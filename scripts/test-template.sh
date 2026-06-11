@@ -101,9 +101,7 @@ if [ -n "$leaks" ]; then
 fi
 
 # ── 3. Rendered workflows are valid (actionlint) ────────────────────
-# STRICT_WORKFLOWS=0 keeps this warn-only until the template workflows are
-# rewritten to the new standard (PR 4 of the v3 overhaul) — then flip to 1.
-STRICT_WORKFLOWS="${STRICT_WORKFLOWS:-0}"
+STRICT_WORKFLOWS="${STRICT_WORKFLOWS:-1}"
 if [ -d .github/workflows ]; then
     if have actionlint; then
         if ! (actionlint); then
@@ -149,7 +147,20 @@ if [ -n "$shell_files" ]; then
     fi
 fi
 
-# ── 7. No secrets in the rendered tree (gitleaks) ───────────────────
+# ── 7. Rendered JSON files parse (devcontainer.json is JSONC — skipped) ──
+json_fail=0
+while IFS= read -r jf; do
+    case "$jf" in
+    *devcontainer.json) continue ;;
+    esac
+    if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$jf" 2>/dev/null; then
+        err "invalid JSON in rendered file: $jf"
+        json_fail=1
+    fi
+done < <(find . -name '*.json' -not -path './.git/*' -not -path './node_modules/*' 2>/dev/null)
+[ "$json_fail" -eq 0 ] && echo "JSON: all rendered .json files parse"
+
+# ── 8. No secrets in the rendered tree (gitleaks) ───────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"
 else

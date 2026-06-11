@@ -96,7 +96,7 @@ for f in "${files[@]}"; do
 
     # --- TOML syntax check ---
     case "$f" in
-    template/*.toml | template/*/*.toml) ;;
+    template/*.toml) ;;
     *.toml)
         if ! python3 -c "import tomllib; tomllib.load(open('$f','rb'))" 2>/dev/null; then
             warn "$f: invalid TOML"
