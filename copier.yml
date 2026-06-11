@@ -222,6 +222,11 @@ current_year:
 _tasks:
   - command: git init -b main
     when: "[[ git_init ]]"
+  # Initial commit — gh repo create --push and task release:init both need
+  # HEAD to exist. Runs before `task install`, so lefthook hooks are not yet
+  # installed and nothing intercepts this commit.
+  - command: 'git add -A && git commit -m "chore: initial scaffold from harmon-init"'
+    when: "[[ git_init ]]"
   - command: gh repo create [[ github_org ]]/[[ project_slug ]] --private --source=. --push
     when: "[[ github_remote_create ]]"
   - command: task install

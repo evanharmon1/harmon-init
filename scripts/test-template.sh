@@ -111,6 +111,10 @@ cd "$dest"
 # (lefthook dump) need a git repo.
 if [ ! -d .git ]; then
     git init -q
+else
+    # _tasks ran: git init must be followed by the initial scaffold commit —
+    # gh repo create --push and task release:init both require HEAD to exist.
+    git rev-parse HEAD >/dev/null 2>&1 || err "_tasks left the rendered repo without an initial commit"
 fi
 
 # ── 0. AGENTS.md is canonical; CLAUDE.md/GEMINI.md are symlinks to it ──
