@@ -1,6 +1,14 @@
 ---
 extends: default
 
+# template/ contains jinja-templated YAML (and jinja-named paths) that is not
+# valid YAML until rendered; the rendered output is linted by test:template:*.
+ignore:
+  - template/
+  - node_modules/
+  - .task/
+  - .worktrees/
+
 rules:
   braces:
     level: warning
@@ -23,6 +31,7 @@ rules:
     level: warning
     indent-sequences: consistent
   line-length:
+    max: 200
     level: warning
     allow-non-breakable-inline-mappings: true
   truthy: disable

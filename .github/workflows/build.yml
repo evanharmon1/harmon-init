@@ -1,0 +1,139 @@
+name: Build & Validate
+run-name: ${{ github.actor }} is running Build & Validate
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install lint tools (shellcheck, shfmt, actionlint, yamllint)
+        run: |
+          # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
+          SHELLCHECK_VERSION=0.10.0
+          curl -sSL -o /tmp/shellcheck.tar.xz \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
+          SHFMT_VERSION=3.13.1
+          sudo curl -sSL -o /usr/local/bin/shfmt \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          sudo chmod +x /usr/local/bin/shfmt
+          # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
+          ACTIONLINT_VERSION=1.7.12
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/
+          pip install yamllint
+      - run: task check
+
+  security:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install gitleaks
+        run: |
+          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
+          GITLEAKS_VERSION=8.24.3
+          curl -sSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+      - run: task security:secrets
+
+  template-test:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [minimal]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install copier and validation tools
+        run: |
+          pipx install copier
+          pip install yamllint
+          # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
+          ACTIONLINT_VERSION=1.7.12
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/
+          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
+          GITLEAKS_VERSION=8.24.3
+          curl -sSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+      - name: Configure git identity (copier renders run git init)
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global init.defaultBranch main
+      - run: task test:template:${{ matrix.profile }}
+
+  verify:
+    if: always()
+    needs: [lint, template-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]] ||
+             [[ "${{ needs.template-test.result }}" != "success" ]]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed."

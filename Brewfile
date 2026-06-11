@@ -1,15 +1,39 @@
+# Brewfile for harmon-init (template maintenance tooling)
+# Install with: task install  (brew bundle --file=Brewfile)
+
+# Template engine
 brew "copier"
-brew "pre-commit"
+
+# Task runner + git hooks
 brew "go-task"
-cask "visual-studio-code"
-brew "node"
-brew "pipx"
-brew "just"
-brew "act"
-cask "bunch"
-tap "snyk/tap"
-brew "snyk/tap/snyk"
+brew "lefthook"
+
+# Git / GitHub
+brew "git"
 brew "gh"
+
+# Lint / format
 brew "shellcheck"
 brew "shfmt"
-brew "semgrep"
+brew "actionlint"
+brew "yamllint"
+
+# Security
+brew "gitleaks"
+tap "snyk/tap"
+brew "snyk/tap/snyk"
+
+# Runtime for npx-based tools (commitlint, markdownlint-cli2)
+brew "node"
+
+# Utilities
+brew "jq"
+brew "fzf"
+brew "fd"
+brew "ripgrep"
+brew "bat"
+brew "act"
+
+# macOS apps
+cask "visual-studio-code"
+cask "bunch"
