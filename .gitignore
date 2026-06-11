@@ -58,6 +58,11 @@ todo.md
 .copier-answers.yml
 .copier-answers.yml.backup
 
+# tool caches
+.task/
+.worktrees/
+.lefthook-local.yml
+
 #             .env
 #------------------------------------------------------------------------------
 # Ignore all .env files

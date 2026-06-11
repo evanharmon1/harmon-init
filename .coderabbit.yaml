@@ -1,0 +1,75 @@
+---
+# CodeRabbit configuration
+# Docs:   https://docs.coderabbit.ai/reference/configuration
+# Schema: https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+
+tone_instructions: >-
+  Be concise and practical. This is a Copier project template: the template/
+  directory becomes generated projects. Prioritize template correctness
+  (will it still render?), jinja escaping, and consistency between root and
+  template layers.
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+  changed_files_summary: true
+  assess_linked_issues: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_usernames:
+      - renovate[bot]
+      - dependabot[bot]
+
+  path_instructions:
+    - path: "**"
+      instructions: >-
+        Enforce Conventional Commits. Trunk-based development: PRs target
+        main. Never suggest bypassing git hooks with --no-verify; fix the
+        underlying issue. `task verify` (lint + test:template) must pass
+        before merge — flag changes that would break template generation.
+
+    - path: "copier.yml"
+      instructions: >-
+        Template configuration: every question/variable change must be
+        reflected in the template files that consume it. Hidden defaults use
+        `when: false`. Side-effectful answers (bunch_add, github_remote_create)
+        must default to no so `copier copy --defaults` is CI-safe. Custom
+        jinja delimiters are [[ ]] / [% %] (set via _envops).
+
+    - path: "template/**"
+      instructions: >-
+        These files become generated projects. Jinja conditionals in
+        filenames control inclusion. No fake placeholder data — derive values
+        from copier answers or use explicit "TODO:" markers. Renovate
+        annotation comments (# renovate: datasource=...) must stay adjacent
+        to the pins they manage and remain un-templated. Any change here must
+        keep `task test:template:all` green.
+
+    - path: ".github/workflows/**"
+      instructions: >-
+        Workflows should call `task` targets rather than re-implement logic,
+        so local + CI stay identical. Pin third-party actions by commit SHA
+        with a trailing version comment. Use Renovate datasource comments for
+        tool versions. Apply least-privilege permissions. Never log secrets.
+
+    - path: "lefthook.yml"
+      instructions: >-
+        Git hooks are orchestrated via lefthook (not pre-commit) and must
+        delegate to Taskfile tasks. template/ stays excluded from file-based
+        lints — jinja files are not valid YAML/Markdown.
+
+    - path: "scripts/test-template.sh"
+      instructions: >-
+        The template test harness. Every copier invocation must pass
+        --vcs-ref=HEAD (without it, copier silently renders the latest tag).
+        All side-effectful answers must be forced off via --data.
+
+chat:
+  auto_reply: true

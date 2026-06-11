@@ -1,141 +1,286 @@
-# Taskfile for Harmon Stack
+# Taskfile for harmon-init (Copier template repo)
+# https://taskfile.dev
+#
+# Two layers live in this repo:
+#   - Root: tooling for maintaining the template itself (this file).
+#   - template/: the Copier template root that becomes generated projects.
+# Lint tasks here exclude template/ where jinja-templated files are not valid
+# YAML/Markdown; the test:template:* tasks validate the RENDERED output instead.
 version: "3"
+
+output:
+  group:
+    begin: "::group::{{.TASK}}"
+    end: "::endgroup::"
+
 tasks:
-  boostrap:
+  default:
+    desc: Interactive task menu (tv)
+    cmds:
+      - task: menu-tv
+
+  menu:
+    desc: Interactive task menu (fzf)
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        selected=$(task --list-all | fzf --reverse --header-lines=1)
+        if [ -n "$selected" ]; then
+          task_name=$(echo "$selected" | awk '{sub(/:$/, "", $2); print $2}')
+          task "$task_name"
+        fi
+
+  menu-tv:
+    desc: Interactive task menu (tv)
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        selected=$(task --list-all | grep -v "task: Available" | grep -v "\* menu:" | tv)
+        if [ -n "$selected" ]; then
+          task_name=$(echo "$selected" | awk '{sub(/:$/, "", $2); print $2}')
+          task "$task_name"
+        fi
+
+  # ── CI / Verification Pipelines ────────────────────────────────
+  ci:
+    desc: Full CI pipeline (check → test → security)
+    cmds:
+      - task: check
+      - task: test
+      - task: security
+
+  verify:
+    desc: Local verification gate (check → test:template)
+    cmds:
+      - task: check
+      - task: test:template
+
+  # ── Quality Checks ────────────────────────────────────────────
+  check:
+    desc: Run all linters (parallel)
+    deps: [lint]
+
+  lint:
+    desc: Run all linters in parallel
+    deps:
+      - lint:yaml
+      - lint:shell
+      - lint:markdown
+      - lint:actions
+      - lint:hygiene
+
+  lint:yaml:
+    desc: yamllint (template/ excluded via .yamllint ignore)
+    cmds:
+      - yamllint {{.CLI_ARGS | default "."}}
+
+  lint:shell:
+    desc: shellcheck + shfmt (template/ excluded — jinja-named paths contain spaces; rendered scripts are checked by test:template)
+    vars:
+      SHELL_FILES:
+        sh: git ls-files '*.sh' '*.bash' ':(exclude)template/*' 2>/dev/null | tr '\n' ' '
+    cmds:
+      - |
+        files="{{.CLI_ARGS}}"
+        [ -z "$files" ] && files="{{.SHELL_FILES}}"
+        [ -z "$files" ] && exit 0
+        shellcheck --severity=error $files
+        shfmt -d $files
+
+  lint:markdown:
+    desc: markdownlint-cli2 (template/ excluded — jinja markdown)
+    cmds:
+      - |
+        if [ -n "{{.CLI_ARGS}}" ]; then
+          npx --yes markdownlint-cli2 --fix {{.CLI_ARGS}}
+        else
+          npx --yes markdownlint-cli2 --fix '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**'
+        fi
+
+  lint:actions:
+    desc: actionlint on GitHub workflows
+    env:
+      # SC2016 flags '$' in single quotes, but we intentionally single-quote
+      # jq expressions that use '$var' placeholders.
+      SHELLCHECK_OPTS: --exclude=SC2016
+    cmds:
+      - actionlint
+
+  lint:hygiene:
+    desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
+    cmds:
+      - ./scripts/lint-hygiene.sh {{.CLI_ARGS}}
+
+  lint:commit-msg:
+    desc: Validate commit message (conventional commits)
+    cmds:
+      - npx --yes --package @commitlint/cli --package @commitlint/config-conventional -- commitlint --edit {{.CLI_ARGS}}
+
+  guard:no-commit-to-main:
+    desc: Block direct commits to main
+    cmds:
+      - |
+        branch=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$branch" = "main" ]; then
+          echo "Direct commits to main are blocked. Use a feature branch."
+          exit 1
+        fi
+
+  format:
+    desc: Auto-format code
+    cmds:
+      - |
+        files=$(git ls-files '*.sh' '*.bash')
+        [ -n "$files" ] && shfmt -w $files || true
+      - npx --yes markdownlint-cli2 --fix '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**'
+
+  fix:
+    desc: Format then lint
+    cmds:
+      - task: format
+      - task: lint
+
+  # ── Template Tests ────────────────────────────────────────────
+  # Copier renders the LATEST TAG unless --vcs-ref=HEAD is passed, and with
+  # --vcs-ref=HEAD it auto-includes dirty/untracked changes (DirtyLocalWarning)
+  # via a throwaway commit in a temp clone — your working tree is never touched.
+  test:
+    desc: Run all template generation tests
+    cmds:
+      - task: test:template
+
+  test:template:
+    desc: Generate projects from the template (all profiles) and validate them
+    cmds:
+      - task: test:template:all
+
+  test:template:all:
+    desc: All template test profiles (parallel)
+    deps:
+      - test:template:minimal
+
+  test:template:minimal:
+    desc: Render template with default answers and validate the result
+    cmds:
+      - ./scripts/test-template.sh minimal
+
+  test:template:committed:
+    desc: Render template, failing if the working tree is dirty (pre-release gate)
+    cmds:
+      - |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "FAIL: working tree is dirty — commit changes before the release gate." >&2
+          exit 1
+        fi
+      - task: test:template:all
+
+  # ── Security ──────────────────────────────────────────────────
+  security:
+    desc: Run all security checks
+    deps:
+      - security:secrets
+
+  security:secrets:
+    desc: Scan for leaked secrets (gitleaks)
+    cmds:
+      - |
+        if [ -z "$GITHUB_STEP_SUMMARY" ]; then
+          gitleaks detect --no-banner --redact --source .
+        else
+          rc=0
+          gitleaks detect --no-banner --redact --source . \
+            --report-format json --report-path /tmp/harmon-init-gitleaks.json || rc=$?
+          node scripts/summarize-gitleaks.mjs /tmp/harmon-init-gitleaks.json
+          exit $rc
+        fi
+
+  security:sast:
+    desc: Static application security testing (source code)
+    cmds:
+      - snyk code test --exclude=.worktrees --severity-threshold=high
+
+  # ── Setup ─────────────────────────────────────────────────────
+  bootstrap:
+    desc: One-time machine setup (Homebrew)
     cmds:
       - /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      - brew install python #TODO: Might need to use a non-homebrew method
-    silent: true
+
   install:
+    desc: Install all project dependencies and tools
     cmds:
       - brew bundle --file=Brewfile
-      - python install -r requirements.txt
-    silent: true
-  validate:
+      - task: install:hooks
+
+  install:hooks:
+    desc: Install git hooks via lefthook
     cmds:
-      - task: preCommit
-      - task: check
-    silent: true
-  preCommit:
-    cmds:
-      - pre-commit run --all-files
-    silent: true
-  check:
-    cmds:
-      - echo "No commands to check"
-    ignore_error:
-      true
-      # - shellcheck osConfig/mac/updateMac.sh
-      # - shellcheck osConfig/mac/setupMac.sh
-      # - shellcheck osConfig/mac/configureMacSettings.sh
-    silent: true
-  fix:
-    cmds:
-      - echo "No commands to fix"
-    silent: true
-  security:
-    cmds:
-      - task: secrets
-      - task: sast
-    ignore_error: true
-    silent: true
-  secrets:
-    cmds:
-      - ./check_for_pattern.sh . "*secret*"
-      - whispers --config test/whisperConfig.yml --severity BLOCKER,CRITICAL .
-    silent: true
-  sast:
-    cmds:
-      - task: sast-dependencies
-      - task: sast-code
-    silent: true
-  sast-dependencies:
-    cmds:
-      - snyk test --all-projects
-    silent: true
-  sast-code:
-    cmds:
-      - snyk code test
-    silent: true
-  ghReleaseInit:
-    cmds:
-      - git add .
-      - git commit -m 'Initial release v0.0.1'
-      - git tag -a v0.0.1 -m "Initial release v0.0.1"
-      - git push origin main
-      - git push origin --tags
-      - gh release create
-    silent: false
-  vBumpPatch:
-    desc: Bump to the next patch version
+      - lefthook install
+
+  # ── Release ───────────────────────────────────────────────────
+  # Releases are intentional — never automated on merge to main.
+  release:patch:
+    desc: Bump patch version and release
     vars:
-      LATEST_TAG:
-        sh: git tag --sort=-version:refname | head -n1
-      VERSION:
-        sh: echo "{{.LATEST_TAG}}" | sed 's/^v//'
-      MAJOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f1
-      MINOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f2
-      PATCH:
-        sh: echo "{{.VERSION}}" | cut -d. -f3
-      NEW_PATCH:
-        sh: expr {{.PATCH}} + 1
-      NEW_VERSION: v{{.MAJOR}}.{{.MINOR}}.{{.NEW_PATCH}}
+      CURRENT_TAG:
+        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+      NEXT_TAG:
+        sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3+1}'
     cmds:
-      - echo "Latest tag is {{.LATEST_TAG}}"
-      - echo "Current version is {{.VERSION}}"
-      - echo "Bumping patch version to {{.NEW_VERSION}}"
-      - git tag {{.NEW_VERSION}}
-      - git push origin {{.NEW_VERSION}}
-      - gh release create
-  vBumpMinor:
-    desc: Bump to the next minor version
+      - echo "Releasing {{.NEXT_TAG}} (was {{.CURRENT_TAG}})"
+      - git tag -a {{.NEXT_TAG}} -m "Release {{.NEXT_TAG}}"
+      - git push origin {{.NEXT_TAG}}
+      - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
+
+  release:minor:
+    desc: Bump minor version and release
     vars:
-      LATEST_TAG:
-        sh: git tag --sort=-version:refname | head -n1
-      VERSION:
-        sh: echo "{{.LATEST_TAG}}" | sed 's/^v//'
-      MAJOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f1
-      MINOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f2
-      NEW_MINOR:
-        sh: expr {{.MINOR}} + 1
-      NEW_VERSION: v{{.MAJOR}}.{{.NEW_MINOR}}.0
+      CURRENT_TAG:
+        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+      NEXT_TAG:
+        sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%d.0", $1, $2+1}'
     cmds:
-      - echo "Latest tag is {{.LATEST_TAG}}"
-      - echo "Current version is {{.VERSION}}"
-      - echo "Bumping minor version to {{.NEW_VERSION}}"
-      - git tag {{.NEW_VERSION}}
-      - git push origin {{.NEW_VERSION}}
-      - gh release create {{.NEW_VERSION}} --generate-notes
-  vBumpMajor:
-    desc: Bump to the next major version
+      - echo "Releasing {{.NEXT_TAG}} (was {{.CURRENT_TAG}})"
+      - git tag -a {{.NEXT_TAG}} -m "Release {{.NEXT_TAG}}"
+      - git push origin {{.NEXT_TAG}}
+      - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
+
+  release:major:
+    desc: Bump major version and release
     vars:
-      LATEST_TAG:
-        sh: git tag --sort=-version:refname | head -n1
-      VERSION:
-        sh: echo "{{.LATEST_TAG}}" | sed 's/^v//'
-      MAJOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f1
-      NEW_MAJOR:
-        sh: expr {{.MAJOR}} + 1
-      NEW_VERSION: v{{.NEW_MAJOR}}.0.0
+      CURRENT_TAG:
+        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+      NEXT_TAG:
+        sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "v%d.0.0", substr($1,2)+1}'
     cmds:
-      - echo "Latest tag is {{.LATEST_TAG}}"
-      - echo "Current version is {{.VERSION}}"
-      - echo "Bumping major version to {{.NEW_VERSION}}"
-      - git tag {{.NEW_VERSION}}
-      - git push origin {{.NEW_VERSION}}
-      - gh release create
-  bunchAdd:
+      - echo "Releasing {{.NEXT_TAG}} (was {{.CURRENT_TAG}})"
+      - git tag -a {{.NEXT_TAG}} -m "Release {{.NEXT_TAG}}"
+      - git push origin {{.NEXT_TAG}}
+      - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
+
+  # ── Clean ─────────────────────────────────────────────────────
+  clean:
+    desc: Remove build artifacts and caches
+    cmds:
+      - rm -rf .task
+
+  # ── Status ────────────────────────────────────────────────────
+  status:
+    desc: Project status overview
+    cmds:
+      - git status -sb
+      - gh pr list || true
+
+  # ── Utilities ─────────────────────────────────────────────────
+  util:bunch-add:
+    desc: Move Bunch file to iCloud and replace with symlink
     cmds:
       - mv '.meta/Code Project - Harmon Stack.bunch' '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/'
       - ln -s '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/Code Project - Harmon Stack.bunch' .meta
-    silent: false
-  obsidianAdd:
+
+  util:obsidian-add:
+    desc: Move Obsidian note to Memex and replace with symlink
     cmds:
       - mv '.meta/Harmon Stack.md' '/Users/evan/Local/Memex/Professional/'
       - ln -s '/Users/evan/Local/Memex/Professional/Harmon Stack.md' .meta
-    silent: false
