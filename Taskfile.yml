@@ -163,6 +163,7 @@ tasks:
       - test:template:web
       - test:template:iac
       - test:template:full
+      - test:template:meta
 
   test:template:minimal:
     desc: Render template with default answers and validate the result
@@ -183,6 +184,11 @@ tasks:
     desc: Render template with maximum conditional coverage and validate
     cmds:
       - ./scripts/test-template.sh full
+
+  test:template:meta:
+    desc: Render template with bunch/obsidian/private-license branches (--skip-tasks) and validate
+    cmds:
+      - ./scripts/test-template.sh meta
 
   test:template:committed:
     desc: Render template, failing if the working tree is dirty (pre-release gate)
