@@ -52,8 +52,16 @@ pnpm-debug.log*
 ehthumbs.db
 Thumbs.db
 
-.meta
-todo.md
+# Anchored to repo root — unanchored `.meta` also matched template/.meta and
+# got dropped from copier's dirty-tree wip commit (empty-index clone + add -A).
+/.meta
+/todo.md
+# Re-include the template's .meta — global gitignores often ignore `.meta`
+# unanchored, which silently drops these files from copier's dirty-tree wip
+# commit (clone --no-checkout has an empty index, so ignore rules apply even
+# to tracked files during its `git add -A`).
+!template/.meta/
+!template/.meta/**
 *.code-workspace
 .copier-answers.yml
 .copier-answers.yml.backup
