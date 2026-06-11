@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [minimal]
+        profile: [minimal, web, iac, full]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -106,6 +106,7 @@ jobs:
         run: |
           pipx install copier
           pip install yamllint
+          npm install -g @devcontainers/cli lefthook
           # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
           ACTIONLINT_VERSION=1.7.12
           curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \

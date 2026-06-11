@@ -1,0 +1,25 @@
+# Gitleaks configuration for [[ project_name ]]
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+    '''\.git/''',
+    '''\.task/''',
+    '''\.worktrees/''',
+[% if use_node %]
+    '''node_modules/''',
+    '''dist/''',
+    '''\.astro/''',
+    '''\.pnpm-store/''',
+[% endif %]
+[% if use_python %]
+    '''\.venv/''',
+    '''__pycache__/''',
+[% endif %]
+[% if include_terraform %]
+    '''\.terraform/''',
+[% endif %]
+]

@@ -1,0 +1,118 @@
+name: Project Automation
+# Syncs the org-level GitHub Project V2 "Status" field from PR/CI events.
+# Requires: an org Project (number 1) with a Status field, and the
+# GH_WORKFLOW_PAT secret (see docs/CHECKLIST.md).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_run:
+    workflows: ["Build & Validate"]
+    types: [completed]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  sync-status:
+    name: Sync project status
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      ((github.event_name == 'pull_request') ||
+       (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+       (github.event_name == 'workflow_run'))
+    runs-on: [ [[ ci_runner_labels ]] ]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Resolve target status and update project
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_WORKFLOW_PAT }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          BRANCH_PR: ${{ github.event.pull_request.head.ref }}
+          BRANCH_WF: ${{ github.event.workflow_run.head_branch }}
+          SHA_WF: ${{ github.event.workflow_run.head_sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eo pipefail
+
+          # Resolve target status and issue source branch from the triggering event
+          case "$EVENT_NAME" in
+            pull_request)
+              BRANCH="$BRANCH_PR"
+              if [ "$ACTION" = "closed" ]; then
+                [ "$MERGED" = "true" ] || { echo "PR closed without merge, skipping"; exit 0; }
+                TARGET_STATUS="Done"
+              else
+                TARGET_STATUS="Validating"
+              fi
+              ;;
+            pull_request_review)
+              BRANCH="$BRANCH_PR"
+              TARGET_STATUS="Done"
+              ;;
+            workflow_run)
+              BRANCH="$BRANCH_WF"
+              WORKFLOW_RUNS=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$SHA_WF&per_page=100")
+              CI_RUNS=$(echo "$WORKFLOW_RUNS" | jq '[.workflow_runs[] | select(.name == "Build & Validate")]')
+              CI_COUNT=$(echo "$CI_RUNS" | jq 'length')
+              FAILED=$(echo "$CI_RUNS" | jq '[.[] | select(.conclusion != null and (.conclusion | test("^(failure|cancelled|timed_out|action_required)$")))] | length')
+              PENDING=$(echo "$CI_RUNS" | jq '[.[] | select(.status != "completed")] | length')
+              if [ "$FAILED" -gt 0 ]; then
+                TARGET_STATUS="Validating"
+              elif [ "$PENDING" -gt 0 ]; then
+                echo "CI still running ($PENDING pending), skipping"; exit 0
+              elif [ "$CI_COUNT" -ge 1 ]; then
+                TARGET_STATUS="In Review"
+              else
+                echo "Expected CI workflow runs for SHA but found $CI_COUNT, skipping"; exit 0
+              fi
+              ;;
+            *)
+              echo "Unhandled event $EVENT_NAME, skipping"; exit 0
+              ;;
+          esac
+
+          # Extract issue number from claude/issue-N branch or PR body Closes/Fixes/Resolves #N
+          ISSUE_NUMBER=$(echo "$BRANCH" | grep -oP '(?<=claude/issue-)\d+' || true)
+          if [ -z "$ISSUE_NUMBER" ] && [ -n "$PR_BODY" ]; then
+            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oP '(?<=(Closes|Fixes|Resolves) #)\d+' | head -1 || true)
+          fi
+          [ -z "$ISSUE_NUMBER" ] && echo "No issue number derivable from event, skipping" && exit 0
+          echo "event=$EVENT_NAME issue=#$ISSUE_NUMBER target=$TARGET_STATUS"
+
+          PROJECT_ID=$(gh api graphql -f query='
+            query($o:String!,$n:Int!){organization(login:$o){projectV2(number:$n){id}}}
+            ' -f o=[[ github_org ]] -F n=1 --jq '.data.organization.projectV2.id')
+
+          ITEM_ID=""
+          CURSOR=""
+          while true; do
+            PAGE=$(gh api graphql -f query='
+              query($i:ID!,$after:String){node(id:$i){...on ProjectV2{items(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id content{...on Issue{number}}}}}}}
+              ' -F i="$PROJECT_ID" ${CURSOR:+-F after="$CURSOR"} 2>/dev/null || true)
+            ITEM_ID=$(echo "$PAGE" | jq -r ".data.node.items.nodes[]|select(.content.number?==$ISSUE_NUMBER)|.id" 2>/dev/null || true)
+            [ -n "$ITEM_ID" ] && break
+            HAS_NEXT=$(echo "$PAGE" | jq -r '.data.node.items.pageInfo.hasNextPage')
+            [ "$HAS_NEXT" != "true" ] && break
+            CURSOR=$(echo "$PAGE" | jq -r '.data.node.items.pageInfo.endCursor')
+          done
+          [ -z "$ITEM_ID" ] && echo "Issue #$ISSUE_NUMBER not in project, skipping" && exit 0
+
+          STATUS_DATA=$(gh api graphql -f query='
+            query($i:ID!){node(id:$i){...on ProjectV2{fields(first:20){nodes{...on ProjectV2SingleSelectField{id name options{id name}}}}}}}
+            ' -F i="$PROJECT_ID")
+          FIELD_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.id')
+          OPTION_ID=$(echo "$STATUS_DATA" | jq -r --arg s "$TARGET_STATUS" \
+            '.data.node.fields.nodes[]|select(.name=="Status")|.options[]|select(.name==$s)|.id')
+          [ -z "$OPTION_ID" ] && echo "Status option '$TARGET_STATUS' not found, skipping" && exit 0
+
+          gh api graphql -f query='
+            mutation($p:ID!,$i:ID!,$f:ID!,$v:String!){
+              updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$v}}){projectV2Item{id}}
+            }' -F p="$PROJECT_ID" -F i="$ITEM_ID" -F f="$FIELD_ID" -F v="$OPTION_ID"
+          echo "Set issue #$ISSUE_NUMBER to $TARGET_STATUS"

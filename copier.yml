@@ -1,6 +1,13 @@
-# copier.yml for the Copier new project template tool
-# Run it with: `copier copy path/to/harmon-stack path/to/new-project --trust`
-# E.g: `copier copy harmon-stack new-project --trust`
+# copier.yml for the harmon-init Copier project template
+# Generate a new project: `copier copy harmon-init new-project --trust`
+# Apply/update an existing project: `copier update --trust` (inside the project)
+#
+# NOTE: custom jinja delimiters are set via _envops below — template variables
+# use [[ var ]] and blocks use [% if x %]. This lets GitHub Actions `${{ }}`,
+# go-task `{{.VAR}}`, and lefthook `{staged_files}` appear verbatim in template
+# files with zero escaping.
+
+# ── Asked questions ─────────────────────────────────────────────────
 
 project_name:
   type: str
@@ -10,101 +17,15 @@ project_name:
 project_slug:
   type: str
   help: "SLUG: Project slug (project-slug)"
-  placeholder: "{{ project_name.lower().replace(' ', '-') }}"
-  default: "{{ project_name.lower().replace(' ', '-') }}"
+  default: "[[ project_name.lower().replace(' ', '-') ]]"
 
 project_description:
   type: str
   help: "DESCRIPTION: Short description of the project"
-  placeholder: "TODO: project_description"
   default: "TODO: project_description"
 
-bunch_add:
-  type: bool
-  help: "BUNCH: Add Bunch file to project?"
-  default: yes
-
-obsidian_project_add:
-  type: bool
-  help: "OBSIDIAN: Add Obsidian project to Obsidian directory?"
-  default: no
-
-license:
-  type: str
-  help: "LICENSE: Add license?"
-  choices:
-    - mit
-    - private
-  default: mit
-
-git_provider:
-  type: str
-  help: "GIT PROVIDER: Git provider for the project"
-  choices:
-    - github
-    - gitlab
-    - other
-  default: github
-  when: false
-
-git_init:
-  type: bool
-  help: "INIT: Initialize git repo?"
-  default: yes
-
-github_remote_create:
-  type: bool
-  help: "GITHUB REMOTE: Create a remote repo on GitHub (gh repo create)? If yes, choose to create repo from local."
-  default: no
-
-github_release_init:
-  type: bool
-  help: "RELEASE: Create an initial release on GitHub (git tag v0.0.1 & gh release create)?"
-  default: no
-
-github_collaboration_templates:
-  type: bool
-  help: "COLLABORATION: Include GitHub Issue templates, CONTRIBUTING.md, and CODE_OF_CONDUCT.md files?"
-  default: no
-
-ci_cd:
-  type: str
-  help: "CI/CD: Add CI/CD files?"
-  choices:
-    - github_actions
-    - gitlab_ci
-  default: github_actions
-  when: false
-
-# Mostly default good defaults (Most Nos) below here vvv so usually just smash enter from here
-
-run_task_bootstrap:
-  type: bool
-  help: "TASK BOOTSTRAP: Run 'task bootstrap' command?"
-  default: no
-
-run_task_install:
-  type: bool
-  help: "TASK INSTALL: Run 'task install' command?"
-  default: no
-
-devcontainer:
-  type: bool
-  help: ".DEVCONTAINER: Add .devcontainer?"
-  default: no
-
-justfile:
-  type: bool
-  help: "Include 'justfile' task runner?"
-  default: no
-  when: false
-
-howzit:
-  type: bool
-  help: "Include 'howzit' build file?"
-  default: no
-  when: false
-
+# Hidden author identity (defaults rarely change) — defined early so asked
+# questions below can reference them in their own defaults.
 author_first_name:
   type: str
   default: Evan
@@ -117,8 +38,7 @@ author_last_name:
 
 author_full_name:
   type: str
-  placeholder: "{{ author_first_name + ' ' + author_last_name }}"
-  default: "{{ author_first_name + ' ' + author_last_name }}"
+  default: "[[ author_first_name + ' ' + author_last_name ]]"
   when: false
 
 author_email:
@@ -136,14 +56,84 @@ author_git_provider_username:
   default: evanharmon1
   when: false
 
-project_url:
+github_org:
   type: str
-  default: "TODO: project_url"
+  help: "GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
+  default: "[[ author_git_provider_username ]]"
 
-repo_url:
+project_type:
   type: str
-  default: "https://{{ git_provider }}.com/{{ author_git_provider_username }}/{{ project_slug }}"
-  when: false
+  help: "TYPE: What kind of project is this? (drives Taskfile, CI jobs, devcontainer tooling)"
+  choices:
+    general: general
+    web-astro (marketing/static sites): web-astro
+    web-app (TanStack/React apps): web-app
+    iac (Terraform/Ansible): iac
+    docs (documentation/Obsidian): docs
+  default: general
+
+include_terraform:
+  type: bool
+  help: "TERRAFORM: Include a terraform/ skeleton + terraform linting?"
+  default: "[[ project_type == 'iac' ]]"
+
+include_ansible:
+  type: bool
+  help: "ANSIBLE: Include an ansible/ skeleton + ansible linting?"
+  default: "[[ project_type == 'iac' ]]"
+
+ci_runner:
+  type: str
+  help: "CI RUNNER: GitHub Actions runner for this repo's workflows"
+  choices:
+    - ubuntu-latest
+    - self-hosted
+  default: ubuntu-latest
+
+license:
+  type: str
+  help: "LICENSE: Add license?"
+  choices:
+    - mit
+    - private
+  default: mit
+
+devcontainer:
+  type: bool
+  help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
+  default: yes
+
+git_init:
+  type: bool
+  help: "GIT INIT: Initialize git repo?"
+  default: yes
+
+github_remote_create:
+  type: bool
+  help: "GITHUB REMOTE: Create the remote repo on GitHub (gh repo create, private, pushes initial state)?"
+  default: no
+
+github_release_init:
+  type: bool
+  help: "RELEASE: Create an initial release (task release:init)?"
+  default: no
+
+bunch_add:
+  type: bool
+  help: "BUNCH: Add Bunch file to project (macOS-only, moves file to iCloud)?"
+  default: no
+
+obsidian_project_add:
+  type: bool
+  help: "OBSIDIAN: Add Obsidian project note to the vault (macOS-only)?"
+  default: no
+
+run_task_install:
+  type: bool
+  help: "TASK INSTALL: Run 'task install' after generation (brew bundle + git hooks)?"
+  default: no
+
+# ── Hidden defaults (when: false) ───────────────────────────────────
 
 organization:
   type: str
@@ -160,25 +150,37 @@ organization_email:
   default: "evan@evanharmon.com"
   when: false
 
-docker_hub_username:
+repo_url:
   type: str
-  default: evanharmon1
+  default: "https://github.com/[[ github_org ]]/[[ project_slug ]]"
   when: false
 
-docker_image:
+# Rendered inside `runs-on: [...]` in generated workflows — one place to
+# extend self-hosted labels.
+ci_runner_labels:
   type: str
-  default: "TODO: docker_image"
+  default: "[% if ci_runner == 'self-hosted' %]\"self-hosted\", \"linux\"[% else %]\"ubuntu-latest\"[% endif %]"
+  when: false
+
+use_node:
+  type: bool
+  default: "[[ project_type in ['web-astro', 'web-app'] ]]"
+  when: false
+
+use_python:
+  type: bool
+  default: "[[ include_ansible or project_type == 'iac' ]]"
+  when: false
+
+devcontainer_image:
+  type: str
+  default: "ghcr.io/[[ github_org ]]/[[ project_slug ]]-devcontainer"
   when: false
 
 # Paths
 projects_directory:
   type: str
   default: ~/git
-  when: false
-
-projects_directory_full:
-  type: str
-  default: "/Users/{{ author_first_name }}/git"
   when: false
 
 bunches_directory:
@@ -205,76 +207,55 @@ state:
 # Date & Time
 current_date:
   type: str
-  default: "{{ '%Y-%m-%d' | strftime }}"
+  default: "[[ '%Y-%m-%d' | strftime ]]"
   when: false
 
 current_year:
   type: str
-  default: "{{ '%Y' | strftime }}"
+  default: "[[ '%Y' | strftime ]]"
   when: false
 
-current_time:
-  type: str
-  default: "{{ '%H:%M:%S' | strftime }}"
-  when: false
-
-# API Keys
-# _ai_tool_key:
-#   when: false
-#   secret: true
-#   default: "TODO: ai_tool_key"
-
-# _opanapi_key:
-#   when: false
-#   secret: true
-#   default: "TODO: opanapi_key"
-
-# _anthropic_key:
-#   when: false
-#   secret: true
-#   default: "TODO: anthropic_key"
-
-# _perplexity_key:
-#   when: false
-#   secret: true
-#   default: "TODO: perplexity_key"
-
-# _gemini_key:
-#   when: false
-#   secret: true
-#   default: "TODO: gemini_key"
-
-# _cursor_key:
-#   when: false
-#   secret: true
-#   default: "TODO: cursor_key"
+# ── Post-generation tasks ───────────────────────────────────────────
+# All side-effectful tasks default to no so `copier copy --defaults` is
+# CI-safe (except git_init, which only touches the new project directory).
 
 _tasks:
-  - command: echo "*******************************************************************"
-  - command: echo "******************** STARTING TASKS SECTION ***********************"
-  - command: echo "*******************************************************************"
-  - command: "echo 'bunches_directory is set to: {{ bunches_directory }}'"
-  - command: "echo 'obsidian_directory is set to: {{ obsidian_directory }}'"
-  - command: git init
-    when: "{{ git_init }}"
-  - command: gh repo create
-    when: "{{ github_remote_create }}"
-  - command: task ghReleaseInit
-    when: "{{ github_release_init }}"
-  - command: task bunchAdd
-    when: "{{ bunch_add }}"
-  - command: task obsidianAdd
-    when: "{{ obsidian_project_add }}"
-  - command: echo "==================================================================="
-  - command: echo "============== HARMON STACK PROJECT CREATION COMPLETE ============="
-  - command: echo "==================================================================="
+  - command: git init -b main
+    when: "[[ git_init ]]"
+  - command: gh repo create [[ github_org ]]/[[ project_slug ]] --private --source=. --push
+    when: "[[ github_remote_create ]]"
+  - command: task install
+    when: "[[ run_task_install ]]"
+  - command: task release:init
+    when: "[[ github_release_init ]]"
+  - command: task util:bunch-add
+    when: "[[ bunch_add ]]"
+  - command: task util:obsidian-add
+    when: "[[ obsidian_project_add ]]"
 
-# Copier Settings
+# ── Copier settings ─────────────────────────────────────────────────
 
-# Automatically use this directory as the root for the copier template
+_min_copier_version: "9.4.0"
+
 _subdirectory: template
 
-# Automatically set any variables that contain password or key in copier.yml to be marked as secrets and not added to the .copier-answers.yml file
+# Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
+# (without this, copier dereferences symlinks into duplicate files).
+_preserve_symlinks: true
+
+# Custom jinja delimiters — see header comment. trim/lstrip keep block tags
+# on their own lines from leaving blank lines in rendered output.
+_envops:
+  block_start_string: "[%"
+  block_end_string: "%]"
+  variable_start_string: "[["
+  variable_end_string: "]]"
+  comment_start_string: "[#"
+  comment_end_string: "#]"
+  trim_blocks: true
+  lstrip_blocks: true
+
+# Variables containing password/key are excluded from .copier-answers.yml
 _secret_questions:
   - password
   - key
