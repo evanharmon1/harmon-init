@@ -1,4 +1,4 @@
-# Taskfile for {{ project_name }}
+# Taskfile for [[ project_name ]]
 version: '3'
 tasks:
   boostrap:
@@ -67,7 +67,7 @@ tasks:
       - git push origin --tags
       - gh release create
     silent: false
-  {% raw %}vBumpPatch:
+  vBumpPatch:
     desc: Bump to the next patch version
     vars:
       LATEST_TAG:
@@ -129,14 +129,14 @@ tasks:
       - echo "Bumping major version to {{.NEW_VERSION}}"
       - git tag {{.NEW_VERSION}}
       - git push origin {{.NEW_VERSION}}
-      - gh release create{% endraw %}
+      - gh release create
   bunchAdd:
     cmds:
-      - mv '.meta/Code Project - {{ project_name }}.bunch' '{{ bunches_directory }}/'
-      - ln -s '{{ bunches_directory }}/Code Project - {{ project_name }}.bunch' .meta
+      - mv '.meta/Code Project - [[ project_name ]].bunch' '[[ bunches_directory ]]/'
+      - ln -s '[[ bunches_directory ]]/Code Project - [[ project_name ]].bunch' .meta
     silent: false
   obsidianAdd:
     cmds:
-      - mv '.meta/{{ project_name }}.md' '{{ obsidian_directory }}/Personal/Digital'
-      - ln -s '{{ obsidian_directory }}/Personal/Digital/{{ project_name }}.md' .meta
+      - mv '.meta/[[ project_name ]].md' '[[ obsidian_directory ]]/Personal/Digital'
+      - ln -s '[[ obsidian_directory ]]/Personal/Digital/[[ project_name ]].md' .meta
     silent: false

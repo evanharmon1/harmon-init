@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Post-create setup script for the {{ project_name }} devcontainer.
+# Post-create setup script for the [[ project_name ]] devcontainer.
 # Runs once after the container is built to install project-specific tooling.
 set -euo pipefail
 
 SNYK_VERSION="1.1303.1"
 
 # Git identity for commits
-git config --global user.name "evanharmon1-bot"
-git config --global user.email "269859446+evanharmon1-bot@users.noreply.github.com"
+git config --global user.name "[[ author_git_provider_username ]]"
+git config --global user.email "[[ author_email ]]"
 
 # Bridge gh CLI auth to git credential helper
 gh auth setup-git
@@ -111,8 +111,9 @@ fi
 # Embedded because ghostty generates terminfo from Zig source at build time — no
 # downloadable .terminfo file exists in the repo.
 if ! infocmp xterm-ghostty &>/dev/null 2>&1; then
+[% raw %]
     cat >/tmp/ghostty.terminfo <<'GHOSTTY_TI'
-{% raw %}xterm-ghostty|ghostty|Ghostty,
+xterm-ghostty|ghostty|Ghostty,
 	am, bce, ccc, hs, km, mc5i, mir, msgr, npc, xenl, AX, Su, Tc, XT, fullkbd,
 	colors#256, cols#80, it#8, lines#24, pairs#32767,
 	acsc=++\,\,--..00``aaffgghhiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~,
@@ -192,7 +193,8 @@ if ! infocmp xterm-ghostty &>/dev/null 2>&1; then
 	setrgbf=\E[38\:2\:%p1%d\:%p2%d\:%p3%dm, smxx=\E[9m,
 	xm=\E[<%i%p3%d;%p1%d;%p2%d;%?%p4%tM%em%;,
 	xr=\EP>\\|[ -~]+a\E\\,
-{% endraw %}GHOSTTY_TI
+GHOSTTY_TI
+[% endraw %]
     sudo tic -x /tmp/ghostty.terminfo
     rm -f /tmp/ghostty.terminfo
 fi
@@ -253,6 +255,7 @@ echo "==> Adding uv and tools to PATH in shell profile..."
 } >>~/.bashrc
 
 echo "==> Writing tmux config..."
+[% raw %]
 cat >~/.tmux.conf <<'TMUX_EOF'
 set-option -g history-limit 50000
 set -g mouse on
@@ -261,6 +264,7 @@ setw -g pane-base-index 1
 set -g status-left '[#S] '
 set -g status-right '%H:%M'
 TMUX_EOF
+[% endraw %]
 
 echo "==> Writing zellij config..."
 mkdir -p ~/.config/zellij

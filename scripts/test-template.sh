@@ -2,7 +2,7 @@
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
 # Usage: ./scripts/test-template.sh <profile>
-# Profiles: minimal (web/iac/full land with the v3 question set)
+# Profiles: minimal | web | iac | full
 #
 # Copier facts this script depends on (verified against copier 9.x):
 #   - Without --vcs-ref, copier renders the LATEST TAG, not your working tree.
@@ -48,6 +48,23 @@ data_args=(
 
 case "$profile" in
 minimal) ;;
+web)
+    data_args+=(--data project_type=web-astro)
+    ;;
+iac)
+    data_args+=(--data project_type=iac)
+    ;;
+full)
+    # Maximize conditional coverage: web tooling + terraform + ansible +
+    # devcontainer + self-hosted runner labels (exercises actionlint config).
+    data_args+=(
+        --data project_type=web-astro
+        --data include_terraform=true
+        --data include_ansible=true
+        --data devcontainer=true
+        --data ci_runner=self-hosted
+    )
+    ;;
 *)
     echo "Unknown profile: ${profile}" >&2
     exit 2
