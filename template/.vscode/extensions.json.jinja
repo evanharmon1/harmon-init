@@ -1,0 +1,35 @@
+{
+  "recommendations": [
+[% if include_terraform %]
+    "hashicorp.terraform",
+[% endif %]
+[% if include_ansible %]
+    "redhat.ansible",
+[% endif %]
+[% if use_python %]
+    "ms-python.python",
+    "ms-python.black-formatter",
+[% endif %]
+[% if project_type == 'web-astro' %]
+    "astro-build.astro-vscode",
+[% endif %]
+[% if use_node %]
+    "esbenp.prettier-vscode",
+    "ms-playwright.playwright",
+[% endif %]
+    "ms-azuretools.vscode-docker",
+    "timonwong.shellcheck",
+    "foxundermoon.shell-format",
+    "redhat.vscode-yaml",
+    "tamasfe.even-better-toml",
+    "mikestead.dotenv",
+    "davidanson.vscode-markdownlint",
+    "GitHub.vscode-github-actions",
+    "github.vscode-pull-request-github",
+    "task.vscode-task",
+    "EditorConfig.EditorConfig",
+    "anthropic.claude-code",
+    "openai.chatgpt"
+  ],
+  "unwantedRecommendations": []
+}

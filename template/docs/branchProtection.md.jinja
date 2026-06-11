@@ -2,7 +2,31 @@
 
 ## Purpose
 
-This document explains the branch protection ruleset applied to `main` and how it ensures that AI coding agents (e.g., Claude Code running in a dev container) cannot push to or merge into `main` without explicit human approval. The ruleset works in combination with a dedicated machine user account (`evanharmon1-bot`) that has Write collaborator access and a scoped fine-grained PAT.
+This document explains the branch protection ruleset applied to `main` and how it ensures that AI coding agents (e.g., Claude Code running in a dev container) cannot push to or merge into `main` without explicit human approval. The ruleset works in combination with a dedicated machine user account (`[[ author_git_provider_username ]]-bot`) that has Write collaborator access and a scoped fine-grained PAT.
+
+## Applying the Ruleset
+
+An importable copy of the ruleset ships in this repo at
+`.github/Branch Protection Ruleset - Protect Main.json`. Import it via the UI
+(Settings → Rules → Rulesets → Import a ruleset) or the API:
+
+```bash
+gh api "repos/[[ github_org ]]/[[ project_slug ]]/rulesets" \
+  --method POST \
+  --input ".github/Branch Protection Ruleset - Protect Main.json"
+```
+
+## Dependabot and Renovate
+
+Version updates are owned by **Renovate** (`renovate.json`) — do not add a
+`dependabot.yml`, it would duplicate Renovate's PRs. Dependabot still has a
+role as a GitHub-native security layer; enable these in
+Settings → Advanced Security:
+
+- Dependabot alerts
+- Dependabot security updates (optional — alerts may be enough since Renovate
+  proposes the same bumps)
+- Private vulnerability reporting (used by `.github/SECURITY.md`)
 
 ## Security Model Overview
 
@@ -22,10 +46,10 @@ The `require_code_owner_review` rule in the ruleset **only works if a `CODEOWNER
 
 ```text
 # All files require the repo owner's approval
-* @evanharmon1
+* @[[ author_git_provider_username ]]
 ```
 
-Replace `@evanharmon1` with the GitHub username of the human who should approve all changes.
+Replace `@[[ author_git_provider_username ]]` with the GitHub username of the human who should approve all changes.
 
 ### Bot Account PAT Permissions
 
@@ -48,7 +72,7 @@ The machine user account's fine-grained PAT should have these permissions and no
   "name": "Protect Main",
   "target": "branch",
   "source_type": "Repository",
-  "source": "evanharmon1/harmon-infra",
+  "source": "[[ github_org ]]/[[ project_slug ]]",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
@@ -100,7 +124,7 @@ The machine user account's fine-grained PAT should have these permissions and no
             "integration_id": 15368
           },
           {
-            "context": "security/snyk (evanharmon1)",
+            "context": "security",
             "integration_id": null
           }
         ]
@@ -190,9 +214,9 @@ The required checks for this repo are:
 
 ## Applying This Ruleset to Other Repos
 
-This ruleset is specific to `evanharmon1/harmon-infra`. When creating new repos (Mowing Bidder, Leaf Bidder, etc.), replicate this configuration:
+This ruleset ships with every repo generated from harmon-init. To replicate manually:
 
-1. Create a `CODEOWNERS` file with `* @evanharmon1`
+1. Create a `CODEOWNERS` file with `* @[[ author_git_provider_username ]]`
 2. Create a branch ruleset targeting `~DEFAULT_BRANCH` with the same rules
 3. Add the bot as a Write collaborator
 4. Update the `required_status_checks` to match that repo's CI checks

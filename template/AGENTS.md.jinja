@@ -1,0 +1,53 @@
+# AGENTS.md
+
+Guidance for AI coding agents (Claude Code, Gemini CLI, Codex, ...) working in
+[[ project_name ]]. `CLAUDE.md` and `GEMINI.md` are symlinks to this file —
+edit only `AGENTS.md`.
+
+TODO: Run `/init` (Claude Code) after the framework is scaffolded to expand
+this file with project-specific architecture notes.
+
+## Project Overview
+
+[[ project_description ]]
+
+Repo: [[ repo_url ]] — see [docs/index.md](docs/index.md) for the
+documentation map and [docs/architecture.md](docs/architecture.md) for the
+architecture.
+
+## Commands
+
+All commands go through the Taskfile (single source of truth — CI, git hooks,
+and humans run the same targets):
+
+```bash
+task verify      # local merge gate (lint[% if use_node %] + typecheck + build[% endif %])
+task check       # all linters
+task fix         # auto-format then lint
+task test        # tests
+task security    # gitleaks + dependency audit
+```
+
+## Definition of Done
+
+- `task verify` passes.
+- Conventional commit message (types: build, change, chore, ci, docs, feat,
+  fix, perf, refactor, remove, revert, style, test).
+- Never bypass git hooks (`--no-verify` is forbidden); fix the underlying issue.
+- Work on a feature branch; direct commits to `main` are blocked.
+- Releases are manual (`task release:*`) — never trigger one automatically.
+
+## Conventions
+
+- Git hooks are managed by lefthook (`lefthook.yml`) and delegate to Taskfile
+  targets — don't duplicate logic in hooks or workflows.
+- Indentation: 2 spaces default, 4 for Python/Terraform/Shell (`.editorconfig`).
+- Secrets never go in git; local env via 1Password (`op run` / `op inject`).
+[% if include_terraform %]
+- Terraform: provider tokens are sensitive variables; use
+  `lifecycle.ignore_changes` for mutable fields.
+[% endif %]
+[% if include_ansible %]
+- Ansible: idempotency required; roles under `ansible/roles/`; new playbooks
+  must be imported in `ansible/site.yml`.
+[% endif %]
