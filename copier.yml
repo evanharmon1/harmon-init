@@ -243,7 +243,8 @@ _subdirectory: template
 # (without this, copier dereferences symlinks into duplicate files).
 _preserve_symlinks: true
 
-# Custom jinja delimiters — see header comment.
+# Custom jinja delimiters — see header comment. trim/lstrip keep block tags
+# on their own lines from leaving blank lines in rendered output.
 _envops:
   block_start_string: "[%"
   block_end_string: "%]"
@@ -251,6 +252,8 @@ _envops:
   variable_end_string: "]]"
   comment_start_string: "[#"
   comment_end_string: "#]"
+  trim_blocks: true
+  lstrip_blocks: true
 
 # Variables containing password/key are excluded from .copier-answers.yml
 _secret_questions:

@@ -1,18 +1,55 @@
-#==============================================================================
-#                       Brewfile - [[ project_name ]]
-#==============================================================================
-brew "copier"
-brew "pre-commit"
+# Brewfile for [[ project_name ]]
+# Install with: task install  (brew bundle --file=Brewfile)
+
+# Task runner + git hooks
 brew "go-task"
-cask "visual-studio-code"
-brew "node"
-brew "pipx"
-brew "just"
-brew "act"
-cask "bunch"
-tap "snyk/tap"
-brew "snyk/tap/snyk"
+brew "lefthook"
+
+# Git / GitHub
+brew "git"
 brew "gh"
+
+# Lint / format
 brew "shellcheck"
 brew "shfmt"
-brew "semgrep"
+brew "actionlint"
+brew "yamllint"
+
+# Security
+brew "gitleaks"
+tap "snyk/tap"
+brew "snyk/tap/snyk"
+
+# Runtime for npx-based tools (commitlint, markdownlint-cli2)
+brew "node"
+[% if use_node %]
+brew "pnpm"
+brew "lychee"
+[% endif %]
+[% if use_python %]
+
+# Python tooling
+brew "uv"
+[% endif %]
+[% if include_terraform %]
+
+# Terraform
+brew "terraform"
+[% endif %]
+[% if devcontainer %]
+
+# Devcontainer
+brew "hadolint"
+[% endif %]
+
+# Utilities
+brew "jq"
+brew "fzf"
+brew "fd"
+brew "ripgrep"
+brew "bat"
+[% if bunch_add %]
+
+# macOS apps
+cask "bunch"
+[% endif %]

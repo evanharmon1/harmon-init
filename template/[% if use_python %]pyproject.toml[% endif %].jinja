@@ -1,0 +1,16 @@
+[project]
+name = "[[ project_slug ]]"
+version = "0.1.0"
+description = "[[ project_description ]]"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "black>=24.0.0",
+[% if include_ansible %]
+    "ansible-lint>=26.3.0",
+    "ansible-core>=2.18",
+[% endif %]
+]

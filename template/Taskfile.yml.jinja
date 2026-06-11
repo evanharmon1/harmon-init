@@ -1,142 +1,460 @@
 # Taskfile for [[ project_name ]]
-version: '3'
+# https://taskfile.dev
+version: "3"
+
+output:
+  group:
+    begin: "::group::{{.TASK}}"
+    end: "::endgroup::"
+
+# ── Entry Points ───────────────────────────────────────────────────
 tasks:
-  boostrap:
+  default:
+    desc: Interactive task menu (tv)
+    cmds:
+      - task: menu-tv
+
+  menu:
+    desc: Interactive task menu (fzf)
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        selected=$(task --list-all | fzf --reverse --header-lines=1)
+        if [ -n "$selected" ]; then
+          task_name=$(echo "$selected" | awk '{sub(/:$/, "", $2); print $2}')
+          task "$task_name"
+        fi
+
+  menu-tv:
+    desc: Interactive task menu (tv)
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        selected=$(task --list-all | grep -v "task: Available" | grep -v "\* menu:" | tv)
+        if [ -n "$selected" ]; then
+          task_name=$(echo "$selected" | awk '{sub(/:$/, "", $2); print $2}')
+          task "$task_name"
+        fi
+
+  # ── CI / Verification Pipelines ────────────────────────────────
+  ci:
+    desc: Full CI pipeline (check → build → test → security)
+    cmds:
+      - task: check
+[% if use_node %]
+      - task: build
+[% endif %]
+      - task: test
+      - task: security
+
+  verify:
+    desc: Local verification gate (check[% if use_node %] → build[% endif %])
+    cmds:
+      - task: check
+[% if use_node %]
+      - task: build
+[% endif %]
+
+  # ── Quality Checks ────────────────────────────────────────────
+  check:
+    desc: Run all linters[% if use_node %] + typecheck[% endif %] (parallel)
+    deps:
+      - lint
+[% if use_node %]
+      - typecheck
+[% endif %]
+
+  lint:
+    desc: Run all linters in parallel
+    deps:
+      - lint:yaml
+      - lint:shell
+      - lint:markdown
+      - lint:actions
+      - lint:hygiene
+[% if use_node %]
+      - lint:prettier
+      - lint:eslint
+[% endif %]
+[% if use_python %]
+      - lint:python
+[% endif %]
+[% if include_terraform %]
+      - lint:terraform
+[% endif %]
+[% if include_ansible %]
+      - lint:ansible
+[% endif %]
+
+  lint:yaml:
+    desc: yamllint
+    cmds:
+      - yamllint {{.CLI_ARGS | default "."}}
+
+  lint:shell:
+    desc: shellcheck + shfmt
+    vars:
+      SHELL_FILES:
+        sh: git ls-files '*.sh' '*.bash' 2>/dev/null | tr '\n' ' '
+    cmds:
+      - |
+        files="{{.CLI_ARGS}}"
+        [ -z "$files" ] && files="{{.SHELL_FILES}}"
+        [ -z "$files" ] && exit 0
+        shellcheck --severity=error $files
+        shfmt -d $files
+
+  lint:markdown:
+    desc: markdownlint-cli2
+    cmds:
+      - |
+        if [ -n "{{.CLI_ARGS}}" ]; then
+          npx --yes markdownlint-cli2 --fix {{.CLI_ARGS}}
+        else
+          npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**'
+        fi
+
+  lint:actions:
+    desc: actionlint on GitHub workflows
+    env:
+      # SC2016 flags '$' in single quotes, but we intentionally single-quote
+      # jq expressions that use '$var' placeholders.
+      SHELLCHECK_OPTS: --exclude=SC2016
+    cmds:
+      - actionlint
+
+  lint:hygiene:
+    desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
+    cmds:
+      - ./scripts/lint-hygiene.sh {{.CLI_ARGS}}
+
+  lint:commit-msg:
+    desc: Validate commit message (conventional commits)
+    cmds:
+      - npx --yes --package @commitlint/cli --package @commitlint/config-conventional -- commitlint --edit {{.CLI_ARGS}}
+[% if use_node %]
+
+  lint:prettier:
+    desc: Prettier (check mode)
+    cmds:
+      - npx --yes prettier --check {{.CLI_ARGS | default "."}}
+
+  lint:eslint:
+    desc: ESLint
+    cmds:
+      - npx --yes eslint {{.CLI_ARGS | default "."}}
+
+  typecheck:
+[% if project_type == 'web-astro' %]
+    desc: TypeScript / Astro type checking
+    cmds:
+      - npx astro check
+[% else %]
+    desc: TypeScript type checking
+    cmds:
+      - npx tsc --noEmit
+[% endif %]
+[% endif %]
+[% if use_python %]
+
+  lint:python:
+    desc: Black (check mode)
+    cmds:
+      - uv run black --check {{.CLI_ARGS | default "."}}
+[% endif %]
+[% if include_terraform %]
+
+  lint:terraform:
+    desc: Terraform format check
+    cmds:
+      - terraform fmt -check -recursive terraform/
+
+  lint:terraform:validate:
+    desc: Terraform validate
+    cmds:
+      - terraform -chdir=terraform validate -no-color
+[% endif %]
+[% if include_ansible %]
+
+  lint:ansible:
+    desc: Run ansible-lint
+    cmds:
+      - |
+        if [ -f ansible/site.yml ]; then
+          uv run ansible-lint ansible/
+        else
+          echo "TODO: ansible/ skeleton is empty — add playbooks (see docs/CHECKLIST.md)"
+        fi
+
+  validate:ansible:syntax:
+    desc: Run ansible-playbook --syntax-check on all playbooks
+    cmds:
+      - |
+        if [ -f ansible/site.yml ]; then
+          uv run ansible-playbook --syntax-check ansible/site.yml
+        else
+          echo "TODO: ansible/ skeleton is empty — add playbooks (see docs/CHECKLIST.md)"
+        fi
+[% endif %]
+
+  guard:no-commit-to-main:
+    desc: Block direct commits to main
+    cmds:
+      - |
+        branch=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$branch" = "main" ]; then
+          echo "Direct commits to main are blocked. Use a feature branch."
+          exit 1
+        fi
+
+  format:
+    desc: Auto-format code
+    cmds:
+[% if use_node %]
+      - npx --yes prettier --write .
+[% endif %]
+[% if use_python %]
+      - uv run black .
+[% endif %]
+[% if include_terraform %]
+      - terraform fmt -recursive terraform/
+[% endif %]
+      - |
+        files=$(git ls-files '*.sh' '*.bash')
+        [ -n "$files" ] && shfmt -w $files || true
+      - npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**'
+
+  fix:
+    desc: Format then lint
+    cmds:
+      - task: format
+      - task: lint
+[% if use_node %]
+
+  # ── Build ──────────────────────────────────────────────────────
+  build:
+    desc: Production build
+    cmds:
+      - pnpm build
+
+  build:preview:
+    desc: Preview production build locally
+    interactive: true
+    cmds:
+      - pnpm preview
+
+  dev:
+    desc: Start dev server with hot reload
+    interactive: true
+    cmds:
+      - pnpm dev
+[% endif %]
+
+  # ── Tests ──────────────────────────────────────────────────────
+  test:
+    desc: Run all tests
+    cmds:
+[% if use_node %]
+      - |
+        if [ -f vitest.config.ts ] || [ -f vitest.config.mts ] || [ -f vitest.config.js ]; then
+          npx vitest run
+        else
+          echo "TODO: wire tests — scaffold the framework first (see docs/CHECKLIST.md and docs/testing.md)"
+        fi
+[% else %]
+      - 'echo "TODO: wire tests for this project (see docs/testing.md); test files live in tests/"'
+[% endif %]
+[% if use_node %]
+
+  test:e2e:
+    desc: Run Playwright end-to-end tests
+    cmds:
+      - npx playwright test {{.CLI_ARGS}}
+
+  test:e2e:screenshot:
+    desc: "Playwright screenshot (usage: task test:e2e:screenshot -- <url> <output.png>)"
+    cmds:
+      - npx playwright screenshot {{.CLI_ARGS}}
+
+  test:e2e:pdf:
+    desc: "Playwright PDF export (usage: task test:e2e:pdf -- <url> <output.pdf>)"
+    cmds:
+      - npx playwright pdf {{.CLI_ARGS}}
+[% endif %]
+
+  # ── Security ───────────────────────────────────────────────────
+  security:
+    desc: Run all security checks (parallel)
+    deps:
+      - security:secrets
+      - security:audit
+
+  security:secrets:
+    desc: Scan for leaked secrets (gitleaks)
+    cmds:
+      - |
+        if [ -z "$GITHUB_STEP_SUMMARY" ]; then
+          gitleaks detect --no-banner --redact --source .
+        else
+          rc=0
+          gitleaks detect --no-banner --redact --source . \
+            --report-format json --report-path /tmp/[[ project_slug ]]-gitleaks.json || rc=$?
+          node scripts/summarize-gitleaks.mjs /tmp/[[ project_slug ]]-gitleaks.json
+          exit $rc
+        fi
+
+  security:audit:
+    desc: Dependency audit
+    cmds:
+[% if use_node %]
+      - pnpm audit --audit-level=high
+[% endif %]
+[% if use_python %]
+      - uvx pip-audit --desc --requirement <(uv pip compile pyproject.toml 2>/dev/null) || true
+[% endif %]
+[% if not use_node and not use_python %]
+      - echo "No package manifests to audit yet."
+[% endif %]
+
+  security:sast:
+    desc: Static application security testing (Snyk)
+    cmds:
+      - snyk code test --exclude=.worktrees --severity-threshold=high
+
+  security:sca:
+    desc: Software composition analysis (Snyk)
+    cmds:
+[% if use_node %]
+      - snyk test --file=pnpm-lock.yaml --severity-threshold=high --show-vulnerable-paths=all
+[% else %]
+      - snyk test --severity-threshold=high --show-vulnerable-paths=all
+[% endif %]
+
+  # ── Setup ──────────────────────────────────────────────────────
+  bootstrap:
+    desc: One-time machine setup (Homebrew[% if use_node %] + Node + pnpm[% endif %])
     cmds:
       - /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      - brew install python #TODO: Might need to use a non-homebrew method
-    silent: true
+[% if use_node %]
+      - brew install node
+      - npm install -g pnpm
+[% endif %]
+
   install:
+    desc: Install all project dependencies and tools
     cmds:
       - brew bundle --file=Brewfile
-      - python install -r requirements.txt
-    silent: true
-  validate:
+[% if use_python %]
+      - uv sync
+[% endif %]
+[% if use_node %]
+      - |
+        if [ -f package.json ]; then pnpm install; fi
+[% endif %]
+      - task: install:hooks
+
+  install:hooks:
+    desc: Install git hooks via lefthook
     cmds:
-      - task: preCommit
-      - task: check
-    silent: true
-  preCommit:
+      - lefthook install
+
+  # ── Release ────────────────────────────────────────────────────
+  # Releases are intentional — never automated on merge to main.
+  release:init:
+    desc: Create initial v0.1.0 tag
     cmds:
-      - pre-commit run --all-files
-    silent: true
-  check:
-    cmds:
-      - npm run check:astro
-      - npm run check:eslint
-      - cmd: npm run check:prettier
-        # - shellcheck osConfig/mac/updateMac.sh
-        # - shellcheck osConfig/mac/setupMac.sh
-        # - shellcheck osConfig/mac/configureMacSettings.sh
-        ignore_error: true
-    silent: true
-  fix:
-    cmds:
-      - npm run fix
-    silent: true
-  security:
-    cmds:
-      - task: secrets
-      - task: sast
-    ignore_error: true
-    silent: true
-  secrets:
-    cmds:
-      - ./check_for_pattern.sh . "*secret*"
-      - whispers --config test/whisperConfig.yml --severity BLOCKER,CRITICAL .
-    silent: true
-  sast:
-    cmds:
-      - task: sast-dependencies
-      - task: sast-code
-    silent: true
-  sast-dependencies:
-    cmds:
-      - snyk test --all-projects
-    silent: true
-  sast-code:
-    cmds:
-      - snyk code test
-    silent: true
-  ghReleaseInit:
-    cmds:
-      - git add .
-      - git commit -m 'Initial release v0.0.1'
-      - git tag -a v0.0.1 -m "Initial release v0.0.1"
-      - git push origin main
-      - git push origin --tags
-      - gh release create
-    silent: false
-  vBumpPatch:
-    desc: Bump to the next patch version
+      - git tag -a v0.1.0 -m "Initial release"
+      - git push origin v0.1.0
+      - gh release create v0.1.0 --generate-notes --title "v0.1.0"
+
+  release:patch:
+    desc: Bump patch version and release
     vars:
-      LATEST_TAG:
-        sh: git tag --sort=-version:refname | head -n1
-      VERSION:
-        sh: echo "{{.LATEST_TAG}}" | sed 's/^v//'
-      MAJOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f1
-      MINOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f2
-      PATCH:
-        sh: echo "{{.VERSION}}" | cut -d. -f3
-      NEW_PATCH:
-        sh: expr {{.PATCH}} + 1
-      NEW_VERSION: v{{.MAJOR}}.{{.MINOR}}.{{.NEW_PATCH}}
+      CURRENT_TAG:
+        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+      NEXT_TAG:
+        sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3+1}'
     cmds:
-      - echo "Latest tag is {{.LATEST_TAG}}"
-      - echo "Current version is {{.VERSION}}"
-      - echo "Bumping patch version to {{.NEW_VERSION}}"
-      - git tag {{.NEW_VERSION}}
-      - git push origin {{.NEW_VERSION}}
-      - gh release create
-  vBumpMinor:
-    desc: Bump to the next minor version
+      - echo "Releasing {{.NEXT_TAG}} (was {{.CURRENT_TAG}})"
+      - git tag -a {{.NEXT_TAG}} -m "Release {{.NEXT_TAG}}"
+      - git push origin {{.NEXT_TAG}}
+      - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
+
+  release:minor:
+    desc: Bump minor version and release
     vars:
-      LATEST_TAG:
-        sh: git tag --sort=-version:refname | head -n1
-      VERSION:
-        sh: echo "{{.LATEST_TAG}}" | sed 's/^v//'
-      MAJOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f1
-      MINOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f2
-      NEW_MINOR:
-        sh: expr {{.MINOR}} + 1
-      NEW_VERSION: v{{.MAJOR}}.{{.NEW_MINOR}}.0
+      CURRENT_TAG:
+        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+      NEXT_TAG:
+        sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%d.0", $1, $2+1}'
     cmds:
-      - echo "Latest tag is {{.LATEST_TAG}}"
-      - echo "Current version is {{.VERSION}}"
-      - echo "Bumping minor version to {{.NEW_VERSION}}"
-      - git tag {{.NEW_VERSION}}
-      - git push origin {{.NEW_VERSION}}
-      - gh release create {{.NEW_VERSION}} --generate-notes
-  vBumpMajor:
-    desc: Bump to the next major version
+      - echo "Releasing {{.NEXT_TAG}} (was {{.CURRENT_TAG}})"
+      - git tag -a {{.NEXT_TAG}} -m "Release {{.NEXT_TAG}}"
+      - git push origin {{.NEXT_TAG}}
+      - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
+
+  release:major:
+    desc: Bump major version and release
     vars:
-      LATEST_TAG:
-        sh: git tag --sort=-version:refname | head -n1
-      VERSION:
-        sh: echo "{{.LATEST_TAG}}" | sed 's/^v//'
-      MAJOR:
-        sh: echo "{{.VERSION}}" | cut -d. -f1
-      NEW_MAJOR:
-        sh: expr {{.MAJOR}} + 1
-      NEW_VERSION: v{{.NEW_MAJOR}}.0.0
+      CURRENT_TAG:
+        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+      NEXT_TAG:
+        sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "v%d.0.0", substr($1,2)+1}'
     cmds:
-      - echo "Latest tag is {{.LATEST_TAG}}"
-      - echo "Current version is {{.VERSION}}"
-      - echo "Bumping major version to {{.NEW_VERSION}}"
-      - git tag {{.NEW_VERSION}}
-      - git push origin {{.NEW_VERSION}}
-      - gh release create
-  bunchAdd:
+      - echo "Releasing {{.NEXT_TAG}} (was {{.CURRENT_TAG}})"
+      - git tag -a {{.NEXT_TAG}} -m "Release {{.NEXT_TAG}}"
+      - git push origin {{.NEXT_TAG}}
+      - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
+
+  # ── Clean ──────────────────────────────────────────────────────
+  clean:
+    desc: Remove build artifacts and caches
+    cmds:
+      - rm -rf .task
+[% if use_node %]
+      - rm -rf dist/ .astro/ node_modules/ playwright-report/ test-results/
+[% endif %]
+[% if use_python %]
+      - find . -type d -name __pycache__ -exec rm -rf {} +
+[% endif %]
+
+  # ── Status ─────────────────────────────────────────────────────
+  status:
+    desc: Project status dashboard
+    cmds:
+      - ./scripts/status.sh
+
+  status:git:
+    desc: Git status section
+    cmds:
+      - ./scripts/status.sh git
+
+  status:gh:
+    desc: GitHub status section
+    cmds:
+      - ./scripts/status.sh gh
+
+  status:code:
+    desc: Codebase stats section
+    cmds:
+      - ./scripts/status.sh code
+
+  status:env:
+    desc: Environment info section
+    cmds:
+      - ./scripts/status.sh env
+
+  # ── Utilities ──────────────────────────────────────────────────
+  util:bunch-add:
+    desc: Move Bunch file to iCloud and replace with symlink (macOS)
     cmds:
       - mv '.meta/Code Project - [[ project_name ]].bunch' '[[ bunches_directory ]]/'
       - ln -s '[[ bunches_directory ]]/Code Project - [[ project_name ]].bunch' .meta
-    silent: false
-  obsidianAdd:
+
+  util:obsidian-add:
+    desc: Move Obsidian note to the vault and replace with symlink (macOS)
     cmds:
       - mv '.meta/[[ project_name ]].md' '[[ obsidian_directory ]]/Personal/Digital'
       - ln -s '[[ obsidian_directory ]]/Personal/Digital/[[ project_name ]].md' .meta
-    silent: false

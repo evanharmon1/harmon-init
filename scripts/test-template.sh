@@ -125,7 +125,31 @@ else
     required yamllint "rendered YAML check" || fail=1
 fi
 
-# ── 5. No secrets in the rendered tree (gitleaks) ───────────────────
+# ── 5. Rendered lefthook config parses ──────────────────────────────
+if [ -f lefthook.yml ]; then
+    if have lefthook; then
+        lefthook dump >/dev/null || err "rendered lefthook.yml does not parse"
+    else
+        required lefthook "lefthook config check" || fail=1
+    fi
+fi
+
+# ── 6. Rendered shell scripts pass shellcheck + shfmt ────────────────
+shell_files=$(find scripts .devcontainer -name '*.sh' -type f 2>/dev/null | tr '\n' ' ')
+if [ -n "$shell_files" ]; then
+    if have shellcheck; then
+        # shellcheck disable=SC2086
+        shellcheck --severity=error $shell_files || err "shellcheck failed on rendered scripts"
+    else
+        required shellcheck "rendered script lint" || fail=1
+    fi
+    if have shfmt; then
+        # shellcheck disable=SC2086
+        shfmt -d $shell_files || err "shfmt failed on rendered scripts"
+    fi
+fi
+
+# ── 7. No secrets in the rendered tree (gitleaks) ───────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"
 else
