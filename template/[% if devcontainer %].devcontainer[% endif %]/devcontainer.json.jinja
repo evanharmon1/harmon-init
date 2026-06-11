@@ -1,47 +1,70 @@
 {
-  "name": "AI Dev Container - [[ project_name ]]",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
-  "initializeCommand": "test -f .devcontainer/devcontainer.env || touch .devcontainer/devcontainer.env",
+  // Primary profile for AI agents (Claude Code, Codex, Gemini).
+  // Secrets (GH_TOKEN) come from the --env-file, not containerEnv.
+  // Tailscale is not installed in this profile — see dev/ for the human profile.
+  "name": "BOT - devcontainer-[[ project_slug ]]",
+  "containerName": "devcontainer-[[ project_slug ]]-bot",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "cacheFrom": "[[ devcontainer_image ]]"
+  },
+  // Bot profile intentionally omits TS_AUTHKEY from the allow-list — this
+  // container has no Tailscale feature installed, and we don't want a tailnet
+  // auth key sitting in its env-file. init-env.sh will strip any stale
+  // TS_AUTHKEY entry on every rebuild.
+  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/devcontainer.env GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY",
   "runArgs": [
-    "--device=/dev/net/tun",
+    "--init",
+    "--shm-size=2g",
     "--env-file",
     ".devcontainer/devcontainer.env"
   ],
   "features": {
     "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.13"
+      "version": "3.14"
     },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "22"
-    },
+[% if include_terraform %]
     "ghcr.io/devcontainers/features/terraform:1": {
       "version": "latest",
       "tflint": "latest"
     },
+[% endif %]
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "dockerDashComposeVersion": "v2"
     },
-    "ghcr.io/tailscale/codespace/tailscale": {},
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers-extra/features/go-task:1": {},
     "ghcr.io/itsmechlark/features/1password:1.5.0": {}
   },
   "mounts": [
-    "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume",
-    "source=codex-config-${devcontainerId},target=/home/vscode/.codex,type=volume",
-    "source=gemini-config-${devcontainerId},target=/home/vscode/.gemini,type=volume"
+    "source=claude-code-config-${localWorkspaceFolderBasename},target=/home/vscode/.claude,type=volume",
+    "source=codex-config-${localWorkspaceFolderBasename},target=/home/vscode/.codex,type=volume",
+    "source=gemini-config-${localWorkspaceFolderBasename},target=/home/vscode/.gemini,type=volume",
+    "source=agent-deck-config-${localWorkspaceFolderBasename},target=/home/vscode/.agent-deck,type=volume",
+    "source=shell-history-${localWorkspaceFolderBasename},target=/home/vscode/.shell-history,type=volume",
+    "source=zoxide-data-${localWorkspaceFolderBasename},target=/home/vscode/.local/share/zoxide,type=volume"
   ],
+  // Secrets (GH_TOKEN) are populated into the --env-file by init-env.sh
+  // (from 1Password locally, or from host env on Coder/Codespaces).
+  // Do NOT forward them via containerEnv — ${localEnv:...} resolves to ""
+  // when the host shell doesn't export them, which overrides the env-file
+  // values (Docker --env takes precedence over --env-file).
   "containerEnv": {
-    "TS_AUTHKEY": "${localEnv:TS_AUTHKEY}",
     "CODER": "${localEnv:CODER}",
-    "GH_TOKEN": "${localEnv:GH_TOKEN}"
+    "CLAUDE_CODE_EFFORT_LEVEL": "max"
   },
+[% if include_ansible %]
   "remoteEnv": {
     "ANSIBLE_CONFIG": "${containerWorkspaceFolder}/ansible/ansible.cfg"
   },
+[% endif %]
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "postStartCommand": "bash .devcontainer/post-start.sh",
   "customizations": {
+    "coder": {
+      "name": "devcontainer"
+    },
     "vscode": {
       "settings": {
         "terminal.integrated.inheritEnv": true,
@@ -51,33 +74,61 @@
         },
         "debug.javascript.autoAttachFilter": "disabled",
         "terminal.integrated.env.linux": {
-          "NODE_OPTIONS": ""
-        }
+          "NODE_OPTIONS": "",
+          "BROWSER": ""
+        },
+        "remote.autoForwardPortsSource": "output",
+        "terminal.integrated.minimumContrastRatio": 1,
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "extensions.ignoreRecommendations": false
       },
       "extensions": [
+[% if include_terraform %]
         "hashicorp.terraform",
+[% endif %]
+[% if include_ansible %]
         "redhat.ansible",
+[% endif %]
         "ms-azuretools.vscode-docker",
         "ms-python.python",
         "ms-python.black-formatter",
+[% if project_type == 'web-astro' %]
         "astro-build.astro-vscode",
+[% endif %]
+        "esbenp.prettier-vscode",
         "timonwong.shellcheck",
         "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "mikestead.dotenv",
+        "davidanson.vscode-markdownlint",
         "foxundermoon.shell-format",
         "GitHub.vscode-github-actions",
+        "github.vscode-pull-request-github",
         "task.vscode-task",
         "EditorConfig.EditorConfig",
         "anthropic.claude-code",
-        "openai.chatgpt"
+        "openai.chatgpt",
+        "ms-playwright.playwright"
       ]
     }
   },
   "remoteUser": "vscode",
   "updateRemoteUserUID": true,
-  "forwardPorts": [4321],
+  "forwardPorts": [
+[% if use_node %]
+    4321,
+[% endif %]
+    8420
+  ],
   "portsAttributes": {
+[% if use_node %]
     "4321": {
       "label": "Astro Dev Server",
+      "onAutoForward": "notify"
+    },
+[% endif %]
+    "8420": {
+      "label": "Agent Deck Web UI",
       "onAutoForward": "notify"
     }
   }

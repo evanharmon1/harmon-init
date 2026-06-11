@@ -1,23 +1,35 @@
 {
-  "name": "Dev Container - [[ project_name ]]",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
-  "initializeCommand": "test -f .devcontainer/dev/devcontainer.env || touch .devcontainer/dev/devcontainer.env",
+  // Local dev profile.
+  // This intentionally omits the root profile's containerEnv block because the
+  // local runArgs env-file already provides TS_AUTHKEY and GH_TOKEN.
+  "name": "DEV - devcontainer-[[ project_slug ]]",
+  "containerName": "devcontainer-[[ project_slug ]]-dev",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "../..",
+    "cacheFrom": "[[ devcontainer_image ]]-dev"
+  },
+  // Dev profile is the only place TS_AUTHKEY is allowed — Tailscale is
+  // installed here and tailscale-connect.sh needs the key to bring up the
+  // tunnel.
+  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/dev/devcontainer.env TS_AUTHKEY GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY",
   "runArgs": [
+    "--init",
+    "--shm-size=2g",
     "--device=/dev/net/tun",
     "--env-file",
     ".devcontainer/dev/devcontainer.env"
   ],
   "features": {
     "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.13"
+      "version": "3.14"
     },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "22"
-    },
+[% if include_terraform %]
     "ghcr.io/devcontainers/features/terraform:1": {
       "version": "latest",
       "tflint": "latest"
     },
+[% endif %]
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "dockerDashComposeVersion": "v2"
     },
@@ -29,14 +41,27 @@
   "mounts": [
     "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume",
     "source=codex-config-${devcontainerId},target=/home/vscode/.codex,type=volume",
-    "source=gemini-config-${devcontainerId},target=/home/vscode/.gemini,type=volume"
+    "source=gemini-config-${devcontainerId},target=/home/vscode/.gemini,type=volume",
+    "source=agent-deck-config-${devcontainerId},target=/home/vscode/.agent-deck,type=volume",
+    "source=shell-history-${devcontainerId},target=/home/vscode/.shell-history,type=volume",
+    "source=zoxide-data-${devcontainerId},target=/home/vscode/.local/share/zoxide,type=volume"
   ],
+  "containerEnv": {
+    "CODER": "${localEnv:CODER}",
+    "DEVCONTAINER_TAILSCALE": "true",
+    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+  },
+[% if include_ansible %]
   "remoteEnv": {
     "ANSIBLE_CONFIG": "${containerWorkspaceFolder}/ansible/ansible.cfg"
   },
+[% endif %]
   "postCreateCommand": "bash .devcontainer/dev/post-create.sh",
   "postStartCommand": "bash .devcontainer/dev/post-start.sh",
   "customizations": {
+    "coder": {
+      "name": "devcontainer"
+    },
     "vscode": {
       "settings": {
         "terminal.integrated.inheritEnv": true,
@@ -46,33 +71,56 @@
         },
         "debug.javascript.autoAttachFilter": "disabled",
         "terminal.integrated.env.linux": {
-          "NODE_OPTIONS": ""
-        }
+          "NODE_OPTIONS": "",
+          "BROWSER": ""
+        },
+        "remote.autoForwardPortsSource": "output",
+        "terminal.integrated.minimumContrastRatio": 1,
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "extensions.ignoreRecommendations": false
       },
       "extensions": [
+[% if include_terraform %]
         "hashicorp.terraform",
+[% endif %]
+[% if include_ansible %]
         "redhat.ansible",
+[% endif %]
         "ms-azuretools.vscode-docker",
         "ms-python.python",
         "ms-python.black-formatter",
+[% if project_type == 'web-astro' %]
         "astro-build.astro-vscode",
+[% endif %]
+        "esbenp.prettier-vscode",
         "timonwong.shellcheck",
         "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "mikestead.dotenv",
+        "davidanson.vscode-markdownlint",
         "foxundermoon.shell-format",
         "GitHub.vscode-github-actions",
+        "github.vscode-pull-request-github",
         "task.vscode-task",
         "EditorConfig.EditorConfig",
         "anthropic.claude-code",
-        "openai.chatgpt"
+        "openai.chatgpt",
+        "ms-playwright.playwright"
       ]
     }
   },
   "remoteUser": "vscode",
   "updateRemoteUserUID": true,
-  "forwardPorts": [4321],
+  "forwardPorts": [4321, 8420],
   "portsAttributes": {
+[% if use_node %]
     "4321": {
       "label": "Astro Dev Server",
+      "onAutoForward": "notify"
+    },
+[% endif %]
+    "8420": {
+      "label": "Agent Deck Web UI",
       "onAutoForward": "notify"
     }
   }

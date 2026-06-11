@@ -266,6 +266,18 @@ tasks:
 [% else %]
       - 'echo "TODO: wire tests for this project (see docs/testing.md); test files live in tests/"'
 [% endif %]
+[% if devcontainer %]
+
+  test:devcontainer:root:
+    desc: Smoke test the primary (AI bot) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/devcontainer.json
+
+  test:devcontainer:dev:
+    desc: Smoke test the dev (human) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
+[% endif %]
 [% if use_node %]
 
   test:e2e:

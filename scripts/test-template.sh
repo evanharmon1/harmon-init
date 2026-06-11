@@ -160,7 +160,20 @@ while IFS= read -r jf; do
 done < <(find . -name '*.json' -not -path './.git/*' -not -path './node_modules/*' 2>/dev/null)
 [ "$json_fail" -eq 0 ] && echo "JSON: all rendered .json files parse"
 
-# ── 8. No secrets in the rendered tree (gitleaks) ───────────────────
+# ── 8. Devcontainer configs are readable by the devcontainers CLI ───
+if [ -d .devcontainer ]; then
+    if ! have devcontainer || ! docker info >/dev/null 2>&1; then
+        echo "SKIP: devcontainer CLI or docker daemon unavailable — skipping devcontainer config check"
+    else
+        for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+            [ -f "$cfg" ] || continue
+            devcontainer read-configuration --workspace-folder . --config "$cfg" >/dev/null ||
+                err "devcontainer read-configuration failed for $cfg"
+        done
+    fi
+fi
+
+# ── 9. No secrets in the rendered tree (gitleaks) ───────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"
 else
