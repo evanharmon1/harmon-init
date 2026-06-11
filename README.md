@@ -1,70 +1,109 @@
 # Harmon Init
 
-This repo allows you to create a new project using the Harmon Init template which bootstraps numerous configurations and tools for you. Mainly, it is a streamlined way to bootstrap a lot of DevOps tools, CI/CD, linting, security checks, and a task runner.
+A [Copier](https://copier.readthedocs.io/en/stable/) project template that
+bootstraps repos with a complete set of standardized conventions: go-task
+Taskfile, lefthook git hooks, conventional commits, GitHub Actions CI (with
+Claude Code plan/implement/review workflows), gitleaks/snyk/CodeQL security,
+Renovate, CodeRabbit, a dual-profile devcontainer (AI bot + human) with GHCR
+prebuilds, a docs tree, and AI steering docs (canonical `AGENTS.md`). It can
+also be applied to existing repos to standardize them.
 
 Author: Evan Harmon
 
-[![Validate](https://github.com/evanharmon1/harmon-init/actions/workflows/validate.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/validate.yml)
-[![Security](https://github.com/evanharmon1/harmon-init/actions/workflows/security.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/security.yml)
+[![Build & Validate](https://github.com/evanharmon1/harmon-init/actions/workflows/build.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/build.yml)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-orange.json)](https://github.com/copier-org/copier)
-[![Maintained](https://img.shields.io/badge/maintained%3F-yes-brightgreen.svg?style=flat-square)](https://github.com/evanharmon1/harmon-init)
-[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat-square)](https://github.com/evanharmon1/harmon-init)
-[![Known Vulnerabilities](https://snyk.io/test/github/evanharmon1/harmon-init/badge.svg?style=flat-square)](https://snyk.io/test/github/evanharmon1/harmon-init)
+[![Renovate](https://img.shields.io/badge/maintained%20with-renovate-blue?logo=renovatebot)](https://github.com/apps/renovate)
 
 ## Usage
 
-Create a new project with: `copier copy harmon-init new-project --trust`
+### New project
 
-The command will ask you a series of questions to create a new project.
-Before using for the first time you will probaby want to customize the copier.yml file. Most importantly, the variables that aren't presented to you when you create a project (i.e, the varables that are set to `when: false`).
+```bash
+copier copy harmon-init new-project --trust
+```
 
-### Standard Procedure For New Projects
+Key questions: `project_type` (general | web-astro | web-app | iac | docs),
+`github_org`, `ci_runner` (ubuntu-latest | self-hosted), `devcontainer`,
+`include_terraform` / `include_ansible`, `license`. Hidden defaults (author
+identity, org info, directories) live in `copier.yml` under `when: false` —
+customize those once before first use.
 
-1. From your git directory: `copier copy harmon-init new-project --trust`, replacing `new-project` with the name of your new project.
-2. Initialize git repo?: Yes
-3. Create new repo on GitHub?: Yes
-4. Create initial release on GitHub?: Yes
-   After initial questions, GitHub will ask questions about creating the repo on GitHub.
-5. Choose "Push an existing localy repository to GitHub" and choose the current path (.)
+After generation, work through the project's `docs/CHECKLIST.md` (branch
+ruleset import, Dependabot alerts, Renovate/CodeRabbit apps, Actions secrets,
+framework scaffolding for web projects).
 
-### Updating the Template
+### Apply to / update an existing project
 
-Copier generates projects from git tags, not from the working tree. After merging changes to the template, you must create a new tag for `copier copy` to pick them up. The `release.yml` GitHub Action does this automatically on push to main, but if you're testing locally:
+```bash
+cd existing-project
+copier update --trust          # if it was generated from this template
+# or adopt the template in a repo that wasn't:
+copier copy --trust ~/git/harmon-init . --vcs-ref=HEAD
+```
 
-- Use `--vcs-ref HEAD` to include uncommitted changes: `copier copy harmon-init new-project --trust --vcs-ref HEAD`
-- Or create a new tag after committing: `git tag v1.2.3 && git push --tags`
+### Template development gotcha: `--vcs-ref=HEAD`
 
-Without this, `copier copy` will keep using the last tagged version and your changes won't appear in generated projects.
+`copier copy` from a local path renders the **latest git tag** by default —
+NOT your working tree. When testing template changes, always pass
+`--vcs-ref=HEAD`. With it, copier auto-includes dirty/untracked changes via a
+throwaway commit in a temp clone (`DirtyLocalWarning`); your working tree is
+never touched. `task test:template` handles this for you.
 
-## Setup & Installation
+## Architecture: two layers
 
-### Requirements
+1. **Root** — tooling for maintaining the template itself (this Taskfile,
+   lefthook, CI). The root dogfoods the same conventions the template
+   generates.
+2. **`template/`** — the Copier template root (`_subdirectory: template`).
+   Everything here becomes the generated project.
 
-- Homebrew
-- Python
-- [Taskfile](https://taskfile.dev/)
-- [Copier](https://copier.readthedocs.io/en/stable/)
+### Custom jinja delimiters
 
-### Task Runner
+Template files use `[[ var ]]` and `[% if x %]` (set via `_envops` in
+`copier.yml`) so GitHub Actions `${{ }}`, go-task `{{.VAR}}`, and lefthook
+`{staged_files}` appear verbatim with zero escaping. Rules of thumb:
 
-[Taskfile.yaml](Taskfile.yaml)
+- Never use bash `[[ ]]` tests inside `.jinja` files — use `[ ]`.
+- An inline `[% endif %]` at end-of-line eats the next newline
+  (`trim_blocks`) — write `[% endif +%]`.
+- Shell scripts that don't need substitution stay plain (not `.jinja`).
 
-### Testing
+## Testing the template
 
-#### Validate
+```bash
+task verify                # lint + full generation matrix
+task test:template         # all answer profiles (minimal/web/iac/full)
+task test:template:web     # one profile
+```
 
-`task validate`
+Each profile renders into a temp dir and validates the output: symlinks
+(CLAUDE.md/GEMINI.md → AGENTS.md), Taskfile parses, no leaked copier
+variables, actionlint, yamllint, lefthook config, shellcheck/shfmt on
+rendered scripts, JSON validity, devcontainer read-configuration (CI), and
+gitleaks. CI runs the same matrix on every PR (`template-test` jobs in
+`build.yml`).
 
-#### Security
+## Releases
 
-`task security`
+Releases are intentional — `task release:patch|minor|major`. Nothing
+auto-releases on merge to main. Generated projects render from the latest
+tag, so **tag a release** after merging template changes you want consumers
+to receive.
 
-#### Linting, Formatting, Conventions, Style Guidelines, etc
+### v2 → v3
 
-- .pre-commit-config.yaml
-- .shellcheckrc
-- .ansible-lint-ignore
+v3.0.0 was a breaking redesign: new question set (`project_type`,
+`github_org`, `ci_runner`, ...), custom jinja delimiters, lefthook+gitleaks
+replacing pre-commit+whispers, manual releases, dual-profile devcontainer,
+and canonical AGENTS.md. Projects generated from v2 should be re-templated
+(`copier copy` over the repo and reconcile) rather than `copier update`d.
 
-## Todo File
+## Repo maintenance commands
 
-[todo.md](todo.md)
+| Command | What it does |
+|---|---|
+| `task verify` | Lint + template generation matrix (merge gate) |
+| `task check` | Root linters (template/ excluded — jinja isn't valid YAML) |
+| `task security:secrets` | gitleaks scan |
+| `task install` | Brewfile deps + lefthook hooks |
+| `task release:patch` | Tag + GitHub release (also `:minor`/`:major`) |

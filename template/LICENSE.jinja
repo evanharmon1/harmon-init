@@ -1,7 +1,7 @@
-{%- if license == "mit" -%}
+[%- if license == "mit" -%]
 MIT License
 
-Copyright (c) {{ current_year }} {{ author_full_name }}
+Copyright (c) [[ current_year ]] [[ author_full_name ]]
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,14 +21,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-{%- elif license == "private" -%}
-{{ project_name }} License Agreement
+[%- elif license == "private" -%]
+[[ project_name ]] License Agreement
 
-Version 1.0, {{ current_year }}
+Version 1.0, [[ current_year ]]
 
 1. Grant of License
 
-This software and associated documentation files (the “Software”) are licensed, not sold, to you by {{ organization }} (“Licensor”) for use strictly in accordance with the terms of this License Agreement. Subject to your compliance with the terms of this License, Licensor grants you a limited, non-exclusive, non-transferable, and revocable license to use the Software solely for your personal or internal business purposes.
+This software and associated documentation files (the “Software”) are licensed, not sold, to you by [[ organization ]] (“Licensor”) for use strictly in accordance with the terms of this License Agreement. Subject to your compliance with the terms of this License, Licensor grants you a limited, non-exclusive, non-transferable, and revocable license to use the Software solely for your personal or internal business purposes.
 
 2. Restrictions
 
@@ -57,10 +57,10 @@ TO THE EXTENT PERMITTED BY APPLICABLE LAW, LICENSOR SHALL NOT BE LIABLE FOR ANY 
 
 7. Governing Law
 
-This License shall be governed by and construed in accordance with the laws of {{ country }}. Any legal action or proceeding arising under this License shall be brought exclusively in the courts located in {{ country }}.
+This License shall be governed by and construed in accordance with the laws of [[ country ]]. Any legal action or proceeding arising under this License shall be brought exclusively in the courts located in [[ country ]].
 
 8. Entire Agreement
 
 This License constitutes the entire agreement between you and Licensor regarding the use of the Software and supersedes all prior agreements, whether written or oral, relating to its subject matter.
 
-{% endif %}
+[% endif %]

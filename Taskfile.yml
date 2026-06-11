@@ -160,11 +160,29 @@ tasks:
     desc: All template test profiles (parallel)
     deps:
       - test:template:minimal
+      - test:template:web
+      - test:template:iac
+      - test:template:full
 
   test:template:minimal:
     desc: Render template with default answers and validate the result
     cmds:
       - ./scripts/test-template.sh minimal
+
+  test:template:web:
+    desc: Render template as project_type=web-astro and validate
+    cmds:
+      - ./scripts/test-template.sh web
+
+  test:template:iac:
+    desc: Render template as project_type=iac (terraform+ansible) and validate
+    cmds:
+      - ./scripts/test-template.sh iac
+
+  test:template:full:
+    desc: Render template with maximum conditional coverage and validate
+    cmds:
+      - ./scripts/test-template.sh full
 
   test:template:committed:
     desc: Render template, failing if the working tree is dirty (pre-release gate)

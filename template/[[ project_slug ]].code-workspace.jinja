@@ -1,0 +1,10 @@
+[% set r = range(256) | random %][% set g = range(256) | random %][% set b = range(256) | random %][% set random_color = '#' + '%02X%02X%02X' % (r, g, b) %]{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "peacock.color": "[[ random_color ]]"
+  }
+}

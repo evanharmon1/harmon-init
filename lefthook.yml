@@ -18,15 +18,18 @@ pre-commit:
       run: task guard:no-commit-to-main
     yaml:
       glob: "*.{yml,yaml}"
-      exclude: ^template/
+      exclude:
+        - "template/**"
       run: task lint:yaml -- {staged_files}
     shell:
       glob: "*.{sh,bash}"
-      exclude: ^template/
+      exclude:
+        - "template/**"
       run: task lint:shell -- {staged_files}
     markdown:
       glob: "*.{md,mdx}"
-      exclude: ^template/
+      exclude:
+        - "template/**"
       run: task lint:markdown -- {staged_files}
     actions:
       glob: ".github/workflows/*.{yml,yaml}"

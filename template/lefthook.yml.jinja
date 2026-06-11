@@ -1,0 +1,78 @@
+# Lefthook config for [[ project_name ]]
+# Install:  task install:hooks   (runs `lefthook install`)
+# Run all:  lefthook run pre-commit --all-files
+#
+# All logic lives in Taskfile.yml so GitHub Actions, Claude hooks, and local
+# developers run the exact same commands. Lefthook only orchestrates which
+# task runs at which git stage and passes the relevant file list.
+
+assert_lefthook_installed: true
+
+pre-commit:
+  parallel: true
+  commands:
+    no-commit-to-main:
+      run: task guard:no-commit-to-main
+[% if use_node %]
+    prettier:
+      glob: "*.{js,jsx,ts,tsx,astro,md,mdx,json,jsonc,yml,yaml,css,scss,html}"
+      # CLAUDE.md / GEMINI.md are symlinks to AGENTS.md; prettier errors when a
+      # symlink is passed explicitly (traversal during `--check .` skips them).
+      exclude:
+        - CLAUDE.md
+        - GEMINI.md
+      run: task lint:prettier -- {staged_files}
+    eslint:
+      glob: "*.{js,jsx,ts,tsx,astro,mdx}"
+      run: task lint:eslint -- {staged_files}
+    typecheck:
+      glob: "*.{ts,tsx,astro}"
+      run: task typecheck
+[% endif %]
+    yaml:
+      glob: "*.{yml,yaml}"
+      run: task lint:yaml -- {staged_files}
+    shell:
+      glob: "*.{sh,bash}"
+      run: task lint:shell -- {staged_files}
+    markdown:
+      glob: "*.{md,mdx}"
+      run: task lint:markdown -- {staged_files}
+    actions:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: task lint:actions
+[% if use_python %]
+    python:
+      glob: "*.py"
+      run: task lint:python -- {staged_files}
+[% endif %]
+[% if include_terraform %]
+    terraform:
+      glob: "*.{tf,tfvars}"
+      run: task lint:terraform
+[% endif %]
+    hygiene:
+      run: task lint:hygiene -- {staged_files}
+
+commit-msg:
+  commands:
+    conventional:
+      run: task lint:commit-msg -- {1}
+
+pre-push:
+  parallel: true
+  commands:
+    secrets:
+      run: task security:secrets
+[% if use_node %]
+    typecheck:
+      run: task typecheck
+[% endif %]
+[% if include_terraform %]
+    terraform-validate:
+      run: task lint:terraform:validate
+[% endif %]
+[% if include_ansible %]
+    ansible-syntax:
+      run: task validate:ansible:syntax
+[% endif %]

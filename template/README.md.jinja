@@ -1,53 +1,121 @@
-# {{ project_name }}
-{{ project_description }}
+# [[ project_name ]]
 
-[{{ project_name }}]({{ project_url }})
+[[ project_description ]]
 
-Author: {{ author_full_name }}
-
-[![Validate](https://github.com/{{ author_git_provider_username }}/{{ project_slug }}/actions/workflows/validate.yml/badge.svg)](https://github.com/{{ author_git_provider_username }}/{{ project_slug }}/actions/workflows/validate.yml)
-[![Build](https://github.com/{{ author_git_provider_username }}/{{ project_slug }}/actions/workflows/build.yml/badge.svg)](https://github.com/{{ author_git_provider_username }}/{{ project_slug }}/actions/workflows/build.yml)
-[![Security](https://github.com/{{ author_git_provider_username }}/{{ project_slug }}/actions/workflows/security.yml/badge.svg)](https://github.com/{{ author_git_provider_username }}/{{ project_slug }}/actions/workflows/security.yml)
+[![Build & Validate]([[ repo_url ]]/actions/workflows/build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/build.yml)
+[% if use_node or use_python %]
+[![CodeQL]([[ repo_url ]]/actions/workflows/codeql.yml/badge.svg)]([[ repo_url ]]/actions/workflows/codeql.yml)
+[% endif %]
+[% if devcontainer %]
+[![Devcontainer Build]([[ repo_url ]]/actions/workflows/devcontainer-build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/devcontainer-build.yml)
+[% endif %]
+[![Renovate](https://img.shields.io/badge/maintained%20with-renovate-blue?logo=renovatebot)](https://github.com/apps/renovate)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-orange.json)](https://github.com/copier-org/copier)
-[![Maintained](https://img.shields.io/badge/maintained%3F-yes-brightgreen.svg?style=flat-square)](https://github.com/{{ author_git_provider_username }}/{{ project_slug }})
-[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat-square)](https://github.com/{{ author_git_provider_username }}/{{ project_slug }})
-[![Known Vulnerabilities](https://snyk.io/test/github/{{ author_git_provider_username }}/{{ project_slug }}/badge.svg?style=flat-square)](https://snyk.io/test/github/{{ author_git_provider_username }}/{{ project_slug }})
+
+Author: [[ author_full_name ]] ([[ author_email ]]) — generated from
+[harmon-init](https://github.com/evanharmon1/harmon-init) on [[ current_date ]].
+
+## Architecture
+
+TODO: Summarize the architecture here. The full picture (with the Mermaid
+diagram that must stay in sync with reality) lives in
+[docs/architecture.md](docs/architecture.md).
 
 ## Setup & Installation
 
 ### Requirements
-- Homebrew
-- Python
-- [Taskfile](https://taskfile.dev/)
 
-### Bootstrap
-Install required software to run other project installers and task runners
-`task bootstrap`
+- [Homebrew](https://brew.sh) and [go-task](https://taskfile.dev)
+[% if use_node %]
+- Node >= 22 and [pnpm](https://pnpm.io)
+[% endif %]
+[% if use_python %]
+- [uv](https://docs.astral.sh/uv/) (Python is pinned in `.python-version`)
+[% endif %]
 
 ### Install
-Install required dependencies
-`task install`
 
-## Usage
-TODO: project usage
+```bash
+task bootstrap   # one-time machine setup (Homebrew[% if use_node %] + Node + pnpm[% endif %])
+task install     # Brewfile deps[% if use_python %] + uv sync[% endif %][% if use_node %] + pnpm install[% endif %] + lefthook git hooks
+task verify      # confirm everything passes
+```
 
-### Task Runner
-[Taskfile.yaml](./Taskfile.yml)
+Or open the repo in the devcontainer (VS Code "Reopen in Container", or a
+[Coder](https://coder.com) workspace)[% if devcontainer %] — the human profile lives in
+`.devcontainer/dev/`, the AI/bot profile at `.devcontainer/`[% endif %].
 
-### Testing
+New here? Start with [docs/onboarding.md](docs/onboarding.md) and the
+post-generation [docs/CHECKLIST.md](docs/CHECKLIST.md).
 
-#### Validate
-`task validate`
+## Project Structure
 
-#### Security
-`task security`
+```text
+.
+├── .claude/             # Claude Code settings + skills
+[% if devcontainer %]
+├── .devcontainer/       # Dual-profile devcontainer (AI bot + dev/ human)
+[% endif %]
+├── .github/             # Workflows, templates, CODEOWNERS, branch ruleset
+[% if include_ansible %]
+├── ansible/             # Ansible playbooks/roles/inventory
+[% endif %]
+├── docs/                # Documentation (see docs/index.md)
+├── scripts/             # Repo utility scripts (hygiene, status, summaries)
+├── specs/               # Specifications
+[% if include_terraform %]
+├── terraform/           # Terraform IaC
+[% endif %]
+├── tests/               # Tests
+├── AGENTS.md            # AI agent guidance (CLAUDE.md/GEMINI.md symlink here)
+├── Taskfile.yml         # Task runner — single source of truth for commands
+├── lefthook.yml         # Git hooks (delegate to Taskfile tasks)
+└── todo.md              # Scratch todos (gitignored)
+```
 
-#### Linting, Formatting, Conventions, Style Guidelines, etc
-- .pre-commit-config.yaml
-- .shellcheckrc
-- .ansible-lint-ignore
+## Commands
 
-### Building, Deploying, & CI/CD
+`task` (or `task menu`) shows the interactive picker. Key targets:
 
-## Todo File
-[todo.md](./todo.md)
+| Command | What it does |
+|---|---|
+| `task verify` | Local merge gate: lint[% if use_node %] + typecheck + build[% endif %] |
+| `task check` | All linters in parallel |
+| `task fix` | Auto-format, then lint |
+[% if use_node %]
+| `task dev` | Dev server with hot reload |
+| `task build` | Production build |
+[% endif %]
+| `task test` | Run tests (see [docs/testing.md](docs/testing.md)) |
+| `task security` | gitleaks + dependency audit |
+| `task release:patch` | Tag + GitHub release (also `:minor` / `:major`) |
+| `task status` | Project status dashboard |
+
+## Testing
+
+See [docs/testing.md](docs/testing.md). Tests live in `tests/`; CI runs the
+same `task` targets as local hooks.
+
+## CI/CD
+
+| Workflow | Purpose |
+|---|---|
+| `build.yml` | lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security → aggregate `verify` gate |
+[% if use_node or use_python %]
+| `codeql.yml` | CodeQL analysis (opt-in via `FULL_SECURITY_SCAN` repo variable) |
+[% endif %]
+[% if devcontainer %]
+| `devcontainer-build.yml` | Prebuilds devcontainer images to GHCR on merge to main |
+[% endif %]
+| `claude-plan/implement/review.yml` | `@claude plan` / `@claude implement` / `@claude review` on issues & PRs |
+
+Branch protection: `main` requires a PR with code-owner approval and the
+`verify` + `security` checks (importable ruleset in `.github/`; see
+[docs/branchProtection.md](docs/branchProtection.md)).
+
+**Releases are intentional** — run `task release:patch|minor|major`; nothing
+auto-releases on merge.
+
+## License
+
+See [LICENSE](LICENSE).

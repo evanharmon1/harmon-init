@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEVCONTAINER_GIT_NAME="[[ author_git_provider_username ]]"
+export DEVCONTAINER_GIT_EMAIL="[[ author_email ]]"
+
+bash .devcontainer/scripts/post-create-common.sh

@@ -1,0 +1,280 @@
+name: Build & Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+  workflow_dispatch:
+
+# Parallel jobs that all call into the Taskfile so local + CI run identical commands.
+# A final `verify` job aggregates statuses for branch protection
+# (required checks: verify + security).
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: [ [[ ci_runner_labels ]] ]
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+[% if use_node %]
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+[% endif %]
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+[% if use_node %]
+          cache: pnpm
+[% endif %]
+[% if use_python %]
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+[% endif %]
+[% if include_terraform %]
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+[% endif %]
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install lint tools (shellcheck, shfmt, actionlint, yamllint)
+        run: |
+          # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
+          SHELLCHECK_VERSION=0.10.0
+          curl -sSL -o /tmp/shellcheck.tar.xz \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
+          SHFMT_VERSION=3.13.1
+          sudo curl -sSL -o /usr/local/bin/shfmt \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          sudo chmod +x /usr/local/bin/shfmt
+          # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
+          ACTIONLINT_VERSION=1.7.12
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/
+          pip install yamllint
+[% if use_python %]
+      - run: uv sync
+[% endif %]
+[% if use_node %]
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+[% endif %]
+      - name: Lint[% if use_node %] + typecheck[% endif +%]
+        run: task check
+[% if use_node %]
+
+  build-test:
+    runs-on: [ [[ ci_runner_labels ]] ]
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+          cache: pnpm
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+      - name: Build
+        run: task build
+      - name: Test
+        run: task test
+[% endif %]
+
+  security:
+    runs-on: [ [[ ci_runner_labels ]] ]
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+[% if use_node %]
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+[% endif %]
+[% if use_python %]
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+[% endif %]
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install gitleaks
+        run: |
+          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
+          GITLEAKS_VERSION=8.24.3
+          curl -sSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+[% if use_node %]
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+[% endif %]
+      - name: Security scan
+        run: task security
+[% if project_type == 'web-astro' %]
+
+  lighthouse:
+    runs-on: [ [[ ci_runner_labels ]] ]
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+          cache: pnpm
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+      - name: Install Chrome (required for Lighthouse)
+        uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1.7.3
+        id: setup-chrome
+        with:
+          install-dependencies: true
+          no-sudo: true
+      - name: Build
+        run: task build
+      - name: Lighthouse CI
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+        id: lighthouse
+        uses: treosh/lighthouse-ci-action@3e7e23fb74242897f95c0ba9cabad3d0227b9b18 # v12
+        with:
+          configPath: ./lighthouserc.json
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+      - name: Comment Lighthouse results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          LHCI_LINKS: ${{ steps.lighthouse.outputs.links }}
+          LHCI_RESULTS_PATH: ${{ steps.lighthouse.outputs.resultspath }}
+        with:
+          script: |
+            const fs = require('fs')
+            const path = require('path')
+            const links = JSON.parse(process.env.LHCI_LINKS || '{}')
+            const manifestPath = path.join(process.env.LHCI_RESULTS_PATH, 'manifest.json')
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+            const fmt = v => (v == null ? 'n/a' : Math.round(v * 100))
+            const rows = manifest
+              .filter(r => r.isRepresentativeRun)
+              .map(r => {
+                const s = r.summary
+                const link = links[r.url] || ''
+                const urlPath = r.url.replace('http://localhost', '') || '/'
+                return `| \`${urlPath}\` | ${fmt(s.performance)} | ${fmt(s.accessibility)} | ${fmt(s['best-practices'])} | ${fmt(s.seo)} | [report](${link}) |`
+              })
+              .join('\n')
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const body = [
+              '## Lighthouse CI Results',
+              '',
+              '| URL | Perf | A11y | BP | SEO | Report |',
+              '|---|---|---|---|---|---|',
+              rows,
+              '',
+              `_Run: [${context.runId}](${runUrl})_`,
+            ].join('\n')
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            })
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.startsWith('## Lighthouse CI Results')
+            )
+            if (existing) {
+              await github.rest.issues.updateComment({
+                comment_id: existing.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              })
+            }
+[% endif %]
+
+  verify:
+    if: always()
+    needs: [lint, security[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        run: |
+          fail=0
+          check() {
+            [ "$2" = "success" ] || [ "$2" = "skipped" ] || { echo "Job $1 result: $2"; fail=1; }
+          }
+          check lint "${{ needs.lint.result }}"
+          check security "${{ needs.security.result }}"
+[% if use_node %]
+          check build-test "${{ needs.build-test.result }}"
+[% endif %]
+[% if project_type == 'web-astro' %]
+          check lighthouse "${{ needs.lighthouse.result }}"
+[% endif %]
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed."
