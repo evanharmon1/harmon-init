@@ -71,6 +71,12 @@ Thumbs.db
 .worktrees/
 .lefthook-local.yml
 
+# Local editor/AI settings
+settings.local.json
+
+# Devcontainer env files (injected locally via 1Password, never committed)
+.devcontainer/**/devcontainer.env
+
 #             .env
 #------------------------------------------------------------------------------
 # Ignore all .env files

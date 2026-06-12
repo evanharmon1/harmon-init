@@ -88,6 +88,12 @@ task release:patch   # or release:minor / release:major
 - `.github/workflows/build.yml` — jobs `lint`, `security`, `template-test` (matrix
   of copier answer profiles), and the aggregate `verify` gate. All jobs delegate to
   `task` targets.
+- `.github/workflows/devcontainer-build.yml` — builds the dual-profile
+  devcontainer images (bot + dev) and pushes them to GHCR as build caches. The
+  root repo dogfoods the same `.devcontainer/` the template generates
+  (`task test:devcontainer:root` / `test:devcontainer:dev` smoke-test them).
+- `.github/workflows/claude-{plan,implement,review}.yml` — Claude Code GitHub
+  Actions (need the `CLAUDE_CODE_OAUTH_TOKEN` and `GH_WORKFLOW_PAT` secrets).
 - Dependency updates via Renovate (`renovate.json`); reviews assisted by CodeRabbit
   (`.coderabbit.yaml`).
 - No auto-release workflow exists by design — use `task release:*`.
