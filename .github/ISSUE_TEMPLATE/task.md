@@ -4,20 +4,17 @@ about: A template for adding tasks or improvements
 title: "[TASK]: "
 labels: task
 assignees: ''
-
 ---
 
 **Task Description**
-A brief description of the task.
+{ A brief description of the task. }
 
 **Goal**
-What outcome should the task achieve?
+{ What outcome should the task achieve? }
 
 **Acceptance Criteria**
-
 - [ ] Criteria 1
 - [ ] Criteria 2
-- [ ] Criteria 3
 
 **Additional context**
-Add any other context or screenshots for this task here.
+{ Add any other context or screenshots for this task here. }

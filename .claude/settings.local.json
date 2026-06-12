@@ -3,7 +3,16 @@
     "allow": [
       "Bash(ls:*)",
       "Bash(python3:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(cp /tmp/harmon-init-self-render/scripts/status.sh scripts/)",
+      "Bash(cp /tmp/harmon-init-self-render/.github/PULL_REQUEST_TEMPLATE.md .github/)",
+      "Bash(echo \"exit=$?\")",
+      "Read(//tmp/**)",
+      "Bash(cp .devcontainer/scripts/init-env.sh 'template/[% if devcontainer %].devcontainer[% endif %]/scripts/init-env.sh')",
+      "Bash(printf 'TS_AUTHKEY=stale\\\\nGH_TOKEN=old\\\\n')",
+      "Bash(GH_TOKEN=new bash /Users/evan/git/harmon-init/.devcontainer/scripts/init-env.sh /tmp/test.env GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN)",
+      "Bash(rm -f test.env)",
+      "Bash(echo \"check exit=$?\")"
     ]
   }
 }

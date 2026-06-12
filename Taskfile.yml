@@ -200,11 +200,22 @@ tasks:
         fi
       - task: test:template:all
 
+  test:devcontainer:root:
+    desc: Smoke test the primary (AI bot) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/devcontainer.json
+
+  test:devcontainer:dev:
+    desc: Smoke test the dev (human) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
+
   # ── Security ──────────────────────────────────────────────────
   security:
     desc: Run all security checks
     deps:
       - security:secrets
+      - security:audit
 
   security:secrets:
     desc: Scan for leaked secrets (gitleaks)
@@ -220,10 +231,20 @@ tasks:
           exit $rc
         fi
 
+  security:audit:
+    desc: Dependency audit
+    cmds:
+      - echo "No package manifests to audit yet."
+
   security:sast:
     desc: Static application security testing (source code)
     cmds:
       - snyk code test --exclude=.worktrees --severity-threshold=high
+
+  security:sca:
+    desc: Software composition analysis (Snyk)
+    cmds:
+      - snyk test --severity-threshold=high --show-vulnerable-paths=all
 
   # ── Setup ─────────────────────────────────────────────────────
   bootstrap:
@@ -244,6 +265,13 @@ tasks:
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.
+  release:init:
+    desc: Create initial v0.1.0 tag
+    cmds:
+      - git tag -a v0.1.0 -m "Initial release"
+      - git push origin v0.1.0
+      - gh release create v0.1.0 --generate-notes --title "v0.1.0"
+
   release:patch:
     desc: Bump patch version and release
     vars:
@@ -291,10 +319,29 @@ tasks:
 
   # ── Status ────────────────────────────────────────────────────
   status:
-    desc: Project status overview
+    desc: Project status dashboard
     cmds:
-      - git status -sb
-      - gh pr list || true
+      - ./scripts/status.sh
+
+  status:git:
+    desc: Git status section
+    cmds:
+      - ./scripts/status.sh git
+
+  status:gh:
+    desc: GitHub status section
+    cmds:
+      - ./scripts/status.sh gh
+
+  status:code:
+    desc: Codebase stats section
+    cmds:
+      - ./scripts/status.sh code
+
+  status:env:
+    desc: Environment info section
+    cmds:
+      - ./scripts/status.sh env
 
   # ── Utilities ─────────────────────────────────────────────────
   util:bunch-add:

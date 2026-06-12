@@ -23,6 +23,9 @@ brew "gitleaks"
 tap "snyk/tap"
 brew "snyk/tap/snyk"
 
+# Devcontainer
+brew "hadolint"
+
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)
 brew "node"
 

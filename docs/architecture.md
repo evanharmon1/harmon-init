@@ -1,0 +1,24 @@
+# Architecture
+
+TODO: Describe the high-level architecture of Harmon Init.
+
+## Overview
+
+TODO: Add a Mermaid diagram of the main components and data flow. Keep this
+diagram in sync with reality — PRs that change components, routing, or
+infrastructure should update it.
+
+```mermaid
+flowchart LR
+    A[TODO: source] --> B[TODO: build] --> C[TODO: deploy]
+```
+
+## Components
+
+TODO: List the major components and what each is responsible for.
+
+## Data Flow
+
+TODO: Describe how data moves through the system.
+
+Deeper architecture documents live in [architecture/](architecture/).
