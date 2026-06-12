@@ -65,13 +65,24 @@ ALLOWED_VARS=("${FILTERED_ALLOWED_VARS[@]}")
 
 touch "$ENV_FILE"
 
+# Remove every line setting $1 from $2, portably. GNU `sed -i` is not
+# available on macOS (BSD sed needs a suffix arg after -i, so `sed -i expr
+# file` silently does nothing useful) — and initializeCommand runs this
+# script on the HOST, which is often a Mac.
+strip_var() {
+    local tmp
+    tmp="$(mktemp)"
+    grep -v "^${1}=" "$2" >"$tmp" || true
+    mv "$tmp" "$2"
+}
+
 # Strip any forbidden var (managed by the script but not in this
 # profile's allow-list). This guarantees, for example, that the bot
 # profile evicts TS_AUTHKEY even if a stale value was written to the
 # env-file by an earlier rebuild.
 for var in "${ALL_MANAGED_VARS[@]}"; do
     if ! contains "$var" "${ALLOWED_VARS[@]}"; then
-        sed -i "/^${var}=/d" "$ENV_FILE" 2>/dev/null || true
+        strip_var "$var" "$ENV_FILE"
     fi
 done
 
@@ -81,7 +92,7 @@ done
 for var in "${ALLOWED_VARS[@]}"; do
     val="${!var:-}"
     if [ -n "$val" ]; then
-        sed -i "/^${var}=/d" "$ENV_FILE" 2>/dev/null || true
+        strip_var "$var" "$ENV_FILE"
         echo "${var}=${val}" >>"$ENV_FILE"
     fi
 done
