@@ -14,6 +14,18 @@ Author: Evan Harmon
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-orange.json)](https://github.com/copier-org/copier)
 [![Renovate](https://img.shields.io/badge/maintained%20with-renovate-blue?logo=renovatebot)](https://github.com/apps/renovate)
 
+## Part of harmon-stack
+
+This repo is part of **harmon-stack** — my personal stack of homelab, dev-tooling, and automation repos that work together.
+
+| Repo | What it is |
+| --- | --- |
+| [**harmon-init**](https://github.com/evanharmon1/harmon-init) **(this repo)** | Copier template that bootstraps & standardizes new repos (CI/CD, devcontainers, AI steering, tooling). |
+| [harmon-devkit](https://github.com/evanharmon1/harmon-devkit) | Reusable boilerplates & code templates, standalone scripts, and AI assets (skills, prompts, agents). |
+| [harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles) | Shell & app dotfiles, managed declaratively with chezmoi. |
+| [harmon-ops](https://github.com/evanharmon1/harmon-ops) | Personal machine bootstrapping, package management & dev-environment setup across macOS/Windows/Linux. |
+| [harmon-infra](https://github.com/harmonops/harmon-infra) | Homelab infrastructure as code — Terraform, Ansible, and Docker Compose services. |
+
 ## Usage
 
 ### New project

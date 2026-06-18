@@ -12,6 +12,15 @@ runners — and can also be applied to existing repos to standardize them. This 
 an application; it is a template repository used via the
 [Copier](https://copier.readthedocs.io/en/stable/) templating tool.
 
+## harmon-stack
+
+One of five repos in **harmon-stack** (Evan's homelab + dev-ops stack):
+[**harmon-init**](https://github.com/evanharmon1/harmon-init) (this repo — the template),
+[harmon-devkit](https://github.com/evanharmon1/harmon-devkit) (boilerplates/scripts/AI assets),
+[harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles) (chezmoi dotfiles),
+[harmon-ops](https://github.com/evanharmon1/harmon-ops) (machine setup),
+[harmon-infra](https://github.com/harmonops/harmon-infra) (homelab IaC). See the README for the full table.
+
 ## Two-Layer Architecture
 
 1. **Root level** — Config for developing/maintaining the template itself
