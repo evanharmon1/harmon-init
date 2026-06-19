@@ -10,6 +10,10 @@ on:
 
 # Opt-in via the FULL_SECURITY_SCAN repository variable (see docs/CHECKLIST.md).
 
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     if: >-
@@ -45,3 +49,20 @@ jobs:
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           category: /language:${{ matrix.language }}
+
+  # Stable aggregate status (the matrixed analyze jobs have dynamic names and
+  # are skipped unless FULL_SECURITY_SCAN is set). Named codeql-verify so it
+  # does not collide with the build workflow's required `verify` check.
+  codeql-verify:
+    if: always()
+    needs: [analyze]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check analyze result
+        run: |
+          result="${{ needs.analyze.result }}"
+          if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+            echo "CodeQL analyze result: $result"
+            exit 1
+          fi
+          echo "CodeQL analyze: $result"

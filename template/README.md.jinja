@@ -47,6 +47,25 @@ Or open the repo in the devcontainer (VS Code "Reopen in Container", or a
 
 New here? Start with [docs/onboarding.md](docs/onboarding.md) and the
 post-generation [docs/CHECKLIST.md](docs/CHECKLIST.md).
+[% if project_type in ['web-astro', 'web-app'] %]
+
+### Web app scaffolding
+
+This template ships shared conventions (lint, hooks, CI, docs) — not the web app
+itself. Scaffold the app with the framework's own tool first, then re-apply the
+template to overlay conventions:
+
+```bash
+[% if project_type == 'web-astro' %]
+pnpm create astro@latest .             # scaffold the Astro site in-place
+[% else %]
+pnpm create @tanstack/router@latest    # scaffold the TanStack + React app
+[% endif %]
+copier update --trust                  # overlay/refresh harmon-init conventions
+```
+
+See [DESIGN.md](DESIGN.md) for visual/UX direction.
+[% endif %]
 
 ## Project Structure
 
@@ -68,6 +87,7 @@ post-generation [docs/CHECKLIST.md](docs/CHECKLIST.md).
 [% endif %]
 ├── tests/               # Tests
 ├── AGENTS.md            # AI agent guidance (CLAUDE.md/GEMINI.md symlink here)
+├── DESIGN.md            # Design / UX intent (AI-facing)
 ├── Taskfile.yml         # Task runner — single source of truth for commands
 ├── lefthook.yml         # Git hooks (delegate to Taskfile tasks)
 └── todo.md              # Scratch todos (gitignored)
@@ -108,13 +128,22 @@ same `task` targets as local hooks.
 | `devcontainer-build.yml` | Prebuilds devcontainer images to GHCR on merge to main |
 [% endif %]
 | `claude-plan/implement/review.yml` | `@claude plan` / `@claude implement` / `@claude review` on issues & PRs |
+[% if use_release_please %]
+| `release.yml` | release-please maintains a release PR; merging it cuts the release |
+[% endif %]
 
 Branch protection: `main` requires a PR with code-owner approval and the
 `verify` + `security` checks (importable ruleset in `.github/`; see
 [docs/branchProtection.md](docs/branchProtection.md)).
-
+[% if use_release_please %]
+**Releases are intentional** — release-please keeps a rolling release PR from
+conventional commits; merging it cuts the tag, GitHub release, and CHANGELOG.
+Nothing auto-releases on a normal merge. `task release:*` stays as a manual
+override.
+[% else %]
 **Releases are intentional** — run `task release:patch|minor|major`; nothing
 auto-releases on merge.
+[% endif %]
 
 ## License
 

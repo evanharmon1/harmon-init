@@ -1,3 +1,15 @@
+---
+# ansible-lint config. https://ansible.readthedocs.io/projects/lint/configuration/
+exclude_paths:
+  - .venv/
+  - node_modules/
+
+# Rules relaxed for pragmatic homelab/ops playbooks. Tighten this list as the
+# codebase matures and you want stricter enforcement.
 skip_list:
-  - yaml[truthy]
-  - yaml[line-length]
+  - yaml[truthy] # allow yes/no in addition to true/false
+  - yaml[line-length] # long lines are linted by yamllint instead
+  - var-naming[no-role-prefix] # don't force role-name prefixes on vars
+  - command-instead-of-module # command/shell are sometimes the pragmatic choice
+  - no-changed-when # not every command reports changed state
+  - risky-shell-pipe # pipefail is enforced where it matters, not everywhere

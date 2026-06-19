@@ -62,9 +62,10 @@ reviews:
 
     - path: "ansible/**"
       instructions: >-
-        Ansible: idempotency required; roles live under `ansible/roles/`.
-        No hardcoded credentials; use env vars or 1Password-provisioned
-        secrets.
+        Ansible: idempotency required; roles live under `ansible/roles/`,
+        playbooks under `ansible/playbooks/` (imported from `ansible/site.yml`),
+        collections pinned in `ansible/requirements.yaml`. No hardcoded
+        credentials; use env vars or 1Password-provisioned secrets.
 [% endif %]
 
 chat:

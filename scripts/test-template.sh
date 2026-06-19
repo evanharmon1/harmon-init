@@ -58,7 +58,12 @@ fi
 
 copier_flags=()
 case "$profile" in
-minimal) ;;
+minimal)
+    # Exercise the release-please OFF branch: use_release_please defaults on,
+    # so every other profile already covers the ON branch + its
+    # conditionally-named release-please files.
+    data_args+=(--data use_release_please=false)
+    ;;
 web)
     data_args+=(--data project_type=web-astro)
     ;;
