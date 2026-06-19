@@ -53,6 +53,12 @@ Replace `@evanharmon1` with the GitHub username of the human who should approve 
 
 ### Bot Account PAT Permissions
 
+> This covers the **devcontainer agent's** push token (Claude Code running in the
+> container). CI _workflows_ (release-please, claude-*, project-automation)
+> authenticate separately as the CI **GitHub App** — see
+> [security.md](security.md) for that App and its permissions. The ruleset below
+> protects `main` from every actor (App, bot PAT, or human) equally.
+
 The machine user account's fine-grained PAT should have these permissions and nothing more:
 
 | Permission      | Level          | Purpose                              |

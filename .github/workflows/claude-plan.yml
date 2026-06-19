@@ -1,6 +1,8 @@
 name: Claude Plan
 run-name: ${{ github.actor }} is running Claude Plan
-# Requires repo secrets: CLAUDE_CODE_OAUTH_TOKEN, GH_WORKFLOW_PAT (see docs/CHECKLIST.md)
+# Requires: CLAUDE_CODE_OAUTH_TOKEN secret, plus the CI GitHub App
+# (CI_APP_ID variable + CI_APP_PRIVATE_KEY secret). See docs/CHECKLIST.md
+# and docs/security.md.
 on:
   issue_comment:
     types: [created]
@@ -27,11 +29,16 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: anthropics/claude-code-action@d5726de019ec4498aa667642bc3a80fca83aa102 # v1.0.148
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GH_WORKFLOW_PAT }}
+          github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@claude plan"
           label_trigger: "claude-plan"
           track_progress: true

@@ -23,8 +23,12 @@ that don't apply, then keep this file as a record of what was configured.
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
-      `GH_WORKFLOW_PAT` (fine-grained PAT for the bot account; see
-      branchProtection.md for required scopes), `SNYK_TOKEN` (snyk tasks)
+      `SNYK_TOKEN` (snyk tasks)
+- [ ] CI GitHub App: install the shared CI App on this repo, then set
+      `CI_APP_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+      **secret**). Drives release-please, the claude-* workflows, and
+      project-automation. Org repos: set these once as org-level
+      variable/secret. See docs/security.md for the App + required permissions.
 - [ ] Actions variables: set `FULL_SECURITY_SCAN=true` to enable CodeQL
 [% if devcontainer %]
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
