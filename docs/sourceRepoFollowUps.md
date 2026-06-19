@@ -11,7 +11,7 @@ source of truth going forward), not by hand-editing them ad hoc.
    canonical, `CLAUDE.md`/`GEMINI.md` symlink to it. (Remember to flip the
    prettier/lefthook symlink excludes accordingly.)
 2. **docs layout drift** — `docs/specs/` should move to root `specs/`; ensure
-   `design/`, `guides/`, `index.md`, `testing.md`, `glossary.md`, `roadmap.md`,
+   `design/`, `guides/`, `README.md`, `testing.md`, `glossary.md`, `roadmap.md`,
    `onboarding.md` exist; `tests/` belongs at repo root. (The runbooks dir is
    now standardized as `runbooks/` (plural) — matches harmon-infra.)
 3. **gitleaks pins divergent and un-annotated** — infra workflows pin 8.24.3,

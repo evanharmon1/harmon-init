@@ -17,11 +17,12 @@ Prefer the devcontainer? Open the repo in VS Code and "Reopen in Container"
 - Work on feature branches; direct commits to `main` are blocked.
 - Conventional commit messages are enforced (`feat:`, `fix:`, `docs:`, ...).
 - `task verify` before pushing; CI runs the same checks.
-- Releases are manual and intentional: `task release:patch|minor|major`.
+- Releases are intentional via release-please: merge the rolling release PR to
+  publish (`task release:*` stays as a manual override).
 
 ## Where things are
 
-See [index.md](index.md) for the documentation map and the README for the
-project structure.
+See [README.md](README.md) for the documentation map and the
+[root README](../README.md) for the project structure.
 
 TODO: add project-specific context a new contributor needs.
