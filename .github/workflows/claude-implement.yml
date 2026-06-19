@@ -34,6 +34,14 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege token: implement pushes commits (contents), opens
+          # PRs (pull-requests), comments (issues), and may touch
+          # .github/workflows/ (workflows, write-only). org-projects gated to
+          # org repos only — an ungranted permission would fail token minting.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-workflows: write
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0

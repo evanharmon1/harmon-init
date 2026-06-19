@@ -31,6 +31,14 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege token: read CI run conclusions (actions) and PR/
+          # repo data, then update the org Project V2 Status field
+          # (organization-projects). This whole workflow is org-only (gated
+          # filename), so no inner jinja guard is needed.
+          permission-contents: read
+          permission-pull-requests: read
+          permission-actions: read
+          permission-organization-projects: write
       - name: Resolve target status and update project
         continue-on-error: true
         env:

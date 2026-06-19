@@ -35,6 +35,12 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege: release-please commits/tags/releases (contents),
+          # maintains the release PR (pull-requests), and applies the
+          # autorelease:* lifecycle labels (issues — PR labels use the Issues API).
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}

@@ -34,6 +34,13 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege token: review only comments (issues/pull-requests)
+          # and reads the repo (no push). members:read is gated to org repos —
+          # it backs the org-membership sender check; personal repos lack it
+          # and requesting it would fail token minting.
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: write
       - name: Verify sender is authorized
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

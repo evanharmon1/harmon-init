@@ -59,6 +59,8 @@ required checks actually run). Commits the App pushes are attributed to
 | Metadata | Read-only | required baseline |
 [% if github_org != author_git_provider_username %]
 | Projects | Read and write (org) | project-automation + claude status sync |
+| Members | Read-only (org) | claude-review verifies the sender is an org member |
+| Actions | Read-only | project-automation reads CI (Build & Validate) run results |
 [% endif %]
 
 ### Blast radius & key protection
