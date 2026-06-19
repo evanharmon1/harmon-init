@@ -26,7 +26,7 @@ sommerlawn-web into the template.
   devcontainer prebuild workflow (GHCR), branch-protection ruleset JSON,
   renovate.json, .coderabbit.yaml, dual-profile devcontainer (AI bot +
   human dev with Tailscale) ported from harmon-infra, docs tree
-  (architecture/decisions/design/guides/runbook + index/testing/
+  (architecture/decisions/design/guides/runbooks + README/testing/
   troubleshooting/glossary/roadmap/onboarding/branchProtection/CHECKLIST),
   specs/ and tests/ at root, CHANGELOG.md, .claude settings, conditional
   pyproject.toml/.python-version (uv), terraform/ansible skeletons.
