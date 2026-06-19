@@ -30,15 +30,37 @@ denied (e.g. no Tailscale, no production credentials).
 ## CI automation identity (GitHub App)
 
 CI workflows that act on the repo as a bot — release-please, the
-`claude-*` workflows — authenticate as a shared
-**GitHub App**, not a personal access token. Each job mints a short-lived (1h)
-installation token at runtime via `actions/create-github-app-token`, reading:
+`claude-*` workflows — authenticate as a
+**GitHub App dedicated to this owner**, not a personal access token. **Each
+GitHub org (and personal account) gets its own App**, named **`<owner>-ci`** —
+for this repo, **`evanharmon1-ci`**. One App per org keeps a leaked key
+contained to a single org (no cross-org reach).
 
-- `CI_APP_ID` — Actions **variable** (the App's numeric id; not secret)
-- `CI_APP_PRIVATE_KEY` — Actions **secret** (the App's PEM private key)
+Each job mints a short-lived (1h) installation token at runtime via
+`actions/create-github-app-token`, reading:
 
-For org repos, set these once as **org-level** variable + secret so every repo
-inherits them; for personal repos, set them per-repo.
+- `CI_APP_ID` — Actions **variable** (this App's numeric id; not secret)
+- `CI_APP_PRIVATE_KEY` — Actions **secret** (this App's PEM private key)
+
+Set both once as **org-level** Actions variable + secret (every repo in the org
+inherits them); for a personal-account repo, set them per-repo.
+
+### Creating the `evanharmon1-ci` App (once per org)
+
+1. Owned by the org: **Settings → Developer settings → GitHub Apps → New GitHub
+   App** (for a personal account, use your account's Developer settings). Name it
+   **`evanharmon1-ci`**.
+2. **Uncheck** "Active" under Webhook — it isn't used.
+3. Grant the **permissions** in the table below; leave everything else "No access".
+4. "Where can this App be installed?" → **Only on this account** (keeps the App
+   and its key scoped to this one org).
+5. **Create the App**, then **Generate a private key** (downloads a `.pem`) and
+   note the **App ID**.
+6. **Install App** → install on this org with **Only select repositories** (not
+   "All repositories").
+7. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
+   (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
+   personal account.
 
 **Why an App, not a PAT:** tokens are short-lived (nothing to rotate yearly), the
 App consumes no user seat, permissions are granular, and — unlike the built-in
@@ -58,13 +80,13 @@ required checks actually run). Commits the App pushes are attributed to
 
 ### Blast radius & key protection
 
-Installations are isolated: a token minted in a workflow is scoped to **one
-installation** (this repo's owner) and expires in ~1h, so a leaked *token*
-reaches only that org for an hour. The cross-org risk lives in the **App private
-key** — it can mint a token for *every* org the App is installed on. So:
+Tokens minted at runtime are scoped to **one installation** and expire in ~1h.
+Because **each org has its own App and key**, the App private key only ever
+reaches **this** org — a key compromise cannot cross into another org. To keep
+even the in-org radius small:
 
 - **Install on selected repos**, not "All repositories", to bound what a key
-  compromise can touch in each org.
+  compromise can touch within the org.
 - **Protect `CI_APP_PRIVATE_KEY`**: it lives only in Actions secrets. Never read
   it from workflows that untrusted code can influence (fork `pull_request`,
   `pull_request_target`, `workflow_run`) — the provided workflows gate on

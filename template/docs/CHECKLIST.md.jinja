@@ -24,11 +24,12 @@ that don't apply, then keep this file as a record of what was configured.
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
       `SNYK_TOKEN` (snyk tasks)
-- [ ] CI GitHub App: install the shared CI App on this repo, then set
+- [ ] CI GitHub App `[[ github_org ]]-ci`: create it for this org (one App per
+      org) or reuse the existing one, install it on this repo, then set
       `CI_APP_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
-      **secret**). Drives release-please, the claude-* workflows, and
-      project-automation. Org repos: set these once as org-level
-      variable/secret. See docs/security.md for the App + required permissions.
+      **secret**) — org-level for an org, per-repo for a personal account.
+      Drives release-please, the claude-* workflows, and project-automation.
+      See docs/security.md for the creation steps + required App permissions.
 - [ ] Actions variables: set `FULL_SECURITY_SCAN=true` to enable CodeQL
 [% if devcontainer %]
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
