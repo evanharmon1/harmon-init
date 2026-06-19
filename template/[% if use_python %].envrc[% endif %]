@@ -1,0 +1,4 @@
+# direnv: auto-activate the uv-managed virtualenv when you cd into the project.
+# Run `direnv allow` once to trust this file (the devcontainer does it in
+# post-create). Create the venv first with `uv sync` / `task install`.
+[ -f .venv/bin/activate ] && source .venv/bin/activate

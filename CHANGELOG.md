@@ -1,11 +1,14 @@
 # Changelog
 
-All notable changes to harmon-init are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
-[SemVer](https://semver.org) via git tags (`task release:*` — releases are
-manual and intentional).
+All notable changes to harmon-init are documented here. Versioning is
+[SemVer](https://semver.org) via git tags. Releases are intentional:
+release-please maintains a rolling release PR from conventional commits — merge
+it to publish the tag, GitHub release, and changelog entry. `task release:*`
+remains a manual override. New entries are appended above by release-please;
+entries at and below v3.0.0 were hand-written in
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
-## [Unreleased] — v3.0.0
+## [3.0.0]
 
 Breaking redesign porting the current repo conventions from harmon-infra and
 sommerlawn-web into the template.
@@ -23,7 +26,7 @@ sommerlawn-web into the template.
   devcontainer prebuild workflow (GHCR), branch-protection ruleset JSON,
   renovate.json, .coderabbit.yaml, dual-profile devcontainer (AI bot +
   human dev with Tailscale) ported from harmon-infra, docs tree
-  (architecture/decisions/design/guides/runbook + index/testing/
+  (architecture/decisions/design/guides/runbooks + README/testing/
   troubleshooting/glossary/roadmap/onboarding/branchProtection/CHECKLIST),
   specs/ and tests/ at root, CHANGELOG.md, .claude settings, conditional
   pyproject.toml/.python-version (uv), terraform/ansible skeletons.

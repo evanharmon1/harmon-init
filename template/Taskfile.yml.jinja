@@ -40,22 +40,24 @@ tasks:
 
   # ── CI / Verification Pipelines ────────────────────────────────
   ci:
-    desc: Full CI pipeline (check → build → test → security)
+    desc: Full CI pipeline (check → build → validate → test → security)
     cmds:
       - task: check
 [% if use_node %]
       - task: build
 [% endif %]
+      - task: validate
       - task: test
       - task: security
 
   verify:
-    desc: Local verification gate (check[% if use_node %] → build[% endif %])
+    desc: Local verification gate (check[% if use_node %] → build[% endif %] → validate)
     cmds:
       - task: check
 [% if use_node %]
       - task: build
 [% endif %]
+      - task: validate
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
@@ -197,6 +199,20 @@ tasks:
         else
           echo "TODO: ansible/ skeleton is empty — add playbooks (see docs/CHECKLIST.md)"
         fi
+[% endif %]
+
+  # ── Validation ─────────────────────────────────────────────────
+  validate:
+    desc: Validate project config/artifacts
+    cmds:
+[% if include_terraform %]
+      - task: lint:terraform:validate
+[% endif %]
+[% if include_ansible %]
+      - task: validate:ansible:syntax
+[% endif %]
+[% if not include_terraform and not include_ansible %]
+      - 'echo "No validate steps for this project type yet — see docs/CHECKLIST.md."'
 [% endif %]
 
   guard:no-commit-to-main:
@@ -373,7 +389,13 @@ tasks:
       - lefthook install
 
   # ── Release ────────────────────────────────────────────────────
+[% if use_release_please %]
+  # Releases are intentional via release-please (.github/workflows/release.yml):
+  # merge the rolling release PR to cut a release. release:init seeds the first
+  # v0.1.0 tag; the release:patch/minor/major tasks remain as a manual override.
+[% else %]
   # Releases are intentional — never automated on merge to main.
+[% endif %]
   release:init:
     desc: Create initial v0.1.0 tag
     cmds:

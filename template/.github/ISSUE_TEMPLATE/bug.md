@@ -23,15 +23,15 @@ assignees: ''
 { If applicable, add screenshots to help explain your problem. }
 
 **Desktop:**
-- OS: [e.g. iOS]
-- Browser [e.g. chrome, safari]
-- Version [e.g. 22]
+- OS: [e.g. macOS 15, Windows 11, Ubuntu 24.04]
+- Browser: [e.g. Chrome, Safari, Firefox]
+- Version: [e.g. 130]
 
-**Device:**
-- Device: [e.g. iPhone6 or MacBook Pro 2021]
-- OS: [e.g. iOS8.1]
-- Browser [e.g. stock browser, safari]
-- Version [e.g. 22]
+**Device (if mobile):**
+- Device: [e.g. iPhone 15, Pixel 9]
+- OS: [e.g. iOS 18, Android 15]
+- Browser: [e.g. Safari, Chrome]
+- Version: [e.g. 130]
 
 **Additional context**
 { Add any other context about the problem here. }

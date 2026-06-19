@@ -1,0 +1,35 @@
+name: Release Please
+run-name: release-please maintaining the release PR
+
+# Releases stay intentional: release-please maintains a rolling release PR from
+# conventional commits (feat -> minor, fix -> patch; pre-1.0 feat bumps minor;
+# chore/docs/ci produce no release). Merging that PR — a deliberate act — is
+# what creates the tag, GitHub release, and CHANGELOG entry. Nothing is bumped
+# automatically on a normal merge to main.
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # GH_WORKFLOW_PAT, not GITHUB_TOKEN: PRs opened by GITHUB_TOKEN never
+          # trigger CI, and branch protection requires those checks to pass
+          # before the release PR can merge. (Same PAT the claude-* workflows use.)
+          token: ${{ secrets.GH_WORKFLOW_PAT }}

@@ -11,9 +11,9 @@ this file with project-specific architecture notes.
 
 [[ project_description ]]
 
-Repo: [[ repo_url ]] — see [docs/index.md](docs/index.md) for the
-documentation map and [docs/architecture.md](docs/architecture.md) for the
-architecture.
+Repo: [[ repo_url ]] — see [docs/README.md](docs/README.md) for the
+documentation map, [docs/architecture.md](docs/architecture.md) for the
+architecture, and [DESIGN.md](DESIGN.md) for design/UX intent.
 
 ## Commands
 
@@ -35,7 +35,13 @@ task security    # gitleaks + dependency audit
   fix, perf, refactor, remove, revert, style, test).
 - Never bypass git hooks (`--no-verify` is forbidden); fix the underlying issue.
 - Work on a feature branch; direct commits to `main` are blocked.
+[% if use_release_please %]
+- Releases are intentional: release-please keeps a rolling release PR from
+  conventional commits; merging it cuts the tag/release. Nothing bumps on a
+  normal merge. `task release:*` remains as a manual override.
+[% else %]
 - Releases are manual (`task release:*`) — never trigger one automatically.
+[% endif %]
 
 ## Conventions
 

@@ -32,7 +32,23 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]
-    }
+    }[% if include_ansible %],
+    {
+      "customType": "regex",
+      "description": "Ansible: annotated container images in group_vars / role defaults / Jinja2 compose templates (invisible to the docker-compose manager)",
+      "managerFilePatterns": ["/^ansible/.*\\.ya?ml(\\.j2)?$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\n\\s*[\\w-]*image:\\s*\"[^\"]*:(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Ansible: annotated `*_version` vars (e.g. a pinned binary in role defaults)",
+      "managerFilePatterns": ["/^ansible/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*\\w+_version:\\s*\"(?<currentValue>[^\"]+)\""
+      ]
+    }[% endif %]
   ],
   "packageRules": [
     {

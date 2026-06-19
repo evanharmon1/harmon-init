@@ -1,16 +1,17 @@
-# [[ project_name ]] Documentation
+# Harmon Init Documentation
 
-[[ project_description ]]
+Copier project template that scaffolds repos with pre-configured DevOps tooling, CI/CD, linting, security checks, git hooks, and task runners
 
 ## Map
 
 | Area | Where |
 |---|---|
 | Architecture overview | [architecture.md](architecture.md) and [architecture/](architecture/) |
+| Design intent | [../DESIGN.md](../DESIGN.md) (AI-facing); design notes in [design/](design/) |
 | Decision records (ADRs) | [decisions/](decisions/) |
-| Design notes | [design/](design/) |
 | How-to guides | [guides/](guides/) |
-| Operational runbooks | [runbook/](runbook/) |
+| Operational runbooks | [runbooks/](runbooks/) |
+| Security strategy | [security.md](security.md) |
 | Branch protection setup | [branchProtection.md](branchProtection.md) |
 | Testing strategy | [testing.md](testing.md) |
 | Troubleshooting | [troubleshooting.md](troubleshooting.md) |
