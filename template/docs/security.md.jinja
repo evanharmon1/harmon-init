@@ -61,6 +61,22 @@ required checks actually run). Commits the App pushes are attributed to
 | Projects | Read and write (org) | project-automation + claude status sync |
 [% endif %]
 
+### Blast radius & key protection
+
+Installations are isolated: a token minted in a workflow is scoped to **one
+installation** (this repo's owner) and expires in ~1h, so a leaked *token*
+reaches only that org for an hour. The cross-org risk lives in the **App private
+key** — it can mint a token for *every* org the App is installed on. So:
+
+- **Install on selected repos**, not "All repositories", to bound what a key
+  compromise can touch in each org.
+- **Protect `CI_APP_PRIVATE_KEY`**: it lives only in Actions secrets. Never read
+  it from workflows that untrusted code can influence (fork `pull_request`,
+  `pull_request_target`, `workflow_run`) — the provided workflows gate on
+  sender / same-repo checks.
+- **Rotate the key** periodically; GitHub Apps allow multiple keys for
+  zero-downtime rotation.
+
 ## Token & secret inventory
 
 TODO: enumerate the tokens/secrets this repo depends on and where each lives:
