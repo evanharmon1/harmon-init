@@ -21,8 +21,9 @@ current — it is the reference for "where do secrets live and who can do what".
 ## Two identities: the bot vs the operator
 
 - **AI bot** (`[[ author_git_provider_username ]]-bot`) — runs in the primary
-  devcontainer with a scoped fine-grained PAT (Write, no admin). Cannot push to
-  or merge `main`.
+  devcontainer with a scoped fine-grained PAT (Write, no admin) for its in-container
+  git pushes. Cannot push to or merge `main`. (CI **workflows** authenticate
+  separately as the `[[ github_org ]]-ci` GitHub App — see below.)
 - **Operator** (you) — full access from the human `dev/` devcontainer or host.
 
 TODO: note the exact PAT scopes and any capabilities the bot is intentionally
@@ -58,7 +59,7 @@ never set permissions by hand.
    [`.github/create-github-app.html`](../.github/create-github-app.html) directly)
    and click *Create the `[[ github_org ]]-ci` app*. It POSTs the manifest to
    GitHub's app-manifest flow (org-owned for an org, account-owned for a personal
-   account). _Manual alternative:_ at **Settings → Developer settings → GitHub
+   account). *Manual alternative:* at **Settings → Developer settings → GitHub
    Apps → New GitHub App**, set the permissions from the table below by hand.
 2. On GitHub's pre-filled page, review and click **Create GitHub App**.
 3. **Generate a private key** (downloads a `.pem`) and note the **App ID**.
@@ -66,6 +67,14 @@ never set permissions by hand.
 5. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
    (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
    personal account.
+
+**Set the secrets by hand — don't script it.** Run the `gh variable set` /
+`gh secret set` commands (or use the GitHub UI) deliberately; **key rotation is
+manual too.** Do **not** automate org `selected`-visibility secret-setting: the
+bulk `--repos` form *replaces* the secret's value and its repo allow-list, so
+running it from a second repo silently evicts the first. (To add a repo to an
+existing org secret non-destructively, grant it in the GitHub UI or
+`PUT /orgs/{org}/actions/secrets/{name}/repositories/{repo_id}`.)
 
 > **Manifest-flow note:** the launcher uses GitHub's app-manifest flow, which
 > after creation redirects (to your Apps page) with a short-lived (~1h),

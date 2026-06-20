@@ -54,7 +54,7 @@ Replace `@[[ author_git_provider_username ]]` with the GitHub username of the hu
 ### Bot Account PAT Permissions
 
 > This covers the **devcontainer agent's** push token (Claude Code running in the
-> container). CI *workflows* (release-please, claude-*, project-automation)
+> container). CI _workflows_ (release-please, claude-*, project-automation)
 > authenticate separately as the CI **GitHub App** — see
 > [security.md](security.md) for that App and its permissions. The ruleset below
 > protects `main` from every actor (App, bot PAT, or human) equally.
@@ -232,6 +232,6 @@ If repos move to the `ponderous` organization in the future, consider creating a
 
 ## Future Considerations
 
-- **GitHub App migration**: If the team grows or token rotation becomes burdensome, replacing the machine user PAT with a GitHub App provides automatic 1-hour token expiry and eliminates the seat cost on paid plans. The ruleset works identically with GitHub App tokens.
+- **GitHub App for the devcontainer agent**: CI **workflows** already authenticate as the `[[ github_org ]]-ci` GitHub App (short-lived 1h tokens, no seat cost — see [security.md](security.md)). The remaining machine-user PAT documented above is the **devcontainer agent's** push token; it could likewise move to an App if rotation becomes burdensome. The ruleset protects `main` identically for App tokens, the bot PAT, or any actor.
 - **Terraform management**: The GitHub Terraform provider supports `github_repository_ruleset` resources. Codifying the ruleset in Terraform ensures consistency as repos multiply.
 - **Additional status checks**: As the CI pipeline matures, add checks for E2E tests (Playwright), accessibility (axe-core), and performance (Lighthouse CI) to the required list.

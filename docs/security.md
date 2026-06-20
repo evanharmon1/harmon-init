@@ -20,8 +20,9 @@ current — it is the reference for "where do secrets live and who can do what".
 ## Two identities: the bot vs the operator
 
 - **AI bot** (`evanharmon1-bot`) — runs in the primary
-  devcontainer with a scoped fine-grained PAT (Write, no admin). Cannot push to
-  or merge `main`.
+  devcontainer with a scoped fine-grained PAT (Write, no admin) for its in-container
+  git pushes. Cannot push to or merge `main`. (CI **workflows** authenticate
+  separately as the `evanharmon1-ci` GitHub App — see below.)
 - **Operator** (you) — full access from the human `dev/` devcontainer or host.
 
 TODO: note the exact PAT scopes and any capabilities the bot is intentionally
@@ -64,6 +65,14 @@ never set permissions by hand.
 5. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
    (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
    personal account.
+
+**Set the secrets by hand — don't script it.** Run the `gh variable set` /
+`gh secret set` commands (or use the GitHub UI) deliberately; **key rotation is
+manual too.** Do **not** automate org `selected`-visibility secret-setting: the
+bulk `--repos` form *replaces* the secret's value and its repo allow-list, so
+running it from a second repo silently evicts the first. (To add a repo to an
+existing org secret non-destructively, grant it in the GitHub UI or
+`PUT /orgs/{org}/actions/secrets/{name}/repositories/{repo_id}`.)
 
 > **Manifest-flow note:** the launcher uses GitHub's app-manifest flow, which
 > after creation redirects (to your Apps page) with a short-lived (~1h),
