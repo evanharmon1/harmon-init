@@ -52,12 +52,12 @@ The exact App config — name, the permissions below, webhook off, and
 [`.github/github-app-manifest.json`](../.github/github-app-manifest.json), so you
 never set permissions by hand.
 
-1. **Open [`.github/create-github-app.html`](../.github/create-github-app.html)**
-   in a browser and click *Create the `evanharmon1-ci` app*. It POSTs the
-   manifest to GitHub's app-manifest flow (org-owned for an org, account-owned
-   for a personal account). _Manual alternative:_ at **Settings → Developer
-   settings → GitHub Apps → New GitHub App**, set the permissions from the table
-   below by hand.
+1. Run **`task setup:github-app`** (or open
+   [`.github/create-github-app.html`](../.github/create-github-app.html) directly)
+   and click *Create the `evanharmon1-ci` app*. It POSTs the manifest to
+   GitHub's app-manifest flow (org-owned for an org, account-owned for a personal
+   account). *Manual alternative:* at **Settings → Developer settings → GitHub
+   Apps → New GitHub App**, set the permissions from the table below by hand.
 2. On GitHub's pre-filled page, review and click **Create GitHub App**.
 3. **Generate a private key** (downloads a `.pem`) and note the **App ID**.
 4. **Install App** → on this org, **Only select repositories** (not "All").

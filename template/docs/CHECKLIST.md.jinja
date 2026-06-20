@@ -25,8 +25,8 @@ that don't apply, then keep this file as a record of what was configured.
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
       `SNYK_TOKEN` (snyk tasks)
 - [ ] CI GitHub App `[[ github_org ]]-ci`: create it for this org (one App per
-      org) by opening `.github/create-github-app.html`, or reuse the org's
-      existing one; install it on this repo, then set `CI_APP_ID` (Actions
+      org) with `task setup:github-app`, or reuse the org's existing one;
+      install it on this repo, then set `CI_APP_ID` (Actions
       **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
       an org, per-repo for a personal account. Drives release-please, the
       claude-* workflows, and project-automation. See docs/security.md.

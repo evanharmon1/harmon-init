@@ -388,6 +388,22 @@ tasks:
     cmds:
       - lefthook install
 
+  setup:github-app:
+    desc: Open the browser flow to create the [[ github_org ]]-ci CI GitHub App
+    cmds:
+      - |
+        f=".github/create-github-app.html"
+        if [ ! -f "$f" ]; then
+          echo "Missing $f" >&2
+          exit 1
+        fi
+        echo "Opening the [[ github_org ]]-ci app creation flow in your browser..."
+        case "$(uname -s)" in
+        Darwin) open "$f" ;;
+        *) xdg-open "$f" >/dev/null 2>&1 || echo "Open $f in a browser to continue." ;;
+        esac
+      - 'echo "Next: create the app, generate a private key (.pem), install it, then set CI_APP_ID + CI_APP_PRIVATE_KEY (see docs/security.md)."'
+
   # ── Release ────────────────────────────────────────────────────
 [% if use_release_please %]
   # Releases are intentional via release-please (.github/workflows/release.yml):
