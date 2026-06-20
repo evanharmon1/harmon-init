@@ -1,8 +1,12 @@
 # Runbooks
 
-Step-by-step procedures for **operating the running system** — deploys, secret
-rotations, recovery, and incident response. Reach for these when performing or
-recovering from a production operation (on a schedule or during an incident).
-(For how to build or contribute to the project, see [guides/](../guides/).)
+**Bucket — "how do I respond when prod breaks?" (crisis).** Named-incident,
+step-by-step procedures read *under pressure*. The calm counterpart is
+[guides/](../guides/), read in advance.
 
-TODO: add a runbook per recurring operational procedure.
+A runbook is one specific operational procedure — e.g. "rotate the API key",
+"restore from backup", "roll back a bad deploy" — written so someone can follow
+it mid-incident without thinking. **Add one when** a real production procedure
+exists; this folder stays a stub until there's something in prod to operate.
+
+TODO: add a runbook per recurring operational / incident procedure.

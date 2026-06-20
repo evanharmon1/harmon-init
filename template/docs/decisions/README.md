@@ -1,6 +1,15 @@
-# Architecture Decision Records
+# Decisions (ADRs)
 
-Significant, hard-to-reverse, or surprising decisions are recorded here as ADRs —
-one per file, numbered sequentially (`0001-…`, `0002-…`). Start with
-[0001-record-architecture-decisions.md](0001-record-architecture-decisions.md)
-for the process, and copy it as the template for new ADRs.
+**Bucket — "why was this choice made?"** Durable, append-only, backward-looking
+records. This is the layer that stops an agent from "helpfully" undoing a
+deliberate choice — and where **deviations from best practice** are justified.
+
+Each record captures one choice: its context, the decision, and the **explicit
+"not" reasoning** (what was rejected and why). **Supersede, don't edit:** to
+change a decision, add a new ADR that supersedes the old one and mark the old
+one's status.
+
+- One ADR per file, numbered sequentially (`0001-…`, `0002-…`).
+- Start with
+  [0001-record-architecture-decisions.md](0001-record-architecture-decisions.md)
+  — the meta-ADR for the process; copy it as the template for new ADRs.

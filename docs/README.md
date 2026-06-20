@@ -2,23 +2,38 @@
 
 Copier project template that scaffolds repos with pre-configured DevOps tooling, CI/CD, linting, security checks, git hooks, and task runners
 
-## Map
+This is the **hub** — read it when you're unsure where something belongs. It
+**routes; it does not hold facts.** Every doc has a *type* and lives in a
+*bucket*.
+
+## The four buckets
+
+| Bucket | Answers | Holds |
+|---|---|---|
+| [product/](product/) | **Why does it exist / who is it for?** | business & problem-space knowledge — the non-code, non-how layer |
+| [architecture/](architecture/) | **How is it built / secured / governed / tested?** | the durable narrative of how the system *is*; home for concern hubs |
+| [decisions/](decisions/) | **Why was this choice made?** | append-only, backward-looking records — they stop agents from "helpfully" undoing deliberate choices |
+| [guides/](guides/) + [runbooks/](runbooks/) | **How do I do X?** | procedures — `guides/` are calm (read in advance), `runbooks/` are crisis (read under pressure) |
+
+## Doc types
+
+- **Hub** — every `README.md`. Routes to where facts live; never duplicates them.
+- **Typed** — holds one kind of content (a vision, an ADR, a guide…).
+- **Flat lookup** (root) — [conventions.md](conventions.md), [glossary.md](glossary.md): grep them, don't read them.
+- **Procedural, run-once** — [CHECKLIST.md](CHECKLIST.md): tick through once when the repo is created, then ignore.
+
+## Where things are
 
 | Area | Where |
 |---|---|
-| Conventions | [conventions.md](conventions.md) |
-| Architecture overview | [architecture/](architecture/) |
-| Design intent | [../DESIGN.md](../DESIGN.md) (AI-facing) |
-| Decision records (ADRs) | [decisions/](decisions/) |
-| How-to guides | [guides/](guides/) |
-| Operational runbooks | [runbooks/](runbooks/) |
-| Security strategy | [architecture/security.md](architecture/security.md) |
-| Branch protection setup | [architecture/branch-protection.md](architecture/branch-protection.md) |
-| Tests | [architecture/tests.md](architecture/tests.md) |
-| Troubleshooting | [guides/troubleshooting.md](guides/troubleshooting.md) |
-| Glossary | [glossary.md](glossary.md) |
-| Product (vision, roadmap, domain) | [product/](product/) |
-| Onboarding | [guides/onboarding.md](guides/onboarding.md) |
-| Post-generation checklist | [CHECKLIST.md](CHECKLIST.md) |
+| Conventions (enforced rules) | [conventions.md](conventions.md) |
+| Glossary (term → definition) | [glossary.md](glossary.md) |
+| Product — vision, roadmap, domain | [product/](product/) |
+| Architecture (concern hubs) | [architecture/](architecture/) — ci-cd, security, branch-protection, tests |
+| Decisions (ADRs) | [decisions/](decisions/) |
+| Guides (calm how-tos) | [guides/](guides/) — onboarding, deploying, troubleshooting |
+| Runbooks (crisis procedures) | [runbooks/](runbooks/) |
+| Post-generation setup | [CHECKLIST.md](CHECKLIST.md) |
 
-Specs live in [`specs/`](../specs/) and tests in [`tests/`](../tests/) at the repo root.
+Design intent is at [`../DESIGN.md`](../DESIGN.md); specs (WHAT to build) in
+[`../specs/`](../specs/) and tests in [`../tests/`](../tests/) — all at the repo root.

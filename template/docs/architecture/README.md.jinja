@@ -1,5 +1,13 @@
 # Architecture
 
+**Bucket — "how is it built / secured / governed / tested?"** The durable
+narrative of how the system *is*, and the home for **concern hubs**. This README
+is the bucket hub plus the high-level overview.
+
+**Route, don't duplicate:** the concern hubs below synthesize a picture no single
+config file shows, then point to [decisions/](../decisions/) for *why* and
+[guides/](../guides/) for *how* — they never restate that content.
+
 TODO: Describe the high-level architecture of [[ project_name ]].
 
 ## Overview
@@ -21,13 +29,15 @@ TODO: List the major components and what each is responsible for.
 
 TODO: Describe how data moves through the system.
 
-Deeper architecture documents (diagrams, component deep-dives, C4 levels) live
-alongside this file in `docs/architecture/`:
+## Concern hubs
 
-- [ci-cd.md](ci-cd.md) — how the CI/CD pipeline is wired.
-- [security.md](security.md) — identity, permissions, and secret strategy.
-- [branch-protection.md](branch-protection.md) — the `main` ruleset + bot model.
-- [tests.md](tests.md) — testing strategy.
+Each synthesizes what's scattered across config, settings, and state, then routes
+onward (diagrams and component deep-dives also live here):
+
+- [ci-cd.md](ci-cd.md) — the pipeline across YAML, runners, and deploy platforms; routes to the release decision and the deploy guide.
+- [security.md](security.md) — the posture across config, secret state, and GitHub settings; holds the threat-model framing, not the config.
+- [branch-protection.md](branch-protection.md) — in-repo (CODEOWNERS) + out-of-repo (ruleset, Actions toggles, bot model) stitched into one picture (grep can't see GitHub settings).
+- [tests.md](tests.md) — the testing strategy holistically (shape, layers, what's tested where); routes to the testing decision and the guides.
 [% if project_type in ['web-astro', 'web-app'] %]
-- [design-language.md](design-language.md) — the visual + interaction system.
+- [design-language.md](design-language.md) — the holistic visual/UX/brand language; philosophy here, with pointers to the live tokens, [DESIGN.md](../../DESIGN.md), and design ADRs.
 [% endif %]
