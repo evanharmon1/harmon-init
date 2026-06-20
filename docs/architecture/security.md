@@ -15,7 +15,7 @@ current — it is the reference for "where do secrets live and who can do what".
   `op inject`); CI reads from GitHub Actions secrets. TODO: list the 1Password
   vault/items this project uses.
 - **Auditable changes.** `main` is protected; changes land via reviewed PRs
-  (see [branchProtection.md](branchProtection.md)).
+  (see [branch-protection.md](branch-protection.md)).
 
 ## Two identities: the bot vs the operator
 

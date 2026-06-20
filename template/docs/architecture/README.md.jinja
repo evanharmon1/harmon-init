@@ -26,5 +26,5 @@ alongside this file in `docs/architecture/`:
 
 - [ci-cd.md](ci-cd.md) — how the CI/CD pipeline is wired.
 - [security.md](security.md) — identity, permissions, and secret strategy.
-- [branchProtection.md](branchProtection.md) — the `main` ruleset + bot model.
+- [branch-protection.md](branch-protection.md) — the `main` ruleset + bot model.
 - [tests.md](tests.md) — testing strategy.

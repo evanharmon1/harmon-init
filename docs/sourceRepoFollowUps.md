@@ -13,7 +13,7 @@ source of truth going forward), not by hand-editing them ad hoc.
    VS Code reads AGENTS.md only behind an experimental flag). Remember to add the
    new symlink and flip the prettier/lefthook symlink excludes accordingly.
 2. **docs layout drift** — `docs/specs/` should move to root `specs/`; ensure
-   `design/`, `guides/`, `README.md`, `architecture/tests.md`, `glossary.md`,
+   `guides/`, `README.md`, `architecture/tests.md`, `glossary.md`,
    `product/roadmap.md`, `guides/onboarding.md` exist; `tests/` belongs at repo
    root. (The runbooks dir is
    now standardized as `runbooks/` (plural) — matches harmon-infra.)

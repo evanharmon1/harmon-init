@@ -70,10 +70,14 @@ quick-reference; it points here.
 - **`AGENTS.md` is the single source of truth** for AI guidance; `CLAUDE.md`,
   `GEMINI.md`, and `.github/copilot-instructions.md` are **symlinks** to it —
   edit only `AGENTS.md`.
+- **Doc filenames are kebab-case** (`branch-protection.md`, `ci-cd.md`). The
+  conventional uppercase project files keep their names: `README.md`,
+  `AGENTS.md`, `DESIGN.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `CODE_OF_CONDUCT.md`, `LICENSE`, `CHECKLIST.md`.
 - Documentation layering: `docs/product/` (why/where) · `specs/` (what to build)
   · `docs/architecture/` (how) · `docs/decisions/` (ADRs, numbered `0001-`) ·
-  `docs/design/` · `docs/guides/` (build it) · `docs/runbooks/` (operate it).
-  Folder landing pages are `README.md`.
+  `docs/guides/` (build it) · `docs/runbooks/` (operate it). Folder landing
+  pages are `README.md`.
 
 ## Releases
 

@@ -10,7 +10,7 @@ that don't apply, then keep this file as a record of what was configured.
 
 ## 2. GitHub repo settings
 
-- [ ] Import the branch ruleset (see [architecture/branchProtection.md](architecture/branchProtection.md)):
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)):
 
   ```bash
   gh api "repos/evanharmon1/harmon-init/rulesets" --method POST \

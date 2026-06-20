@@ -8,14 +8,14 @@ Copier project template that scaffolds repos with pre-configured DevOps tooling,
 |---|---|
 | Conventions | [conventions.md](conventions.md) |
 | Architecture overview | [architecture/](architecture/) |
-| Design intent | [../DESIGN.md](../DESIGN.md) (AI-facing); design notes in [design/](design/) |
+| Design intent | [../DESIGN.md](../DESIGN.md) (AI-facing) |
 | Decision records (ADRs) | [decisions/](decisions/) |
 | How-to guides | [guides/](guides/) |
 | Operational runbooks | [runbooks/](runbooks/) |
 | Security strategy | [architecture/security.md](architecture/security.md) |
-| Branch protection setup | [architecture/branchProtection.md](architecture/branchProtection.md) |
+| Branch protection setup | [architecture/branch-protection.md](architecture/branch-protection.md) |
 | Tests | [architecture/tests.md](architecture/tests.md) |
-| Troubleshooting | [troubleshooting.md](troubleshooting.md) |
+| Troubleshooting | [guides/troubleshooting.md](guides/troubleshooting.md) |
 | Glossary | [glossary.md](glossary.md) |
 | Product (vision, roadmap, domain) | [product/](product/) |
 | Onboarding | [guides/onboarding.md](guides/onboarding.md) |
