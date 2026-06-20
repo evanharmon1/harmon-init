@@ -46,6 +46,10 @@ task security    # gitleaks + dependency audit
 
 ## Conventions
 
+Full reference: [docs/conventions.md](docs/conventions.md). Highlights:
+
+- Conventional Commits; `group:action` Taskfile naming (e.g. `lint:shell`, not
+  `shell:lint`); pin actions by SHA + `# vX.Y.Z`.
 - Git hooks are managed by lefthook (`lefthook.yml`) and delegate to Taskfile
   targets — don't duplicate logic in hooks or workflows.
 - Indentation: 2 spaces default, 4 for Python/Terraform/Shell (`.editorconfig`).
