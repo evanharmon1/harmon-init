@@ -1,8 +1,8 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents (Claude Code, Gemini CLI, Codex, etc.)
-working in this repository. `CLAUDE.md` and `GEMINI.md` are symlinks to this file —
-edit only `AGENTS.md`.
+This file provides guidance to AI coding agents (Claude Code, Gemini CLI, GitHub
+Copilot, Codex, etc.) working in this repository. `CLAUDE.md`, `GEMINI.md`, and
+`.github/copilot-instructions.md` are symlinks to this file — edit only `AGENTS.md`.
 
 ## Project Overview
 
