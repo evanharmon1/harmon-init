@@ -55,7 +55,7 @@ never set permissions by hand.
 1. **Open [`.github/create-github-app.html`](../.github/create-github-app.html)**
    in a browser and click *Create the `evanharmon1-ci` app*. It POSTs the
    manifest to GitHub's app-manifest flow (org-owned for an org, account-owned
-   for a personal account). *Manual alternative:* at **Settings → Developer
+   for a personal account). _Manual alternative:_ at **Settings → Developer
    settings → GitHub Apps → New GitHub App**, set the permissions from the table
    below by hand.
 2. On GitHub's pre-filled page, review and click **Create GitHub App**.
@@ -64,6 +64,14 @@ never set permissions by hand.
 5. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
    (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
    personal account.
+
+> **Manifest-flow note:** the launcher uses GitHub's app-manifest flow, which
+> after creation redirects (to your Apps page) with a short-lived (~1h),
+> single-use `?code=` that *can* be exchanged for an auto-generated App key. It
+> stays on `github.com` (never sent to a third party) and expires unused — low
+> risk when you're creating your own app on your own machine. For the strictest
+> posture, use the **manual** path above (no `code` is generated), and/or rotate
+> the App's keys after setup. Never paste a `?code=` URL anywhere.
 
 **Why an App, not a PAT:** tokens are short-lived (nothing to rotate yearly), the
 App consumes no user seat, permissions are granular, and — unlike the built-in

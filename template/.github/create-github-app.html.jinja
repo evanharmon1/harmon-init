@@ -21,7 +21,11 @@
       </button>
     </p>
 
-    <!-- Keep this manifest identical to .github/github-app-manifest.json -->
+    <!-- Keep this manifest identical to .github/github-app-manifest.json.
+         redirect_url is required by GitHub's manifest flow and points at your
+         own Apps page (same-origin github.com). After creation GitHub appends a
+         short-lived single-use ?code=; it stays on github.com and expires
+         unused. See docs/security.md "Manifest-flow note". -->
     <script id="manifest" type="application/json">
       {
         "name": "[[ github_org ]]-ci",

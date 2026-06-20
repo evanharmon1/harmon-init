@@ -67,6 +67,14 @@ never set permissions by hand.
    (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
    personal account.
 
+> **Manifest-flow note:** the launcher uses GitHub's app-manifest flow, which
+> after creation redirects (to your Apps page) with a short-lived (~1h),
+> single-use `?code=` that *can* be exchanged for an auto-generated App key. It
+> stays on `github.com` (never sent to a third party) and expires unused — low
+> risk when you're creating your own app on your own machine. For the strictest
+> posture, use the **manual** path above (no `code` is generated), and/or rotate
+> the App's keys after setup. Never paste a `?code=` URL anywhere.
+
 **Why an App, not a PAT:** tokens are short-lived (nothing to rotate yearly), the
 App consumes no user seat, permissions are granular, and — unlike the built-in
 `GITHUB_TOKEN` — App-token-authored PRs/pushes DO trigger CI (so a release PR's
