@@ -24,4 +24,4 @@ runbook in [../runbooks/](../runbooks/).
 ## Configuration & secrets
 
 TODO: deploy-time configuration and where secrets come from (1Password / CI
-secrets — see [../security.md](../security.md)).
+secrets — see [../architecture/security.md](../architecture/security.md)).

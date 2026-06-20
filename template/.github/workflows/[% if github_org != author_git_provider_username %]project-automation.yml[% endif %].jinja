@@ -2,7 +2,7 @@ name: Project Automation
 # Syncs the org-level GitHub Project V2 "Status" field from PR/CI events.
 # Requires: an org Project (number 1) with a Status field, and the CI GitHub App
 # (CI_APP_ID variable + CI_APP_PRIVATE_KEY secret) installed on the org with
-# Projects: Read and write (see docs/CHECKLIST.md and docs/security.md).
+# Projects: Read and write (see docs/CHECKLIST.md and docs/architecture/security.md).
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]

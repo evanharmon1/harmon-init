@@ -277,7 +277,7 @@ tasks:
         Darwin) open "$f" ;;
         *) xdg-open "$f" >/dev/null 2>&1 || echo "Open $f in a browser to continue." ;;
         esac
-      - 'echo "Next: create the app, generate a private key (.pem), install it, then set CI_APP_ID + CI_APP_PRIVATE_KEY (see docs/security.md)."'
+      - 'echo "Next: create the app, generate a private key (.pem), install it, then set CI_APP_ID + CI_APP_PRIVATE_KEY (see docs/architecture/security.md)."'
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.

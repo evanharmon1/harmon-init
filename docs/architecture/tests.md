@@ -1,18 +1,13 @@
-# Testing
+# Tests
 
-How testing works in [[ project_name ]].
+How testing works in Harmon Init.
 
 ## Layers
 
 | Layer | Tool | Command |
 |---|---|---|
-| Lint / static analysis | shellcheck, yamllint, markdownlint, actionlint[% if use_node %], eslint, prettier, tsc/astro check[% endif %][% if use_python %], black[% endif %] | `task check` |
-[% if use_node %]
-| Unit / component tests | vitest | `task test` |
-| End-to-end | Playwright | `task test:e2e` |
-[% else %]
+| Lint / static analysis | shellcheck, yamllint, markdownlint, actionlint | `task check` |
 | Tests | TODO: pick a test runner | `task test` |
-[% endif %]
 | Secrets | gitleaks | `task security:secrets` |
 
 ## Conventions

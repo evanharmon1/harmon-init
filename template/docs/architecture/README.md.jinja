@@ -25,3 +25,6 @@ Deeper architecture documents (diagrams, component deep-dives, C4 levels) live
 alongside this file in `docs/architecture/`:
 
 - [ci-cd.md](ci-cd.md) — how the CI/CD pipeline is wired.
+- [security.md](security.md) — identity, permissions, and secret strategy.
+- [branchProtection.md](branchProtection.md) — the `main` ruleset + bot model.
+- [tests.md](tests.md) — testing strategy.

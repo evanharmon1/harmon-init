@@ -2,7 +2,7 @@ name: Claude Review
 run-name: ${{ github.actor }} is running Claude Review
 # Requires: CLAUDE_CODE_OAUTH_TOKEN secret, plus the CI GitHub App
 # (CI_APP_ID variable + CI_APP_PRIVATE_KEY secret). See docs/CHECKLIST.md
-# and docs/security.md.
+# and docs/architecture/security.md.
 on:
   issue_comment:
     types: [created]

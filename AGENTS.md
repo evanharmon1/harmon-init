@@ -104,7 +104,7 @@ task release:patch   # or release:minor / release:major
 - `.github/workflows/claude-{plan,implement,review}.yml` — Claude Code GitHub
   Actions. They (and `release.yml`) authenticate as the CI **GitHub App**
   (`CI_APP_ID` variable + `CI_APP_PRIVATE_KEY` secret) and need the
-  `CLAUDE_CODE_OAUTH_TOKEN` secret. See `docs/security.md`.
+  `CLAUDE_CODE_OAUTH_TOKEN` secret. See `docs/architecture/security.md`.
 - Dependency updates via Renovate (`renovate.json`); reviews assisted by CodeRabbit
   (`.coderabbit.yaml`).
 - `release.yml` runs release-please: releases stay intentional (merge the rolling

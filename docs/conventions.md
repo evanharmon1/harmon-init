@@ -57,7 +57,7 @@ quick-reference; it points here.
   Renovate keeps them current.
 - **Least-privilege `permissions:`** per job; never log secrets.
 - CI authenticates as the **`evanharmon1-ci` GitHub App** (short-lived
-  tokens), not a PAT — see [security.md](security.md).
+  tokens), not a PAT — see [architecture/security.md](architecture/security.md).
 
 ## Secrets
 

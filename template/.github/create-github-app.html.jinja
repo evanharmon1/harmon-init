@@ -13,7 +13,7 @@
       <code>.github/github-app-manifest.json</code> via GitHub's app-manifest flow).
       Review it, click <strong>Create GitHub App</strong>, then generate a private key
       and install the app on selected repositories. Full steps are in
-      <code>docs/security.md</code>.
+      <code>docs/architecture/security.md</code>.
     </p>
     <p>
       <button id="create" style="font-size: 1rem; padding: 0.6rem 1rem; cursor: pointer">
@@ -25,11 +25,11 @@
          redirect_url is required by GitHub's manifest flow and points at your
          own Apps page (same-origin github.com). After creation GitHub appends a
          short-lived single-use ?code=; it stays on github.com and expires
-         unused. See docs/security.md "Manifest-flow note". -->
+         unused. See docs/architecture/security.md "Manifest-flow note". -->
     <script id="manifest" type="application/json">
       {
         "name": "[[ github_org ]]-ci",
-        "description": "CI automation app for [[ github_org ]]: mints short-lived tokens for release-please, Claude Code, and project automation. See docs/security.md.",
+        "description": "CI automation app for [[ github_org ]]: mints short-lived tokens for release-please, Claude Code, and project automation. See docs/architecture/security.md.",
         "url": "[[ repo_url ]]",
         "redirect_url": "[% if github_org != author_git_provider_username %]https://github.com/organizations/[[ github_org ]]/settings/apps[% else %]https://github.com/settings/apps[% endif %]",
         "hook_attributes": { "url": "[[ repo_url ]]", "active": false },

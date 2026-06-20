@@ -1,6 +1,6 @@
 # Security, Permissions & Secret Strategy
 
-How **[[ project_name ]]** handles identity, permissions, and secrets. Keep this
+How **Harmon Init** handles identity, permissions, and secrets. Keep this
 current — it is the reference for "where do secrets live and who can do what".
 
 > TODO: fill in the project-specific details below as the threat model firms up.
@@ -16,27 +16,25 @@ current — it is the reference for "where do secrets live and who can do what".
   vault/items this project uses.
 - **Auditable changes.** `main` is protected; changes land via reviewed PRs
   (see [branchProtection.md](branchProtection.md)).
-[% if devcontainer %]
 
 ## Two identities: the bot vs the operator
 
-- **AI bot** (`[[ author_git_provider_username ]]-bot`) — runs in the primary
+- **AI bot** (`evanharmon1-bot`) — runs in the primary
   devcontainer with a scoped fine-grained PAT (Write, no admin) for its in-container
   git pushes. Cannot push to or merge `main`. (CI **workflows** authenticate
-  separately as the `[[ github_org ]]-ci` GitHub App — see below.)
+  separately as the `evanharmon1-ci` GitHub App — see below.)
 - **Operator** (you) — full access from the human `dev/` devcontainer or host.
 
 TODO: note the exact PAT scopes and any capabilities the bot is intentionally
 denied (e.g. no Tailscale, no production credentials).
-[% endif %]
 
 ## CI automation identity (GitHub App)
 
-CI workflows that act on the repo as a bot — [% if use_release_please %]release-please, [% endif %]the
-`claude-*` workflows[% if github_org != author_git_provider_username %], and project-automation[% endif %] — authenticate as a
+CI workflows that act on the repo as a bot — release-please, the
+`claude-*` workflows — authenticate as a
 **GitHub App dedicated to this owner**, not a personal access token. **Each
 GitHub org (and personal account) gets its own App**, named **`<owner>-ci`** —
-for this repo, **`[[ github_org ]]-ci`**. One App per org keeps a leaked key
+for this repo, **`evanharmon1-ci`**. One App per org keeps a leaked key
 contained to a single org (no cross-org reach).
 
 Each job mints a short-lived (1h) installation token at runtime via
@@ -48,16 +46,16 @@ Each job mints a short-lived (1h) installation token at runtime via
 Set both once as **org-level** Actions variable + secret (every repo in the org
 inherits them); for a personal-account repo, set them per-repo.
 
-### Creating the `[[ github_org ]]-ci` App (once per org)
+### Creating the `evanharmon1-ci` App (once per org)
 
 The exact App config — name, the permissions below, webhook off, and
 "Only on this account" — is checked in as
-[`.github/github-app-manifest.json`](../.github/github-app-manifest.json), so you
-never set permissions by hand.
+[`.github/github-app-manifest.json`](../../.github/github-app-manifest.json), so
+you never set permissions by hand.
 
 1. Run **`task setup:github-app`** (or open
-   [`.github/create-github-app.html`](../.github/create-github-app.html) directly)
-   and click *Create the `[[ github_org ]]-ci` app*. It POSTs the manifest to
+   [`.github/create-github-app.html`](../../.github/create-github-app.html) directly)
+   and click *Create the `evanharmon1-ci` app*. It POSTs the manifest to
    GitHub's app-manifest flow (org-owned for an org, account-owned for a personal
    account). *Manual alternative:* at **Settings → Developer settings → GitHub
    Apps → New GitHub App**, set the permissions from the table below by hand.
@@ -99,11 +97,6 @@ required checks actually run). Commits the App pushes are attributed to
 | Issues | Read and write | claude comments/labels/updates issues |
 | Workflows | Read and write | claude may edit files under `.github/workflows/` |
 | Metadata | Read-only | required baseline |
-[% if github_org != author_git_provider_username %]
-| Projects | Read and write (org) | project-automation + claude status sync |
-| Members | Read-only (org) | claude-review verifies the sender is an org member |
-| Actions | Read-only | project-automation reads CI (Build & Validate) run results |
-[% endif %]
 
 ### Blast radius & key protection
 
@@ -127,24 +120,10 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 
 | Secret / variable | Used by | Stored in | Rotation |
 |---|---|---|---|
-| `CI_APP_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | [% if use_release_please %]release-please, [% endif %]claude-*[% if github_org != author_git_provider_username %], project-automation[% endif %] | repo or org Actions variable + secret | rotate App key per policy |
+| `CI_APP_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-* | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
 | `SNYK_TOKEN` | `task security:sast`/`sca` | repo Actions secret | TODO |
 | TODO | TODO | TODO | TODO |
-[% if include_terraform or include_ansible %]
-
-## Infrastructure secrets
-
-- **Provider tokens** are sensitive variables — never hardcoded.
-[% if include_terraform %]
-  Terraform: mark them `sensitive`; supply via `tfvars.env` (gitignored) or
-  1Password; use `lifecycle.ignore_changes` for mutable fields.
-[% endif %]
-[% if include_ansible %]
-  Ansible: no plaintext credentials in playbooks/inventory; use env vars or
-  1Password-provisioned secrets (and Ansible Vault where appropriate).
-[% endif %]
-[% endif %]
 
 ## Rotation & incident notes
 

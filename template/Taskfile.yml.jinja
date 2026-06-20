@@ -277,10 +277,10 @@ tasks:
         if [ -f vitest.config.ts ] || [ -f vitest.config.mts ] || [ -f vitest.config.js ]; then
           npx vitest run
         else
-          echo "TODO: wire tests — scaffold the framework first (see docs/CHECKLIST.md and docs/testing.md)"
+          echo "TODO: wire tests — scaffold the framework first (see docs/CHECKLIST.md and docs/architecture/tests.md)"
         fi
 [% else %]
-      - 'echo "TODO: wire tests for this project (see docs/testing.md); test files live in tests/"'
+      - 'echo "TODO: wire tests for this project (see docs/architecture/tests.md); test files live in tests/"'
 [% endif %]
 [% if devcontainer %]
 
@@ -402,7 +402,7 @@ tasks:
         Darwin) open "$f" ;;
         *) xdg-open "$f" >/dev/null 2>&1 || echo "Open $f in a browser to continue." ;;
         esac
-      - 'echo "Next: create the app, generate a private key (.pem), install it, then set CI_APP_ID + CI_APP_PRIVATE_KEY (see docs/security.md)."'
+      - 'echo "Next: create the app, generate a private key (.pem), install it, then set CI_APP_ID + CI_APP_PRIVATE_KEY (see docs/architecture/security.md)."'
 
   # ── Release ────────────────────────────────────────────────────
 [% if use_release_please %]

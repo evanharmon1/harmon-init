@@ -106,14 +106,14 @@ See [DESIGN.md](DESIGN.md) for visual/UX direction.
 | `task dev` | Dev server with hot reload |
 | `task build` | Production build |
 [% endif %]
-| `task test` | Run tests (see [docs/testing.md](docs/testing.md)) |
+| `task test` | Run tests (see [docs/architecture/tests.md](docs/architecture/tests.md)) |
 | `task security` | gitleaks + dependency audit |
 | `task release:patch` | Tag + GitHub release (also `:minor` / `:major`) |
 | `task status` | Project status dashboard |
 
 ## Testing
 
-See [docs/testing.md](docs/testing.md). Tests live in `tests/`; CI runs the
+See [docs/architecture/tests.md](docs/architecture/tests.md). Tests live in `tests/`; CI runs the
 same `task` targets as local hooks.
 
 ## CI/CD
@@ -134,7 +134,7 @@ same `task` targets as local hooks.
 
 Branch protection: `main` requires a PR with code-owner approval and the
 `verify` + `security` checks (importable ruleset in `.github/`; see
-[docs/branchProtection.md](docs/branchProtection.md)).
+[docs/architecture/branchProtection.md](docs/architecture/branchProtection.md)).
 [% if use_release_please %]
 **Releases are intentional** — release-please keeps a rolling release PR from
 conventional commits; merging it cuts the tag, GitHub release, and CHANGELOG.

@@ -21,7 +21,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 ## Authentication
 
 CI workflows authenticate as the **`evanharmon1-ci` GitHub App** (short-lived
-tokens minted at runtime), not a PAT — see [../security.md](../security.md).
+tokens minted at runtime), not a PAT — see [security.md](security.md).
 Third-party actions are pinned by commit SHA and bumped by Renovate.
 
 ## Releases

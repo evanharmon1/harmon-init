@@ -13,7 +13,7 @@ source of truth going forward), not by hand-editing them ad hoc.
    VS Code reads AGENTS.md only behind an experimental flag). Remember to add the
    new symlink and flip the prettier/lefthook symlink excludes accordingly.
 2. **docs layout drift** — `docs/specs/` should move to root `specs/`; ensure
-   `design/`, `guides/`, `README.md`, `testing.md`, `glossary.md`,
+   `design/`, `guides/`, `README.md`, `architecture/tests.md`, `glossary.md`,
    `product/roadmap.md`, `guides/onboarding.md` exist; `tests/` belongs at repo
    root. (The runbooks dir is
    now standardized as `runbooks/` (plural) — matches harmon-infra.)
@@ -23,7 +23,7 @@ source of truth going forward), not by hand-editing them ad hoc.
 4. **go-task pin divergence** — `arduino/setup-task` version 3.51.1 (infra)
    vs 3.49.x (sommerlawn).
 5. **New template standards to apply on re-template** (added 2026-06) —
-   `DESIGN.md`, `docs/security.md`, a seed ADR in `docs/decisions/`, release-please
+   `DESIGN.md`, `docs/architecture/security.md`, a seed ADR in `docs/decisions/`, release-please
    (default on; opt out per repo if task-driven releases are preferred), `.envrc`
    for Python projects, ansible/terraform scaffolds, CI `concurrency:` groups,
    `claude-code-action` v1.0.148, and the canonical UID bot commit email.
