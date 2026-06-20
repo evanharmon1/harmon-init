@@ -17,7 +17,7 @@ Copier project template that scaffolds repos with pre-configured DevOps tooling,
 | Troubleshooting | [troubleshooting.md](troubleshooting.md) |
 | Glossary | [glossary.md](glossary.md) |
 | Roadmap | [roadmap.md](roadmap.md) |
-| Onboarding | [onboarding.md](onboarding.md) |
+| Onboarding | [guides/onboarding.md](guides/onboarding.md) |
 | Post-generation checklist | [CHECKLIST.md](CHECKLIST.md) |
 
 Specs live in [`specs/`](../specs/) and tests in [`tests/`](../tests/) at the repo root.
