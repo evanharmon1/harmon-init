@@ -22,4 +22,6 @@ TODO: List the major components and what each is responsible for.
 TODO: Describe how data moves through the system.
 
 Deeper architecture documents (diagrams, component deep-dives, C4 levels) live
-alongside this file in `docs/architecture/`.
+alongside this file in `docs/architecture/`:
+
+- [ci-cd.md](ci-cd.md) — how the CI/CD pipeline is wired.
