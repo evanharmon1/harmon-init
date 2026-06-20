@@ -1,5 +1,8 @@
 # Branch Protection: Protecting `main` from AI Agents
 
+*Concern hub: in-repo (CODEOWNERS) and out-of-repo (ruleset, Actions toggles, bot
+model) stitched into one picture — grep can't see GitHub settings.*
+
 ## Purpose
 
 This document explains the branch protection ruleset applied to `main` and how it ensures that AI coding agents (e.g., Claude Code running in a dev container) cannot push to or merge into `main` without explicit human approval. The ruleset works in combination with a dedicated machine user account (`evanharmon1-bot`) that has Write collaborator access and a scoped fine-grained PAT.
@@ -36,7 +39,7 @@ Three independent layers enforce the boundary between AI agent work and producti
 2. **Repository ruleset on `main`** — Server-side enforcement that blocks direct pushes, requires PR reviews from a code owner, and mandates passing status checks before merge.
 3. **CODEOWNERS file** — Designates the human owner as the required reviewer for all file changes, ensuring the bot's PRs always require human approval.
 
-No single layer is sufficient alone. The PAT controls _what operations the token can attempt_. The ruleset controls _what operations GitHub allows on `main`_. The CODEOWNERS file controls _whose approval counts_.
+No single layer is sufficient alone. The PAT controls *what operations the token can attempt*. The ruleset controls *what operations GitHub allows on `main`*. The CODEOWNERS file controls *whose approval counts*.
 
 ## Prerequisites
 
@@ -54,7 +57,7 @@ Replace `@evanharmon1` with the GitHub username of the human who should approve 
 ### Bot Account PAT Permissions
 
 > This covers the **devcontainer agent's** push token (Claude Code running in the
-> container). CI _workflows_ (release-please, claude-*, project-automation)
+> container). CI *workflows* (release-please, claude-*, project-automation)
 > authenticate separately as the CI **GitHub App** — see
 > [security.md](security.md) for that App and its permissions. The ruleset below
 > protects `main` from every actor (App, bot PAT, or human) equally.

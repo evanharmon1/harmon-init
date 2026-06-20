@@ -1,5 +1,8 @@
 # CI/CD
 
+*Concern hub: the CI/CD pipeline as one picture — across workflow YAML, runners,
+and deploy platforms — routing to the release decision and the deploy guide.*
+
 How continuous integration and delivery are wired in Harmon Init. Every
 job delegates to `task` targets, so local hooks, CI, and humans run identical
 commands (the Taskfile is the single source of truth).
