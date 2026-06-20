@@ -2,6 +2,7 @@
   "name": "evanharmon1-ci",
   "description": "CI automation app for evanharmon1: mints short-lived tokens for release-please, Claude Code, and project automation. See docs/security.md.",
   "url": "https://github.com/evanharmon1/harmon-init",
+  "redirect_url": "https://github.com/settings/apps",
   "hook_attributes": {
     "url": "https://github.com/evanharmon1/harmon-init",
     "active": false
