@@ -17,7 +17,7 @@ Copier project template that scaffolds repos with pre-configured DevOps tooling,
 | Testing strategy | [testing.md](testing.md) |
 | Troubleshooting | [troubleshooting.md](troubleshooting.md) |
 | Glossary | [glossary.md](glossary.md) |
-| Product (roadmap, vision) | [product/](product/) |
+| Product (vision, roadmap, domain) | [product/](product/) |
 | Onboarding | [guides/onboarding.md](guides/onboarding.md) |
 | Post-generation checklist | [CHECKLIST.md](CHECKLIST.md) |
 
