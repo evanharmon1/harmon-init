@@ -47,18 +47,21 @@ inherits them); for a personal-account repo, set them per-repo.
 
 ### Creating the `evanharmon1-ci` App (once per org)
 
-1. Owned by the org: **Settings → Developer settings → GitHub Apps → New GitHub
-   App** (for a personal account, use your account's Developer settings). Name it
-   **`evanharmon1-ci`**.
-2. **Uncheck** "Active" under Webhook — it isn't used.
-3. Grant the **permissions** in the table below; leave everything else "No access".
-4. "Where can this App be installed?" → **Only on this account** (keeps the App
-   and its key scoped to this one org).
-5. **Create the App**, then **Generate a private key** (downloads a `.pem`) and
-   note the **App ID**.
-6. **Install App** → install on this org with **Only select repositories** (not
-   "All repositories").
-7. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
+The exact App config — name, the permissions below, webhook off, and
+"Only on this account" — is checked in as
+[`.github/github-app-manifest.json`](../.github/github-app-manifest.json), so you
+never set permissions by hand.
+
+1. **Open [`.github/create-github-app.html`](../.github/create-github-app.html)**
+   in a browser and click *Create the `evanharmon1-ci` app*. It POSTs the
+   manifest to GitHub's app-manifest flow (org-owned for an org, account-owned
+   for a personal account). *Manual alternative:* at **Settings → Developer
+   settings → GitHub Apps → New GitHub App**, set the permissions from the table
+   below by hand.
+2. On GitHub's pre-filled page, review and click **Create GitHub App**.
+3. **Generate a private key** (downloads a `.pem`) and note the **App ID**.
+4. **Install App** → on this org, **Only select repositories** (not "All").
+5. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
    (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
    personal account.
 

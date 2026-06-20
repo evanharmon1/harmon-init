@@ -25,11 +25,11 @@ that don't apply, then keep this file as a record of what was configured.
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
       `SNYK_TOKEN` (snyk tasks)
 - [ ] CI GitHub App `evanharmon1-ci`: create it for this org (one App per
-      org) or reuse the existing one, install it on this repo, then set
-      `CI_APP_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
-      **secret**) — org-level for an org, per-repo for a personal account.
-      Drives release-please, the claude-* workflows, and project-automation.
-      See docs/security.md for the creation steps + required App permissions.
+      org) by opening `.github/create-github-app.html`, or reuse the org's
+      existing one; install it on this repo, then set `CI_APP_ID` (Actions
+      **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
+      an org, per-repo for a personal account. Drives release-please, the
+      claude-* workflows, and project-automation. See docs/security.md.
 - [ ] Actions variables: set `FULL_SECURITY_SCAN=true` to enable CodeQL
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main

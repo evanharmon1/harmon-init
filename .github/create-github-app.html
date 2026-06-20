@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Create the evanharmon1-ci GitHub App</title>
+  </head>
+  <body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; line-height: 1.5">
+    <h1>Create the <code>evanharmon1-ci</code> GitHub App</h1>
+    <p>
+      This opens GitHub's <strong>Create GitHub App</strong> page pre-filled with the
+      exact permissions this repo's CI needs (it posts
+      <code>.github/github-app-manifest.json</code> via GitHub's app-manifest flow).
+      Review it, click <strong>Create GitHub App</strong>, then generate a private key
+      and install the app on selected repositories. Full steps are in
+      <code>docs/security.md</code>.
+    </p>
+    <p>
+      <button id="create" style="font-size: 1rem; padding: 0.6rem 1rem; cursor: pointer">
+        Create the evanharmon1-ci app
+      </button>
+    </p>
+
+    <!-- Keep this manifest identical to .github/github-app-manifest.json -->
+    <script id="manifest" type="application/json">
+      {
+        "name": "evanharmon1-ci",
+        "description": "CI automation app for evanharmon1: mints short-lived tokens for release-please, Claude Code, and project automation. See docs/security.md.",
+        "url": "https://github.com/evanharmon1/harmon-init",
+        "hook_attributes": { "url": "https://github.com/evanharmon1/harmon-init", "active": false },
+        "public": false,
+        "default_permissions": {
+          "contents": "write",
+          "pull_requests": "write",
+          "issues": "write",
+          "workflows": "write",
+          "metadata": "read"        }
+      }
+    </script>
+
+    <script>
+      // org-owned app for org repos, account-owned for personal repos
+      var target =
+        "https://github.com/settings/apps/new";
+      document.getElementById("create").addEventListener("click", function () {
+        var manifest = JSON.stringify(
+          JSON.parse(document.getElementById("manifest").textContent),
+        );
+        var form = document.createElement("form");
+        form.method = "post";
+        form.action = target;
+        var input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "manifest";
+        input.value = manifest;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+      });
+    </script>
+  </body>
+</html>
