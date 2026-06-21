@@ -64,11 +64,12 @@ a machine-readable reference; mirror it in the form.
    (**Settings → Developer settings → GitHub Apps → New GitHub App**).
 2. Set **GitHub App name** `evanharmon1-ci` (names are globally unique — if
    it's taken, add a suffix; the workflows reference the **App ID**, not the
-   name), **Homepage URL** = the owner's page `https://github.com/evanharmon1`
-   (a required-but-cosmetic field — it doesn't scope the App to any repo; the App
-   is owner-wide), **uncheck the "Active" webhook**, grant the permissions in the
-   table below, and choose **"Only on this account"**. Then scroll down and click
-   **Create GitHub App**.
+   name), **Description** = the `description` from the manifest (optional,
+   cosmetic — documents what the App is for), **Homepage URL** = the owner's page
+   `https://github.com/evanharmon1` (also required-but-cosmetic — it doesn't
+   scope the App to any repo; the App is owner-wide), **uncheck the "Active"
+   webhook**, grant the permissions in the table below, and choose **"Only on this
+   account"**. Then scroll down and click **Create GitHub App**.
 3. **Generate a private key** (downloads a `.pem`) and note the **App ID**.
 4. **Install App** → on this org, **Only select repositories** (not "All").
 5. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
