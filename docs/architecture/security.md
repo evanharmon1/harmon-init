@@ -92,7 +92,9 @@ App consumes no user seat, permissions are granular, and — unlike the built-in
 required checks actually run). Commits the App pushes are attributed to
 `<app-slug>[bot]`.
 
-**Required App permissions** (grant nothing more):
+**Required App permissions** — select each of these on the form (the form
+pre-checks nothing, **Metadata included**, so set them all explicitly); grant
+nothing more:
 
 | Permission | Level | Why |
 |---|---|---|
