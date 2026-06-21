@@ -28,7 +28,7 @@ it points here.
 
 - Tasks are named **`group:action`** — the group/domain comes first, the action
   is the leaf: `lint:shell`, `lint:typescript`, `test:e2e`, `security:secrets`,
-  `setup:github-app`, `status:git`. **Never action-first** (`typescript:lint`,
+  `install:hooks`, `status:git`. **Never action-first** (`typescript:lint`,
   `yaml:lint`).
 - Pipeline order is **`check → build → validate → test → security`**, with
   `verify` (local gate) and `ci` (full) as the aggregates.

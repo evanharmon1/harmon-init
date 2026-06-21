@@ -53,18 +53,22 @@ inherits them); for a personal-account repo, set them per-repo.
 
 ### Creating the `[[ github_org ]]-ci` App (once per org)
 
-The exact App config — name, the permissions below, webhook off, and
-"Only on this account" — is checked in as
-[`.github/github-app-manifest.json`](../../.github/github-app-manifest.json), so
-you never set permissions by hand.
+Create the App **by hand.** GitHub's app-manifest ("one-click") flow only
+finalizes an app through a server-side callback it redirects to, so a static page
+can't complete it (it redirects, the one-time `?code=` expires unused, and no app
+is created) — there is no working shortcut. The exact permission set is checked in
+as [`.github/github-app-manifest.json`](../../.github/github-app-manifest.json) as
+a machine-readable reference; mirror it in the form.
 
-1. Run **`task setup:github-app`** (or open
-   [`.github/create-github-app.html`](../../.github/create-github-app.html) directly)
-   and click *Create the `[[ github_org ]]-ci` app*. It POSTs the manifest to
-   GitHub's app-manifest flow (org-owned for an org, account-owned for a personal
-   account). *Manual alternative:* at **Settings → Developer settings → GitHub
-   Apps → New GitHub App**, set the permissions from the table below by hand.
-2. On GitHub's pre-filled page, review and click **Create GitHub App**.
+1. Open **New GitHub App** — for an org,
+   `https://github.com/organizations/[[ github_org ]]/settings/apps/new`; for a
+   personal account, `https://github.com/settings/apps/new`
+   (**Settings → Developer settings → GitHub Apps → New GitHub App**).
+2. Set **GitHub App name** `[[ github_org ]]-ci` (names are globally unique — if
+   it's taken, add a suffix; the workflows reference the **App ID**, not the
+   name), **Homepage URL** = the repo URL, **uncheck the "Active" webhook**, grant
+   the permissions in the table below, and choose **"Only on this account"**. Then
+   scroll down and click **Create GitHub App**.
 3. **Generate a private key** (downloads a `.pem`) and note the **App ID**.
 4. **Install App** → on this org, **Only select repositories** (not "All").
 5. Set `CI_APP_ID` (Actions variable = the App ID) and `CI_APP_PRIVATE_KEY`
@@ -78,14 +82,6 @@ bulk `--repos` form *replaces* the secret's value and its repo allow-list, so
 running it from a second repo silently evicts the first. (To add a repo to an
 existing org secret non-destructively, grant it in the GitHub UI or
 `PUT /orgs/{org}/actions/secrets/{name}/repositories/{repo_id}`.)
-
-> **Manifest-flow note:** the launcher uses GitHub's app-manifest flow, which
-> after creation redirects (to your Apps page) with a short-lived (~1h),
-> single-use `?code=` that *can* be exchanged for an auto-generated App key. It
-> stays on `github.com` (never sent to a third party) and expires unused — low
-> risk when you're creating your own app on your own machine. For the strictest
-> posture, use the **manual** path above (no `code` is generated), and/or rotate
-> the App's keys after setup. Never paste a `?code=` URL anywhere.
 
 **Why an App, not a PAT:** tokens are short-lived (nothing to rotate yearly), the
 App consumes no user seat, permissions are granular, and — unlike the built-in
