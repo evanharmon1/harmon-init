@@ -42,6 +42,11 @@ it points here.
   Shell (`.editorconfig`). Final newline; trim trailing whitespace (except
   Markdown/MDX).
 
+## TODOs
+
+- Mark unfinished work with `TODO: <description>` — the literal `TODO:` prefix, in
+  code and docs alike, so it stays greppable (`rg 'TODO:'`).
+
 ## YAML, Markdown & shell
 
 - **YAML:** 2-space indent, `.yml` extension (not `.yaml`), linted by yamllint.
