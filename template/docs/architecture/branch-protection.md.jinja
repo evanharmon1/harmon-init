@@ -1,8 +1,5 @@
 # Branch Protection: Protecting `main` from AI Agents
 
-*Subject hub: in-repo (CODEOWNERS) and out-of-repo (ruleset, Actions toggles, bot
-model) stitched into one picture — grep can't see GitHub settings.*
-
 ## Purpose
 
 This document explains the branch protection ruleset applied to `main` and how it ensures that AI coding agents (e.g., Claude Code running in a dev container) cannot push to or merge into `main` without explicit human approval. The ruleset works in combination with a dedicated machine user account (`[[ author_git_provider_username ]]-bot`) that has Write collaborator access and a scoped fine-grained PAT.
