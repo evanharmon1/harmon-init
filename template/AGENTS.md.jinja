@@ -1,8 +1,9 @@
 # AGENTS.md
 
-Guidance for AI coding agents (Claude Code, Gemini CLI, Codex, ...) working in
-[[ project_name ]]. `CLAUDE.md` and `GEMINI.md` are symlinks to this file —
-edit only `AGENTS.md`.
+Guidance for AI coding agents (Claude Code, Gemini CLI, GitHub Copilot, Codex,
+...) working in [[ project_name ]]. `CLAUDE.md`, `GEMINI.md`, and
+`.github/copilot-instructions.md` are symlinks to this file — edit only
+`AGENTS.md`.
 
 TODO: Run `/init` (Claude Code) after the framework is scaffolded to expand
 this file with project-specific architecture notes.
@@ -12,8 +13,8 @@ this file with project-specific architecture notes.
 [[ project_description ]]
 
 Repo: [[ repo_url ]] — see [docs/README.md](docs/README.md) for the
-documentation map, [docs/architecture.md](docs/architecture.md) for the
-architecture, and [DESIGN.md](DESIGN.md) for design/UX intent.
+documentation map, [docs/architecture/README.md](docs/architecture/README.md)
+for the architecture, and [DESIGN.md](DESIGN.md) for design/UX intent.
 
 ## Commands
 
@@ -45,6 +46,10 @@ task security    # gitleaks + dependency audit
 
 ## Conventions
 
+Full reference: [docs/conventions.md](docs/conventions.md). Highlights:
+
+- Conventional Commits; `group:action` Taskfile naming (e.g. `lint:shell`, not
+  `shell:lint`); pin actions by SHA + `# vX.Y.Z`.
 - Git hooks are managed by lefthook (`lefthook.yml`) and delegate to Taskfile
   targets — don't duplicate logic in hooks or workflows.
 - Indentation: 2 spaces default, 4 for Python/Terraform/Shell (`.editorconfig`).

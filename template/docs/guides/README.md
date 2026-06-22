@@ -1,0 +1,16 @@
+# Guides
+
+**Bucket — "how do I do X?" (calm).** Planned, repeatable how-tos read *in
+advance*. The crisis counterpart is [runbooks/](../runbooks/) — procedures read
+*under pressure* when prod breaks. Rule of thumb: would you read it at your desk
+(guide) or at 3am during an incident (runbook)?
+
+- [onboarding.md](onboarding.md) — get a new dev or agent productive: setup,
+  where things live, the dev loop. The human entry procedure.
+- [deploying.md](deploying.md) — how to cut/promote a release (the calm
+  procedure); cross-links a rollback runbook for when it goes wrong.
+- [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
+  problems (broken build, failing local setup). Distinct from runbooks, which
+  cover prod incidents.
+
+TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".

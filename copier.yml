@@ -56,14 +56,6 @@ author_git_provider_username:
   default: evanharmon1
   when: false
 
-# GitHub numeric user id for the bot account ([[ author_git_provider_username ]]-bot),
-# used to build the canonical no-reply commit email so bot commits link to the
-# account. Find it via: gh api users/<bot-username> --jq .id
-author_bot_uid:
-  type: str
-  default: "269859446"
-  when: false
-
 github_org:
   type: str
   help: "GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"

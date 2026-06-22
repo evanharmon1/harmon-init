@@ -1,0 +1,47 @@
+# Design language
+
+The concrete visual + interaction system for [[ project_name ]]. Design *intent*
+and non-negotiables live in [DESIGN.md](../../DESIGN.md); this is the system that
+realizes it. Runtime truth is the stylesheet/token source once scaffolded — when
+this doc and the tokens disagree, the tokens win.
+
+## Design tokens
+
+TODO: where tokens live (CSS custom properties / theme file) and the rule to use
+semantic roles, never raw values, in components.
+
+## Typography
+
+TODO: type families (display vs body), scale, weights, casing/tracking.
+
+## Color
+
+TODO: palette + semantic roles (bg, fg, accent, state colors), light/dark
+policy, and the contrast bar (e.g. WCAG 2.2 AA).
+
+## Spacing & layout
+
+TODO: spacing scale, container widths, grid, responsive breakpoints.
+
+## Components
+
+TODO: the component set ([% if project_type == 'web-app' %]shadcn/ui[% else %]your component library[% endif %]) and variant
+conventions; keep variants defined in one place.
+
+## Motion & effects
+
+TODO: durations/easings, when motion is allowed; always honor
+`prefers-reduced-motion`.
+
+## Iconography & imagery
+
+TODO: icon set (e.g. lucide), sizing, and image/asset conventions.
+
+## Accessibility
+
+Non-negotiable: keyboard-navigable, semantic HTML, visible focus, labelled
+controls, sufficient contrast. TODO: project-specific a11y rules.
+
+## Voice & tone
+
+TODO: how UI copy should read (terse / warm / technical).

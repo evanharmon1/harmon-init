@@ -1,8 +1,8 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents (Claude Code, Gemini CLI, Codex, etc.)
-working in this repository. `CLAUDE.md` and `GEMINI.md` are symlinks to this file —
-edit only `AGENTS.md`.
+This file provides guidance to AI coding agents (Claude Code, Gemini CLI, GitHub
+Copilot, Codex, etc.) working in this repository. `CLAUDE.md`, `GEMINI.md`, and
+`.github/copilot-instructions.md` are symlinks to this file — edit only `AGENTS.md`.
 
 ## Project Overview
 
@@ -102,7 +102,10 @@ task release:patch   # or release:minor / release:major
   root repo dogfoods the same `.devcontainer/` the template generates
   (`task test:devcontainer:root` / `test:devcontainer:dev` smoke-test them).
 - `.github/workflows/claude-{plan,implement,review}.yml` — Claude Code GitHub
-  Actions (need the `CLAUDE_CODE_OAUTH_TOKEN` and `GH_WORKFLOW_PAT` secrets).
+  Actions. They (and `release.yml`) authenticate as the CI **GitHub App**
+  (`CI_APP_ID` variable + `CI_APP_PRIVATE_KEY` secret) and need the
+  `CLAUDE_CODE_OAUTH_TOKEN` secret. See `docs/architecture/security.md`.
 - Dependency updates via Renovate (`renovate.json`); reviews assisted by CodeRabbit
   (`.coderabbit.yaml`).
-- No auto-release workflow exists by design — use `task release:*`.
+- `release.yml` runs release-please: releases stay intentional (merge the rolling
+  release PR to cut a tag); `task release:*` remains a manual override.

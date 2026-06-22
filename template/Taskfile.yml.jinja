@@ -277,10 +277,10 @@ tasks:
         if [ -f vitest.config.ts ] || [ -f vitest.config.mts ] || [ -f vitest.config.js ]; then
           npx vitest run
         else
-          echo "TODO: wire tests — scaffold the framework first (see docs/CHECKLIST.md and docs/testing.md)"
+          echo "TODO: wire tests — scaffold the framework first (see docs/CHECKLIST.md and docs/architecture/tests.md)"
         fi
 [% else %]
-      - 'echo "TODO: wire tests for this project (see docs/testing.md); test files live in tests/"'
+      - 'echo "TODO: wire tests for this project (see docs/architecture/tests.md); test files live in tests/"'
 [% endif %]
 [% if devcontainer %]
 

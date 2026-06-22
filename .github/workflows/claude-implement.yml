@@ -1,6 +1,8 @@
 name: Claude Implement
 run-name: ${{ github.actor }} is running Claude Implement
-# Requires repo secrets: CLAUDE_CODE_OAUTH_TOKEN, GH_WORKFLOW_PAT (see docs/CHECKLIST.md)
+# Requires: CLAUDE_CODE_OAUTH_TOKEN secret, plus the CI GitHub App
+# (CI_APP_ID variable + CI_APP_PRIVATE_KEY secret). See docs/CHECKLIST.md
+# and docs/architecture/security.md.
 on:
   issue_comment:
     types: [created]
@@ -27,18 +29,36 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege token: implement pushes commits (contents), opens
+          # PRs (pull-requests), comments (issues), and may touch
+          # .github/workflows/ (workflows, write-only). org-projects gated to
+          # org repos only — an ungranted permission would fail token minting.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-workflows: write
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-          token: ${{ secrets.GH_WORKFLOW_PAT }}
-      - name: Configure git identity as evanharmon1-bot
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Configure git identity as the CI app bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
-          git config --global user.name "evanharmon1-bot"
-          git config --global user.email "269859446+evanharmon1-bot@users.noreply.github.com"
+          bot="${APP_SLUG}[bot]"
+          bot_id=$(gh api "/users/${bot}" --jq .id)
+          git config --global user.name "$bot"
+          git config --global user.email "${bot_id}+${bot}@users.noreply.github.com"
       - uses: anthropics/claude-code-action@d5726de019ec4498aa667642bc3a80fca83aa102 # v1.0.148
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GH_WORKFLOW_PAT }}
+          github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@claude implement"
           label_trigger: "claude-implement"
           track_progress: true

@@ -10,7 +10,7 @@ that don't apply, then keep this file as a record of what was configured.
 
 ## 2. GitHub repo settings
 
-- [ ] Import the branch ruleset (see [branchProtection.md](branchProtection.md)):
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)):
 
   ```bash
   gh api "repos/evanharmon1/harmon-init/rulesets" --method POST \
@@ -23,8 +23,14 @@ that don't apply, then keep this file as a record of what was configured.
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
-      `GH_WORKFLOW_PAT` (fine-grained PAT for the bot account; see
-      branchProtection.md for required scopes), `SNYK_TOKEN` (snyk tasks)
+      `SNYK_TOKEN` (snyk tasks)
+- [ ] CI GitHub App `evanharmon1-ci`: create it by hand for this org (one App
+      per org; **Settings → Developer settings → GitHub Apps**), or reuse the
+      org's existing one;
+      install it on this repo, then set `CI_APP_ID` (Actions
+      **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
+      an org, per-repo for a personal account. Drives release-please, the
+      claude-* workflows, and project-automation. See docs/architecture/security.md.
 - [ ] Actions variables: set `FULL_SECURITY_SCAN=true` to enable CodeQL
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
@@ -35,7 +41,6 @@ that don't apply, then keep this file as a record of what was configured.
 
 ## 4. Secrets & environment
 
-- [ ] No secrets in git — gitleaks enforces this on pre-push and in CI
 - [ ] For local `.env` needs, use 1Password: `op inject`/`op run` or the
       1Password Developer Environments feature; commit only `.env.example`-style files
 - [ ] Devcontainer secrets land in `.devcontainer/devcontainer.env` via

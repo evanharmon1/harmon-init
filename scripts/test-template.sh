@@ -122,7 +122,8 @@ else
     git rev-parse HEAD >/dev/null 2>&1 || err "_tasks left the rendered repo without an initial commit"
 fi
 
-# ── 0. AGENTS.md is canonical; CLAUDE.md/GEMINI.md are symlinks to it ──
+# ── 0. AGENTS.md is canonical; CLAUDE.md/GEMINI.md + copilot-instructions.md
+#       symlink to it (copilot's canonical file lives under .github/). ──
 if [ ! -f AGENTS.md ]; then
     err "AGENTS.md missing from rendered output"
 fi
@@ -131,6 +132,10 @@ for link in CLAUDE.md GEMINI.md; do
         err "$link should be a symlink to AGENTS.md"
     fi
 done
+if [ ! -L .github/copilot-instructions.md ] ||
+    [ "$(readlink .github/copilot-instructions.md)" != "../AGENTS.md" ]; then
+    err ".github/copilot-instructions.md should be a symlink to ../AGENTS.md"
+fi
 
 # ── 1. Generated Taskfile parses ────────────────────────────────────
 if [ -f Taskfile.yml ]; then
