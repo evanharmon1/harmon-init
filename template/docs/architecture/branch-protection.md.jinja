@@ -1,6 +1,6 @@
 # Branch Protection: Protecting `main` from AI Agents
 
-*Concern hub: in-repo (CODEOWNERS) and out-of-repo (ruleset, Actions toggles, bot
+*Subject hub: in-repo (CODEOWNERS) and out-of-repo (ruleset, Actions toggles, bot
 model) stitched into one picture — grep can't see GitHub settings.*
 
 ## Purpose

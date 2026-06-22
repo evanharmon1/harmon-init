@@ -1,10 +1,10 @@
 # Architecture
 
 **Bucket — "how is it built / secured / governed / tested?"** The durable
-narrative of how the system *is*, and the home for **concern hubs**. This README
+narrative of how the system *is*, and the home for **subject hubs**. This README
 is the bucket hub plus the high-level overview.
 
-**Route, don't duplicate:** the concern hubs below synthesize a picture no single
+**Route, don't duplicate:** the subject hubs below synthesize a picture no single
 config file shows, then point to [decisions/](../decisions/) for *why* and
 [guides/](../guides/) for *how* — they never restate that content.
 
@@ -29,7 +29,7 @@ TODO: List the major components and what each is responsible for.
 
 TODO: Describe how data moves through the system.
 
-## Concern hubs
+## Subject hubs
 
 Each synthesizes what's scattered across config, settings, and state, then routes
 onward (diagrams and component deep-dives also live here):

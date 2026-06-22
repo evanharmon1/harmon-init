@@ -41,7 +41,6 @@ that don't apply, then keep this file as a record of what was configured.
 
 ## 4. Secrets & environment
 
-- [ ] No secrets in git — gitleaks enforces this on pre-push and in CI
 - [ ] For local `.env` needs, use 1Password: `op inject`/`op run` or the
       1Password Developer Environments feature; commit only `.env.example`-style files
 - [ ] Devcontainer secrets land in `.devcontainer/devcontainer.env` via

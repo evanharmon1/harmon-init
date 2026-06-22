@@ -1,6 +1,6 @@
 # Security, Permissions & Secret Strategy
 
-*Concern hub: the security posture synthesized across config, secret state, and
+*Subject hub: the security posture synthesized across config, secret state, and
 GitHub settings — the threat-model framing, not the raw config.*
 
 How **Harmon Init** handles identity, permissions, and secrets. Keep this
@@ -12,8 +12,6 @@ current — it is the reference for "where do secrets live and who can do what".
 
 - **Least privilege.** Every token, account, and workflow gets the narrowest
   scope that still works.
-- **No secrets in git.** Secrets are provided at runtime, never committed.
-  `gitleaks` (`task security:secrets`) guards this in CI and pre-push.
 - **Secrets via 1Password.** Local env comes from 1Password (`op run` /
   `op inject`); CI reads from GitHub Actions secrets. TODO: list the 1Password
   vault/items this project uses.
