@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.1.0](https://github.com/evanharmon1/harmon-init/compare/v3.0.3...v3.1.0) (2026-06-22)
+
+
+### Features
+
+* authenticate CI workflows as a GitHub App (not a PAT) ([#74](https://github.com/evanharmon1/harmon-init/issues/74)) ([4931dfe](https://github.com/evanharmon1/harmon-init/commit/4931dfe39b5742117c1a41c2eec50692797bb469))
+* release-please, DESIGN.md, IaC scaffolds, and CI polish ([#72](https://github.com/evanharmon1/harmon-init/issues/72)) ([b925224](https://github.com/evanharmon1/harmon-init/commit/b925224de9840246bf91459cebe87990d465f090))
+
 ## [3.0.0]
 
 Breaking redesign porting the current repo conventions from harmon-infra and
