@@ -61,6 +61,11 @@ github_org:
   help: "GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
   default: "[[ author_git_provider_username ]]"
 
+code_owner:
+  type: str
+  help: "CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
+  default: "[[ github_org ]]"
+
 project_type:
   type: str
   help: "TYPE: What kind of project is this? (drives Taskfile, CI jobs, devcontainer tooling)"
