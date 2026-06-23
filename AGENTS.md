@@ -21,6 +21,12 @@ One of five repos in **harmon-stack** (Evan's homelab + dev-ops stack):
 [harmon-ops](https://github.com/evanharmon1/harmon-ops) (machine setup),
 [harmon-infra](https://github.com/harmonops/harmon-infra) (homelab IaC). See the README for the full table.
 
+Applying or auditing these standards against another repo is driven by the
+**`standardize-repo`** Claude skill in harmon-devkit
+(`ai/skills/repo/standardize-repo`): it wraps `copier` to scaffold a new repo,
+adopt the template into an existing one, or audit a repo for drift — and carries
+the authoritative repo-conventions catalog.
+
 ## Two-Layer Architecture
 
 1. **Root level** — Config for developing/maintaining the template itself
