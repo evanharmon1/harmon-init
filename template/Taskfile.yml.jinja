@@ -388,6 +388,23 @@ tasks:
     cmds:
       - lefthook install
 
+  # ── GitHub setup ───────────────────────────────────────────────
+  # One-time, idempotent repo settings applied via gh (safe to re-run); run once
+  # the repo exists on GitHub. The remaining setup steps need a browser or a real
+  # credential and stay manual — see docs/CHECKLIST.md (branch ruleset import,
+  # Renovate/CodeRabbit app installs, Actions secrets, the CI GitHub App).
+  setup:github:
+    desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting, CodeQL variable[% if github_org != author_git_provider_username %], bot collaborator[% endif %])
+    vars:
+      REPO: "[[ github_org ]]/[[ project_slug ]]"
+    cmds:
+      - gh api "repos/{{.REPO}}/vulnerability-alerts" --method PUT
+      - gh api "repos/{{.REPO}}/private-vulnerability-reporting" --method PUT
+      - gh variable set FULL_SECURITY_SCAN --repo "{{.REPO}}" --body true
+[% if github_org != author_git_provider_username %]
+      - gh api "repos/{{.REPO}}/collaborators/[[ author_git_provider_username ]]-bot" --method PUT -f permission=push
+[% endif %]
+
   # ── Release ────────────────────────────────────────────────────
 [% if use_release_please %]
   # Releases are intentional via release-please (.github/workflows/release.yml):
