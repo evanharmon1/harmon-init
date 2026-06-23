@@ -115,7 +115,7 @@ tasks:
         if [ -n "{{.CLI_ARGS}}" ]; then
           npx --yes markdownlint-cli2 --fix {{.CLI_ARGS}}
         else
-          npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**'
+          npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**'
         fi
 
   lint:actions:
