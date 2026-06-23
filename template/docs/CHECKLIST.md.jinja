@@ -67,11 +67,16 @@ that don't apply, then keep this file as a record of what was configured.
 
 ## 4. Secrets & environment
 
-- [ ] For local `.env` needs, use 1Password: `op inject`/`op run` or the
-      1Password Developer Environments feature; commit only `.env.example`-style files
+- [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
+      `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only
+      `.env.example`-style files
 [% if devcontainer %]
-- [ ] Devcontainer secrets land in `.devcontainer/devcontainer.env` via
-      `init-env.sh` (1Password locally, host env on Coder) — never committed
+- [ ] Devcontainer secrets: create a **1Password environment** that mounts
+      `.devcontainer/devcontainer.env` (and `.devcontainer/dev/devcontainer.env`)
+      with `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`
+      (+ `TS_AUTHKEY` for the dev profile). `init-env.sh` enforces the per-profile
+      allow-list; on Coder the values come from workspace parameters. See
+      [guides/devcontainers.md](guides/devcontainers.md)
 [% endif %]
 
 ## 5. Docs & meta
