@@ -40,12 +40,21 @@ case "$msg" in
 "Merge "* | "Revert "* | "fixup!"* | "squash!"*) exit 0 ;;
 esac
 
-if ! printf '%s' "$msg" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|change|remove|revert)(\([a-zA-Z0-9_.,/-]+\))?!?: .+'; then
+# Delegate validation to commitlint via the Taskfile — the single source of
+# truth for the allowed type list and rules (commitlint.config.mjs). Pipe the
+# message via stdin so it is never re-quoted or evaluated as a shell/template
+# expression by go-task.
+cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# Fail open if the toolchain is unavailable — a missing `task` must not block
+# every commit (lefthook's commit-msg hook still enforces this for real commits).
+command -v task >/dev/null 2>&1 || exit 0
+
+if ! output="$(printf '%s' "$msg" | task lint:commit-msg:text 2>&1)"; then
     {
         echo "enforce-conventional-commits: commit message does not match Conventional Commits."
-        echo "  got:      $msg"
-        echo "  expected: type(scope): description"
-        echo "  types:    feat fix docs style refactor perf test chore ci build change remove revert"
+        echo "  got: $msg"
+        echo "$output"
     } >&2
     exit 2
 fi

@@ -136,6 +136,11 @@ tasks:
     desc: Validate commit message (conventional commits)
     cmds:
       - npx --yes --package @commitlint/cli --package @commitlint/config-conventional -- commitlint --edit {{.CLI_ARGS}}
+
+  lint:commit-msg:text:
+    desc: "Validate a commit message read from stdin (usage: printf '%s' <message> | task lint:commit-msg:text)"
+    cmds:
+      - npx --yes --package @commitlint/cli --package @commitlint/config-conventional -- commitlint
 [% if use_node %]
 
   lint:prettier:
@@ -242,6 +247,27 @@ tasks:
         [ -n "$files" ] && shfmt -w $files || true
       - npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**'
 
+  format:file:
+    desc: "Format a single file by extension (usage: task format:file -- <path>)"
+    cmds:
+      - |
+        f={{.CLI_ARGS}}
+        [ -z "$f" ] && exit 0
+        [ -f "$f" ] || exit 0
+        case "$f" in
+[% if use_node %]
+        *.js | *.jsx | *.ts | *.tsx | *.json | *.css | *.astro) npx --yes prettier --write "$f" ;;
+[% endif %]
+[% if use_python %]
+        *.py) uv run black "$f" ;;
+[% endif %]
+[% if include_terraform %]
+        *.tf | *.tfvars) terraform fmt "$f" ;;
+[% endif %]
+        *.sh | *.bash) shfmt -w "$f" ;;
+        *.md | *.mdx) npx --yes markdownlint-cli2 --fix "$f" ;;
+        esac
+
   fix:
     desc: Format then lint
     cmds:
@@ -293,6 +319,16 @@ tasks:
     desc: Smoke test the dev (human) devcontainer via the devcontainers CLI
     cmds:
       - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
+
+  test:devcontainer:permissions:
+    desc: Unit-assert devcontainer permission invariants (no container needed)
+    cmds:
+      - ./scripts/devcontainer-assert.sh unit
+
+  test:hooks:
+    desc: Round-trip the Taskfile targets the Claude hooks delegate to
+    cmds:
+      - ./scripts/test-hooks.sh
 [% endif %]
 [% if use_node %]
 
@@ -364,7 +400,7 @@ tasks:
   bootstrap:
     desc: One-time machine setup (Homebrew[% if use_node %] + Node + pnpm[% endif %])
     cmds:
-      - /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      - NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 [% if use_node %]
       - brew install node
       - npm install -g pnpm

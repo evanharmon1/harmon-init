@@ -4,6 +4,13 @@
   // local runArgs env-file already provides TS_AUTHKEY and GH_TOKEN.
   "name": "DEV - devcontainer-harmon-init",
   "containerName": "devcontainer-harmon-init-dev",
+  // Minimum-resource HINT. Codespaces enforces these; local Docker Desktop /
+  // Coder may not — real sizing lives in the Coder/WSL config.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
   "build": {
     "dockerfile": "../Dockerfile",
     "context": "../..",

@@ -118,6 +118,11 @@ tasks:
     cmds:
       - npx --yes --package @commitlint/cli --package @commitlint/config-conventional -- commitlint --edit {{.CLI_ARGS}}
 
+  lint:commit-msg:text:
+    desc: "Validate a commit message read from stdin (usage: printf '%s' <message> | task lint:commit-msg:text)"
+    cmds:
+      - npx --yes --package @commitlint/cli --package @commitlint/config-conventional -- commitlint
+
   guard:no-commit-to-main:
     desc: Block direct commits to main
     cmds:
@@ -135,6 +140,18 @@ tasks:
         files=$(git ls-files '*.sh' '*.bash')
         [ -n "$files" ] && shfmt -w $files || true
       - npx --yes markdownlint-cli2 --fix '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**'
+
+  format:file:
+    desc: "Format a single file by extension (usage: task format:file -- <path>)"
+    cmds:
+      - |
+        f={{.CLI_ARGS}}
+        [ -z "$f" ] && exit 0
+        [ -f "$f" ] || exit 0
+        case "$f" in
+        *.sh | *.bash) shfmt -w "$f" ;;
+        *.md | *.mdx) npx --yes markdownlint-cli2 --fix "$f" ;;
+        esac
 
   fix:
     desc: Format then lint
@@ -210,6 +227,16 @@ tasks:
     cmds:
       - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
 
+  test:devcontainer:permissions:
+    desc: Unit-assert devcontainer permission invariants (no container needed)
+    cmds:
+      - ./scripts/devcontainer-assert.sh unit
+
+  test:hooks:
+    desc: Round-trip the Taskfile targets the Claude hooks delegate to
+    cmds:
+      - ./scripts/test-hooks.sh
+
   # ── Security ──────────────────────────────────────────────────
   security:
     desc: Run all security checks
@@ -250,7 +277,7 @@ tasks:
   bootstrap:
     desc: One-time machine setup (Homebrew)
     cmds:
-      - /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      - NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
   install:
     desc: Install all project dependencies and tools

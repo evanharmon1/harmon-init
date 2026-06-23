@@ -4,6 +4,13 @@
   // Tailscale is not installed in this profile — see dev/ for the human profile.
   "name": "BOT - devcontainer-harmon-init",
   "containerName": "devcontainer-harmon-init-bot",
+  // Minimum-resource HINT. Codespaces enforces these; local Docker Desktop /
+  // Coder may not — real sizing lives in the Coder/WSL config.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
   "build": {
     "dockerfile": "Dockerfile",
     "context": "..",
