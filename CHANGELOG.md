@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.1.1](https://github.com/evanharmon1/harmon-init/compare/v3.1.0...v3.1.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* don't enforce a repo-wide YAML extension convention ([#81](https://github.com/evanharmon1/harmon-init/issues/81)) ([bb5b42d](https://github.com/evanharmon1/harmon-init/commit/bb5b42dc557eb903bb44cf61eb10e32b0cd500b5))
+* ensure rendered LICENSE ends with a trailing newline ([#80](https://github.com/evanharmon1/harmon-init/issues/80)) ([42bc585](https://github.com/evanharmon1/harmon-init/commit/42bc585acd141d1fc1ded3b4c69759410fe3c3de))
+
 ## [3.1.0](https://github.com/evanharmon1/harmon-init/compare/v3.0.3...v3.1.0) (2026-06-22)
 
 
