@@ -10,16 +10,18 @@ that don't apply, then keep this file as a record of what was configured.
 
 ## 2. GitHub repo settings
 
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)):
+- [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
+      re-run): enables **Dependabot alerts** and **private vulnerability
+      reporting**, sets the `FULL_SECURITY_SCAN` variable (CodeQL)[% if github_org != author_git_provider_username %], and adds
+      the `[[ author_git_provider_username ]]-bot` machine account as a Write
+      collaborator[% endif %]. Do NOT add dependabot.yml — Renovate owns version updates.
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — run once `build.yml` is on `main`, so the required `verify`/`security` checks resolve:
 
   ```bash
   gh api "repos/[[ github_org ]]/[[ project_slug ]]/rulesets" --method POST \
     --input ".github/Branch Protection Ruleset - Protect Main.json"
   ```
 
-- [ ] Settings → Advanced Security: enable **Dependabot alerts** and
-      **Private vulnerability reporting** (do NOT add dependabot.yml —
-      Renovate owns version updates)
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
@@ -31,7 +33,6 @@ that don't apply, then keep this file as a record of what was configured.
       **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
       an org, per-repo for a personal account. Drives release-please, the
       claude-* workflows, and project-automation. See docs/architecture/security.md.
-- [ ] Actions variables: set `FULL_SECURITY_SCAN=true` to enable CodeQL
 [% if devcontainer %]
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `[[ devcontainer_image ]]` on merge to main
@@ -40,7 +41,6 @@ that don't apply, then keep this file as a record of what was configured.
 - [ ] Org Project V2 (number 1) with a `Status` single-select field
       (Shaping / In Progress / Validating / In Review / Done) for
       project-automation.yml and the claude-* workflows
-- [ ] Add the `[[ author_git_provider_username ]]-bot` machine account as a Write collaborator
 [% endif %]
 
 ## 3. Framework scaffolding (conventions-only template)
