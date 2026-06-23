@@ -13,10 +13,44 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint, security, then the aggregate **`verify`** job.
+- `build.yml` — on push/PR to `main`: `lint`, `security`, the `template-test`
+  matrix (renders every copier profile and validates the output), then the
+  aggregate **`verify`** job.
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
-- `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
+- `devcontainer-build.yml` — builds the root's bot + dev devcontainers on
+  `.devcontainer/**` changes (and pushes a GHCR cache on merge to `main`).
 - `release.yml` — release-please maintains the rolling release PR.
+
+## Devcontainer build verification
+
+Split deliberately by cost:
+
+- **The image is built once, by dogfooding.** `devcontainer-build.yml` runs a real
+  `devcontainers/ci` build of the root repo's own bot + dev devcontainers on every
+  PR touching `.devcontainer/**` (and pushes a GHCR cache on merge to `main`).
+- **Rendered template configs are validated, not built.** `build.yml`'s
+  `template-test` matrix runs `devcontainer read-configuration` on each rendered
+  profile (via `scripts/test-template.sh`) — it parses `devcontainer.json` and
+  resolves its `features`, but does not build the image.
+
+We **do not** build the rendered devcontainer per copier profile: that would be
+~5× the same build for almost no extra coverage, because of one load-bearing
+invariant —
+
+> **The template Dockerfile (`template/…/Dockerfile`) stays profile-invariant: no
+> `[% … %]` copier conditionals.**
+
+Since it renders identically for every `project_type`, the single dogfood build
+above covers the image for all profiles. The only per-profile variation is in
+`devcontainer.json` (`forwardPorts`, a few extensions, and the `terraform` feature
+when `include_terraform`) — config that `read-configuration` already validates. The
+one build path the dogfood does not exercise is the upstream, version-pinned
+`terraform` devcontainer feature, whose ref `read-configuration` still resolves.
+
+**If a Dockerfile conditional is ever added** (e.g. branching on `use_node`), this
+invariant breaks and the dogfood stops covering all profiles — at that point add a
+path-filtered, per-profile rendered build (mirroring `devcontainer-build.yml`) for
+the profiles that now differ.
 
 ## Authentication
 

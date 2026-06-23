@@ -107,6 +107,10 @@ task release:patch   # or release:minor / release:major
   devcontainer images (bot + dev) and pushes them to GHCR as build caches. The
   root repo dogfoods the same `.devcontainer/` the template generates
   (`task test:devcontainer:root` / `test:devcontainer:dev` smoke-test them).
+  Rendered template devcontainers are config-validated (`read-configuration` in
+  `template-test`), **not** built per profile — the dogfood build covers every
+  profile only because the template `Dockerfile` is kept free of copier
+  conditionals (profile-invariant). See `docs/architecture/ci-cd.md`.
 - `.github/workflows/claude-{plan,implement,review}.yml` — Claude Code GitHub
   Actions. They (and `release.yml`) authenticate as the CI **GitHub App**
   (`CI_APP_ID` variable + `CI_APP_PRIVATE_KEY` secret) and need the
