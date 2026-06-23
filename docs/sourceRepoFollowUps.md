@@ -46,9 +46,6 @@ source of truth going forward), not by hand-editing them ad hoc.
 5. **CHECKLIST.md is stale** (mentions pre-commit/cookiecutter).
 6. **validate.yml reinstalls lint tools inline every run** — candidates for
     the prebuilt devcontainer image or a composite action.
-7. **YAML extension drift** — harmon-infra uses `.yaml` for
-    `Taskfile`/`lefthook`/`.github/workflows/*`; the template standard is `.yml`
-    (matches sommerlawn-web + the harmon-init root). Re-templating renames them.
 
 ## sommerlawn-web
 
