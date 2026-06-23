@@ -1,8 +1,8 @@
 # Decisions (ADRs)
 
-**Bucket — "why was this choice made?"** Durable, append-only, backward-looking
-records. This is the layer that stops an agent from "helpfully" undoing a
-deliberate choice — and where **deviations from best practice** are justified.
+Append-only records of why each choice was made — they stop an agent from
+"helpfully" undoing a deliberate choice, and justify **deviations from best
+practice**.
 
 Each record captures one choice: its context, the decision, and the **explicit
 "not" reasoning** (what was rejected and why). **Supersede, don't edit:** to
