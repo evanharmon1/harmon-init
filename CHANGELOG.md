@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.3.0](https://github.com/evanharmon1/harmon-init/compare/v3.2.1...v3.3.0) (2026-06-24)
+
+
+### Features
+
+* **status:** add GitHub setup-completeness audit (task status:setup) ([#95](https://github.com/evanharmon1/harmon-init/issues/95)) ([98556aa](https://github.com/evanharmon1/harmon-init/commit/98556aa32b7e835c047865cd581c550d5296a625))
+* **status:** broaden setup audit + visual grouped output ([#97](https://github.com/evanharmon1/harmon-init/issues/97)) ([c896ac0](https://github.com/evanharmon1/harmon-init/commit/c896ac0da3da79be0a8cf573ef14458dd97188ed))
+
 ## [3.2.1](https://github.com/evanharmon1/harmon-init/compare/v3.2.0...v3.2.1) (2026-06-24)
 
 
