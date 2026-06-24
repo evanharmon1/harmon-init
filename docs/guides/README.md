@@ -1,9 +1,7 @@
 # Guides
 
-**Bucket — "how do I do X?" (calm).** Planned, repeatable how-tos read *in
-advance*. The crisis counterpart is [runbooks/](../runbooks/) — procedures read
-*under pressure* when prod breaks. Rule of thumb: would you read it at your desk
-(guide) or at 3am during an incident (runbook)?
+Calm, repeatable how-tos read *in advance* (the crisis counterpart is
+[runbooks/](../runbooks/)).
 
 - [onboarding.md](onboarding.md) — get a new dev or agent productive: setup,
   where things live, the dev loop. The human entry procedure.
@@ -12,5 +10,7 @@ advance*. The crisis counterpart is [runbooks/](../runbooks/) — procedures rea
 - [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
   problems (broken build, failing local setup). Distinct from runbooks, which
   cover prod incidents.
+- [devcontainer-performance.md](devcontainer-performance.md) — tuning CPU/RAM
+  for the devcontainer; the real levers live in Coder and WSL2, not this repo.
 
 TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".

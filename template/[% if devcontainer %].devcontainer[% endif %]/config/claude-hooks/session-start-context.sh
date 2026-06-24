@@ -19,7 +19,7 @@ git_status="$(timeout 5 task status:git 2>/dev/null | strip_ansi || echo '(task 
 gh_status="$(timeout 8 task status:gh 2>/dev/null | strip_ansi || echo '(task status:gh unavailable)')"
 branch="$(git branch --show-current 2>/dev/null || echo 'unknown')"
 
-reminder=$'Repo conventions:\n- Run `task verify` before committing (lint + build + validate + test).\n- Conventional Commits required (feat/fix/docs/style/refactor/perf/test/chore/ci/build/change/remove/revert).\n- Never bypass git hooks with --no-verify; fix the underlying issue.\n- Use lefthook for git hooks (not pre-commit).'
+reminder=$'Repo conventions:\n- Run `task verify` before committing (lint + build + validate + test).\n- Conventional Commits required (feat/fix/docs/style/refactor/perf/test/chore/ci/build/change/remove/revert).\n- Never bypass git hooks with --no-verify; fix the underlying issue.\n- Use lefthook for git hooks (not pre-commit).\n- See docs/conventions.md (and AGENTS.md) for the authoritative conventions catalog.'
 
 context="$(printf 'Branch: %s\n\n=== task status:git ===\n%s\n\n=== task status:gh ===\n%s\n\n%s\n' \
     "$branch" "$git_status" "$gh_status" "$reminder")"

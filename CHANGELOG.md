@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.2.0](https://github.com/evanharmon1/harmon-init/compare/v3.1.1...v3.2.0) (2026-06-24)
+
+
+### Features
+
+* **devcontainer:** delegate Claude hooks to Taskfile and add permission tests ([#88](https://github.com/evanharmon1/harmon-init/issues/88)) ([00b4217](https://github.com/evanharmon1/harmon-init/commit/00b4217dcb1cb352525399e1208e7cfe5d44d7f6))
+* **template:** add `task setup:github` for idempotent repo settings ([#86](https://github.com/evanharmon1/harmon-init/issues/86)) ([88a0940](https://github.com/evanharmon1/harmon-init/commit/88a0940c6f7337807693341c553f353bbfa30450))
+* **template:** add code_owner question and improve issue/PR templates ([#89](https://github.com/evanharmon1/harmon-init/issues/89)) ([af4e742](https://github.com/evanharmon1/harmon-init/commit/af4e742e2bbc5e2fe57b016ece62169b82ec4121))
+
+
+### Bug Fixes
+
+* **template:** markdownlint — exclude artifact dirs + MD024 siblings_only ([#84](https://github.com/evanharmon1/harmon-init/issues/84)) ([7c7ae07](https://github.com/evanharmon1/harmon-init/commit/7c7ae072b0205ed85f966d94e7438c8b24ef4087))
+
 ## [3.1.1](https://github.com/evanharmon1/harmon-init/compare/v3.1.0...v3.1.1) (2026-06-23)
 
 

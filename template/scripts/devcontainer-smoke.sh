@@ -42,4 +42,15 @@ if [ -z "${CONTAINER_ID}" ]; then
     exit 1
 fi
 
+# Derive the profile from the config's parent-dir basename: the dev profile
+# lives in .devcontainer/dev/, everything else is the bot profile.
+if [ "$(basename "$(dirname "${CONFIG_PATH}")")" = "dev" ]; then
+    PROFILE="dev"
+else
+    PROFILE="bot"
+fi
+
+echo "==> Asserting ${PROFILE} permission invariants in the running container..."
+bash "$(dirname "$0")/devcontainer-assert.sh" container "${CONFIG_PATH}" "${CONTAINER_ID}" "${PROFILE}"
+
 echo "==> Smoke test passed for ${CONFIG_PATH}."

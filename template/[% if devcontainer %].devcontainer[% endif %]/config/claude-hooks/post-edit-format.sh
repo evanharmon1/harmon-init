@@ -2,8 +2,8 @@
 # post-edit-format.sh — PostToolUse hook for Edit|Write|MultiEdit.
 #
 # Auto-formats the just-written file so AI-generated code matches repo
-# conventions before it ever reaches git. Adapted for IaC: black for Python,
-# shfmt for shell, terraform fmt for Terraform.
+# conventions before it ever reaches git. Delegates to `task format:file`,
+# the single source of truth for the per-language formatter set.
 #
 # Always exits 0: this hook fixes, never blocks the tool call.
 set -euo pipefail
@@ -15,19 +15,7 @@ file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // ""')"
 
 cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
-case "$file_path" in
-*.py)
-    black --quiet "$file_path" 2>/dev/null || true
-    ;;
-*.sh | *.bash)
-    shfmt -w "$file_path" 2>/dev/null || true
-    ;;
-*.tf | *.tfvars)
-    terraform fmt "$file_path" 2>/dev/null || true
-    ;;
-*.md | *.mdx)
-    npx --yes markdownlint-cli2 --fix "$file_path" 2>/dev/null || true
-    ;;
-esac
+# Delegate to the Taskfile so the formatter SET lives in one place.
+task format:file -- "$file_path" >/dev/null 2>&1 || true
 
 exit 0

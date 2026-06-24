@@ -4,6 +4,13 @@
   // local runArgs env-file already provides TS_AUTHKEY and GH_TOKEN.
   "name": "DEV - devcontainer-harmon-init",
   "containerName": "devcontainer-harmon-init-dev",
+  // Minimum to run the intended workload (Playwright + agents). Codespaces
+  // enforces it; local Docker / Coder may not — see
+  // docs/guides/devcontainer-performance.md for recommended sizing.
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb"
+  },
   "build": {
     "dockerfile": "../Dockerfile",
     "context": "../..",
