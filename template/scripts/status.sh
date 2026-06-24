@@ -59,15 +59,25 @@ should_show() {
 }
 
 # ── Setup-check helpers ─────────────────────────────────────────────────────
-# Precompute status glyphs once (gum spawns a process per call, so we avoid
-# styling inside the per-check loop).
 
-if $HAS_GUM; then
-    I_OK="$(gum style --foreground 42 '✓')"
-    I_NO="$(gum style --foreground 196 '✗')"
-    I_UNKNOWN="$(gum style --foreground 214 '?')"
-    I_NA="$(gum style --foreground 240 '–')"
-    I_INFO="$(gum style --foreground 39 '•')"
+# Color is on when stdout is a TTY or gum is present (gum forces color anyway).
+# ANSI only — no extra dependency. Detected here at top level because inside the
+# section's `| section_box` pipe, stdout reads as a non-TTY.
+USE_COLOR=false
+{ [ -t 1 ] || $HAS_GUM; } && USE_COLOR=true
+
+# c SGR TEXT — wrap TEXT in an ANSI SGR sequence when color is enabled.
+c() {
+    if $USE_COLOR; then printf '\033[%sm%s\033[0m' "$1" "$2"; else printf '%s' "$2"; fi
+}
+
+# Status glyphs: colored Unicode when color is on, plain ASCII otherwise.
+if $USE_COLOR; then
+    I_OK="$(c '1;32' '✓')"
+    I_NO="$(c '1;31' '✗')"
+    I_UNKNOWN="$(c '1;33' '?')"
+    I_NA="$(c '2' '–')"
+    I_INFO="$(c '1;36' '•')"
 else
     I_OK='[x]'
     I_NO='[ ]'
@@ -75,6 +85,24 @@ else
     I_NA='[-]'
     I_INFO=' * '
 fi
+
+# subhead TEXT — a colored group header inside a section.
+subhead() {
+    printf '\n  %s\n' "$(c '1;36' "▸ $1")"
+}
+
+# bar PERCENT — a 20-cell Unicode progress bar (green fill on a dim track).
+bar() {
+    local pct="$1" width=20 i=0 fill="" track=""
+    local filled=$((pct * width / 100))
+    [ "${filled}" -gt "${width}" ] && filled="${width}"
+    [ "${filled}" -lt 0 ] && filled=0
+    while [ "${i}" -lt "${width}" ]; do
+        if [ "${i}" -lt "${filled}" ]; then fill="${fill}█"; else track="${track}░"; fi
+        i=$((i + 1))
+    done
+    printf '%s%s' "$(c '32' "${fill}")" "$(c '2' "${track}")"
+}
 
 SETUP_OK=0
 SETUP_NO=0
@@ -308,13 +336,21 @@ if [[ "${SECTION}" == "setup" ]]; then
 
         NWO="$(jq -r '.nameWithOwner // empty' "${d}/repo.json")"
 
-        if [[ -z "${NWO}" ]]; then
-            {
-                checkline no "Remote repository" "no GitHub remote (gh repo create)"
-                echo ""
-                kv "Summary" "remote not found — other checks skipped"
-            } | section_box
+        HAS_REMOTE=true
+        [ -z "${NWO}" ] && HAS_REMOTE=false
+
+        # Toolchain audit (brew) — slow JSON-API call; fire it in the background
+        # so it overlaps the GitHub lookups. Needs no remote.
+        if [ -f Brewfile ] && command -v brew >/dev/null 2>&1; then
+            (brew bundle check --file=Brewfile >/dev/null 2>&1 &&
+                echo ok >"${d}/brew" || echo no >"${d}/brew") &
+        elif [ -f Brewfile ]; then
+            echo unknown >"${d}/brew"
         else
+            echo na >"${d}/brew"
+        fi
+
+        if ${HAS_REMOTE}; then
             OWNER="${NWO%%/*}"
             REPO="${NWO##*/}"
             VISIBILITY="$(jq -r '.visibility // "?"' "${d}/repo.json" | tr '[:upper:]' '[:lower:]')"
@@ -370,30 +406,104 @@ if [[ "${SECTION}" == "setup" ]]; then
                     echo unknown >"${d}/ghcr"
                 fi
             ) &
-            wait
+        fi
+        wait
 
-            # ── Feature applicability, detected from local files ──
-            has_claude_wf=0
-            ls .github/workflows/claude-*.yml >/dev/null 2>&1 && has_claude_wf=1
-            has_release_wf=0
-            ls .github/workflows/release.yml >/dev/null 2>&1 && has_release_wf=1
-            uses_ci_app=$((has_claude_wf || has_release_wf))
-            uses_snyk=0
-            grep -rqi 'snyk' Taskfile.yml >/dev/null 2>&1 && uses_snyk=1
-            uses_full_scan=0
-            grep -rq 'FULL_SECURITY_SCAN' .github/workflows >/dev/null 2>&1 && uses_full_scan=1
+        # ── Feature applicability, detected from local files ──
+        has_claude_wf=0
+        ls .github/workflows/claude-*.yml >/dev/null 2>&1 && has_claude_wf=1
+        has_release_wf=0
+        ls .github/workflows/release.yml >/dev/null 2>&1 && has_release_wf=1
+        uses_ci_app=$((has_claude_wf || has_release_wf))
+        uses_snyk=0
+        grep -rqi 'snyk' Taskfile.yml >/dev/null 2>&1 && uses_snyk=1
+        uses_full_scan=0
+        grep -rq 'FULL_SECURITY_SCAN' .github/workflows >/dev/null 2>&1 && uses_full_scan=1
 
-            {
+        {
+            if ${HAS_REMOTE}; then
                 checkline info "Repository" "${NWO} (${VISIBILITY}, default: ${DEFAULT_BRANCH})"
+            else
+                checkline info "Repository" "no GitHub remote — local checks only"
+            fi
 
-                # Local git hooks (lefthook).
-                if grep -rql lefthook .git/hooks 2>/dev/null; then
-                    checkline ok "Git hooks (lefthook)"
+            # ── Local & hooks ──
+            subhead "Local & hooks"
+            if grep -rql lefthook .git/hooks 2>/dev/null; then
+                checkline ok "Git hooks (lefthook)"
+            else
+                checkline no "Git hooks (lefthook)" "task install:hooks"
+            fi
+            if git check-ignore -q .env 2>/dev/null; then
+                checkline ok ".env gitignored"
+            else
+                checkline no ".env gitignored" "add .env to .gitignore"
+            fi
+
+            # ── Toolchain ──
+            subhead "Toolchain"
+            case "$(cat "${d}/brew" 2>/dev/null)" in
+            ok) checkline ok "Brewfile deps installed" ;;
+            no) checkline no "Brewfile deps installed" "task install" ;;
+            unknown) checkline unknown "Brewfile deps installed" "brew not found" ;;
+            *) checkline na "Brewfile deps installed" "no Brewfile" ;;
+            esac
+
+            # ── Dev environment ──
+            subhead "Dev environment"
+            if command -v op >/dev/null 2>&1; then
+                if [ -n "$(timeout 3 op account list 2>/dev/null)" ]; then
+                    checkline ok "1Password CLI" "account configured"
                 else
-                    checkline no "Git hooks (lefthook)" "task install:hooks"
+                    checkline unknown "1Password CLI" "installed; no account"
                 fi
+            else
+                checkline no "1Password CLI" "brew install 1password-cli"
+            fi
+            if [ -f .envrc ]; then
+                if command -v direnv >/dev/null 2>&1; then
+                    checkline ok "direnv (.envrc)"
+                else
+                    checkline no "direnv (.envrc)" "brew install direnv"
+                fi
+            else
+                checkline na "direnv (.envrc)" "no .envrc"
+            fi
 
-                # Branch protection ruleset.
+            # ── Devcontainer ──
+            subhead "Devcontainer"
+            if [ -d .devcontainer ]; then
+                if [ -f .devcontainer/devcontainer.json ]; then
+                    checkline ok "Bot profile (devcontainer.json)"
+                else
+                    checkline no "Bot profile (devcontainer.json)"
+                fi
+                if [ -f .devcontainer/dev/devcontainer.json ]; then
+                    checkline ok "Dev profile (dev/devcontainer.json)"
+                else
+                    checkline no "Dev profile (dev/devcontainer.json)"
+                fi
+                if [ -f .devcontainer/devcontainer.env ]; then
+                    checkline ok "Secrets env seeded" "devcontainer.env"
+                else
+                    checkline no "Secrets env seeded" "1Password Environments mount"
+                fi
+                if ${HAS_REMOTE}; then
+                    case "$(cat "${d}/ghcr" 2>/dev/null)" in
+                    yes) checkline ok "GHCR image" "${REPO}-devcontainer" ;;
+                    no) checkline no "GHCR image" "built on first merge to main" ;;
+                    *) checkline unknown "GHCR image" "needs read:packages scope" ;;
+                    esac
+                else
+                    checkline unknown "GHCR image" "no remote"
+                fi
+            else
+                checkline na "Devcontainer" "not enabled (.devcontainer absent)"
+            fi
+
+            if ${HAS_REMOTE}; then
+                # ── GitHub configuration ──
+                subhead "GitHub configuration"
                 if ls .github/*[Rr]uleset*.json >/dev/null 2>&1; then
                     ruleset="$(jq -r '.[].name' "${d}/rulesets.json" 2>/dev/null |
                         grep -i 'protect' | head -1)"
@@ -405,15 +515,11 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "Branch ruleset" "no ruleset JSON shipped"
                 fi
-
-                # Dependabot alerts.
                 if [ "$(cat "${d}/depalerts" 2>/dev/null)" = "yes" ]; then
                     checkline ok "Dependabot alerts"
                 else
                     checkline no "Dependabot alerts" "Settings → Advanced Security"
                 fi
-
-                # Private vulnerability reporting (n/a on private repos).
                 if [ "${IS_PRIVATE}" = "true" ]; then
                     checkline na "Private vuln reporting" "private repo"
                 elif [ "$(jq -r '.enabled // false' "${d}/pvr.json")" = "true" ]; then
@@ -421,8 +527,6 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline no "Private vuln reporting" "Settings → Advanced Security"
                 fi
-
-                # Renovate app.
                 if [ -f renovate.json ] || [ -f .github/renovate.json ]; then
                     if grep -qi 'renovate' "${d}/apps.json" 2>/dev/null; then
                         checkline ok "Renovate app" "installed"
@@ -434,8 +538,6 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "Renovate app" "no renovate.json"
                 fi
-
-                # CodeRabbit app.
                 if [ -f .coderabbit.yaml ] || [ -f .coderabbit.yml ]; then
                     if grep -qi 'coderabbit' "${d}/apps.json" 2>/dev/null; then
                         checkline ok "CodeRabbit app" "installed"
@@ -447,10 +549,32 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "CodeRabbit app" "no .coderabbit.yaml"
                 fi
+                if jq -e '.data.repository' "${d}/projects.json" >/dev/null 2>&1; then
+                    proj_count="$(jq -r '(.data.repository.projectsV2.nodes // []) | length' \
+                        "${d}/projects.json" 2>/dev/null || echo 0)"
+                    if [ "${proj_count:-0}" -gt 0 ]; then
+                        proj_title="$(jq -r '.data.repository.projectsV2.nodes[0].title // "?"' \
+                            "${d}/projects.json" 2>/dev/null)"
+                        checkline ok "GitHub Project linked" "${proj_title}"
+                    else
+                        checkline no "GitHub Project linked" "link a Project v2 to the repo"
+                    fi
+                else
+                    checkline unknown "GitHub Project linked" "needs read:project scope"
+                fi
+                if [ "${has_release_wf}" = 1 ]; then
+                    if [ -s "${d}/release.txt" ]; then
+                        rel="$(head -1 "${d}/release.txt" | awk '{print $1}')"
+                        checkline ok "Release published" "${rel}"
+                    else
+                        checkline no "Release published" "task release:init"
+                    fi
+                else
+                    checkline na "Release published" "no release workflow"
+                fi
 
-                # Actions secrets.
-                echo ""
-                echo "  Actions secrets & variables:"
+                # ── Secrets & variables (names only; values never read) ──
+                subhead "Secrets & variables"
                 if [ "${has_claude_wf}" = 1 ]; then
                     if has_cred "${d}/secrets.json" "CLAUDE_CODE_OAUTH_TOKEN"; then
                         checkline ok "CLAUDE_CODE_OAUTH_TOKEN"
@@ -460,7 +584,6 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "CLAUDE_CODE_OAUTH_TOKEN" "no claude-* workflows"
                 fi
-
                 if [ "${uses_ci_app}" = 1 ]; then
                     if has_cred "${d}/vars.json" "CI_APP_ID"; then
                         checkline ok "CI_APP_ID (variable)"
@@ -475,7 +598,6 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "CI App credentials" "not used by this repo"
                 fi
-
                 if [ "${uses_snyk}" = 1 ]; then
                     if has_cred "${d}/secrets.json" "SNYK_TOKEN"; then
                         checkline ok "SNYK_TOKEN"
@@ -485,7 +607,6 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "SNYK_TOKEN" "no snyk tasks"
                 fi
-
                 if [ "${uses_full_scan}" = 1 ]; then
                     if has_cred "${d}/vars.json" "FULL_SECURITY_SCAN"; then
                         checkline ok "FULL_SECURITY_SCAN (variable)"
@@ -495,52 +616,22 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline na "FULL_SECURITY_SCAN (variable)" "not referenced"
                 fi
+            fi
 
-                # GHCR devcontainer image.
-                echo ""
-                if [ -d .devcontainer ]; then
-                    case "$(cat "${d}/ghcr" 2>/dev/null)" in
-                    yes) checkline ok "GHCR devcontainer image" "${REPO}-devcontainer" ;;
-                    no) checkline no "GHCR devcontainer image" "built on first merge to main" ;;
-                    *) checkline unknown "GHCR devcontainer image" "needs read:packages scope" ;;
-                    esac
-                else
-                    checkline na "GHCR devcontainer image" "no .devcontainer/"
-                fi
+            # ── Code health ──
+            subhead "Code health"
+            todo_count="$(git grep -I -h 'TODO:' 2>/dev/null | wc -l | tr -d ' ')"
+            checkline info "TODO: markers" "${todo_count:-0} remaining"
 
-                # GitHub Project (v2) linked to the repo.
-                if jq -e '.data.repository' "${d}/projects.json" >/dev/null 2>&1; then
-                    proj_count="$(jq -r '(.data.repository.projectsV2.nodes // []) | length' \
-                        "${d}/projects.json" 2>/dev/null || echo 0)"
-                    if [ "${proj_count:-0}" -gt 0 ]; then
-                        proj_title="$(jq -r '.data.repository.projectsV2.nodes[0].title // "?"' \
-                            "${d}/projects.json" 2>/dev/null)"
-                        checkline ok "GitHub Project linked" "${proj_title}"
-                    else
-                        checkline no "GitHub Project linked" "link a Project v2 to the repo"
-                    fi
-                else
-                    checkline unknown "GitHub Project linked" "needs read:project scope"
-                fi
-
-                # Initial release.
-                if [ "${has_release_wf}" = 1 ]; then
-                    if [ -s "${d}/release.txt" ]; then
-                        rel="$(head -1 "${d}/release.txt" | awk '{print $1}')"
-                        checkline ok "Release published" "${rel}"
-                    else
-                        checkline no "Release published" "task release:init"
-                    fi
-                else
-                    checkline na "Release published" "no release workflow"
-                fi
-
-                # Summary — MUST stay in this { } group so the counters are in
-                # scope (the surrounding pipe to section_box runs a subshell).
-                echo ""
-                setup_total=$((SETUP_OK + SETUP_NO + SETUP_UNKNOWN))
-                kv "Summary" "${SETUP_OK}/${setup_total} configured · ${SETUP_NO} missing · ${SETUP_UNKNOWN} unknown · ${SETUP_NA} n/a"
-            } | section_box
-        fi
+            # Summary — MUST stay in this { } group so the counters are in scope
+            # (the surrounding pipe to section_box runs a subshell).
+            echo ""
+            setup_total=$((SETUP_OK + SETUP_NO + SETUP_UNKNOWN))
+            setup_pct=0
+            [ "${setup_total}" -gt 0 ] && setup_pct=$((SETUP_OK * 100 / setup_total))
+            printf '  %s  %s  %s\n' "$(bar "${setup_pct}")" \
+                "$(c '1' "${setup_pct}%")" "$(c '2' "(${SETUP_OK}/${setup_total})")"
+            kv "Summary" "$(c '32' "${SETUP_OK} ok") · $(c '31' "${SETUP_NO} missing") · $(c '33' "${SETUP_UNKNOWN} unknown") · ${SETUP_NA} n/a"
+        } | section_box
     fi
 fi
