@@ -541,6 +541,11 @@ tasks:
     cmds:
       - ./scripts/status.sh env
 
+  status:setup:
+    desc: Audit GitHub setup completeness against docs/CHECKLIST.md
+    cmds:
+      - ./scripts/status.sh setup
+
   # ── Utilities ──────────────────────────────────────────────────
   util:bunch-add:
     desc: Move Bunch file to iCloud and replace with symlink (macOS)
