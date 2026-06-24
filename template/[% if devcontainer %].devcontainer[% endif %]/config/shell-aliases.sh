@@ -31,6 +31,13 @@ fi
 alias wm=workmux
 command -v workmux &>/dev/null && eval "$(workmux completions zsh)"
 
+# ── Agent Deck ──────────────────────────────────────────────
+alias ad='agent-deck'
+adf() { agent-deck worktree finish --no-merge "$@"; }
+# Usage: adl my-branch Implement the abc plan
+# Expands to: agent-deck launch . -c claude -w feat/my-branch -b -m "Implement the abc plan"
+adl() { agent-deck launch . -c claude -w "feat/$1" -b -m "${*:2}"; }
+
 # ── pnpm ────────────────────────────────────────────────────
 alias p='pnpm'
 alias pi='pnpm install'

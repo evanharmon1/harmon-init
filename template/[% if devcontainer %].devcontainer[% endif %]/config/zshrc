@@ -61,13 +61,6 @@ export HISTFILE="$HOME/.shell-history/.zsh_history"
 export EDITOR="micro"
 export VISUAL="$EDITOR"
 
-# Agent Deck shortcuts.
-alias ad='agent-deck'
-adf() { agent-deck worktree finish --no-merge "$@"; }
-# Usage: adl my-branch Implement the abc plan
-# Expands to: agent-deck launch . -c claude -w feat/my-branch -b -m "Implement the abc plan"
-adl() { agent-deck launch . -c claude -w "feat/$1" -b -m "${*:2}"; }
-
 # Starship prompt — must be after oh-my-zsh sourcing.
 # Config lives at ~/.config/starship.toml (installed from .devcontainer/config/).
 eval "$(starship init zsh)"

@@ -5,23 +5,23 @@ editors), the fix is almost never in this repo — it's in how much CPU/RAM the
 host actually grants the container. This guide covers the one knob that lives
 here and the real provisioning levers that live elsewhere.
 
-## The `hostRequirements` hint
+## The `hostRequirements` floor
 
-`.devcontainer/devcontainer.json` (and the `dev/` profile) declares a baseline:
+`.devcontainer/devcontainer.json` (and the `dev/` profile) declares the **minimum**
+the container needs to run its intended workload (Playwright + agents):
 
 ```jsonc
 "hostRequirements": {
-  "cpus": 4,
-  "memory": "8gb",
-  "storage": "32gb"
+  "cpus": 2,
+  "memory": "4gb"
 }
 ```
 
-This is a **hint, not a hard guarantee**. **Codespaces** enforces it (it sizes
-the VM to match). Local **Docker Desktop** and **Coder** largely ignore it —
-they hand the container whatever the host/VM allows. So bumping these numbers
-documents intent but does not, on its own, give the container more resources.
-The real sizing lives in the two places below.
+This is a **floor, not a target**. **Codespaces** enforces it — it won't offer a
+machine below these specs, so don't inflate it (that only forces a bigger, costlier
+machine than you need). **VS Code** warns when the host is under it. **Coder**
+ignores it. Raising these numbers does **not** give the container more resources;
+it only gates startup. For actual headroom, use the two levers below.
 
 ## Coder workspace quota (lives in harmon-infra)
 
@@ -35,9 +35,9 @@ the workspace.
 
 ## WSL2 memory (lives in `.wslconfig`)
 
-On Windows, Docker Desktop runs inside WSL2, so the container can never exceed
-what WSL2 itself is allowed. That cap is set per-user in `%UserProfile%\.wslconfig`
-(create it if absent):
+On Windows, Docker Engine runs inside a WSL2 distro, so the container can never
+exceed what WSL2 itself is allowed. That cap is the WSL2 VM's, set per-user in
+`%UserProfile%\.wslconfig` (create it if absent):
 
 ```ini
 [wsl2]
