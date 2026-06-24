@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Discussions
-    url: "https://github.com/evanharmon1/harmon-init/discussions"
-    about: For questions and support, use repo discussions.
+  - name: Contact
+    url: "mailto:evan@evanharmon.com"
+    about: For questions and support, contact the maintainers.
