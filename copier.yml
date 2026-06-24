@@ -24,8 +24,9 @@ project_description:
   help: "DESCRIPTION: Short description of the project"
   default: "TODO: project_description"
 
-# Hidden author identity (defaults rarely change) — defined early so asked
-# questions below can reference them in their own defaults.
+# Author identity — asked so a generated repo can carry a different identity;
+# each defaults to the maintainer. first/last stay hidden and only seed the
+# full-name default (they are not rendered anywhere directly).
 author_first_name:
   type: str
   default: Evan
@@ -38,23 +39,23 @@ author_last_name:
 
 author_full_name:
   type: str
+  help: "AUTHOR NAME: full name for LICENSE / author metadata / git identity"
   default: "[[ author_first_name + ' ' + author_last_name ]]"
-  when: false
 
 author_email:
   type: str
+  help: "AUTHOR EMAIL: email for LICENSE / author metadata / git identity"
   default: "evan@evanharmon.com"
-  when: false
 
 author_url:
   type: str
+  help: "AUTHOR URL: homepage / profile URL for author metadata"
   default: "https://evanharmon.com"
-  when: false
 
 author_git_provider_username:
   type: str
+  help: "GIT USERNAME: GitHub username; seeds the repo owner + CODEOWNERS defaults"
   default: evanharmon1
-  when: false
 
 github_org:
   type: str
