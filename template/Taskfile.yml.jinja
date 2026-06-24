@@ -435,7 +435,15 @@ tasks:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
       - gh api "repos/{{.REPO}}/vulnerability-alerts" --method PUT
-      - gh api "repos/{{.REPO}}/private-vulnerability-reporting" --method PUT
+      # Private vulnerability reporting is a public-repo-only feature; harmon-init
+      # creates repos --private, so guard on visibility to avoid a 404 that would
+      # abort the task. Applies cleanly if the repo is later made public.
+      - |
+        if [ "$(gh api "repos/{{.REPO}}" --jq '.private')" = "false" ]; then
+          gh api "repos/{{.REPO}}/private-vulnerability-reporting" --method PUT
+        else
+          echo "Skipping private vulnerability reporting ({{.REPO}} is private; public-repo-only feature)."
+        fi
       - gh variable set FULL_SECURITY_SCAN --repo "{{.REPO}}" --body true
 [% if github_org != author_git_provider_username %]
       - gh api "repos/{{.REPO}}/collaborators/[[ author_git_provider_username ]]-bot" --method PUT -f permission=push
