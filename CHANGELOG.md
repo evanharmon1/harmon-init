@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.2.1](https://github.com/evanharmon1/harmon-init/compare/v3.2.0...v3.2.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **template:** skip private vulnerability reporting on private repos ([#93](https://github.com/evanharmon1/harmon-init/issues/93)) ([8c755e2](https://github.com/evanharmon1/harmon-init/commit/8c755e2f7b43d6637f7cd1aa05b7621c25cce1de))
+
 ## [3.2.0](https://github.com/evanharmon1/harmon-init/compare/v3.1.1...v3.2.0) (2026-06-24)
 
 
