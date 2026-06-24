@@ -52,6 +52,12 @@ pnpm-debug.log*
 ehthumbs.db
 Thumbs.db
 
+# Editor / IDE files #
+######################
+.idea/
+*.swp
+*~
+
 # Anchored to repo root — unanchored `.meta` also matched template/.meta and
 # got dropped from copier's dirty-tree wip commit (empty-index clone + add -A).
 /.meta

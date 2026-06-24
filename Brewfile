@@ -11,6 +11,7 @@ brew "lefthook"
 # Git / GitHub
 brew "git"
 brew "gh"
+brew "git-delta"
 
 # Lint / format
 brew "shellcheck"
@@ -30,6 +31,7 @@ brew "hadolint"
 brew "node"
 
 # Utilities
+brew "direnv"
 brew "jq"
 brew "fzf"
 brew "fd"

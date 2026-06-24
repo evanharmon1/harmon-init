@@ -1,8 +1,7 @@
 # Product
 
-**Bucket — "why does it exist / who is it for?"** Business and problem-space
-knowledge: the non-code, non-how layer. This README is the hub for `product/`; it
-routes, the files below hold the content.
+Business and problem-space knowledge: why it exists and who it's for — the
+non-code, non-how layer.
 
 **Belongs here:** why the product exists, who it serves, where it's going, and the
 conceptual model. **Not here:** how it's built (→ [../architecture/](../architecture/)),
