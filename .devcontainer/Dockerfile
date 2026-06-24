@@ -7,7 +7,7 @@ ARG TARGETARCH
 # Each ARG_VERSION line is annotated with a `# renovate:` comment so Renovate
 # can auto-PR new releases. See renovate.json for the regex manager config.
 # NODE_MAJOR is intentionally unmanaged — Node major bumps are deliberate.
-ARG NODE_MAJOR=22
+ARG NODE_MAJOR=24
 # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
 ARG SHFMT_VERSION=3.13.1
 # renovate: datasource=github-releases depName=hadolint/hadolint extractVersion=^v?(?<version>.+)$

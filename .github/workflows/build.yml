@@ -53,6 +53,8 @@ jobs:
           sudo mv /tmp/actionlint /usr/local/bin/
           pip install yamllint
       - run: task check
+      - run: task test:hooks
+      - run: task test:devcontainer:permissions
 
   security:
     runs-on: ubuntu-latest
