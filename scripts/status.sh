@@ -410,13 +410,16 @@ if [[ "${SECTION}" == "setup" ]]; then
         wait
 
         # ── Feature applicability, detected from local files ──
+        # Match both .yml and .yaml — extension is each tool's own convention.
         has_claude_wf=0
-        ls .github/workflows/claude-*.yml >/dev/null 2>&1 && has_claude_wf=1
+        find .github/workflows -maxdepth 1 \( -name 'claude-*.yml' -o -name 'claude-*.yaml' \) 2>/dev/null | grep -q . && has_claude_wf=1
         has_release_wf=0
-        ls .github/workflows/release.yml >/dev/null 2>&1 && has_release_wf=1
+        find .github/workflows -maxdepth 1 \( -name 'release.yml' -o -name 'release.yaml' \) 2>/dev/null | grep -q . && has_release_wf=1
         uses_ci_app=$((has_claude_wf || has_release_wf))
         uses_snyk=0
-        grep -rqi 'snyk' Taskfile.yml >/dev/null 2>&1 && uses_snyk=1
+        for tf in Taskfile.yml Taskfile.yaml; do
+            [ -f "$tf" ] && grep -qi 'snyk' "$tf" && uses_snyk=1
+        done
         uses_full_scan=0
         grep -rq 'FULL_SECURITY_SCAN' .github/workflows >/dev/null 2>&1 && uses_full_scan=1
 
