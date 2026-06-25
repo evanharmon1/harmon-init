@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.3.2](https://github.com/evanharmon1/harmon-init/compare/v3.3.1...v3.3.2) (2026-06-25)
+
+
+### Bug Fixes
+
+* **template:** idempotent task bootstrap + task test:tasks Taskfile guard ([#102](https://github.com/evanharmon1/harmon-init/issues/102)) ([1944d6e](https://github.com/evanharmon1/harmon-init/commit/1944d6e4ac00f494b545e44e067893150ff903db))
+
 ## [3.3.1](https://github.com/evanharmon1/harmon-init/compare/v3.3.0...v3.3.1) (2026-06-25)
 
 
