@@ -400,7 +400,10 @@ tasks:
   bootstrap:
     desc: One-time machine setup (Homebrew[% if use_node %] + Node + pnpm[% endif %])
     cmds:
-      - NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      # Idempotent: skip the installer when Homebrew is already present. The
+      # official installer's NONINTERACTIVE mode demands sudo up front and aborts
+      # even when there is nothing to install, so guard on `brew` existing.
+      - command -v brew >/dev/null 2>&1 || NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 [% if use_node %]
       - brew install node
       - npm install -g pnpm
