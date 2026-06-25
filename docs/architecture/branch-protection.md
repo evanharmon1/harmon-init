@@ -36,7 +36,7 @@ Three independent layers enforce the boundary between AI agent work and producti
 2. **Repository ruleset on `main`** — Server-side enforcement that blocks direct pushes, requires PR reviews from a code owner, and mandates passing status checks before merge.
 3. **CODEOWNERS file** — Designates the human owner as the required reviewer for all file changes, ensuring the bot's PRs always require human approval.
 
-No single layer is sufficient alone. The PAT controls *what operations the token can attempt*. The ruleset controls *what operations GitHub allows on `main`*. The CODEOWNERS file controls *whose approval counts*.
+No single layer is sufficient alone. The PAT controls _what operations the token can attempt_. The ruleset controls _what operations GitHub allows on `main`_. The CODEOWNERS file controls _whose approval counts_.
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ Replace `@evanharmon1` with the GitHub username of the human who should approve 
 ### Bot Account PAT Permissions
 
 > This covers the **devcontainer agent's** push token (Claude Code running in the
-> container). CI *workflows* (release-please, claude-*, project-automation)
+> container). CI _workflows_ (release-please, claude-*, project-automation)
 > authenticate separately as the CI **GitHub App** — see
 > [security.md](security.md) for that App and its permissions. The ruleset below
 > protects `main` from every actor (App, bot PAT, or human) equally.
@@ -72,9 +72,11 @@ The machine user account's fine-grained PAT should have these permissions and no
 
 ## Ruleset Configuration
 
+This mirrors the importable
+`.github/Branch Protection Ruleset - Protect Main.json` — keep the two in sync.
+
 ```json
 {
-  "id": 14110902,
   "name": "Protect Main",
   "target": "branch",
   "source_type": "Repository",
@@ -82,8 +84,8 @@ The machine user account's fine-grained PAT should have these permissions and no
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "exclude": [],
-      "include": ["~DEFAULT_BRANCH", "refs/heads/main"]
+      "include": ["~DEFAULT_BRANCH", "refs/heads/main"],
+      "exclude": []
     }
   },
   "rules": [
@@ -118,20 +120,12 @@ The machine user account's fine-grained PAT should have these permissions and no
         "do_not_enforce_on_create": true,
         "required_status_checks": [
           {
-            "context": "secrets",
-            "integration_id": 15368
-          },
-          {
-            "context": "validate",
-            "integration_id": 15368
-          },
-          {
-            "context": "build-homepage",
+            "context": "verify",
             "integration_id": 15368
           },
           {
             "context": "security",
-            "integration_id": null
+            "integration_id": 15368
           }
         ]
       }
@@ -141,7 +135,7 @@ The machine user account's fine-grained PAT should have these permissions and no
     {
       "actor_id": 5,
       "actor_type": "RepositoryRole",
-      "bypass_mode": "pull_request"
+      "bypass_mode": "always"
     }
   ]
 }
@@ -153,9 +147,12 @@ The machine user account's fine-grained PAT should have these permissions and no
 
 The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. The `~DEFAULT_BRANCH` is a GitHub alias that always resolves to whatever the repo's default branch is, so even if the default branch name changes, the ruleset follows. Including `refs/heads/main` explicitly is belt-and-suspenders.
 
-### `bypass_actors: []`
+### `bypass_actors`
 
-**No one can bypass these rules.** This is intentional. Even the repo owner must go through the full PR process. If you later need an emergency bypass (e.g., for a hotfix), you would temporarily add yourself as a bypass actor, but the default posture is zero exceptions.
+Only the **Maintain** repository role (`RepositoryRole` id `5`, `bypass_mode: always`)
+can bypass these rules — an escape hatch for emergency hotfixes. The bot has only
+Write access (below Maintain), so it can never bypass. Day to day, even you go through
+the full PR process.
 
 ### `deletion`
 
@@ -190,15 +187,16 @@ This is the core rule that prevents the AI agent from pushing directly to `main`
 
 All specified CI checks must pass before the PR can merge. The `strict_required_status_checks_policy: true` setting means the PR branch must be up-to-date with `main` before merging — if `main` advances after the checks ran, the checks must re-run. The `do_not_enforce_on_create: true` setting skips enforcement when the branch is first created (before any CI has had a chance to run).
 
-The required checks for this repo are:
+The required checks are the two aggregate jobs from `build.yml` (see
+[ci-cd.md](ci-cd.md)):
 
-| Check                | Purpose                                  |
-| -------------------- | ---------------------------------------- |
-| `secrets`            | Scans for leaked secrets (Gitleaks)      |
-| `validate-compose`   | Validates Docker Compose configuration   |
-| `validate`           | General validation (linting, formatting) |
-| `validate-templates` | Validates infrastructure templates       |
-| `build-homepage`     | Ensures the homepage builds successfully |
+| Check      | Purpose                                                                                          |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| `verify`   | Aggregate gate — rolls up `lint`, and `security` so one check reports overall pass/fail |
+| `security` | Secret scanning (gitleaks) + dependency audit                                                    |
+
+Requiring the aggregate `verify` (rather than each leaf job) keeps the required-check
+list stable as jobs are added inside `build.yml`.
 
 ## What the AI Agent Can and Cannot Do
 
@@ -228,7 +226,7 @@ This ruleset ships with every repo generated from harmon-init. To replicate manu
 4. Update the `required_status_checks` to match that repo's CI checks
 5. Verify by attempting a direct push to main from the bot account — it should be rejected
 
-If repos move to the `ponderous` organization in the future, consider creating an **org-level ruleset** (requires GitHub Team plan) that applies these rules across all repos automatically, eliminating the need to configure each repo individually.
+For an organization with many repos, consider creating an **org-level ruleset** (requires GitHub Team plan) that applies these rules across all repos automatically, eliminating the need to configure each repo individually.
 
 ## Future Considerations
 

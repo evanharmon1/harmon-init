@@ -72,9 +72,11 @@ The machine user account's fine-grained PAT should have these permissions and no
 
 ## Ruleset Configuration
 
+This mirrors the importable
+`.github/Branch Protection Ruleset - Protect Main.json` — keep the two in sync.
+
 ```json
 {
-  "id": 14110902,
   "name": "Protect Main",
   "target": "branch",
   "source_type": "Repository",
@@ -82,8 +84,8 @@ The machine user account's fine-grained PAT should have these permissions and no
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "exclude": [],
-      "include": ["~DEFAULT_BRANCH", "refs/heads/main"]
+      "include": ["~DEFAULT_BRANCH", "refs/heads/main"],
+      "exclude": []
     }
   },
   "rules": [
@@ -118,32 +120,48 @@ The machine user account's fine-grained PAT should have these permissions and no
         "do_not_enforce_on_create": true,
         "required_status_checks": [
           {
-            "context": "secrets",
-            "integration_id": 15368
-          },
-          {
-            "context": "validate",
-            "integration_id": 15368
-          },
-          {
-            "context": "build-homepage",
+            "context": "verify",
             "integration_id": 15368
           },
           {
             "context": "security",
-            "integration_id": null
+            "integration_id": 15368
           }
         ]
       }
+[% if github_org != author_git_provider_username %]
+    },
+    {
+      "type": "merge_queue",
+      "parameters": {
+        "check_response_timeout_minutes": 60,
+        "grouping_strategy": "ALLGREEN",
+        "max_entries_to_build": 10,
+        "max_entries_to_merge": 5,
+        "merge_method": "SQUASH",
+        "min_entries_to_merge": 1,
+        "min_entries_to_merge_wait_minutes": 5
+      }
+    }
+  ],
+  "bypass_actors": [
+    {
+      "actor_id": null,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "always"
+    }
+  ]
+[% else %]
     }
   ],
   "bypass_actors": [
     {
       "actor_id": 5,
       "actor_type": "RepositoryRole",
-      "bypass_mode": "pull_request"
+      "bypass_mode": "always"
     }
   ]
+[% endif %]
 }
 ```
 
@@ -153,9 +171,19 @@ The machine user account's fine-grained PAT should have these permissions and no
 
 The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. The `~DEFAULT_BRANCH` is a GitHub alias that always resolves to whatever the repo's default branch is, so even if the default branch name changes, the ruleset follows. Including `refs/heads/main` explicitly is belt-and-suspenders.
 
-### `bypass_actors: []`
+### `bypass_actors`
 
-**No one can bypass these rules.** This is intentional. Even the repo owner must go through the full PR process. If you later need an emergency bypass (e.g., for a hotfix), you would temporarily add yourself as a bypass actor, but the default posture is zero exceptions.
+[% if github_org != author_git_provider_username %]
+Only **organization admins** (`OrganizationAdmin`, `bypass_mode: always`) can bypass
+these rules — an escape hatch for emergency hotfixes. The bot has only Write
+collaborator access and is **never** an org admin, so it can never bypass. Everyone
+else, including the repo owner, goes through the full PR process.
+[% else %]
+Only the **Maintain** repository role (`RepositoryRole` id `5`, `bypass_mode: always`)
+can bypass these rules — an escape hatch for emergency hotfixes. The bot has only
+Write access (below Maintain), so it can never bypass. Day to day, even you go through
+the full PR process.
+[% endif %]
 
 ### `deletion`
 
@@ -190,16 +218,27 @@ This is the core rule that prevents the AI agent from pushing directly to `main`
 
 All specified CI checks must pass before the PR can merge. The `strict_required_status_checks_policy: true` setting means the PR branch must be up-to-date with `main` before merging — if `main` advances after the checks ran, the checks must re-run. The `do_not_enforce_on_create: true` setting skips enforcement when the branch is first created (before any CI has had a chance to run).
 
-The required checks for this repo are:
+The required checks are the two aggregate jobs from `build.yml` (see
+[ci-cd.md](ci-cd.md)):
 
-| Check                | Purpose                                  |
-| -------------------- | ---------------------------------------- |
-| `secrets`            | Scans for leaked secrets (Gitleaks)      |
-| `validate-compose`   | Validates Docker Compose configuration   |
-| `validate`           | General validation (linting, formatting) |
-| `validate-templates` | Validates infrastructure templates       |
-| `build-homepage`     | Ensures the homepage builds successfully |
+| Check      | Purpose                                                                                          |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| `verify`   | Aggregate gate — rolls up `lint`[% if use_node %], `build-test`[% endif %][% if project_type == 'web-astro' %], `lighthouse`[% endif %], and `security` so one check reports overall pass/fail |
+| `security` | Secret scanning (gitleaks) + dependency audit                                                    |
 
+Requiring the aggregate `verify` (rather than each leaf job) keeps the required-check
+list stable as jobs are added inside `build.yml`.
+
+[% if github_org != author_git_provider_username %]
+### `merge_queue`
+
+Merges go through a merge queue (`grouping_strategy: ALLGREEN`): GitHub batches queued
+PRs, re-runs the required checks against the prospective merged result, and squash-merges
+only if everything stays green. A required check whose workflow does **not** run on the
+`merge_group` event would never report and would stall the queue, so only checks wired to
+`merge_group` belong in the required set.
+
+[% endif %]
 ## What the AI Agent Can and Cannot Do
 
 | Operation                               | Allowed? | Enforced by                                     |
@@ -228,7 +267,7 @@ This ruleset ships with every repo generated from harmon-init. To replicate manu
 4. Update the `required_status_checks` to match that repo's CI checks
 5. Verify by attempting a direct push to main from the bot account — it should be rejected
 
-If repos move to the `ponderous` organization in the future, consider creating an **org-level ruleset** (requires GitHub Team plan) that applies these rules across all repos automatically, eliminating the need to configure each repo individually.
+For an organization with many repos, consider creating an **org-level ruleset** (requires GitHub Team plan) that applies these rules across all repos automatically, eliminating the need to configure each repo individually.
 
 ## Future Considerations
 
