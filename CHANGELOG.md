@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.3.1](https://github.com/evanharmon1/harmon-init/compare/v3.3.0...v3.3.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **status:** status.sh set -e safety + Brewfile local-tooling parity (tokei, gum, television) ([#100](https://github.com/evanharmon1/harmon-init/issues/100)) ([581a6ec](https://github.com/evanharmon1/harmon-init/commit/581a6ec2bd161647028273604a25009225f89670))
+
 ## [3.3.0](https://github.com/evanharmon1/harmon-init/compare/v3.2.1...v3.3.0) (2026-06-24)
 
 
