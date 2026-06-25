@@ -38,6 +38,8 @@ brew "fd"
 brew "ripgrep"
 brew "bat"
 brew "tokei"
+brew "gum"          # status dashboard rendering (scripts/status.sh)
+brew "television"   # interactive task menu (`task` / task menu-tv → tv)
 brew "act"
 
 # macOS apps
