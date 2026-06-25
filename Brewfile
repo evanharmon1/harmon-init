@@ -37,6 +37,7 @@ brew "fzf"
 brew "fd"
 brew "ripgrep"
 brew "bat"
+brew "tokei"
 brew "act"
 
 # macOS apps

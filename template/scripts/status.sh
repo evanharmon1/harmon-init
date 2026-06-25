@@ -506,7 +506,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                 subhead "GitHub configuration"
                 if ls .github/*[Rr]uleset*.json >/dev/null 2>&1; then
                     ruleset="$(jq -r '.[].name' "${d}/rulesets.json" 2>/dev/null |
-                        grep -i 'protect' | head -1)"
+                        grep -i 'protect' | head -1 || true)"
                     if [ -n "${ruleset}" ]; then
                         checkline ok "Branch ruleset" "${ruleset}"
                     else
@@ -620,7 +620,7 @@ if [[ "${SECTION}" == "setup" ]]; then
 
             # ── Code health ──
             subhead "Code health"
-            todo_count="$(git grep -I -h 'TODO:' 2>/dev/null | wc -l | tr -d ' ')"
+            todo_count="$(git grep -I -h 'TODO:' 2>/dev/null | wc -l | tr -d ' ' || true)"
             checkline info "TODO: markers" "${todo_count:-0} remaining"
 
             # Summary — MUST stay in this { } group so the counters are in scope
