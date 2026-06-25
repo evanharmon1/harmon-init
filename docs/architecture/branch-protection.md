@@ -149,9 +149,9 @@ The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. T
 
 ### `bypass_actors`
 
-Only the **Maintain** repository role (`RepositoryRole` id `5`, `bypass_mode: always`)
+Only the **Repository admin** role (`RepositoryRole` id `5`, `bypass_mode: always`)
 can bypass these rules — an escape hatch for emergency hotfixes. The bot has only
-Write access (below Maintain), so it can never bypass. Day to day, even you go through
+Write access (below Admin), so it can never bypass. Day to day, even you go through
 the full PR process.
 
 ### `deletion`

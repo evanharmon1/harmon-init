@@ -179,9 +179,9 @@ these rules — an escape hatch for emergency hotfixes. The bot has only Write
 collaborator access and is **never** an org admin, so it can never bypass. Everyone
 else, including the repo owner, goes through the full PR process.
 [% else %]
-Only the **Maintain** repository role (`RepositoryRole` id `5`, `bypass_mode: always`)
+Only the **Repository admin** role (`RepositoryRole` id `5`, `bypass_mode: always`)
 can bypass these rules — an escape hatch for emergency hotfixes. The bot has only
-Write access (below Maintain), so it can never bypass. Day to day, even you go through
+Write access (below Admin), so it can never bypass. Day to day, even you go through
 the full PR process.
 [% endif %]
 
