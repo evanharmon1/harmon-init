@@ -135,7 +135,7 @@ This mirrors the importable
     {
       "actor_id": 5,
       "actor_type": "RepositoryRole",
-      "bypass_mode": "always"
+      "bypass_mode": "pull_request"
     }
   ]
 }
@@ -149,10 +149,13 @@ The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. T
 
 ### `bypass_actors`
 
-Only the **Repository admin** role (`RepositoryRole` id `5`, `bypass_mode: always`)
-can bypass these rules — an escape hatch for emergency hotfixes. The bot has only
-Write access (below Admin), so it can never bypass. Day to day, even you go through
-the full PR process.
+Only the **Repository admin** role (`RepositoryRole` id `5`) can bypass these rules,
+and only in `pull_request` mode — you can **merge** a PR that hasn't met every
+requirement (e.g. your own PR, which GitHub won't let you self-approve, or a stuck
+check), but you **cannot push directly to `main`**: a direct push isn't a pull
+request, so the bypass doesn't apply and the ruleset rejects it. This prevents
+accidental `git push origin main` while still letting a solo maintainer merge. The
+bot has only Write access (below Admin), so it can never bypass.
 
 ### `deletion`
 
