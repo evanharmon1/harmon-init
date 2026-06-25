@@ -57,6 +57,8 @@ Thumbs.db
 .idea/
 *.swp
 *~
+# VS Code: extensions auto-write machine-specific values, causing churn.
+.vscode/settings.json
 
 # Anchored to repo root — unanchored `.meta` also matched template/.meta and
 # got dropped from copier's dirty-tree wip commit (empty-index clone + add -A).
