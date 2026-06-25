@@ -52,6 +52,10 @@ Full reference: [docs/conventions.md](docs/conventions.md). Highlights:
   `shell:lint`); pin actions by SHA + `# vX.Y.Z`.
 - Git hooks are managed by lefthook (`lefthook.yml`) and delegate to Taskfile
   targets — don't duplicate logic in hooks or workflows.
+- Keep Taskfile `cmds:` trivial — inline strings aren't linted (`lint:shell`
+  only covers `scripts/*.sh`). Put any pipeline/conditional/loop/`curl | bash`
+  in a `scripts/*.sh` the task calls. `task test:tasks` checks the Taskfile
+  compiles and setup tasks are safe no-ops.
 - Indentation: 2 spaces default, 4 for Python/Terraform/Shell (`.editorconfig`).
 - Secrets never go in git; local env via 1Password (`op run` / `op inject`).
 [% if include_terraform %]

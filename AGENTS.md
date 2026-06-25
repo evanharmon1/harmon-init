@@ -93,6 +93,12 @@ task release:patch   # or release:minor / release:major
   (see `.editorconfig`).
 - Shell scripts must pass `shellcheck --severity=error` and `shfmt -d`, and stay
   portable across macOS bash 3.2 (no `mapfile`, no `grep -P`) and Linux.
+- Keep Taskfile `cmds:` trivial. Inline command strings are **not** seen by
+  `shellcheck`/`shfmt` (`lint:shell` only covers `scripts/*.sh`), so non-trivial
+  logic — pipelines, conditionals, loops, `curl | bash`, anything with `&&`/`||`
+  — belongs in a `scripts/*.sh` file that the task calls. `task test:tasks` guards
+  the floor (the Taskfile compiles; setup tasks are safe no-ops), but extracting
+  the shell is what actually gets it linted.
 - YAML linted with yamllint; workflows with actionlint; markdown with
   markdownlint-cli2.
 - Pin third-party GitHub Actions by commit SHA with a trailing version comment and
