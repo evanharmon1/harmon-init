@@ -174,7 +174,7 @@ The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. T
 ### `bypass_actors`
 
 > **Design intent — leave this `pull_request`, not `always`.** Every bypass actor is
-> scoped to `bypass_mode: pull_request` on purpose: an admin may *merge* a
+> scoped to `bypass_mode: pull_request` on purpose: an admin may _merge_ a
 > non-compliant PR (a solo maintainer's own PR, which GitHub won't let them
 > self-approve, or a genuinely stuck check) but **cannot push directly to `main`**.
 > Widening any bypass to `always` re-enables accidental (or malicious) direct pushes
