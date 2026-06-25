@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.3.3](https://github.com/evanharmon1/harmon-init/compare/v3.3.2...v3.3.3) (2026-06-25)
+
+
+### Bug Fixes
+
+* **status:** detect setup workflows by .yml and .yaml ([#109](https://github.com/evanharmon1/harmon-init/issues/109)) ([ba52871](https://github.com/evanharmon1/harmon-init/commit/ba52871e129c6e5e6494a72478f2feb2ca019ad7))
+
 ## [3.3.2](https://github.com/evanharmon1/harmon-init/compare/v3.3.1...v3.3.2) (2026-06-25)
 
 
