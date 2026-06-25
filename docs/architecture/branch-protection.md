@@ -7,14 +7,21 @@ This document explains the branch protection ruleset applied to `main` and how i
 ## Applying the Ruleset
 
 An importable copy of the ruleset ships in this repo at
-`.github/Branch Protection Ruleset - Protect Main.json`. Import it via the UI
-(Settings → Rules → Rulesets → Import a ruleset) or the API:
+`.github/Branch Protection Ruleset - Protect Main.json`. Apply it through the
+GitHub **UI import** (do this once `build.yml` is on `main`, so the required
+`verify`/`security` checks resolve):
 
-```bash
-gh api "repos/evanharmon1/harmon-init/rulesets" \
-  --method POST \
-  --input ".github/Branch Protection Ruleset - Protect Main.json"
-```
+> Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select
+> `.github/Branch Protection Ruleset - Protect Main.json`.
+
+To change the ruleset later, **edit the existing one in the UI** (Settings →
+Rules → Rulesets → Protect Main) — don't re-import.
+
+**Why the UI, not `gh api … rulesets`:** the REST `POST` is **not idempotent**
+(every run creates another "Protect Main" ruleset — silent duplicates), the
+`PUT` form needs the live ruleset id, and both currently reject the
+`merge_queue` rule with `422 Invalid rule 'merge_queue'`. The UI import handles
+every rule type and is the GitHub-native way to apply an exported ruleset.
 
 ## Dependabot and Renovate
 

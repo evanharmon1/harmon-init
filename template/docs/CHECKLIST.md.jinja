@@ -19,12 +19,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
       reporting**, sets the `FULL_SECURITY_SCAN` variable (CodeQL)[% if github_org != author_git_provider_username %], and adds
       the `[[ author_git_provider_username ]]-bot` machine account as a Write
       collaborator[% endif %]. Do NOT add dependabot.yml — Renovate owns version updates.
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — run once `build.yml` is on `main`, so the required `verify`/`security` checks resolve:
-
-  ```bash
-  gh api "repos/[[ github_org ]]/[[ project_slug ]]/rulesets" --method POST \
-    --input ".github/Branch Protection Ruleset - Protect Main.json"
-  ```
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)

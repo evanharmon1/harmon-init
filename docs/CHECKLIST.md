@@ -14,16 +14,11 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 ## 2. GitHub repo settings
 
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)):
+- [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
+      re-run): enables **Dependabot alerts** and **private vulnerability
+      reporting**, sets the `FULL_SECURITY_SCAN` variable (CodeQL). Do NOT add dependabot.yml — Renovate owns version updates.
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 
-  ```bash
-  gh api "repos/evanharmon1/harmon-init/rulesets" --method POST \
-    --input ".github/Branch Protection Ruleset - Protect Main.json"
-  ```
-
-- [ ] Settings → Advanced Security: enable **Dependabot alerts** and
-      **Private vulnerability reporting** (do NOT add dependabot.yml —
-      Renovate owns version updates)
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
@@ -35,7 +30,6 @@ config, toolchain, devcontainer, and dev environment — against the items below
       **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
       an org, per-repo for a personal account. Drives release-please, the
       claude-* workflows, and project-automation. See docs/architecture/security.md.
-- [ ] Actions variables: set `FULL_SECURITY_SCAN=true` to enable CodeQL
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
 
@@ -45,10 +39,15 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 ## 4. Secrets & environment
 
-- [ ] For local `.env` needs, use 1Password: `op inject`/`op run` or the
-      1Password Developer Environments feature; commit only `.env.example`-style files
-- [ ] Devcontainer secrets land in `.devcontainer/devcontainer.env` via
-      `init-env.sh` (1Password locally, host env on Coder) — never committed
+- [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
+      `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only
+      `.env.example`-style files
+- [ ] Devcontainer secrets: create a **1Password environment** that mounts
+      `.devcontainer/devcontainer.env` (and `.devcontainer/dev/devcontainer.env`)
+      with `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`
+      (+ `TS_AUTHKEY` for the dev profile). `init-env.sh` enforces the per-profile
+      allow-list; on Coder the values come from workspace parameters. See
+      [guides/devcontainers.md](guides/devcontainers.md)
 
 ## 5. Docs & meta
 
