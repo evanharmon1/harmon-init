@@ -149,6 +149,16 @@ The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. T
 
 ### `bypass_actors`
 
+> **Design intent — leave this `pull_request`, not `always`.** Every bypass actor is
+> scoped to `bypass_mode: pull_request` on purpose: an admin may *merge* a
+> non-compliant PR (a solo maintainer's own PR, which GitHub won't let them
+> self-approve, or a genuinely stuck check) but **cannot push directly to `main`**.
+> Widening any bypass to `always` re-enables accidental (or malicious) direct pushes
+> to `main` and is a real security loosening — only do it deliberately, and call it
+> out in review. A bypass actor is required at all (rather than `bypass_actors: []`)
+> because a solo maintainer otherwise can't merge anything; with multiple human
+> reviewers you can drop the bypass entirely instead.
+
 Only the **Repository admin** role (`RepositoryRole` id `5`) can bypass these rules,
 and only in `pull_request` mode — you can **merge** a PR that hasn't met every
 requirement (e.g. your own PR, which GitHub won't let you self-approve, or a stuck
