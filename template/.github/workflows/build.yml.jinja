@@ -83,6 +83,7 @@ jobs:
 [% endif %]
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
+      - run: task test:tasks
 [% if devcontainer %]
       - run: task test:hooks
       - run: task test:devcontainer:permissions

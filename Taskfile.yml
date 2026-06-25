@@ -237,6 +237,11 @@ tasks:
     cmds:
       - ./scripts/test-hooks.sh
 
+  test:tasks:
+    desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
+    cmds:
+      - ./scripts/test-tasks.sh
+
   # ── Security ──────────────────────────────────────────────────
   security:
     desc: Run all security checks
@@ -277,7 +282,10 @@ tasks:
   bootstrap:
     desc: One-time machine setup (Homebrew)
     cmds:
-      - NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      # Idempotent: skip the installer when Homebrew is already present. The
+      # official installer's NONINTERACTIVE mode demands sudo up front and aborts
+      # even when there is nothing to install, so guard on `brew` existing.
+      - command -v brew >/dev/null 2>&1 || NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
   install:
     desc: Install all project dependencies and tools

@@ -308,6 +308,11 @@ tasks:
 [% else %]
       - 'echo "TODO: wire tests for this project (see docs/architecture/tests.md); test files live in tests/"'
 [% endif %]
+
+  test:tasks:
+    desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
+    cmds:
+      - ./scripts/test-tasks.sh
 [% if devcontainer %]
 
   test:devcontainer:root:
