@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.4.0](https://github.com/evanharmon1/harmon-init/compare/v3.3.3...v3.4.0) (2026-06-26)
+
+
+### Features
+
+* **template:** make copier update safe (no target-repo complexity) ([#112](https://github.com/evanharmon1/harmon-init/issues/112)) ([7dd0dfa](https://github.com/evanharmon1/harmon-init/commit/7dd0dfa1221b14719ad8e611ae19885c6a9e9810))
+
 ## [3.3.3](https://github.com/evanharmon1/harmon-init/compare/v3.3.2...v3.3.3) (2026-06-25)
 
 
