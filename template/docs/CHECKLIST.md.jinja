@@ -11,6 +11,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] `task install` — Brewfile deps[% if use_python %], `uv sync`[% endif %][% if use_node %], `pnpm install`[% endif %], and lefthook git hooks
 - [ ] `task verify` passes locally
+- [ ] Open the `[[ project_slug ]].code-workspace` in VS Code (the curated multi-root workspace)
+- [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
+- [ ] macOS: add a Raycast quicklink/alias that opens the `[[ project_slug ]].code-workspace`
+[% if bunch_add %]
+- [ ] macOS: confirm the project is in your Bunch — auto-added at generation via `task util:bunch-add` (re-run it if needed)
+[% endif %]
 
 ## 2. GitHub repo settings
 
