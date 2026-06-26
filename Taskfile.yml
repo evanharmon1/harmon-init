@@ -181,6 +181,7 @@ tasks:
       - test:template:iac
       - test:template:full
       - test:template:meta
+      - test:template:update
 
   test:template:minimal:
     desc: Render template with default answers and validate the result
@@ -206,6 +207,11 @@ tasks:
     desc: Render template with bunch/obsidian/private-license branches (--skip-tasks) and validate
     cmds:
       - ./scripts/test-template.sh meta
+
+  test:template:update:
+    desc: Verify `copier update` is safe (delivers template changes; repo edits + seeds survive; no churn)
+    cmds:
+      - ./scripts/test-template-update.sh
 
   test:template:committed:
     desc: Render template, failing if the working tree is dirty (pre-release gate)
