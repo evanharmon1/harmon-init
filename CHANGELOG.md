@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.5.0](https://github.com/evanharmon1/harmon-init/compare/v3.4.0...v3.5.0) (2026-06-26)
+
+
+### Features
+
+* **status:** show CHECKLIST.md completion in status:setup ([#116](https://github.com/evanharmon1/harmon-init/issues/116)) ([5efdb72](https://github.com/evanharmon1/harmon-init/commit/5efdb72df1c9307be929e641217ddefd777027a7))
+
 ## [3.4.0](https://github.com/evanharmon1/harmon-init/compare/v3.3.3...v3.4.0) (2026-06-26)
 
 
