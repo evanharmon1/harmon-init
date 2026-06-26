@@ -46,12 +46,55 @@ framework scaffolding for web projects).
 
 ### Apply to / update an existing project
 
+Which copier operation to use depends on the repo's situation. The
+**standardize-repo** skill (in harmon-devkit) detects the situation and runs the
+right one for you; the underlying commands are:
+
+| Situation | Operation |
+|---|---|
+| New, empty project | `copier copy` (scaffold) |
+| Existing repo, never templated, **or** generated from **v2** (pre-v3 breaking redesign) | `copier copy … --vcs-ref=HEAD` over it, then reconcile by hand |
+| Existing repo generated from **v3+** (has `.copier-answers.yml`) | `copier update` (three-way merge) |
+
 ```bash
 cd existing-project
-copier update --trust          # if it was generated from this template
-# or adopt the template in a repo that wasn't:
+copier update --trust            # v3+ repo: merge in the latest template
+# or, to adopt a repo that was never templated / is on v2:
 copier copy --trust ~/git/harmon-init . --vcs-ref=HEAD
 ```
+
+#### How updates keep repos current (copier's three-way merge)
+
+`copier update` does **not** overwrite your files. It re-renders the template at
+the version your repo was last generated/updated from (recorded in
+`.copier-answers.yml`), diffs that against the latest template, and applies just
+that delta to your working tree as a three-way merge. So:
+
+- **Template improvements flow in** — a new README section, a fixed `bootstrap`
+  task, an updated `status.sh` land in your files automatically.
+- **Your customizations are preserved** — edits to template-owned files (a project
+  task in `Taskfile.yml`, a custom `status` section in `scripts/status.sh`) survive;
+  only a region you *and* the template both changed becomes a conflict to resolve.
+- **No special repo structure** — generated repos stay plain. Customize files **in
+  place**; there's nothing harmon-init-specific to learn to work in one, and no
+  "template-owned vs custom" file split. (Reconcile a conflict by keeping *both*
+  the template's change and your edit in the same file — never extract anything
+  into a separate file.)
+
+Two `copier.yml` settings keep updates safe (both invisible to repo users):
+
+- First-run `_tasks` (git init, the initial commit, `gh repo create`,
+  `release:init`, the macOS meta moves) are gated on `_copier_operation == 'copy'`,
+  so `copier update` never makes a spurious commit, re-inits git, or re-cuts a
+  release.
+- `_skip_if_exists` is kept to just **`CHANGELOG.md`** (owned by release-please).
+  Everything else is deliberately left out so the three-way merge can deliver its
+  improvements to existing repos — listing a file there *freezes* it and blocks all
+  template updates to it.
+
+For the repeatable, verified workflow (preview drift → update → reconcile → verify),
+use the standardize-repo skill's **`update`** mode; it ships `diff-template.sh`,
+which shows exactly which template-owned files are behind the template.
 
 ### Template development gotcha: `--vcs-ref=HEAD`
 
@@ -84,8 +127,10 @@ Template files use `[[ var ]]` and `[% if x %]` (set via `_envops` in
 
 ```bash
 task verify                # lint + full generation matrix
-task test:template         # all answer profiles (minimal/web/iac/full)
+task test:template         # all answer profiles (minimal/web/iac/full/meta) + update
 task test:template:web     # one profile
+task test:template:update  # `copier update` is safe: improvements merge in,
+                           # repo edits + CHANGELOG survive, no churn or conflicts
 ```
 
 Each profile renders into a temp dir and validates the output: symlinks
