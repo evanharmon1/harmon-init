@@ -2,10 +2,10 @@
 # test-template-update.sh — verify `copier update` on a generated repo is safe.
 #
 # Asserts that, going from one template version to the next:
-#   - template improvements are delivered,
+#   - template improvements are delivered (incl. a NEW README section merging in),
 #   - a repo's own edits to a template file survive (three-way merge), so repos
 #     can be customized normally without an extension-file dance,
-#   - one-time seeds (_skip_if_exists, e.g. README) are not clobbered,
+#   - _skip_if_exists files (CHANGELOG.md, release-please-owned) are NOT merged,
 #   - first-run _tasks do NOT re-run (no spurious scaffold commit / re-init),
 #   - no merge conflicts or .rej files are left behind.
 #
@@ -71,13 +71,17 @@ cat >>"$gen/Taskfile.yml" <<'YAML'
     cmds:
       - echo deploying
 YAML
-echo "REPO-OWNED README" >>"$gen/README.md"
+echo "- repo-owned changelog entry" >>"$gen/CHANGELOG.md"
 gitq "$gen" add -A
 gitq "$gen" commit -qm customize
 before="$(git -C "$gen" rev-list --count HEAD)"
 
-# 4. Ship a template-owned change (a DIFFERENT file, so the merge is clean) as v0.0.2.
+# 4. Ship template changes as v0.0.2: improve a template-owned file, ADD a README
+#    section (should flow in via three-way merge — README is NOT skip_if_exists),
+#    and change CHANGELOG (must NOT flow — it is _skip_if_exists).
 printf '\n# update-test marker\n' >>"$tmpl/template/scripts/lint-hygiene.sh"
+printf '\n## Template Added Section\n\nnew template content\n' >>"$tmpl/template/README.md.jinja"
+printf '\ntemplate-changed-changelog\n' >>"$tmpl/template/CHANGELOG.md.jinja"
 gitq "$tmpl" add -A
 gitq "$tmpl" commit -qm v0.0.2
 git -C "$tmpl" tag v0.0.2
@@ -88,9 +92,11 @@ git -C "$tmpl" tag v0.0.2
 # 6. Assertions.
 after="$(git -C "$gen" rev-list --count HEAD)"
 [ "$before" = "$after" ] || err "spurious commit on update (before=$before after=$after) — first-run _tasks re-ran"
-grep -q 'update-test marker' "$gen/scripts/lint-hygiene.sh" || err "template improvement was not delivered"
+grep -q 'update-test marker' "$gen/scripts/lint-hygiene.sh" || err "template improvement to a template-owned file was not delivered"
 grep -q 'project-specific task added in the repo' "$gen/Taskfile.yml" || err "repo's own edit to Taskfile.yml was lost on update"
-grep -q 'REPO-OWNED README' "$gen/README.md" || err "README.md (_skip_if_exists) was clobbered"
+grep -q 'Template Added Section' "$gen/README.md" || err "new template README section did not merge into the repo"
+grep -q 'repo-owned changelog entry' "$gen/CHANGELOG.md" || err "CHANGELOG.md lost the repo's content"
+grep -q 'template-changed-changelog' "$gen/CHANGELOG.md" && err "CHANGELOG.md received a template change despite _skip_if_exists"
 markers="$(grep -rl '^<<<<<<<' "$gen" 2>/dev/null | grep -v '/\.git/' || true)"
 [ -z "$markers" ] || err "conflict markers left in: $markers"
 rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"

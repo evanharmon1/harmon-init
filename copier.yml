@@ -259,21 +259,15 @@ _min_copier_version: "9.4.0"
 
 _subdirectory: template
 
-# One-time seeds: created on first generation, then OWNED by the repo. `copier
-# update` must never overwrite them — they hold authored content (README prose,
-# release history, the project's own AGENTS.md / product docs). Tooling and
-# scaffold docs the template keeps improving are deliberately NOT listed, so
-# `copier update`'s three-way merge delivers their improvements while preserving
-# any local edits.
+# Files copier must NEVER merge into on `copier update` — kept deliberately
+# minimal. Everything else (README, AGENTS.md, DESIGN.md, docs, …) is left OUT so
+# copier's three-way merge keeps delivering template improvements (e.g. a new
+# README section) while preserving the repo's own edits; only overlapping edits
+# conflict, and the update flow reconciles those. `_skip_if_exists` freezes a
+# file entirely, so it is reserved for content owned by another generator:
+#   - CHANGELOG.md — release-please owns it; template merges would fight it.
 _skip_if_exists:
-  - README.md
   - CHANGELOG.md
-  - todo.md
-  - DESIGN.md
-  - AGENTS.md
-  - docs/product/vision.md
-  - docs/product/roadmap.md
-  - docs/product/domain.md
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).
