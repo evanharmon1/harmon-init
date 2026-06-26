@@ -323,6 +323,26 @@ fi
 if [[ "${SECTION}" == "setup" ]]; then
     section_header "Setup Completeness"
 
+    # Checklist progress — parse the repo's docs/CHECKLIST.md task boxes and show
+    # how many are ticked as a colorful bar. Pure local file parsing (no network),
+    # so it renders even when gh is unauthenticated.
+    {
+        cl="docs/CHECKLIST.md"
+        if [ -f "${cl}" ]; then
+            cl_total="$(grep -cE '^[[:space:]]*- \[[ xX]\]' "${cl}" 2>/dev/null || true)"
+            cl_done="$(grep -cE '^[[:space:]]*- \[[xX]\]' "${cl}" 2>/dev/null || true)"
+            cl_total="${cl_total:-0}"
+            cl_done="${cl_done:-0}"
+            cl_pct=0
+            [ "${cl_total}" -gt 0 ] && cl_pct=$((cl_done * 100 / cl_total))
+            printf '  %s  %s  %s\n' "$(bar "${cl_pct}")" \
+                "$(c '1' "${cl_pct}%")" "$(c '2' "(${cl_done}/${cl_total} checked)")"
+            kv "Checklist" "${cl}"
+        else
+            printf '  %s\n' "$(c '2' "no docs/CHECKLIST.md to parse")"
+        fi
+    } | section_box
+
     if ! gh auth status &>/dev/null 2>&1; then
         echo "  (gh not authenticated -- run 'gh auth login')" | section_box
     else
