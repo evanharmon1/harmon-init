@@ -11,6 +11,9 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] `task install` — Brewfile deps, and lefthook git hooks
 - [ ] `task verify` passes locally
+- [ ] Open the `harmon-init.code-workspace` in VS Code (the curated multi-root workspace)
+- [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
+- [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
 
 ## 2. GitHub repo settings
 
