@@ -229,30 +229,51 @@ current_year:
 # All side-effectful tasks default to no so `copier copy --defaults` is
 # CI-safe (except git_init, which only touches the new project directory).
 
+# First-run-only tasks are gated on `_copier_operation == 'copy'` so they do
+# NOT re-run on `copier update` (which would make a spurious scaffold commit,
+# re-init git, re-create the remote, re-cut a release, or re-move the macOS meta
+# files). `task install` is intentionally left ungated — re-running it on update
+# refreshes brew deps + lefthook hooks against any updated config.
 _tasks:
   - command: git init -b main
-    when: "[[ git_init ]]"
+    when: "[[ git_init and _copier_operation == 'copy' ]]"
   # Initial commit — gh repo create --push and task release:init both need
   # HEAD to exist. Runs before `task install`, so lefthook hooks are not yet
   # installed and nothing intercepts this commit.
   - command: 'git add -A && git commit -m "chore: initial scaffold from harmon-init"'
-    when: "[[ git_init ]]"
+    when: "[[ git_init and _copier_operation == 'copy' ]]"
   - command: gh repo create [[ github_org ]]/[[ project_slug ]] --private --source=. --push
-    when: "[[ github_remote_create ]]"
+    when: "[[ github_remote_create and _copier_operation == 'copy' ]]"
   - command: task install
     when: "[[ run_task_install ]]"
   - command: task release:init
-    when: "[[ github_release_init ]]"
+    when: "[[ github_release_init and _copier_operation == 'copy' ]]"
   - command: task util:bunch-add
-    when: "[[ bunch_add ]]"
+    when: "[[ bunch_add and _copier_operation == 'copy' ]]"
   - command: task util:obsidian-add
-    when: "[[ obsidian_project_add ]]"
+    when: "[[ obsidian_project_add and _copier_operation == 'copy' ]]"
 
 # ── Copier settings ─────────────────────────────────────────────────
 
 _min_copier_version: "9.4.0"
 
 _subdirectory: template
+
+# One-time seeds: created on first generation, then OWNED by the repo. `copier
+# update` must never overwrite them — they hold authored content (README prose,
+# release history, the project's own AGENTS.md / product docs). Tooling and
+# scaffold docs the template keeps improving are deliberately NOT listed, so
+# `copier update`'s three-way merge delivers their improvements while preserving
+# any local edits.
+_skip_if_exists:
+  - README.md
+  - CHANGELOG.md
+  - todo.md
+  - DESIGN.md
+  - AGENTS.md
+  - docs/product/vision.md
+  - docs/product/roadmap.md
+  - docs/product/domain.md
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).
