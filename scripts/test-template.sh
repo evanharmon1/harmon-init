@@ -216,6 +216,15 @@ if [ -n "$shell_files" ]; then
         # shellcheck disable=SC2086
         shfmt -d $shell_files || err "shfmt failed on rendered scripts"
     fi
+    # A rendered script with a shebang must ship executable — else the generated
+    # repo's lifecycle hooks / `task` callers can't run it, and repos on the
+    # legacy node hygiene-check fail their own lint:hygiene on first commit.
+    # Safe to check the on-disk bit here: the render lands on the local FS where
+    # this test runs (not a fileMode-losing devcontainer mount).
+    for sf in $shell_files; do
+        [ "$(head -c 2 "$sf" 2>/dev/null)" = "#!" ] || continue
+        [ -x "$sf" ] || err "rendered shell script is not executable: $sf"
+    done
 fi
 
 # ── 7. Rendered JSON files parse (devcontainer.json is JSONC — skipped) ──
