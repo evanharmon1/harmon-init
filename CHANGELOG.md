@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.5.1](https://github.com/evanharmon1/harmon-init/compare/v3.5.0...v3.5.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **template:** drop trailing blank line in .copier-answers.yml ([#122](https://github.com/evanharmon1/harmon-init/issues/122)) ([ec98078](https://github.com/evanharmon1/harmon-init/commit/ec980781de641b0d8528e4d153ac908722f94ed6))
+
 ## [3.5.0](https://github.com/evanharmon1/harmon-init/compare/v3.4.0...v3.5.0) (2026-06-26)
 
 
