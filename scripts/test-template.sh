@@ -122,6 +122,17 @@ else
     git rev-parse HEAD >/dev/null 2>&1 || err "_tasks left the rendered repo without an initial commit"
 fi
 
+# ── 0a. Rendered repo passes its OWN file-hygiene gate ──────────────
+# The generated project's `task lint:hygiene` (scripts/lint-hygiene.sh) is part
+# of its merge gate. Running it here catches defects the other validators miss
+# because they live in the SOURCE files, not the rendered structure — e.g. a
+# `.jinja` whose whitespace-control strips the trailing newline (the LICENSE
+# bug) or a shell script committed without its EOF newline. Pure bash + git, so
+# no `task install` is needed; runs against the freshly-rendered tree.
+if [ -x scripts/lint-hygiene.sh ]; then
+    ./scripts/lint-hygiene.sh || err "rendered output fails its own lint:hygiene gate"
+fi
+
 # ── 0. AGENTS.md is canonical; CLAUDE.md/GEMINI.md + copilot-instructions.md
 #       symlink to it (copilot's canonical file lives under .github/). ──
 if [ ! -f AGENTS.md ]; then
