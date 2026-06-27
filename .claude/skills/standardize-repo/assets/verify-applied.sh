@@ -93,6 +93,20 @@ if { [ -f Taskfile.yml ] || [ -f Taskfile.yaml ]; } && have task; then
     fi
 fi
 
+# ── 3b. Required universal Taskfile targets are present ──────────────
+# Every standardized repo defines these regardless of project_type. A missing
+# one means the Taskfile drifted from (or predates) the current template — the
+# recurring example is status:setup (the setup-completeness audit), which older
+# forks of scripts/status.sh + Taskfile never had.
+if { [ -f Taskfile.yml ] || [ -f Taskfile.yaml ]; } && have task; then
+    tasklist="$(task --list-all 2>/dev/null || true)"
+    for t in verify check security status:setup install:hooks; do
+        if ! printf '%s\n' "$tasklist" | grep -qE "^[* ]*${t}:([[:space:]]|\$)"; then
+            err "Taskfile missing required target: ${t}"
+        fi
+    done
+fi
+
 # ── 4. No unrendered template markers leaked into the repo ──────────
 # harmon-init uses CUSTOM jinja delimiters ([[ var ]], [% block %]). Legitimate
 # look-alikes must NOT trip this: go-task uses {{.VAR}} (dot, no space), GitHub
@@ -139,6 +153,21 @@ if have gitleaks; then
     fi
 else
     echo "WARN: gitleaks not installed — skipping secrets scan"
+fi
+
+# ── 6. Template-owned file content drift (advisory) ─────────────────
+# Renders harmon-init from this repo's .copier-answers.yml and diffs the
+# template-owned file set (see diff-template.sh / template-owned-files.txt).
+# Advisory here — some drift is legitimate local customization, and the
+# update/audit modes review and reconcile it. After a `copier update` it should
+# show only intentional customizations.
+diff_tool="$(dirname "$0")/diff-template.sh"
+if [ -f .copier-answers.yml ] && [ -x "$diff_tool" ] && have copier && have yq; then
+    if ! "$diff_tool" . >/dev/null 2>&1; then
+        echo "WARN: template-owned files differ from a fresh harmon-init render —" >&2
+        echo "      review with $diff_tool --show . and reconcile (mode-update.md /" >&2
+        echo "      mode-audit.md drift class K). Legit customizations are expected." >&2
+    fi
 fi
 
 # ── Result ──────────────────────────────────────────────────────────

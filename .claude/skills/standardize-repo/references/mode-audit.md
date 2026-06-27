@@ -176,9 +176,10 @@ shipped ruleset JSON is already `verify`+`security` — so check the JSON, not j
 the doc. Relatedly, ambiguous `verify` contexts: if both `build.yml` and the
 devcontainer workflow define a job literally named `verify`, either can satisfy
 the required check — the template renames the devcontainer job to
-**`devcontainer-verify`**. Fix: re-import the ruleset
-(`gh api repos/<org>/<repo>/rulesets --method POST --input "<ruleset>.json"`),
-rename the devcontainer job, and align CI job names to `verify` + `security`.
+**`devcontainer-verify`**. Fix: re-import the ruleset via the GitHub UI
+(Settings → Rules → Rulesets → **Import a ruleset**; avoid `gh api … rulesets`,
+which is non-idempotent and rejects the `merge_queue` rule), rename the
+devcontainer job, and align CI job names to `verify` + `security`.
 Severity: **blocker** (wrong contexts mean the gate is unenforced or unsatisfiable).
 
 **E. YAML file extensions — NOT drift; do not flag.** `.yml` vs `.yaml` is left
@@ -245,6 +246,42 @@ default; `task release:*` stays a manual override); stale `CHECKLIST.md`
 workspace/bunch/slug files and the repo slug. Map each to its catalog area and
 assign severity by the §2 rubric.
 
+**J. Missing universal Taskfile targets (e.g. `status:setup`).** Every
+standardized repo defines the universal targets from
+[`standards-catalog.md`](./standards-catalog.md) §1.2 regardless of
+`project_type` — notably `verify`, `check`, `security`, `install:hooks`, and
+**`status:setup`** (the setup-completeness audit, `./scripts/status.sh setup`).
+Repos whose `Taskfile` / `scripts/status.sh` predate or forked away from the
+template often lack `status:setup` (the older `status.sh` had no `setup`
+section). Detect by listing targets (`task --list-all`) and checking the
+universal set; `assets/verify-applied.sh` enforces this. Fix: port the
+setup-check helpers + the "Setup Completeness" section from the template's
+`scripts/status.sh` (preserving any repo-specific sections) and add the
+`status:setup` task. Severity: **should**.
+
+**K. Template-owned file content drift (the general check).** The generalization of
+H/J and the bootstrap/idempotency class: any **template-owned** file (the set in
+[`assets/template-owned-files.txt`](../assets/template-owned-files.txt) —
+`Taskfile.yml`, `scripts/*.sh`, lint configs, the standard `.github/workflows/*`,
+devcontainer files) that no longer matches a fresh render is potentially missing
+template improvements. Detect it mechanically — this is how the audit "checks
+everything" instead of eyeballing each file:
+
+```bash
+~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/diff-template.sh "$TARGET"
+# --show to see the per-file diff
+```
+
+It renders harmon-init from the repo's own `.copier-answers.yml` and reports each
+template-owned file that differs (mapping `.yml`↔`.yaml`). Each `DRIFT` is either a
+**missed template improvement** or a **legitimate local customization** — read the
+diff to tell them apart. Fix the former with `copier update`
+([`mode-update.md`](./mode-update.md)) or by copying the template's version; leave
+the latter, reconciling **in place** (keep the customization in its normal file — do
+not extract it elsewhere). Severity: **should** (blocker if the drift breaks a
+required gate, e.g. a non-portable `lint-hygiene.sh`). Run this as a standard step of
+every audit.
+
 ---
 
 ## 4. Fix flow
@@ -285,8 +322,8 @@ Apply fixes on a branch, prefer re-templating for files copier owns, then verify
    - **Non-templated bits — hand-edit.** Copier won't *delete* or *move* files,
      so renames and relocations are manual: `git mv docs/specs specs`,
      `git mv docs/runbook docs/runbooks`, delete `-max`
-     duplicate workflows, re-import the branch ruleset JSON, repoint the
-     AGENTS.md symlinks. Use the gap report's Reconciliation plan as the work
+     duplicate workflows, re-import the branch ruleset JSON (via the GitHub UI),
+     repoint the AGENTS.md symlinks. Use the gap report's Reconciliation plan as the work
      list.
 
 3. **Verify locally.** Run the same gates the standard requires, from the target:
