@@ -235,12 +235,17 @@ current_year:
 # files). `task install` is intentionally left ungated — re-running it on update
 # refreshes brew deps + lefthook hooks against any updated config.
 _tasks:
-  - command: git init -b main
+  # Both git commands are idempotent so adopting harmon-init INTO an existing
+  # repo (`copier copy` over a checkout with its own history) is a safe no-op
+  # here: `[ -d .git ]` skips re-init, and the HEAD guard skips the scaffold
+  # commit when commits already exist. On a fresh scaffold neither guard fires.
+  - command: "[ -d .git ] || git init -b main"
     when: "[[ git_init and _copier_operation == 'copy' ]]"
   # Initial commit — gh repo create --push and task release:init both need
   # HEAD to exist. Runs before `task install`, so lefthook hooks are not yet
-  # installed and nothing intercepts this commit.
-  - command: 'git add -A && git commit -m "chore: initial scaffold from harmon-init"'
+  # installed and nothing intercepts this commit. Skipped when HEAD already
+  # exists (adopt-over-existing) so it never makes a spurious scaffold commit.
+  - command: 'git rev-parse --verify HEAD >/dev/null 2>&1 || { git add -A && git commit -m "chore: initial scaffold from harmon-init"; }'
     when: "[[ git_init and _copier_operation == 'copy' ]]"
   - command: gh repo create [[ github_org ]]/[[ project_slug ]] --private --source=. --push
     when: "[[ github_remote_create and _copier_operation == 'copy' ]]"
