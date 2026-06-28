@@ -14,6 +14,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Verify `harmon-init.code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
 - [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
 - [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
+- [ ] macOS (Bunch): add/confirm the project in your Bunch via `task util:bunch-add` — tracks a `.meta/*.bunch` symlink → iCloud (re-run if missing)
 
 ## 2. GitHub repo settings
 
