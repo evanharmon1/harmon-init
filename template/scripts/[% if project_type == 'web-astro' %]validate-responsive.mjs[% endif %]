@@ -24,7 +24,8 @@ function htmlFiles(dir) {
   return out
 }
 
-const VIEWPORT_RE = /<meta\s+name=["']viewport["']\s+content=["'][^"']*width=device-width[^"']*["']/i
+const VIEWPORT_RE =
+  /<meta\s+name=["']viewport["']\s+content=["'][^"']*width=device-width[^"']*["']/i
 
 const pages = htmlFiles(DIST)
 let errors = 0
