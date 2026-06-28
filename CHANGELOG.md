@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.9.0](https://github.com/evanharmon1/harmon-init/compare/v3.8.0...v3.9.0) (2026-06-28)
+
+
+### Features
+
+* **template:** add Latest Release, License, and Open-in-DevContainer README badges ([#143](https://github.com/evanharmon1/harmon-init/issues/143)) ([b83fd2f](https://github.com/evanharmon1/harmon-init/commit/b83fd2f6e9947ad1da4fc4a0399dd65c8da9c180))
+
+
+### Bug Fixes
+
+* **template:** harden side-effect tasks, fix buildx input, broaden node_modules ignore ([#142](https://github.com/evanharmon1/harmon-init/issues/142)) ([83bdc0a](https://github.com/evanharmon1/harmon-init/commit/83bdc0acbaf8f8dfd2562a6ff8df5ea2fb40965c))
+
 ## [3.8.0](https://github.com/evanharmon1/harmon-init/compare/v3.7.0...v3.8.0) (2026-06-28)
 
 
