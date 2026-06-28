@@ -1,0 +1,31 @@
+# Each file type is owned by ONE formatter/linter to avoid tools fighting:
+#   - YAML      -> yamllint        (task lint:yaml)
+#   - Markdown  -> markdownlint    (task lint:markdown)
+#   - Shell     -> shfmt           (task lint:shell)
+# Prettier owns the rest (js/ts/jsx/tsx/json/css/astro). Keeping it out of YAML
+# also avoids its flow-sequence normalization (`[ "x" ]` -> `["x"]`) fighting the
+# rendered GitHub Actions / jinja workflow style.
+*.yml
+*.yaml
+*.md
+*.mdx
+
+# Machine-/agent-specific, generated, or vendored — not ours to format.
+.claude/
+node_modules/
+dist/
+.task/
+.worktrees/
+.terraform/
+.venv/
+pnpm-lock.yaml
+
+# release-please owns CHANGELOG.md (writes double blanks Prettier would strip).
+CHANGELOG.md
+
+# Config JSON Prettier can't cleanly own: JSONC (devcontainer) and templated
+# JSON whose rendered structure differs from Prettier's. Validity is checked by
+# lint:hygiene (JSON parse), so they don't need Prettier formatting too.
+.devcontainer/
+renovate.json
+.github/github-app-manifest.json

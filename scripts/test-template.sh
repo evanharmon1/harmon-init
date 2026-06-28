@@ -187,6 +187,21 @@ if [ -d .github/workflows ]; then
     fi
 fi
 
+# ── 3b. Rendered JS/TS/JSON is Prettier-clean (node projects) ────────
+# A generated repo runs `prettier --check` in its own lint:prettier; if the
+# template's RENDERED output isn't already clean, the consumer's very first
+# `task verify` fails (recurring example: jinja-bracketed workflow YAML, now
+# handed to yamllint via .prettierignore). Catch that here. Explicit options
+# match the shipped prettier-config-standard (singleQuote, no-semi,
+# trailing-comma none, width 100) so no config package needs installing; the
+# rendered .prettierignore (YAML->yamllint, Markdown->markdownlint) is honored.
+if [ -f prettier.config.cjs ] && have npx; then
+    if ! npx --yes prettier@3 --no-config --single-quote --no-semi \
+        --trailing-comma none --print-width 100 --check . >/dev/null 2>&1; then
+        err "rendered output is not Prettier-clean — a consumer's first 'task verify' would fail (run: npx prettier --check . in the render)"
+    fi
+fi
+
 # ── 4. Rendered YAML is valid (yamllint, errors only) ───────────────
 if have yamllint; then
     yamllint --no-warnings . || err "yamllint errors in rendered output"

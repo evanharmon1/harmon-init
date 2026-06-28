@@ -2,9 +2,7 @@
   "ci": {
     "collect": {
       "staticDistDir": "./dist",
-      "url": [
-        "http://localhost/"
-      ],
+      "url": ["http://localhost/"],
       "numberOfRuns": 1,
       "settings": {
         "chromeFlags": "--no-sandbox --headless --disable-gpu --disable-dev-shm-usage"
