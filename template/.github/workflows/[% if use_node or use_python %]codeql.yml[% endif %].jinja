@@ -56,7 +56,7 @@ jobs:
   codeql-verify:
     if: always()
     needs: [analyze]
-    runs-on: ubuntu-latest
+    runs-on: [ [[ ci_runner_labels ]] ]
     steps:
       - name: Check analyze result
         run: |
