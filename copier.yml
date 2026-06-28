@@ -273,6 +273,10 @@ _subdirectory: template
 #   - CHANGELOG.md — release-please owns it; template merges would fight it.
 _skip_if_exists:
   - CHANGELOG.md
+  # The workspace is generated once with a random peacock color and then tracked
+  # by the consumer; freeze it so `copier update` never regenerates a new color
+  # (which would churn a now-committed file on every update).
+  - "*.code-workspace"
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).

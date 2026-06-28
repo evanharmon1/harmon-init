@@ -37,10 +37,9 @@ Brewfile.lock.json
 # Local editor/AI settings
 settings.local.json
 
-# Project meta (Bunch/Obsidian symlink targets) and scratch — anchored to root
-/.meta
+# Scratch — anchored to root. (`.meta/` and the `*.code-workspace` are tracked;
+# `.DS_Store` above still keeps macOS cruft out of `.meta/`.)
 /todo.md
-/*.code-workspace
 [% if use_node %]
 
 # build output
