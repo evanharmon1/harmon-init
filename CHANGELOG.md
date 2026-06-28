@@ -8,6 +8,26 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.6.0](https://github.com/evanharmon1/harmon-init/compare/v3.5.1...v3.6.0) (2026-06-28)
+
+
+### Features
+
+* **template:** add web-astro quality gates (JSON-LD/OG/responsive/links) + Site Overview ([#132](https://github.com/evanharmon1/harmon-init/issues/132)) ([4052922](https://github.com/evanharmon1/harmon-init/commit/405292229663d43522b2dafd7641da43f52b7409))
+* **template:** make `verify` the fast agent gate and `ci` a full CI mirror ([#131](https://github.com/evanharmon1/harmon-init/issues/131)) ([31eb4c0](https://github.com/evanharmon1/harmon-init/commit/31eb4c0a3d1602c709910d37112dc86dff3f481b))
+
+
+### Bug Fixes
+
+* pin the uv and starship installers in the devcontainer image ([#130](https://github.com/evanharmon1/harmon-init/issues/130)) ([0a99873](https://github.com/evanharmon1/harmon-init/commit/0a9987321c22f502a36a3f8fd9d6e603a7a5cc6d))
+* **template:** make editor/prettier config project-type-aware ([#126](https://github.com/evanharmon1/harmon-init/issues/126)) ([53e0e30](https://github.com/evanharmon1/harmon-init/commit/53e0e305f3a0308dfe73125c485170b212c50d4c))
+* **template:** make generated CI correct on hosted and self-hosted runners ([#125](https://github.com/evanharmon1/harmon-init/issues/125)) ([5b85fe2](https://github.com/evanharmon1/harmon-init/commit/5b85fe29b2f03969e7bbeafa24a91d3d2f7609ef))
+
+
+### Performance Improvements
+
+* **template:** drop npm download cache from devcontainer image layers ([#127](https://github.com/evanharmon1/harmon-init/issues/127)) ([0a90a5a](https://github.com/evanharmon1/harmon-init/commit/0a90a5a3c1405f5700ade99c55cc3f090be1d650))
+
 ## [3.5.1](https://github.com/evanharmon1/harmon-init/compare/v3.5.0...v3.5.1) (2026-06-27)
 
 
