@@ -1,11 +1,27 @@
 {
   "editor.formatOnSave": true,
+[% if use_python %]
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter"
   },
+[% endif %]
+[% if include_terraform %]
   "[terraform]": {
     "editor.defaultFormatter": "hashicorp.terraform"
   },
+[% endif %]
+[% if project_type == 'web-astro' %]
+  "[astro]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+[% endif %]
+[% if use_node %]
+  "[javascript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[javascriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[css]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+[% endif %]
   "[shellscript]": {
     "editor.defaultFormatter": "foxundermoon.shell-format"
   },
