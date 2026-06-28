@@ -40,24 +40,35 @@ tasks:
 
   # ── CI / Verification Pipelines ────────────────────────────────
   ci:
-    desc: Full CI pipeline (check → build → validate → test → security)
+    # Full local mirror of the CI pipeline — run before (or instead of) opening
+    # a PR to catch everything CI would, on demand, without waiting on a PR run.
+    # Builds on `verify` and adds the heavier / environment-dependent checks
+    # (the devcontainer permission assert needs a Docker daemon, like CI has).
+    desc: Full CI mirror (verify → [test:devcontainer:permissions →] test → security)
     cmds:
-      - task: check
-[% if use_node %]
-      - task: build
+      - task: verify
+[% if devcontainer %]
+      - task: test:devcontainer:permissions
 [% endif %]
-      - task: validate
       - task: test
       - task: security
 
   verify:
-    desc: Local verification gate (check[% if use_node %] → build[% endif %] → validate)
+    # Fast local gate (target: well under a minute) — safe for editors, git
+    # hooks, and AI agents to run on every change without getting bogged down.
+    # Add a check here ONLY if it stays fast; heavier or environment-dependent
+    # checks (test, security, the devcontainer permission assert) live in `ci`.
+    desc: Fast local gate (check[% if use_node %] → build[% endif %] → validate → guards)
     cmds:
       - task: check
 [% if use_node %]
       - task: build
 [% endif %]
       - task: validate
+      - task: test:tasks
+[% if devcontainer %]
+      - task: test:hooks
+[% endif %]
 
   # ── Quality Checks ────────────────────────────────────────────
   check:

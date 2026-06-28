@@ -54,6 +54,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Free up runner disk space
+        # Only on disposable GitHub-hosted runners: these rm -rf / prune commands
+        # would permanently delete real SDKs and Docker images on a persistent
+        # self-hosted runner. The devcontainer image is large (toolchains,
+        # browsers, language runtimes), and hosted ubuntu-latest's free space is
+        # too small — the build fails with "no space left on device" — so reclaim
+        # ~13GB of preinstalled SDKs we don't use. Self-hosted machines are
+        # assumed to have adequate disk and are skipped entirely.
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
       - name: Build ${{ matrix.name }} devcontainer
         uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3
         env:
@@ -82,7 +95,7 @@ jobs:
   devcontainer-verify:
     if: always()
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: [ [[ ci_runner_labels ]] ]
     steps:
       - name: Check job results
         run: |

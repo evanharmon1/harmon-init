@@ -22,12 +22,19 @@ All commands go through the Taskfile (single source of truth — CI, git hooks,
 and humans run the same targets):
 
 ```bash
-task verify      # local merge gate (lint[% if use_node %] + typecheck + build[% endif %])
+task verify      # FAST local gate (<~1 min) — run constantly; safe for hooks/agents
+task ci          # FULL CI mirror — run before/instead of opening a PR
 task check       # all linters
 task fix         # auto-format then lint
 task test        # tests
 task security    # gitleaks + dependency audit
 ```
+
+`verify` is deliberately kept fast (lint[% if use_node %] + typecheck + build[% endif %] + the quick
+Taskfile/hook guards) so editors, git hooks, and AI agents can run it on every
+change without getting bogged down. `ci` is the full pipeline — everything CI
+runs (`verify` + `test` + `security`[% if devcontainer %] + the devcontainer permission assert[% endif %]) — so you
+can reproduce a CI run locally on demand instead of waiting on a PR.
 
 ## Definition of Done
 

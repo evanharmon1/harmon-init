@@ -45,16 +45,28 @@ tasks:
 
   # ── CI / Verification Pipelines ────────────────────────────────
   ci:
-    desc: Full CI pipeline (check → test → security)
+    # Full local mirror of this repo's CI — run on demand to catch everything CI
+    # would (the lint job's guards, the template render matrix, security) without
+    # waiting on a PR. test:devcontainer:permissions needs a Docker daemon.
+    desc: Full CI mirror (check → guards → test → security)
     cmds:
       - task: check
+      - task: test:tasks
+      - task: test:hooks
+      - task: test:devcontainer:permissions
       - task: test
       - task: security
 
   verify:
-    desc: Local verification gate (check → test:template)
+    # Local gate for this template repo. Unlike a generated repo's `verify` (which
+    # is tuned to stay under a minute for agents/hooks), this one renders the whole
+    # template via test:template, so it is inherently heavier — but it still runs
+    # the same fast Taskfile/hook guards a generated repo's verify does.
+    desc: Local verification gate (check → guards → test:template)
     cmds:
       - task: check
+      - task: test:tasks
+      - task: test:hooks
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────

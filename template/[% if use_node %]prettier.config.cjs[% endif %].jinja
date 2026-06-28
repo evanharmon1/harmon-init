@@ -8,6 +8,7 @@ module.exports = {
   semi: false,
   printWidth: 100,
   // pluginSearchDirs: [__dirname],
+[% if project_type == 'web-astro' %]
   plugins: [
     require.resolve('prettier-plugin-astro'),
     require.resolve('prettier-plugin-tailwindcss')
@@ -20,4 +21,7 @@ module.exports = {
       }
     }
   ]
+[% else %]
+  plugins: [require.resolve('prettier-plugin-tailwindcss')]
+[% endif %]
 }
