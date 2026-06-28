@@ -59,8 +59,11 @@ both.
 # Generate a new project from this template
 copier copy harmon-init new-project --trust
 
-# Local verification gate (lint + template generation tests) — run before pushing
+# Local verification gate (lint + fast guards + template generation tests)
 task verify
+
+# Full CI mirror on demand (verify's checks + devcontainer assert + security)
+task ci
 
 # Lint only
 task check
