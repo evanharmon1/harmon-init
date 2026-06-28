@@ -272,7 +272,7 @@ template improvements. Detect it mechanically — this is how the audit "checks
 everything" instead of eyeballing each file:
 
 ```bash
-~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/diff-template.sh "$TARGET"
+assets/diff-template.sh "$TARGET"
 # --show to see the per-file diff
 ```
 
@@ -289,6 +289,27 @@ the latter, reconciling **in place** (keep the customization in its normal file 
 not extract it elsewhere). Severity: **should** (blocker if the drift breaks a
 required gate, e.g. a non-portable `lint-hygiene.sh`). Run this as a standard step of
 every audit.
+
+**L. Workflow ↔ Taskfile contract.** Every `task <target>` referenced in
+`.github/workflows/*.yml` must exist in `Taskfile.yml`. CI's `lint`/`build` jobs
+call targets `task verify` never runs (e.g. `test:tasks`, `test:hooks`,
+`test:devcontainer:permissions`), so a Taskfile that drifted from the template —
+or was restored wholesale from a pre-template `main` during a Path-B adopt while
+the template's workflows were taken as-is — can omit them. The result is the worst
+kind of green: `task verify` (and `verify-applied.sh`'s §1 gate) passes locally
+while CI goes **red**, because the gate doesn't exercise what CI does. Detect the
+contract directly:
+
+```bash
+grep -rhoE '(run:[[:space:]]*|^[[:space:]]*|&&[[:space:]]*)task +[a-z][a-z0-9:_-]*' \
+  .github/workflows/ | sed -E 's/.*task +//' | sort -u
+# then assert each is in `task --list-all`
+```
+
+`assets/verify-applied.sh` (§3c) enforces this. Fix: port the missing targets and
+their `scripts/*.sh` helpers from the template (or reconcile the preserved Taskfile
+against the adopted workflows). Severity: **blocker** (the gate is unenforced and CI
+is unsatisfiable until the targets exist).
 
 ---
 
@@ -348,7 +369,7 @@ Apply fixes on a branch, prefer re-templating for files copier owns, then verify
    actually resolved by running the skill's checker:
 
    ```bash
-   ~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/verify-applied.sh "$TARGET"
+   assets/verify-applied.sh "$TARGET"
    ```
 
    (See [`../assets/verify-applied.sh`](../assets/verify-applied.sh) — it should

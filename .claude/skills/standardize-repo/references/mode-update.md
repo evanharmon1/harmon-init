@@ -34,7 +34,7 @@ git switch -c chore/update-harmon-init
 ## 1. See what's missing (read-only)
 
 ```bash
-~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/diff-template.sh .
+assets/diff-template.sh .
 # add --show to print the full per-file diff
 ```
 
@@ -90,6 +90,26 @@ update will **not** make a scaffold commit, re-init git, or re-cut a release. On
 > harmon-init changes from a local checkout (see [copier-gotchas.md](./copier-gotchas.md)
 > gotcha 1). It is never needed for a normal repo update — don't add it here.
 
+**Renamed templated files are skipped silently — port their delta by hand.**
+`copier update`'s three-way merge is keyed on file *path*. If the repo renamed a
+templated file (most commonly `*.yml` → `*.yaml` for the workflows, `Taskfile`,
+and `lefthook`), copier can't match it: it leaves the file **untouched** and emits
+**no warning** — the run still prints `Updating to template version <X>`, so it
+*looks* fully applied while those files stay on the old version. `diff-template.sh`
+(§1/§4) maps `.yml`↔`.yaml` for *detection*, so such a file shows as `DRIFT`
+whether the gap is a benign extension swap **or** a genuinely missed update — open
+the diff to tell which. For every renamed templated file, port the version delta
+manually:
+
+```bash
+# <old> = the repo's _commit before this update; <new> = the tag you updated to
+git -C ~/git/harmon-init diff <old>..<new> -- template/<path>
+```
+
+Apply the meaningful changes into the repo's renamed file, keeping its local
+customizations. harmon-infra is the standing example (every `.yml` renamed to
+`.yaml`, so its workflows/Taskfile/lefthook always need this hand-port).
+
 ## 3. Reconcile conflicts (in place — no special files)
 
 The three-way merge applies template improvements and keeps the repo's edits when
@@ -103,22 +123,62 @@ Resolve each like a git merge — keep **both** the template's intent and the re
 real customization in the same file. Example: the template improved `scripts/status.sh`
 and the repo had added an `infra` section — the merged file keeps the improved core
 *and* the `infra` section. Don't discard either side; don't extract anything into a
-separate file. Then read the full diff (`git add -A -N && git diff`) and confirm no
+separate file. Then read the full diff (`git add -A && git diff HEAD`) and confirm no
 app content was clobbered and no copier marker leaked (`[[`, `[%`,
-`TODO: project_description`).
+`TODO: project_description`). Use `git add -A` (not `git add -A -N`): copier
+resolves some conflicts with a delete-then-add, which a bare `git diff` renders as a
+misleading whole-file rewrite (`DA` in `git status`, every line shown as removed +
+re-added); staging first and diffing against `HEAD` shows the true, small delta.
+
+**Silent reverts have NO conflict marker.** copier only emits markers / `.rej`
+where edits *overlap*. A file the repo customized **outside copier's tracked
+answers** — anything restored wholesale from `main` during a Path-B adopt
+(`.vscode/settings.json`, `.gitignore`, `renovate.json`, a forked `Taskfile.yml`) —
+can be reverted to the template default *cleanly and invisibly*. (`.vscode/settings.json`
+is gitignored, so its revert doesn't even show in a normal `git diff`.) So the diff
+review above is not optional: eyeball every high-churn, locally-customized file by
+name and confirm your customization survived. Cross-check the §1 `diff-template.sh`
+worklist — any file that was `DRIFT` *before* the update but is now byte-identical to
+the template was silently reverted; restore the customization.
+
+**Heavily-forked files: take `--ours` and re-apply the new bits.** When a file is
+*heavily* customized (a forked `Taskfile.yml`, a bespoke `status.sh`), copier's
+three-way merge can scramble it — a single conflict hunk spanning several unrelated
+targets. Hand-resolving that is error-prone. Take the repo's complete version and
+cherry-pick only the genuinely-new pieces:
+
+```bash
+git checkout --ours Taskfile.yml   # keep the repo's complete, working file
+# then add just what the update introduced (e.g. a new `status:setup` target)
+```
+
+**The template absorbed something this repo pioneered → add/add conflict; keep
+yours.** A canonical convention repo's innovations get *generalized* and upstreamed;
+on its next update, the template's new generic version collides with the repo's
+specific original (an add/add conflict on, e.g., `scripts/validate-*.mjs`). Keep the
+repo's specific version (`git checkout --ours <file>`) — the generic one is for
+*other* repos. Recognise this when a file you know the repo authored shows up as a
+conflict against a near-identical-but-blander template version.
 
 ## 4. Verify comprehensively
 
+copier renders files in the **template's** style, which may not match the repo's
+formatter (e.g. Prettier reformatting freshly-rendered workflow YAML or config).
+Run **`task format` first**, or `task verify` can fail on formatting alone:
+
 ```bash
-~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/diff-template.sh .   # should now show only legit customizations
+task format                 # reconcile rendered files to the repo's formatter
+assets/diff-template.sh .   # should now show only legit customizations
 task verify
-~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/verify-applied.sh .
+assets/verify-applied.sh .
 ```
 
 Walk the [`mode-audit.md`](./mode-audit.md) drift classes too — `copier update`
 refreshes templated files, but renames/moves and GitHub-side settings it cannot do.
 Re-run `diff-template.sh`: every remaining `DRIFT` should be an intentional local
-customization you can explain, not a missed update.
+customization you can explain, not a missed update. In particular, a `DRIFT` on a
+file the repo *renamed* (e.g. `.yaml`) may be an update copier skipped, not a
+customization — confirm against the §2 renamed-files note before dismissing it.
 
 ## 5. Hand off
 
