@@ -8,8 +8,15 @@
 [% endif %]
 [% if devcontainer %]
 [![Devcontainer Build]([[ repo_url ]]/actions/workflows/devcontainer-build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/devcontainer-build.yml)
+[![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=[[ repo_url ]])
+[% endif %]
+[% if use_release_please and license != 'private' %]
+[![Latest Release](https://img.shields.io/github/v/release/[[ github_org ]]/[[ project_slug ]]?sort=semver)]([[ repo_url ]]/releases)
 [% endif %]
 [![Renovate](https://img.shields.io/badge/maintained%20with-renovate-blue?logo=renovatebot)](https://github.com/apps/renovate)
+[% if license != 'private' %]
+[![License: [[ license | upper ]]](https://img.shields.io/badge/license-[[ license | upper ]]-blue.svg)](./LICENSE)
+[% endif %]
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-orange.json)](https://github.com/copier-org/copier)
 
 Author: [[ author_full_name ]] ([[ author_email ]]) — generated from
