@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.8.0](https://github.com/evanharmon1/harmon-init/compare/v3.7.0...v3.8.0) (2026-06-28)
+
+
+### Features
+
+* **template:** track curated .vscode config, ignore machine-written extras ([#138](https://github.com/evanharmon1/harmon-init/issues/138)) ([edf3499](https://github.com/evanharmon1/harmon-init/commit/edf349972d235e4ace68277e342a67fab073ba2c))
+
 ## [3.7.0](https://github.com/evanharmon1/harmon-init/compare/v3.6.0...v3.7.0) (2026-06-28)
 
 
