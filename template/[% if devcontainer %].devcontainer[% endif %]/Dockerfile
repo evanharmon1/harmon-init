@@ -74,6 +74,10 @@ ARG GITLEAKS_VERSION=8.30.1
 ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.7
+# renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
+ARG UV_VERSION=0.11.25
+# renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
+ARG STARSHIP_VERSION=1.25.1
 ARG UV_INSTALL_DIR=/usr/local/bin
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -302,10 +306,10 @@ RUN case "${TARGETARCH}" in \
         | tar -xz -C /usr/local/bin sesh
 
 # ---------- uv (Python package manager) ----------
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="${UV_INSTALL_DIR}" sh
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR="${UV_INSTALL_DIR}" sh
 
 # ---------- starship prompt ----------
-RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes
+RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --version v${STARSHIP_VERSION}
 
 # ---------- devcontainer config files ----------
 # Bake to /usr/local/share/ rather than /tmp/ — Coder/devcontainer hosts mount
@@ -321,7 +325,8 @@ RUN tic -x /usr/local/share/devcontainer-config/ghostty.terminfo
 RUN npm install -g \
         "@commitlint/cli" \
         "@commitlint/config-conventional" \
-        "markdownlint-cli2"
+        "markdownlint-cli2" \
+    && npm cache clean --force
 
 # ---------- Playwright (browser automation CLI) ----------
 # Two packages: @playwright/test for the test runner + standard CLI (screenshot,
@@ -342,7 +347,8 @@ RUN npm install -g \
     && npx playwright install --with-deps chromium \
     && (playwright-cli install --with-deps chromium 2>/dev/null || true) \
     && chmod -R o+rx ${PLAYWRIGHT_BROWSERS_PATH} \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && npm cache clean --force
 
 # ---------- Python packages for agent-deck Telegram bridge ----------
 RUN uv pip install --system --break-system-packages --no-cache toml aiogram
@@ -397,6 +403,7 @@ RUN npm install -g \
         "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
         "dmux@${DMUX_VERSION}" \
-        "snyk@${SNYK_VERSION}"
+        "snyk@${SNYK_VERSION}" \
+    && npm cache clean --force
 
 USER vscode

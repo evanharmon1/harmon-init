@@ -40,6 +40,19 @@ the authoritative repo-conventions catalog.
 Root lint tasks deliberately exclude `template/` (jinja files are not valid
 YAML/Markdown). The **rendered** output is validated by `task test:template:*`.
 
+**Dogfood parity — edit both layers in lockstep.** Most root files have a
+`template/` counterpart they are the rendered form of (e.g.
+`.devcontainer/Dockerfile` ↔ `template/[% if devcontainer %].devcontainer[% endif %]/Dockerfile`,
+`.github/workflows/devcontainer-build.yml` ↔ its `…devcontainer-build.yml….jinja`).
+A change to one MUST be applied to the other in the same PR, or the template and
+the dogfood drift — the repo stops practicing what it ships, and `task
+test:template` will not catch it (it validates the *rendered* template against
+itself, not against the root copy). The root form is the template rendered with
+harmon-init's own answers (e.g. `[[ ci_runner_labels ]]` → `[ "ubuntu-latest" ]`),
+and template-only logic (`[% if … %]`, `${VERSION}` arg substitution) collapses to
+its concrete value. When you touch a templated file, grep for the sibling and edit
+both.
+
 ## Common Commands
 
 ```bash
