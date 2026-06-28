@@ -202,6 +202,23 @@ if [ -f prettier.config.cjs ] && have npx; then
     fi
 fi
 
+# ── 3c. Rendered Markdown is markdownlint-clean ─────────────────────
+# Markdown is excluded from prettier (.prettierignore hands it to markdownlint),
+# and nothing else above covers it — so a rendered .md that breaks a markdownlint
+# rule (a jinja emitting a bad heading level, list, or fenced block) ships and
+# only fails when a consumer runs `task lint:markdown`. Run markdownlint-cli2 in
+# CHECK mode with the same globs as that target — NOT `task lint:markdown`, which
+# runs `--fix` (it would mutate the render and mask issues). The rendered
+# .markdownlint(.json/.jsonc) config is auto-discovered.
+if have npx; then
+    if ! md_out=$(npx --yes markdownlint-cli2 '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
+        printf '%s\n' "$md_out" >&2
+        err "rendered Markdown fails markdownlint"
+    fi
+else
+    required npx "rendered Markdown lint (markdownlint-cli2 via npx)" || fail=1
+fi
+
 # ── 4. Rendered YAML is valid (yamllint, errors only) ───────────────
 if have yamllint; then
     yamllint --no-warnings . || err "yamllint errors in rendered output"
