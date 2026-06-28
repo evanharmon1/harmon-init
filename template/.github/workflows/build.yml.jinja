@@ -192,8 +192,11 @@ jobs:
         uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1.7.3
         id: setup-chrome
         with:
-          install-dependencies: true
-          no-sudo: true
+          # Hosted runners need apt (via sudo) to install Chrome's shared libs;
+          # persistent self-hosted machines already have them, so skip apt/sudo
+          # there to avoid requiring passwordless sudo.
+          install-dependencies: ${{ runner.environment == 'github-hosted' }}
+          no-sudo: ${{ runner.environment != 'github-hosted' }}
       - name: Build
         run: task build
       - name: Lighthouse CI
@@ -266,7 +269,7 @@ jobs:
   verify:
     if: always()
     needs: [lint, security[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
-    runs-on: ubuntu-latest
+    runs-on: [ [[ ci_runner_labels ]] ]
     steps:
       - name: Check job results
         run: |

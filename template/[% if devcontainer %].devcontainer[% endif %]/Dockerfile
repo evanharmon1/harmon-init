@@ -325,7 +325,8 @@ RUN tic -x /usr/local/share/devcontainer-config/ghostty.terminfo
 RUN npm install -g \
         "@commitlint/cli" \
         "@commitlint/config-conventional" \
-        "markdownlint-cli2"
+        "markdownlint-cli2" \
+    && npm cache clean --force
 
 # ---------- Playwright (browser automation CLI) ----------
 # Two packages: @playwright/test for the test runner + standard CLI (screenshot,
@@ -346,7 +347,8 @@ RUN npm install -g \
     && npx playwright install --with-deps chromium \
     && (playwright-cli install --with-deps chromium 2>/dev/null || true) \
     && chmod -R o+rx ${PLAYWRIGHT_BROWSERS_PATH} \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && npm cache clean --force
 
 # ---------- Python packages for agent-deck Telegram bridge ----------
 RUN uv pip install --system --break-system-packages --no-cache toml aiogram
@@ -401,6 +403,7 @@ RUN npm install -g \
         "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
         "dmux@${DMUX_VERSION}" \
-        "snyk@${SNYK_VERSION}"
+        "snyk@${SNYK_VERSION}" \
+    && npm cache clean --force
 
 USER vscode
