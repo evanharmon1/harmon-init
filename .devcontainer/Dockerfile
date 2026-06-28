@@ -74,6 +74,10 @@ ARG GITLEAKS_VERSION=8.30.1
 ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.7
+# renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
+ARG UV_VERSION=0.11.25
+# renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
+ARG STARSHIP_VERSION=1.25.1
 ARG UV_INSTALL_DIR=/usr/local/bin
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -302,10 +306,10 @@ RUN case "${TARGETARCH}" in \
         | tar -xz -C /usr/local/bin sesh
 
 # ---------- uv (Python package manager) ----------
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="${UV_INSTALL_DIR}" sh
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR="${UV_INSTALL_DIR}" sh
 
 # ---------- starship prompt ----------
-RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes
+RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --version v${STARSHIP_VERSION}
 
 # ---------- devcontainer config files ----------
 # Bake to /usr/local/share/ rather than /tmp/ — Coder/devcontainer hosts mount
