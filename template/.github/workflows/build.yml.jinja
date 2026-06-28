@@ -112,8 +112,17 @@ jobs:
       - name: Install dependencies
         run: |
           if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+[% if project_type == 'web-astro' %]
+      - name: Install lychee
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
+        with:
+          args: --version
+          fail: false
+[% endif %]
       - name: Build
         run: task build
+      - name: Validate
+        run: task validate
       - name: Test
         run: task test
 [% endif %]

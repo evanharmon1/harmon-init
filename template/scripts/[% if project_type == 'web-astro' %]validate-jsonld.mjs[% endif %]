@@ -1,0 +1,67 @@
+// Validate JSON-LD structured data across the built site (dist/).
+//
+// Generic gate: auto-discovers every dist/**/*.html and checks that any JSON-LD
+// it ships is well-formed — valid JSON, a schema.org @context, and at least one
+// @type. Pages without JSON-LD are fine (it is optional); this only asserts that
+// what IS present is correct. Add page/type-specific expectations in your own
+// repo if you want stricter checks.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
+
+const DIST = resolve('dist')
+
+if (!existsSync(DIST)) {
+  console.error('FAIL: dist/ not found — run the build first (task build)')
+  process.exit(1)
+}
+
+function htmlFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) out.push(...htmlFiles(p))
+    else if (entry.endsWith('.html')) out.push(p)
+  }
+  return out
+}
+
+const JSONLD_RE = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+
+const pages = htmlFiles(DIST)
+let errors = 0
+let blocks = 0
+
+for (const file of pages) {
+  const label = relative(DIST, file)
+  const html = readFileSync(file, 'utf-8')
+
+  for (const [, content] of html.matchAll(JSONLD_RE)) {
+    blocks++
+    let data
+    try {
+      data = JSON.parse(content)
+    } catch (e) {
+      console.error(`FAIL [${label}] malformed JSON-LD: ${e.message}`)
+      errors++
+      continue
+    }
+
+    // Accept a single node, an array of nodes, or a @graph container.
+    const nodes = Array.isArray(data) ? data : data['@graph'] || [data]
+    const ctx = data['@context'] || nodes.find((n) => n && n['@context'])?.['@context']
+    if (!ctx || !String(ctx).includes('schema.org')) {
+      console.error(`FAIL [${label}] JSON-LD missing a schema.org @context`)
+      errors++
+    }
+    if (!nodes.some((n) => n && n['@type'])) {
+      console.error(`FAIL [${label}] JSON-LD has no @type`)
+      errors++
+    }
+  }
+}
+
+if (errors > 0) {
+  console.error(`\n${errors} JSON-LD error(s) across ${pages.length} page(s)`)
+  process.exit(1)
+}
+console.log(`JSON-LD OK: ${blocks} block(s) across ${pages.length} page(s) are well-formed`)

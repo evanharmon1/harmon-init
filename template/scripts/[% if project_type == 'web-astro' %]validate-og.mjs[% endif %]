@@ -1,0 +1,67 @@
+// Validate Open Graph / social meta tags across the built site (dist/).
+//
+// Generic gate: auto-discovers every dist/**/*.html. For any page that ships OG
+// tags at all, the load-bearing ones must be correct — og:title and an absolute
+// https og:image (a relative og:image breaks link unfurling). og:description is
+// recommended (warned, not failed). Pages with no OG tags are skipped (utility
+// pages like 404 legitimately omit them), so this catches broken/partial OG
+// without false-failing.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
+
+const DIST = resolve('dist')
+
+if (!existsSync(DIST)) {
+  console.error('FAIL: dist/ not found — run the build first (task build)')
+  process.exit(1)
+}
+
+function htmlFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) out.push(...htmlFiles(p))
+    else if (entry.endsWith('.html')) out.push(p)
+  }
+  return out
+}
+
+const ANY_OG_RE = /<meta\s+property=["']og:/i
+const OG_TITLE_RE = /<meta\s+property=["']og:title["']\s+content=["'][^"']+["']/i
+const OG_DESC_RE = /<meta\s+property=["']og:description["']\s+content=["'][^"']+["']/i
+const OG_IMAGE_RE = /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i
+
+const pages = htmlFiles(DIST)
+let errors = 0
+let checked = 0
+
+for (const file of pages) {
+  const label = relative(DIST, file)
+  const html = readFileSync(file, 'utf-8')
+
+  // Only enforce on pages that opt into OG at all.
+  if (!ANY_OG_RE.test(html)) continue
+  checked++
+
+  if (!OG_TITLE_RE.test(html)) {
+    console.error(`FAIL [${label}] has OG tags but is missing og:title`)
+    errors++
+  }
+  if (!OG_DESC_RE.test(html)) {
+    console.warn(`WARN [${label}] has OG tags but is missing og:description (recommended)`)
+  }
+  const image = html.match(OG_IMAGE_RE)
+  if (!image) {
+    console.error(`FAIL [${label}] has OG tags but is missing og:image`)
+    errors++
+  } else if (!image[1].startsWith('https://')) {
+    console.error(`FAIL [${label}] og:image must be an absolute https URL: ${image[1]}`)
+    errors++
+  }
+}
+
+if (errors > 0) {
+  console.error(`\n${errors} Open Graph error(s) across ${checked} OG page(s)`)
+  process.exit(1)
+}
+console.log(`Open Graph OK: ${checked} page(s) with OG tags are complete`)
