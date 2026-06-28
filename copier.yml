@@ -247,16 +247,23 @@ _tasks:
   # exists (adopt-over-existing) so it never makes a spurious scaffold commit.
   - command: 'git rev-parse --verify HEAD >/dev/null 2>&1 || { git add -A && git commit -m "chore: initial scaffold from harmon-init"; }'
     when: "[[ git_init and _copier_operation == 'copy' ]]"
-  - command: gh repo create [[ github_org ]]/[[ project_slug ]] --private --source=. --push
-    when: "[[ github_remote_create and _copier_operation == 'copy' ]]"
+  # The remaining side effects are FRESH-SCAFFOLD ONLY, so they are also gated on
+  # `git_init` (the fresh-scaffold signal — adopt-over-existing always passes
+  # git_init=false). `copier copy` seeds answer defaults from an EXISTING
+  # .copier-answers.yml, so a re-adopt would otherwise carry a stale `true`
+  # forward and (e.g.) re-run `gh repo create` or cut a bogus `release:init`
+  # v0.1.0 over a repo already on v2/v3. The two externally-visible tasks also
+  # carry their own idempotency guard (skip if origin/tags already exist).
+  - command: 'git remote get-url origin >/dev/null 2>&1 || gh repo create [[ github_org ]]/[[ project_slug ]] --private --source=. --push'
+    when: "[[ git_init and github_remote_create and _copier_operation == 'copy' ]]"
   - command: task install
     when: "[[ run_task_install ]]"
-  - command: task release:init
-    when: "[[ github_release_init and _copier_operation == 'copy' ]]"
+  - command: 'git tag | grep -q . || task release:init'
+    when: "[[ git_init and github_release_init and _copier_operation == 'copy' ]]"
   - command: task util:bunch-add
-    when: "[[ bunch_add and _copier_operation == 'copy' ]]"
+    when: "[[ git_init and bunch_add and _copier_operation == 'copy' ]]"
   - command: task util:obsidian-add
-    when: "[[ obsidian_project_add and _copier_operation == 'copy' ]]"
+    when: "[[ git_init and obsidian_project_add and _copier_operation == 'copy' ]]"
 
 # ── Copier settings ─────────────────────────────────────────────────
 
