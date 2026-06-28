@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.7.0](https://github.com/evanharmon1/harmon-init/compare/v3.6.0...v3.7.0) (2026-06-28)
+
+
+### Features
+
+* **template:** track the workspace file and .meta/ instead of ignoring them ([#136](https://github.com/evanharmon1/harmon-init/issues/136)) ([07ff52f](https://github.com/evanharmon1/harmon-init/commit/07ff52f43069f6d89ed8868a19ef369bc9b8eba7))
+
+
+### Bug Fixes
+
+* **template:** make rendered output Prettier-clean + guard it in test-template ([#133](https://github.com/evanharmon1/harmon-init/issues/133)) ([67a4f36](https://github.com/evanharmon1/harmon-init/commit/67a4f36c701cce60cc1d19cb02db07ca03d807a7))
+
 ## [3.6.0](https://github.com/evanharmon1/harmon-init/compare/v3.5.1...v3.6.0) (2026-06-28)
 
 
