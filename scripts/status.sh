@@ -283,6 +283,26 @@ if should_show "code"; then
     fi
 fi
 
+# ── Site Overview ───────────────────────────────────────────────────────────
+# Shown only for Astro sites, detected at runtime (src/pages/) so this generic
+# status script needs no per-project-type templating.
+
+if should_show "site" && [[ -d src/pages ]]; then
+    section_header "Site Overview"
+    {
+        page_count="$(find src/pages -name '*.astro' 2>/dev/null | wc -l | tr -d ' ')"
+        kv "Pages (src/pages/*.astro)" "${page_count}"
+        if [[ -d dist ]]; then
+            html_count="$(find dist -name '*.html' 2>/dev/null | wc -l | tr -d ' ')"
+            dist_size="$(du -sh dist 2>/dev/null | cut -f1)"
+            kv "Built pages (dist/*.html)" "${html_count}"
+            kv "Build output size" "${dist_size}"
+        else
+            echo "  (no dist/ yet — run 'task build' for build stats)"
+        fi
+    } | section_box
+fi
+
 # ── Environment ─────────────────────────────────────────────────────────────
 
 if should_show "env"; then

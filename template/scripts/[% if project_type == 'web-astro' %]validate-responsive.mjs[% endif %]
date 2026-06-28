@@ -1,0 +1,45 @@
+// Validate mobile/responsive readiness across the built site (dist/).
+//
+// Generic gate: auto-discovers every dist/**/*.html and asserts each ships a
+// responsive viewport meta (`width=device-width`) — the one tag a page MUST have
+// to render correctly on mobile. Add repo-specific responsive checks (sticky CTA,
+// safe-area insets, no fixed widths) on top if your design needs them.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
+
+const DIST = resolve('dist')
+
+if (!existsSync(DIST)) {
+  console.error('FAIL: dist/ not found — run the build first (task build)')
+  process.exit(1)
+}
+
+function htmlFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) out.push(...htmlFiles(p))
+    else if (entry.endsWith('.html')) out.push(p)
+  }
+  return out
+}
+
+const VIEWPORT_RE = /<meta\s+name=["']viewport["']\s+content=["'][^"']*width=device-width[^"']*["']/i
+
+const pages = htmlFiles(DIST)
+let errors = 0
+
+for (const file of pages) {
+  const label = relative(DIST, file)
+  const html = readFileSync(file, 'utf-8')
+  if (!VIEWPORT_RE.test(html)) {
+    console.error(`FAIL [${label}] missing responsive viewport meta (width=device-width)`)
+    errors++
+  }
+}
+
+if (errors > 0) {
+  console.error(`\n${errors} responsive error(s) across ${pages.length} page(s)`)
+  process.exit(1)
+}
+console.log(`Responsive OK: all ${pages.length} page(s) have a device-width viewport`)
