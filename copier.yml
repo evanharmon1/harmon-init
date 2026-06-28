@@ -276,7 +276,8 @@ _subdirectory: template
 # copier's three-way merge keeps delivering template improvements (e.g. a new
 # README section) while preserving the repo's own edits; only overlapping edits
 # conflict, and the update flow reconciles those. `_skip_if_exists` freezes a
-# file entirely, so it is reserved for content owned by another generator:
+# file entirely, so it is reserved for content owned by another generator or by
+# the consumer (their own access decisions):
 #   - CHANGELOG.md — release-please owns it; template merges would fight it.
 _skip_if_exists:
   - CHANGELOG.md
@@ -284,6 +285,13 @@ _skip_if_exists:
   # by the consumer; freeze it so `copier update` never regenerates a new color
   # (which would churn a now-committed file on every update).
   - "*.code-workspace"
+  # CODEOWNERS encodes the repo's real access control (who must review / is
+  # auto-requested). The template renders it from the single `code_owner` answer
+  # (`* @code_owner`), which can't represent a second owner or a team — so a
+  # Path-B adopt over a repo with MORE owners would silently DROP them (a security
+  # regression). Freeze it: a fresh scaffold still gets `* @code_owner`; an
+  # existing CODEOWNERS is never clobbered on adopt/update.
+  - .github/CODEOWNERS
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).
