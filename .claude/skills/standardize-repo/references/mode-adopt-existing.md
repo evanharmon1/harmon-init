@@ -38,7 +38,7 @@ Copier's first decision is `project_type`, which drives the Taskfile, CI jobs, a
 devcontainer tooling. Don't guess it — run the detector against the target repo:
 
 ```bash
-~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/detect-project-type.sh .
+assets/detect-project-type.sh .
 ```
 
 It inspects the repo and prints the matching `project_type`, one of the five values
@@ -57,7 +57,7 @@ normally set explicitly when adopting an existing repo (the rest fall back to
 sensible `copier.yml` defaults):
 
 ```bash
-PROJECT_TYPE="$(~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/detect-project-type.sh .)"
+PROJECT_TYPE="$(assets/detect-project-type.sh .)"
 
 --data project_type="$PROJECT_TYPE" \
 --data project_name="<Formal Project Name>" \
@@ -158,6 +158,16 @@ from git rather than hand-merging conflict markers:
    `git checkout main -- <Taskfile.yml> <renovate.json> <.gitignore> …`. The repo
    was likely already close to current (hand-synced), so this loses little template
    improvement while preserving every customization.
+   - **If you restore a customized `Taskfile.yml` but keep the template's
+     workflows, reconcile the contract.** The template's `.github/workflows/*`
+     delegate to `task` targets (e.g. `test:tasks`, `test:hooks`,
+     `test:devcontainer:permissions`) that a pre-template Taskfile won't have.
+     `task verify` will **not** catch the gap — CI will. List every target the
+     adopted workflows call and ensure each exists, porting the missing targets +
+     their `scripts/*.sh` from the template:
+     `grep -rhoE '(run:[[:space:]]*|^[[:space:]]*|&&[[:space:]]*)task +[a-z][a-z0-9:_-]*' .github/workflows/ | sed -E 's/.*task +//' | sort -u`.
+     `verify-applied.sh` §3c enforces this (see [mode-audit.md](./mode-audit.md)
+     drift class L).
 3. **Keep** the template version for uncustomized tooling **and all additive new
    files** (docs scaffold, codeql/release-please, helper scripts, `.copier-answers.yml`).
 4. **Canonicalize AGENTS.md** — fold the old real guidance (often the pre-existing
@@ -277,7 +287,7 @@ Run the same gate the template installs, then the skill's applied-state check:
 ```bash
 task install        # one-time: brew deps + lefthook hooks (safe to run now)
 task verify         # the merge gate: lint → (build) → validate
-~/git/harmon-devkit/ai/skills/repo/standardize-repo/assets/verify-applied.sh .
+assets/verify-applied.sh .
 ```
 
 `task verify` runs `check` (all linters[, typecheck], parallel), an optional
