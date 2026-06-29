@@ -12,6 +12,14 @@ which secrets and capabilities they allow.
 The bot profile intentionally omits `TS_AUTHKEY` from its allow-list so a tailnet
 key never reaches an agent container.
 
+**Claude permission mode differs by profile.** The **bot** defaults to
+`bypassPermissions` (Claude runs tools without per-action prompts — the container
+is the isolation boundary); the **dev** profile keeps the normal prompt-on-action
+default so a human stays in the loop. The shared managed settings
+(`config/claude-settings.json`) deliberately omit `defaultMode`; the bot opts in
+at create time via `scripts/enable-claude-bypass.sh`. `bypassPermissions` is only
+safe because it is container-scoped — it is never set on the host.
+
 ## Run it locally
 
 - **VS Code:** "Dev Containers: Reopen in Container" → pick the **Dev** profile
