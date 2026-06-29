@@ -288,7 +288,10 @@ tasks:
       - |
         files=$(git ls-files '*.sh' '*.bash')
         [ -n "$files" ] && shfmt -w $files || true
-      - npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**'
+      # Best-effort: markdownlint --fix auto-fixes what it can but must NOT abort
+      # `format` on un-auto-fixable rule violations (e.g. MD024 duplicate heading,
+      # MD040 missing fence language) — `lint:markdown` (check-only) is the gate.
+      - npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' || true
 
   format:file:
     desc: "Format a single file by extension (usage: task format:file -- <path>)"
@@ -308,7 +311,7 @@ tasks:
         *.tf | *.tfvars) terraform fmt "$f" ;;
 [% endif %]
         *.sh | *.bash) shfmt -w "$f" ;;
-        *.md | *.mdx) npx --yes markdownlint-cli2 --fix "$f" ;;
+        *.md | *.mdx) npx --yes markdownlint-cli2 --fix "$f" || true ;;
         esac
 
   fix:
