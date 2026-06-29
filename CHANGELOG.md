@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.9.1](https://github.com/evanharmon1/harmon-init/compare/v3.9.0...v3.9.1) (2026-06-28)
+
+
+### Bug Fixes
+
+* **template:** freeze .github/CODEOWNERS (don't clobber repo owners on adopt) ([#149](https://github.com/evanharmon1/harmon-init/issues/149)) ([9183ab3](https://github.com/evanharmon1/harmon-init/commit/9183ab3f6e96cf08587999954b0648635566b8bb))
+* **template:** make lint:markdown a read-only gate (drop --fix) ([#151](https://github.com/evanharmon1/harmon-init/issues/151)) ([e86c00a](https://github.com/evanharmon1/harmon-init/commit/e86c00acb80575548287e5759afe5135c4a57270))
+
 ## [3.9.0](https://github.com/evanharmon1/harmon-init/compare/v3.8.0...v3.9.0) (2026-06-28)
 
 
