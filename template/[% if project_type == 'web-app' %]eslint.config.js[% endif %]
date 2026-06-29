@@ -3,9 +3,11 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
+import router from '@tanstack/eslint-plugin-router'
+import convex from '@convex-dev/eslint-plugin'
 
 export default [
-  { ignores: ['dist/', '.output/', '.nitro/'] },
+  { ignores: ['dist/', '.output/', '.nitro/', 'convex/_generated/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { ...react.configs.flat.recommended, settings: { react: { version: 'detect' } } },
@@ -14,6 +16,11 @@ export default [
     plugins: { 'react-hooks': reactHooks },
     rules: reactHooks.configs['recommended-latest'].rules
   },
+  // TanStack Router (route property order, param names) + Convex (args
+  // validators, table-id types, query patterns). Drop a block if a given
+  // web-app doesn't use that library.
+  ...router.configs['flat/recommended'],
+  ...convex.configs.recommended,
   { languageOptions: { globals: { ...globals.node, ...globals.browser } } },
   // CommonJS config files (e.g. prettier.config.cjs) legitimately use require().
   { files: ['**/*.cjs'], rules: { '@typescript-eslint/no-require-imports': 'off' } }
