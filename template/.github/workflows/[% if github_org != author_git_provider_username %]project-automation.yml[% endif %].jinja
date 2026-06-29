@@ -131,10 +131,12 @@ jobs:
             }' -F p="$PROJECT_ID" -F i="$ITEM_ID" -F f="$FIELD_ID" -F v="$OPTION_ID"
           echo "Set issue #$ISSUE_NUMBER to $TARGET_STATUS"
 
-  # Stable required-check target: passes when sync-status succeeded or
-  # skipped, fails only on a real error. Lets branch protection gate on one
-  # constant name regardless of which event path sync-status took.
-  verify:
+  # Stable, uniquely-named required-check target: passes when sync-status
+  # succeeded or skipped, fails only on a real error. The `<workflow>-verify`
+  # name (not a bare `verify`) keeps this status-check context distinct from
+  # other workflows' gate jobs — duplicate contexts are ambiguous in branch
+  # protection / rulesets.
+  project-automation-verify:
     if: always()
     needs: [sync-status]
     runs-on: [ [[ ci_runner_labels ]] ]
