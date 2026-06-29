@@ -73,6 +73,11 @@ config, toolchain, devcontainer, and dev environment — against the items below
       isn't ESLint 10-ready yet): `pnpm add -D eslint@9 @eslint/js@9 typescript-eslint
       eslint-plugin-react eslint-plugin-react-hooks globals @tanstack/eslint-plugin-router
       @convex-dev/eslint-plugin` (drop the TanStack Router / Convex plugins if a given app doesn't use them)
+- [ ] (optional) Type-aware async safety: add `@typescript-eslint/no-floating-promises`
+      and `no-misused-promises` to `eslint.config.js`, scoped to `src/**` with
+      `languageOptions.parserOptions.projectService: true`, to catch a missing
+      `await` / floating promise that `tsc` won't. Makes ESLint type-check
+      (slower) and needs your tsconfig wired up — skip to keep lint instant.
 [% elif project_type == 'iac' %]
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
