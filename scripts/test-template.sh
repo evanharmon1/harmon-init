@@ -298,26 +298,38 @@ else
     required gitleaks "secrets scan" || fail=1
 fi
 
-# ── 11. web-astro: the shipped ESLint config lints a real Astro app ──
-# The render ships eslint.config.js but no app, so nothing above exercises it.
-# Overlay a minimal Astro fixture (package.json + a few src files), install, and
-# run the RENDERED config -- a broken flat config or a plugin-API bump fails HERE
-# instead of in every generated site. eslint runs via its own binary (not
-# `pnpm exec`) so the intentionally-unbuilt esbuild/sharp scripts don't gate it.
+# ── 11. web-astro: the shipped toolchain works on a real Astro app ───
+# The render ships eslint.config.js + prettier.config.cjs (with prettier-plugin-astro)
+# but no app, so nothing above exercises them. Overlay a minimal Astro fixture
+# (package.json + a few src files), install, and run the SHIPPED toolchain against
+# it -- a broken config, plugin-API bump, or build regression fails HERE instead of
+# in every generated site. Tools run via their binaries (not `task check`) so the
+# intentionally-unbuilt esbuild/sharp scripts don't gate them and local plugins
+# (eslint-plugin-astro, prettier-plugin-astro) resolve.
 if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
-    if have pnpm; then
+    if ! have pnpm; then
+        required pnpm "web-astro toolchain validation" || fail=1
+    else
         cp -R "$repo_root/tests/fixtures/web-astro/." .
         pnpm install --silent >/dev/null 2>&1 || true
-        if [ ! -x node_modules/.bin/eslint ]; then
-            err "web-astro fixture: install did not provide eslint (see tests/fixtures/web-astro/package.json)"
-        elif ! node_modules/.bin/eslint . >/dev/null 2>&1; then
-            node_modules/.bin/eslint . || true
-            err "web-astro fixture: shipped eslint.config.js failed to lint a real Astro app"
+        bin="node_modules/.bin"
+        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ]; then
+            err "web-astro fixture: install did not provide the toolchain (see tests/fixtures/web-astro/package.json)"
+        elif ! "$bin/eslint" . >/dev/null 2>&1; then
+            "$bin/eslint" . || true
+            err "web-astro fixture: ESLint failed"
+        elif ! "$bin/prettier" --check . >/dev/null 2>&1; then
+            "$bin/prettier" --check . || true
+            err "web-astro fixture: prettier --check failed (prettier-plugin-astro)"
+        elif ! "$bin/astro" check >/dev/null 2>&1; then
+            "$bin/astro" check || true
+            err "web-astro fixture: astro check (typecheck) failed"
+        elif ! "$bin/astro" build >/dev/null 2>&1; then
+            "$bin/astro" build || true
+            err "web-astro fixture: astro build failed"
         else
-            echo "web-astro: shipped ESLint config lints a real Astro app cleanly"
+            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build) clean on a real app"
         fi
-    else
-        required pnpm "web-astro ESLint validation" || fail=1
     fi
 fi
 
