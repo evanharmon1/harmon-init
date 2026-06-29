@@ -292,6 +292,11 @@ _skip_if_exists:
   # regression). Freeze it: a fresh scaffold still gets `* @code_owner`; an
   # existing CODEOWNERS is never clobbered on adopt/update.
   - .github/CODEOWNERS
+  # related-repos.txt is the repo's curated list of sibling repos to clone/fetch
+  # in the devcontainer (the bootstrap/fetch scripts are template-owned and keep
+  # updating; only the list is per-repo). Ship an empty stub on first scaffold,
+  # then freeze it so `copier update` never overwrites a populated list.
+  - .devcontainer/related-repos.txt
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).

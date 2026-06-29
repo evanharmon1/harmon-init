@@ -88,6 +88,41 @@ repo** (one template serves every repo). To stand this repo up in Coder:
 > complication does not apply here — only the repo's own `-devcontainer` cache
 > image matters.
 
+## Working on related repos
+
+To work across several repos in one container, list them in
+`.devcontainer/related-repos.txt` (one `owner/repo` per line; `@branch`, full
+URLs, and ssh URLs also work). They are:
+
+- **cloned** into `/workspaces/`, beside this repo, on container **create**
+  (`scripts/bootstrap-related-repos.sh`) — so a rebuilt or persistence-lost
+  container re-populates them;
+- **fetched** non-destructively on container **start**
+  (`scripts/fetch-related-repos.sh`).
+
+Both are safe to re-run: an already-cloned sibling is **never clobbered** —
+clone skips it, and start runs `git fetch` only (never pull / merge / checkout),
+so uncommitted work, local commits, and the checked-out branch stay put. The
+list is preserved across `copier update` (an empty list is a no-op).
+
+To let Claude read and search the cloned siblings, add them to
+`.claude/settings.json` in **two** places — `permissions.additionalDirectories`
+(Claude's own Read/Grep/Glob tools) and `sandbox.filesystem.allowRead` (the Bash
+sandbox):
+
+```json
+{
+  "permissions": {
+    "additionalDirectories": ["../sibling-repo"]
+  },
+  "sandbox": {
+    "filesystem": {
+      "allowRead": ["../sibling-repo"]
+    }
+  }
+}
+```
+
 ## See also
 
 - [architecture/security.md](../architecture/security.md) — full secret strategy.
