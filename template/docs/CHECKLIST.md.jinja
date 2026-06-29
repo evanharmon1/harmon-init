@@ -69,6 +69,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
 - [ ] Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide
 - [ ] Move lint tooling into devDependencies and switch Taskfile `npx --yes` calls to `pnpm exec`
+- [ ] Install the shipped `eslint.config.js`'s plugins (ESLint 9 — eslint-plugin-react
+      isn't ESLint 10-ready yet): `pnpm add -D eslint@9 @eslint/js@9 typescript-eslint
+      eslint-plugin-react eslint-plugin-react-hooks globals @tanstack/eslint-plugin-router
+      @convex-dev/eslint-plugin` (drop the TanStack Router / Convex plugins if a given app doesn't use them)
 [% elif project_type == 'iac' %]
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks

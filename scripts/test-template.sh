@@ -67,6 +67,9 @@ minimal)
 web)
     data_args+=(--data project_type=web-astro)
     ;;
+webapp)
+    data_args+=(--data project_type=web-app)
+    ;;
 iac)
     data_args+=(--data project_type=iac)
     ;;
@@ -330,6 +333,26 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         else
             echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build) clean on a real app"
         fi
+    fi
+fi
+
+# ── 12. web-app: the shipped ESLint config lints a real React app ────
+# Same idea as the web-astro check above, for the web-app (React) project type.
+# eslint-plugin-react is not yet ESLint-10-ready, so the fixture pins ESLint 9.
+if [ "$profile" = "webapp" ] && [ -f eslint.config.js ]; then
+    if have pnpm; then
+        cp -R "$repo_root/tests/fixtures/web-app/." .
+        pnpm install --silent >/dev/null 2>&1 || true
+        if [ ! -x node_modules/.bin/eslint ]; then
+            err "web-app fixture: install did not provide eslint (see tests/fixtures/web-app/package.json)"
+        elif ! node_modules/.bin/eslint . >/dev/null 2>&1; then
+            node_modules/.bin/eslint . || true
+            err "web-app fixture: shipped eslint.config.js failed to lint a real React app"
+        else
+            echo "web-app: shipped ESLint config lints a real React app cleanly"
+        fi
+    else
+        required pnpm "web-app ESLint validation" || fail=1
     fi
 fi
 
