@@ -164,9 +164,16 @@ tasks:
       - npx --yes prettier --check {{.CLI_ARGS | default "."}}
 
   lint:eslint:
+    # Skip cleanly when there is no ESLint config yet (e.g. a fresh scaffold before
+    # the app + its framework-specific config exist) so `task check` stays green.
     desc: ESLint
     cmds:
-      - npx --yes eslint {{.CLI_ARGS | default "."}}
+      - |
+        if find . -maxdepth 1 \( -name 'eslint.config.*' -o -name '.eslintrc.*' \) 2>/dev/null | grep -q .; then
+          npx --yes eslint {{.CLI_ARGS | default "."}}
+        else
+          echo "lint:eslint: no ESLint config yet -- skipping (add one after scaffolding the app)"
+        fi
 
   typecheck:
 [% if project_type == 'web-astro' %]
