@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.10.0](https://github.com/evanharmon1/harmon-init/compare/v3.9.1...v3.10.0) (2026-06-29)
+
+
+### Features
+
+* **ci:** add verify gate to project-automation template ([#159](https://github.com/evanharmon1/harmon-init/issues/159)) ([a1fd5df](https://github.com/evanharmon1/harmon-init/commit/a1fd5dfcd337ced3324cda05cf310a8db41c282d))
+
+
+### Bug Fixes
+
+* **ci:** name project-automation gate project-automation-verify (not verify) ([#162](https://github.com/evanharmon1/harmon-init/issues/162)) ([0d1a9b2](https://github.com/evanharmon1/harmon-init/commit/0d1a9b2599e5d8ec28394b92bab4cbe0233d634a))
+* **ci:** repair project-automation issue-link grep + document CLI key-setting ([#158](https://github.com/evanharmon1/harmon-init/issues/158)) ([47b2be6](https://github.com/evanharmon1/harmon-init/commit/47b2be625cff67f1eaf615650c9b332507f5ec6f))
+
 ## [3.9.1](https://github.com/evanharmon1/harmon-init/compare/v3.9.0...v3.9.1) (2026-06-28)
 
 
