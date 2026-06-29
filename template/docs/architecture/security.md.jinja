@@ -81,7 +81,19 @@ a machine-readable reference; mirror it in the form.
 4. **Install App** → on this org, **Only select repositories** (not "All").
 5. Set `CI_APP_CLIENT_ID` (Actions variable = the App's Client ID) and `CI_APP_PRIVATE_KEY`
    (Actions secret = the `.pem` contents) — org-level for an org, per-repo for a
-   personal account.
+   personal account. **Set the private key by piping the `.pem` file in, never by
+   pasting it** — redirecting the file preserves its newlines, whereas a copy-paste
+   into the web UI (or a `gh secret set -b "…"` string) can flatten them and leave
+   the key undecodable. `create-github-app-token` then fails at JWT-signing time
+   with `error:1E08010C:DECODER routines::unsupported` (or `Invalid keyData`):
+
+   ```bash
+   # personal account / single repo:
+   gh secret set CI_APP_PRIVATE_KEY --repo <owner>/<repo> < [[ github_org ]]-ci.*.private-key.pem
+
+   # org-wide (all repos):
+   gh secret set CI_APP_PRIVATE_KEY --org [[ github_org ]] --visibility all < [[ github_org ]]-ci.*.private-key.pem
+   ```
 
 **Set the secrets by hand — don't script it.** Run the `gh variable set` /
 `gh secret set` commands (or use the GitHub UI) deliberately; **key rotation is
