@@ -197,6 +197,7 @@ tasks:
     deps:
       - test:template:minimal
       - test:template:web
+      - test:template:webapp
       - test:template:iac
       - test:template:full
       - test:template:meta
@@ -211,6 +212,11 @@ tasks:
     desc: Render template as project_type=web-astro and validate
     cmds:
       - ./scripts/test-template.sh web
+
+  test:template:webapp:
+    desc: Render template as project_type=web-app and validate
+    cmds:
+      - ./scripts/test-template.sh webapp
 
   test:template:iac:
     desc: Render template as project_type=iac (terraform+ansible) and validate

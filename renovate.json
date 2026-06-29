@@ -75,6 +75,12 @@
       "matchFileNames": ["tests/fixtures/web-astro/package.json"],
       "groupName": "web-astro fixture",
       "separateMajorMinor": false
+    },
+    {
+      "description": "Batch the web-app test-fixture dependency bumps into one PR",
+      "matchFileNames": ["tests/fixtures/web-app/package.json"],
+      "groupName": "web-app fixture",
+      "separateMajorMinor": false
     }
   ]
 }
