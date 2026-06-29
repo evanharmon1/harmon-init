@@ -32,7 +32,9 @@ config, toolchain, devcontainer, and dev environment — against the items below
       org's existing one;
       install it on this repo, then set `CI_APP_CLIENT_ID` (Actions
       **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
-      an org, per-repo for a personal account. Drives release-please, the
+      an org, per-repo for a personal account. Set the private key by piping the
+      `.pem` in (`gh secret set CI_APP_PRIVATE_KEY … < key.pem`), not by pasting —
+      flattened newlines make the key undecodable. Drives release-please, the
       claude-* workflows, and project-automation. See docs/architecture/security.md.
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main

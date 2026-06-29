@@ -94,7 +94,7 @@ jobs:
           # Extract issue number from claude/issue-N branch or PR body Closes/Fixes/Resolves #N
           ISSUE_NUMBER=$(echo "$BRANCH" | grep -oP '(?<=claude/issue-)\d+' || true)
           if [ -z "$ISSUE_NUMBER" ] && [ -n "$PR_BODY" ]; then
-            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oP '(?<=(Closes|Fixes|Resolves) #)\d+' | head -1 || true)
+            ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oiP '(?:Closes|Fixes|Resolves):?\s+#\K\d+' | head -1 || true)
           fi
           [ -z "$ISSUE_NUMBER" ] && echo "No issue number derivable from event, skipping" && exit 0
           echo "event=$EVENT_NAME issue=#$ISSUE_NUMBER target=$TARGET_STATUS"
