@@ -32,6 +32,14 @@ it points here.
   `yaml:lint`).
 - Pipeline order is **`check → build → validate → test → security`**, with
   `verify` (local gate) and `ci` (full) as the aggregates.
+- **`lint:*` and `check` are read-only gates** — they report and fail, never
+  modify files. All auto-fixing lives in **`task format`**, **`task format:file
+  -- <path>`**, and **`task fix`** (= format then lint). Pre-commit hooks run the
+  read-only `lint:*`, so a failing check **blocks the commit and tells you** to
+  run `task format` rather than silently rewriting your tree.
+- Formatters (e.g. Prettier, Black, shfmt, `terraform fmt`, markdownlint) expose
+  a check side in `lint:*` and a write side in `format`; pure analyzers (e.g.
+  shellcheck, actionlint, yamllint, ESLint) are check-only by design.
 - **Workflows delegate to `task` targets** so local hooks, CI, and humans run
   identical commands — the Taskfile is the single source of truth. Don't
   reimplement command logic in a workflow or a hook.
