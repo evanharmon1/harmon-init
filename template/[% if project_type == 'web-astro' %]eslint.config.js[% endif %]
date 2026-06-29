@@ -1,0 +1,14 @@
+import js from '@eslint/js'
+import globals from 'globals'
+import tseslint from 'typescript-eslint'
+import astro from 'eslint-plugin-astro'
+
+export default [
+  { ignores: ['dist/', '.astro/'] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  ...astro.configs.recommended,
+  { languageOptions: { globals: { ...globals.node, ...globals.browser } } },
+  // CommonJS config files (e.g. prettier.config.cjs) legitimately use require().
+  { files: ['**/*.cjs'], rules: { '@typescript-eslint/no-require-imports': 'off' } }
+]

@@ -298,6 +298,29 @@ else
     required gitleaks "secrets scan" || fail=1
 fi
 
+# ── 11. web-astro: the shipped ESLint config lints a real Astro app ──
+# The render ships eslint.config.js but no app, so nothing above exercises it.
+# Overlay a minimal Astro fixture (package.json + a few src files), install, and
+# run the RENDERED config -- a broken flat config or a plugin-API bump fails HERE
+# instead of in every generated site. eslint runs via its own binary (not
+# `pnpm exec`) so the intentionally-unbuilt esbuild/sharp scripts don't gate it.
+if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
+    if have pnpm; then
+        cp -R "$repo_root/tests/fixtures/web-astro/." .
+        pnpm install --silent >/dev/null 2>&1 || true
+        if [ ! -x node_modules/.bin/eslint ]; then
+            err "web-astro fixture: install did not provide eslint (see tests/fixtures/web-astro/package.json)"
+        elif ! node_modules/.bin/eslint . >/dev/null 2>&1; then
+            node_modules/.bin/eslint . || true
+            err "web-astro fixture: shipped eslint.config.js failed to lint a real Astro app"
+        else
+            echo "web-astro: shipped ESLint config lints a real Astro app cleanly"
+        fi
+    else
+        required pnpm "web-astro ESLint validation" || fail=1
+    fi
+fi
+
 if [ "$fail" -ne 0 ]; then
     echo "test-template (${profile}): FAILED" >&2
     exit 1
