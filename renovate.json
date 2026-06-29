@@ -69,6 +69,12 @@
       "description": "Batch all devcontainer updates (base image + annotated tools) into one PR — must come after the Docker images rule so the base image lands here instead",
       "matchFileNames": [".devcontainer/**", "template/**"],
       "groupName": "Devcontainer"
+    },
+    {
+      "description": "Batch the web-astro test-fixture dependency bumps into one PR (the fixture validates the shipped ESLint config; its deps move together)",
+      "matchFileNames": ["tests/fixtures/web-astro/package.json"],
+      "groupName": "web-astro fixture",
+      "separateMajorMinor": false
     }
   ]
 }

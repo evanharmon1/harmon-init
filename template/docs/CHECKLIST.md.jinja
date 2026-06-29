@@ -56,10 +56,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Scaffold Astro: `pnpm create astro@latest . --template minimal` (or preferred template)
 - [ ] Add the standard stack: Tailwind v4 (`@tailwindcss/vite`), zod, vitest, lucide
 - [ ] Move lint tooling into devDependencies (prettier, eslint, markdownlint-cli2,
-      @commitlint/cli) and switch Taskfile `npx --yes` calls to `pnpm exec`
+      @commitlint/cli); switch the `lint:prettier` / `lint:markdown` `npx --yes`
+      calls to `pnpm exec` (`lint:eslint` already uses it once a config + deps exist)
 - [ ] Install the shipped `eslint.config.js`'s plugins:
       `pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-astro globals`
-      (`task lint:eslint` auto-uses `pnpm exec` once a config + deps exist)
+- [ ] Approve Astro's native build scripts so `astro build` works:
+      `pnpm approve-builds` (esbuild, sharp) — or add them to `onlyBuiltDependencies`
 - [ ] Review `lighthouserc.json` URLs once routes exist
 [% elif project_type == 'web-app' %]
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
