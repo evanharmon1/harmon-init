@@ -130,3 +130,24 @@ jobs:
               updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$v}}){projectV2Item{id}}
             }' -F p="$PROJECT_ID" -F i="$ITEM_ID" -F f="$FIELD_ID" -F v="$OPTION_ID"
           echo "Set issue #$ISSUE_NUMBER to $TARGET_STATUS"
+
+  # Stable required-check target: passes when sync-status succeeded or
+  # skipped, fails only on a real error. Lets branch protection gate on one
+  # constant name regardless of which event path sync-status took.
+  verify:
+    if: always()
+    needs: [sync-status]
+    runs-on: [ [[ ci_runner_labels ]] ]
+    steps:
+      - name: Check job results
+        run: |
+          fail=0
+          check() {
+            [ "$2" = "success" ] || [ "$2" = "skipped" ] || { echo "Job $1 result: $2"; fail=1; }
+          }
+          check sync-status "${{ needs.sync-status.result }}"
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed."
