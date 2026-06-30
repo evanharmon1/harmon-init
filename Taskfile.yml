@@ -418,11 +418,11 @@ tasks:
   util:bunch-add:
     desc: Move Bunch file to iCloud and replace with symlink
     cmds:
-      - mv '.meta/Code Project - Harmon Stack.bunch' '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/'
-      - ln -s '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/Code Project - Harmon Stack.bunch' .meta
+      - mv '.meta/Code Project - Harmon Platform.bunch' '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/'
+      - ln -s '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/Code Project - Harmon Platform.bunch' .meta
 
   util:obsidian-add:
     desc: Move Obsidian note to Memex and replace with symlink
     cmds:
-      - mv '.meta/Harmon Stack.md' '/Users/evan/Local/Memex/Professional/'
-      - ln -s '/Users/evan/Local/Memex/Professional/Harmon Stack.md' .meta
+      - mv '.meta/Harmon Platform.md' '/Users/evan/Local/Memex/Professional/'
+      - ln -s '/Users/evan/Local/Memex/Professional/Harmon Platform.md' .meta
