@@ -416,13 +416,23 @@ tasks:
 
   # ── Utilities ─────────────────────────────────────────────────
   util:bunch-add:
-    desc: Move Bunch file to iCloud and replace with symlink
+    desc: Scaffold the Bunch launcher in .meta (mirrors what the template generates)
     cmds:
-      - mv '.meta/Code Project - Harmon Platform.bunch' '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/'
-      - ln -s '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/Code Project - Harmon Platform.bunch' .meta
+      - ./scripts/meta-create.sh bunch 'Harmon Init' 'harmon-init' '~/git'
+
+  util:bunch-install:
+    desc: Move the Bunch file to iCloud and replace it with a symlink (macOS)
+    cmds:
+      - mv '.meta/Code Project - Harmon Init.bunch' '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/'
+      - ln -s '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/Code Project - Harmon Init.bunch' .meta
 
   util:obsidian-add:
-    desc: Move Obsidian note to Memex and replace with symlink
+    desc: Scaffold the Obsidian project note in .meta (mirrors what the template generates)
     cmds:
-      - mv '.meta/Harmon Platform.md' '/Users/evan/Local/Memex/Professional/'
-      - ln -s '/Users/evan/Local/Memex/Professional/Harmon Platform.md' .meta
+      - ./scripts/meta-create.sh obsidian 'Harmon Init' 'Evan Harmon'
+
+  util:obsidian-install:
+    desc: Move the Obsidian note to the vault and replace it with a symlink (macOS)
+    cmds:
+      - mv '.meta/Harmon Init.md' '/Users/evan/Local/Memex/Professional/'
+      - ln -s '/Users/evan/Local/Memex/Professional/Harmon Init.md' .meta

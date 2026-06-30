@@ -260,9 +260,9 @@ _tasks:
     when: "[[ run_task_install ]]"
   - command: 'git tag | grep -q . || task release:init'
     when: "[[ git_init and github_release_init and _copier_operation == 'copy' ]]"
-  - command: task util:bunch-add
+  - command: task util:bunch-install
     when: "[[ git_init and bunch_add and _copier_operation == 'copy' ]]"
-  - command: task util:obsidian-add
+  - command: task util:obsidian-install
     when: "[[ git_init and obsidian_project_add and _copier_operation == 'copy' ]]"
 
 # ── Copier settings ─────────────────────────────────────────────────

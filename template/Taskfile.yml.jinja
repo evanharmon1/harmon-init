@@ -620,13 +620,23 @@ tasks:
 
   # ── Utilities ──────────────────────────────────────────────────
   util:bunch-add:
-    desc: Move Bunch file to iCloud and replace with symlink (macOS)
+    desc: Scaffold the Bunch launcher in .meta (mirrors what the template generates)
+    cmds:
+      - ./scripts/meta-create.sh bunch '[[ project_name ]]' '[[ project_slug ]]' '[[ projects_directory ]]'
+
+  util:bunch-install:
+    desc: Move the Bunch file to iCloud and replace it with a symlink (macOS)
     cmds:
       - mv '.meta/Code Project - [[ project_name ]].bunch' '[[ bunches_directory ]]/'
       - ln -s '[[ bunches_directory ]]/Code Project - [[ project_name ]].bunch' .meta
 
   util:obsidian-add:
-    desc: Move Obsidian note to the vault and replace with symlink (macOS)
+    desc: Scaffold the Obsidian project note in .meta (mirrors what the template generates)
+    cmds:
+      - ./scripts/meta-create.sh obsidian '[[ project_name ]]' '[[ author_full_name ]]'
+
+  util:obsidian-install:
+    desc: Move the Obsidian note to the vault and replace it with a symlink (macOS)
     cmds:
       - mv '.meta/[[ project_name ]].md' '[[ obsidian_directory ]]/Personal/Digital'
       - ln -s '[[ obsidian_directory ]]/Personal/Digital/[[ project_name ]].md' .meta

@@ -125,7 +125,7 @@ Universal task targets every repo has (from the template):
 (Snyk), `security:sca` (Snyk), `bootstrap`, `install`, `install:hooks`,
 `release:init`, `release:patch`, `release:minor`, `release:major`, `clean`,
 `status` (+ `status:git|gh|code|env`), `status:setup`, `util:bunch-add`,
-`util:obsidian-add`.
+`util:bunch-install`, `util:obsidian-add`, `util:obsidian-install`.
 
 `status:setup` is a **setup-completeness audit** (run by hand, not part of the
 default dashboard): it checks the repo against `docs/CHECKLIST.md` and reports
@@ -536,7 +536,8 @@ Like `general` (no `build`/framework). [copier]
 
 - **[manual] CHECKLIST:** decide the docs toolchain (plain markdown / Obsidian
   vault / static site generator).
-- `obsidian_project_add` (default no) wires `util:obsidian-add` + a vault note.
+- `obsidian_project_add` (default no) generates a vault note and runs
+  `util:obsidian-install` post-gen; `util:obsidian-add` scaffolds one later.
 
 ---
 
@@ -565,8 +566,9 @@ Legitimately repo- or type-specific differences. An auditor should treat these a
   repos (`github_org == author_git_provider_username`). Org repos get all three.
 - **`design-language.md` / DESIGN.md web section** only for web types; shadcn/ui
   named only for `web-app`.
-- **macOS-only meta** (`util:bunch-add`/`util:obsidian-add`, `.meta/`, Bunch
-  cask) gated by `bunch_add`/`obsidian_project_add` (default no).
+- **macOS-only meta** (`util:bunch-add`/`util:bunch-install` /
+  `util:obsidian-add`/`util:obsidian-install`, `.meta/`, Bunch cask) gated by
+  `bunch_add`/`obsidian_project_add` (default no).
 
 ### 3.2 Tech-stack preferences (web), expected to vary by repo
 
