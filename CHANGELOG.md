@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.11.0](https://github.com/evanharmon1/harmon-init/compare/v3.10.0...v3.11.0) (2026-06-30)
+
+
+### Features
+
+* **template:** add web vscode extensions + restore effort-level comment ([#170](https://github.com/evanharmon1/harmon-init/issues/170)) ([42d441b](https://github.com/evanharmon1/harmon-init/commit/42d441b9dd748ff410d75c75fbbd69ec281339cc))
+* **template:** ship + self-validate a web-app (TanStack Router + Convex) ESLint config ([#168](https://github.com/evanharmon1/harmon-init/issues/168)) ([e5f9874](https://github.com/evanharmon1/harmon-init/commit/e5f987401f053e9c6ef10653f936c1f33c756941))
+* **template:** ship + self-validate a web-astro ESLint config ([#166](https://github.com/evanharmon1/harmon-init/issues/166)) ([76f0e50](https://github.com/evanharmon1/harmon-init/commit/76f0e50b3eb6514475beb9b97d29f46f01a37e34))
+* **template:** validate the full web-astro toolchain in the fixture ([#167](https://github.com/evanharmon1/harmon-init/issues/167)) ([14641d7](https://github.com/evanharmon1/harmon-init/commit/14641d7368573e51b26d662479ce69e9507dc157))
+
+
+### Bug Fixes
+
+* **template:** let Prettier own *.mdx (markdownlint is .md-only) ([#163](https://github.com/evanharmon1/harmon-init/issues/163)) ([de2f189](https://github.com/evanharmon1/harmon-init/commit/de2f1890ff64b9d6ca3b64d3bcc8408e7b25b0ea))
+
 ## [3.10.0](https://github.com/evanharmon1/harmon-init/compare/v3.9.1...v3.10.0) (2026-06-29)
 
 
