@@ -12,9 +12,9 @@ runners — and can also be applied to existing repos to standardize them. This 
 an application; it is a template repository used via the
 [Copier](https://copier.readthedocs.io/en/stable/) templating tool.
 
-## harmon-stack
+## harmon-platform
 
-One of five repos in **harmon-stack** (Evan's homelab + dev-ops stack):
+One of five repos in **harmon-platform** (Evan's developer & DevOps platform + homelab):
 [**harmon-init**](https://github.com/evanharmon1/harmon-init) (this repo — the template),
 [harmon-devkit](https://github.com/evanharmon1/harmon-devkit) (boilerplates/scripts/AI assets),
 [harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles) (chezmoi dotfiles),

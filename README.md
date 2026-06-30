@@ -18,9 +18,9 @@ Author: Evan Harmon
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-orange.json)](https://github.com/copier-org/copier)
 
-## Part of harmon-stack
+## Part of harmon-platform
 
-This repo is part of **harmon-stack** — my personal stack of homelab, dev-tooling, and automation repos that work together.
+This repo is part of **harmon-platform** — my custom development platform with machine configuration, DevOps systems, homelab infrastructure, and automation repos that work together to help me develop software and manage my homelab.
 
 | Repo | What it is |
 | --- | --- |
