@@ -12,8 +12,11 @@
 [% endif %]
 [% if project_type == 'web-astro' %]
     "astro-build.astro-vscode",
+    "unifiedjs.vscode-mdx",
 [% endif %]
 [% if use_node %]
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
     "esbenp.prettier-vscode",
     "ms-playwright.playwright",
 [% endif %]
