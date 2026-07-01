@@ -159,7 +159,8 @@ drive it.
 The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
-- **Effort** — size / estimate (XS…XXXL)
+- **Effort** — story points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
+  a **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
@@ -317,8 +318,9 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   `Priority`, with the **`Effort` field summed in each group header**. The "how
   big is the pile, and what's the plan" view, and a **dates-free roadmap
   substitute**: the per-group sum shows the weight behind each product without
-  maintaining a timeline. (Group-header sums only work on a **number** field, so
-  this wants `Effort` as points — a T-shirt single-select can't be summed.)
+  maintaining a timeline. (`Effort` is a **number** field — GitHub sums number
+  fields in group headers, so this totals the points behind each group; a
+  single-select can't be summed.)
 - **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.
 
 ### Two toggles, not more views

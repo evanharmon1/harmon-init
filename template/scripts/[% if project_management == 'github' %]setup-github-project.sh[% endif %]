@@ -200,6 +200,18 @@ create_text() {
         >/dev/null
 }
 
+create_number() {
+    name="$1"
+    if [ -n "$(field_id "$name")" ]; then
+        echo "    Field '$name' already exists — leaving it as-is"
+        return 0
+    fi
+    echo "    Creating number field '$name'"
+    gh api graphql -f p="$project_id" \
+        -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:NUMBER,name:\"$name\"}){projectV2Field{... on ProjectV2FieldCommon{id}}}}" \
+        >/dev/null
+}
+
 # Metadata fields: on an ORGANIZATION these are org-level ISSUE fields (durable —
 # the value is on the issue, shared across every project; see
 # docs/project-management.md). Priority + Effort are GitHub built-ins;
@@ -218,15 +230,10 @@ create_single_select "Priority" '[
   {"name":"Medium","color":"YELLOW","description":""},
   {"name":"Low","color":"GRAY","description":""}
 ]'
-create_single_select "Effort" '[
-  {"name":"XS","color":"GRAY","description":""},
-  {"name":"S","color":"BLUE","description":""},
-  {"name":"M","color":"GREEN","description":""},
-  {"name":"L","color":"YELLOW","description":""},
-  {"name":"XL","color":"ORANGE","description":""},
-  {"name":"XXL","color":"RED","description":""},
-  {"name":"XXXL","color":"PURPLE","description":""}
-]'
+# Effort is story points on the Fibonacci ladder (1/2/3/5/8/13/21) — a NUMBER
+# field so views can sum it per group (single-selects can't be summed). The
+# ladder is a convention; a number field takes free numeric entry.
+create_number "Effort"
 create_text "Product"
 create_single_select "Agent" '[
   {"name":"Claude Code","color":"ORANGE","description":""},
