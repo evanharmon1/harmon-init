@@ -156,10 +156,10 @@ TODO: finalize exactly what to automate. The intended event → status shape:
 project because the built-in workflows (and `project-automation.yml`, on an org)
 drive it.
 
-The work-metadata fields are:
+The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
-- **Estimate** — size/effort (XS…XXXL)
+- **Effort** — size / estimate (XS…XXXL)
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)

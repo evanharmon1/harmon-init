@@ -522,7 +522,7 @@ tasks:
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-fields:
-    desc: Idempotently ensure the org's issue fields — Priority/Estimate/Product/Agent (public preview). Requires `gh` with the admin:org scope.
+    desc: Idempotently add the org's Product + Agent issue fields (Priority + Effort are GitHub built-ins; public preview). Requires `gh` with the admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]

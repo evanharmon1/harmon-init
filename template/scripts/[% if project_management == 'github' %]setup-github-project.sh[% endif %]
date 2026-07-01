@@ -2,9 +2,10 @@
 # setup-github-project.sh — idempotently create and sync a GitHub Project V2 for a
 # repo owner (an organization OR a personal user account): the board and its
 # Status pipeline (docs/project-management.md). On an ORGANIZATION, the metadata
-# fields (Priority, Estimate, Product, Agent) are org-level ISSUE fields created
-# by setup-github-issue-fields.sh; on a personal account (no org issue fields)
-# this script creates them as project fields instead.
+# fields are org-level ISSUE fields (Priority + Effort are GitHub built-ins;
+# setup-github-issue-fields.sh adds Product + Agent); on a personal account (no
+# org issue fields) this script creates Priority/Effort/Product/Agent as project
+# fields instead.
 #
 # Safe to re-run and safe to run from every repo the owner controls: it looks the
 # project up by title, so the first run creates it and later runs just reconcile
@@ -199,12 +200,13 @@ create_text() {
         >/dev/null
 }
 
-# Priority/Estimate/Product/Agent: on an ORGANIZATION these live as org-level
-# ISSUE fields (durable — the value is on the issue and shared across every
-# project; see docs/project-management.md) created by setup-github-issue-fields.sh.
-# A personal account has no org issue fields, so fall back to project fields here.
+# Metadata fields: on an ORGANIZATION these are org-level ISSUE fields (durable —
+# the value is on the issue, shared across every project; see
+# docs/project-management.md). Priority + Effort are GitHub built-ins;
+# setup-github-issue-fields.sh adds Product + Agent. A personal account has no org
+# issue fields, so fall back to creating them as project fields here.
 if [ "$owner_type" = "Organization" ]; then
-    echo "==> Metadata (Priority/Estimate/Product/Agent) are org issue fields — run setup-github-issue-fields.sh"
+    echo "==> Metadata are org issue fields (Priority/Effort built-in; run setup-github-issue-fields.sh for Product/Agent)"
     echo "==> Done — project #$project_number: $title"
     exit 0
 fi
@@ -216,7 +218,7 @@ create_single_select "Priority" '[
   {"name":"Medium","color":"YELLOW","description":""},
   {"name":"Low","color":"GRAY","description":""}
 ]'
-create_single_select "Estimate" '[
+create_single_select "Effort" '[
   {"name":"XS","color":"GRAY","description":""},
   {"name":"S","color":"BLUE","description":""},
   {"name":"M","color":"GREEN","description":""},

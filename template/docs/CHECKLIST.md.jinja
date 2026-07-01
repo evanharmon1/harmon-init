@@ -54,11 +54,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
 - [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
-      `admin:org` scope) to create the org's Priority/Estimate/Product/Agent
-      **issue fields** (GitHub public preview) — durable metadata that lives on
-      the issue rather than the board. Idempotent and non-destructive.
+      `admin:org` scope) to add the org's **Product** and **Agent** issue fields
+      (GitHub public preview). Priority + Effort are GitHub built-in issue fields,
+      so they aren't recreated — tune their options in the org's issue-field
+      settings. Idempotent and non-destructive.
 [% else %]
-      On a personal account it also creates the Priority/Estimate/Product/Agent
+      On a personal account it also creates Priority/Effort/Product/Agent as
       project fields (issue fields are org-only); status automation is a separate
       follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
 [% endif %]

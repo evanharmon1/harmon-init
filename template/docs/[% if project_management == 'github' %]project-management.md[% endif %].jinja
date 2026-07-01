@@ -160,19 +160,22 @@ TODO: finalize exactly what to automate. The intended event → status shape:
 project because the built-in workflows (and `project-automation.yml`, on an org)
 drive it.
 
-The work-metadata fields are:
+The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
-- **Estimate** — size/effort (XS…XXXL)
+- **Effort** — size / estimate
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
 
 [% if github_org != author_git_provider_username %]
-These are **org issue fields** (currently GitHub public preview), not project
-fields: they're org-level, defined once, and — unlike a project field — the value
-lives on the **issue**, stays the same across every project the issue belongs to,
-and shows in the issue timeline. `task setup:github-issue-fields` creates them.
+These are **org issue fields** (GitHub public preview): org-level, defined once,
+and — unlike a project field — the value lives on the **issue**, stays consistent
+across every project the issue belongs to, and shows in the issue timeline. GitHub
+ships **Priority** and **Effort** (plus **Start date** / **Target date**) as
+built-in issue fields, so `task setup:github-issue-fields` only adds the two that
+aren't built in — **Product** and **Agent**. Tune Priority's / Effort's options
+(e.g. an XS…XXXL Effort scale) in the org's issue-field settings.
 
 [% else %]
 On a personal account these are **project fields** (issue fields are org-only),

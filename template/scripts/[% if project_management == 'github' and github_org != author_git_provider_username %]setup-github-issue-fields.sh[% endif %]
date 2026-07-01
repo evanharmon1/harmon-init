@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# setup-github-issue-fields.sh — idempotently ensure the org's ISSUE FIELDS:
-# Priority, Estimate, Product, Agent. Create-if-missing only; it never edits or
-# deletes an existing field, so later customizations survive.
+# setup-github-issue-fields.sh — idempotently add the org ISSUE FIELDS that are
+# NOT GitHub built-ins: Product and Agent. GitHub already ships Priority, Effort,
+# Start date, and Target date as built-in issue fields (Priority's options are
+# Urgent/High/Medium/Low; Effort is the size/estimate field), so we never recreate
+# those. Create-if-missing only; it never edits or deletes a field.
 #
 # Issue fields are org-level, durable metadata: the value lives on the *issue*
 # (not a project item), is the same across every project the issue belongs to,
@@ -49,23 +51,8 @@ done
 # Preview REST API version for issue fields; bump if GitHub moves the endpoint.
 api_version="2026-03-10"
 
-# Desired single-select options. Colors are GitHub's palette: gray, blue, green,
+# Agent single-select options. Colors are GitHub's palette: gray, blue, green,
 # yellow, orange, red, pink, purple.
-priority_opts='[
-  {"name":"Urgent","color":"red","description":""},
-  {"name":"High","color":"orange","description":""},
-  {"name":"Medium","color":"yellow","description":""},
-  {"name":"Low","color":"gray","description":""}
-]'
-estimate_opts='[
-  {"name":"XS","color":"gray","description":""},
-  {"name":"S","color":"blue","description":""},
-  {"name":"M","color":"green","description":""},
-  {"name":"L","color":"yellow","description":""},
-  {"name":"XL","color":"orange","description":""},
-  {"name":"XXL","color":"red","description":""},
-  {"name":"XXXL","color":"purple","description":""}
-]'
 agent_opts='[
   {"name":"Claude Code","color":"orange","description":""},
   {"name":"Codex","color":"blue","description":""},
@@ -113,9 +100,7 @@ create_field() {
             -H "X-GitHub-Api-Version: $api_version" --input - >/dev/null
 }
 
-create_field "Priority" "single_select" "Relative importance" "$priority_opts"
-create_field "Estimate" "single_select" "Size / effort" "$estimate_opts"
 create_field "Product" "text" "Which product/area it belongs to"
 create_field "Agent" "single_select" "Which agent should implement it" "$agent_opts"
 
-echo "==> Done — issue fields on '$org': Priority, Estimate, Product, Agent"
+echo "==> Done — added issue fields on '$org': Product, Agent (Priority + Effort are GitHub built-ins)"
