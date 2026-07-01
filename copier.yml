@@ -113,6 +113,15 @@ devcontainer:
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
   default: yes
 
+project_management:
+  type: str
+  help: "PROJECT MGMT: Add a project-management doc (docs/project-management.md)?"
+  choices:
+    none: none
+    GitHub Projects: github
+    Linear (TODO stub): linear
+  default: none
+
 git_init:
   type: bool
   help: "GIT INIT: Initialize git repo?"

@@ -62,12 +62,13 @@ jobs:
                 [ "$MERGED" = "true" ] || { echo "PR closed without merge, skipping"; exit 0; }
                 TARGET_STATUS="Done"
               else
-                TARGET_STATUS="Validating"
+                TARGET_STATUS="Verifying"
               fi
               ;;
             pull_request_review)
               BRANCH="$BRANCH_PR"
-              TARGET_STATUS="Done"
+              # Approved but not yet merged — Done is reserved for the merge event
+              TARGET_STATUS="Ready to Merge"
               ;;
             workflow_run)
               BRANCH="$BRANCH_WF"
@@ -77,7 +78,7 @@ jobs:
               FAILED=$(echo "$CI_RUNS" | jq '[.[] | select(.conclusion != null and (.conclusion | test("^(failure|cancelled|timed_out|action_required)$")))] | length')
               PENDING=$(echo "$CI_RUNS" | jq '[.[] | select(.status != "completed")] | length')
               if [ "$FAILED" -gt 0 ]; then
-                TARGET_STATUS="Validating"
+                TARGET_STATUS="Verifying"
               elif [ "$PENDING" -gt 0 ]; then
                 echo "CI still running ($PENDING pending), skipping"; exit 0
               elif [ "$CI_COUNT" -ge 1 ]; then
