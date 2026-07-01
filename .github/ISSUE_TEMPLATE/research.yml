@@ -1,7 +1,6 @@
 name: Research
 description: Track a research question or investigation
 title: "[Research]: "
-labels: ["research"]
 body:
   - type: textarea
     id: question

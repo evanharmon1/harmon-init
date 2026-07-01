@@ -1,7 +1,6 @@
 name: Feature
 description: Suggest a new capability or improvement
 title: "[Feature]: "
-labels: ["feature"]
 body:
   - type: textarea
     id: problem

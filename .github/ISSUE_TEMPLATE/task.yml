@@ -1,7 +1,6 @@
 name: Task
 description: General work — maintenance, chores, cleanup, or a small improvement
 title: "[Task]: "
-labels: ["task"]
 body:
   - type: textarea
     id: description
