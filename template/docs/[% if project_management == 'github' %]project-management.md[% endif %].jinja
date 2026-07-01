@@ -227,13 +227,31 @@ org's **default labels** (org Settings → Repository, UI-only) to seed *new* re
 (it won't change existing ones). It never deletes labels, so GitHub's defaults
 remain until you prune them.
 
+## Views
+
+Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
+view mutations, only reads — so create these once in the UI (**Project → New
+view**). Each is a saved **filter + layout + grouping** over the one board:
+
+| View | Layout | Filter | Group / sort |
+| --- | --- | --- | --- |
+| Board | Board | `is:open` | group by `Status` |
+| Triage | Table | `is:open is:issue no:status` | sort by newest |
+| Agent queue | Board | `is:open status:"Agent Queue"` | group by `Agent` |
+| Priority | Table | `is:open` | sort by `Priority`, then `Effort` |
+| Roadmap | Roadmap | `is:open` | lay out on `Start date` → `Target date` |
+| Mine | Table | `is:open assignee:@me` | sort by `Priority` |
+
+Roadmap needs the date fields (`Start date` / `Target date` are org issue-field
+built-ins; add them as project fields on a personal account). Slice further by
+`Product` or iteration (`iteration:@current`) rather than spinning up more
+projects.
+
 ## Notes
 
 - **Labels vs Type** — `Type` is a first-class, org-level issue field
   (Bug / Feature / Task / Research), separate from labels (see **Labels** above);
   don't reproduce it as a label.
-- **Views** — save per-slice views off the one board (by iteration, product, or
-  agent) rather than spinning up more projects.
 - **Owner**, **Iteration/cycle**, **Milestone** — additional fields/axes as the
   work needs them.
 - **Sub-issues** — break a large issue down natively instead of with a checklist.
