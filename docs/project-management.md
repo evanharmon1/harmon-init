@@ -191,6 +191,40 @@ org's **default labels** (org Settings → Repository, UI-only) to seed *new* re
 (it won't change existing ones). It never deletes labels, so GitHub's defaults
 remain until you prune them.
 
+## Milestones
+
+A milestone has **one job — "when it ships"** — and nothing else. Four things
+could all masquerade as milestones, so keep the lanes clean:
+
+- **Type** — what kind of work (Bug / Feature / Task / Research)
+- **Status** — where it sits in the pipeline
+- **Labels** — orthogonal, cross-cutting concerns
+- **Sub-issues** — hierarchy
+
+None of those answers *"which dated, shippable batch does this belong to, and how
+done is that batch?"* — that's the milestone's unique contribution: a
+release/launch container with a **due date** and a **live completion bar**. Labels
+for classification, milestones for goal tracking. The moment you're making a
+milestone that isn't a dated, shippable batch, it's really a label or a saved
+view.
+
+**Name milestones after release versions** — the milestone title *equals* the git
+tag (`v1.0.0`, `v1.1.0`). Then the milestone list doubles as a release-history /
+changelog skeleton, and closing a milestone on publish needs no special plumbing.
+This dovetails with **release-please** because they run at different times and
+never overlap:
+
+- The **milestone** is the *pre-ship planning* artifact — "what must land before
+  we cut `v1.1.0`."
+- **release-please** is the *post-merge machine* that calculates and cuts the
+  actual version from your conventional commits (see
+  [conventions.md](conventions.md)).
+
+Naming them identically makes the two legible to each other — and a ~10-line
+Action can close the milestone matching a published tag — without making them one
+system. Since PRs and issues share the milestone namespace, the release PR itself
+can carry the milestone, so the shipped batch is fully self-documenting.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
@@ -232,8 +266,8 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
 - **Labels vs Type** — `Type` is a first-class, org-level issue field
   (Bug / Feature / Task / Research), separate from labels (see **Labels** above);
   don't reproduce it as a label.
-- **Owner**, **Iteration/cycle**, **Milestone** — additional fields/axes as the
-  work needs them.
+- **Owner**, **Iteration/cycle** — additional fields/axes as the work needs them
+  (**Milestones** have their own section above).
 - **Sub-issues** — break a large issue down natively instead of with a checklist.
 - An issue can belong to **multiple projects** — the org project plus a focused
   one is fine.
