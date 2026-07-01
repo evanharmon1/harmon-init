@@ -516,9 +516,16 @@ tasks:
 [% if project_management == 'github' %]
 
   setup:github-project:
-    desc: Idempotently create/sync the owner's GitHub Project V2 (Status pipeline + Priority/Estimate/Product/Agent fields). Requires `gh auth refresh -s project`.
+    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires `gh auth refresh -s project`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
+[% if github_org != author_git_provider_username %]
+
+  setup:github-issue-fields:
+    desc: Idempotently ensure the org's issue fields — Priority/Estimate/Product/Agent (public preview). Requires `gh` with the admin:org scope.
+    cmds:
+      - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
+[% endif %]
 [% endif %]
 
   # ── Release ────────────────────────────────────────────────────

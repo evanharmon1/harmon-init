@@ -154,16 +154,31 @@ TODO: finalize exactly what to automate. The intended event → status shape:
 - Issue closed (`state_reason == completed`) → **Done**
 - 90 days in Done → **auto-archived** off the board (native built-in, not a Status)
 
-## Custom fields
+## Fields
 
-Beyond `Status`, the project carries:
+`Status` is a **Project field** — the board pipeline above; it stays on the
+project because the built-in workflows (and `project-automation.yml`, on an org)
+drive it.
 
-- **Priority**
-- **Estimate** — size/effort
-- **Product** — which product/area it belongs to
+The work-metadata fields are:
+
+- **Priority** — Urgent / High / Medium / Low
+- **Estimate** — size/effort (XS…XXXL)
+- **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
 
+[% if github_org != author_git_provider_username %]
+These are **org issue fields** (currently GitHub public preview), not project
+fields: they're org-level, defined once, and — unlike a project field — the value
+lives on the **issue**, stays the same across every project the issue belongs to,
+and shows in the issue timeline. `task setup:github-issue-fields` creates them.
+
+[% else %]
+On a personal account these are **project fields** (issue fields are org-only),
+created alongside the board by `task setup:github-project`.
+
+[% endif %]
 TODO: finalize each field's options/values.
 
 [% if github_org != author_git_provider_username %]

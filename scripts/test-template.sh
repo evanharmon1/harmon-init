@@ -309,15 +309,19 @@ full) # project_management=github; github_org=test-org (an org repo)
     # project_management=github → the project-setup script + task render
     # (shellcheck at step 6 and `task --list-all` at step 1 then validate them)
     [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
+    # org + github → the org issue-fields setup script renders too
+    [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
     head -1 docs/project-management.md | grep -qx '# Linear' || err "Linear project-management.md not titled 'Linear'"
     grep -q 'TODO' docs/project-management.md || err "Linear project-management.md missing TODO marker"
+    [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management!=github for profile '$profile'"
     ;;
-*) # project_management=none — neither the doc nor the project-setup script render
+*) # project_management=none — neither the doc nor the project-setup scripts render
     [ ! -f docs/project-management.md ] || err "docs/project-management.md present but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-project.sh ] || err "setup-github-project.sh rendered but project_management=none for profile '$profile'"
+    [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management=none for profile '$profile'"
     ;;
 esac
 

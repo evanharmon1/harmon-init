@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# setup-github-issue-fields.sh — idempotently ensure the org's ISSUE FIELDS:
+# Priority, Estimate, Product, Agent. Create-if-missing only; it never edits or
+# deletes an existing field, so later customizations survive.
+#
+# Issue fields are org-level, durable metadata: the value lives on the *issue*
+# (not a project item), is the same across every project the issue belongs to,
+# and shows in the issue timeline — unlike Project (V2) fields. `Status`
+# deliberately stays a Project field (it's the board pipeline the built-in +
+# project-automation workflows drive), so it is NOT created here.
+#
+# Issue fields are an ORG-level feature (no per-user equivalent), so this is
+# org-only. Needs gh authed with the 'admin:org' scope + jq.
+#
+# Usage: setup-github-issue-fields.sh --org <org-login>
+#
+# NOTE: issue fields are in GitHub PUBLIC PREVIEW — the API is subject to change,
+# and this hits the live API so it is not exercised by `task test:template`
+# (guarded by shellcheck + shfmt only). Test it against a scratch org, and pin
+# api_version below if the endpoint moves.
+set -euo pipefail
+
+org=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --org)
+        org="${2:-}"
+        shift 2
+        ;;
+    *)
+        echo "Unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+done
+
+if [ -z "$org" ]; then
+    echo "Usage: $0 --org <org-login>" >&2
+    exit 2
+fi
+
+for tool in gh jq; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "Required tool not found: $tool" >&2
+        exit 1
+    fi
+done
+
+# Preview REST API version for issue fields; bump if GitHub moves the endpoint.
+api_version="2026-03-10"
+
+# Desired single-select options. Colors are GitHub's palette: gray, blue, green,
+# yellow, orange, red, pink, purple.
+priority_opts='[
+  {"name":"Urgent","color":"red","description":""},
+  {"name":"High","color":"orange","description":""},
+  {"name":"Medium","color":"yellow","description":""},
+  {"name":"Low","color":"gray","description":""}
+]'
+estimate_opts='[
+  {"name":"XS","color":"gray","description":""},
+  {"name":"S","color":"blue","description":""},
+  {"name":"M","color":"green","description":""},
+  {"name":"L","color":"yellow","description":""},
+  {"name":"XL","color":"orange","description":""},
+  {"name":"XXL","color":"red","description":""},
+  {"name":"XXXL","color":"purple","description":""}
+]'
+agent_opts='[
+  {"name":"Claude Code","color":"orange","description":""},
+  {"name":"Codex","color":"blue","description":""},
+  {"name":"Gemini CLI","color":"purple","description":""},
+  {"name":"Qwen Code","color":"green","description":""},
+  {"name":"DeepSeek","color":"red","description":""},
+  {"name":"Kimi K2","color":"yellow","description":""},
+  {"name":"GLM","color":"pink","description":""},
+  {"name":"GitHub Copilot","color":"gray","description":""}
+]'
+
+echo "==> Reading existing issue fields for '$org'"
+existing=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
+if [ -z "$existing" ]; then
+    echo "Could not read issue fields for '$org' — is it an org, do you have 'admin:org', and is the issue-fields preview enabled?" >&2
+    exit 1
+fi
+
+# The list endpoint returns a bare array; tolerate an {"issue_fields":[...]} wrapper too.
+existing_names=$(printf '%s' "$existing" |
+    jq -r 'if type == "object" then (.issue_fields // []) else . end | .[].name' 2>/dev/null || true)
+
+field_present() { printf '%s\n' "$existing_names" | grep -Fxq "$1"; }
+
+# create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON]
+create_field() {
+    name="$1"
+    dtype="$2"
+    desc="$3"
+    opts="${4:-}"
+    if field_present "$name"; then
+        echo "    Issue field '$name' already exists — leaving it as-is"
+        return 0
+    fi
+    echo "    Creating $dtype issue field '$name'"
+    if [ -n "$opts" ]; then
+        body=$(jq -cn --arg n "$name" --arg d "$desc" --arg t "$dtype" --argjson o "$opts" \
+            '{name:$n,description:$d,data_type:$t,options:$o}')
+    else
+        body=$(jq -cn --arg n "$name" --arg d "$desc" --arg t "$dtype" \
+            '{name:$n,description:$d,data_type:$t}')
+    fi
+    printf '%s' "$body" |
+        gh api --method POST "orgs/$org/issue-fields" \
+            -H "X-GitHub-Api-Version: $api_version" --input - >/dev/null
+}
+
+create_field "Priority" "single_select" "Relative importance" "$priority_opts"
+create_field "Estimate" "single_select" "Size / effort" "$estimate_opts"
+create_field "Product" "text" "Which product/area it belongs to"
+create_field "Agent" "single_select" "Which agent should implement it" "$agent_opts"
+
+echo "==> Done — issue fields on '$org': Priority, Estimate, Product, Agent"

@@ -47,16 +47,20 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% if project_management == 'github' %]
 - [ ] GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
-      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline +
-      Priority/Estimate/Product/Agent fields — see
+      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline — see
       [project-management.md](project-management.md).
 [% if github_org != author_git_provider_username %]
       It also writes the project id to the `ORG_PROJECT_ID` org variable that
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
+- [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
+      `admin:org` scope) to create the org's Priority/Estimate/Product/Agent
+      **issue fields** (GitHub public preview) — durable metadata that lives on
+      the issue rather than the board. Idempotent and non-destructive.
 [% else %]
-      Personal-account status automation is a separate follow-up — the board and
-      fields get set up, but issue/PR status isn't auto-synced yet.
+      On a personal account it also creates the Priority/Estimate/Product/Agent
+      project fields (issue fields are org-only); status automation is a separate
+      follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
 [% endif %]
 [% endif %]
 
