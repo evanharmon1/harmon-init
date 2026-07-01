@@ -113,6 +113,15 @@ devcontainer:
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
   default: yes
 
+project_management:
+  type: str
+  help: "PROJECT MGMT: Add a project-management doc (docs/project-management.md)?"
+  choices:
+    none: none
+    GitHub Projects: github
+    Linear (TODO stub): linear
+  default: none
+
 git_init:
   type: bool
   help: "GIT INIT: Initialize git repo?"
@@ -158,6 +167,16 @@ organization_url:
 organization_email:
   type: str
   default: "evan@evanharmon.com"
+  when: false
+
+# Formal display name of the GitHub org, used for the org-level Project title
+# ("<name> Project" — see docs/project-management.md). Distinct from
+# `organization` (the copyright entity): here the org Project is "Harmon Platform
+# Project" while the copyright holder is "Harmon Lab". Override per client org
+# (e.g. "Sommer Lawn").
+org_formal_name:
+  type: str
+  default: "Harmon Platform"
   when: false
 
 repo_url:

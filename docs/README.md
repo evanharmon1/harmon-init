@@ -33,6 +33,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 | Decisions (ADRs) | [decisions/](decisions/) |
 | Guides (calm how-tos) | [guides/](guides/) — onboarding, deploying, troubleshooting |
 | Runbooks (crisis procedures) | [runbooks/](runbooks/) |
+| Project management (GitHub Projects) | [project-management.md](project-management.md) |
 | Post-generation setup | [CHECKLIST.md](CHECKLIST.md) |
 
 Design intent is at [`../DESIGN.md`](../DESIGN.md); specs (WHAT to build) in
