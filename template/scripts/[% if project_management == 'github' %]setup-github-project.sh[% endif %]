@@ -51,19 +51,19 @@ done
 status_pipeline='[
   {"name":"Inbox","color":"GRAY","description":"Newly landed, unsorted"},
   {"name":"Icebox","color":"GRAY","description":"Real, but not now"},
-  {"name":"Next","color":"GRAY","description":"Will pull in soon"},
+  {"name":"Next","color":"PINK","description":"Will pull in soon"},
   {"name":"Todo","color":"BLUE","description":"Committed, not started"},
   {"name":"Shaping","color":"BLUE","description":"Problem/approach being defined"},
   {"name":"Ready","color":"BLUE","description":"Shaped, ready to pick up"},
-  {"name":"Agent Queue","color":"PURPLE","description":"Queued for an AI agent"},
+  {"name":"Agent Queue","color":"BLUE","description":"Queued for an AI agent"},
   {"name":"In Progress","color":"YELLOW","description":"Actively being worked"},
-  {"name":"Verifying","color":"YELLOW","description":"CI/checks running"},
-  {"name":"In Review","color":"ORANGE","description":"Under human review"},
-  {"name":"Ready to Merge","color":"ORANGE","description":"Approved, awaiting merge"},
-  {"name":"Done","color":"GREEN","description":"Merged/shipped"},
-  {"name":"Deployed","color":"GREEN","description":"Deployed"},
-  {"name":"Accepted","color":"GREEN","description":"Smoke/QA/manual check passed"},
-  {"name":"Archived","color":"GRAY","description":"Archived"}
+  {"name":"Verifying","color":"ORANGE","description":"CI/checks running"},
+  {"name":"In Review","color":"GREEN","description":"Under human review"},
+  {"name":"Ready to Merge","color":"GREEN","description":"Approved, awaiting merge"},
+  {"name":"Done","color":"PURPLE","description":"Merged/shipped"},
+  {"name":"Deployed","color":"PURPLE","description":"Deployed"},
+  {"name":"Accepted","color":"PURPLE","description":"Smoke/QA/manual check passed"},
+  {"name":"Archived","color":"PURPLE","description":"Archived"}
 ]'
 
 # jq filter: a JSON array of {name,color,description} -> a GraphQL options
