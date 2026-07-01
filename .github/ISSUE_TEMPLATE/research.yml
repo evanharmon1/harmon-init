@@ -1,6 +1,8 @@
 name: Research
 description: Track a research question or investigation
 title: "[Research]: "
+assignees:
+  - evanharmon1
 body:
   - type: markdown
     attributes:

@@ -1,6 +1,8 @@
 name: Task
 description: General work — maintenance, chores, cleanup, or a small improvement
 title: "[Task]: "
+assignees:
+  - evanharmon1
 body:
   - type: textarea
     id: description

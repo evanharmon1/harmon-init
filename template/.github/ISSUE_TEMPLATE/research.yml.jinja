@@ -1,6 +1,11 @@
 name: Research
 description: Track a research question or investigation
 title: "[Research]: "
+assignees:
+  - [[ author_git_provider_username ]]
+[% if github_org != author_git_provider_username %]
+type: Research
+[% endif %]
 body:
   - type: markdown
     attributes:

@@ -1,6 +1,11 @@
 name: Bug
 description: Report something that's broken or behaving incorrectly
 title: "[Bug]: "
+assignees:
+  - [[ author_git_provider_username ]]
+[% if github_org != author_git_provider_username %]
+type: Bug
+[% endif %]
 body:
   - type: textarea
     id: what-happened

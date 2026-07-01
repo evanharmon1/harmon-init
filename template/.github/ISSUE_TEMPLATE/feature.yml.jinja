@@ -1,6 +1,11 @@
 name: Feature
 description: Suggest a new capability or improvement
 title: "[Feature]: "
+assignees:
+  - [[ author_git_provider_username ]]
+[% if github_org != author_git_provider_username %]
+type: Feature
+[% endif %]
 body:
   - type: textarea
     id: problem

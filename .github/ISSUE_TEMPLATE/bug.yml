@@ -1,6 +1,8 @@
 name: Bug
 description: Report something that's broken or behaving incorrectly
 title: "[Bug]: "
+assignees:
+  - evanharmon1
 body:
   - type: textarea
     id: what-happened

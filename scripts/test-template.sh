@@ -324,6 +324,20 @@ meta) # project_management=linear
     ;;
 esac
 
+# ── 9c. Issue forms: default assignee always renders; the org issue `type:` key
+#       is present only on org repos (issue types are org-level) ──
+if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
+    grep -q '^assignees:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml is missing the default assignee"
+    case "$profile" in
+    full) # org repo (github_org != author) → the form declares the org issue type
+        grep -q '^type: Bug$' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing 'type: Bug' on an org repo"
+        ;;
+    *) # personal repo → no org issue types, so the type: key must be absent
+        ! grep -q '^type:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml has a type: key on a personal repo (org-only)"
+        ;;
+    esac
+fi
+
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"

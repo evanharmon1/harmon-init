@@ -1,6 +1,8 @@
 name: Feature
 description: Suggest a new capability or improvement
 title: "[Feature]: "
+assignees:
+  - evanharmon1
 body:
   - type: textarea
     id: problem
