@@ -316,6 +316,25 @@ estimating a big parent isn't — and a view's field sums total the leaves for y
 It's route-not-duplicate applied to hierarchy: a child references the parent's spec
 rather than restating it, and reads up for context.
 
+**Sub-issue vs. task-list checkbox.** Markdown `- [ ]` task lists still have a
+place. The rule: if an item needs its own **status, assignee, or independent
+scheduling**, promote it to a **sub-issue**; if it's just "steps to finish this one
+issue," leave it a **checkbox** in the body. Don't promote every checkbox (that's
+sprawl), and don't spin up a sub-issue where a checkbox suffices.
+
+**Research child as a blocking gate.** When a Feature has an unknown, spawn a
+**Research** sub-issue and let it *block* the implementation children. It closes
+when it produces a decision record (the Research closure rule), which unblocks the
+rest — encoding "figure this out first, then build" in the tree itself, and tying
+Research, sub-issues, and the ADR discipline together.
+
+**Hierarchy is not dependency.** A sub-issue means *"part of,"* not *"must happen
+before."* If A must finish before B but B isn't part of A, that's a **dependency**
+— the native blocked-by relationship, or the `blocked` label + a note (see
+**Blocked is not a status** above) — not a parent-child link. Conflating them
+corrupts the tree; keep composition (sub-issues) and sequencing (dependencies) in
+separate mechanisms.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
