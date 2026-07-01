@@ -166,10 +166,32 @@ Beyond `Status`, the project carries:
 
 TODO: finalize each field's options/values.
 
+[% if github_org != author_git_provider_username %]
+## Issue types → commit types → releases
+
+The **issue type** (Bug / Feature / Task / Research) is an org-level, largely
+downstream-inert categorization — your preference for slicing the board; nothing
+automated reads it. It maps **many-to-one** onto the load-bearing
+conventional-commit types (see [conventions.md](conventions.md)), which are the
+only thing release-please reads to cut a version:
+
+| Issue type | Commit type(s) | release-please |
+| --- | --- | --- |
+| **Bug** | `fix` | Bug Fixes → patch |
+| **Feature** | `feat` (`feat!` = breaking) | Features → minor (major) |
+| **Task** | `chore`, `build`, `ci`, `docs`, `perf`, `refactor`, `style`, `test` | none on their own |
+| **Research** | usually `docs`, or no code (the outcome is a decision) | none |
+
+Types are GitHub's defaults (Bug, Feature, Task) plus Research, kept in sync by
+`task setup:github-issue-types`. A `Task` issue almost always ships as `chore` —
+there is no `task:` commit type, by design.
+
+[% endif %]
 ## Notes
 
-- **Labels vs Type** — `Type` is a first-class issue field (Bug / Feature / …),
-  separate from labels; don't reproduce it as a label.
+- **Labels vs Type** — `Type` is a first-class, org-level issue field
+  (Bug / Feature / Task / Research), separate from labels; don't reproduce it as
+  a label.
 - **Views** — save per-slice views off the one board (by iteration, product, or
   agent) rather than spinning up more projects.
 - **Owner**, **Iteration/cycle**, **Milestone** — additional fields/axes as the

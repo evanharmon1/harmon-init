@@ -164,8 +164,9 @@ TODO: finalize each field's options/values.
 
 ## Notes
 
-- **Labels vs Type** — `Type` is a first-class issue field (Bug / Feature / …),
-  separate from labels; don't reproduce it as a label.
+- **Labels vs Type** — `Type` is a first-class, org-level issue field
+  (Bug / Feature / Task / Research), separate from labels; don't reproduce it as
+  a label.
 - **Views** — save per-slice views off the one board (by iteration, product, or
   agent) rather than spinning up more projects.
 - **Owner**, **Iteration/cycle**, **Milestone** — additional fields/axes as the
