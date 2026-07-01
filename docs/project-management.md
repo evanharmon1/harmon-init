@@ -300,6 +300,33 @@ before."* If A must finish before B but B isn't part of A, that's a **dependency
 corrupts the tree; keep composition (sub-issues) and sequencing (dependencies) in
 separate mechanisms.
 
+## Cross-repo work
+
+The one board already spans every repo (the single default project per owner). For
+work that *itself* crosses repos, reach for the tree, not a new field:
+
+**A cross-repo feature → a parent sub-issue tree. No field needed.** A feature that
+touches app + infra + marketing is one cohesive thing, so it's a legitimate parent:
+the parent **Feature** issue lives in the app repo, its **Task** children live in
+whichever repos they belong to (sub-issues cross repos freely), and the parent's
+rollup counts completion across all of them. The tree *is* the cross-repo grouping
+— you track it by opening the parent, not by tagging a field.
+
+**A cross-repo *release* is mostly a smell.** Repos with genuinely independent
+deploy cadences shouldn't share a release: the app cuts versions via release-please
+on its own rhythm, an Astro marketing site deploys continuously on copy changes,
+infra changes when infra changes. Forcing "app v1.1.0 + a pricing-page edit + a
+terraform tweak" into one dated cross-repo release invents coordination the
+independent cadences don't need. What legitimately spans repos is **features, not
+releases** — so the flat cross-repo batch a milestone structurally can't hold (and
+that a field would exist to solve) mostly shouldn't exist.
+
+**The one genuine exception: a coordinated launch.** An initial public launch
+really does need app-live + marketing-up + infra-provisioned at once — a real
+cross-repo dated batch. Even then, model it as a single **Public Launch** parent
+tracking issue with cross-repo sub-issues, not a new field: it's a one-time event,
+not a recurring dimension worth a permanent field on every issue forever.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
