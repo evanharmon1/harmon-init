@@ -218,9 +218,10 @@ create_single_select "Agent" '[
   {"name":"Codex","color":"BLUE","description":""},
   {"name":"Gemini CLI","color":"PURPLE","description":""},
   {"name":"Qwen Code","color":"GREEN","description":""},
-  {"name":"DeepSeek","color":"GRAY","description":""},
+  {"name":"DeepSeek","color":"RED","description":""},
   {"name":"Kimi K2","color":"YELLOW","description":""},
-  {"name":"GLM","color":"PINK","description":""}
+  {"name":"GLM","color":"PINK","description":""},
+  {"name":"GitHub Copilot","color":"GRAY","description":""}
 ]'
 
 echo "==> Done — project #$project_number: $title"

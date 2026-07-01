@@ -158,7 +158,7 @@ Beyond `Status`, the project carries:
 - **Estimate** — size/effort
 - **Product** — which product/area it belongs to
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
-  Qwen Code, DeepSeek, Kimi K2, GLM) and how (effort level, model)
+  Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
 
 TODO: finalize each field's options/values.
 
