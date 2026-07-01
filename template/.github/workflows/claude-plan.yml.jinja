@@ -61,9 +61,9 @@ jobs:
           if [ -z "$PROJECT_ID" ]; then
             PROJECT_ID=$(gh api graphql -f query='
               query($o:String!){organization(login:$o){projectsV2(first:100){nodes{id title}}}}
-              ' -f o=[[ github_org ]] --jq '.data.organization.projectsV2.nodes[]|select(.title=="[[ org_formal_name ]] Project")|.id' 2>/dev/null | head -n1 || true)
+              ' -f o=[[ github_org ]] --jq '.data.organization.projectsV2.nodes[]|select(.title=="[[ github_org ]] Project")|.id' 2>/dev/null | head -n1 || true)
           fi
-          [ -z "$PROJECT_ID" ] && echo "No org project (set ORG_PROJECT_ID or create a project titled '[[ org_formal_name ]] Project'), skipping" && exit 0
+          [ -z "$PROJECT_ID" ] && echo "No org project (set ORG_PROJECT_ID or create a project titled '[[ github_org ]] Project'), skipping" && exit 0
 
           ITEM_ID=""
           CURSOR=""
