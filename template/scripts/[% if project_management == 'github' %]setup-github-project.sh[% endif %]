@@ -214,8 +214,13 @@ create_single_select "Estimate" '[
 ]'
 create_text "Product"
 create_single_select "Agent" '[
-  {"name":"Claude","color":"PURPLE","description":""},
-  {"name":"Codex","color":"BLUE","description":""}
+  {"name":"Claude Code","color":"ORANGE","description":""},
+  {"name":"Codex","color":"BLUE","description":""},
+  {"name":"Gemini CLI","color":"PURPLE","description":""},
+  {"name":"Qwen Code","color":"GREEN","description":""},
+  {"name":"DeepSeek","color":"GRAY","description":""},
+  {"name":"Kimi K2","color":"YELLOW","description":""},
+  {"name":"GLM","color":"PINK","description":""}
 ]'
 
 echo "==> Done — project #$project_number: $title"

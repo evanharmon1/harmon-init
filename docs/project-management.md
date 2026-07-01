@@ -157,8 +157,8 @@ Beyond `Status`, the project carries:
 - **Priority**
 - **Estimate** — size/effort
 - **Product** — which product/area it belongs to
-- **Agent** — which agent should implement it (e.g. Claude vs Codex) and how
-  (effort level, model)
+- **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
+  Qwen Code, DeepSeek, Kimi K2, GLM) and how (effort level, model)
 
 TODO: finalize each field's options/values.
 
