@@ -512,6 +512,11 @@ tasks:
       - gh variable set FULL_SECURITY_SCAN --repo "{{.REPO}}" --body true
 [% if github_org != author_git_provider_username %]
       - gh api "repos/{{.REPO}}/collaborators/[[ author_git_provider_username ]]-bot" --method PUT -f permission=push
+
+  setup:github-project:
+    desc: Idempotently create/sync the org GitHub Project V2 (Status pipeline + Priority/Estimate/Product/Agent fields). Requires `gh auth refresh -s project`.
+    cmds:
+      - ./scripts/setup-github-project.sh --org "[[ github_org ]]" --title "[[ org_formal_name ]] Project"
 [% endif %]
 
   # ── Release ────────────────────────────────────────────────────

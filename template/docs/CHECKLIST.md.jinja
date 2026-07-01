@@ -45,12 +45,13 @@ config, toolchain, devcontainer, and dev environment — against the items below
       devcontainer prebuild populates `[[ devcontainer_image ]]` on merge to main
 [% endif %]
 [% if github_org != author_git_provider_username %]
-- [ ] Org Project V2 (number 1) with a `Status` single-select field. The
-      automation writes `Shaping`, `In Progress`, `Verifying`, `In Review`,
-      `Ready to Merge`, and `Done`, so those options must exist (for
-      project-automation.yml and the claude-* workflows).
+- [ ] Org Project V2: run `task setup:github-project` (needs
+      `gh auth refresh -s project`) to create it and idempotently sync the
+      `Status` pipeline (which project-automation.yml and the claude-* workflows
+      drive) plus the Priority/Estimate/Product/Agent fields. It must be the
+      org's **project number 1** — the workflows query `projectV2(number: 1)`.
 [% if project_management == 'github' %]
-      See [project-management.md](project-management.md) for the full pipeline.
+      See [project-management.md](project-management.md) for the full model.
 [% endif %]
 [% endif %]
 

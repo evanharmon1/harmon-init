@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# setup-github-project.sh — idempotently create and sync an org's GitHub Project
+# V2: the Status pipeline (docs/project-management.md) plus the Priority, Estimate,
+# Product, and Agent custom fields.
+#
+# Safe to re-run and safe to run from every org repo: it looks the project up by
+# title, so the first run creates it and later runs just reconcile fields. It
+# never deletes options or fields, so your later customizations survive.
+#
+# Usage:   setup-github-project.sh --org <org-login> --title "<Project Title>"
+# Needs:   gh authed with the 'project' scope (gh auth refresh -s project) + jq.
+#
+# NOTE: this hits the live GitHub API, so it is not exercised by `task
+# test:template` (which never touches GitHub) — it is guarded by shellcheck +
+# shfmt only. Test it against a scratch org project when changing it.
+set -euo pipefail
+
+org=""
+title=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --org)
+        org="${2:-}"
+        shift 2
+        ;;
+    --title)
+        title="${2:-}"
+        shift 2
+        ;;
+    *)
+        echo "Unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+done
+
+if [ -z "$org" ] || [ -z "$title" ]; then
+    echo "Usage: $0 --org <org-login> --title \"<Project Title>\"" >&2
+    exit 2
+fi
+
+for tool in gh jq; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "Required tool not found: $tool" >&2
+        exit 1
+    fi
+done
+
+# Full Status pipeline (docs/project-management.md), in board order. GitHub's API
+# cannot create the visual groups, so these render as a flat, ordered list.
+status_pipeline='[
+  {"name":"Inbox","color":"GRAY","description":"Newly landed, unsorted"},
+  {"name":"Icebox","color":"GRAY","description":"Real, but not now"},
+  {"name":"Next","color":"GRAY","description":"Will pull in soon"},
+  {"name":"Todo","color":"BLUE","description":"Committed, not started"},
+  {"name":"Shaping","color":"BLUE","description":"Problem/approach being defined"},
+  {"name":"Ready","color":"BLUE","description":"Shaped, ready to pick up"},
+  {"name":"Agent Queue","color":"PURPLE","description":"Queued for an AI agent"},
+  {"name":"In Progress","color":"YELLOW","description":"Actively being worked"},
+  {"name":"Verifying","color":"YELLOW","description":"CI/checks running"},
+  {"name":"In Review","color":"ORANGE","description":"Under human review"},
+  {"name":"Ready to Merge","color":"ORANGE","description":"Approved, awaiting merge"},
+  {"name":"Done","color":"GREEN","description":"Merged/shipped"},
+  {"name":"Deployed","color":"GREEN","description":"Deployed"},
+  {"name":"Accepted","color":"GREEN","description":"Smoke/QA/manual check passed"},
+  {"name":"Archived","color":"GRAY","description":"Archived"}
+]'
+
+# jq filter: a JSON array of {name,color,description} -> a GraphQL options
+# fragment. Names/descriptions are JSON-escaped; color is emitted as a bare enum.
+opts_to_graphql='[.[] | "{name:" + (.name|@json) + ",color:" + .color + ",description:" + (.description|@json) + "}"] | join(",")'
+
+# ── Resolve the org, then find the project by title (else create it) ──
+echo "==> Resolving org '$org'"
+org_id=$(gh api graphql -f query='query($l:String!){organization(login:$l){id}}' \
+    -f l="$org" --jq '.data.organization.id')
+if [ -z "$org_id" ] || [ "$org_id" = "null" ]; then
+    echo "Could not resolve org '$org' — is it an organization, and do you have the 'project' scope?" >&2
+    exit 1
+fi
+
+echo "==> Looking for a project titled '$title'"
+project_id=""
+project_number=""
+cursor=""
+while true; do
+    if [ -n "$cursor" ]; then
+        page=$(gh api graphql -f query='query($l:String!,$c:String){organization(login:$l){projectsV2(first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{id number title}}}}' \
+            -f l="$org" -f c="$cursor")
+    else
+        page=$(gh api graphql -f query='query($l:String!){organization(login:$l){projectsV2(first:100){pageInfo{hasNextPage endCursor} nodes{id number title}}}}' \
+            -f l="$org")
+    fi
+    match=$(printf '%s' "$page" |
+        jq -r --arg t "$title" '.data.organization.projectsV2.nodes[] | select(.title==$t) | (.id + "\t" + (.number|tostring))' |
+        head -n1)
+    if [ -n "$match" ]; then
+        project_id=$(printf '%s' "$match" | cut -f1)
+        project_number=$(printf '%s' "$match" | cut -f2)
+        break
+    fi
+    has_next=$(printf '%s' "$page" | jq -r '.data.organization.projectsV2.pageInfo.hasNextPage')
+    [ "$has_next" = "true" ] || break
+    cursor=$(printf '%s' "$page" | jq -r '.data.organization.projectsV2.pageInfo.endCursor')
+done
+
+created=0
+if [ -n "$project_id" ]; then
+    echo "    Found existing project #$project_number"
+else
+    echo "    Not found — creating '$title'"
+    resp=$(gh api graphql -f query='mutation($o:ID!,$t:String!){createProjectV2(input:{ownerId:$o,title:$t}){projectV2{id number}}}' \
+        -f o="$org_id" -f t="$title")
+    project_id=$(printf '%s' "$resp" | jq -r '.data.createProjectV2.projectV2.id')
+    project_number=$(printf '%s' "$resp" | jq -r '.data.createProjectV2.projectV2.number')
+    created=1
+    echo "    Created project #$project_number"
+fi
+
+if [ "$project_number" != "1" ]; then
+    echo "WARNING: this project is number $project_number, not 1. project-automation.yml and the" >&2
+    echo "         claude-* workflows query projectV2(number: 1); make this the org's project #1" >&2
+    echo "         (delete stray projects and recreate) or update the workflows to match." >&2
+fi
+
+# ── Snapshot current fields (one read; reused for existence checks) ──
+fields_json=$(gh api graphql -f query='query($p:ID!){node(id:$p){... on ProjectV2{fields(first:50){nodes{... on ProjectV2FieldCommon{id name} ... on ProjectV2SingleSelectField{options{name color description}}}}}}}' \
+    -f p="$project_id")
+
+field_id() {
+    printf '%s' "$fields_json" |
+        jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .id' | head -n1
+}
+
+# ── Status field: full pipeline on a new project; preserve + append on an
+#    existing one so items already assigned to an option are never orphaned ──
+status_field_id=$(field_id "Status")
+if [ -z "$status_field_id" ]; then
+    echo "==> Creating the Status field with the full pipeline"
+    frag=$(printf '%s' "$status_pipeline" | jq -r "$opts_to_graphql")
+    gh api graphql -f p="$project_id" \
+        -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:SINGLE_SELECT,name:\"Status\",singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
+        >/dev/null
+else
+    if [ "$created" = "1" ]; then
+        echo "==> Setting Status to the full pipeline (new project)"
+        desired="$status_pipeline"
+    else
+        echo "==> Syncing Status (keeping existing options, appending any missing)"
+        existing=$(printf '%s' "$fields_json" |
+            jq -c '[.data.node.fields.nodes[] | select(.name=="Status") | .options[] | {name, color: (.color // "GRAY" | ascii_upcase), description: (.description // "")}]')
+        desired=$(jq -cn --argjson ex "$existing" --argjson pl "$status_pipeline" \
+            '$ex + [ $pl[] | select( ([ $ex[].name ] | index(.name)) == null ) ]')
+    fi
+    frag=$(printf '%s' "$desired" | jq -r "$opts_to_graphql")
+    gh api graphql -f f="$status_field_id" \
+        -f query="mutation(\$f:ID!){updateProjectV2Field(input:{fieldId:\$f,singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
+        >/dev/null
+fi
+
+# ── Custom fields: create-if-missing; existing fields are left untouched ──
+create_single_select() {
+    name="$1"
+    options_json="$2"
+    if [ -n "$(field_id "$name")" ]; then
+        echo "    Field '$name' already exists — leaving it as-is"
+        return 0
+    fi
+    echo "    Creating single-select field '$name'"
+    frag=$(printf '%s' "$options_json" | jq -r "$opts_to_graphql")
+    gh api graphql -f p="$project_id" \
+        -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:SINGLE_SELECT,name:\"$name\",singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
+        >/dev/null
+}
+
+create_text() {
+    name="$1"
+    if [ -n "$(field_id "$name")" ]; then
+        echo "    Field '$name' already exists — leaving it as-is"
+        return 0
+    fi
+    echo "    Creating text field '$name'"
+    gh api graphql -f p="$project_id" \
+        -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:TEXT,name:\"$name\"}){projectV2Field{... on ProjectV2FieldCommon{id}}}}" \
+        >/dev/null
+}
+
+echo "==> Custom fields (starters — refine options in the UI; re-runs won't clobber them)"
+create_single_select "Priority" '[
+  {"name":"Urgent","color":"RED","description":""},
+  {"name":"High","color":"ORANGE","description":""},
+  {"name":"Medium","color":"YELLOW","description":""},
+  {"name":"Low","color":"GRAY","description":""}
+]'
+create_single_select "Estimate" '[
+  {"name":"XS","color":"GRAY","description":""},
+  {"name":"S","color":"BLUE","description":""},
+  {"name":"M","color":"GREEN","description":""},
+  {"name":"L","color":"YELLOW","description":""},
+  {"name":"XL","color":"ORANGE","description":""}
+]'
+create_text "Product"
+create_single_select "Agent" '[
+  {"name":"Claude","color":"PURPLE","description":""},
+  {"name":"Codex","color":"BLUE","description":""}
+]'
+
+echo "==> Done — project #$project_number: $title"
