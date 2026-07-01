@@ -267,6 +267,19 @@ don't build a giant "Launch" parent with 40 sub-issues spanning unrelated featur
 — that's exactly what the milestone is for. Milestone for the cross-feature
 release; the parent-issue tree for a single feature.
 
+**Where metadata lives — parent vs. leaf.** The **parent** holds the durable
+context: the spec (your Given/When/Then acceptance criteria), the "why," the
+explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
+**milestone and project** assignment. Set those once on the parent and the tree
+inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
+the milestone per child.
+
+The **leaves** hold execution: the `Task` type and the **estimate**. Put estimates
+on the mergeable one-PR slices, not the parent — estimating a slice is reliable,
+estimating a big parent isn't — and a view's field sums total the leaves for you.
+It's route-not-duplicate applied to hierarchy: a child references the parent's spec
+rather than restating it, and reads up for context.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
