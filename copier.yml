@@ -169,6 +169,16 @@ organization_email:
   default: "evan@evanharmon.com"
   when: false
 
+# Formal display name of the GitHub org, used for the org-level Project title
+# ("<name> Project" — see docs/project-management.md). Distinct from
+# `organization` (the copyright entity): here the org Project is "Harmon Platform
+# Project" while the copyright holder is "Harmon Lab". Override per client org
+# (e.g. "Sommer Lawn").
+org_formal_name:
+  type: str
+  default: "Harmon Platform"
+  when: false
+
 repo_url:
   type: str
   default: "https://github.com/[[ github_org ]]/[[ project_slug ]]"
