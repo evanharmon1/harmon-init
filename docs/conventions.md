@@ -9,8 +9,8 @@ it points here.
 ## Commits & git
 
 - **Conventional Commits**, enforced by commitlint at the `commit-msg` hook.
-  Allowed types: `build`, `change`, `chore`, `ci`, `docs`, `feat`, `fix`,
-  `perf`, `refactor`, `remove`, `revert`, `style`, `test`. Format
+  Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
+  `refactor`, `revert`, `style`, `test`. Format
   `type(scope): subject`, imperative mood.
 - **Subject and body lines ≤ 100 characters** (config-conventional).
 - **Breaking changes:** `feat!:` (or a `BREAKING CHANGE:` footer) — drives a
@@ -23,6 +23,28 @@ it points here.
   validates commit messages.
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
+
+## Issue types → commit types → releases
+
+Three vocabularies describe the same work at different layers. They map
+**many-to-one** downward, and only the middle one is load-bearing:
+
+| Issue type (GitHub) | Commit type(s)                                                      | release-please           |
+| ------------------- | ------------------------------------------------------------------- | ------------------------ |
+| **Bug**             | `fix`                                                               | Bug Fixes → patch        |
+| **Feature**         | `feat` (`feat!` = breaking)                                         | Features → minor (major) |
+| **Task**            | `chore`, `build`, `ci`, `docs`, `perf`, `refactor`, `style`, `test` | none on their own        |
+| **Research**        | usually `docs`, or no code (the outcome is a decision)              | none                     |
+
+- **Issue type** is a downstream-inert, org-level label — your preference for
+  slicing the board; nothing automated reads it. It's GitHub's defaults (Bug,
+  Feature, Task) plus Research, kept in sync by `task setup:github-issue-types`.
+- **Commit type** is the one that matters: ecosystem-standard, enforced by
+  commitlint, and the only thing release-please reads. A `Task` issue almost
+  always ships as `chore` (or another maintenance type) — there is no `task:`
+  commit type, by design.
+- **release-please** turns commits into the CHANGELOG + version bump: only
+  `feat`, `fix`, and breaking changes cut a release; the rest ride along.
 
 ## Task runner (Taskfile)
 

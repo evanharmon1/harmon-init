@@ -523,7 +523,7 @@ tasks:
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-types:
-    desc: Idempotently set the org's issue types to Bug/Feature/Chore/Research (renames the default Task → Chore). Requires `gh` with the admin:org scope.
+    desc: Idempotently ensure the org's issue types are Bug/Feature/Task/Research (adds any missing; keeps the defaults). Requires `gh` with the admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-types.sh --org "[[ github_org ]]"
 [% endif %]

@@ -1,7 +1,7 @@
-name: Chore
-description: A maintenance task, cleanup, or small improvement
-title: "[Chore]: "
-labels: ["chore"]
+name: Task
+description: General work — maintenance, chores, cleanup, or a small improvement
+title: "[Task]: "
+labels: ["task"]
 body:
   - type: textarea
     id: description
