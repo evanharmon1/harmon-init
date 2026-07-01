@@ -274,6 +274,56 @@ when the plan slips. That's where milestones earn their keep on a team: the date
 milestone is the shared artifact that tells collaborators what's shipping and
 roughly when — worth more with others in the loop than in pure solo work.
 
+## Milestones over iterations
+
+For pre-launch product development, lead with **milestones, not iterations**
+(sprints). The mechanisms differ in what they fix vs. flex:
+
+- **Iterations fix time, flex scope** — the window ends Friday, you ship whatever's
+  done.
+- **Milestones fix scope, flex time** — you ship when the thing is done; the date
+  is a signal.
+
+Early product work needs to **fix scope**: a half-built product at an arbitrary
+time-box boundary isn't shippable value — "ship it when it's good enough to charge
+for" is a scope commitment, not a time one. Here the milestone's commitment shape
+is right and the iteration's is actively wrong.
+
+**Incremental delivery doesn't come from either mechanism** — it comes from **small
+slices + frequent deploys + a release cadence**, which you already have (PR-sized
+sub-issues, per-PR previews to prod, release-please cutting incremental releases
+from accumulated commits). You can sprint and ship zero user value, or run
+milestones and ship continuously; the delivery job routes through the *release*
+mechanism (milestone-adjacent), not sprints.
+
+**So run small, frequent milestones** — a shippable chunk every ~2–4 weeks, not one
+giant "Launch." A tightly-scoped milestone with a target date is a chunk of value
+with an expectation attached, doing three jobs at once: coordination (toward
+shippable scope), commitment (to that scope; date as signal), and incremental
+delivery (frequent small releases). It's literally the release-please flow —
+**small frequent milestones == frequent small releases** — so it's one rhythm, not
+two.
+
+**Get the forcing-function from tools you already have,** not a sprint clock: a
+**WIP limit** on `In Progress`, sub-issues **sized to one PR**, and continuous
+deploy — anti-drag pressure applied at the work slice, not a calendar boundary a
+tiny team can't make hard anyway.
+
+**Why this phase picks milestones:** early development is **discovery-driven** —
+you're figuring out scope as you go, capacity is erratic, and the priority is
+shipping the *right* thing, not a predictable amount. Iterations shine in the
+opposite regime (a known backlog, steady team, predictable capacity metered at a
+constant clip) — steady-state maturity, not pre-launch. (Honest counter:
+time-boxing can curb rabbit-holing during discovery — but the Lean answer is
+build-measure-learn, get it in front of a user fast, for which the clock is your
+**deploy cadence**, not a two-week sprint; and a WIP limit plus one-PR slices curb
+it at the work level more directly. You already have those.)
+
+**Iterations also don't fit the agent queue.** Agents run when triggered, not "this
+week"; scoping the queue to `iteration:@current` adds nothing over *agent-set +
+Ready + priority*. Iteration is a human-cadence concept your agents don't have.
+(The native Iteration field stays available if you reach steady-state and want it.)
+
 ## Hierarchy (sub-issues, not Epics)
 
 There's **no Epic type, by design.** The "big initiative" role splits cleanly
