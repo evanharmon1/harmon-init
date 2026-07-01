@@ -42,7 +42,11 @@ toward delivery is this.** The columns, grouped:
 - Done — merged/shipped; the single terminal status
 - Deployed
 - Accepted — smoke/QA/manual check passed, communicated, released
-- Archived
+
+Archiving isn't a status — it's a separate native axis. GitHub's built-in
+**auto-archive** removes finished items from the board (into the retrievable
+Archived-items view), so aged `Done` items leave the board automatically instead
+of sitting in an "Archived" column.
 
 ## Status is not issue state
 
@@ -144,7 +148,7 @@ TODO: finalize exactly what to automate. The intended event → status shape:
 - PR opened → **In Review**
 - Deployment complete → verification (if applicable)
 - Issue closed (`state_reason == completed`) → **Done**
-- 30–60 days in Done → **Archived**
+- 90 days in Done → **auto-archived** off the board (native built-in, not a Status)
 
 ## Custom fields
 

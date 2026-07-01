@@ -62,8 +62,7 @@ status_pipeline='[
   {"name":"Ready to Merge","color":"GREEN","description":"Approved, awaiting merge"},
   {"name":"Done","color":"PURPLE","description":"Merged/shipped"},
   {"name":"Deployed","color":"PURPLE","description":"Deployed"},
-  {"name":"Accepted","color":"PURPLE","description":"Smoke/QA/manual check passed"},
-  {"name":"Archived","color":"PURPLE","description":"Archived"}
+  {"name":"Accepted","color":"PURPLE","description":"Smoke/QA/manual check passed"}
 ]'
 
 # jq filter: a JSON array of {name,color,description} -> a GraphQL options
@@ -209,7 +208,9 @@ create_single_select "Estimate" '[
   {"name":"S","color":"BLUE","description":""},
   {"name":"M","color":"GREEN","description":""},
   {"name":"L","color":"YELLOW","description":""},
-  {"name":"XL","color":"ORANGE","description":""}
+  {"name":"XL","color":"ORANGE","description":""},
+  {"name":"XXL","color":"RED","description":""},
+  {"name":"XXXL","color":"PURPLE","description":""}
 ]'
 create_text "Product"
 create_single_select "Agent" '[
