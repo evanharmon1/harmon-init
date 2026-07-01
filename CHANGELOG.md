@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.12.0](https://github.com/evanharmon1/harmon-init/compare/v3.11.0...v3.12.0) (2026-07-01)
+
+
+### Features
+
+* **template:** add idempotent setup:github-project task + script ([#184](https://github.com/evanharmon1/harmon-init/issues/184)) ([43fad93](https://github.com/evanharmon1/harmon-init/commit/43fad938eea4f2dcbde4806bad046c203e2a2ef2))
+* **template:** add project-management doc gated by new copier question ([#182](https://github.com/evanharmon1/harmon-init/issues/182)) ([719605d](https://github.com/evanharmon1/harmon-init/commit/719605d133a27ed6b4d5dfbeea636342a6d88dda))
+* **template:** split .meta Bunch/Obsidian tasks into add + install ([#175](https://github.com/evanharmon1/harmon-init/issues/175)) ([88253e3](https://github.com/evanharmon1/harmon-init/commit/88253e3664c660783732d960f516ab9c319ff111))
+
 ## [3.11.0](https://github.com/evanharmon1/harmon-init/compare/v3.10.0...v3.11.0) (2026-06-30)
 
 
