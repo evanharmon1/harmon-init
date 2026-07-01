@@ -10,6 +10,9 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
 - [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
   problems (broken build, failing local setup). Distinct from runbooks, which
   cover prod incidents.
+- [devcontainers.md](devcontainers.md) — the dual-profile devcontainer (bot vs
+  dev), local secrets via **1Password Environments**, GHCR prebuilds, and
+  **Coder** setup.
 - [devcontainer-performance.md](devcontainer-performance.md) — tuning CPU/RAM
   for the devcontainer; the real levers live in Coder and WSL2, not this repo.
 

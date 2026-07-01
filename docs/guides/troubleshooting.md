@@ -10,7 +10,7 @@ Common issues in Harmon Init and how to fix them.
 ## Devcontainer
 
 - **Stale tools after a Dockerfile change** — rebuild the container; prebuilt images come from GHCR (see `.github/workflows/devcontainer-build.yml`).
-- **Missing secrets in the container** — the env-file is seeded by `.devcontainer/scripts/init-env.sh` from 1Password or host env on rebuild.
+- **Missing secrets in the container** — locally, the env-file is provided by a **1Password environment** mounted at `.devcontainer/devcontainer.env` (see [devcontainers.md](devcontainers.md)); on Coder/Codespaces it's seeded from host/workspace env by `.devcontainer/scripts/init-env.sh`. Note `init-env.sh` does **not** call `op` — if values are missing locally, check the 1Password environment is authorized and mounted at the right path.
 
 ## CI
 

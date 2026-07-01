@@ -10,7 +10,9 @@ Getting productive in Harmon Init.
 4. Verify everything works: `task verify`
 
 Prefer the devcontainer? Open the repo in VS Code and "Reopen in Container"
-(human profile: `.devcontainer/dev/`), or use the Coder workspace.
+(human profile: `.devcontainer/dev/`), or use a Coder workspace. See
+[devcontainers.md](devcontainers.md) for local secrets (1Password Environments)
+and Coder setup.
 
 ## Daily workflow
 
