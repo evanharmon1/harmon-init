@@ -43,8 +43,8 @@ done
 # palette: gray, blue, green, yellow, orange, red, pink, purple.
 desired='[
   {"name":"Bug","color":"red","description":"A defect — something is broken"},
-  {"name":"Feature","color":"purple","description":"A new capability or improvement"},
-  {"name":"Chore","color":"gray","description":"Maintenance, cleanup, or a small task"},
+  {"name":"Feature","color":"yellow","description":"A new capability or improvement"},
+  {"name":"Chore","color":"purple","description":"Maintenance, cleanup, or a small task"},
   {"name":"Research","color":"blue","description":"A question or investigation"}
 ]'
 
@@ -67,7 +67,7 @@ if [ -z "$(type_id "Chore")" ]; then
     if [ -n "$task_id" ]; then
         echo "==> Renaming default 'Task' issue type -> 'Chore'"
         gh api --method PUT "orgs/$org/issue-types/$task_id" \
-            -f name="Chore" -F is_enabled=true -f color="gray" \
+            -f name="Chore" -F is_enabled=true -f color="purple" \
             -f description="Maintenance, cleanup, or a small task" >/dev/null
         existing=$(gh api "orgs/$org/issue-types" --paginate 2>/dev/null || true)
     fi
