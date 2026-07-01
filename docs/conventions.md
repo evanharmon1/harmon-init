@@ -106,3 +106,7 @@ it points here.
   a release on their own — they ride along in the next one.
 - Issue types map many-to-one onto these commit types — see
   [project-management.md](project-management.md).
+- **Milestones are named after release versions** (`v1.1.0` = the git tag): the
+  pre-ship "what must land before this version" container, distinct from
+  release-please cutting the tag post-merge — same name, different jobs. See
+  [project-management.md](project-management.md).

@@ -126,6 +126,10 @@ it points here.
 [% if project_management == 'github' %]
 - Issue types map many-to-one onto these commit types — see
   [project-management.md](project-management.md).
+- **Milestones are named after release versions** (`v1.1.0` = the git tag): the
+  pre-ship "what must land before this version" container, distinct from
+  release-please cutting the tag post-merge — same name, different jobs. See
+  [project-management.md](project-management.md).
 [% endif %]
 [% else %]
 - Releases are intentional: run `task release:patch|minor|major`. Nothing
