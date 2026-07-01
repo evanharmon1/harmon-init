@@ -117,10 +117,13 @@ else
     echo "    Created project #$project_number"
 fi
 
-if [ "$project_number" != "1" ]; then
-    echo "WARNING: this project is number $project_number, not 1. project-automation.yml and the" >&2
-    echo "         claude-* workflows query projectV2(number: 1); make this the org's project #1" >&2
-    echo "         (delete stray projects and recreate) or update the workflows to match." >&2
+# Record the project id where the workflows read it: project-automation.yml and
+# the claude-* workflows prefer the ORG_PROJECT_ID variable over a title lookup,
+# so the project no longer has to be the org's number 1.
+echo "==> Recording project id in the ORG_PROJECT_ID org variable"
+if ! gh variable set ORG_PROJECT_ID --org "$org" --visibility all --body "$project_id"; then
+    echo "WARNING: could not set the ORG_PROJECT_ID org variable (needs org admin)." >&2
+    echo "         Set it by hand: gh variable set ORG_PROJECT_ID --org \"$org\" --body \"$project_id\"" >&2
 fi
 
 # ── Snapshot current fields (one read; reused for existence checks) ──
