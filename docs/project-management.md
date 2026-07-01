@@ -236,6 +236,21 @@ when the plan slips. That's where milestones earn their keep on a team: the date
 milestone is the shared artifact that tells collaborators what's shipping and
 roughly when — worth more with others in the loop than in pure solo work.
 
+## Hierarchy (sub-issues, not Epics)
+
+There's **no Epic type, by design.** The "big initiative" role splits cleanly
+into two natives — **sub-issues** carry the *hierarchy* axis and **milestones**
+carry the *release* axis — and GitHub stitches them together for you: a
+**sub-issue inherits its parent's Project and Milestone by default** (shipped
+2025-09). Assign them once on the parent and the child tree picks them up — no
+per-child bookkeeping.
+
+So a parent issue "Scheduling v1" in milestone `v1.1.0` pulls its whole subtree
+into that release payload for free. Break big work down with **sub-issues** (up to
+8 levels — flip on **Show hierarchy** in a view to expand/collapse the tree)
+rather than a markdown checklist or an Epic type: you get the structure without
+the "Feature or Epic?" tax.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
@@ -279,6 +294,5 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   don't reproduce it as a label.
 - **Owner**, **Iteration/cycle** — additional fields/axes as the work needs them
   (**Milestones** have their own section above).
-- **Sub-issues** — break a large issue down natively instead of with a checklist.
 - An issue can belong to **multiple projects** — the org project plus a focused
   one is fine.
