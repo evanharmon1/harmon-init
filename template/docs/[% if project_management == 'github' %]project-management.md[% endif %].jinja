@@ -287,6 +287,22 @@ into that release payload for free. Break big work down with **sub-issues** (up 
 rather than a markdown checklist or an Epic type: you get the structure without
 the "Feature or Epic?" tax.
 
+**Sub-issues are your only hierarchy axis; everything else stays flat.** Type,
+Status, milestone, labels, and fields must never try to encode "part of" — that's
+the sub-issue's job, and only that. Once that's clear, the rest is just sizing and
+deciding what metadata rides on the parent vs. the leaves.
+
+**The three-tier shape (replaces Epic → Story → Task with natives):** a
+**milestone** (the dated release batch — possibly-unrelated work) contains parent
+**Feature** issues (each a cohesive capability), each of which contains **Task**
+sub-issues (mergeable slices). Full hierarchy, no synthetic Epic.
+
+The boundary that trips people up: **a milestone is a flat batch of unrelated
+features targeting a date; a parent issue is one cohesive thing decomposed.** So
+don't build a giant "Launch" parent with 40 sub-issues spanning unrelated features
+— that's exactly what the milestone is for. Milestone for the cross-feature
+release; the parent-issue tree for a single feature.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
