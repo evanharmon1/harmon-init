@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# setup-github-project.sh — idempotently create and sync an org's GitHub Project
-# V2: the Status pipeline (docs/project-management.md) plus the Priority, Estimate,
-# Product, and Agent custom fields.
+# setup-github-project.sh — idempotently create and sync a GitHub Project V2 for a
+# repo owner (an organization OR a personal user account): the Status pipeline
+# (docs/project-management.md) plus the Priority, Estimate, Product, Agent fields.
 #
-# Safe to re-run and safe to run from every org repo: it looks the project up by
-# title, so the first run creates it and later runs just reconcile fields. It
-# never deletes options or fields, so your later customizations survive.
+# Safe to re-run and safe to run from every repo the owner controls: it looks the
+# project up by title, so the first run creates it and later runs just reconcile
+# fields. It never deletes options or fields, so your later customizations survive.
 #
-# Usage:   setup-github-project.sh --org <org-login> --title "<Project Title>"
+# Usage:   setup-github-project.sh --owner <org-or-user-login> --title "<Project Title>"
 # Needs:   gh authed with the 'project' scope (gh auth refresh -s project) + jq.
 #
 # NOTE: this hits the live GitHub API, so it is not exercised by `task
 # test:template` (which never touches GitHub) — it is guarded by shellcheck +
-# shfmt only. Test it against a scratch org project when changing it.
+# shfmt only. Test it against a scratch project when changing it.
 set -euo pipefail
 
-org=""
+owner=""
 title=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
-    --org)
-        org="${2:-}"
+    --owner)
+        owner="${2:-}"
         shift 2
         ;;
     --title)
@@ -34,8 +34,8 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ -z "$org" ] || [ -z "$title" ]; then
-    echo "Usage: $0 --org <org-login> --title \"<Project Title>\"" >&2
+if [ -z "$owner" ] || [ -z "$title" ]; then
+    echo "Usage: $0 --owner <org-or-user-login> --title \"<Project Title>\"" >&2
     exit 2
 fi
 
@@ -70,12 +70,16 @@ status_pipeline='[
 # fragment. Names/descriptions are JSON-escaped; color is emitted as a bare enum.
 opts_to_graphql='[.[] | "{name:" + (.name|@json) + ",color:" + .color + ",description:" + (.description|@json) + "}"] | join(",")'
 
-# ── Resolve the org, then find the project by title (else create it) ──
-echo "==> Resolving org '$org'"
-org_id=$(gh api graphql -f query='query($l:String!){organization(login:$l){id}}' \
-    -f l="$org" --jq '.data.organization.id')
-if [ -z "$org_id" ] || [ "$org_id" = "null" ]; then
-    echo "Could not resolve org '$org' — is it an organization, and do you have the 'project' scope?" >&2
+# ── Resolve the owner (org or user), then find the project by title ──
+# repositoryOwner + a ProjectV2Owner fragment is one code path for both User and
+# Organization owners (both implement the interface).
+echo "==> Resolving owner '$owner'"
+owner_data=$(gh api graphql -f query='query($l:String!){repositoryOwner(login:$l){__typename id}}' \
+    -f l="$owner")
+owner_type=$(printf '%s' "$owner_data" | jq -r '.data.repositoryOwner.__typename')
+owner_id=$(printf '%s' "$owner_data" | jq -r '.data.repositoryOwner.id')
+if [ -z "$owner_id" ] || [ "$owner_id" = "null" ]; then
+    echo "Could not resolve owner '$owner' — check the login and that you have the 'project' scope." >&2
     exit 1
 fi
 
@@ -85,23 +89,23 @@ project_number=""
 cursor=""
 while true; do
     if [ -n "$cursor" ]; then
-        page=$(gh api graphql -f query='query($l:String!,$c:String){organization(login:$l){projectsV2(first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{id number title}}}}' \
-            -f l="$org" -f c="$cursor")
+        page=$(gh api graphql -f query='query($l:String!,$c:String){repositoryOwner(login:$l){... on ProjectV2Owner{projectsV2(first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{id number title}}}}}' \
+            -f l="$owner" -f c="$cursor")
     else
-        page=$(gh api graphql -f query='query($l:String!){organization(login:$l){projectsV2(first:100){pageInfo{hasNextPage endCursor} nodes{id number title}}}}' \
-            -f l="$org")
+        page=$(gh api graphql -f query='query($l:String!){repositoryOwner(login:$l){... on ProjectV2Owner{projectsV2(first:100){pageInfo{hasNextPage endCursor} nodes{id number title}}}}}' \
+            -f l="$owner")
     fi
     match=$(printf '%s' "$page" |
-        jq -r --arg t "$title" '.data.organization.projectsV2.nodes[] | select(.title==$t) | (.id + "\t" + (.number|tostring))' |
+        jq -r --arg t "$title" '.data.repositoryOwner.projectsV2.nodes[] | select(.title==$t) | (.id + "\t" + (.number|tostring))' |
         head -n1)
     if [ -n "$match" ]; then
         project_id=$(printf '%s' "$match" | cut -f1)
         project_number=$(printf '%s' "$match" | cut -f2)
         break
     fi
-    has_next=$(printf '%s' "$page" | jq -r '.data.organization.projectsV2.pageInfo.hasNextPage')
+    has_next=$(printf '%s' "$page" | jq -r '.data.repositoryOwner.projectsV2.pageInfo.hasNextPage')
     [ "$has_next" = "true" ] || break
-    cursor=$(printf '%s' "$page" | jq -r '.data.organization.projectsV2.pageInfo.endCursor')
+    cursor=$(printf '%s' "$page" | jq -r '.data.repositoryOwner.projectsV2.pageInfo.endCursor')
 done
 
 created=0
@@ -110,17 +114,25 @@ if [ -n "$project_id" ]; then
 else
     echo "    Not found — creating '$title'"
     resp=$(gh api graphql -f query='mutation($o:ID!,$t:String!){createProjectV2(input:{ownerId:$o,title:$t}){projectV2{id number}}}' \
-        -f o="$org_id" -f t="$title")
+        -f o="$owner_id" -f t="$title")
     project_id=$(printf '%s' "$resp" | jq -r '.data.createProjectV2.projectV2.id')
     project_number=$(printf '%s' "$resp" | jq -r '.data.createProjectV2.projectV2.number')
     created=1
     echo "    Created project #$project_number"
 fi
 
-if [ "$project_number" != "1" ]; then
-    echo "WARNING: this project is number $project_number, not 1. project-automation.yml and the" >&2
-    echo "         claude-* workflows query projectV2(number: 1); make this the org's project #1" >&2
-    echo "         (delete stray projects and recreate) or update the workflows to match." >&2
+# For an organization, record the project id in the ORG_PROJECT_ID org variable
+# that project-automation.yml + the claude-* workflows read (preferred over a
+# title lookup). Personal accounts have no org-level variable scope, and their
+# status automation is a separate follow-up, so skip it there.
+if [ "$owner_type" = "Organization" ]; then
+    echo "==> Recording project id in the ORG_PROJECT_ID org variable"
+    if ! gh variable set ORG_PROJECT_ID --org "$owner" --visibility all --body "$project_id"; then
+        echo "WARNING: could not set the ORG_PROJECT_ID org variable (needs org admin)." >&2
+        echo "         Set it by hand: gh variable set ORG_PROJECT_ID --org \"$owner\" --body \"$project_id\"" >&2
+    fi
+else
+    echo "==> Owner is a user account — skipping ORG_PROJECT_ID (no user-level variable scope; personal status automation is a separate follow-up)"
 fi
 
 # ── Snapshot current fields (one read; reused for existence checks) ──
