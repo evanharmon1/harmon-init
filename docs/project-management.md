@@ -225,6 +225,17 @@ Action can close the milestone matching a published tag — without making them 
 system. Since PRs and issues share the milestone namespace, the release PR itself
 can carry the milestone, so the shipped batch is fully self-documenting.
 
+**One active release milestone at a time (rolling).** Carry one open milestone per
+release line — created when it has real scope and a date, closed when it ships,
+the next opened only as needed. Not five speculative open milestones competing for
+attention.
+
+**Due dates are signals, not gates.** A milestone's due date doesn't block a merge
+or a close and triggers nothing — it's a communication tool; update it honestly
+when the plan slips. That's where milestones earn their keep on a team: the dated
+milestone is the shared artifact that tells collaborators what's shipping and
+roughly when — worth more with others in the loop than in pure solo work.
+
 ## Views
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
