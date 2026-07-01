@@ -72,4 +72,5 @@ process is memory — bump `memory` (and `swap` on WSL2) accordingly.
 
 ## See also
 
+- [devcontainers.md](devcontainers.md) — the dual-profile devcontainer overall.
 - [troubleshooting.md](troubleshooting.md) — other devcontainer issues.

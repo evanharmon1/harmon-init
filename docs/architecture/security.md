@@ -9,9 +9,13 @@ current — it is the reference for "where do secrets live and who can do what".
 
 - **Least privilege.** Every token, account, and workflow gets the narrowest
   scope that still works.
-- **Secrets via 1Password.** Local env comes from 1Password (`op run` /
-  `op inject`); CI reads from GitHub Actions secrets. TODO: list the 1Password
-  vault/items this project uses.
+- **Secrets via 1Password.** Local env comes from **1Password Environments**
+  (a virtual `.env` mounted over a UNIX pipe — never written to disk or git) or
+  `op run`/`op inject`; CI reads from GitHub Actions secrets.
+  Devcontainer secrets are `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `AGENT_DECK_TELEGRAM_KEY` (+ `TS_AUTHKEY`, dev profile only) — see
+  [../guides/devcontainers.md](../guides/devcontainers.md).
+  TODO: list the 1Password vault/items this project uses.
 - **Auditable changes.** `main` is protected; changes land via reviewed PRs
   (see [branch-protection.md](branch-protection.md)).
 
