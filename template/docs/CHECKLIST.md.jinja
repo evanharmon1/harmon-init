@@ -63,6 +63,11 @@ config, toolchain, devcontainer, and dev environment — against the items below
       project fields (issue fields are org-only); status automation is a separate
       follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
 [% endif %]
+- [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
+      families (concerns/source/workflow/layer/domain — see
+      [project-management.md](project-management.md)). Labels are per-repo, so run
+      it in each repo; org default labels (org Settings → Repository, UI-only) only
+      seed new repos.
 [% endif %]
 
 ## 3. Framework scaffolding (conventions-only template)

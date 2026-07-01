@@ -519,6 +519,13 @@ tasks:
     desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires `gh auth refresh -s project`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
+
+  setup:github-labels:
+    desc: Idempotently create/update this repo's starter labels (see docs/project-management.md). Requires `gh` with repo write.
+    vars:
+      REPO: "[[ github_org ]]/[[ project_slug ]]"
+    cmds:
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-fields:

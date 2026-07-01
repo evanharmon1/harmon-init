@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# setup-github-labels.sh — idempotently create/update this repo's starter label
+# set (docs/project-management.md). Colors are grouped by family (concerns=orange,
+# source=blue, workflow=yellow, layer=purple, domain=green).
+#
+# Labels are REPO-level in GitHub — there's no shared org label pool. Run this in
+# each repo; org "default labels" (Settings → Repository, UI-only, no API) only
+# seed NEW repos and don't touch existing ones. Non-destructive: `--force`
+# creates-or-updates and it never deletes labels, so GitHub's defaults stay unless
+# you prune them yourself.
+#
+# Usage: setup-github-labels.sh --repo <owner/repo>
+# Needs: gh authed with repo write.
+#
+# NOTE: hits the live GitHub API, so it is not exercised by `task test:template`
+# (guarded by shellcheck + shfmt only). Test it against a scratch repo.
+set -euo pipefail
+
+repo=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --repo)
+        repo="${2:-}"
+        shift 2
+        ;;
+    *)
+        echo "Unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+done
+
+if [ -z "$repo" ]; then
+    echo "Usage: $0 --repo <owner/repo>" >&2
+    exit 2
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+    echo "Required tool not found: gh" >&2
+    exit 1
+fi
+
+# name|hex-color|description — one per line. Color encodes the family.
+labels="
+sec|D93F0B|Security concern
+a11y|D93F0B|Accessibility concern
+perf|D93F0B|Performance concern
+tech-debt|D93F0B|Technical debt
+i18n|D93F0B|Internationalization
+l10n|D93F0B|Localization
+customer-request|1D76DB|Requested by a customer
+ai-generated|1D76DB|Created or authored by an AI agent
+needs-triage|FBCA04|Awaiting triage
+needs-requirements|FBCA04|Requirements not yet defined
+blocked|FBCA04|Blocked by a non-issue dependency (reason in a comment)
+waiting|FBCA04|Waiting on an external party
+needs-decision|FBCA04|Needs a decision before it can proceed
+needs-response|FBCA04|Awaiting a response
+needs-communication|FBCA04|An update needs to be communicated out
+layer:frontend|5319E7|Frontend
+layer:backend|5319E7|Backend
+layer:infra|5319E7|Infrastructure
+domain:auth|0E8A16|Authentication and authorization
+domain:billing|0E8A16|Billing and payments
+"
+
+printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do
+    [ -z "$name" ] && continue
+    echo "==> label: $name"
+    gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force
+done
+
+echo "==> Done — starter labels on $repo (existing labels left as-is)"

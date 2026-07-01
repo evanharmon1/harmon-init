@@ -205,11 +205,33 @@ Types are GitHub's defaults (Bug, Feature, Task) plus Research, kept in sync by
 there is no `task:` commit type, by design.
 
 [% endif %]
+## Labels
+
+Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
+`Type` (kind of work) — they tag cross-cutting *facets*. Keep them in a few
+families, color-coded by family; the starter set is created by
+`task setup:github-labels`:
+
+- **Concerns** — `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n`
+- **Source** — `customer-request`, `ai-generated`
+- **Workflow** — `needs-triage`, `needs-requirements`, `blocked`, `waiting`,
+  `needs-decision`, `needs-response`, `needs-communication` (transient triage
+  states; `blocked` is the non-issue-blocker flag described above)
+- **Layer** — `layer:frontend`, `layer:backend`, `layer:infra`, …
+- **Domain** — start with `domain:auth`, `domain:billing`; grow from your ERD
+  entities
+
+GitHub labels live per-repository (there's no shared org label pool).
+`setup-github-labels` seeds the set into one repo — run it in each, or set the
+org's **default labels** (org Settings → Repository, UI-only) to seed *new* repos
+(it won't change existing ones). It never deletes labels, so GitHub's defaults
+remain until you prune them.
+
 ## Notes
 
 - **Labels vs Type** — `Type` is a first-class, org-level issue field
-  (Bug / Feature / Task / Research), separate from labels; don't reproduce it as
-  a label.
+  (Bug / Feature / Task / Research), separate from labels (see **Labels** above);
+  don't reproduce it as a label.
 - **Views** — save per-slice views off the one board (by iteration, product, or
   agent) rather than spinning up more projects.
 - **Owner**, **Iteration/cycle**, **Milestone** — additional fields/axes as the
