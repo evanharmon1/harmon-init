@@ -77,7 +77,8 @@ full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
     # devcontainer + self-hosted runner labels (exercises actionlint config)
     # + an org owner != author (renders project-automation.yml, the org
-    # branches of the claude workflows, and the merge_queue ruleset rule).
+    # branches of the claude workflows, and the merge_queue ruleset rule)
+    # + the GitHub project-management doc (docs/project-management.md).
     data_args+=(
         --data project_type=web-astro
         --data include_terraform=true
@@ -85,18 +86,21 @@ full)
         --data devcontainer=true
         --data ci_runner=self-hosted
         --data github_org=test-org
+        --data project_management=github
     )
     ;;
 meta)
     # Covers conditionally-named files the other profiles leave disabled:
-    # the Bunch + Obsidian .meta notes, license=private, and the web-app
-    # (tsc --noEmit) branch. --skip-tasks because the bunch/obsidian _tasks
-    # move files into iCloud / the Obsidian vault — real side effects.
+    # the Bunch + Obsidian .meta notes, license=private, the web-app
+    # (tsc --noEmit) branch, and the Linear project-management doc stub.
+    # --skip-tasks because the bunch/obsidian _tasks move files into iCloud /
+    # the Obsidian vault — real side effects.
     data_args+=(
         --data project_type=web-app
         --data license=private
         --data bunch_add=true
         --data obsidian_project_add=true
+        --data project_management=linear
     )
     copier_flags+=(--skip-tasks)
     ;;
@@ -293,6 +297,25 @@ if [ "$profile" = "meta" ]; then
     [ -f ".meta/Code Project - Smoke Test.bunch" ] || err "Bunch file missing from .meta/"
     [ -f ".meta/Smoke Test.md" ] || err "Obsidian note missing from .meta/"
 fi
+
+# ── 9b. docs/project-management.md rendered per project_management answer ──
+# Two mutually-exclusive conditional-named source files share the rendered name
+# docs/project-management.md; assert the right one lands (and none does when the
+# answer is 'none') so a broken filename condition can't ship silently.
+case "$profile" in
+full) # project_management=github
+    [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
+    grep -q 'Not planned' docs/project-management.md || err "GitHub project-management.md missing expected content"
+    ;;
+meta) # project_management=linear
+    [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
+    head -1 docs/project-management.md | grep -qx '# Linear' || err "Linear project-management.md not titled 'Linear'"
+    grep -q 'TODO' docs/project-management.md || err "Linear project-management.md missing TODO marker"
+    ;;
+*) # project_management defaults to none — no doc should render
+    [ ! -f docs/project-management.md ] || err "docs/project-management.md present but project_management=none for profile '$profile'"
+    ;;
+esac
 
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
