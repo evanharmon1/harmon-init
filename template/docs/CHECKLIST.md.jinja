@@ -44,14 +44,19 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `[[ devcontainer_image ]]` on merge to main
 [% endif %]
-[% if github_org != author_git_provider_username %]
-- [ ] Org Project V2: run `task setup:github-project` (needs
-      `gh auth refresh -s project`) to create it and idempotently sync the
-      `Status` pipeline (which project-automation.yml and the claude-* workflows
-      drive) plus the Priority/Estimate/Product/Agent fields. It must be the
-      org's **project number 1** — the workflows query `projectV2(number: 1)`.
 [% if project_management == 'github' %]
-      See [project-management.md](project-management.md) for the full model.
+- [ ] GitHub Project: run `task setup:github-project` (needs
+      `gh auth refresh -s project`) to create the owner's default project (titled
+      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline +
+      Priority/Estimate/Product/Agent fields — see
+      [project-management.md](project-management.md).
+[% if github_org != author_git_provider_username %]
+      It also writes the project id to the `ORG_PROJECT_ID` org variable that
+      project-automation.yml and the claude-* workflows read (they fall back to
+      the project title).
+[% else %]
+      Personal-account status automation is a separate follow-up — the board and
+      fields get set up, but issue/PR status isn't auto-synced yet.
 [% endif %]
 [% endif %]
 

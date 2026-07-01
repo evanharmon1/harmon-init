@@ -2,14 +2,15 @@
 
 How work is tracked for Harmon Init in **GitHub Projects**.
 
-## One project per org
+## One default project per owner
 
-The standard strategy is a single GitHub **Project (V2)** per org, titled
-`<Org Formal Name> Project` (here: **Harmon Platform Project**) — the org's
-formal display name, not the `github_org` login. Issues and PRs from every repo
-in the org feed that one board — an issue can belong to multiple projects, but
-the org project is its default home. Reach for a second, focused project only
-when a body of work needs its own board.
+The standard strategy is a single default GitHub **Project (V2)** per owner — one
+board for the organization, or (for personal-account repos) one for the user
+account — titled after the owner's GitHub login: `<owner> Project` (here:
+**evanharmon1 Project**; e.g. `harmonops Project`, `evanharmon1 Project`).
+Every repo the owner controls feeds that one board; an issue can belong to
+multiple projects, but this default board is its home. Reach for a second,
+focused project only when a body of work needs its own.
 
 ## Status pipeline
 
