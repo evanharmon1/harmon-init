@@ -26,28 +26,6 @@ it points here.
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
 
-## Issue types → commit types → releases
-
-Three vocabularies describe the same work at different layers. They map
-**many-to-one** downward, and only the middle one is load-bearing:
-
-| Issue type (GitHub) | Commit type(s)                                                      | release-please           |
-| ------------------- | ------------------------------------------------------------------- | ------------------------ |
-| **Bug**             | `fix`                                                               | Bug Fixes → patch        |
-| **Feature**         | `feat` (`feat!` = breaking)                                         | Features → minor (major) |
-| **Task**            | `chore`, `build`, `ci`, `docs`, `perf`, `refactor`, `style`, `test` | none on their own        |
-| **Research**        | usually `docs`, or no code (the outcome is a decision)              | none                     |
-
-- **Issue type** is a downstream-inert, org-level label — your preference for
-  slicing the board; nothing automated reads it. It's GitHub's defaults (Bug,
-  Feature, Task) plus Research, kept in sync by `task setup:github-issue-types`.
-- **Commit type** is the one that matters: ecosystem-standard, enforced by
-  commitlint, and the only thing release-please reads. A `Task` issue almost
-  always ships as `chore` (or another maintenance type) — there is no `task:`
-  commit type, by design.
-- **release-please** turns commits into the CHANGELOG + version bump: only
-  `feat`, `fix`, and breaking changes cut a release; the rest ride along.
-
 ## Task runner (Taskfile)
 
 - Tasks are named **`group:action`** — the group/domain comes first, the action
@@ -140,6 +118,15 @@ Three vocabularies describe the same work at different layers. They map
 - Releases are intentional via **release-please**: merge the rolling release PR
   to cut the tag, GitHub release, and CHANGELOG entry. `task release:*` remains a
   manual override. Nothing auto-releases on a normal merge.
+- **The commit type drives the release.** release-please reads the type to pick
+  the CHANGELOG section and bump: `feat` → **Features** (minor), `fix` → **Bug
+  Fixes** (patch), `feat!` / `BREAKING CHANGE:` → major. The rest (`build`,
+  `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`) don't cut
+  a release on their own — they ride along in the next one.
+[% if project_management == 'github' %]
+- Issue types map many-to-one onto these commit types — see
+  [project-management.md](project-management.md).
+[% endif %]
 [% else %]
 - Releases are intentional: run `task release:patch|minor|major`. Nothing
   auto-releases on merge.
