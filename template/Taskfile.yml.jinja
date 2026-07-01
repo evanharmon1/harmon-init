@@ -520,6 +520,13 @@ tasks:
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
 [% endif %]
+[% if github_org != author_git_provider_username %]
+
+  setup:github-issue-types:
+    desc: Idempotently set the org's issue types to Bug/Feature/Chore/Research (renames the default Task → Chore). Requires `gh` with the admin:org scope.
+    cmds:
+      - ./scripts/setup-github-issue-types.sh --org "[[ github_org ]]"
+[% endif %]
 
   # ── Release ────────────────────────────────────────────────────
 [% if use_release_please %]

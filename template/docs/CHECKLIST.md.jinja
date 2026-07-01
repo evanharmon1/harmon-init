@@ -59,6 +59,11 @@ config, toolchain, devcontainer, and dev environment — against the items below
       fields get set up, but issue/PR status isn't auto-synced yet.
 [% endif %]
 [% endif %]
+[% if github_org != author_git_provider_username %]
+- [ ] Org issue types: run `task setup:github-issue-types` (needs `gh` with the
+      `admin:org` scope) to set the org's issue types to Bug/Feature/Chore/Research
+      (renames the default Task → Chore) — idempotent and non-destructive.
+[% endif %]
 
 ## 3. Framework scaffolding (conventions-only template)
 

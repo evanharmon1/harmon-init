@@ -309,6 +309,8 @@ full) # project_management=github; github_org=test-org (an org repo)
     # project_management=github → the project-setup script + task render
     # (shellcheck at step 6 and `task --list-all` at step 1 then validate them)
     [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
+    # org repo (github_org=test-org) → the org-gated issue-types script renders
+    [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
@@ -318,6 +320,7 @@ meta) # project_management=linear
 *) # project_management=none — neither the doc nor the project-setup script render
     [ ! -f docs/project-management.md ] || err "docs/project-management.md present but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-project.sh ] || err "setup-github-project.sh rendered but project_management=none for profile '$profile'"
+    [ ! -f scripts/setup-github-issue-types.sh ] || err "org-gated setup-github-issue-types.sh rendered for personal-repo profile '$profile'"
     ;;
 esac
 

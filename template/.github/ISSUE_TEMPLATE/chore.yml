@@ -1,0 +1,22 @@
+name: Chore
+description: A maintenance task, cleanup, or small improvement
+title: "[Chore]: "
+labels: ["chore"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs doing?
+      description: Briefly describe the task and the outcome it should achieve.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      value: |
+        - [ ]
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

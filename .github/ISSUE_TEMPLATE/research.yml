@@ -1,0 +1,33 @@
+name: Research
+description: Track a research question or investigation
+title: "[Research]: "
+labels: ["research"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Research question
+      description: What is being investigated?
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: Background / context
+      description: What do we already know, and why is this worth investigating?
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What's in scope and out of scope.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: What decision, document, or artifact should result?
+    validations:
+      required: true
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources / references
