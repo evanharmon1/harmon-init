@@ -231,21 +231,37 @@ remain until you prune them.
 
 Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
 view mutations, only reads — so create these once in the UI (**Project → New
-view**). Each is a saved **filter + layout + grouping** over the one board:
+view**). Keep the saved set small; **slice the one board** (below) for the rest.
 
-| View | Layout | Filter | Group / sort |
-| --- | --- | --- | --- |
-| Board | Board | `is:open` | group by `Status` |
-| Triage | Table | `is:open is:issue no:status` | sort by newest |
-| Agent queue | Board | `is:open status:"Agent Queue"` | group by `Agent` |
-| Priority | Table | `is:open` | sort by `Priority`, then `Effort` |
-| Roadmap | Roadmap | `is:open` | lay out on `Start date` → `Target date` |
-| Mine | Table | `is:open assignee:@me` | sort by `Priority` |
+- **Board** — board, `is:open`, grouped by `Status`. The day-to-day working board.
+- **Triage** — table, filtered to items **missing a `Priority`** or carrying
+  **`needs-triage`**, grouped by **Type** (Bug / Feature / Task / Research) so you
+  see the shape of the inbox. This is your grooming session — it exists so
+  untriaged work can't hide; empty it regularly and it stays useful.
+- **Agent queue** — board, filtered to issues whose **`Agent`** field is set,
+  showing only the in-flight `Status` columns (**Ready, Agent Queue, In Progress,
+  Verifying, In Review, Ready to Merge**), sorted by `Priority`.
+- **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
+  `Priority`, with the **`Effort` field summed in each group header**. The "how
+  big is the pile, and what's the plan" view, and a **dates-free roadmap
+  substitute**: the per-group sum shows the weight behind each product without
+  maintaining a timeline. (Group-header sums only work on a **number** field, so
+  this wants `Effort` as points — a T-shirt single-select can't be summed.)
+- **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.
 
-Roadmap needs the date fields (`Start date` / `Target date` are org issue-field
-built-ins; add them as project fields on a personal account). Slice further by
-`Product` or iteration (`iteration:@current`) rather than spinning up more
-projects.
+### Two toggles, not more views
+
+- **Show hierarchy** (sub-issues — public preview) — expands/collapses sub-issues
+  up to 8 levels while still grouping, slicing, sorting, and filtering. Flip it on
+  in the Board or Planning view for the parent-with-children rollup you'd
+  otherwise reach for an Epic type to get — the payoff of choosing **sub-issues
+  over Epics**: structure without the "Feature or Epic?" tax. Still preview, so
+  expect rough edges.
+- **Slice the board** — rather than separate per-product / per-layer / per-agent
+  saved views, slice the one board: by **`Product`** when you go multi-product, by
+  **`layer:`** to focus a system layer, by **`Agent`** to see the split. One
+  board, many lenses — and how multiple products stay legible in one aggregating
+  project instead of fragmenting into project-per-product.
 
 ## Notes
 
