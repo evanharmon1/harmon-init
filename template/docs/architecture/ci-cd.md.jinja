@@ -27,6 +27,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 [% if github_org != author_git_provider_username %]
 - `project-automation.yml` — syncs the org Project board status from PR/CI events.
 [% endif %]
+[% if use_release_please and project_management == 'github' %]
+- `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
+[% endif %]
 
 ## Authentication
 
