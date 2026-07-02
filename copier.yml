@@ -115,12 +115,16 @@ devcontainer:
 
 project_management:
   type: str
-  help: "PROJECT MGMT: Add a project-management doc (docs/project-management.md)?"
+  help: "PROJECT MGMT: GitHub Projects playbook (docs/project-management.md + setup tasks)? Org repos default to GitHub (shared org board); personal to none."
   choices:
     none: none
     GitHub Projects: github
     Linear (TODO stub): linear
-  default: none
+  # Org repos (github_org != the author's own account) default to GitHub Projects,
+  # since every org repo feeds the one shared org board; personal repos default to
+  # none. Override either way at generation. Existing repos keep their recorded
+  # answer on `copier update` — this only affects new generation.
+  default: "[% if github_org != author_git_provider_username %]github[% else %]none[% endif %]"
 
 git_init:
   type: bool
