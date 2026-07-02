@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # setup-github-project.sh — idempotently create and sync a GitHub Project V2 for a
-# repo owner (an organization OR a personal user account): the Status pipeline
-# (docs/project-management.md) plus the Priority, Estimate, Product, Agent fields.
+# repo owner (an organization OR a personal user account): the board and its
+# Status pipeline (docs/project-management.md). On an ORGANIZATION, the metadata
+# fields are org-level ISSUE fields (Priority + Effort are GitHub built-ins;
+# setup-github-issue-fields.sh adds Product + Agent); on a personal account (no
+# org issue fields) this script creates Priority/Effort/Product/Agent as project
+# fields instead.
 #
 # Safe to re-run and safe to run from every repo the owner controls: it looks the
 # project up by title, so the first run creates it and later runs just reconcile
@@ -51,19 +55,18 @@ done
 status_pipeline='[
   {"name":"Inbox","color":"GRAY","description":"Newly landed, unsorted"},
   {"name":"Icebox","color":"GRAY","description":"Real, but not now"},
-  {"name":"Next","color":"GRAY","description":"Will pull in soon"},
+  {"name":"Next","color":"PINK","description":"Will pull in soon"},
   {"name":"Todo","color":"BLUE","description":"Committed, not started"},
   {"name":"Shaping","color":"BLUE","description":"Problem/approach being defined"},
   {"name":"Ready","color":"BLUE","description":"Shaped, ready to pick up"},
-  {"name":"Agent Queue","color":"PURPLE","description":"Queued for an AI agent"},
+  {"name":"Agent Queue","color":"BLUE","description":"Queued for an AI agent"},
   {"name":"In Progress","color":"YELLOW","description":"Actively being worked"},
-  {"name":"Verifying","color":"YELLOW","description":"CI/checks running"},
-  {"name":"In Review","color":"ORANGE","description":"Under human review"},
-  {"name":"Ready to Merge","color":"ORANGE","description":"Approved, awaiting merge"},
-  {"name":"Done","color":"GREEN","description":"Merged/shipped"},
-  {"name":"Deployed","color":"GREEN","description":"Deployed"},
-  {"name":"Accepted","color":"GREEN","description":"Smoke/QA/manual check passed"},
-  {"name":"Archived","color":"GRAY","description":"Archived"}
+  {"name":"Verifying","color":"ORANGE","description":"CI/checks running"},
+  {"name":"In Review","color":"GREEN","description":"Under human review"},
+  {"name":"Ready to Merge","color":"GREEN","description":"Approved, awaiting merge"},
+  {"name":"Done","color":"PURPLE","description":"Merged/shipped"},
+  {"name":"Deployed","color":"PURPLE","description":"Deployed"},
+  {"name":"Accepted","color":"PURPLE","description":"Smoke/QA/manual check passed"}
 ]'
 
 # jq filter: a JSON array of {name,color,description} -> a GraphQL options
@@ -197,24 +200,50 @@ create_text() {
         >/dev/null
 }
 
-echo "==> Custom fields (starters — refine options in the UI; re-runs won't clobber them)"
+create_number() {
+    name="$1"
+    if [ -n "$(field_id "$name")" ]; then
+        echo "    Field '$name' already exists — leaving it as-is"
+        return 0
+    fi
+    echo "    Creating number field '$name'"
+    gh api graphql -f p="$project_id" \
+        -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:NUMBER,name:\"$name\"}){projectV2Field{... on ProjectV2FieldCommon{id}}}}" \
+        >/dev/null
+}
+
+# Metadata fields: on an ORGANIZATION these are org-level ISSUE fields (durable —
+# the value is on the issue, shared across every project; see
+# docs/project-management.md). Priority + Effort are GitHub built-ins;
+# setup-github-issue-fields.sh adds Product + Agent. A personal account has no org
+# issue fields, so fall back to creating them as project fields here.
+if [ "$owner_type" = "Organization" ]; then
+    echo "==> Metadata are org issue fields (Priority/Effort built-in; run setup-github-issue-fields.sh for Product/Agent)"
+    echo "==> Done — project #$project_number: $title"
+    exit 0
+fi
+
+echo "==> Custom project fields (personal account; starters — re-runs won't clobber them)"
 create_single_select "Priority" '[
   {"name":"Urgent","color":"RED","description":""},
   {"name":"High","color":"ORANGE","description":""},
   {"name":"Medium","color":"YELLOW","description":""},
   {"name":"Low","color":"GRAY","description":""}
 ]'
-create_single_select "Estimate" '[
-  {"name":"XS","color":"GRAY","description":""},
-  {"name":"S","color":"BLUE","description":""},
-  {"name":"M","color":"GREEN","description":""},
-  {"name":"L","color":"YELLOW","description":""},
-  {"name":"XL","color":"ORANGE","description":""}
-]'
+# Effort is story points on the Fibonacci ladder (1/2/3/5/8/13/21) — a NUMBER
+# field so views can sum it per group (single-selects can't be summed). The
+# ladder is a convention; a number field takes free numeric entry.
+create_number "Effort"
 create_text "Product"
 create_single_select "Agent" '[
-  {"name":"Claude","color":"PURPLE","description":""},
-  {"name":"Codex","color":"BLUE","description":""}
+  {"name":"Claude Code","color":"ORANGE","description":""},
+  {"name":"Codex","color":"BLUE","description":""},
+  {"name":"Gemini CLI","color":"PURPLE","description":""},
+  {"name":"Qwen Code","color":"GREEN","description":""},
+  {"name":"DeepSeek","color":"RED","description":""},
+  {"name":"Kimi K2","color":"YELLOW","description":""},
+  {"name":"GLM","color":"PINK","description":""},
+  {"name":"GitHub Copilot","color":"GRAY","description":""}
 ]'
 
 echo "==> Done — project #$project_number: $title"

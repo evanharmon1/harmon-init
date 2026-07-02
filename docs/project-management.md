@@ -42,7 +42,19 @@ toward delivery is this.** The columns, grouped:
 - Done — merged/shipped; the single terminal status
 - Deployed
 - Accepted — smoke/QA/manual check passed, communicated, released
-- Archived
+
+Archiving isn't a status — it's a separate native axis. GitHub's built-in
+**auto-archive** removes finished items from the board (into the retrievable
+Archived-items view), so aged `Done` items leave the board automatically instead
+of sitting in an "Archived" column.
+
+**Agent Queue is the hand-off lane to AI coding agents.** An item lands there once
+it's shaped and ready for an *agent* rather than a human to implement — the
+**Agent** field says which one (and effort / model). Today the hand-off is manual:
+assign the agent and trigger it (a `claude-*` workflow, or point Claude Code at the
+item). The lane is built for future automation, though — an agent can watch *Agent
+Queue + Agent-set + priority* (the Agent-queue view below) and pull the top item on
+its own — and either way the item moves to **In Progress** once work starts.
 
 ## Status is not issue state
 
@@ -144,28 +156,280 @@ TODO: finalize exactly what to automate. The intended event → status shape:
 - PR opened → **In Review**
 - Deployment complete → verification (if applicable)
 - Issue closed (`state_reason == completed`) → **Done**
-- 30–60 days in Done → **Archived**
+- 90 days in Done → **auto-archived** off the board (native built-in, not a Status)
 
-## Custom fields
+## Fields
 
-Beyond `Status`, the project carries:
+`Status` is a **Project field** — the board pipeline above; it stays on the
+project because the built-in workflows (and `project-automation.yml`, on an org)
+drive it.
 
-- **Priority**
-- **Estimate** — size/effort
-- **Product** — which product/area it belongs to
-- **Agent** — which agent should implement it (e.g. Claude vs Codex) and how
-  (effort level, model)
+The work-metadata fields:
+
+- **Priority** — Urgent / High / Medium / Low
+- **Effort** — story points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
+  a **number** field so a view can sum it per group
+- **Product** — which product/area it belongs to (free text)
+- **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
+  Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
+
+On a personal account these are **project fields** (issue fields are org-only),
+created alongside the board by `task setup:github-project`.
 
 TODO: finalize each field's options/values.
 
+## Labels
+
+Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
+`Type` (kind of work) — they tag cross-cutting *facets*. Keep them in a few
+families, color-coded by family; the starter set is created by
+`task setup:github-labels`:
+
+- **Concerns** — `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n`
+- **Source** — `customer-request`, `ai-generated`
+- **Workflow** — `needs-triage`, `needs-requirements`, `blocked`, `waiting`,
+  `needs-decision`, `needs-response`, `needs-communication` (transient triage
+  states; `blocked` is the non-issue-blocker flag described above)
+- **Layer** — `layer:frontend`, `layer:backend`, `layer:infra`, …
+- **Domain** — start with `domain:auth`, `domain:billing`; grow from your ERD
+  entities
+
+GitHub labels live per-repository (there's no shared org label pool).
+`setup-github-labels` seeds the set into one repo — run it in each, or set the
+org's **default labels** (org Settings → Repository, UI-only) to seed *new* repos
+(it won't change existing ones). It never deletes labels, so GitHub's defaults
+remain until you prune them.
+
+## Milestones
+
+A milestone has **one job — "when it ships"** — and nothing else. Four things
+could all masquerade as milestones, so keep the lanes clean:
+
+- **Type** — what kind of work (Bug / Feature / Task / Research)
+- **Status** — where it sits in the pipeline
+- **Labels** — orthogonal, cross-cutting concerns
+- **Sub-issues** — hierarchy
+
+None of those answers *"which dated, shippable batch does this belong to, and how
+done is that batch?"* — that's the milestone's unique contribution: a
+release/launch container with a **due date** and a **live completion bar**. Labels
+for classification, milestones for goal tracking. The moment you're making a
+milestone that isn't a dated, shippable batch, it's really a label or a saved
+view.
+
+**Name milestones after release versions** — the milestone title *equals* the git
+tag (`v1.0.0`, `v1.1.0`). Then the milestone list doubles as a release-history /
+changelog skeleton, and closing a milestone on publish needs no special plumbing.
+This dovetails with **release-please** because they run at different times and
+never overlap:
+
+- The **milestone** is the *pre-ship planning* artifact — "what must land before
+  we cut `v1.1.0`."
+- **release-please** is the *post-merge machine* that calculates and cuts the
+  actual version from your conventional commits (see
+  [conventions.md](conventions.md)).
+
+Naming them identically makes the two legible to each other — the shipped
+`close-milestone-on-release.yml` Action closes the milestone matching a published
+tag (when release-please is on) — without making them one system. Since PRs and
+issues share the milestone namespace, the release PR itself
+can carry the milestone, so the shipped batch is fully self-documenting.
+
+**One active release milestone at a time (rolling).** Carry one open milestone per
+release line — created when it has real scope and a date, closed when it ships,
+the next opened only as needed. Not five speculative open milestones competing for
+attention.
+
+**Due dates are signals, not gates.** A milestone's due date doesn't block a merge
+or a close and triggers nothing — it's a communication tool; update it honestly
+when the plan slips. That's where milestones earn their keep on a team: the dated
+milestone is the shared artifact that tells collaborators what's shipping and
+roughly when — worth more with others in the loop than in pure solo work.
+
+## Milestones over iterations
+
+For pre-launch product development, lead with **milestones, not iterations**
+(sprints). The mechanisms differ in what they fix vs. flex:
+
+- **Iterations fix time, flex scope** — the window ends Friday, you ship whatever's
+  done.
+- **Milestones fix scope, flex time** — you ship when the thing is done; the date
+  is a signal.
+
+Early product work needs to **fix scope**: a half-built product at an arbitrary
+time-box boundary isn't shippable value — "ship it when it's good enough to charge
+for" is a scope commitment, not a time one. Here the milestone's commitment shape
+is right and the iteration's is actively wrong.
+
+**Incremental delivery doesn't come from either mechanism** — it comes from **small
+slices + frequent deploys + a release cadence**, which you already have (PR-sized
+sub-issues, per-PR previews to prod, release-please cutting incremental releases
+from accumulated commits). You can sprint and ship zero user value, or run
+milestones and ship continuously; the delivery job routes through the *release*
+mechanism (milestone-adjacent), not sprints.
+
+**So run small, frequent milestones** — a shippable chunk every ~2–4 weeks, not one
+giant "Launch." A tightly-scoped milestone with a target date is a chunk of value
+with an expectation attached, doing three jobs at once: coordination (toward
+shippable scope), commitment (to that scope; date as signal), and incremental
+delivery (frequent small releases). It's literally the release-please flow —
+**small frequent milestones == frequent small releases** — so it's one rhythm, not
+two.
+
+**Get the forcing-function from tools you already have,** not a sprint clock: a
+**WIP limit** on `In Progress`, sub-issues **sized to one PR**, and continuous
+deploy — anti-drag pressure applied at the work slice, not a calendar boundary a
+tiny team can't make hard anyway.
+
+**Why this phase picks milestones:** early development is **discovery-driven** —
+you're figuring out scope as you go, capacity is erratic, and the priority is
+shipping the *right* thing, not a predictable amount. Iterations shine in the
+opposite regime (a known backlog, steady team, predictable capacity metered at a
+constant clip) — steady-state maturity, not pre-launch. (Honest counter:
+time-boxing can curb rabbit-holing during discovery — but the Lean answer is
+build-measure-learn, get it in front of a user fast, for which the clock is your
+**deploy cadence**, not a two-week sprint; and a WIP limit plus one-PR slices curb
+it at the work level more directly. You already have those.)
+
+**Iterations also don't fit the agent queue.** Agents run when triggered, not "this
+week"; scoping the queue to `iteration:@current` adds nothing over *agent-set +
+Ready + priority*. Iteration is a human-cadence concept your agents don't have.
+(The native Iteration field stays available if you reach steady-state and want it.)
+
+## Hierarchy (sub-issues, not Epics)
+
+There's **no Epic type, by design.** The "big initiative" role splits cleanly
+into two natives — **sub-issues** carry the *hierarchy* axis and **milestones**
+carry the *release* axis — and GitHub stitches them together for you: a
+**sub-issue inherits its parent's Project and Milestone by default** (shipped
+2025-09). Assign them once on the parent and the child tree picks them up — no
+per-child bookkeeping.
+
+So a parent issue "Scheduling v1" in milestone `v1.1.0` pulls its whole subtree
+into that release payload for free. Break big work down with **sub-issues** (up to
+8 levels — flip on **Show hierarchy** in a view to expand/collapse the tree)
+rather than a markdown checklist or an Epic type: you get the structure without
+the "Feature or Epic?" tax.
+
+**Sub-issues are your only hierarchy axis; everything else stays flat.** Type,
+Status, milestone, labels, and fields must never try to encode "part of" — that's
+the sub-issue's job, and only that. Once that's clear, the rest is just sizing and
+deciding what metadata rides on the parent vs. the leaves.
+
+**The three-tier shape (replaces Epic → Story → Task with natives):** a
+**milestone** (the dated release batch — possibly-unrelated work) contains parent
+**Feature** issues (each a cohesive capability), each of which contains **Task**
+sub-issues (mergeable slices). Full hierarchy, no synthetic Epic.
+
+The boundary that trips people up: **a milestone is a flat batch of unrelated
+features targeting a date; a parent issue is one cohesive thing decomposed.** So
+don't build a giant "Launch" parent with 40 sub-issues spanning unrelated features
+— that's exactly what the milestone is for. Milestone for the cross-feature
+release; the parent-issue tree for a single feature.
+
+**Where metadata lives — parent vs. leaf.** The **parent** holds the durable
+context: the spec (your Given/When/Then acceptance criteria), the "why," the
+explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
+**milestone and project** assignment. Set those once on the parent and the tree
+inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
+the milestone per child.
+
+The **leaves** hold execution: the `Task` type and the **`Effort` points**. Put
+the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
+reliable, estimating a big parent isn't — and a view's field sums total the leaves
+for you.
+It's route-not-duplicate applied to hierarchy: a child references the parent's spec
+rather than restating it, and reads up for context.
+
+**Sub-issue vs. task-list checkbox.** Markdown `- [ ]` task lists still have a
+place. The rule: if an item needs its own **status, assignee, or independent
+scheduling**, promote it to a **sub-issue**; if it's just "steps to finish this one
+issue," leave it a **checkbox** in the body. Don't promote every checkbox (that's
+sprawl), and don't spin up a sub-issue where a checkbox suffices.
+
+**Research child as a blocking gate.** When a Feature has an unknown, spawn a
+**Research** sub-issue and let it *block* the implementation children. It closes
+when it produces a decision record (the Research closure rule), which unblocks the
+rest — encoding "figure this out first, then build" in the tree itself, and tying
+Research, sub-issues, and the ADR discipline together.
+
+**Hierarchy is not dependency.** A sub-issue means *"part of,"* not *"must happen
+before."* If A must finish before B but B isn't part of A, that's a **dependency**
+— the native blocked-by relationship, or the `blocked` label + a note (see
+**Blocked is not a status** above) — not a parent-child link. Conflating them
+corrupts the tree; keep composition (sub-issues) and sequencing (dependencies) in
+separate mechanisms.
+
+## Cross-repo work
+
+The one board already spans every repo (the single default project per owner). For
+work that *itself* crosses repos, reach for the tree, not a new field:
+
+**A cross-repo feature → a parent sub-issue tree. No field needed.** A feature that
+touches app + infra + marketing is one cohesive thing, so it's a legitimate parent:
+the parent **Feature** issue lives in the app repo, its **Task** children live in
+whichever repos they belong to (sub-issues cross repos freely), and the parent's
+rollup counts completion across all of them. The tree *is* the cross-repo grouping
+— you track it by opening the parent, not by tagging a field.
+
+**A cross-repo *release* is mostly a smell.** Repos with genuinely independent
+deploy cadences shouldn't share a release: the app cuts versions via release-please
+on its own rhythm, an Astro marketing site deploys continuously on copy changes,
+infra changes when infra changes. Forcing "app v1.1.0 + a pricing-page edit + a
+terraform tweak" into one dated cross-repo release invents coordination the
+independent cadences don't need. What legitimately spans repos is **features, not
+releases** — so the flat cross-repo batch a milestone structurally can't hold (and
+that a field would exist to solve) mostly shouldn't exist.
+
+**The one genuine exception: a coordinated launch.** An initial public launch
+really does need app-live + marketing-up + infra-provisioned at once — a real
+cross-repo dated batch. Even then, model it as a single **Public Launch** parent
+tracking issue with cross-repo sub-issues, not a new field: it's a one-time event,
+not a recurring dimension worth a permanent field on every issue forever.
+
+## Views
+
+Views (the board's tabs) **can't be created via API** — Projects V2 exposes no
+view mutations, only reads — so create these once in the UI (**Project → New
+view**). Keep the saved set small; **slice the one board** (below) for the rest.
+
+- **Board** — board, `is:open`, grouped by `Status`. The day-to-day working board.
+- **Triage** — table, filtered to items **missing a `Priority`** or carrying
+  **`needs-triage`**, grouped by **Type** (Bug / Feature / Task / Research) so you
+  see the shape of the inbox. This is your grooming session — it exists so
+  untriaged work can't hide; empty it regularly and it stays useful.
+- **Agent queue** — board, filtered to issues whose **`Agent`** field is set,
+  showing only the in-flight `Status` columns (**Ready, Agent Queue, In Progress,
+  Verifying, In Review, Ready to Merge**), sorted by `Priority`.
+- **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
+  `Priority`, with the **`Effort` field summed in each group header**. The "how
+  big is the pile, and what's the plan" view, and a **dates-free roadmap
+  substitute**: the per-group sum shows the weight behind each product without
+  maintaining a timeline. (`Effort` is a **number** field — GitHub sums number
+  fields in group headers, so this totals the points behind each group; a
+  single-select can't be summed.)
+- **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.
+
+### Two toggles, not more views
+
+- **Show hierarchy** (sub-issues — public preview) — expands/collapses sub-issues
+  up to 8 levels while still grouping, slicing, sorting, and filtering. Flip it on
+  in the Board or Planning view for the parent-with-children rollup you'd
+  otherwise reach for an Epic type to get — the payoff of choosing **sub-issues
+  over Epics**: structure without the "Feature or Epic?" tax. Still preview, so
+  expect rough edges.
+- **Slice the board** — rather than separate per-product / per-layer / per-agent
+  saved views, slice the one board: by **`Product`** when you go multi-product, by
+  **`layer:`** to focus a system layer, by **`Agent`** to see the split. One
+  board, many lenses — and how multiple products stay legible in one aggregating
+  project instead of fragmenting into project-per-product.
+
 ## Notes
 
-- **Labels vs Type** — `Type` is a first-class issue field (Bug / Feature / …),
-  separate from labels; don't reproduce it as a label.
-- **Views** — save per-slice views off the one board (by iteration, product, or
-  agent) rather than spinning up more projects.
-- **Owner**, **Iteration/cycle**, **Milestone** — additional fields/axes as the
-  work needs them.
-- **Sub-issues** — break a large issue down natively instead of with a checklist.
+- **Labels vs Type** — `Type` is a first-class, org-level issue field
+  (Bug / Feature / Task / Research), separate from labels (see **Labels** above);
+  don't reproduce it as a label.
+- **Owner**, **Iteration/cycle** — additional fields/axes as the work needs them
+  (**Milestones** have their own section above).
 - An issue can belong to **multiple projects** — the org project plus a focused
   one is fine.

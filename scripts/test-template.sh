@@ -309,17 +309,24 @@ full) # project_management=github; github_org=test-org (an org repo)
     # project_management=github → the project-setup script + task render
     # (shellcheck at step 6 and `task --list-all` at step 1 then validate them)
     [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
-    # org repo (github_org=test-org) → the org-gated issue-types script renders
+    # project_management=github → the repo label-setup script renders
+    [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
+    # org + github → the org issue-fields + issue-types scripts render too
+    [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
     [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
     head -1 docs/project-management.md | grep -qx '# Linear' || err "Linear project-management.md not titled 'Linear'"
     grep -q 'TODO' docs/project-management.md || err "Linear project-management.md missing TODO marker"
+    [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management!=github for profile '$profile'"
+    [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management!=github for profile '$profile'"
     ;;
-*) # project_management=none — neither the doc nor the project-setup script render
+*) # project_management=none — neither the doc nor the project-setup scripts render
     [ ! -f docs/project-management.md ] || err "docs/project-management.md present but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-project.sh ] || err "setup-github-project.sh rendered but project_management=none for profile '$profile'"
+    [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management=none for profile '$profile'"
+    [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-issue-types.sh ] || err "org-gated setup-github-issue-types.sh rendered for personal-repo profile '$profile'"
     ;;
 esac

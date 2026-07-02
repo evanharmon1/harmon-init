@@ -47,17 +47,31 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% if project_management == 'github' %]
 - [ ] GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
-      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline +
-      Priority/Estimate/Product/Agent fields — see
+      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline — see
       [project-management.md](project-management.md).
 [% if github_org != author_git_provider_username %]
       It also writes the project id to the `ORG_PROJECT_ID` org variable that
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
+- [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
+      `admin:org` scope) to add the org's **Product** and **Agent** issue fields
+      (GitHub public preview). Priority + Effort are GitHub built-in issue fields,
+      so they aren't recreated — tune their options in the org's issue-field
+      settings. Idempotent and non-destructive.
 [% else %]
-      Personal-account status automation is a separate follow-up — the board and
-      fields get set up, but issue/PR status isn't auto-synced yet.
+      On a personal account it also creates Priority/Effort/Product/Agent as
+      project fields (issue fields are org-only); status automation is a separate
+      follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
 [% endif %]
+- [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
+      families (concerns/source/workflow/layer/domain — see
+      [project-management.md](project-management.md)). Labels are per-repo, so run
+      it in each repo; org default labels (org Settings → Repository, UI-only) only
+      seed new repos.
+- [ ] Project views: create the starter views (Board / Triage / Agent queue /
+      Planning / Mine) in the Project UI — Projects V2 has no view API,
+      so this is a one-time manual step. Filters/layouts are in
+      [project-management.md](project-management.md).
 - [ ] GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
