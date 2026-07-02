@@ -229,9 +229,10 @@ never overlap:
   actual version from your conventional commits (see
   [conventions.md](conventions.md)).
 
-Naming them identically makes the two legible to each other — and a ~10-line
-Action can close the milestone matching a published tag — without making them one
-system. Since PRs and issues share the milestone namespace, the release PR itself
+Naming them identically makes the two legible to each other — the shipped
+`close-milestone-on-release.yml` Action closes the milestone matching a published
+tag (when release-please is on) — without making them one system. Since PRs and
+issues share the milestone namespace, the release PR itself
 can carry the milestone, so the shipped batch is fully self-documenting.
 
 **One active release milestone at a time (rolling).** Carry one open milestone per
@@ -333,9 +334,10 @@ explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
 inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
 the milestone per child.
 
-The **leaves** hold execution: the `Task` type and the **estimate**. Put estimates
-on the mergeable one-PR slices, not the parent — estimating a slice is reliable,
-estimating a big parent isn't — and a view's field sums total the leaves for you.
+The **leaves** hold execution: the `Task` type and the **`Effort` points**. Put
+the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
+reliable, estimating a big parent isn't — and a view's field sums total the leaves
+for you.
 It's route-not-duplicate applied to hierarchy: a child references the parent's spec
 rather than restating it, and reads up for context.
 
