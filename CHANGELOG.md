@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.13.0](https://github.com/evanharmon1/harmon-init/compare/v3.12.0...v3.13.0) (2026-07-02)
+
+
+### Features
+
+* **template:** GitHub board/issue configuration — Status pipeline, issue fields, labels ([#189](https://github.com/evanharmon1/harmon-init/issues/189)) ([a74b162](https://github.com/evanharmon1/harmon-init/commit/a74b16277a7a8e0318aa63ef53319468d3db86ca))
+* **template:** issue Forms + org issue-types + issue/commit/release taxonomy ([#190](https://github.com/evanharmon1/harmon-init/issues/190)) ([de58884](https://github.com/evanharmon1/harmon-init/commit/de58884a17f3690b01a2048694c9711e6793e35c))
+* **template:** resolve + name the org/user project reliably (ORG_PROJECT_ID + login titles) ([#185](https://github.com/evanharmon1/harmon-init/issues/185)) ([62a828a](https://github.com/evanharmon1/harmon-init/commit/62a828aadc4a4391c927bb8c44659618c2c10ccd))
+
 ## [3.12.0](https://github.com/evanharmon1/harmon-init/compare/v3.11.0...v3.12.0) (2026-07-01)
 
 
