@@ -17,6 +17,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 - `release.yml` — release-please maintains the rolling release PR.
+- `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 
 ## Authentication
 
