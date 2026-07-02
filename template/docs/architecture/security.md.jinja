@@ -163,7 +163,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 |---|---|---|---|
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | [% if use_release_please %]release-please, [% endif %]claude-*[% if github_org != author_git_provider_username %], project-automation[% endif %] | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
-| `SNYK_TOKEN` | `task security:sast`/`sca` | repo Actions secret | TODO |
+| `SNYK_TOKEN` | `task security:sast`/`sca` (optional, local-only — not in CI) | local env / 1Password | TODO |
 | TODO | TODO | TODO | TODO |
 [% if include_terraform or include_ansible %]
 
