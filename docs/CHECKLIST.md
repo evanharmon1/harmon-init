@@ -40,6 +40,30 @@ config, toolchain, devcontainer, and dev environment — against the items below
       claude-* workflows, and project-automation. See docs/architecture/security.md.
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
+- [ ] GitHub Project: run `task setup:github-project` (needs
+      `gh auth refresh -s project`) to create the owner's default project (titled
+      `evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
+      [project-management.md](project-management.md).
+      On a personal account it also creates Priority/Effort/Product/Agent as
+      project fields (issue fields are org-only); status automation is a separate
+      follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
+- [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
+      families (concerns/source/workflow/layer/domain — see
+      [project-management.md](project-management.md)). Labels are per-repo, so run
+      it in each repo; org default labels (org Settings → Repository, UI-only) only
+      seed new repos.
+- [ ] Project views: create the starter views (Board / Triage / Agent queue /
+      Planning / Mine) in the Project UI — Projects V2 has no view API,
+      so this is a one-time manual step. Filters/layouts are in
+      [project-management.md](project-management.md).
+- [ ] GitHub Project auto-add (**adds every issue to the board**): in the
+      Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
+      point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
+      PR lands on the board automatically, however it's created. GitHub's native
+      built-in — no Actions or tokens, and it's the reliable way to guarantee
+      coverage (the issue-form `projects:` key only covers form-created issues and
+      needs a static project number). See
+      [project-management.md](project-management.md).
 
 ## 3. Framework scaffolding (conventions-only template)
 
