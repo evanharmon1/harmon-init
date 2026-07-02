@@ -100,8 +100,8 @@ task release:patch   # or release:minor / release:major
   to a Taskfile target so local hooks, CI, and manual runs execute identical
   commands. Never bypass hooks with `--no-verify`.
 - Commit messages follow **Conventional Commits** (enforced by commitlint):
-  types `build, change, chore, ci, docs, feat, fix, perf, refactor, remove, revert,
-  style, test`.
+  types `build, chore, ci, docs, feat, fix, perf, refactor, revert, style,
+  test`.
 
 ## Code Style
 
