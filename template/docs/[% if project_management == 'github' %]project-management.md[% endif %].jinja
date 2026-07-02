@@ -48,6 +48,14 @@ Archiving isn't a status — it's a separate native axis. GitHub's built-in
 Archived-items view), so aged `Done` items leave the board automatically instead
 of sitting in an "Archived" column.
 
+**Agent Queue is the hand-off lane to AI coding agents.** An item lands there once
+it's shaped and ready for an *agent* rather than a human to implement — the
+**Agent** field says which one (and effort / model). Today the hand-off is manual:
+assign the agent and trigger it (a `claude-*` workflow, or point Claude Code at the
+item). The lane is built for future automation, though — an agent can watch *Agent
+Queue + Agent-set + priority* (the Agent-queue view below) and pull the top item on
+its own — and either way the item moves to **In Progress** once work starts.
+
 ## Status is not issue state
 
 GitHub has **two independent state machines**, and conflating them is the most
