@@ -346,6 +346,18 @@ tasks:
         fi
       - gh variable set FULL_SECURITY_SCAN --repo "{{.REPO}}" --body true
 
+  setup:github-project:
+    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires `gh auth refresh -s project`.
+    cmds:
+      - ./scripts/setup-github-project.sh --owner "evanharmon1" --title "evanharmon1 Project"
+
+  setup:github-labels:
+    desc: Idempotently create/update this repo's starter labels (see docs/project-management.md). Requires `gh` with repo write.
+    vars:
+      REPO: "evanharmon1/harmon-init"
+    cmds:
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"
+
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.
   release:init:
