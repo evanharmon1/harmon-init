@@ -72,6 +72,19 @@ config, toolchain, devcontainer, and dev environment — against the items below
       Planning / Mine) in the Project UI — Projects V2 has no view API,
       so this is a one-time manual step. Filters/layouts are in
       [project-management.md](project-management.md).
+- [ ] GitHub Project auto-add (**adds every issue to the board**): in the
+      Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
+      point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
+      PR lands on the board automatically, however it's created. GitHub's native
+      built-in — no Actions or tokens, and it's the reliable way to guarantee
+      coverage (the issue-form `projects:` key only covers form-created issues and
+      needs a static project number). See
+      [project-management.md](project-management.md).
+[% endif %]
+[% if github_org != author_git_provider_username %]
+- [ ] Org issue types: run `task setup:github-issue-types` (needs `gh` with the
+      `admin:org` scope) to ensure the org's issue types are Bug/Feature/Task/Research
+      (adds any missing; keeps GitHub's defaults) — idempotent and non-destructive.
 [% endif %]
 
 ## 3. Framework scaffolding (conventions-only template)

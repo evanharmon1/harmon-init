@@ -1,0 +1,26 @@
+name: Task
+description: General work — maintenance, chores, cleanup, or a small improvement
+title: "[Task]: "
+assignees:
+  - [[ author_git_provider_username ]]
+[% if github_org != author_git_provider_username %]
+type: Task
+[% endif %]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs doing?
+      description: Briefly describe the task and the outcome it should achieve.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      value: |
+        - [ ]
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

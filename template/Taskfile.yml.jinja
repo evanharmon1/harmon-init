@@ -534,6 +534,13 @@ tasks:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]
 [% endif %]
+[% if github_org != author_git_provider_username %]
+
+  setup:github-issue-types:
+    desc: Idempotently ensure the org's issue types are Bug/Feature/Task/Research (adds any missing; keeps the defaults). Requires `gh` with the admin:org scope.
+    cmds:
+      - ./scripts/setup-github-issue-types.sh --org "[[ github_org ]]"
+[% endif %]
 
   # ── Release ────────────────────────────────────────────────────
 [% if use_release_please %]

@@ -9,8 +9,8 @@ it points here.
 ## Commits & git
 
 - **Conventional Commits**, enforced by commitlint at the `commit-msg` hook.
-  Allowed types: `build`, `change`, `chore`, `ci`, `docs`, `feat`, `fix`,
-  `perf`, `refactor`, `remove`, `revert`, `style`, `test`. Format
+  Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
+  `refactor`, `revert`, `style`, `test`. Format
   `type(scope): subject`, imperative mood.
 - **Subject and body lines ≤ 100 characters** (config-conventional).
 - **Breaking changes:** `feat!:` (or a `BREAKING CHANGE:` footer) — drives a
@@ -99,3 +99,14 @@ it points here.
 - Releases are intentional via **release-please**: merge the rolling release PR
   to cut the tag, GitHub release, and CHANGELOG entry. `task release:*` remains a
   manual override. Nothing auto-releases on a normal merge.
+- **The commit type drives the release.** release-please reads the type to pick
+  the CHANGELOG section and bump: `feat` → **Features** (minor), `fix` → **Bug
+  Fixes** (patch), `feat!` / `BREAKING CHANGE:` → major. The rest (`build`,
+  `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`) don't cut
+  a release on their own — they ride along in the next one.
+- Issue types map many-to-one onto these commit types — see
+  [project-management.md](project-management.md).
+- **Milestones are named after release versions** (`v1.1.0` = the git tag): the
+  pre-ship "what must land before this version" container, distinct from
+  release-please cutting the tag post-merge — same name, different jobs. See
+  [project-management.md](project-management.md).

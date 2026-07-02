@@ -311,8 +311,9 @@ full) # project_management=github; github_org=test-org (an org repo)
     [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
     # project_management=github → the repo label-setup script renders
     [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
-    # org + github → the org issue-fields setup script renders too
+    # org + github → the org issue-fields + issue-types scripts render too
     [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
+    [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
@@ -326,8 +327,23 @@ meta) # project_management=linear
     [ ! -f scripts/setup-github-project.sh ] || err "setup-github-project.sh rendered but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management=none for profile '$profile'"
+    [ ! -f scripts/setup-github-issue-types.sh ] || err "org-gated setup-github-issue-types.sh rendered for personal-repo profile '$profile'"
     ;;
 esac
+
+# ── 9c. Issue forms: default assignee always renders; the org issue `type:` key
+#       is present only on org repos (issue types are org-level) ──
+if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
+    grep -q '^assignees:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml is missing the default assignee"
+    case "$profile" in
+    full) # org repo (github_org != author) → the form declares the org issue type
+        grep -q '^type: Bug$' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing 'type: Bug' on an org repo"
+        ;;
+    *) # personal repo → no org issue types, so the type: key must be absent
+        ! grep -q '^type:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml has a type: key on a personal repo (org-only)"
+        ;;
+    esac
+fi
 
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
