@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.14.0](https://github.com/evanharmon1/harmon-init/compare/v3.13.0...v3.14.0) (2026-07-02)
+
+
+### Features
+
+* **template:** status:setup audits the GitHub PM setup tasks ([#192](https://github.com/evanharmon1/harmon-init/issues/192)) ([ac7d8d2](https://github.com/evanharmon1/harmon-init/commit/ac7d8d2eda878fdd1660c5517f02d37981f77ea9))
+
 ## [3.13.0](https://github.com/evanharmon1/harmon-init/compare/v3.12.0...v3.13.0) (2026-07-02)
 
 
