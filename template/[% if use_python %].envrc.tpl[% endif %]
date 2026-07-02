@@ -1,0 +1,15 @@
+# op inject source — resolve the op:// references below into the gitignored
+# .envrc.local (which .envrc sources), so secrets never touch git:
+#
+#   op inject -i .envrc.tpl -o .envrc.local
+#
+# op:// references are pointers, not secrets, so THIS file is safe to commit; the
+# resolved .envrc.local is gitignored — never commit it. Re-run the command above
+# whenever you change a reference. Setup steps are in docs/CHECKLIST.md.
+#
+# Examples (uncomment and point each at your own 1Password item):
+#
+# export CLOUDFLARE_API_TOKEN="op://Vault/item/CLOUDFLARE_API_TOKEN"
+# export AWS_ACCESS_KEY_ID="op://Vault/item/Access Key ID"
+# export AWS_SECRET_ACCESS_KEY="op://Vault/item/Secret Access Key"
+# export TF_VAR_example="op://Vault/item/example"
