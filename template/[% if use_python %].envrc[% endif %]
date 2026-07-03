@@ -1,4 +1,10 @@
-# direnv: auto-activate the uv-managed virtualenv when you cd into the project.
-# Run `direnv allow` once to trust this file (the devcontainer does it in
-# post-create). Create the venv first with `uv sync` / `task install`.
+# direnv config for this project. Run `direnv allow` once to trust it (the
+# devcontainer does this in post-create).
+
+# Auto-activate the uv-managed virtualenv (create it with `uv sync` / `task install`).
 [ -f .venv/bin/activate ] && source .venv/bin/activate
+
+# Secret env vars (cloud creds, TF_VAR_*, ...) must NOT live in this committed
+# file. Put op:// references in .envrc.tpl, resolve them into the gitignored
+# .envrc.local with `op inject -i .envrc.tpl -o .envrc.local`, and they load here:
+[ -f .envrc.local ] && source .envrc.local

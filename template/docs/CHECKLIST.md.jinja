@@ -143,6 +143,13 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
       `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only
       `.env.example`-style files
+[% if use_python %]
+- [ ] For direnv env vars that include secrets (cloud creds, `TF_VAR_*`), put
+      `op://` references in `.envrc.tpl`, then run
+      `op inject -i .envrc.tpl -o .envrc.local`. `.envrc` (committed, activates the
+      venv) sources the resolved `.envrc.local` (gitignored) — never commit resolved
+      secrets. `direnv allow` once to trust it
+[% endif %]
 [% if devcontainer %]
 - [ ] Devcontainer secrets: create a **1Password environment** that mounts
       `.devcontainer/devcontainer.env` (and `.devcontainer/dev/devcontainer.env`)

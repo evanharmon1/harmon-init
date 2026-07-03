@@ -87,6 +87,11 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# direnv: resolved secret exports, generated from .envrc.tpl via `op inject`
+# (never committed). .envrc itself is committed and only activates the venv and
+# sources this file when present.
+.envrc.local
 [% endif %]
 [% if include_terraform %]
 
