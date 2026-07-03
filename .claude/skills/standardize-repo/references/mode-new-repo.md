@@ -121,10 +121,8 @@ project directory):
    plus `uv sync` / `pnpm install` if applicable).
 5. `task release:init` — when `github_release_init` (tags `v0.1.0`, pushes it,
    `gh release create`). Requires the remote to exist (step 3).
-6. `task util:bunch-install` — when `bunch_add` (macOS-only); moves the
-   generated `.meta/*.bunch` to iCloud and symlinks it back.
-7. `task util:obsidian-install` — when `obsidian_project_add` (macOS-only);
-   moves the generated `.meta/*.md` to the vault and symlinks it back.
+6. `task util:bunch-add` — when `bunch_add` (macOS-only).
+7. `task util:obsidian-add` — when `obsidian_project_add` (macOS-only).
 
 If you left the side-effectful answers at their `no` defaults (the CI-safe,
 recommended path for unattended generation), only steps 1–2 run and you finish
