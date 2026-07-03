@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.15.1](https://github.com/evanharmon1/harmon-init/compare/v3.15.0...v3.15.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* add required priority key to Agent issue-field options ([#203](https://github.com/evanharmon1/harmon-init/issues/203)) ([afe577e](https://github.com/evanharmon1/harmon-init/commit/afe577ea72e0d1a62b923dbffcbfe9fb11315983))
+
 ## [3.15.0](https://github.com/evanharmon1/harmon-init/compare/v3.14.0...v3.15.0) (2026-07-03)
 
 
