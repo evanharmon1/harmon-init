@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.15.0](https://github.com/evanharmon1/harmon-init/compare/v3.14.0...v3.15.0) (2026-07-03)
+
+
+### Features
+
+* **template:** direnv secrets via .envrc.tpl + op inject ([#195](https://github.com/evanharmon1/harmon-init/issues/195)) ([1370d6c](https://github.com/evanharmon1/harmon-init/commit/1370d6cad602c256d499babb46b6b88df072e372))
+* **template:** security scanning strategy (SAST/SCA/secrets/audits) + Snyk optional/local ([#197](https://github.com/evanharmon1/harmon-init/issues/197)) ([dab73ab](https://github.com/evanharmon1/harmon-init/commit/dab73ab1c6f08d3dd652de31d02b5d11698ad1f3))
+
 ## [3.14.0](https://github.com/evanharmon1/harmon-init/compare/v3.13.0...v3.14.0) (2026-07-02)
 
 
