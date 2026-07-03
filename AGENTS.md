@@ -51,7 +51,17 @@ itself, not against the root copy). The root form is the template rendered with
 harmon-init's own answers (e.g. `[[ ci_runner_labels ]]` → `[ "ubuntu-latest" ]`),
 and template-only logic (`[% if … %]`, `${VERSION}` arg substitution) collapses to
 its concrete value. When you touch a templated file, grep for the sibling and edit
-both.
+both. For **verbatim** twins — template files *without* a `.jinja` suffix, copied
+byte-for-byte into generated repos — `task test:dogfood-parity` (part of `task
+verify`) enforces byte-equality with the root copy, so a fix applied to only one
+side fails the gate instead of silently shipping stale content downstream
+(intentional root-only divergences are allowlisted in
+`scripts/test-dogfood-parity.sh`).
+
+The **standardize-repo skill** is vendored at `.claude/skills/standardize-repo`
+(so the devcontainer and cloud claude-* workflows can use it); the canonical copy
+lives in harmon-devkit (`ai/skills/repo/standardize-repo`). After the canonical
+copy changes, run `task ai:sync-skills` here and commit the refresh.
 
 ## Common Commands
 
