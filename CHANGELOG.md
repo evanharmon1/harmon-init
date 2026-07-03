@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.15.2](https://github.com/evanharmon1/harmon-init/compare/v3.15.1...v3.15.2) (2026-07-03)
+
+
+### Bug Fixes
+
+* **scripts:** correct jq membership test in Status sync ([#205](https://github.com/evanharmon1/harmon-init/issues/205)) ([be41dff](https://github.com/evanharmon1/harmon-init/commit/be41dfff8902a5193cc41e3f48d1b676550e5e29))
+
 ## [3.15.1](https://github.com/evanharmon1/harmon-init/compare/v3.15.0...v3.15.1) (2026-07-03)
 
 
