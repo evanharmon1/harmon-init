@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.16.0](https://github.com/evanharmon1/harmon-init/compare/v3.15.2...v3.16.0) (2026-07-03)
+
+
+### Features
+
+* **template:** upstream downstream-pioneered install + markdownlint hardening ([#210](https://github.com/evanharmon1/harmon-init/issues/210)) ([528b903](https://github.com/evanharmon1/harmon-init/commit/528b903a44680cf6077b4004861ab5163517bc4d))
+
+
+### Bug Fixes
+
+* **template:** setup-github-project [#205](https://github.com/evanharmon1/harmon-init/issues/205) parity + stale SNYK_TOKEN setup check ([#209](https://github.com/evanharmon1/harmon-init/issues/209)) ([48dda0a](https://github.com/evanharmon1/harmon-init/commit/48dda0a38cf97860ac746bf83b304adcfadbddea))
+
 ## [3.15.2](https://github.com/evanharmon1/harmon-init/compare/v3.15.1...v3.15.2) (2026-07-03)
 
 
