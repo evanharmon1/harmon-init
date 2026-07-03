@@ -79,8 +79,16 @@ Defaults worth knowing so you only override what's wrong (from `copier.yml`):
   `github_remote_create`, `github_release_init`, `bunch_add`,
   `obsidian_project_add`, `run_task_install`. The repo already exists and has a
   remote/history — let those run by hand later, not as a copier `_task`. Pass
-  `--defaults` (with the `--data` overrides above) to lock the rest down
-  non-interactively, or answer interactively and explicitly decline each one.
+  `--defaults` to avoid prompts **and explicitly pass each one `=false`** — do
+  NOT rely on copier.yml's `no` defaults. On a **re-adopt over an existing
+  `.copier-answers.yml`** (every v2 repo — see Path A's v2 note), copier seeds
+  defaults *from that answers file*, so a stale `true` there sails straight
+  through `--defaults` and **fires the side-effect `_task`** (observed: a v2
+  re-adopt's stale `github_remote_create: true` ran `gh repo create`; a stale
+  `github_release_init: true` would cut a bogus `release:init` v0.1.0).
+  harmon-init ≥ the side-effect-task hardening also gates these on `git_init`,
+  so `git_init=false` neutralizes them on a current template — but pass them all
+  `=false` to stay correct across template versions.
 
 ---
 
@@ -127,8 +135,11 @@ copier copy --trust ~/git/harmon-init . --vcs-ref=HEAD --defaults --overwrite \
   --data project_name="<Formal Project Name>" \
   --data project_slug="$(basename "$(pwd)")" \
   --data github_org="<org-or-user>" \
-  --data git_init=false        # ← REQUIRED: see note below
-  # ...remaining --data; all other side-effect answers already default = no
+  --data git_init=false \
+  --data github_remote_create=false --data github_release_init=false \
+  --data bunch_add=false --data obsidian_project_add=false --data run_task_install=false
+  # ↑ pass EVERY side effect =false (see §1). On a v2 RE-adopt copier seeds
+  #   defaults from the stale .copier-answers.yml, so they do NOT "default to no".
 ```
 
 `--vcs-ref=HEAD` is **mandatory** here when `~/git/harmon-init` is a local path:
@@ -158,6 +169,14 @@ from git rather than hand-merging conflict markers:
    `git checkout main -- <Taskfile.yml> <renovate.json> <.gitignore> …`. The repo
    was likely already close to current (hand-synced), so this loses little template
    improvement while preserving every customization.
+   - **`.github/CODEOWNERS` is access control — never silently reduce it.** The
+     template renders it from the single `code_owner` answer (`* @code_owner`),
+     which can't hold a second owner or a team, so the adopt render drops any
+     extras. `git checkout main -- .github/CODEOWNERS` (or merge the owners) and
+     **confirm any owner change with the user** — dropping a code owner is a
+     security regression, not a tooling sync. (harmon-init ≥ the CODEOWNERS-freeze
+     change keeps it via `_skip_if_exists`, and `verify-applied.sh` FAILS if an
+     owner present on `main` is missing post-adopt — but check it by hand too.)
    - **If you restore a customized `Taskfile.yml` but keep the template's
      workflows, reconcile the contract.** The template's `.github/workflows/*`
      delegate to `task` targets (e.g. `test:tasks`, `test:hooks`,
@@ -229,8 +248,12 @@ These are the recurring drifts harmon-init exists to fix (source:
    ln -sf ../AGENTS.md .github/copilot-instructions.md   # note: ../ from .github/
    ```
 
-   Merge any unique guidance from the old real file into `AGENTS.md` *before*
-   replacing it with a symlink. Then confirm the tool excludes are in place so
+   **Fold the old file's *substantive* guidance** — architecture, directory
+   structure, real commands, project-specific conventions — into `AGENTS.md`
+   *before* replacing it with a symlink. Don't settle for a thin fold that keeps
+   only the one-line project blurb (and a `TODO: run /init`): the old file's real
+   content is the whole point of the merge. Then confirm the tool excludes are
+   in place so
    linters don't choke on the symlinks: `lefthook.yml`'s prettier hook must
    `exclude` `CLAUDE.md`, `GEMINI.md`, and `.github/copilot-instructions.md`
    (these are explicit excludes in the template's `lefthook.yml`).
@@ -278,6 +301,94 @@ These are the recurring drifts harmon-init exists to fix (source:
    `Brewfile`; make scripts portable to macOS bash 3.2 (no `mapfile`, no
    `grep -P`).
 
+6. **v2→v3 re-adopt cleanup (the v2 question set predates lefthook/gitleaks).**
+   After the Path B render, **delete the superseded v2 artifacts** the template no
+   longer ships: `.pre-commit-config.yaml` (→ lefthook); `check_for_pattern.sh` +
+   any `test/whisperConfig.yml` (→ gitleaks); a v2 `package.json` (eslint/prettier
+   stubs) and `requirements.txt` (whispers/pre-commit deps) on a non-node repo;
+   `.ansible-lint` when ansible isn't in the pipeline; and the old `build.yaml` /
+   `security.yml` / `validate.yml` workflows the template's `build.yml` supersedes.
+   Untrack a now-gitignored root `todo.md` and drop a stale
+   `<old-slug>.code-workspace`. **`node_modules/` gotcha:** an older `general`
+   (`use_node=false`) `.gitignore` did NOT ignore `node_modules/`, so a v2 repo
+   carrying one needs it added (now fixed in harmon-init — present in every
+   profile). Restore the rich `README.md` from `main` and update its stale refs
+   (badges `validate.yml`/`build.yaml` → `build.yml`; `task validate` → `task
+   verify`; drop `.pre-commit-config.yaml`/`.ansible-lint` mentions). Fold the old
+   real `CLAUDE.md` into `AGENTS.md` per step 1.
+
+   **Three traps that block the first commit/push after a v2→v3 render:**
+   (a) **Stale pre-commit.com hook** — deleting `.pre-commit-config.yaml` leaves the
+   installed `.git/hooks/pre-commit` behind, which blocks *every* commit with
+   "No .pre-commit-config.yaml file was found"; run **`pre-commit uninstall`**,
+   then `task install:hooks` (lefthook) to wire the v3 hooks. Two things make this
+   recur: the stub is often **globally seeded** by git's `init.templateDir`
+   (`~/.git-template/hooks/pre-commit`, from a past `pre-commit init-templatedir`),
+   so it lands in *every* clone/`git init` — even repos with no
+   `.pre-commit-config.yaml`, where it **silently no-ops** (`--skip-on-missing-config`)
+   and hides next to lefthook's hooks; and `lefthook install` backs it up to
+   `pre-commit.old` while `lefthook uninstall` **restores** it, so a bare `rm` isn't
+   durable. Fix for good: `grep -rl 'generated by pre-commit' .git/hooks` → `rm` the
+   matches, then (if it holds only that stub) `git config --global --unset
+   init.templateDir` + `rm -rf ~/.git-template`. All local — `.git/hooks/*` is never
+   tracked, so there is nothing to commit or push. (b) **gitleaks
+   scans full history** — adopting it surfaces pre-existing leaks (a committed
+   key/cert/`.env`) that fail the pre-push hook *and* CI; for each KNOWN finding
+   add its fingerprint (`gitleaks detect --report-format json` → `.Fingerprint`)
+   to **`.gitleaksignore`** AND **rotate the secret** (urgent if the repo is
+   public — the allowlist stops re-flagging, it does not un-expose the key).
+   (c) **Mis-shebanged scripts** — a `#!/bin/sh` script that uses bash features
+   (`&>`, `function`, arrays) makes `shfmt` parse it as POSIX and fail; fix the
+   shebang to `#!/usr/bin/env bash`.
+
+   Path B's `--overwrite` also **resets `.gitignore`** to the template's —
+   re-merge the repo's custom ignores (binary/cache patterns like `*.dll`,
+   `.output/`) from `main`, but NOT what v3 now tracks (`*.code-workspace`,
+   `.vscode/settings.json`, `.meta/`).
+
+7. **Scope the repo's linters past reference/example content.** A repo that
+   *houses* example or vendored content — a boilerplate library (`templates/`,
+   `snippets/`), copy-paste Windows scripts, an agent-skill source — should not be
+   held to its own operational lint standard for that content (the same reason the
+   template excludes `.claude/**`). Patterns that worked: `lint:shell`'s
+   `SHELL_FILES` adds `':!:templates/' ':!:snippets/'`; `scripts/lint-hygiene.sh`
+   skips `*.cmd`/`*.bat` (Windows files use CRLF by convention). NB a `SHELL_FILES`
+   exclusion does **not** apply when lefthook passes `{staged_files}` via
+   `CLI_ARGS`, so add a matching lefthook `exclude:` if staged edits to that
+   content must skip too. A **chezmoi** dotfiles source is a special case: it is
+   **both** a chezmoi source directory **and** a harmon-init-templated repo, so its
+   repo-maintenance files sit at the root next to the dotfiles — and chezmoi must
+   not deploy any of them to `$HOME`. Handle it explicitly:
+   - **Root `Brewfile` for repo tooling, separate from the deployed one.** The repo
+     needs a root `Brewfile` (its own toolchain, for `task install` / `status.sh`),
+     kept distinct from the `private_Brewfile` chezmoi renders to `~/Brewfile` (the
+     full dev-machine set). `diff-template.sh` reports the root `Brewfile` as
+     `MISSING` because chezmoi names its copy `private_Brewfile` — a **false
+     MISSING**; add a root `Brewfile`, don't "restore" one.
+   - **`.chezmoiignore` every repo-maintenance file.** Files not starting with `.`
+     are NOT auto-ignored, so `AGENTS.md`, `GEMINI.md`, `DESIGN.md`, `CHANGELOG.md`,
+     `commitlint.config.mjs`, `lefthook.yml`, `Taskfile.yml`, `Brewfile`,
+     `renovate.json`, `release-please-config.json`, and the `scripts/`, `specs/`,
+     `tests/` dirs would otherwise be deployed to `$HOME` on the next
+     `chezmoi apply`. Add them all to `.chezmoiignore` and verify with
+     `chezmoi status` (an `A` line = would be added to `$HOME`) / `chezmoi managed`.
+   - The `.tmpl` files themselves are safe: they aren't `*.sh`/`*.yml` (so
+     `lint:shell`/`yamllint` skip them) and `{{ .chezmoi.* }}` Go-templates don't
+     match the copier marker scan. The one lint snag is app-managed configs missing
+     a trailing newline (e.g. `private_karabiner.json`) — append one.
+   - **If the source uses chezmoi `git.autoCommit`/`autoPush`, reconcile it with
+     lefthook.** A chezmoi source that auto-commits to `main` collides with the
+     template hooks head-on — the `no-commit-to-main` guard blocks the commit and
+     commitlint rejects chezmoi's non-Conventional message ("Update dot_zshrc"). To
+     keep the auto-push convenience, **trim `lefthook.yml` to the gitleaks `pre-push`
+     only** (drop `pre-commit` + `commit-msg`), so secrets are still caught before
+     they leave — an intentional, documented divergence (expect a future
+     copier-update conflict; keep the trimmed version). Also beware the **`git add .`
+     sweep**: chezmoi's `autoCommit` stages the *whole* source tree, so an uncommitted
+     repo-tooling edit sitting in the clone gets swept into a dotfile auto-commit and
+     pushed — keep the tree clean, or guard `chezmoi re-add` to skip when
+     `git status --porcelain` is non-empty.
+
 ---
 
 ## 5. Verify, then commit on the branch
@@ -294,6 +405,15 @@ assets/verify-applied.sh .
 `build` for node projects, then `validate`. `verify-applied.sh` confirms the
 adoption actually took (canonical AGENTS.md + symlinks, docs layout, `.yml`
 extensions, renovate annotations, no leaked copier vars). Fix everything they flag.
+
+**git-lfs repos: `lefthook install` shadows git-lfs's pre-push.** If the repo uses
+git-lfs, installing lefthook overwrites `.git/hooks/pre-push` with lefthook's
+(gitleaks) and moves git-lfs's aside to `pre-push.old` — so the git-lfs pre-push that
+uploads LFS objects on push **stops running, silently** (the push still succeeds, but
+LFS blobs may never upload). Detect with `grep -l git-lfs .git/hooks/*` after install;
+if git-lfs's pre-push was shadowed, make lefthook run it too (add a `pre-push` command
+that invokes `git lfs push`, or chain `pre-push.old`) and confirm with
+`git lfs push --dry-run origin HEAD` that objects still upload.
 
 Then stage, review the **full** diff one more time, and commit on the feature
 branch with a Conventional Commit message (types enforced by commitlint):

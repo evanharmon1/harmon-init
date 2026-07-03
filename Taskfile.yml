@@ -66,6 +66,7 @@ tasks:
     cmds:
       - task: check
       - task: test:tasks
+      - task: test:dogfood-parity
       - task: test:hooks
       - task: test:template
 
@@ -272,6 +273,17 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
+
+  test:dogfood-parity:
+    desc: Verbatim (non-jinja) template files must byte-match their root twins
+    cmds:
+      - ./scripts/test-dogfood-parity.sh
+
+  # ── AI assets ─────────────────────────────────────────────────
+  ai:sync-skills:
+    desc: Re-sync the vendored standardize-repo skill from harmon-devkit (canonical copy)
+    cmds:
+      - rsync -a --delete --exclude=.DS_Store ~/git/harmon-devkit/ai/skills/repo/standardize-repo/ .claude/skills/standardize-repo/
 
   # ── Security ──────────────────────────────────────────────────
   security:

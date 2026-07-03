@@ -125,7 +125,20 @@ Universal task targets every repo has (from the template):
 (Snyk), `security:sca` (Snyk), `bootstrap`, `install`, `install:hooks`,
 `release:init`, `release:patch`, `release:minor`, `release:major`, `clean`,
 `status` (+ `status:git|gh|code|env`), `status:setup`, `util:bunch-add`,
-`util:bunch-install`, `util:obsidian-add`, `util:obsidian-install`.
+`util:obsidian-add`.
+
+**Lint vs. format discipline (read-only gates).** Every `lint:*` target and the
+`check`/`verify` aggregates are **read-only** — they report and fail, never
+modify files. All auto-fixing lives in `format`, `format:file`, and `fix` (=
+format then lint); **no `lint:*` body runs `--fix`/`--write`/`-w`/`-i`**.
+Pre-commit hooks call the read-only `lint:*` so a failing check blocks-and-tells
+instead of silently rewriting the tree. **Flag any `lint:*` that mutates** — the
+classic regression is `lint:markdown` carrying `markdownlint-cli2 --fix`, which
+makes CI report green while discarding the fix and makes the markdown hook commit
+the unfixed staged blob (no `stage_fixed`). Formatters (Prettier, Black, shfmt,
+`terraform fmt`, markdownlint) have a check side in `lint:*` + a write side in
+`format`; pure analyzers (shellcheck, actionlint, yamllint, ESLint, ansible-lint)
+are check-only by design.
 
 `status:setup` is a **setup-completeness audit** (run by hand, not part of the
 default dashboard): it checks the repo against `docs/CHECKLIST.md` and reports
@@ -138,7 +151,8 @@ quick first pass when auditing an already-standardized repo.
 Notable command bodies (for an auditor checking they match):
 
 - `lint:shell` → `shellcheck --severity=error` + `shfmt -d`
-- `lint:markdown` → `npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' …`
+- `lint:markdown` → `npx --yes markdownlint-cli2 '**/*.md' '#.claude/**' …`
+  (check-only; **no `--fix`** — auto-fix lives in `format`)
 - `lint:hygiene` → `./scripts/lint-hygiene.sh`
 - `security:secrets` → `gitleaks detect --no-banner --redact --source .`
 - `install` → `brew bundle --file=Brewfile` (+ `uv sync` / `pnpm install`) →
@@ -163,8 +177,8 @@ Notable command bodies (for an auditor checking they match):
   **type enum** (read from `commitlint.config.mjs`, identical in template and
   both live repos):
 
-  ```
-  build, change, chore, ci, docs, feat, fix, perf, refactor, remove, revert, style, test
+  ```text
+  build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test
   ```
 
   Format `type(scope): subject`, imperative mood. Subject/body lines ≤ 100 chars
@@ -373,7 +387,7 @@ install the Renovate GitHub App on the repo. Conventions:
   Terraform providers each into one PR.
 - **`anthropics/claude-code-action` ejection:** removed from the Actions group
   (`groupName: null`) and `minimumReleaseAge: 0 days` (ships near-daily; grouping
-  + the 3-day gate kept the whole batch perpetually pending). Rule ordered AFTER
+  - the 3-day gate kept the whole batch perpetually pending). Rule ordered AFTER
   the group rules so the override wins.
 - npm `overrides` deptype disabled (avoids `EOVERRIDE`).
 - `dependencyDashboard: true`; weekly schedule `before 9am on Monday`,
@@ -448,8 +462,67 @@ install the Renovate GitHub App on the repo. Conventions:
 - Other root files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `LICENSE`
   (mit/private), `<slug>.code-workspace`, `.vscode/{settings,extensions}.json`,
   `.coderabbit.yaml` (CodeRabbit reviews — [manual] install the app),
-  `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/{bug,feature,task,research}.md`,
-  `.dockerignore`. **[copier]**
+  `.github/PULL_REQUEST_TEMPLATE.md`, the `.github/ISSUE_TEMPLATE/` YAML **Issue
+  Forms** (`{bug,feature,task,research}.yml` and `config.yml`, always generated —
+  see §1.13 for the `type:`/assignee behavior), `.dockerignore`. **[copier]**
+
+### 1.13 Project management (GitHub Projects) — when `project_management: github`
+
+The `project_management` copier answer (`github` / `linear` / `none`, default
+`none`) gates a GitHub-Projects playbook. **`github`** ships
+`docs/project-management.md` — the authoritative doc (statuses, fields, labels,
+milestones, hierarchy, cross-repo, views) — plus the setup tasks/scripts below.
+**`linear`** ships a `# Linear` TODO stub; **`none`** ships neither. **[copier]**
+for the doc/tasks/workflows; **[manual]** to run the setup (they hit the live
+GitHub API and are shellcheck/shfmt-gated only, never CI-tested).
+
+**One default Project (V2) per owner**, titled after the owner's GitHub login
+(`<owner> Project`); every repo feeds the one board. Slice it (by Product /
+`layer:` / Agent) instead of spinning up more projects.
+
+**Setup tasks** (idempotent + non-destructive; **[copier]** generates them, **[manual]** to run):
+
+| Task | Needs | Rendered when | Does |
+|---|---|---|---|
+| `setup:github-project` | `gh` + `project` scope | `project_management: github` | Create/sync the board + `Status` pipeline; write the `ORG_PROJECT_ID` org var (org only); on a **personal** account also create Priority/Effort/Product/Agent as project fields |
+| `setup:github-labels` | `gh` + repo write | `project_management: github` | `gh label create --force` for the five label families |
+| `setup:github-issue-fields` | `gh` + `admin:org` | `github` **and** org owner | Add the org **issue fields** Product + Agent (public preview) |
+| `setup:github-issue-types` | `gh` + `admin:org` | **org owner** (independent of `project_management`) | Ensure org issue types Bug/Feature/Task/Research (Task is GitHub's default; adds Research) |
+
+**Conventions the doc encodes** (audit the doc + the field/label/workflow
+artifacts; the prose rules are guidance, not lint):
+
+- **`Status`** — project single-select, one meaning ("where in delivery"):
+  Inbox/Icebox/Next · Todo/Shaping/Ready/Agent Queue · In Progress/Verifying/
+  In Review/Ready to Merge · Done/Deployed/Accepted. `Done` is the sole terminal
+  status; **no `Archived`** (native 90-day auto-archive); Canceled/Duplicate are
+  close reasons; Blocked is the native blocked-by relationship or `blocked` label.
+  `Agent Queue` is the AI-agent hand-off lane.
+- **Fields** — `Status` is a project field. **Priority + Effort are GitHub built-in
+  issue fields** (Effort must be a **Number** — story points, Fibonacci — so views
+  can sum it); **Product + Agent** are org issue fields from
+  `setup:github-issue-fields`. On a personal account all four are project fields.
+- **Issue types** — Bug/Feature/Task/Research (org). The Issue Forms set `type:` on
+  org repos and a **default assignee**, and apply **no labels** (type is the Type
+  field, not a label).
+- **Labels** — repo-level, five color families (Concerns / Source / Workflow /
+  Layer / Domain), orthogonal to Status and Type. There is no shared org label
+  pool; run `setup:github-labels` per repo.
+- **Milestones** — named after release versions (title == git tag), small +
+  rolling, preferred over iterations pre-launch.
+  `.github/workflows/close-milestone-on-release.yml` closes the matching milestone
+  on release publish — **[copier]** when `use_release_please` + `github`.
+- **Views** (Board / Triage / Agent queue / Planning / Mine) are **UI-only** —
+  Projects V2 has no view API. **[manual]**.
+- **Hierarchy** — sub-issues, no Epic type: the parent holds the spec +
+  milestone/project (children inherit both); leaves hold the `Task` type + `Effort`
+  points.
+
+**Org-only automation** (`github_org != author`):
+`.github/workflows/project-automation.yml` syncs `Status` from PR/CI events as the
+CI GitHub App, reading the `ORG_PROJECT_ID` org variable (title fallback).
+**[copier]**. The project's built-in **"Auto-add to project"** workflow
+(**[manual]**, UI, no API) puts every issue/PR on the board.
 
 ---
 
@@ -514,7 +587,7 @@ Adds (all [copier]):
 - **`include_terraform`** → `terraform/` skeleton (`main.tf`, `variables.tf`,
   `outputs.tf`, `tfvars.env.example`); tasks `lint:terraform` (`fmt -check`),
   `lint:terraform:validate`, `validate`→validate; lefthook terraform (pre-commit)
-  + terraform-validate (pre-push); terraform devcontainer feature; Renovate
+  - terraform-validate (pre-push); terraform devcontainer feature; Renovate
   Terraform-providers group; hashicorp/terraform extension.
 - **`include_ansible`** → `ansible/` skeleton (`ansible.cfg`, `requirements.yaml`,
   `inventory/ playbooks/ roles/` each `.gitkeep`); **`.ansible-lint`**; tasks
@@ -536,8 +609,7 @@ Like `general` (no `build`/framework). [copier]
 
 - **[manual] CHECKLIST:** decide the docs toolchain (plain markdown / Obsidian
   vault / static site generator).
-- `obsidian_project_add` (default no) generates a vault note and runs
-  `util:obsidian-install` post-gen; `util:obsidian-add` scaffolds one later.
+- `obsidian_project_add` (default no) wires `util:obsidian-add` + a vault note.
 
 ---
 
@@ -566,9 +638,8 @@ Legitimately repo- or type-specific differences. An auditor should treat these a
   repos (`github_org == author_git_provider_username`). Org repos get all three.
 - **`design-language.md` / DESIGN.md web section** only for web types; shadcn/ui
   named only for `web-app`.
-- **macOS-only meta** (`util:bunch-add`/`util:bunch-install` /
-  `util:obsidian-add`/`util:obsidian-install`, `.meta/`, Bunch cask) gated by
-  `bunch_add`/`obsidian_project_add` (default no).
+- **macOS-only meta** (`util:bunch-add`/`util:obsidian-add`, `.meta/`, Bunch
+  cask) gated by `bunch_add`/`obsidian_project_add` (default no).
 
 ### 3.2 Tech-stack preferences (web), expected to vary by repo
 

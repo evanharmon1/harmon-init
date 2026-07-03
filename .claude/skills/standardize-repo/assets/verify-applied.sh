@@ -33,9 +33,14 @@ cd "$target"
 have() { command -v "$1" >/dev/null 2>&1; }
 
 fail=0
+fail_msgs=""
 err() {
     echo "FAIL: $*" >&2
     fail=1
+    # accumulate a one-line summary of each failed check for the final verdict,
+    # so "FAILED" names what failed rather than trailing the advisory drift WARN
+    fail_msgs="${fail_msgs}    - $(printf '%s' "$*" | head -n 1)
+"
 }
 
 echo "Verifying applied conventions in: $(pwd)"
@@ -156,16 +161,20 @@ marker_re="\[\[-? ($varpfx)|\{\{-? ($varpfx)|\[%-? ($blockkw) "
 # Jinja ({{ x }} / {% x %}) — Ansible templates, nginx configs, etc. — and the
 # {{ <stem> }} branch of marker_re can't tell `{{ github_runner_image }}` (a real
 # Ansible var) from a copier leak. Copier's own delimiters are [[ ]] / [% %], so
-# dropping these files loses no real-leak coverage.
+# dropping these files loses no real-leak coverage. Likewise drop anything under
+# a `skills/` dir: agent-skill references/assets legitimately DOCUMENT copier's
+# [[ ]] / [% %] delimiters as examples (the standardize-repo skill itself does),
+# so they would false-positive on the repo that HOSTS the skill — cf. the
+# .claude/** exclude in the markdownlint config.
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     leaks=$(git ls-files --cached --others --exclude-standard -z 2>/dev/null |
         xargs -0 grep -IlE "$marker_re" 2>/dev/null |
-        grep -vE '\.(j2|jinja)$' || true)
+        grep -vE '\.(j2|jinja)$|(^|/)skills/' || true)
 else
     leaks=$(grep -rIlE "$marker_re" \
         --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv \
         --exclude-dir=.terraform --exclude-dir=.task --exclude-dir=.worktrees \
-        --exclude-dir=dist --exclude='*.j2' --exclude='*.jinja' . 2>/dev/null || true)
+        --exclude-dir=dist --exclude-dir=skills --exclude='*.j2' --exclude='*.jinja' . 2>/dev/null || true)
 fi
 if [ -n "$leaks" ]; then
     err "unrendered template markers found in:"
@@ -199,9 +208,29 @@ if [ -f .copier-answers.yml ] && [ -x "$diff_tool" ] && have copier && have yq; 
     fi
 fi
 
+# ── 7. CODEOWNERS must not lose owners on adopt (access-control regression) ─
+# CODEOWNERS is rendered from the single `code_owner` answer (`* @owner`), so a
+# Path-B adopt over a repo with MORE owners (or a team) silently drops them — an
+# access-control change that must be surfaced and confirmed, never auto-applied.
+# harmon-init also freezes CODEOWNERS via _skip_if_exists; this is the belt to
+# that suspenders (and catches a hand-overwritten CODEOWNERS too). Compare the
+# @owners in the pre-adopt CODEOWNERS (on `main`) against the current one; skip
+# cleanly when there is no main, no CODEOWNERS, or not a git tree.
+co=".github/CODEOWNERS"
+if [ -f "$co" ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+    git cat-file -e "main:$co" 2>/dev/null; then
+    before="$(git show "main:$co" 2>/dev/null | grep -oE '@[A-Za-z0-9_/-]+' | sort -u)"
+    after="$(grep -oE '@[A-Za-z0-9_/-]+' "$co" 2>/dev/null | sort -u)"
+    dropped="$(comm -23 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep -v '^$' || true)"
+    if [ -n "$dropped" ]; then
+        err "CODEOWNERS dropped owner(s) present on main: $(printf '%s ' $dropped)— adopting must NOT silently reduce access. The template's single code_owner answer can't hold multiple owners/teams; restore the dropped owner(s) and confirm the change with the user."
+    fi
+fi
+
 # ── Result ──────────────────────────────────────────────────────────
 if [ "$fail" -ne 0 ]; then
-    echo "verify-applied: FAILED" >&2
+    echo "verify-applied: FAILED — checks that did not pass:" >&2
+    printf '%s' "$fail_msgs" >&2
     exit 1
 fi
 echo "verify-applied: PASS"

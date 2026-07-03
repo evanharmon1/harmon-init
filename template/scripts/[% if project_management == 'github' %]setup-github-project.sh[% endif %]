@@ -165,7 +165,7 @@ else
         existing=$(printf '%s' "$fields_json" |
             jq -c '[.data.node.fields.nodes[] | select(.name=="Status") | .options[] | {name, color: (.color // "GRAY" | ascii_upcase), description: (.description // "")}]')
         desired=$(jq -cn --argjson ex "$existing" --argjson pl "$status_pipeline" \
-            '$ex + [ $pl[] | select( ([ $ex[].name ] | index(.name)) == null ) ]')
+            '$ex + [ $pl[] | select( .name as $n | ([ $ex[].name ] | index($n)) == null ) ]')
     fi
     frag=$(printf '%s' "$desired" | jq -r "$opts_to_graphql")
     gh api graphql -f f="$status_field_id" \
