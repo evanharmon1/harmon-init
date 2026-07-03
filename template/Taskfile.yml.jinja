@@ -445,12 +445,12 @@ tasks:
 [% endif %]
 
   security:sast:
-    desc: Static application security testing (Snyk)
+    desc: "Static application security testing (Snyk) — optional/local, needs SNYK_TOKEN (not in CI or `task security`)"
     cmds:
       - snyk code test --exclude=.worktrees --severity-threshold=high
 
   security:sca:
-    desc: Software composition analysis (Snyk)
+    desc: "Software composition analysis (Snyk) — optional/local, needs SNYK_TOKEN (not in CI or `task security`)"
     cmds:
 [% if use_node %]
       - snyk test --file=pnpm-lock.yaml --severity-threshold=high --show-vulnerable-paths=all
