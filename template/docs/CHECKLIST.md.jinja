@@ -112,8 +112,14 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-astro globals`
 - [ ] Install the shipped prettier config's plugins:
       `pnpm add -D prettier prettier-config-standard prettier-plugin-astro prettier-plugin-tailwindcss`
-- [ ] Approve Astro's native build scripts so `astro build` works:
-      `pnpm approve-builds` (esbuild, sharp) — or add them to `onlyBuiltDependencies`
+- [ ] Approve build scripts so `astro build` works — pnpm 10+ blocks dependency
+      build scripts by default. Add an `onlyBuiltDependencies` list to
+      `pnpm-workspace.yaml` (e.g. `esbuild`, `sharp`, plus `lefthook` if it is a
+      pnpm dep), or run `pnpm approve-builds`
+- [ ] Put pnpm `overrides` and `auditConfig` (security version floors, audit CVE
+      ignores) in `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field —
+      pnpm 10+ silently ignores that field, so overrides declared there vanish on
+      the next lockfile resolve
 - [ ] Review `lighthouserc.json` URLs once routes exist
 [% elif project_type == 'web-app' %]
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
@@ -128,6 +134,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `languageOptions.parserOptions.projectService: true`, to catch a missing
       `await` / floating promise that `tsc` won't. Makes ESLint type-check
       (slower) and needs your tsconfig wired up — skip to keep lint instant.
+- [ ] Put pnpm `overrides` / `auditConfig` / `onlyBuiltDependencies` in
+      `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field — pnpm 10+
+      ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`)
+      via `onlyBuiltDependencies` or `pnpm approve-builds`
 [% elif project_type == 'iac' %]
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
