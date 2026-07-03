@@ -52,16 +52,17 @@ done
 api_version="2026-03-10"
 
 # Agent single-select options. Colors are GitHub's palette: gray, blue, green,
-# yellow, orange, red, pink, purple.
+# yellow, orange, red, pink, purple. `priority` (1-based) is REQUIRED per option
+# on this preview endpoint and sets the display order (1 shows first).
 agent_opts='[
-  {"name":"Claude Code","color":"orange","description":""},
-  {"name":"Codex","color":"blue","description":""},
-  {"name":"Gemini CLI","color":"purple","description":""},
-  {"name":"Qwen Code","color":"green","description":""},
-  {"name":"DeepSeek","color":"red","description":""},
-  {"name":"Kimi K2","color":"yellow","description":""},
-  {"name":"GLM","color":"pink","description":""},
-  {"name":"GitHub Copilot","color":"gray","description":""}
+  {"name":"Claude Code","color":"orange","description":"","priority":1},
+  {"name":"Codex","color":"blue","description":"","priority":2},
+  {"name":"Gemini CLI","color":"purple","description":"","priority":3},
+  {"name":"Qwen Code","color":"green","description":"","priority":4},
+  {"name":"DeepSeek","color":"red","description":"","priority":5},
+  {"name":"Kimi K2","color":"yellow","description":"","priority":6},
+  {"name":"GLM","color":"pink","description":"","priority":7},
+  {"name":"GitHub Copilot","color":"gray","description":"","priority":8}
 ]'
 
 echo "==> Reading existing issue fields for '$org'"
