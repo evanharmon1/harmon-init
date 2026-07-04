@@ -106,6 +106,11 @@ task release:patch   # or release:minor / release:major
 - No direct commits to main (enforced by lefthook `guard:no-commit-to-main` and the
   branch ruleset). Work on feature branches; PRs require code-owner review and the
   `verify` + `security` status checks.
+- **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
+  `main` without Evan's explicit, per-merge approval, even when CI is green and
+  the ruleset would allow it. Open the PR, report that checks pass, then stop;
+  merging is always a human decision. (`.claude/settings.json` backstops this
+  with `permissions.ask` rules on merge commands.)
 - Git hooks are managed by **lefthook** (`task install:hooks`); every hook delegates
   to a Taskfile target so local hooks, CI, and manual runs execute identical
   commands. Never bypass hooks with `--no-verify`.
