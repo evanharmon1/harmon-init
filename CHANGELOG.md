@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.18.0](https://github.com/evanharmon1/harmon-init/compare/v3.17.0...v3.18.0) (2026-07-04)
+
+
+### Features
+
+* **template:** per-file lint-hygiene exemptions via .lint-hygiene-ignore ([#222](https://github.com/evanharmon1/harmon-init/issues/222)) ([cf5a3d3](https://github.com/evanharmon1/harmon-init/commit/cf5a3d37fbfaab47ee96be7a1c7f4a8b45352838)), closes [#213](https://github.com/evanharmon1/harmon-init/issues/213)
+
 ## [3.17.0](https://github.com/evanharmon1/harmon-init/compare/v3.16.0...v3.17.0) (2026-07-04)
 
 
