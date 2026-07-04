@@ -20,7 +20,9 @@ jobs:
       ((github.event_name == 'pull_request') ||
        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
        (github.event_name == 'workflow_run'))
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -147,7 +149,9 @@ jobs:
   project-automation-verify:
     if: always()
     needs: [sync-status]
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     steps:
       - name: Check job results
         run: |
