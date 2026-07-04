@@ -124,6 +124,9 @@ config, toolchain, devcontainer, and dev environment — against the items below
       pnpm 10+ silently ignores that field, so overrides declared there vanish on
       the next lockfile resolve
 - [ ] Review `lighthouserc.json` URLs once routes exist
+- [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
+      iPhone) — the Playwright scaffold ships them commented out, and
+      mobile-first is the convention
 [% elif project_type == 'web-app' %]
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
 - [ ] Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide

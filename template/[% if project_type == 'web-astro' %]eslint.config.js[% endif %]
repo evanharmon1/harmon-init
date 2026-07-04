@@ -4,7 +4,8 @@ import tseslint from 'typescript-eslint'
 import astro from 'eslint-plugin-astro'
 
 export default [
-  { ignores: ['dist/', '.astro/'] },
+  // specs/*/ holds vendored design-handoff bundles (deleted at sign-off).
+  { ignores: ['dist/', '.astro/', 'specs/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...astro.configs.recommended,

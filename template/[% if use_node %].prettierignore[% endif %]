@@ -21,6 +21,8 @@ dist/
 .terraform/
 .venv/
 pnpm-lock.yaml
+# Design-handoff bundles under specs/ (vendored Claude Design exports).
+specs/*/
 
 # release-please owns CHANGELOG.md (writes double blanks Prettier would strip).
 CHANGELOG.md

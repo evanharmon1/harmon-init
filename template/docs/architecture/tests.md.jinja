@@ -19,4 +19,9 @@ How testing works in [[ project_name ]].
 
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
 - `task verify` is the local merge gate; CI runs the same task targets.
+[% if project_type in ['web-astro', 'web-app'] %]
+- Playwright runs desktop Chromium/Firefox/WebKit **and mobile device
+  projects** (e.g. Pixel + iPhone). The scaffold ships the mobile projects
+  commented out — enable them; mobile-first is the convention.
+[% endif %]
 - TODO: document coverage expectations and fixtures as the suite grows.

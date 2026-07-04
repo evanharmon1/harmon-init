@@ -16,6 +16,12 @@
 #     (DirtyLocalWarning). The real working tree is never touched.
 set -euo pipefail
 
+# Git hooks export GIT_DIR/GIT_WORK_TREE (in a linked worktree GIT_DIR points at
+# .git/worktrees/<name>). Left set, the rendered project's `git init` re-targets
+# the CALLING repo instead of the temp dir and the render never becomes a repo
+# (actionlint then fails with "no project was found"). Sanitize unconditionally.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 profile="${1:-minimal}"
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$(mktemp -d -t harmon-init-test-XXXXXX)"
