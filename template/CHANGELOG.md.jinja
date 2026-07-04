@@ -4,9 +4,12 @@ All notable changes to [[ project_name ]] are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Releases are cut manually with `task release:patch|minor|major` (never
+[% if use_release_please %]Releases are intentional: release-please maintains a rolling release PR from
+conventional commits, and merging it cuts the tag, GitHub release, and this
+changelog (`task release:*` remains as a manual override).
+[% else %]Releases are cut manually with `task release:patch|minor|major` (never
 automatically on merge).
-
+[% endif %]
 ## [Unreleased]
 
 ### Added
