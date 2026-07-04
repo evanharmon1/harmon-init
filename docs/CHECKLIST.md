@@ -42,9 +42,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
 - [ ] GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
-      `evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
+      `evanharmon1 Project`) and idempotently sync its `Status` pipeline and
+      `Size` number field — see
       [project-management.md](project-management.md).
-      On a personal account it also creates Priority/Effort/Product/Agent as
+      On a personal account it also creates Priority/Product/Agent/Size as
       project fields (issue fields are org-only); status automation is a separate
       follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label

@@ -167,14 +167,14 @@ drive it.
 The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
-- **Effort** — story points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
+- **Size** — estimation points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
   a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
 
-On a personal account all four are **project fields** (issue fields are
-org-only), created alongside the board by `task setup:github-project`.
+On a personal account there are no issue fields, so `task setup:github-project`
+creates **Priority, Product, Agent, and Size** as project fields.
 
 TODO: finalize each field's options/values.
 
@@ -334,7 +334,7 @@ explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
 inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
 the milestone per child.
 
-The **leaves** hold execution: the `Task` type and the **`Effort` points**. Put
+The **leaves** hold execution: the `Task` type and the **`Size` points**. Put
 the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
 reliable, estimating a big parent isn't — and a view's field sums total the leaves
 for you.
@@ -402,10 +402,10 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   showing only the in-flight `Status` columns (**Ready, Agent Queue, In Progress,
   Verifying, In Review, Ready to Merge**), sorted by `Priority`.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
-  `Priority`, with the **`Effort` field summed in each group header**. The "how
+  `Priority`, with the **`Size` field summed in each group header**. The "how
   big is the pile, and what's the plan" view, and a **dates-free roadmap
   substitute**: the per-group sum shows the weight behind each product without
-  maintaining a timeline. (`Effort` is a **number** field — GitHub sums number
+  maintaining a timeline. (`Size` is a **number** field — GitHub sums number
   fields in group headers, so this totals the points behind each group; a
   single-select can't be summed.)
 - **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.

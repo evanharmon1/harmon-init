@@ -171,7 +171,7 @@ drive it.
 The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
-- **Effort** — story points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
+- **Size** — estimation points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
   a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
@@ -181,22 +181,21 @@ The work-metadata fields:
 **Priority, Product, and Agent are org issue fields**: org-level, defined once,
 and — unlike a project field — the value lives on the **issue**, stays consistent
 across every project the issue belongs to, and shows in the issue timeline. GitHub
-ships **Priority** (plus **Start date** / **Target date**) built in, so
-`task setup:github-issue-fields` only adds **Product** and **Agent**; tune
-Priority's options in the org's issue-field settings.
+ships **Priority** and **Effort** (plus **Start date** / **Target date**) built
+in, left at their defaults, so `task setup:github-issue-fields` only adds
+**Product** and **Agent**.
 
-**Effort is the exception — a project number field** (created by
+**Size is the exception — a project number field** (created by
 `task setup:github-project`): project views can group, filter, and sort by
 issue-field columns, but group-header **sums** only work for project **number**
-fields, and the per-group sum is Effort's whole job (see the Planning view). An
-issue field's type can't be changed after creation, so **delete the org's
-built-in single-select `Effort` issue field** to avoid two Efforts
-(`gh api orgs/<org>/issue-fields` for the id, then
-`gh api --method DELETE orgs/<org>/issue-fields/<id>`).
+fields, and the per-group sum is Size's whole job (see the Planning view). An
+issue field's type also can't be changed after creation, so the built-in
+single-select `Effort` issue field can't hold the numeric estimate — leave it at
+its default (a coarse gut-check) and put points in `Size`.
 
 [% else %]
-On a personal account all four are **project fields** (issue fields are
-org-only), created alongside the board by `task setup:github-project`.
+On a personal account there are no issue fields, so `task setup:github-project`
+creates **Priority, Product, Agent, and Size** as project fields.
 
 [% endif %]
 TODO: finalize each field's options/values.
@@ -378,7 +377,7 @@ explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
 inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
 the milestone per child.
 
-The **leaves** hold execution: the `Task` type and the **`Effort` points**. Put
+The **leaves** hold execution: the `Task` type and the **`Size` points**. Put
 the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
 reliable, estimating a big parent isn't — and a view's field sums total the leaves
 for you.
@@ -446,10 +445,10 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   showing only the in-flight `Status` columns (**Ready, Agent Queue, In Progress,
   Verifying, In Review, Ready to Merge**), sorted by `Priority`.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
-  `Priority`, with the **`Effort` field summed in each group header**. The "how
+  `Priority`, with the **`Size` field summed in each group header**. The "how
   big is the pile, and what's the plan" view, and a **dates-free roadmap
   substitute**: the per-group sum shows the weight behind each product without
-  maintaining a timeline. (`Effort` is a **number** field — GitHub sums number
+  maintaining a timeline. (`Size` is a **number** field — GitHub sums number
   fields in group headers, so this totals the points behind each group; a
   single-select can't be summed.)
 - **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.
