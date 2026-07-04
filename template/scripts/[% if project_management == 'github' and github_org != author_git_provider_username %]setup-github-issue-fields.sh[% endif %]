@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # setup-github-issue-fields.sh — idempotently add the org ISSUE FIELDS that are
 # NOT GitHub built-ins: Product and Agent. GitHub already ships Priority, Effort,
-# Start date, and Target date as built-in issue fields (Priority's options are
-# Urgent/High/Medium/Low; Effort is the size/estimate field), so we never recreate
-# those. Create-if-missing only; it never edits or deletes a field.
+# Start date, and Target date as built-in issue fields, and we never recreate or
+# modify those (leave them at their defaults). Create-if-missing only; it never
+# edits or deletes a field.
+#
+# NB: the numeric, summable estimate is NOT an issue field — it is the Size
+# project NUMBER field (setup-github-project.sh), because only project number
+# fields sum in view group headers. The built-in single-select Effort issue
+# field stays as GitHub ships it (a coarse gut-check, not the estimate).
 #
 # Issue fields are org-level, durable metadata: the value lives on the *issue*
 # (not a project item), is the same across every project the issue belongs to,
@@ -104,4 +109,4 @@ create_field() {
 create_field "Product" "text" "Which product/area it belongs to"
 create_field "Agent" "single_select" "Which agent should implement it" "$agent_opts"
 
-echo "==> Done — added issue fields on '$org': Product, Agent (Priority + Effort are GitHub built-ins)"
+echo "==> Done — added issue fields on '$org': Product, Agent (Priority/Effort/dates are GitHub built-ins)"

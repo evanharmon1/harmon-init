@@ -60,19 +60,22 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% if project_management == 'github' %]
 - [ ] GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
-      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline — see
+      `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline and
+      `Size` number field — see
       [project-management.md](project-management.md).
 [% if github_org != author_git_provider_username %]
       It also writes the project id to the `ORG_PROJECT_ID` org variable that
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
 - [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
-      `admin:org` scope) to add the org's **Product** and **Agent** issue fields
-      (GitHub public preview). Priority + Effort are GitHub built-in issue fields,
-      so they aren't recreated — tune their options in the org's issue-field
-      settings. Idempotent and non-destructive.
+      `admin:org` scope) to add the org's **Product** and **Agent** issue fields.
+      Priority/Effort (and the date fields) are GitHub built-in issue fields, left
+      at their defaults — tune options in the org's issue-field settings if you
+      like. **The numeric estimate is the `Size` project number field** (created
+      by `task setup:github-project`; only project number fields sum in view
+      group headers). Idempotent and non-destructive.
 [% else %]
-      On a personal account it also creates Priority/Effort/Product/Agent as
+      On a personal account it also creates Priority/Product/Agent/Size as
       project fields (issue fields are org-only); status automation is a separate
       follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
 [% endif %]
