@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.17.0](https://github.com/evanharmon1/harmon-init/compare/v3.16.0...v3.17.0) (2026-07-04)
+
+
+### Features
+
+* **template:** add a summable Size project number field (Fibonacci points) ([#214](https://github.com/evanharmon1/harmon-init/issues/214)) ([c6c40f6](https://github.com/evanharmon1/harmon-init/commit/c6c40f6ebc660c8ba48a4e453ef3c647346e852b))
+* **template:** agents must ask before merging to main (convention + settings backstop) ([#221](https://github.com/evanharmon1/harmon-init/issues/221)) ([f3a0779](https://github.com/evanharmon1/harmon-init/commit/f3a0779a3de5ed52f7f2041e526f55cd89dcc0c1))
+* **template:** shield design-handoff bundles under specs/ + mobile Playwright convention ([#219](https://github.com/evanharmon1/harmon-init/issues/219)) ([ef83be2](https://github.com/evanharmon1/harmon-init/commit/ef83be24a4d40c48ce3015616ce0e5dc8153ac6c))
+
+
+### Bug Fixes
+
+* **template:** harden web-astro validators (lychee root-dir, JSON-LD origin check) ([#218](https://github.com/evanharmon1/harmon-init/issues/218)) ([3d4aa67](https://github.com/evanharmon1/harmon-init/commit/3d4aa67de0c372c1a82242c4b135b0865f812ce8))
+
 ## [3.16.0](https://github.com/evanharmon1/harmon-init/compare/v3.15.2...v3.16.0) (2026-07-03)
 
 
