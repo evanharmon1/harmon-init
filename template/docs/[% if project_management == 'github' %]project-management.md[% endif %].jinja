@@ -172,24 +172,31 @@ The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
 - **Effort** — story points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
-  a **number** field so a view can sum it per group
+  a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
 
 [% if github_org != author_git_provider_username %]
-These are **org issue fields** (GitHub public preview): org-level, defined once,
+**Priority, Product, and Agent are org issue fields**: org-level, defined once,
 and — unlike a project field — the value lives on the **issue**, stays consistent
 across every project the issue belongs to, and shows in the issue timeline. GitHub
-ships **Priority** and **Effort** (plus **Start date** / **Target date**) as
-built-in issue fields, so `task setup:github-issue-fields` only adds the two that
-aren't built in — **Product** and **Agent**. Tune Priority's options and make
-**Effort a number** (story points) in the org's issue-field settings, so the
-Planning view can sum it.
+ships **Priority** (plus **Start date** / **Target date**) built in, so
+`task setup:github-issue-fields` only adds **Product** and **Agent**; tune
+Priority's options in the org's issue-field settings.
+
+**Effort is the exception — a project number field** (created by
+`task setup:github-project`): project views can group, filter, and sort by
+issue-field columns, but group-header **sums** only work for project **number**
+fields, and the per-group sum is Effort's whole job (see the Planning view). An
+issue field's type can't be changed after creation, so **delete the org's
+built-in single-select `Effort` issue field** to avoid two Efforts
+(`gh api orgs/<org>/issue-fields` for the id, then
+`gh api --method DELETE orgs/<org>/issue-fields/<id>`).
 
 [% else %]
-On a personal account these are **project fields** (issue fields are org-only),
-created alongside the board by `task setup:github-project`.
+On a personal account all four are **project fields** (issue fields are
+org-only), created alongside the board by `task setup:github-project`.
 
 [% endif %]
 TODO: finalize each field's options/values.

@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # setup-github-issue-fields.sh — idempotently add the org ISSUE FIELDS that are
-# NOT GitHub built-ins: Product and Agent. GitHub already ships Priority, Effort,
-# Start date, and Target date as built-in issue fields (Priority's options are
-# Urgent/High/Medium/Low; Effort is the size/estimate field), so we never recreate
-# those. Create-if-missing only; it never edits or deletes a field.
+# NOT GitHub built-ins: Product and Agent. GitHub already ships Priority,
+# Start date, and Target date as useful built-in issue fields (Priority's options
+# are Urgent/High/Medium/Low), so we never recreate those. Create-if-missing
+# only; it never edits or deletes a field.
+#
+# NB: Effort is deliberately NOT an issue field — it is a project NUMBER field
+# (setup-github-project.sh) because only project number fields sum in view group
+# headers, and the per-group sum is Effort's whole job. The org's built-in
+# single-select Effort ISSUE field should be DELETED (issue-field types can't be
+# changed after creation); this script prints the command when it sees one.
 #
 # Issue fields are org-level, durable metadata: the value lives on the *issue*
 # (not a project item), is the same across every project the issue belongs to,
@@ -104,4 +110,16 @@ create_field() {
 create_field "Product" "text" "Which product/area it belongs to"
 create_field "Agent" "single_select" "Which agent should implement it" "$agent_opts"
 
-echo "==> Done — added issue fields on '$org': Product, Agent (Priority + Effort are GitHub built-ins)"
+# Advisory: Effort must live on the PROJECT (number field, so views can sum it).
+# If the org still has its built-in single-select Effort ISSUE field, say how to
+# remove it — never delete automatically (this script is non-destructive).
+effort_id=$(printf '%s' "$existing" |
+    jq -r '.[] | select(.name == "Effort" and .data_type == "single_select") | .id' | head -n1)
+if [ -n "$effort_id" ]; then
+    echo "==> NOTE: this org has the built-in single-select 'Effort' ISSUE field (id $effort_id)."
+    echo "          Effort belongs on the project as a NUMBER field (views sum it; see"
+    echo "          setup-github-project.sh). Issue-field types can't be changed — delete it with:"
+    echo "          gh api --method DELETE orgs/$org/issue-fields/$effort_id"
+fi
+
+echo "==> Done — added issue fields on '$org': Product, Agent (Priority is a GitHub built-in)"

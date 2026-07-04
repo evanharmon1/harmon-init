@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # setup-github-project.sh — idempotently create and sync a GitHub Project V2 for a
-# repo owner (an organization OR a personal user account): the board and its
-# Status pipeline (docs/project-management.md). On an ORGANIZATION, the metadata
-# fields are org-level ISSUE fields (Priority + Effort are GitHub built-ins;
+# repo owner (an organization OR a personal user account): the board, its
+# Status pipeline (docs/project-management.md), and the Effort project NUMBER
+# field — Effort stays a project field for BOTH owner types, because only
+# project number fields sum in view group headers (issue-field columns can
+# group/filter/sort, not sum). The other metadata on an ORGANIZATION are
+# org-level ISSUE fields (Priority is a GitHub built-in;
 # setup-github-issue-fields.sh adds Product + Agent); on a personal account (no
-# org issue fields) this script creates Priority/Effort/Product/Agent as project
-# fields instead.
+# org issue fields) this script creates Priority/Product/Agent as project
+# fields too.
 #
 # Safe to re-run and safe to run from every repo the owner controls: it looks the
 # project up by title, so the first run creates it and later runs just reconcile
@@ -212,13 +215,25 @@ create_number() {
         >/dev/null
 }
 
-# Metadata fields: on an ORGANIZATION these are org-level ISSUE fields (durable —
+# Effort: a project NUMBER field for BOTH owner types — story points on the
+# Fibonacci ladder (1/2/3/5/8/13/21; the ladder is a convention, the field takes
+# free numeric entry). Project views can group/filter/sort by org ISSUE-field
+# columns, but group-header SUMS only work for project NUMBER fields — and the
+# per-group sum is Effort's whole job (docs/project-management.md, Planning view).
+echo "==> Effort project field (number — views sum it per group)"
+create_number "Effort"
+
+# Other metadata: on an ORGANIZATION these are org-level ISSUE fields (durable —
 # the value is on the issue, shared across every project; see
-# docs/project-management.md). Priority + Effort are GitHub built-ins;
+# docs/project-management.md). Priority is a GitHub built-in;
 # setup-github-issue-fields.sh adds Product + Agent. A personal account has no org
 # issue fields, so fall back to creating them as project fields here.
 if [ "$owner_type" = "Organization" ]; then
-    echo "==> Metadata are org issue fields (Priority/Effort built-in; run setup-github-issue-fields.sh for Product/Agent)"
+    echo "==> Other metadata are org issue fields (Priority built-in; run setup-github-issue-fields.sh for Product/Agent)"
+    echo "    NOTE: delete the org's built-in single-select 'Effort' ISSUE field if it still"
+    echo "          exists — Effort lives on the project (issue-field types can't be changed):"
+    echo "          gh api orgs/$owner/issue-fields   # find the id, then"
+    echo "          gh api --method DELETE orgs/$owner/issue-fields/<id>"
     echo "==> Done — project #$project_number: $title"
     exit 0
 fi
@@ -230,10 +245,6 @@ create_single_select "Priority" '[
   {"name":"Medium","color":"YELLOW","description":""},
   {"name":"Low","color":"GRAY","description":""}
 ]'
-# Effort is story points on the Fibonacci ladder (1/2/3/5/8/13/21) — a NUMBER
-# field so views can sum it per group (single-selects can't be summed). The
-# ladder is a convention; a number field takes free numeric entry.
-create_number "Effort"
 create_text "Product"
 create_single_select "Agent" '[
   {"name":"Claude Code","color":"ORANGE","description":""},

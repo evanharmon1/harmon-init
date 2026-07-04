@@ -168,13 +168,13 @@ The work-metadata fields:
 
 - **Priority** — Urgent / High / Medium / Low
 - **Effort** — story points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
-  a **number** field so a view can sum it per group
+  a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
 
-On a personal account these are **project fields** (issue fields are org-only),
-created alongside the board by `task setup:github-project`.
+On a personal account all four are **project fields** (issue fields are
+org-only), created alongside the board by `task setup:github-project`.
 
 TODO: finalize each field's options/values.
 
