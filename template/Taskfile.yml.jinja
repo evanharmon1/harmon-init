@@ -271,7 +271,9 @@ tasks:
   validate:links:
     desc: Check the built site (dist/) for broken internal links (lychee, offline)
     cmds:
-      - lychee --offline --no-progress ./dist
+      # --root-dir is required to resolve root-relative links (/about, /rss.xml)
+      # against dist/ instead of failing with "provide a root dir".
+      - lychee --offline --no-progress --root-dir "{{.PWD}}/dist" ./dist
 [% endif %]
 
   guard:no-commit-to-main:
