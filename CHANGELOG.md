@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.18.1](https://github.com/evanharmon1/harmon-init/compare/v3.18.0...v3.18.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **template:** lefthook prettier hook excludes .meta/*.md vault symlinks ([#225](https://github.com/evanharmon1/harmon-init/issues/225)) ([5289927](https://github.com/evanharmon1/harmon-init/commit/528992708ef09514a478e11e0b36b7bcdae58920))
+
 ## [3.18.0](https://github.com/evanharmon1/harmon-init/compare/v3.17.0...v3.18.0) (2026-07-04)
 
 
