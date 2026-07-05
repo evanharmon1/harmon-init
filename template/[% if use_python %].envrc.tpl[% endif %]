@@ -1,15 +1,21 @@
-# op inject source — resolve the op:// references below into the gitignored
-# .envrc.local (which .envrc sources), so secrets never touch git:
+# op inject source — resolves the 1Password secret references in this file into
+# the gitignored .envrc.local (which .envrc sources), so secrets never touch git:
 #
 #   op inject -i .envrc.tpl -o .envrc.local
 #
-# op:// references are pointers, not secrets, so THIS file is safe to commit; the
+# References are pointers, not secrets, so THIS file is safe to commit; the
 # resolved .envrc.local is gitignored — never commit it. Re-run the command above
-# whenever you change a reference. Setup steps are in docs/CHECKLIST.md.
+# whenever a reference or the underlying item changes. Setup steps are in
+# docs/CHECKLIST.md; mechanism + footguns in docs/guides/local-secrets.md.
 #
-# Examples (uncomment and point each at your own 1Password item):
+# NOTE: op inject parses secret references EVERYWHERE in this file, including
+# comments — a literal reference (or even the scheme prefix in prose) breaks
+# injection outright. The examples below escape the scheme with a backslash for
+# exactly that reason: when uncommenting, remove the backslash.
 #
-# export CLOUDFLARE_API_TOKEN="op://Vault/item/CLOUDFLARE_API_TOKEN"
-# export AWS_ACCESS_KEY_ID="op://Vault/item/Access Key ID"
-# export AWS_SECRET_ACCESS_KEY="op://Vault/item/Secret Access Key"
-# export TF_VAR_example="op://Vault/item/example"
+# Examples (uncomment, remove the backslash, point at your own 1Password item):
+#
+# export CLOUDFLARE_API_TOKEN="op\://Vault/item/CLOUDFLARE_API_TOKEN"
+# export AWS_ACCESS_KEY_ID="op\://Vault/item/Access Key ID"
+# export AWS_SECRET_ACCESS_KEY="op\://Vault/item/Secret Access Key"
+# export TF_VAR_example="op\://Vault/item/example"
