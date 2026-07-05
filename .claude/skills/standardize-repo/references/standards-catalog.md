@@ -217,6 +217,16 @@ Conditional formatters/linters (see Part 2 for which project types):
 - **terraform fmt / validate** — iac/terraform only.
 - **ansible-lint** — `.ansible-lint` (ansible only).
 
+**Design-bundle shield (`specs/*/`)** — spec *subdirectories* hold vendored
+design-handoff bundles (Claude Design exports; deleted at sign-off, never
+committed) and are excluded from git and every linter, while top-level
+`specs/*.md` stay tracked and linted. Audit that all surfaces agree:
+`.gitignore` + `.prettierignore` (`specs/*/`), `.yamllint` ignores
+(`specs/*/`), the markdownlint invocation in the Taskfile (`'#specs/*/**'`),
+and — web repos, [manual] since those files are scaffolded — eslint `ignores`
+(`'specs/'`) and tsconfig `"exclude": ["specs"]`. A repo missing these fails
+`verify` the moment a bundle lands (untracked-file hygiene scans included).
+
 ### 1.5 Git hooks (lefthook)
 
 **[copier]** ships `lefthook.yml`; installed via `task install:hooks` (`lefthook
@@ -402,8 +412,18 @@ install the Renovate GitHub App on the repo. Conventions:
   commits have the symlink flipped the other way (`AGENTS.md -> CLAUDE.md`) — see
   Part 3. **[copier]**
 - **`.claude/settings.json`** (repo-level): minimal allow-list —
-  `Bash(task:*)`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`.
+  `Bash(task:*)`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)` —
+  plus a `permissions.ask` list that forces a prompt on merge commands:
+  `gh pr merge` (all variants incl. `--auto`/`--admin`), `git merge`,
+  `git push origin main`, and force pushes (harmon-init ≥3.18.0, init #221).
   **[copier]**
+- **Agents never merge to main.** AGENTS.md Definition of Done carries the rule
+  (harmon-init ≥3.18.0, init #221): no `gh pr merge`/`git merge`/push to `main`
+  without the maintainer's explicit per-merge approval, even with green CI and
+  a permissive ruleset — open the PR, report checks, stop. The settings `ask`
+  rules above are the harness backstop (note: `ask` is skipped under
+  `bypassPermissions`, e.g. the devcontainer bot profile — the AGENTS.md rule
+  is the binding convention there). **[copier]**
 - **`.claude/skills/`** with a `.gitkeep`. **[copier]**
 - Devcontainer ships richer `config/claude-settings.json` as managed settings (see
   1.6). **[copier]**
@@ -580,7 +600,9 @@ Adds (all [copier] unless noted):
 - **[manual] CHECKLIST:** `pnpm create astro@latest .`; add **Tailwind v4**
   (`@tailwindcss/vite`), **zod**, **vitest**, **lucide**; move lint tooling into
   `devDependencies`; switch Taskfile `npx --yes` calls to `pnpm exec`; review
-  `lighthouserc.json` URLs.
+  `lighthouserc.json` URLs; enable **mobile device projects** in
+  `playwright.config.ts` (e.g. Pixel + iPhone — the scaffold ships them
+  commented out, and mobile-first is the stated convention).
 
 ### 2.3 web-app (TanStack/React apps) — `use_node: true`
 
