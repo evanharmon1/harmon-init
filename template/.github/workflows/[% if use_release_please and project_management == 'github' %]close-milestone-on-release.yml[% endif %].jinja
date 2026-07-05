@@ -13,7 +13,9 @@ permissions:
 jobs:
   close-milestone:
     name: Close matching milestone
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 10
     steps:
       - name: Close the milestone named after the tag

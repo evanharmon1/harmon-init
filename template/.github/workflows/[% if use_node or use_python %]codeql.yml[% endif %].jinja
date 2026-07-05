@@ -20,7 +20,9 @@ jobs:
       vars.FULL_SECURITY_SCAN == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -56,7 +58,9 @@ jobs:
   codeql-verify:
     if: always()
     needs: [analyze]
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     steps:
       - name: Check analyze result
         run: |

@@ -89,7 +89,7 @@ include_ansible:
 
 ci_runner:
   type: str
-  help: "CI RUNNER: GitHub Actions runner for this repo's workflows"
+  help: "CI RUNNER: default GitHub Actions runner (the CI_RUNS_ON repo/org variable overrides at runtime)"
   choices:
     - ubuntu-latest
     - self-hosted
@@ -174,11 +174,13 @@ repo_url:
   default: "https://github.com/[[ github_org ]]/[[ project_slug ]]"
   when: false
 
-# Rendered inside `runs-on: [...]` in generated workflows — one place to
-# extend self-hosted labels.
-ci_runner_labels:
+# Render-time fallback for `runs-on:` in generated workflows. At runtime the
+# CI_RUNS_ON GitHub Actions variable (repo or org level, JSON: '"ubuntu-latest"'
+# or '["self-hosted","linux",...]') overrides this without a re-render — so a
+# downed self-hosted runner box is a variable flip, not a template update.
+ci_runs_on_default:
   type: str
-  default: "[% if ci_runner == 'self-hosted' %]\"self-hosted\", \"linux\"[% else %]\"ubuntu-latest\"[% endif %]"
+  default: "[% if ci_runner == 'self-hosted' %][\"self-hosted\", \"linux\"][% else %]\"ubuntu-latest\"[% endif %]"
   when: false
 
 use_node:

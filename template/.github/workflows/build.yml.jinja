@@ -23,7 +23,9 @@ permissions:
 
 jobs:
   lint:
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -91,7 +93,9 @@ jobs:
 [% if use_node %]
 
   build-test:
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -128,7 +132,9 @@ jobs:
 [% endif %]
 
   security:
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -173,7 +179,9 @@ jobs:
 [% if project_type == 'web-astro' %]
 
   lighthouse:
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -278,7 +286,9 @@ jobs:
   verify:
     if: always()
     needs: [lint, security[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
-    runs-on: [ [[ ci_runner_labels ]] ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     steps:
       - name: Check job results
         run: |
