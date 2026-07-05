@@ -155,6 +155,18 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% endif %]
 
 ## 4. Secrets & environment
+[% if deploy_cloudflare_workers %]
+
+- [ ] Cloudflare Workers deploys: create an **Account API Token** scoped to
+      **Account → Workers Scripts → Edit** only (1-year TTL + renewal
+      reminder) and add it: `gh secret set CLOUDFLARE_API_TOKEN`. The
+      `CLOUDFLARE_ACCOUNT_ID` org-level Actions variable is shared org-wide —
+      set it once per org if missing.
+- [ ] Create the `preview` and `production` GitHub Environments (production:
+      restrict to protected branches). Then bootstrap the Worker: Actions →
+      *Release Please* → *Run workflow* (main) — the first `wrangler deploy`
+      creates it; PR preview uploads work from that point.
+[% endif %]
 
 - [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
       `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only

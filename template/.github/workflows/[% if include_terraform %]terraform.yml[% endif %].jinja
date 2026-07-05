@@ -1,0 +1,123 @@
+name: Terraform
+# GitOps deploy-on-merge (harmonops/harmon-infra ADR-0006, the shared infra
+# standard): PRs produce a plan (the review gate), pushes to main apply, and a
+# post-apply re-plan asserts the state converged.
+#
+# The plan/apply job is dormant until remote state exists: configure an
+# S3-compatible backend with native locking (use_lockfile, Terraform >= 1.10 —
+# Cloudflare R2 supports it), add the R2_* backend credentials and provider
+# TF_VAR_* secrets, then set the TERRAFORM_CI_ENABLED repo variable to 'true'.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+# Never cancel an in-flight apply on main — a killed apply can strand
+# half-created resources; PR runs are plan-only and safe to cancel.
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-validate:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform/
+      - name: terraform validate
+        run: |
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate -no-color
+
+  terraform-plan-apply:
+    # Dormant until TERRAFORM_CI_ENABLED=true (repo variable) — needs remote
+    # state + credentials, see the header comment.
+    if: >-
+      vars.TERRAFORM_CI_ENABLED == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    timeout-minutes: 15
+    env:
+      # The S3-compatible backend (Cloudflare R2) reads AWS-style env vars.
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      TF_IN_AUTOMATION: "true"
+      # Add provider credentials as TF_VAR_* secrets here, e.g.:
+      # TF_VAR_cloudflare_api_token: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
+      # TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - name: terraform plan
+        run: |
+          terraform -chdir=terraform init -input=false
+          terraform -chdir=terraform plan -no-color -input=false -lock=false \
+            | tee /tmp/tfplan.txt
+      - name: Plan summary
+        if: always()
+        run: |
+          {
+            echo "## Terraform plan"
+            echo '```'
+            tail -n 100 /tmp/tfplan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Deploy-on-merge: merging the reviewed plan is the approval. Applies
+      # take the state lock (no -lock=false here). workflow_dispatch on main
+      # re-applies — useful to reconcile drift without an empty commit.
+      - name: terraform apply
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: terraform -chdir=terraform apply -auto-approve -input=false -no-color
+      # Post-apply smoke: a clean re-plan proves the applied state converged
+      # (exit 2 = unexpected residual diff, exit 1 = plan error).
+      - name: converge check (post-apply re-plan)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          terraform -chdir=terraform plan -detailed-exitcode -no-color -input=false -lock=false \
+            > /tmp/tfconverge.txt 2>&1 || {
+              echo "Post-apply plan is not clean — state did not converge:"
+              tail -n 60 /tmp/tfconverge.txt
+              exit 1
+            }
+          echo "Converged: post-apply plan reports no changes."
+
+  terraform-verify:
+    if: always()
+    needs: [terraform-validate, terraform-plan-apply]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    steps:
+      - name: Check job results
+        # POSIX single-bracket tests on purpose: bash's double-bracket test
+        # syntax collides with this template's jinja delimiters.
+        run: |
+          fail=0
+          check() {
+            [ "$2" = "success" ] || [ "$2" = "skipped" ] || { echo "Job $1 result: $2"; fail=1; }
+          }
+          check terraform-validate "${{ needs.terraform-validate.result }}"
+          check terraform-plan-apply "${{ needs.terraform-plan-apply.result }}"
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed."
