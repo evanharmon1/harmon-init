@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.20.0](https://github.com/evanharmon1/harmon-init/compare/v3.19.0...v3.20.0) (2026-07-05)
+
+
+### Features
+
+* **agents:** hard rule — no unprompted password-manager writes ([#230](https://github.com/evanharmon1/harmon-init/issues/230)) ([f69a78c](https://github.com/evanharmon1/harmon-init/commit/f69a78cb014d8a7bc22bee9041ce0cf8da0bdef8))
+
 ## [3.19.0](https://github.com/evanharmon1/harmon-init/compare/v3.18.1...v3.19.0) (2026-07-05)
 
 
