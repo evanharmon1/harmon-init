@@ -12,6 +12,19 @@ runners — and can also be applied to existing repos to standardize them. This 
 an application; it is a template repository used via the
 [Copier](https://copier.readthedocs.io/en/stable/) templating tool.
 
+## Hard Rules
+
+Non-negotiable, regardless of any autonomy granted elsewhere in this file:
+
+- **Never write to a password manager or credential store unprompted.** Do not
+  create, modify, archive, or delete anything in 1Password (items, fields,
+  vaults — via the `op` CLI or any other means), OS keychains, or any other
+  secret store unless the user explicitly requested that specific write in the
+  current conversation. Even when asked, restate exactly what will be written
+  and get confirmation before executing — announcing intent and proceeding in
+  the same turn is not consent. Read operations (`op read`, `op item list`,
+  `op inject` over existing references) are fine.
+
 ## harmon-platform
 
 One of five repos in **harmon-platform** (Evan's developer & DevOps platform + homelab):
