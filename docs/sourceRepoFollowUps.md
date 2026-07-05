@@ -1,4 +1,4 @@
-# Follow-ups for harmon-infra and sommerlawn-web
+# Follow-ups for harmon-infra and sommerlawn-site
 
 Issues noticed while porting conventions into harmon-init v3. The plan is to
 fix these by applying the updated template to each repo (harmon-init is the
@@ -47,13 +47,13 @@ source of truth going forward), not by hand-editing them ad hoc.
 6. **validate.yml reinstalls lint tools inline every run** — candidates for
     the prebuilt devcontainer image or a composite action.
 
-## sommerlawn-web
+## sommerlawn-site
 
 1. **Duplicate claude workflows** — `claude-review-max.yml` /
     `claude-implement-max.yml` duplicate the base workflows; consolidate.
 2. **Missing codeql.yml** (infra has one).
 3. **Naming inconsistency** — workspace/bunch files say `sommer-lawn` while
-    the repo slug is `sommerlawn-web`; regenerating from the template
+    the repo slug is `sommerlawn-site`; regenerating from the template
     normalizes this.
 4. **lint-hygiene portability** — infra's `scripts/lint-hygiene.sh` uses
     `mapfile` and `grep -P` (Linux-only); the template version is portable to
