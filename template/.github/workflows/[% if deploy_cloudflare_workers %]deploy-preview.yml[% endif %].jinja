@@ -1,0 +1,158 @@
+name: Deploy Preview
+run-name: deploy preview for PR #${{ github.event.pull_request.number }}
+
+# Cloudflare deploys run from GitHub Actions via wrangler-action against the
+# [[ project_slug ]] Worker (static assets — wrangler.jsonc). Every same-repo
+# PR uploads a non-production Worker *version* bound to the `preview` GitHub
+# Environment: a unique versioned preview URL plus a stable branch-alias URL,
+# both on workers.dev. Versions never receive live traffic; production
+# deploys happen in release.yml when a release-please release PR merges.
+#
+# Requires the Worker to exist (first created by the bootstrap/production
+# deploy in release.yml — see that file's workflow_dispatch trigger).
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fork PRs have no secrets, and until CLOUDFLARE_API_TOKEN is configured the
+  # deploy should skip rather than fail. Secrets are not readable in job-level
+  # `if:` expressions, so a tiny preflight job exposes the check as an output.
+  preflight:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check Cloudflare credentials
+        id: check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "CLOUDFLARE_API_TOKEN is not available (fork PR or secret not yet configured) — skipping preview deploy." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          # renovate: datasource=node-version
+          node-version: "24"
+          cache: pnpm
+      - uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: task build
+      # github.head_ref is attacker-influenced (branch names may contain `;`,
+      # `$`, backticks) and the wrangler-action command runs through a shell,
+      # so reduce it to a safe preview alias: lowercase [a-z0-9-], no
+      # leading/trailing dash, short enough that alias + "-[[ project_slug ]]"
+      # fits in a 63-char DNS label.
+      - name: Derive preview alias from branch name
+        id: branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          alias=$(printf '%s' "$HEAD_REF" \
+            | tr '[:upper:]' '[:lower:]' \
+            | tr -c 'a-z0-9-' '-' \
+            | tr -s '-' \
+            | sed -e 's/^-//' -e 's/-$//' \
+            | cut -c1-[[ [40, 62 - (project_slug | length)] | min ]])
+          echo "alias=$alias" >> "$GITHUB_OUTPUT"
+      - name: Upload preview version to Cloudflare Workers
+        id: deploy
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: pnpm
+          # renovate: datasource=npm depName=wrangler
+          wranglerVersion: "4.107.0"
+          command: >-
+            versions upload
+            --preview-alias=${{ steps.branch.outputs.alias }}
+            --message=pr-${{ github.event.pull_request.number }}
+      - name: Comment preview URLs on PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+          COMMAND_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+          PREVIEW_ALIAS: ${{ steps.branch.outputs.alias }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const deployUrl = process.env.DEPLOY_URL
+            // wrangler-action only surfaces the versioned preview URL as an
+            // output; fish the stable branch-alias URL out of wrangler's
+            // stdout.
+            const alias = process.env.PREVIEW_ALIAS
+            const aliasUrl = (process.env.COMMAND_OUTPUT || '')
+              .match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g)
+              ?.find(u => u.includes(`//${alias}-`)) ?? null
+            const body = [
+              '## Cloudflare Workers Preview',
+              '',
+              '| | URL |',
+              '|---|---|',
+              `| **Preview (this version)** | ${deployUrl} |`,
+              aliasUrl ? `| **Branch alias** | ${aliasUrl} |` : null,
+              '',
+              `_Deployed commit: ${process.env.HEAD_SHA}_`,
+            ].filter(l => l !== null).join('\n')
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            })
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.startsWith('## Cloudflare Workers Preview')
+            )
+            if (existing) {
+              await github.rest.issues.updateComment({
+                comment_id: existing.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              })
+            }

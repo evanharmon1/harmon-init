@@ -1,0 +1,23 @@
+// Cloudflare Workers (static assets) configuration. The worker is assets-only
+// (no script): it serves the build output from dist/, including any _headers
+// and _redirects files copied from public/.
+//
+// Deploys run from GitHub Actions (deploy-preview.yml uploads preview
+// versions, release.yml runs `wrangler deploy` on releases). Manage custom
+// domains outside this file (Terraform cloudflare_workers_custom_domain, or
+// the dashboard) so wrangler owns only the Worker itself.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "[[ project_slug ]]",
+  // Bump deliberately when adopting new runtime behavior.
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  // No workers.dev production URL (the site lives on its custom domain), but
+  // keep per-version preview URLs for PR deploys — workers_dev: false would
+  // otherwise disable them by default.
+  "workers_dev": false,
+  "preview_urls": true
+}

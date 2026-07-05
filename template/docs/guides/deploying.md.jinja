@@ -4,7 +4,33 @@ How to deploy [[ project_name ]]. For the shape of the CI/CD pipeline see
 [../architecture/ci-cd.md](../architecture/ci-cd.md); for production operational
 procedures and rollback runbooks see [../runbooks/](../runbooks/).
 
+[% if deploy_cloudflare_workers %]
+The site is served by the `[[ project_slug ]]` **Cloudflare Worker** (static
+assets, configured in [`wrangler.jsonc`](../../wrangler.jsonc)). All deploys
+run from GitHub Actions via `cloudflare/wrangler-action`. Custom domains are
+managed outside wrangler (Terraform `cloudflare_workers_custom_domain`, or the
+dashboard).
+
+- **Preview**: every same-repo PR uploads a non-production Worker *version*
+  (`deploy-preview.yml`) — versioned + branch-alias URLs on workers.dev,
+  posted as a sticky PR comment. Preview versions never receive production
+  traffic. Skips gracefully when `CLOUDFLARE_API_TOKEN` is unavailable.
+- **Production**: merging the release-please release PR makes `release.yml`
+  build the tagged commit and run `wrangler deploy`. Normal merges to `main`
+  do **not** deploy production.
+- **Bootstrap / rollback**: Actions → *Release Please* → *Run workflow* with a
+  branch or tag deploys that ref directly — used once to create the Worker,
+  and to redeploy the previous release tag.
+
+Credentials: `CLOUDFLARE_ACCOUNT_ID` is an org-level Actions **variable** (an
+identifier, not a secret); `CLOUDFLARE_API_TOKEN` is a repo **secret** — an
+Account API Token scoped to **Account → Workers Scripts → Edit** only, 1-year
+TTL with a renewal reminder (rotate via the token's Roll button + re-run
+`gh secret set CLOUDFLARE_API_TOKEN`). Also create `preview` and `production`
+GitHub Environments (see the post-generation CHECKLIST).
+[% else %]
 > TODO: no deployment is configured yet — fill in the sections below.
+[% endif %]
 
 ## Environments
 

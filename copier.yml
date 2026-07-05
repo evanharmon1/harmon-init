@@ -95,6 +95,12 @@ ci_runner:
     - self-hosted
   default: ubuntu-latest
 
+deploy_cloudflare_workers:
+  type: bool
+  help: "DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-web pattern)"
+  default: "[[ project_type == 'web-astro' ]]"
+  when: "[[ project_type in ['web-astro', 'web-app'] ]]"
+
 license:
   type: str
   help: "LICENSE: Add license?"
