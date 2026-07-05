@@ -13,9 +13,11 @@
 # injection outright. The examples below escape the scheme with a backslash for
 # exactly that reason: when uncommenting, remove the backslash.
 #
-# Examples (uncomment, remove the backslash, point at your own 1Password item):
+# Examples (uncomment, remove the backslash, point at your org-vault item —
+# naming + canonical field labels per docs/architecture/security.md):
 #
-# export CLOUDFLARE_API_TOKEN="op\://Vault/item/CLOUDFLARE_API_TOKEN"
-# export AWS_ACCESS_KEY_ID="op\://Vault/item/Access Key ID"
-# export AWS_SECRET_ACCESS_KEY="op\://Vault/item/Secret Access Key"
-# export TF_VAR_example="op\://Vault/item/example"
+# export CLOUDFLARE_API_TOKEN="op\://<org-vault>/Cloudflare <repo>-terraform/API Token"
+# export CLOUDFLARE_ACCOUNT_ID="op\://<org-vault>/Cloudflare <org>/Account ID"
+# export AWS_ACCESS_KEY_ID="op\://<org-vault>/Cloudflare R2 <repo>-tfstate-rw/Access Key ID"
+# export AWS_SECRET_ACCESS_KEY="op\://<org-vault>/Cloudflare R2 <repo>-tfstate-rw/Secret Access Key"
+# export AWS_ENDPOINT_URL_S3="op\://<org-vault>/Cloudflare R2 <repo>-tfstate-rw/Default Endpoint"

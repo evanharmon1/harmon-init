@@ -236,8 +236,31 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
   1Password-provisioned secrets (and Ansible Vault where appropriate).
 [% endif %]
 [% endif %]
-[% if include_terraform %]
 
+### 1Password conventions (source of truth)
+
+1Password is the source of truth for every credential, consistent across orgs,
+provider accounts, and machines. The standard:
+
+- **One vault per org** (this repo: the `[[ github_org ]]` vault). No
+  credentials in personal/shared vaults.
+- **API credentials use the 1Password "API Credential" type**, named
+  `<Provider> <scope-descriptor>` — e.g. `Cloudflare [[ project_slug ]]-terraform`,
+  `Cloudflare R2 [[ project_slug ]]-tfstate-rw`. One item per credential;
+  related fields live on the item rather than as separate items.
+- **Canonical field labels** (references must match exactly): `API Token`,
+  `Access Key ID`, `Secret Access Key`, `Default Endpoint`, `Account ID`,
+  `App ID`, `Client ID`, `Client Secret`.
+- **Account-level identifiers** get a per-account item (e.g. `Cloudflare
+  <org>` holding `Account ID`) so identifiers have one home too.
+- **SSH keys use the 1Password SSH key type** (fields: `public key`,
+  `fingerprint`, `private key`, `passphrase`).
+- Repos consume credentials only through references[% if use_python %]
+  (`.envrc.tpl` → `op inject`, see
+  [../guides/local-secrets.md](../guides/local-secrets.md))[% endif %] or CI
+  secrets fed from these items (`op read "…" | gh secret set …`) — never by
+  copying values into other stores of record.
+[% if include_terraform %]
 ### Cloudflare credentials (creation click-paths)
 
 The two credential kinds are created in **different places** in the Cloudflare
@@ -270,6 +293,20 @@ dashboard — R2 tokens are not regular API tokens:
 The Cloudflare account ID is an identifier, not a secret — keep it as an
 org-level Actions **variable** (`CLOUDFLARE_ACCOUNT_ID`) shared by all repos.
 [% endif %]
+
+## Remote access (SSH, Tailscale, VNC)
+
+- **Tailscale is the standard network layer** for remote access — homelab
+  hosts and remote sites join the tailnet rather than exposing ports. Its
+  OAuth client lives in the org vault (fields: `Client ID`, `Client Secret`,
+  `tailnet ID`); scope OAuth clients narrowly (e.g. auth-key creation only)
+  and prefer ephemeral/pre-authorized keys minted from them.
+- **SSH** keys are stored as 1Password SSH-key items (see conventions above)
+  and served by the 1Password SSH agent where possible, so private keys never
+  sit loose on disk.
+- **VNC / screen sharing: Screens 5 is the standard client**, connecting over
+  the tailnet (never an exposed VNC port); any credential it needs lives on
+  the relevant 1Password item.
 
 ## Rotation & incident notes
 
