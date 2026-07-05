@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.19.0](https://github.com/evanharmon1/harmon-init/compare/v3.18.1...v3.19.0) (2026-07-05)
+
+
+### Features
+
+* **ci:** runtime CI_RUNS_ON runner switch in generated workflows ([#227](https://github.com/evanharmon1/harmon-init/issues/227)) ([c1459dc](https://github.com/evanharmon1/harmon-init/commit/c1459dc7c47d60daff94e66e76f1ebf4ef91947b))
+* **deploy:** upstream the proven deployment strategies into the template ([#229](https://github.com/evanharmon1/harmon-init/issues/229)) ([acebc94](https://github.com/evanharmon1/harmon-init/commit/acebc94119942120ec7af7aa62be67013e982536))
+
 ## [3.18.1](https://github.com/evanharmon1/harmon-init/compare/v3.18.0...v3.18.1) (2026-07-04)
 
 
