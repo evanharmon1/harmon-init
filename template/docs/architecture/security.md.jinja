@@ -248,9 +248,15 @@ provider accounts, and machines. The standard:
   `<Provider> <scope-descriptor>` — e.g. `Cloudflare [[ project_slug ]]-terraform`,
   `Cloudflare R2 [[ project_slug ]]-tfstate-rw`. One item per credential;
   related fields live on the item rather than as separate items.
-- **Canonical field labels** (references must match exactly): `API Token`,
-  `Access Key ID`, `Secret Access Key`, `Default Endpoint`, `Account ID`,
-  `App ID`, `Client ID`, `Client Secret`.
+- **Field labels match the provider's own documentation, verbatim.**
+  `Access Key ID` / `Secret Access Key` map 1:1 to AWS/S3 docs; `Account ID`
+  and `API Token` to Cloudflare's. That means you (or an agent) can go from
+  provider documentation to the 1Password item with no translation layer.
+  Don't invent generic labels (`key`, `secret`) and don't normalize to a
+  house case style (kebab-case, Title Case) — the provider's spelling wins.
+  Common results: `API Token`, `Access Key ID`, `Secret Access Key`,
+  `Default Endpoint`, `Account ID`, `App ID`, `Client ID`, `Client Secret`.
+  References must match labels exactly.
 - **Account-level identifiers** get a per-account item (e.g. `Cloudflare
   <org>` holding `Account ID`) so identifiers have one home too.
 - **SSH keys use the 1Password SSH key type** (fields: `public key`,
