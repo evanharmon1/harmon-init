@@ -97,7 +97,7 @@ ci_runner:
 
 deploy_cloudflare_workers:
   type: bool
-  help: "DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-web pattern)"
+  help: "DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-site pattern)"
   default: "[[ project_type == 'web-astro' ]]"
   when: "[[ project_type in ['web-astro', 'web-app'] ]]"
 
