@@ -10,6 +10,12 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
 - [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
   problems (broken build, failing local setup). Distinct from runbooks, which
   cover prod incidents.
+[% if use_python %]
+- [local-secrets.md](local-secrets.md) — how credentials reach a local shell:
+  1Password references in `.envrc.tpl`, `op inject` into the gitignored
+  `.envrc.local`, direnv sourcing, the uv/venv non-relationship, footguns,
+  and repair.
+[% endif %]
 [% if devcontainer %]
 - [devcontainers.md](devcontainers.md) — the dual-profile devcontainer (bot vs
   dev), local secrets via **1Password Environments**, GHCR prebuilds, and
