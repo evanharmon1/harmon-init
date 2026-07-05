@@ -236,8 +236,54 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
   1Password-provisioned secrets (and Ansible Vault where appropriate).
 [% endif %]
 [% endif %]
+[% if include_terraform %]
+
+### Cloudflare credentials (creation click-paths)
+
+The two credential kinds are created in **different places** in the Cloudflare
+dashboard — R2 tokens are not regular API tokens:
+
+**Account API Token** (provider credential, e.g. `CLOUDFLARE_API_TOKEN` /
+`TF_VAR_cloudflare_api_token`):
+
+1. Dashboard → select the account → **Manage Account → Account API Tokens →
+   Create Token** → custom token. (Account tokens, not *My Profile → API
+   Tokens* — CI is a service identity, so the credential should be owned by
+   the account, not a user.)
+2. Name it for the audit log, e.g. `[[ project_slug ]]-terraform`.
+3. Permissions: least privilege for what this repo's Terraform actually
+   manages (verify against a `terraform plan` after creating). Account
+   Resources: this account only. TTL: end date 1 year out + a renewal
+   reminder.
+4. Copy the value once → 1Password item → `gh secret set` for CI[% if use_python %] → locally
+   `op inject -i .envrc.tpl -o .envrc.local && direnv reload` (see
+   [../guides/local-secrets.md](../guides/local-secrets.md))[% endif %].
+
+**R2 API token** (S3-style key pair for the Terraform state backend):
+
+1. Dashboard → **R2 → Manage R2 API Tokens → Create API Token** — R2 has its
+   own token system, separate from API tokens.
+2. Permission **Object Read & Write**, scoped to the state bucket only.
+3. Creation shows an **Access Key ID** and **Secret Access Key** (shown once)
+   → 1Password → `gh secret set R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`.
+
+The Cloudflare account ID is an identifier, not a secret — keep it as an
+org-level Actions **variable** (`CLOUDFLARE_ACCOUNT_ID`) shared by all repos.
+[% endif %]
 
 ## Rotation & incident notes
 
-TODO: how and how often each secret rotates; what to do if one leaks (revoke,
-re-scope, rotate, scrub history). Record notable past incidents here.
+- **Cadence**: long-lived provider tokens carry a 1-year TTL; set a calendar
+  reminder ~1 week before expiry. Expired-token symptom: the CI jobs using
+  the credential fail with authentication errors.
+- **Rotate create → verify → revoke, never delete-first**: create the
+  replacement, update 1Password and the Actions secret, prove it works (a
+  trivial PR whose checks exercise the credential), then revoke the old one.
+  Paired credentials (e.g. R2 key pairs) rotate as a unit — deleting the old
+  token first cuts off everything that still uses it.
+- **If a secret leaks**: revoke it at the provider immediately, rotate per
+  above, re-scope downward if it was broader than needed, and check the
+  provider's audit log for actions taken since the exposure. An allowlist
+  entry stops the scanner re-flagging — it does not un-expose the key.
+
+Record notable past incidents here.
