@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.20.1](https://github.com/evanharmon1/harmon-init/compare/v3.20.0...v3.20.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **template:** web-astro .prettierignore ignores transient scratch files ([#240](https://github.com/evanharmon1/harmon-init/issues/240)) ([0d96584](https://github.com/evanharmon1/harmon-init/commit/0d965849c2baede23dfa248b160d85d0519c3189))
+
 ## [3.20.0](https://github.com/evanharmon1/harmon-init/compare/v3.19.0...v3.20.0) (2026-07-05)
 
 
