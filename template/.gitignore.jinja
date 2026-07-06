@@ -106,9 +106,14 @@ htmlcov/
 # Terraform
 .terraform/
 *.tfplan
-*.tfstate.backup
 override.tf
 crash.log
+# State and tfvars can hold secrets — never commit them (only *.tfvars.example).
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
 [% endif %]
 [% if include_ansible %]
 
