@@ -115,10 +115,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-astro globals`
 - [ ] Install the shipped prettier config's plugins:
       `pnpm add -D prettier prettier-config-standard prettier-plugin-astro prettier-plugin-tailwindcss`
-- [ ] Approve build scripts so `astro build` works — pnpm 10+ blocks dependency
-      build scripts by default. Add an `onlyBuiltDependencies` list to
-      `pnpm-workspace.yaml` (e.g. `esbuild`, `sharp`, plus `lefthook` if it is a
-      pnpm dep), or run `pnpm approve-builds`
+- [ ] Approve build scripts so `astro build` (and, when deploying to Cloudflare
+      Workers, `wrangler deploy`) work — pnpm 10+ blocks dependency build scripts
+      by default. Add the blocked packages to `pnpm-workspace.yaml` (`esbuild`,
+      `sharp`, `lefthook` if it is a pnpm dep, and **`workerd`** — wrangler pulls
+      it in at deploy time, so without it the Cloudflare deploy fails
+      `ERR_PNPM_IGNORED_BUILDS`), or run `pnpm approve-builds`
 - [ ] Put pnpm `overrides` and `auditConfig` (security version floors, audit CVE
       ignores) in `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field —
       pnpm 10+ silently ignores that field, so overrides declared there vanish on
@@ -142,8 +144,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       (slower) and needs your tsconfig wired up — skip to keep lint instant.
 - [ ] Put pnpm `overrides` / `auditConfig` / `onlyBuiltDependencies` in
       `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field — pnpm 10+
-      ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`)
-      via `onlyBuiltDependencies` or `pnpm approve-builds`
+      ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`,
+      and `workerd` if deploying to Cloudflare Workers — else `wrangler deploy`
+      fails `ERR_PNPM_IGNORED_BUILDS`) via `onlyBuiltDependencies` or
+      `pnpm approve-builds`
 [% elif project_type == 'iac' %]
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
