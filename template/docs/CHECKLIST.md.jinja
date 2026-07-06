@@ -42,17 +42,27 @@ config, toolchain, devcontainer, and dev environment — against the items below
       running app, and a **multi-tenant isolation** review before onboarding
       customers. See [architecture/security.md](architecture/security.md).
 [% endif %]
-- [ ] CI GitHub App `[[ github_org ]]-ci`: create it by hand for this org (one App
-      per org; **Settings → Developer settings → GitHub Apps**), or reuse the
-      org's existing one;
-      install it on this repo, then set `CI_APP_CLIENT_ID` (Actions
-      **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
-      an org, per-repo for a personal account. Set the private key by piping the
-      `.pem` in (`gh secret set CI_APP_PRIVATE_KEY … < key.pem`), not by pasting —
-      flattened newlines make the key undecodable. For an org, scope it
-      (`--visibility selected --repos …`) and then finalize/audit repo access in
-      the UI. Drives release-please, the
-      claude-* workflows, and project-automation. See docs/architecture/security.md.
+- [ ] CI GitHub App `[[ github_org ]]-ci`: create it by hand (one App per org;
+      **Settings → Developer settings → GitHub Apps**), or reuse the org's existing
+      one; **install it on only the repos that use it** (the harmon-init repos —
+      they run release-please / claude-* / project-automation), not "All". Then set
+      `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+      **secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
+      the key), and **scope the secret to those same repos** (least privilege — the
+      key can act as the App: commits, PRs, releases, workflow edits):
+
+      ```bash
+      gh secret set CI_APP_PRIVATE_KEY --org [[ github_org ]] \
+        --visibility selected --repos <repo-a>,<repo-b> < [[ github_org ]]-ci.private-key.pem
+      gh variable set CI_APP_CLIENT_ID --org [[ github_org ]] \
+        --visibility selected --repos <repo-a>,<repo-b> --body "<client-id>"  # Iv…-style, not the numeric App ID
+      ```
+
+      Personal account: use `--repo [[ github_org ]]/[[ project_slug ]]` instead of
+      `--org`/`--visibility`/`--repos`. Re-running `--repos` **replaces** the list —
+      re-run with the full list to add a repo. Drives release-please, the claude-*
+      workflows, and project-automation; blast-radius + rotation in
+      docs/architecture/security.md.
 [% if devcontainer %]
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `[[ devcontainer_image ]]` on merge to main
