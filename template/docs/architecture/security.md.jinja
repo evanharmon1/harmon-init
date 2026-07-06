@@ -281,9 +281,15 @@ dashboard — R2 tokens are not regular API tokens:
    the account, not a user.)
 2. Name it for the audit log, e.g. `[[ project_slug ]]-terraform`.
 3. Permissions: least privilege for what this repo's Terraform actually
-   manages (verify against a `terraform plan` after creating). Account
-   Resources: this account only. TTL: end date 1 year out + a renewal
-   reminder.
+   manages (verify against a `terraform plan` after creating). For DNS-only
+   management — the common case — that is two rows: `Zone · DNS · Edit` **and**
+   `Zone · Zone · Read` (the built-in **"Edit zone DNS"** template sets exactly
+   these). `Edit` is full CRUDL, so it already includes read — don't add a
+   separate DNS Read; the second row is needed because the `cloudflare_zone`
+   resource reads zone metadata that `DNS · Edit` alone doesn't cover. Do
+   **not** grant "Zone DNS Settings" — despite the name it is DNSSEC/zone
+   settings, not records. Account Resources: this account only. TTL: end date
+   1 year out + a renewal reminder.
 4. Copy the value once → 1Password item → `gh secret set` for CI[% if use_python %] → locally
    `op inject -i .envrc.tpl -o .envrc.local && direnv reload` (see
    [../guides/local-secrets.md](../guides/local-secrets.md))[% endif %].
