@@ -21,6 +21,15 @@ dist/
 .terraform/
 .venv/
 pnpm-lock.yaml
+
+# Transient scratch files that concurrent tooling (test harnesses, editors,
+# some CLIs) drops into the repo root can vanish mid-run and race
+# `prettier --check .` into an ENOENT crash (exit 2) — failing the format gate
+# on a file that was never ours. Ignore the common temp/backup patterns so a
+# stray file can't break the gate.
+_tmp_*
+*.tmp
+*~
 # Design-handoff bundles under specs/ (vendored Claude Design exports).
 specs/*/
 
