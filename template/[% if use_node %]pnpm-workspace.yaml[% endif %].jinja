@@ -1,0 +1,17 @@
+# pnpm build-script approvals + version pins. pnpm 10+ blocks dependency build
+# scripts by default; list the ones that must run here (NOT the package.json
+# `pnpm` field — pnpm 10+ ignores that).
+allowBuilds:
+  esbuild: true
+  sharp: true
+[% if deploy_cloudflare_workers %]
+  # workerd (the Cloudflare Workers runtime) is pulled in by wrangler at deploy
+  # time; approve its build or `wrangler deploy` fails ERR_PNPM_IGNORED_BUILDS.
+  workerd: true
+[% endif %]
+
+# Security floor: esbuild <0.28.1 allows arbitrary file reads via the dev server
+# on Windows (GHSA; pnpm audit + Snyk). Astro/Vite still resolve 0.27.x — force
+# the patched line until they catch up.
+overrides:
+  esbuild: '>=0.28.1'

@@ -159,9 +159,18 @@ tasks:
 [% if use_node %]
 
   lint:prettier:
+    # Skip cleanly when deps aren't installed (fresh scaffold), like lint:eslint,
+    # so `task check` / pre-push stay green before the app is set up. Runs the
+    # project's own prettier via `pnpm exec` so a plugin config (e.g.
+    # prettier-config-standard) resolves.
     desc: Prettier (check mode)
     cmds:
-      - npx --yes prettier --check {{.CLI_ARGS | default "."}}
+      - |
+        if [ ! -d node_modules ]; then
+          echo "lint:prettier: deps not installed yet -- skipping (run pnpm install)"
+        else
+          pnpm exec prettier --check {{.CLI_ARGS | default "."}}
+        fi
 
   lint:eslint:
     # Skip cleanly when ESLint can't run yet -- no config (fresh scaffold) or deps
@@ -180,14 +189,27 @@ tasks:
         fi
 
   typecheck:
+    # Skip cleanly before the app + deps exist (fresh scaffold), like lint:eslint,
+    # so `task check` / pre-push stay green — otherwise `astro check` prompts to
+    # install @astrojs/check and hangs CI.
 [% if project_type == 'web-astro' %]
     desc: TypeScript / Astro type checking
     cmds:
-      - npx astro check
+      - |
+        if [ ! -f package.json ] || [ ! -d node_modules ]; then
+          echo "typecheck: app/deps not set up yet -- skipping (scaffold Astro + pnpm install)"
+        else
+          pnpm exec astro check
+        fi
 [% else %]
     desc: TypeScript type checking
     cmds:
-      - npx tsc --noEmit
+      - |
+        if [ ! -f package.json ] || [ ! -d node_modules ]; then
+          echo "typecheck: app/deps not set up yet -- skipping (pnpm install)"
+        else
+          pnpm exec tsc --noEmit
+        fi
 [% endif %]
 [% endif %]
 [% if use_python %]
