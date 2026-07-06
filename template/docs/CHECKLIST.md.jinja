@@ -27,7 +27,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
-- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows)
+- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
+      with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
+      token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
+      key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
 - [ ] Snyk is **optional and local-only**: `task security:sast`/`security:sca` are
       opt-in — they are NOT in CI or `task security`, so run them by hand with
       `SNYK_TOKEN` in your local env / 1Password (no Actions secret needed). If the
@@ -42,14 +45,19 @@ config, toolchain, devcontainer, and dev environment — against the items below
       running app, and a **multi-tenant isolation** review before onboarding
       customers. See [architecture/security.md](architecture/security.md).
 [% endif %]
-- [ ] CI GitHub App `[[ github_org ]]-ci`: create it by hand (one App per org;
-      **Settings → Developer settings → GitHub Apps**), or reuse the org's existing
-      one; **install it on only the repos that use it** (the harmon-init repos —
-      they run release-please / claude-* / project-automation), not "All". Then set
-      `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+- [ ] **Create** the CI GitHub App `[[ github_org ]]-ci` by hand (one App per org;
+      **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.
+- [ ] **Install** the App on this repo — **Install App → Only select repositories**
+      (the harmon-init repos that run release-please / claude-* / project-automation),
+      **not "All"**. **Creating the App is not enough:** an App whose credentials are
+      set but which is *not installed* on the repo makes
+      `actions/create-github-app-token` fail at runtime with a **404**
+      (`Not Found` — "not installed on this repository"). This is the single
+      easiest step to miss.
+- [ ] Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
       **secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
-      the key), and **scope the secret to those same repos** (least privilege — the
-      key can act as the App: commits, PRs, releases, workflow edits):
+      the key), and **scope both to those same repos** (least privilege — the key can
+      act as the App: commits, PRs, releases, workflow edits):
 
       ```bash
       gh secret set CI_APP_PRIVATE_KEY --org [[ github_org ]] \
@@ -125,16 +133,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-astro globals`
 - [ ] Install the shipped prettier config's plugins:
       `pnpm add -D prettier prettier-config-standard prettier-plugin-astro prettier-plugin-tailwindcss`
-- [ ] Approve build scripts so `astro build` (and, when deploying to Cloudflare
-      Workers, `wrangler deploy`) work — pnpm 10+ blocks dependency build scripts
-      by default. Add the blocked packages to `pnpm-workspace.yaml` (`esbuild`,
-      `sharp`, `lefthook` if it is a pnpm dep, and **`workerd`** — wrangler pulls
-      it in at deploy time, so without it the Cloudflare deploy fails
-      `ERR_PNPM_IGNORED_BUILDS`), or run `pnpm approve-builds`
-- [ ] Put pnpm `overrides` and `auditConfig` (security version floors, audit CVE
-      ignores) in `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field —
-      pnpm 10+ silently ignores that field, so overrides declared there vanish on
-      the next lockfile resolve
+- [ ] Build-script approvals + version pins already ship in
+      **`pnpm-workspace.yaml`** — the template pre-approves `esbuild` + `sharp`
+      (and **`workerd`** when deploying to Cloudflare Workers, so `wrangler deploy`
+      doesn't fail `ERR_PNPM_IGNORED_BUILDS`) under `allowBuilds`, and floors
+      `esbuild` at the patched `>=0.28.1` under `overrides` (pnpm 10+ blocks
+      dependency build scripts by default). Add any other packages whose build
+      scripts your deps need to `allowBuilds` (or run `pnpm approve-builds`); keep
+      all pnpm `overrides` / `auditConfig` there too, **not** in the `package.json`
+      `pnpm` field — pnpm 10+ silently ignores that field, so entries there vanish
+      on the next lockfile resolve
 - [ ] Review `lighthouserc.json` URLs once routes exist
 - [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
       iPhone) — the Playwright scaffold ships them commented out, and
