@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.21.0](https://github.com/evanharmon1/harmon-init/compare/v3.20.2...v3.21.0) (2026-07-06)
+
+
+### Features
+
+* **template:** make fresh web-astro repos deploy-ready + pushable ([#248](https://github.com/evanharmon1/harmon-init/issues/248)) ([ab22c8b](https://github.com/evanharmon1/harmon-init/commit/ab22c8bcb235547c0d6c83572b535cc4ffcd1baf))
+
 ## [3.20.2](https://github.com/evanharmon1/harmon-init/compare/v3.20.1...v3.20.2) (2026-07-06)
 
 
