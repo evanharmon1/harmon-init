@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.20.2](https://github.com/evanharmon1/harmon-init/compare/v3.20.1...v3.20.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **template:** ignore terraform state and tfvars (can contain secrets) ([#243](https://github.com/evanharmon1/harmon-init/issues/243)) ([f85bc73](https://github.com/evanharmon1/harmon-init/commit/f85bc73374ce99e08153dd0dca8533a08be9a351))
+
 ## [3.20.1](https://github.com/evanharmon1/harmon-init/compare/v3.20.0...v3.20.1) (2026-07-06)
 
 
