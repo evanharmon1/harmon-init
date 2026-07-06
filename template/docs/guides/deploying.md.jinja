@@ -22,6 +22,12 @@ dashboard).
   branch or tag deploys that ref directly — used once to create the Worker,
   and to redeploy the previous release tag.
 
+> **Bootstrap before the first preview.** A preview (`wrangler versions upload`)
+> **requires the Worker to already exist** — the very first preview otherwise
+> fails with *"cannot upload a new version of a Worker that does not yet exist."*
+> On a brand-new repo, run the Bootstrap dispatch (a production `wrangler deploy`)
+> **once** to create the Worker; preview deploys work from then on.
+
 Credentials: `CLOUDFLARE_ACCOUNT_ID` is an org-level Actions **variable** (an
 identifier, not a secret); `CLOUDFLARE_API_TOKEN` is a repo **secret** — an
 Account API Token scoped to **Account → Workers Scripts → Edit** only, 1-year
