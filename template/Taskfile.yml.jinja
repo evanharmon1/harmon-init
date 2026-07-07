@@ -358,9 +358,18 @@ tasks:
 
   # ── Build ──────────────────────────────────────────────────────
   build:
+    # Skip cleanly before the app + deps exist (fresh scaffold), like lint:eslint
+    # and typecheck, so `task verify` (and CI's build step) stay green until the
+    # framework is scaffolded — see docs/CHECKLIST.md. Once package.json +
+    # node_modules exist this runs the real build unchanged.
     desc: Production build
     cmds:
-      - pnpm build
+      - |
+        if [ ! -f package.json ] || [ ! -d node_modules ]; then
+          echo "build: app/deps not set up yet -- skipping (scaffold the app + pnpm install)"
+        else
+          pnpm build
+        fi
 
   build:preview:
     desc: Preview production build locally
@@ -521,7 +530,10 @@ tasks:
   # credential and stay manual — see docs/CHECKLIST.md (branch ruleset import,
   # Renovate/CodeRabbit app installs, Actions secrets, the CI GitHub App).
   setup:github:
-    desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting, CodeQL variable[% if github_org != author_git_provider_username %], bot collaborator[% endif %])
+    desc: >-
+      Apply idempotent GitHub repo settings via gh (Dependabot alerts, private
+      vulnerability reporting, CodeQL
+      variable[% if github_org != author_git_provider_username %], bot collaborator[% endif %])
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
@@ -542,7 +554,10 @@ tasks:
 [% if project_management == 'github' %]
 
   setup:github-project:
-    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline + Size number field (on a personal account also the other metadata fields). Requires `gh auth refresh -s project`.
+    desc: >-
+      Idempotently create/sync the owner's GitHub Project V2 board + Status
+      pipeline + Size number field (on a personal account also the other
+      metadata fields). Requires `gh auth refresh -s project`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
 
@@ -555,7 +570,11 @@ tasks:
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-fields:
-    desc: Idempotently add the org's Product + Agent issue fields (Priority/Effort are GitHub built-ins, left at defaults; the numeric Size estimate is a project field via setup:github-project). Requires `gh` with the admin:org scope.
+    desc: >-
+      Idempotently add the org's Product + Agent issue fields (Priority/Effort
+      are GitHub built-ins, left at defaults; the numeric Size estimate is a
+      project field via setup:github-project). Requires `gh` with the admin:org
+      scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]
