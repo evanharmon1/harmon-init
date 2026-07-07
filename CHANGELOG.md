@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.21.2](https://github.com/evanharmon1/harmon-init/compare/v3.21.1...v3.21.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* **template:** guard build task on fresh scaffold + wrap long desc lines ([#255](https://github.com/evanharmon1/harmon-init/issues/255)) ([6563172](https://github.com/evanharmon1/harmon-init/commit/65631722adb703572605143e2ea71272a60e8804))
+
 ## [3.21.1](https://github.com/evanharmon1/harmon-init/compare/v3.21.0...v3.21.1) (2026-07-07)
 
 
