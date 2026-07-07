@@ -8,7 +8,7 @@ import convex from '@convex-dev/eslint-plugin'
 
 export default [
   // specs/*/ holds vendored design-handoff bundles (deleted at sign-off).
-  { ignores: ['dist/', '.output/', '.nitro/', 'convex/_generated/', 'specs/'] },
+  { ignores: ['**/dist/', '**/.output/', '**/.nitro/', 'convex/_generated/', 'specs/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { ...react.configs.flat.recommended, settings: { react: { version: 'detect' } } },

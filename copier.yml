@@ -314,6 +314,14 @@ _skip_if_exists:
   # updating; only the list is per-repo). Ship an empty stub on first scaffold,
   # then freeze it so `copier update` never overwrites a populated list.
   - .devcontainer/related-repos.txt
+  # .release-please-manifest.json is release-please state (the repo's current
+  # released version), not template content. The template only seeds it (0.0.0)
+  # for a fresh scaffold; every repo that has cut a release carries a real
+  # version, so an unfrozen copy conflicts on EVERY `copier update` (seed vs
+  # real) and a careless resolution regresses release tracking. Same rationale
+  # as CHANGELOG.md above: freeze it — fresh scaffolds still get the seed; an
+  # existing manifest is never clobbered.
+  - .release-please-manifest.json
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).

@@ -160,12 +160,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `languageOptions.parserOptions.projectService: true`, to catch a missing
       `await` / floating promise that `tsc` won't. Makes ESLint type-check
       (slower) and needs your tsconfig wired up — skip to keep lint instant.
-- [ ] Put pnpm `overrides` / `auditConfig` / `onlyBuiltDependencies` in
+- [ ] Put pnpm `overrides` / `auditConfig` / `allowBuilds` in
       `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field — pnpm 10+
       ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`,
       and `workerd` if deploying to Cloudflare Workers — else `wrangler deploy`
-      fails `ERR_PNPM_IGNORED_BUILDS`) via `onlyBuiltDependencies` or
-      `pnpm approve-builds`
+      fails `ERR_PNPM_IGNORED_BUILDS`) via `allowBuilds` (pnpm 11+; the shipped
+      `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`
 [% elif project_type == 'iac' %]
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
