@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.21.1](https://github.com/evanharmon1/harmon-init/compare/v3.21.0...v3.21.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **template:** manifest freeze + nested eslint ignores + pnpm key fix ([#252](https://github.com/evanharmon1/harmon-init/issues/252)) ([7be3503](https://github.com/evanharmon1/harmon-init/commit/7be35036a4102abfa5a3e1bcb109c1530cbcbe1a))
+
 ## [3.21.0](https://github.com/evanharmon1/harmon-init/compare/v3.20.2...v3.21.0) (2026-07-06)
 
 
