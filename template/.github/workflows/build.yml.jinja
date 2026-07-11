@@ -282,7 +282,7 @@ jobs:
               })
             }
 [% endif %]
-[% if project_type == 'web-app' %]
+[% if project_type in ['web-astro', 'web-app'] %]
 
   a11y:
     # Accessibility (axe-core via Playwright). NON-BLOCKING for now: intentionally
