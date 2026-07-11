@@ -166,6 +166,14 @@ config, toolchain, devcontainer, and dev environment — against the items below
       and `workerd` if deploying to Cloudflare Workers — else `wrangler deploy`
       fails `ERR_PNPM_IGNORED_BUILDS`) via `allowBuilds` (pnpm 11+; the shipped
       `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`
+- [ ] Accessibility (axe-core): `pnpm add -D @axe-core/playwright`, then add a
+      `playwright.config.ts` with a `webServer` (starts the app) + `baseURL` so
+      `tests/a11y.spec.ts` can run. `task test:a11y` skips until that config
+      exists; once it does, the non-blocking `a11y` CI job runs automatically.
+- [ ] Once real routes exist and pass axe, promote the `a11y` CI job to a
+      required check: add `a11y` to `verify.needs` + a `check a11y` line in
+      `.github/workflows/build.yml`, and add it to the ruleset's
+      `required_status_checks`.
 [% elif project_type == 'iac' %]
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks

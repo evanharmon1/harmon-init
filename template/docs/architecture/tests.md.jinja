@@ -10,6 +10,9 @@ How testing works in [[ project_name ]].
 [% if use_node %]
 | Unit / component tests | vitest | `task test` |
 | End-to-end | Playwright | `task test:e2e` |
+[% if project_type == 'web-app' %]
+| Accessibility | axe-core (via Playwright) | `task test:a11y` |
+[% endif %]
 [% else %]
 | Tests | TODO: pick a test runner | `task test` |
 [% endif %]
@@ -23,5 +26,10 @@ How testing works in [[ project_name ]].
 - Playwright runs desktop Chromium/Firefox/WebKit **and mobile device
   projects** (e.g. Pixel + iPhone). The scaffold ships the mobile projects
   commented out — enable them; mobile-first is the convention.
+[% endif %]
+[% if project_type == 'web-app' %]
+- Accessibility: axe-core assertions live in Playwright specs tagged `@a11y`
+  (run via `task test:a11y`). This is the automated **floor** (WCAG 2.x A/AA
+  rules axe can detect) — keyboard + screen-reader testing still required.
 [% endif %]
 - TODO: document coverage expectations and fixtures as the suite grows.
