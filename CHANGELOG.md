@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.22.0](https://github.com/evanharmon1/harmon-init/compare/v3.21.2...v3.22.0) (2026-07-11)
+
+
+### Features
+
+* **template:** add axe-core a11y checks for web-app (Playwright, non-blocking) ([#259](https://github.com/evanharmon1/harmon-init/issues/259)) ([f9abd2c](https://github.com/evanharmon1/harmon-init/commit/f9abd2cddfd074f8ee9bed04b4c0ca4d2654f159)), closes [#199](https://github.com/evanharmon1/harmon-init/issues/199)
+* **template:** extend axe-core a11y checks to web-astro (mirror web-app) ([#263](https://github.com/evanharmon1/harmon-init/issues/263)) ([5d098dc](https://github.com/evanharmon1/harmon-init/commit/5d098dc8d172b61febd5992a89f518bae93bfe8d)), closes [#262](https://github.com/evanharmon1/harmon-init/issues/262)
+
 ## [3.21.2](https://github.com/evanharmon1/harmon-init/compare/v3.21.1...v3.21.2) (2026-07-07)
 
 
