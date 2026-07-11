@@ -393,23 +393,32 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
     fi
 fi
 
-# ── 12. web-app: the shipped ESLint config lints a real React app ────
+# ── 12. web-app: the shipped ESLint config + tsc type-check a real React app ──
 # Same idea as the web-astro check above, for the web-app (React) project type.
 # eslint-plugin-react is not yet ESLint-10-ready, so the fixture pins ESLint 9.
+# The tsc step guards that the shipped tests/a11y.spec.ts type-checks once its
+# Playwright + axe devDeps exist — the web-astro astro-check caught that class of
+# bug; the eslint-only web-app check used to miss it. The fixture tsconfig
+# excludes src/routes (TanStack's createFileRoute needs a generated route tree to
+# type; ESLint still lints it) and includes tests/ so the a11y spec is checked.
 if [ "$profile" = "webapp" ] && [ -f eslint.config.js ]; then
     if have pnpm; then
         cp -R "$repo_root/tests/fixtures/web-app/." .
         pnpm install --silent >/dev/null 2>&1 || true
-        if [ ! -x node_modules/.bin/eslint ]; then
-            err "web-app fixture: install did not provide eslint (see tests/fixtures/web-app/package.json)"
-        elif ! node_modules/.bin/eslint . >/dev/null 2>&1; then
-            node_modules/.bin/eslint . || true
+        bin="node_modules/.bin"
+        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/tsc" ]; then
+            err "web-app fixture: install did not provide the toolchain (see tests/fixtures/web-app/package.json)"
+        elif ! "$bin/eslint" . >/dev/null 2>&1; then
+            "$bin/eslint" . || true
             err "web-app fixture: shipped eslint.config.js failed to lint a real React app"
+        elif ! "$bin/tsc" --noEmit >/dev/null 2>&1; then
+            "$bin/tsc" --noEmit || true
+            err "web-app fixture: tsc --noEmit failed — the shipped tests/a11y.spec.ts must type-check with @playwright/test + @axe-core/playwright installed"
         else
-            echo "web-app: shipped ESLint config lints a real React app cleanly"
+            echo "web-app: shipped ESLint + tsc type-check clean on a real React app"
         fi
     else
-        required pnpm "web-app ESLint validation" || fail=1
+        required pnpm "web-app toolchain validation" || fail=1
     fi
 fi
 
