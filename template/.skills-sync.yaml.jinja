@@ -1,0 +1,21 @@
+# .skills-sync.yaml — the shared agent skills this repo vendors from
+# harmon-devkit, pinned to a tag. Categories are seeded from your project type;
+# adjust them freely, then run `task sync:skills`. See docs/CHECKLIST.md.
+#
+# harmon-devkit is the single source of truth; `dest` is fully managed by the
+# sync (do not hand-edit vendored skills there).
+source:
+  repo: https://github.com/evanharmon1/harmon-devkit.git
+  ref: v0.5.0 # pinned tag — bump deliberately to a released harmon-devkit tag
+categories:
+  - universal
+[% if project_type in ['web-astro', 'web-app'] %]
+  - frontend
+[% endif %]
+[% if project_type == 'web-app' %]
+  - backend
+[% endif %]
+[% if include_terraform or include_ansible or project_type == 'iac' %]
+  - infra
+[% endif %]
+dest: .claude/skills
