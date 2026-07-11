@@ -114,6 +114,26 @@ use_release_please:
   help: "RELEASE-PLEASE: Manage releases with release-please? (opens a rolling release PR you merge intentionally; CHANGELOG auto-generated from conventional commits)"
   default: yes
 
+use_skills_sync:
+  type: bool
+  help: "SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned, drift-checked)?"
+  default: yes
+
+skill_categories:
+  type: str
+  help: "SKILLS: Which shared-skill categories to vendor? (seeded from project type; edit later in .skills-sync.yaml)"
+  multiselect: true
+  choices:
+    universal: universal
+    backend: backend
+    frontend: frontend
+    infra: infra
+    mobile: mobile
+    repo: repo
+  # Seed the selection from the project type; the user can toggle any category.
+  default: "[[ ['universal'] + (['frontend'] if project_type in ['web-astro', 'web-app'] else []) + (['backend'] if project_type == 'web-app' else []) + (['infra'] if (include_terraform or include_ansible or project_type == 'iac') else []) ]]"
+  when: "[[ use_skills_sync ]]"
+
 devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"

@@ -69,6 +69,9 @@ minimal)
     # so every other profile already covers the ON branch + its
     # conditionally-named release-please files.
     data_args+=(--data use_release_please=false)
+    # Exercise the skills-sync OFF branch too (default on -> every other profile
+    # covers the ON branch + its conditionally-named files).
+    data_args+=(--data use_skills_sync=false)
     ;;
 web)
     data_args+=(--data project_type=web-astro)
@@ -350,6 +353,24 @@ if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
         ;;
     esac
 fi
+
+# ── 9d. skills-sync renders per use_skills_sync (default on) ────────
+# minimal renders with use_skills_sync=false (OFF branch); every other profile
+# uses the default (on). Assert the conditionally-named files + gated tasks
+# appear/disappear together so a broken gate can't ship silently.
+case "$profile" in
+minimal) # use_skills_sync=false -> none of the machinery renders
+    [ ! -f .skills-sync.yaml ] || err ".skills-sync.yaml rendered but use_skills_sync=false"
+    [ ! -f scripts/sync-skills.sh ] || err "scripts/sync-skills.sh rendered but use_skills_sync=false"
+    ! grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task rendered but use_skills_sync=false"
+    ;;
+*) # use_skills_sync defaults on -> manifest, engine, and tasks all present
+    [ -f .skills-sync.yaml ] || err ".skills-sync.yaml missing (use_skills_sync default on)"
+    [ -x scripts/sync-skills.sh ] || err "scripts/sync-skills.sh missing or not executable"
+    grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task missing (use_skills_sync default on)"
+    grep -q '^  - universal$' .skills-sync.yaml || err ".skills-sync.yaml categories missing 'universal' (skill_categories default)"
+    ;;
+esac
 
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
