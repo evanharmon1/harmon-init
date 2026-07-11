@@ -147,6 +147,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
       iPhone) — the Playwright scaffold ships them commented out, and
       mobile-first is the convention
+- [ ] Accessibility (axe-core): `pnpm add -D @axe-core/playwright`, then add a
+      `playwright.config.ts` with a `webServer` (starts `astro dev`/preview) +
+      `baseURL` so `tests/a11y.spec.ts` can run — this complements the Lighthouse
+      a11y gate (static pages) by covering interactive states (nav, cookie
+      banner, forms). `task test:a11y` skips until that config exists; once it
+      does, the non-blocking `a11y` CI job runs automatically.
+- [ ] Once real routes exist and pass axe, promote the `a11y` CI job to a
+      required check: add `a11y` to `verify.needs` + a `check a11y` line in
+      `.github/workflows/build.yml`, and add it to the ruleset's
+      `required_status_checks`.
 [% elif project_type == 'web-app' %]
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
 - [ ] Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide

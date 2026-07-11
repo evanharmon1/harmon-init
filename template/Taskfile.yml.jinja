@@ -441,7 +441,7 @@ tasks:
     desc: "Playwright PDF export (usage: task test:e2e:pdf -- <url> <output.pdf>)"
     cmds:
       - npx playwright pdf {{.CLI_ARGS}}
-[% if project_type == 'web-app' %]
+[% if project_type in ['web-astro', 'web-app'] %]
 
   test:a11y:
     # Accessibility (axe-core) assertions run through Playwright — catches
