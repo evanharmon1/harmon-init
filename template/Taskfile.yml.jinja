@@ -441,6 +441,25 @@ tasks:
     desc: "Playwright PDF export (usage: task test:e2e:pdf -- <url> <output.pdf>)"
     cmds:
       - npx playwright pdf {{.CLI_ARGS}}
+[% if project_type == 'web-app' %]
+
+  test:a11y:
+    # Accessibility (axe-core) assertions run through Playwright — catches
+    # runtime a11y problems in real rendered/interactive states (what
+    # Lighthouse-on-static-URLs can't reach). Skips cleanly until Playwright +
+    # deps exist, like lint:eslint, so `task check`/CI stay green on a fresh
+    # scaffold. a11y tests are tagged `@a11y` (see tests/a11y.spec.ts).
+    desc: Accessibility tests (axe-core via Playwright)
+    cmds:
+      - |
+        if ! find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+          echo "test:a11y: no Playwright config yet -- skipping (add playwright.config.ts after scaffolding the app)"
+        elif [ ! -d node_modules ]; then
+          echo "test:a11y: deps not installed yet -- skipping (pnpm install + pnpm add -D @axe-core/playwright)"
+        else
+          pnpm exec playwright test --grep @a11y {{.CLI_ARGS}}
+        fi
+[% endif %]
 [% endif %]
 
   # ── Security ───────────────────────────────────────────────────

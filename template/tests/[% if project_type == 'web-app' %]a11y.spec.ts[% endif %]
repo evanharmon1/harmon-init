@@ -1,0 +1,24 @@
+import { test, expect } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
+
+// Automated accessibility checks — the WCAG 2.x A/AA rules axe can detect.
+// axe finds only ~a third to half of WCAG issues: this is the automated FLOOR,
+// not a substitute for keyboard / screen-reader testing. Tag a11y tests
+// `@a11y` so `task test:a11y` selects them. Requires (installed when you
+// scaffold the app): pnpm add -D @axe-core/playwright
+test('homepage has no detectable accessibility violations @a11y', async ({ page }) => {
+  await page.goto('/')
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+  expect(results.violations).toEqual([])
+})
+
+// The reason axe-in-Playwright beats Lighthouse: test INTERACTIVE states too.
+// Uncomment and adapt once the app has real UI:
+// test('nav menu (open) has no violations @a11y', async ({ page }) => {
+//   await page.goto('/')
+//   await page.getByRole('button', { name: /menu/i }).click()
+//   const results = await new AxeBuilder({ page }).analyze()
+//   expect(results.violations).toEqual([])
+// })
