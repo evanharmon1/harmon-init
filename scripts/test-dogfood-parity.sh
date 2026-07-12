@@ -14,7 +14,10 @@ cd "$(dirname "$0")/.."
 # Intentional root-only divergences (the template copy is what consumers get):
 #   .yamllint — root adds the template/ exclusion (jinja YAML is not valid YAML
 #               until rendered) and trims artifact dirs harmon-init never makes.
-ALLOW_DIVERGE=".yamllint"
+#   .devcontainer/related-repos.txt and .claude/settings.json — harmon-init's
+#               curated sibling-repo list and Claude read permissions; generated
+#               repositories begin with an empty, consumer-owned list instead.
+ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt .claude/settings.json"
 
 fail=0
 checked=0
