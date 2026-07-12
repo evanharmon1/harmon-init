@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.23.0](https://github.com/evanharmon1/harmon-init/compare/v3.22.0...v3.23.0) (2026-07-12)
+
+
+### Features
+
+* **template:** vendor shared agent skills from harmon-devkit ([#267](https://github.com/evanharmon1/harmon-init/issues/267)) ([93b2300](https://github.com/evanharmon1/harmon-init/commit/93b2300f9259503540e100af12610c5f3538d5ce))
+
 ## [3.22.0](https://github.com/evanharmon1/harmon-init/compare/v3.21.2...v3.22.0) (2026-07-11)
 
 
