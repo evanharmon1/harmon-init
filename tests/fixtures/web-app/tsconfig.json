@@ -8,6 +8,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "tests"],
-  "exclude": ["src/routes"]
+  "include": ["src", "tests"]
 }

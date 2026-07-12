@@ -416,12 +416,12 @@ fi
 
 # ── 12. web-app: the shipped ESLint config + tsc type-check a real React app ──
 # Same idea as the web-astro check above, for the web-app (React) project type.
-# eslint-plugin-react is not yet ESLint-10-ready, so the fixture pins ESLint 9.
-# The tsc step guards that the shipped tests/a11y.spec.ts type-checks once its
-# Playwright + axe devDeps exist — the web-astro astro-check caught that class of
-# bug; the eslint-only web-app check used to miss it. The fixture tsconfig
-# excludes src/routes (TanStack's createFileRoute needs a generated route tree to
-# type; ESLint still lints it) and includes tests/ so the a11y spec is checked.
+# The shipped config is ESLint 10 + type-aware linting (projectService), so the
+# fixture mirrors a real app: src/routeTree.gen.ts (a codegen stand-in) registers
+# the '/' route so createFileRoute type-checks, and convex/ carries its own
+# tsconfig + _generated stubs — under projectService every linted TS file must
+# belong to a project. The tsc steps guard that the shipped tests/a11y.spec.ts
+# and the convex/ functions type-check with their devDeps installed.
 if [ "$profile" = "webapp" ] && [ -f eslint.config.js ]; then
     if have pnpm; then
         cp -R "$repo_root/tests/fixtures/web-app/." .
@@ -435,8 +435,11 @@ if [ "$profile" = "webapp" ] && [ -f eslint.config.js ]; then
         elif ! "$bin/tsc" --noEmit >/dev/null 2>&1; then
             "$bin/tsc" --noEmit || true
             err "web-app fixture: tsc --noEmit failed — the shipped tests/a11y.spec.ts must type-check with @playwright/test + @axe-core/playwright installed"
+        elif ! "$bin/tsc" -p convex --noEmit >/dev/null 2>&1; then
+            "$bin/tsc" -p convex --noEmit || true
+            err "web-app fixture: tsc -p convex --noEmit failed — the convex/ functions must type-check under their own tsconfig"
         else
-            echo "web-app: shipped ESLint + tsc type-check clean on a real React app"
+            echo "web-app: shipped ESLint + tsc type-check (root + convex) clean on a real React app"
         fi
     else
         required pnpm "web-app toolchain validation" || fail=1
