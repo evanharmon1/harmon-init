@@ -42,9 +42,13 @@ gitq() { git -C "$1" -c user.email=t@t.co -c user.name=t -c commit.gpgsign=false
 
 # 1. Tagged template source from the working tree (excluding heavy/vcs dirs).
 mkdir -p "$tmpl"
+# devcontainer.env is the local-only secrets file (gitignored, often
+# permission-restricted); __pycache__/.foreman are foreman runtime artifacts.
+# None belong in the tagged template source.
 rsync -a \
     --exclude=.git --exclude=.task --exclude=.venv --exclude=node_modules \
-    --exclude=.worktrees --exclude=dist "$repo_root/" "$tmpl/"
+    --exclude=.worktrees --exclude=dist --exclude=__pycache__ \
+    --exclude=.foreman --exclude=devcontainer.env "$repo_root/" "$tmpl/"
 git -C "$tmpl" init -q
 gitq "$tmpl" add -A
 gitq "$tmpl" commit -qm base
