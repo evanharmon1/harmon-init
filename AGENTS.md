@@ -101,9 +101,20 @@ task test:template
 # Secrets scan
 task security:secrets
 
+# Foreman: dispatch ready issues to headless agents, shepherd their PRs
+task foreman:plan -- --milestone <n|title>   # dry-run the graph/waves
+task foreman:dispatch -- --issue <n>         # worktree → agent → verify → PR
+task foreman:watch -- --milestone <n>        # unattended loop (humans merge)
+
 # Releases are INTENTIONAL — never automated on merge to main
 task release:patch   # or release:minor / release:major
 ```
+
+**Foreman** (`scripts/foreman/`, `taskfiles/foreman.yml`) is the deterministic
+supervisor for milestone-driven agent dispatch: explicit arming via
+`foreman:*` labels (issue fields on org repos), hardened doneness, a strict
+write contract, and **never a merge** — see `docs/architecture/foreman.md`
+and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 
 ## Critical Copier Gotchas
 
