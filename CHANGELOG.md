@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.24.0](https://github.com/evanharmon1/harmon-init/compare/v3.23.0...v3.24.0) (2026-07-12)
+
+
+### Features
+
+* **template:** web-app retro from omator — secrets, e2e guard, ESLint 10, renovate jinja pins ([#269](https://github.com/evanharmon1/harmon-init/issues/269)) ([9e222f4](https://github.com/evanharmon1/harmon-init/commit/9e222f4a1f1005ab020ed3851aa87eda48ff18c0))
+
 ## [3.23.0](https://github.com/evanharmon1/harmon-init/compare/v3.22.0...v3.23.0) (2026-07-12)
 
 
