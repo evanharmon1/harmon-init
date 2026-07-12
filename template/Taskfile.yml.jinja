@@ -176,7 +176,7 @@ tasks:
     cmds:
       - |
         if [ ! -d node_modules ]; then
-          echo "lint:prettier: deps not installed yet -- skipping (run pnpm install)"
+          echo "lint:prettier: deps not installed yet -- skipping (install dependencies first)"
         else
           node_modules/.bin/prettier --check {{.CLI_ARGS | default "."}}
         fi
