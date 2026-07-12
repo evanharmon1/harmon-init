@@ -20,6 +20,12 @@ class ParseInterval(unittest.TestCase):
             with self.assertRaises(ForemanError):
                 parse_interval(bad)
 
+    def test_rejects_non_positive(self):
+        # 0 would turn the watch loop into a tight spin.
+        for bad in ("0", "0s", "0m", "0h"):
+            with self.assertRaises(ForemanError):
+                parse_interval(bad)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -130,8 +130,8 @@ def human_queue(
     if merge_order:
         lines.append("")
         lines.append("  Pending merges (suggested dependency-aware order):")
-        for number, url in merge_order:
-            lines.append(f"    1. #{number}  {url}")
+        for position, (number, url) in enumerate(merge_order, 1):
+            lines.append(f"    {position}. #{number}  {url}")
     if blocked:
         lines.append("")
         lines.append("  Blocked questions:")

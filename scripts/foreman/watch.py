@@ -31,7 +31,10 @@ def parse_interval(text: str) -> int:
     if not match:
         raise ForemanError(f"bad --interval '{text}' (use e.g. 300, 5m, 1h)")
     value, unit = int(match.group(1)), match.group(2)
-    return value * {"": 1, "s": 1, "m": 60, "h": 3600}[unit]
+    seconds = value * {"": 1, "s": 1, "m": 60, "h": 3600}[unit]
+    if seconds <= 0:
+        raise ForemanError(f"--interval must be positive, got '{text}'")
+    return seconds
 
 
 def run_watch(
