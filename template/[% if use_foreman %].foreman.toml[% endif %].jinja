@@ -1,0 +1,33 @@
+# Foreman configuration for [[ project_name ]] (docs/architecture/foreman.md).
+#
+# Issue custom fields are org-only: on an org-owned repo `inputs = "auto"`
+# resolves to fields mode (`foreman`, `foreman-budget-usd`,
+# `foreman-timeout-min`); on a personal-account repo it falls back to labels
+# (`foreman:claude`, `foreman:hold`, ...). Explicit approval is required
+# before any issue is dispatchable.
+
+backend = "claude"
+require_approval = true
+inputs = "auto"
+verify_command = ["task", "ci"]
+max_parallel = 3
+branch_prefix = "foreman"
+expected_login = "[[ author_git_provider_username ]]-bot"
+
+# subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD
+# budgets are inert (guardrails bind on timeout/turns). api: adapters export
+# FOREMAN_ANTHROPIC_API_KEY process-locally; USD budgets bind.
+billing = "subscription"
+
+# Set FOREMAN_SANDBOXED=1 (env) inside the egress-limited bot devcontainer to
+# let adapters run with a relaxed permission mode; the committed default stays
+# conservative for any other host.
+sandboxed = false
+
+[budgets]
+dispatch_usd = 20.0
+shepherd_usd = 10.0
+
+[timeouts]
+dispatch_min = 90
+shepherd_min = 30

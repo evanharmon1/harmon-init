@@ -34,7 +34,7 @@ pre-commit:
     actions:
       glob: ".github/workflows/*.{yml,yaml}"
       run: task lint:actions
-    python:
+    foreman-lint:
       glob: "*.py"
       exclude:
         - "template/**"

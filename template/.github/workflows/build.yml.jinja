@@ -48,6 +48,10 @@ jobs:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 [% endif %]
+[% if use_foreman and not use_python %]
+      # uv provides uvx for foreman:lint's pinned ruff/black (see taskfiles/foreman.yml)
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+[% endif %]
 [% if include_terraform %]
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 [% endif %]
@@ -93,6 +97,9 @@ jobs:
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
       - run: task test:tasks
+[% if use_foreman %]
+      - run: task foreman:test
+[% endif %]
 [% if use_skills_sync %]
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills

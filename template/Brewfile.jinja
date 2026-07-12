@@ -27,9 +27,9 @@ brew "node"
 brew "pnpm"
 brew "lychee"
 [% endif %]
-[% if use_python %]
+[% if use_python or use_foreman %]
 
-# Python tooling
+# Python tooling (uv[% if use_foreman %]; foreman lint runs pinned ruff/black via uvx[% endif %])
 brew "uv"
 [% endif %]
 [% if include_terraform %]

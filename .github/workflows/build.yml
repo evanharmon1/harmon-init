@@ -34,7 +34,7 @@ jobs:
           version: 3.51.1
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # uv provides uvx for foreman:lint's pinned ruff/black (see taskfiles/foreman.yml)
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install lint tools (shellcheck, shfmt, actionlint, yamllint, yq)
         run: |
           # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
