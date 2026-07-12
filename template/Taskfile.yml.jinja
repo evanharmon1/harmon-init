@@ -307,6 +307,27 @@ tasks:
           echo "Direct commits to main are blocked. Use a feature branch."
           exit 1
         fi
+[% if use_skills_sync %]
+
+  # ── Skills sync ────────────────────────────────────────────────
+  # Vendor shared agent skills from harmon-devkit, pinned in .skills-sync.yaml.
+  # The verify:skills* drift checks skip cleanly until the first `task sync:skills`,
+  # so a fresh scaffold stays green. See docs/CHECKLIST.md.
+  sync:skills:
+    desc: Vendor the pinned skill categories from harmon-devkit into .claude/skills
+    cmds:
+      - ./scripts/sync-skills.sh sync
+
+  verify:skills:
+    desc: "Skill drift check (network): fail if vendored skills differ from the pinned ref"
+    cmds:
+      - ./scripts/sync-skills.sh verify
+
+  verify:skills:offline:
+    desc: "Fast offline check that the vendored ref matches the manifest (no network)"
+    cmds:
+      - ./scripts/sync-skills.sh verify-offline
+[% endif %]
 
   format:
     desc: Auto-format code
