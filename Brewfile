@@ -30,6 +30,9 @@ brew "hadolint"
 # Skills sync (scripts/sync-skills.sh reads .skills-sync.yaml)
 brew "yq"
 
+# Foreman python lint tooling (taskfiles/foreman.yml runs pinned ruff/black via uvx)
+brew "uv"
+
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)
 brew "node"
 

@@ -39,6 +39,17 @@
         "uses: (?<depName>[^\\s@]+)@(?<currentDigest>[0-9a-f]{40}) # (?<currentValue>v[0-9][0-9.]*)"
       ],
       "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "Taskfile tool pins (root Taskfile + included taskfiles/, both layers), `FOO_VERSION: x.y.z` var style — used by foreman:lint's uvx-pinned ruff/black",
+      "managerFilePatterns": [
+        "/(^|\\/)Taskfile\\.ya?ml(\\.jinja)?$/",
+        "/taskfiles\\/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION: \"?(?<currentValue>[^\"\\s]+)\"?"
+      ]
     }
   ],
   "packageRules": [

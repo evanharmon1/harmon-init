@@ -34,6 +34,11 @@ pre-commit:
     actions:
       glob: ".github/workflows/*.{yml,yaml}"
       run: task lint:actions
+    python:
+      glob: "*.py"
+      exclude:
+        - "template/**"
+      run: task foreman:lint
     hygiene:
       run: task lint:hygiene -- {staged_files}
 
