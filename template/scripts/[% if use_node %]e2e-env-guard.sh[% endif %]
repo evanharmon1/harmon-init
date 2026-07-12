@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Fail-closed environment guard for the e2e suite: refuse to run when any
+# production-capable credential or target is present in the environment.
+# `task test:e2e` runs this before Playwright, loading .env.local first.
+#
+# CONFIGURE ME (when the app grows an e2e suite): replace the TODO examples
+# below with this app's real auth providers, deploy credentials, and production
+# domains, then delete the "not configured" failure at the end. The guard must
+# fail closed — when in doubt, refuse to run. Reference implementation: the
+# omator repo's scripts/e2e-env-guard.sh.
+set -euo pipefail
+
+fail() {
+    echo "e2e-env-guard: $*" >&2
+    echo "e2e-env-guard: refusing to run" >&2
+    exit 1
+}
+
+# ── 1. Auth-provider keys must be test/dev-instance keys ──────────────
+# TODO example (Clerk): only sk_test_/pk_test_ keys may ever be present.
+# for var in CLERK_SECRET_KEY CLERK_SECRET_KEY_TEST; do
+#     val="${!var:-}"
+#     if [ -n "$val" ] && [[ "$val" != sk_test_* ]]; then
+#         fail "$var is not an sk_test_ key — live keys are forbidden in e2e environments"
+#     fi
+# done
+
+# ── 2. Production domains are never a valid e2e target ────────────────
+# TODO: list this app's production domains (a post-deploy smoke test against
+# prod belongs in a separate task, not the e2e suite).
+# if [ -n "${PLAYWRIGHT_BASE_URL:-}" ]; then
+#     host="$(printf '%s' "$PLAYWRIGHT_BASE_URL" | sed -E 's|^[a-z]+://([^/:]+).*|\1|')"
+#     case "$host" in
+#     example.com | *.example.com)
+#         fail "PLAYWRIGHT_BASE_URL targets a production domain ($host)"
+#         ;;
+#     esac
+# fi
+
+# ── 3. Provider/deploy credentials must never be present for e2e ──────
+# They belong in CI secrets or the backend's env store — never in an
+# environment that runs browser tests.
+# for var in CLOUDFLARE_API_TOKEN STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
+#     if [ -n "${!var:-}" ]; then
+#         fail "$var must never be present for e2e (it belongs in CI secrets)"
+#     fi
+# done
+
+# Fail closed until the checks above are configured for this app.
+fail "not configured yet — add this app's provider/domain checks above, then remove this line (see the header comment)"
+
+# echo "e2e-env-guard: OK — no production-capable credentials detected"

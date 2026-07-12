@@ -321,6 +321,27 @@ tasks:
     cmds:
       - snyk test --severity-threshold=high --show-vulnerable-paths=all
 
+  # ── Secrets ────────────────────────────────────────────────────
+  # Destination-only helpers: the secret value stays on stdin — never in argv,
+  # env vars, Taskfile vars, or shell history (see docs/conventions.md).
+  secret:set:1p:
+    desc: "Set an existing 1Password field from stdin (usage: command | task secret:set:1p VAULT=... ITEM=... FIELD=... [SECTION=...])"
+    env:
+      VAULT: '{{.VAULT | default ""}}'
+      ITEM: '{{.ITEM | default ""}}'
+      FIELD: '{{.FIELD | default ""}}'
+      SECTION: '{{.SECTION | default ""}}'
+    cmds:
+      - ./scripts/secret-set-1p.sh
+
+  secret:set:gh:
+    desc: "Set a GitHub repo secret from stdin (usage: command | task secret:set:gh NAME=... REPO=owner/repo)"
+    env:
+      NAME: '{{.NAME | default ""}}'
+      REPO: '{{.REPO | default ""}}'
+    cmds:
+      - ./scripts/secret-set-gh.sh
+
   # ── Setup ─────────────────────────────────────────────────────
   bootstrap:
     desc: One-time machine setup (Homebrew)

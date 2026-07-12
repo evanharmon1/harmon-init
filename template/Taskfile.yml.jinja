@@ -76,7 +76,7 @@ tasks:
     deps:
       - lint
 [% if use_node %]
-      - typecheck
+      - lint:typescript
 [% endif %]
 
   lint:
@@ -124,13 +124,20 @@ tasks:
     # lint:shell: CI and the pre-commit hook fail loudly instead of silently
     # mutating the tree (and, in CI, discarding the fix while reporting green).
     # Auto-fix lives in `task format` / `task format:file`.
+    # Prefer the repo-pinned markdownlint-cli2 (node_modules) so hooks/CI match
+    # the lockfile; fall back to npx for non-node repos and fresh scaffolds.
     desc: markdownlint-cli2 (check mode)
     cmds:
       - |
-        if [ -n "{{.CLI_ARGS}}" ]; then
-          npx --yes markdownlint-cli2 {{.CLI_ARGS}}
+        if [ -x node_modules/.bin/markdownlint-cli2 ]; then
+          run="pnpm exec markdownlint-cli2"
         else
-          npx --yes markdownlint-cli2 '**/*.md' '#.claude/**' '#specs/*/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**'
+          run="npx --yes markdownlint-cli2"
+        fi
+        if [ -n "{{.CLI_ARGS}}" ]; then
+          $run {{.CLI_ARGS}}
+        else
+          $run '**/*.md' '#.claude/**' '#specs/*/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**'
         fi
 
   lint:actions:
@@ -188,7 +195,10 @@ tasks:
           pnpm exec eslint {{.CLI_ARGS | default "."}}
         fi
 
-  typecheck:
+  lint:typescript:
+    # `lint:` group naming (a read-only gate like the other linters); the old
+    # bare name still works via the alias.
+    aliases: [typecheck]
     # Skip cleanly before the app + deps exist (fresh scaffold), like lint:eslint,
     # so `task check` / pre-push stay green — otherwise `astro check` prompts to
     # install @astrojs/check and hangs CI.
@@ -197,7 +207,7 @@ tasks:
     cmds:
       - |
         if [ ! -f package.json ] || [ ! -d node_modules ]; then
-          echo "typecheck: app/deps not set up yet -- skipping (scaffold Astro + pnpm install)"
+          echo "lint:typescript: app/deps not set up yet -- skipping (scaffold Astro + pnpm install)"
         else
           pnpm exec astro check
         fi
@@ -206,7 +216,11 @@ tasks:
     cmds:
       - |
         if [ ! -f package.json ] || [ ! -d node_modules ]; then
-          echo "typecheck: app/deps not set up yet -- skipping (pnpm install)"
+          echo "lint:typescript: app/deps not set up yet -- skipping (pnpm install)"
+        elif grep -q '"references"' tsconfig.json 2>/dev/null; then
+          # Solution-style root tsconfig (files: [] + project references): a plain
+          # `tsc --noEmit` against it type-checks NOTHING — build mode walks the refs.
+          pnpm exec tsc -b
         else
           pnpm exec tsc --noEmit
         fi
@@ -333,7 +347,14 @@ tasks:
     desc: Auto-format code
     cmds:
 [% if use_node %]
-      - npx --yes prettier --write .
+      # Repo-pinned prettier when installed (plugins in prettier.config.cjs need
+      # the local install anyway); npx fallback covers the fresh scaffold.
+      - |
+        if [ -x node_modules/.bin/prettier ]; then
+          pnpm exec prettier --write .
+        else
+          npx --yes prettier --write .
+        fi
 [% endif %]
 [% if use_python %]
       - uv run black .
@@ -347,7 +368,13 @@ tasks:
       # Best-effort: markdownlint --fix auto-fixes what it can but must NOT abort
       # `format` on un-auto-fixable rule violations (e.g. MD024 duplicate heading,
       # MD040 missing fence language) — `lint:markdown` (check-only) is the gate.
-      - npx --yes markdownlint-cli2 --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' || true
+      - |
+        if [ -x node_modules/.bin/markdownlint-cli2 ]; then
+          run="pnpm exec markdownlint-cli2"
+        else
+          run="npx --yes markdownlint-cli2"
+        fi
+        $run --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' || true
 
   format:file:
     desc: "Format a single file by extension (usage: task format:file -- <path>)"
@@ -358,7 +385,13 @@ tasks:
         [ -f "$f" ] || exit 0
         case "$f" in
 [% if use_node %]
-        *.js | *.jsx | *.ts | *.tsx | *.json | *.css | *.astro) npx --yes prettier --write "$f" ;;
+        *.js | *.jsx | *.ts | *.tsx | *.json | *.css | *.astro)
+          if [ -x node_modules/.bin/prettier ]; then
+            pnpm exec prettier --write "$f"
+          else
+            npx --yes prettier --write "$f"
+          fi
+          ;;
 [% endif %]
 [% if use_python %]
         *.py) uv run black "$f" ;;
@@ -367,7 +400,13 @@ tasks:
         *.tf | *.tfvars) terraform fmt "$f" ;;
 [% endif %]
         *.sh | *.bash) shfmt -w "$f" ;;
-        *.md | *.mdx) npx --yes markdownlint-cli2 --fix "$f" || true ;;
+        *.md | *.mdx)
+          if [ -x node_modules/.bin/markdownlint-cli2 ]; then
+            pnpm exec markdownlint-cli2 --fix "$f" || true
+          else
+            npx --yes markdownlint-cli2 --fix "$f" || true
+          fi
+          ;;
         esac
 
   fix:
@@ -450,7 +489,15 @@ tasks:
 
   test:e2e:
     desc: Run Playwright end-to-end tests
+    # Local dev secrets (if any) come from .env.local; CI passes env via the
+    # workflow instead. A missing file is ignored.
+    dotenv:
+      - .env.local
     cmds:
+      # Fail closed: refuse to run e2e with production-capable credentials or
+      # targets in the environment. The guard fails until configured for this
+      # app's providers — see scripts/e2e-env-guard.sh.
+      - ./scripts/e2e-env-guard.sh
       - npx playwright test {{.CLI_ARGS}}
 
   test:e2e:screenshot:
@@ -530,6 +577,27 @@ tasks:
 [% else %]
       - snyk test --severity-threshold=high --show-vulnerable-paths=all
 [% endif %]
+
+  # ── Secrets ────────────────────────────────────────────────────
+  # Destination-only helpers: the secret value stays on stdin — never in argv,
+  # env vars, Taskfile vars, or shell history (see docs/conventions.md).
+  secret:set:1p:
+    desc: "Set an existing 1Password field from stdin (usage: command | task secret:set:1p VAULT=... ITEM=... FIELD=... [SECTION=...])"
+    env:
+      VAULT: '{{.VAULT | default ""}}'
+      ITEM: '{{.ITEM | default ""}}'
+      FIELD: '{{.FIELD | default ""}}'
+      SECTION: '{{.SECTION | default ""}}'
+    cmds:
+      - ./scripts/secret-set-1p.sh
+
+  secret:set:gh:
+    desc: "Set a GitHub repo secret from stdin (usage: command | task secret:set:gh NAME=... REPO=owner/repo)"
+    env:
+      NAME: '{{.NAME | default ""}}'
+      REPO: '{{.REPO | default ""}}'
+    cmds:
+      - ./scripts/secret-set-gh.sh
 
   # ── Setup ──────────────────────────────────────────────────────
   bootstrap:

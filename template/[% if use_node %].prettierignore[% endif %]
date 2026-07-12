@@ -16,6 +16,11 @@
 .claude/
 node_modules/
 dist/
+# Generated (committed but tool-owned): TanStack route tree + Convex codegen.
+src/routeTree.gen.ts
+convex/_generated/
+# Convex local dev runtime state
+.convex/
 .task/
 .worktrees/
 .terraform/

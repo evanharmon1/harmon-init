@@ -81,6 +81,16 @@ coverage/
 
 # Lighthouse CI output
 .lighthouseci/
+[% if deploy_cloudflare_workers or project_type == 'web-app' %]
+
+# Wrangler local state (Cloudflare Workers)
+.wrangler/
+[% endif %]
+[% if project_type == 'web-app' %]
+
+# Convex anonymous/local dev deployment state (npx convex dev)
+.convex/
+[% endif %]
 [% endif %]
 [% if use_python %]
 
@@ -134,3 +144,5 @@ ansible/*.retry
 .env.*
 **/.env.*
 .env/
+# ...but keep the committed example (documents required vars; contains no secrets).
+!/.env.example
