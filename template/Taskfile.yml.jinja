@@ -175,7 +175,7 @@ tasks:
     desc: Prettier (check mode)
     cmds:
       - |
-        if [ ! -d node_modules ]; then
+        if [ ! -x node_modules/.bin/prettier ]; then
           echo "lint:prettier: deps not installed yet -- skipping (install dependencies first)"
         else
           node_modules/.bin/prettier --check {{.CLI_ARGS | default "."}}
