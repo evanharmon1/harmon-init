@@ -123,24 +123,11 @@ tasks:
     # Check-only (no --fix) so this is a read-only gate like lint:prettier /
     # lint:shell: CI and the pre-commit hook fail loudly instead of silently
     # mutating the tree (and, in CI, discarding the fix while reporting green).
-    # Auto-fix lives in `task format` / `task format:file`.
-    # Prefer the repo-pinned markdownlint-cli2 (node_modules) so hooks/CI match
-    # the lockfile; fall back to npx for non-node repos and fresh scaffolds.
-    # Invoke the .bin shim directly — package-manager-agnostic (works in
-    # npm-managed repos too, where `pnpm exec` would break).
+    # Auto-fix lives in `task format` / `task format:file`. The bin-vs-npx
+    # dispatch + default glob set live in scripts/markdownlint.sh.
     desc: markdownlint-cli2 (check mode)
     cmds:
-      - |
-        if [ -x node_modules/.bin/markdownlint-cli2 ]; then
-          run="node_modules/.bin/markdownlint-cli2"
-        else
-          run="npx --yes markdownlint-cli2"
-        fi
-        if [ -n "{{.CLI_ARGS}}" ]; then
-          $run {{.CLI_ARGS}}
-        else
-          $run '**/*.md' '#.claude/**' '#specs/*/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**'
-        fi
+      - ./scripts/markdownlint.sh check {{.CLI_ARGS}}
 
   lint:actions:
     desc: actionlint on GitHub workflows
@@ -368,16 +355,10 @@ tasks:
       - |
         files=$(git ls-files '*.sh' '*.bash')
         [ -n "$files" ] && shfmt -w $files || true
-      # Best-effort: markdownlint --fix auto-fixes what it can but must NOT abort
-      # `format` on un-auto-fixable rule violations (e.g. MD024 duplicate heading,
-      # MD040 missing fence language) — `lint:markdown` (check-only) is the gate.
-      - |
-        if [ -x node_modules/.bin/markdownlint-cli2 ]; then
-          run="node_modules/.bin/markdownlint-cli2"
-        else
-          run="npx --yes markdownlint-cli2"
-        fi
-        $run --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' || true
+      # Best-effort markdown auto-fix (bin-vs-npx dispatch in the helper); must
+      # NOT abort `format` on un-auto-fixable rule violations — `lint:markdown`
+      # (check-only) is the gate.
+      - ./scripts/markdownlint.sh fix
 
   format:file:
     desc: "Format a single file by extension (usage: task format:file -- <path>)"
@@ -403,13 +384,7 @@ tasks:
         *.tf | *.tfvars) terraform fmt "$f" ;;
 [% endif %]
         *.sh | *.bash) shfmt -w "$f" ;;
-        *.md | *.mdx)
-          if [ -x node_modules/.bin/markdownlint-cli2 ]; then
-            node_modules/.bin/markdownlint-cli2 --fix "$f" || true
-          else
-            npx --yes markdownlint-cli2 --fix "$f" || true
-          fi
-          ;;
+        *.md | *.mdx) ./scripts/markdownlint.sh fix "$f" ;;
         esac
 
   fix:
