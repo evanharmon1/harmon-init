@@ -7,6 +7,12 @@ module.exports = {
   trailingComma: 'none',
   semi: false,
   printWidth: 100,
+[% if project_type == 'web-app' %]
+  // Required for prettier-plugin-tailwindcss on Tailwind v4 (no tailwind.config
+  // file to discover). Uncomment once the app's main stylesheet exists — the
+  // plugin hard-fails (ENOENT) if the path doesn't exist yet. See docs/CHECKLIST.md.
+  // tailwindStylesheet: './src/styles/globals.css',
+[% endif %]
   // pluginSearchDirs: [__dirname],
 [% if project_type == 'web-astro' %]
   plugins: [

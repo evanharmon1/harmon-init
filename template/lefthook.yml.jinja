@@ -32,7 +32,7 @@ pre-commit:
       run: task lint:eslint -- {staged_files}
     typecheck:
       glob: "*.{ts,tsx,astro}"
-      run: task typecheck
+      run: task lint:typescript
 [% endif %]
     yaml:
       glob: "*.{yml,yaml}"
@@ -77,7 +77,7 @@ pre-push:
 [% endif %]
 [% if use_node %]
     typecheck:
-      run: task typecheck
+      run: task lint:typescript
 [% endif %]
 [% if include_terraform %]
     terraform-validate:

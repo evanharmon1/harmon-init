@@ -5,7 +5,15 @@
 # package.json `pnpm` field — pnpm 10+ ignores that).
 allowBuilds:
   esbuild: true
+[% if project_type == 'web-app' %]
+  # sharp is an optional transitive dep of tooling (e.g. wrangler) that web-app
+  # code never imports; its from-source build fails on current Node and is
+  # unnecessary (prebuilt binaries ship as optional deps). Explicit false =
+  # "do not run its build script".
+  sharp: false
+[% else %]
   sharp: true
+[% endif %]
 [% if deploy_cloudflare_workers %]
   # workerd (the Cloudflare Workers runtime) is pulled in by wrangler at deploy
   # time; approve its build or `wrangler deploy` fails ERR_PNPM_IGNORED_BUILDS.
@@ -17,3 +25,10 @@ allowBuilds:
 # the patched line until they catch up.
 overrides:
   esbuild: '>=0.28.1'
+
+# pnpm 11 defaults minimumReleaseAge to 1440 (1 day) — freshly published
+# versions won't resolve until they age. To install a pinned release younger
+# than that, add version-pinned entries here (they become harmless no-ops once
+# the version ages past the cooldown):
+# minimumReleaseAgeExclude:
+#   - some-package@1.2.3

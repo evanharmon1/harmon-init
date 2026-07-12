@@ -169,22 +169,44 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% elif project_type == 'web-app' %]
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
 - [ ] Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide
-- [ ] Move lint tooling into devDependencies and switch Taskfile `npx --yes` calls to `pnpm exec`
-- [ ] Install the shipped `eslint.config.js`'s plugins (ESLint 9 — eslint-plugin-react
-      isn't ESLint 10-ready yet): `pnpm add -D eslint@9 @eslint/js@9 typescript-eslint
-      eslint-plugin-react eslint-plugin-react-hooks globals @tanstack/eslint-plugin-router
-      @convex-dev/eslint-plugin` (drop the TanStack Router / Convex plugins if a given app doesn't use them)
-- [ ] (optional) Type-aware async safety: add `@typescript-eslint/no-floating-promises`
-      and `no-misused-promises` to `eslint.config.js`, scoped to `src/**` with
-      `languageOptions.parserOptions.projectService: true`, to catch a missing
-      `await` / floating promise that `tsc` won't. Makes ESLint type-check
-      (slower) and needs your tsconfig wired up — skip to keep lint instant.
+- [ ] Move lint tooling into devDependencies (`pnpm add -D prettier
+      prettier-config-standard prettier-plugin-tailwindcss markdownlint-cli2`) —
+      the Taskfile auto-prefers the repo-pinned `node_modules` bins over
+      `npx --yes` once they're installed
+- [ ] Install the shipped `eslint.config.js`'s plugins (ESLint 10; no
+      eslint-plugin-react — ESLint 10 tracks JSX natively): `pnpm add -D eslint
+      @eslint/js typescript-eslint eslint-config-prettier eslint-plugin-react-hooks
+      globals @tanstack/eslint-plugin-router @convex-dev/eslint-plugin` (drop the
+      TanStack Router / Convex plugins if a given app doesn't use them)
+- [ ] The shipped config runs **type-aware linting** (`projectService`), so every
+      linted `.ts`/`.tsx` file must belong to a tsconfig project: give `convex/`
+      its own `convex/tsconfig.json` (Convex runtime: `"types": []`, exclude
+      `./_generated`) and keep generated files (`src/routeTree.gen.ts`,
+      `convex/_generated/`) in the config's `ignores` — commit them, never lint
+      them. Directories of one-off scripts either get a tsconfig or an
+      `ignores` entry.
+- [ ] If the root `tsconfig.json` becomes solution-style (`files: []` +
+      `references`), nothing to do — `task lint:typescript` detects it and runs
+      `tsc -b` instead of `tsc --noEmit` (which would silently check nothing).
+- [ ] Tailwind v4 has no `tailwind.config`: once the main stylesheet exists
+      (e.g. `src/styles/globals.css`), uncomment `tailwindStylesheet` in
+      `prettier.config.cjs` so prettier-plugin-tailwindcss can sort classes
+      (it hard-fails if the path doesn't exist yet)
+- [ ] Vitest: split `vitest.config.ts` into **projects** when the backend needs
+      a different runtime — e.g. a `react` project (jsdom, `src/**/*.test.{ts,tsx}`)
+      and a `convex` project (edge-runtime + `convex-test`, `convex/**/*.test.ts`,
+      no deployment needed). `task test` picks the config up automatically.
 - [ ] Put pnpm `overrides` / `auditConfig` / `allowBuilds` in
       `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field — pnpm 10+
       ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`,
       and `workerd` if deploying to Cloudflare Workers — else `wrangler deploy`
       fails `ERR_PNPM_IGNORED_BUILDS`) via `allowBuilds` (pnpm 11+; the shipped
       `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`
+- [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
+      app's auth providers, deploy credentials, and production domains —
+      `task test:e2e` runs it first and it **fails until configured** (fail
+      closed; see the script header). Document required env vars in
+      `.env.example` (names only, never values).
 - [ ] Accessibility (axe-core): `pnpm add -D @axe-core/playwright`, then add a
       `playwright.config.ts` with a `webServer` (starts the app) + `baseURL` so
       `tests/a11y.spec.ts` can run. `task test:a11y` skips until that config

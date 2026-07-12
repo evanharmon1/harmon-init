@@ -1,28 +1,56 @@
 import js from '@eslint/js'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
-import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
 import router from '@tanstack/eslint-plugin-router'
 import convex from '@convex-dev/eslint-plugin'
+import prettier from 'eslint-config-prettier'
 
-export default [
-  // specs/*/ holds vendored design-handoff bundles (deleted at sign-off).
-  { ignores: ['**/dist/', '**/.output/', '**/.nitro/', 'convex/_generated/', 'specs/'] },
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
-  { ...react.configs.flat.recommended, settings: { react: { version: 'detect' } } },
-  react.configs.flat['jsx-runtime'],
+// ESLint 10 flat config. ESLint 10 tracks JSX natively, so eslint-plugin-react
+// is dropped (it isn't v10-ready and is no longer needed for the jsx-runtime).
+// Type-aware linting (projectService) catches floating promises — which matter
+// with async backend APIs (e.g. Convex's ctx). eslint-config-prettier is last
+// so formatting rules never fight Prettier.
+export default tseslint.config(
   {
-    plugins: { 'react-hooks': reactHooks },
-    rules: reactHooks.configs['recommended-latest'].rules
+    // specs/*/ holds vendored design-handoff bundles (deleted at sign-off);
+    // routeTree.gen.ts + convex/_generated/ are generated (committed but not linted).
+    ignores: [
+      '**/dist/',
+      '**/.output/',
+      '**/.nitro/',
+      'convex/_generated/',
+      'src/routeTree.gen.ts',
+      'specs/'
+    ]
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname
+      }
+    }
   },
   // TanStack Router (route property order, param names) + Convex (args
   // validators, table-id types, query patterns). Drop a block if a given
   // web-app doesn't use that library.
   ...router.configs['flat/recommended'],
   ...convex.configs.recommended,
+  {
+    plugins: { 'react-hooks': reactHooks },
+    rules: reactHooks.configs['recommended-latest'].rules
+  },
   { languageOptions: { globals: { ...globals.node, ...globals.browser } } },
-  // CommonJS config files (e.g. prettier.config.cjs) legitimately use require().
-  { files: ['**/*.cjs'], rules: { '@typescript-eslint/no-require-imports': 'off' } }
-]
+  // Plain JS/CJS config files (eslint.config.js, prettier.config.cjs, etc.) are
+  // not part of a tsconfig — turn off type-aware rules for them.
+  {
+    files: ['**/*.{js,cjs,mjs}'],
+    extends: [tseslint.configs.disableTypeChecked]
+  },
+  // CommonJS config files legitimately use require().
+  { files: ['**/*.cjs'], rules: { '@typescript-eslint/no-require-imports': 'off' } },
+  prettier
+)

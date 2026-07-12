@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    // Match Convex's runtime: don't auto-include @types/node (most of Node
+    // isn't available in Convex functions).
+    "types": [],
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["./**/*"],
+  // _generated ships its own .js + .d.ts; imports still resolve, we just don't
+  // re-typecheck the generated files.
+  "exclude": ["./_generated"]
+}
