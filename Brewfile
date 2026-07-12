@@ -27,6 +27,9 @@ brew "snyk/tap/snyk"
 # Devcontainer
 brew "hadolint"
 
+# Skills sync (scripts/sync-skills.sh reads .skills-sync.yaml)
+brew "yq"
+
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)
 brew "node"
 

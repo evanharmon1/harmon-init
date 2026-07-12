@@ -47,5 +47,9 @@ pre-push:
   commands:
     secrets:
       run: task security:secrets
+    skills-drift:
+      # Offline variant (no network) so the hook never blocks on connectivity;
+      # skips cleanly until the first `task sync:skills`.
+      run: task verify:skills:offline
     template:
       run: task test:template:minimal

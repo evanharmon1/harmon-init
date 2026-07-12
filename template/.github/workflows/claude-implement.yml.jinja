@@ -39,14 +39,45 @@ jobs:
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           # Least-privilege token: implement pushes commits (contents), opens
           # PRs (pull-requests), comments (issues), and may touch
-          # .github/workflows/ (workflows, write-only). org-projects gated to
-          # org repos only — an ungranted permission would fail token minting.
+          # .github/workflows/ (workflows, write-only). org-projects (project
+          # Status updates) and members:read (the org-membership sender check)
+          # are gated to org repos only — an ungranted permission would fail
+          # token minting.
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
           permission-workflows: write
 [% if github_org != author_git_provider_username %]
           permission-organization-projects: write
+          permission-members: read
+[% endif %]
+      # Defense in depth behind the job-level `if:` sender gate: re-verify the
+      # sender server-side (org membership / repo owner) BEFORE the privileged
+      # checkout, so a spoof-shaped gap in the expression can never reach a
+      # push-capable token.
+      - name: Verify sender is authorized
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          if [ "$SENDER" = "[[ author_git_provider_username ]]-bot" ]; then
+            echo "Bot $SENDER allowed"
+            exit 0
+          fi
+[% if github_org != author_git_provider_username %]
+          if gh api "orgs/[[ github_org ]]/members/$SENDER" --silent 2>/dev/null; then
+            echo "$SENDER is a [[ github_org ]] org member"
+          else
+            echo "::error::$SENDER is not authorized (not a [[ github_org ]] org member)"
+            exit 1
+          fi
+[% else %]
+          if [ "$SENDER" = "[[ author_git_provider_username ]]" ]; then
+            echo "$SENDER is the repo owner"
+          else
+            echo "::error::$SENDER is not authorized"
+            exit 1
+          fi
 [% endif %]
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -101,9 +132,14 @@ jobs:
             ' -F i="$PROJECT_ID")
 
           FIELD_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.id')
-          OPTION_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.options[]|select(.name=="In Progress")|.id')
+          # Case-insensitive: project boards vary between "In Progress"/"In progress".
+          OPTION_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.options[]|select((.name|ascii_downcase)=="in progress")|.id')
 
-          [ -z "$OPTION_ID" ] && echo "Status option 'In Progress' not found, skipping" && exit 0
+          if [ -z "$OPTION_ID" ]; then
+            echo "::warning::Status option matching 'in progress' not found. Available options:"
+            echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.options[].name'
+            exit 0
+          fi
 
           gh api graphql -f query='
             mutation($p:ID!,$i:ID!,$f:ID!,$v:String!){

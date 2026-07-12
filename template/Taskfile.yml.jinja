@@ -126,11 +126,13 @@ tasks:
     # Auto-fix lives in `task format` / `task format:file`.
     # Prefer the repo-pinned markdownlint-cli2 (node_modules) so hooks/CI match
     # the lockfile; fall back to npx for non-node repos and fresh scaffolds.
+    # Invoke the .bin shim directly — package-manager-agnostic (works in
+    # npm-managed repos too, where `pnpm exec` would break).
     desc: markdownlint-cli2 (check mode)
     cmds:
       - |
         if [ -x node_modules/.bin/markdownlint-cli2 ]; then
-          run="pnpm exec markdownlint-cli2"
+          run="node_modules/.bin/markdownlint-cli2"
         else
           run="npx --yes markdownlint-cli2"
         fi
@@ -168,15 +170,15 @@ tasks:
   lint:prettier:
     # Skip cleanly when deps aren't installed (fresh scaffold), like lint:eslint,
     # so `task check` / pre-push stay green before the app is set up. Runs the
-    # project's own prettier via `pnpm exec` so a plugin config (e.g.
-    # prettier-config-standard) resolves.
+    # project's own prettier (node_modules/.bin — package-manager-agnostic) so a
+    # plugin config (e.g. prettier-config-standard) resolves.
     desc: Prettier (check mode)
     cmds:
       - |
-        if [ ! -d node_modules ]; then
-          echo "lint:prettier: deps not installed yet -- skipping (run pnpm install)"
+        if [ ! -x node_modules/.bin/prettier ]; then
+          echo "lint:prettier: deps not installed yet -- skipping (install dependencies first)"
         else
-          pnpm exec prettier --check {{.CLI_ARGS | default "."}}
+          node_modules/.bin/prettier --check {{.CLI_ARGS | default "."}}
         fi
 
   lint:eslint:
@@ -348,10 +350,11 @@ tasks:
     cmds:
 [% if use_node %]
       # Repo-pinned prettier when installed (plugins in prettier.config.cjs need
-      # the local install anyway); npx fallback covers the fresh scaffold.
+      # the local install anyway); npx fallback covers the fresh scaffold. The
+      # .bin shim is invoked directly — package-manager-agnostic (npm too).
       - |
         if [ -x node_modules/.bin/prettier ]; then
-          pnpm exec prettier --write .
+          node_modules/.bin/prettier --write .
         else
           npx --yes prettier --write .
         fi
@@ -370,11 +373,11 @@ tasks:
       # MD040 missing fence language) — `lint:markdown` (check-only) is the gate.
       - |
         if [ -x node_modules/.bin/markdownlint-cli2 ]; then
-          run="pnpm exec markdownlint-cli2"
+          run="node_modules/.bin/markdownlint-cli2"
         else
           run="npx --yes markdownlint-cli2"
         fi
-        $run --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' || true
+        $run --fix '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' || true
 
   format:file:
     desc: "Format a single file by extension (usage: task format:file -- <path>)"
@@ -387,7 +390,7 @@ tasks:
 [% if use_node %]
         *.js | *.jsx | *.ts | *.tsx | *.json | *.css | *.astro)
           if [ -x node_modules/.bin/prettier ]; then
-            pnpm exec prettier --write "$f"
+            node_modules/.bin/prettier --write "$f"
           else
             npx --yes prettier --write "$f"
           fi
@@ -402,7 +405,7 @@ tasks:
         *.sh | *.bash) shfmt -w "$f" ;;
         *.md | *.mdx)
           if [ -x node_modules/.bin/markdownlint-cli2 ]; then
-            pnpm exec markdownlint-cli2 --fix "$f" || true
+            node_modules/.bin/markdownlint-cli2 --fix "$f" || true
           else
             npx --yes markdownlint-cli2 --fix "$f" || true
           fi

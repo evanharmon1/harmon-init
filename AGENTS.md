@@ -73,8 +73,12 @@ side fails the gate instead of silently shipping stale content downstream
 
 The **standardize-repo skill** is vendored at `.claude/skills/standardize-repo`
 (so the devcontainer and cloud claude-* workflows can use it); the canonical copy
-lives in harmon-devkit (`ai/skills/repo/standardize-repo`). After the canonical
-copy changes, run `task ai:sync-skills` here and commit the refresh.
+lives in harmon-devkit (`ai/skills/repo/standardize-repo`). The root repo
+dogfoods the same pinned skills sync the template ships: `.skills-sync.yaml`
+pins a released harmon-devkit tag, `task sync:skills` vendors the `repo`
+category into `.claude/skills`, and CI/pre-push run `task verify:skills` /
+`verify:skills:offline` as drift checks. After a harmon-devkit release, bump
+the `ref` pin, run `task sync:skills`, and commit the refresh.
 
 ## Common Commands
 

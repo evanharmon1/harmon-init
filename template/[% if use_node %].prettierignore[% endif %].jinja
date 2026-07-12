@@ -16,11 +16,13 @@
 .claude/
 node_modules/
 dist/
+[% if project_type == 'web-app' %]
 # Generated (committed but tool-owned): TanStack route tree + Convex codegen.
 src/routeTree.gen.ts
 convex/_generated/
 # Convex local dev runtime state
 .convex/
+[% endif %]
 .task/
 .worktrees/
 .terraform/

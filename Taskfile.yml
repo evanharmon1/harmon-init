@@ -279,11 +279,24 @@ tasks:
     cmds:
       - ./scripts/test-dogfood-parity.sh
 
-  # ── AI assets ─────────────────────────────────────────────────
-  ai:sync-skills:
-    desc: Re-sync the vendored standardize-repo skill from harmon-devkit (canonical copy)
+  # ── Skills sync ────────────────────────────────────────────────
+  # Vendor shared agent skills from harmon-devkit, pinned in .skills-sync.yaml.
+  # The verify:skills* drift checks skip cleanly until the first `task sync:skills`,
+  # so a fresh scaffold stays green. See docs/CHECKLIST.md.
+  sync:skills:
+    desc: Vendor the pinned skill categories from harmon-devkit into .claude/skills
     cmds:
-      - rsync -a --delete --exclude=.DS_Store ~/git/harmon-devkit/ai/skills/repo/standardize-repo/ .claude/skills/standardize-repo/
+      - ./scripts/sync-skills.sh sync
+
+  verify:skills:
+    desc: "Skill drift check (network): fail if vendored skills differ from the pinned ref"
+    cmds:
+      - ./scripts/sync-skills.sh verify
+
+  verify:skills:offline:
+    desc: "Fast offline check that the vendored ref matches the manifest (no network)"
+    cmds:
+      - ./scripts/sync-skills.sh verify-offline
 
   # ── Security ──────────────────────────────────────────────────
   security:

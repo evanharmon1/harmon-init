@@ -14,14 +14,16 @@ import prettier from 'eslint-config-prettier'
 export default tseslint.config(
   {
     // specs/*/ holds vendored design-handoff bundles (deleted at sign-off);
-    // routeTree.gen.ts + convex/_generated/ are generated (committed but not linted).
+    // routeTree.gen.ts + convex/_generated/ are generated (committed but not linted);
+    // .claude/ holds vendored agent skills whose .ts/.mjs assets must never hit type-aware lint.
     ignores: [
       '**/dist/',
       '**/.output/',
       '**/.nitro/',
       'convex/_generated/',
       'src/routeTree.gen.ts',
-      'specs/'
+      'specs/',
+      '.claude/'
     ]
   },
   js.configs.recommended,
