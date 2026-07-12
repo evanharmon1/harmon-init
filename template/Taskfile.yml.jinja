@@ -171,17 +171,18 @@ tasks:
   lint:eslint:
     # Skip cleanly when ESLint can't run yet -- no config (fresh scaffold) or deps
     # not installed -- so `task check` stays green before the app is set up. Runs
-    # the project's own ESLint via `pnpm exec` so a plugin-based flat config (e.g.
-    # the web-astro eslint.config.js) resolves its plugins.
+    # the project's own ESLint via the node_modules/.bin shim (package-manager-
+    # agnostic — works under npm too, where `pnpm exec` would break) so a
+    # plugin-based flat config (e.g. the web-astro eslint.config.js) resolves.
     desc: ESLint
     cmds:
       - |
         if ! find . -maxdepth 1 \( -name 'eslint.config.*' -o -name '.eslintrc.*' \) 2>/dev/null | grep -q .; then
           echo "lint:eslint: no ESLint config yet -- skipping (add one after scaffolding the app)"
-        elif [ ! -d node_modules ]; then
-          echo "lint:eslint: deps not installed yet -- skipping (run pnpm install)"
+        elif [ ! -x node_modules/.bin/eslint ]; then
+          echo "lint:eslint: deps not installed yet -- skipping (install dependencies first)"
         else
-          pnpm exec eslint {{.CLI_ARGS | default "."}}
+          node_modules/.bin/eslint {{.CLI_ARGS | default "."}}
         fi
 
   lint:typescript:
@@ -195,23 +196,23 @@ tasks:
     desc: TypeScript / Astro type checking
     cmds:
       - |
-        if [ ! -f package.json ] || [ ! -d node_modules ]; then
-          echo "lint:typescript: app/deps not set up yet -- skipping (scaffold Astro + pnpm install)"
+        if [ ! -f package.json ] || [ ! -x node_modules/.bin/astro ]; then
+          echo "lint:typescript: app/deps not set up yet -- skipping (scaffold Astro + install deps)"
         else
-          pnpm exec astro check
+          node_modules/.bin/astro check
         fi
 [% else %]
     desc: TypeScript type checking
     cmds:
       - |
-        if [ ! -f package.json ] || [ ! -d node_modules ]; then
-          echo "lint:typescript: app/deps not set up yet -- skipping (pnpm install)"
+        if [ ! -f package.json ] || [ ! -x node_modules/.bin/tsc ]; then
+          echo "lint:typescript: app/deps not set up yet -- skipping (install dependencies)"
         elif grep -q '"references"' tsconfig.json 2>/dev/null; then
           # Solution-style root tsconfig (files: [] + project references): a plain
           # `tsc --noEmit` against it type-checks NOTHING — build mode walks the refs.
-          pnpm exec tsc -b
+          node_modules/.bin/tsc -b
         else
-          pnpm exec tsc --noEmit
+          node_modules/.bin/tsc --noEmit
         fi
 [% endif %]
 [% endif %]
@@ -500,10 +501,10 @@ tasks:
       - |
         if ! find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
           echo "test:a11y: no Playwright config yet -- skipping (add playwright.config.ts after scaffolding the app)"
-        elif [ ! -d node_modules ]; then
-          echo "test:a11y: deps not installed yet -- skipping (pnpm install + pnpm add -D @axe-core/playwright)"
+        elif [ ! -x node_modules/.bin/playwright ]; then
+          echo "test:a11y: deps not installed yet -- skipping (install deps; add @playwright/test + @axe-core/playwright as devDependencies if missing)"
         else
-          pnpm exec playwright test --grep @a11y {{.CLI_ARGS}}
+          node_modules/.bin/playwright test --grep @a11y {{.CLI_ARGS}}
         fi
 [% endif %]
 [% endif %]
