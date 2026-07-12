@@ -131,7 +131,12 @@ skill_categories:
     mobile: mobile
     repo: repo
   # Seed the selection from the project type; the user can toggle any category.
-  default: "[[ ['universal'] + (['frontend'] if project_type in ['web-astro', 'web-app'] else []) + (['backend'] if project_type == 'web-app' else []) + (['infra'] if (include_terraform or include_ansible or project_type == 'iac') else []) ]]"
+  # Folded scalar (joined with spaces) purely to keep each source line short.
+  default: >-
+    [[ ['universal']
+    + (['frontend'] if project_type in ['web-astro', 'web-app'] else [])
+    + (['backend'] if project_type == 'web-app' else [])
+    + (['infra'] if (include_terraform or include_ansible or project_type == 'iac') else []) ]]
   when: "[[ use_skills_sync ]]"
 
 devcontainer:
