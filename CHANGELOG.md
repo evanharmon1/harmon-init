@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.25.0](https://github.com/evanharmon1/harmon-init/compare/v3.24.0...v3.25.0) (2026-07-12)
+
+
+### Features
+
+* **template:** local-skill-safe skills sync + v3.24 sweep retro fixes ([#271](https://github.com/evanharmon1/harmon-init/issues/271)) ([def26af](https://github.com/evanharmon1/harmon-init/commit/def26af07275a4037517610fb3a8cdc56551fdc3))
+
 ## [3.24.0](https://github.com/evanharmon1/harmon-init/compare/v3.23.0...v3.24.0) (2026-07-12)
 
 
