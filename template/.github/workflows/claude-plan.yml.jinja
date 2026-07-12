@@ -38,13 +38,43 @@ jobs:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           # Least-privilege token: plan only comments (issues/pull-requests) and
-          # reads the repo (no push). org-projects gated to org repos only —
-          # requesting a permission the installation lacks makes this step fail.
+          # reads the repo (no push). org-projects (project Status updates) and
+          # members:read (the org-membership sender check) are gated to org
+          # repos — requesting a permission the installation lacks makes this
+          # step fail.
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
 [% if github_org != author_git_provider_username %]
           permission-organization-projects: write
+          permission-members: read
+[% endif %]
+      # Defense in depth behind the job-level `if:` sender gate: re-verify the
+      # sender server-side (org membership / repo owner) so a spoof-shaped gap
+      # in the expression can never reach the Claude step.
+      - name: Verify sender is authorized
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          if [ "$SENDER" = "[[ author_git_provider_username ]]-bot" ]; then
+            echo "Bot $SENDER allowed"
+            exit 0
+          fi
+[% if github_org != author_git_provider_username %]
+          if gh api "orgs/[[ github_org ]]/members/$SENDER" --silent 2>/dev/null; then
+            echo "$SENDER is a [[ github_org ]] org member"
+          else
+            echo "::error::$SENDER is not authorized (not a [[ github_org ]] org member)"
+            exit 1
+          fi
+[% else %]
+          if [ "$SENDER" = "[[ author_git_provider_username ]]" ]; then
+            echo "$SENDER is the repo owner"
+          else
+            echo "::error::$SENDER is not authorized"
+            exit 1
+          fi
 [% endif %]
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 [% if github_org != author_git_provider_username %]
@@ -87,9 +117,14 @@ jobs:
             ' -F i="$PROJECT_ID")
 
           FIELD_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.id')
-          OPTION_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.options[]|select(.name=="Shaping")|.id')
+          # Case-insensitive: project boards vary between "Shaping"/"shaping".
+          OPTION_ID=$(echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.options[]|select((.name|ascii_downcase)=="shaping")|.id')
 
-          [ -z "$OPTION_ID" ] && echo "Status option 'Shaping' not found, skipping" && exit 0
+          if [ -z "$OPTION_ID" ]; then
+            echo "::warning::Status option matching 'shaping' not found. Available options:"
+            echo "$STATUS_DATA" | jq -r '.data.node.fields.nodes[]|select(.name=="Status")|.options[].name'
+            exit 0
+          fi
 
           gh api graphql -f query='
             mutation($p:ID!,$i:ID!,$f:ID!,$v:String!){
