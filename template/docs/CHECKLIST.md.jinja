@@ -18,7 +18,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       [harmon-devkit release](https://github.com/evanharmon1/harmon-devkit/releases)
       that ships the skill category layout, run `task sync:skills`, and commit
       `.claude/skills/`. Until then the `verify:skills*` drift checks skip
-      cleanly (CI + pre-push). To update later: bump `ref`, re-sync, commit.
+      cleanly (CI + pre-push). **Pin bumps are a two-step:** edit `ref` in
+      `.skills-sync.yaml`, then run `task sync:skills` and commit the refreshed
+      `.claude/skills/` in the same PR — Renovate can bump the ref but can't do
+      the re-sync, so a ref-only commit fails the drift check.
 [% endif %]
 - [ ] Verify `[[ project_slug ]].code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
 - [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
@@ -156,7 +159,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
       iPhone) — the Playwright scaffold ships them commented out, and
       mobile-first is the convention
-- [ ] Accessibility (axe-core): `pnpm add -D @axe-core/playwright`, then add a
+- [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
+      @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
+      `tsc`/`astro check` fail until they're installed (pair the spec with the
+      dep install). Then add a
       `playwright.config.ts` with a `webServer` (starts `astro dev`/preview) +
       `baseURL` so `tests/a11y.spec.ts` can run — this complements the Lighthouse
       a11y gate (static pages) by covering interactive states (nav, cookie
@@ -206,10 +212,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail
       closed; see the script header). Document required env vars in
-      `.env.example` (names only, never values).
-- [ ] Accessibility (axe-core): `pnpm add -D @axe-core/playwright`, then add a
-      `playwright.config.ts` with a `webServer` (starts the app) + `baseURL` so
-      `tests/a11y.spec.ts` can run. `task test:a11y` skips until that config
+      `.env.example` (names only, never values). **Updating a repo that already
+      has an e2e suite:** the guard lands unconfigured and blocks
+      `task test:e2e` — either configure it in the same update PR, or
+      consciously defer (keep running Playwright directly) and file a follow-up;
+      don't gut the guard to get green.
+- [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
+      @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
+      `tsc` fails until they're installed (pair the spec with the dep install).
+      Then add a `playwright.config.ts` with a `webServer` (starts the app) +
+      `baseURL` so `tests/a11y.spec.ts` can run. `task test:a11y` skips until that config
       exists; once it does, the non-blocking `a11y` CI job runs automatically.
 - [ ] Once real routes exist and pass axe, promote the `a11y` CI job to a
       required check: add `a11y` to `verify.needs` + a `check a11y` line in

@@ -56,6 +56,11 @@ it points here.
   (`task lint:eslint`) + type-check (`astro check` or `tsc --noEmit`); pnpm is
   the package manager.
 [% endif %]
+[% if project_type == 'web-astro' %]
+- **Documented divergence:** web-astro stays on **ESLint 9** until
+  eslint-plugin-astro supports ESLint 10 (web-app repos are on 10). This is
+  intentional, not drift — don't "fix" it in a standardize pass.
+[% endif %]
 [% if use_python %]
 - **Python:** Black in check mode (`task lint:python`); managed with uv.
 [% endif %]
@@ -109,6 +114,14 @@ it points here.
 - **`AGENTS.md` is the single source of truth** for AI guidance; `CLAUDE.md`,
   `GEMINI.md`, and `.github/copilot-instructions.md` are **symlinks** to it —
   edit only `AGENTS.md`.
+[% if use_skills_sync %]
+- **Vendored vs local skills:** the skills sync manages ONLY the directories
+  listed on the `# managed:` line of `.claude/skills/.SKILLS_PROVENANCE`. Any
+  other directory under `.claude/skills/` is a **local skill owned by this
+  repo** — create, edit, and delete it freely; `task sync:skills` and the
+  `verify:skills*` drift checks never touch or report it. Never hand-edit the
+  managed (vendored) skills — change them in harmon-devkit and bump the pin.
+[% endif %]
 - **Doc filenames are kebab-case** (`branch-protection.md`, `ci-cd.md`). The
   conventional uppercase project files keep their names: `README.md`,
   `AGENTS.md`, `DESIGN.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
