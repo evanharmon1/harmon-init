@@ -42,6 +42,11 @@ brew "terraform"
 # Devcontainer
 brew "hadolint"
 [% endif %]
+[% if use_skills_sync %]
+
+# Skills sync (scripts/sync-skills.sh reads .skills-sync.yaml)
+brew "yq"
+[% endif %]
 
 # Utilities
 brew "direnv"
