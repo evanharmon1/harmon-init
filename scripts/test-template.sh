@@ -72,6 +72,9 @@ minimal)
     # Exercise the skills-sync OFF branch too (default on -> every other profile
     # covers the ON branch + its conditionally-named files).
     data_args+=(--data use_skills_sync=false)
+    # Exercise the devcontainer OFF branch (default on -> every other profile
+    # covers the ON branch; full also sets it explicitly).
+    data_args+=(--data devcontainer=false)
     ;;
 web)
     data_args+=(--data project_type=web-astro)
@@ -252,7 +255,12 @@ if [ -f lefthook.yml ]; then
 fi
 
 # ── 6. Rendered shell scripts pass shellcheck + shfmt ────────────────
-shell_files=$(find scripts .devcontainer -name '*.sh' -type f 2>/dev/null | tr '\n' ' ')
+# .devcontainer only exists when the devcontainer answer is on; a missing dir
+# would make `find` (and, via pipefail + set -e, the whole script) fail silently.
+shell_dirs="scripts"
+[ -d .devcontainer ] && shell_dirs="$shell_dirs .devcontainer"
+# shellcheck disable=SC2086
+shell_files=$(find $shell_dirs -name '*.sh' -type f 2>/dev/null | tr '\n' ' ')
 if [ -n "$shell_files" ]; then
     if have shellcheck; then
         # shellcheck disable=SC2086
@@ -371,6 +379,33 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     grep -q '^  - universal$' .skills-sync.yaml || err ".skills-sync.yaml categories missing 'universal' (skill_categories default)"
     ;;
 esac
+
+# ── 9e. devcontainer machinery renders per the devcontainer answer ──
+# minimal renders with devcontainer=false; every other profile has it on.
+# The helper scripts are conditionally named, so a broken gate would either
+# ship dead weight into devcontainer=false repos or drop them from real ones.
+if [ "$profile" = "minimal" ]; then
+    [ ! -d .devcontainer ] || err ".devcontainer/ rendered but devcontainer=false"
+    [ ! -f scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh rendered but devcontainer=false"
+    [ ! -f scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh rendered but devcontainer=false"
+    ! grep -q 'test:devcontainer:permissions:' Taskfile.yml || err "test:devcontainer tasks rendered but devcontainer=false"
+else
+    [ -d .devcontainer ] || err ".devcontainer/ missing (devcontainer on for profile '$profile')"
+    [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
+    [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
+fi
+
+# ── 9f. .prettierignore: web-app-only entries are gated by project type ──
+# TanStack/Convex ignores (routeTree.gen.ts, convex/_generated, .convex) must
+# render for web-app and must NOT leak into other node project types.
+if [ -f .prettierignore ]; then
+    if [ "$profile" = "webapp" ] || [ "$profile" = "meta" ]; then # project_type=web-app
+        grep -q 'convex/_generated/' .prettierignore || err ".prettierignore missing web-app entries (convex/_generated) for project_type=web-app"
+        grep -q 'src/routeTree.gen.ts' .prettierignore || err ".prettierignore missing web-app entries (routeTree.gen.ts) for project_type=web-app"
+    else
+        ! grep -q 'convex\|routeTree' .prettierignore || err ".prettierignore leaks web-app-only entries into profile '$profile'"
+    fi
+fi
 
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
