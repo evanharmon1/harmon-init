@@ -25,3 +25,10 @@ allowBuilds:
 # the patched line until they catch up.
 overrides:
   esbuild: '>=0.28.1'
+
+# pnpm 11 defaults minimumReleaseAge to 1440 (1 day) — freshly published
+# versions won't resolve until they age. To install a pinned release younger
+# than that, add version-pinned entries here (they become harmless no-ops once
+# the version ages past the cooldown):
+# minimumReleaseAgeExclude:
+#   - some-package@1.2.3
