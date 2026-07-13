@@ -64,7 +64,9 @@ github_org:
 code_owner:
   type: str
   help: "CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
-  default: "[[ github_org ]]"
+  # A bare organization is not a valid CODEOWNERS principal. Default to the
+  # author account; org repos can deliberately choose `org/team` instead.
+  default: "[[ author_git_provider_username ]]"
 
 project_type:
   type: str
@@ -117,9 +119,9 @@ use_release_please:
 use_skills_sync:
   type: bool
   help: "SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned, drift-checked)?"
-  # The universal category is intentionally empty today, so a general repo
-  # would otherwise install sync machinery that manages no usable skills.
-  default: "[[ project_type != 'general' ]]"
+  # Today only the frontend/backend categories contain skills. Keep the sync
+  # machinery off when a profile would otherwise manage an empty set.
+  default: "[[ project_type in ['web-astro', 'web-app'] ]]"
 
 skill_categories:
   type: str

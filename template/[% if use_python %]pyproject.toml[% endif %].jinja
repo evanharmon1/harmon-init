@@ -14,3 +14,8 @@ dev = [
     "ansible-core>=2.18",
 [% endif %]
 ]
+
+[tool.black]
+# `requires-python = ">=3.14"` has no upper bound, so Black may otherwise infer
+# a future grammar (for example py315) that the active 3.14 runtime cannot parse.
+target-version = ["py314"]

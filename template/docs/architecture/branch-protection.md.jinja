@@ -17,11 +17,12 @@ GitHub **UI import** (do this once `build.yml` is on `main`, so the required
 To change the ruleset later, **edit the existing one in the UI** (Settings →
 Rules → Rulesets → Protect Main) — don't re-import.
 
-**Why the UI, not `gh api … rulesets`:** the REST `POST` is **not idempotent**
-(every run creates another "Protect Main" ruleset — silent duplicates), the
-`PUT` form needs the live ruleset id, and both currently reject the
-`merge_queue` rule with `422 Invalid rule 'merge_queue'`. The UI import handles
-every rule type and is the GitHub-native way to apply an exported ruleset.
+**Why the UI for a one-time import:** a blind REST `POST` is **not idempotent**
+(every run creates another "Protect Main" ruleset — silent duplicates). The
+[REST ruleset API](https://docs.github.com/en/rest/repos/rules?apiVersion=2022-11-28)
+now supports `merge_queue`, but safe automation must first discover exactly one
+matching live ruleset and then `PUT` its id. The UI import keeps the initial
+application explicit and reviewable; edit the existing ruleset thereafter.
 
 ## Dependabot and Renovate
 
@@ -53,10 +54,11 @@ The `require_code_owner_review` rule in the ruleset **only works if a `CODEOWNER
 
 ```text
 # All files require the repo owner's approval
-* @[[ author_git_provider_username ]]
+* @[[ code_owner ]]
 ```
 
-Replace `@[[ author_git_provider_username ]]` with the GitHub username of the human who should approve all changes.
+Set `code_owner` to the GitHub username or `org/team` principal that should
+approve all changes; a bare organization name is not a valid principal.
 
 ### Bot Account PAT Permissions
 
@@ -283,7 +285,7 @@ only if everything stays green. A required check whose workflow does **not** run
 
 This ruleset ships with every repo generated from harmon-init. To replicate manually:
 
-1. Create a `CODEOWNERS` file with `* @[[ author_git_provider_username ]]`
+1. Create a `CODEOWNERS` file with `* @[[ code_owner ]]`
 2. Create a branch ruleset targeting `~DEFAULT_BRANCH` with the same rules
 3. Add the bot as a Write collaborator
 4. Update the `required_status_checks` to match that repo's CI checks

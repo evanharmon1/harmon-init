@@ -74,4 +74,36 @@ case "$out" in
 *) fail "task secret:set:gh failed for the wrong reason: $out" ;;
 esac
 
+echo "==> 1Password helper rejects SSH key items before edit"
+fake_bin="${shell_tmp}/fake-bin"
+edit_marker="${shell_tmp}/op-edit-called"
+mkdir -p "$fake_bin"
+cat >"${fake_bin}/op" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+"item get")
+    printf '%s\n' '{"category":"SSH_KEY","fields":[{"label":"password","type":"CONCEALED","value":"old"}]}'
+    ;;
+"item edit")
+    : >"${OP_EDIT_MARKER:?}"
+    ;;
+*)
+    exit 2
+    ;;
+esac
+EOF
+chmod +x "${fake_bin}/op"
+out=$(printf '%s' 'dummy-secret' |
+    PATH="${fake_bin}:${PATH}" OP_EDIT_MARKER="$edit_marker" \
+        VAULT=test ITEM=test FIELD=password ./scripts/secret-set-1p.sh 2>&1) && rc=0 || rc=$?
+if [ "$rc" -eq 0 ]; then
+    fail "secret:set:1p accepted an SSH key item"
+fi
+[ ! -e "$edit_marker" ] || fail "secret:set:1p called op item edit for an SSH key item"
+case "$out" in
+*"passkey or SSH key"*) ;;
+*) fail "secret:set:1p rejected the SSH key item for the wrong reason: $out" ;;
+esac
+
 echo "==> task targets OK (compile + bootstrap idempotency)"

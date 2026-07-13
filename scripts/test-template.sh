@@ -69,8 +69,8 @@ minimal)
     # so every other profile already covers the ON branch + its
     # conditionally-named release-please files.
     data_args+=(--data use_release_please=false)
-    # Exercise the skills-sync OFF branch too (general repos default off while
-    # every non-general profile covers the ON branch + conditional files).
+    # Exercise the skills-sync OFF branch too (profiles whose seeded categories
+    # are empty default off; web profiles cover the ON branch).
     data_args+=(--data use_skills_sync=false)
     # Exercise the devcontainer OFF branch (default on -> every other profile
     # covers the ON branch; full also sets it explicitly).
@@ -366,17 +366,22 @@ if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
     esac
 fi
 
+# A bare organization is not a valid CODEOWNERS principal. The full profile
+# deliberately changes github_org, so this catches regressions where the owner
+# default follows the repository organization instead of the human author.
+grep -Fxq '* @evanharmon1' .github/CODEOWNERS || err "CODEOWNERS does not default to the human author account"
+
 # ── 9d. skills-sync renders per use_skills_sync ─────────────────────
-# Minimal/general renders with use_skills_sync=false; every non-general profile
-# uses its default (on). Assert the conditionally-named files + gated tasks
-# appear/disappear together so a broken gate can't ship silently.
+# General and IaC profiles render with use_skills_sync=false because their
+# currently seeded categories are empty; web profiles use the default (on).
+# Assert the conditionally-named files + gated tasks appear/disappear together.
 case "$profile" in
-minimal) # use_skills_sync=false -> none of the machinery renders
+minimal | iac) # use_skills_sync=false -> none of the machinery renders
     [ ! -f .skills-sync.yaml ] || err ".skills-sync.yaml rendered but use_skills_sync=false"
     [ ! -f scripts/sync-skills.sh ] || err "scripts/sync-skills.sh rendered but use_skills_sync=false"
     ! grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task rendered but use_skills_sync=false"
     ;;
-*) # use_skills_sync defaults on -> manifest, engine, and tasks all present
+*) # web profiles default on -> manifest, engine, and tasks all present
     [ -f .skills-sync.yaml ] || err ".skills-sync.yaml missing (use_skills_sync default on)"
     [ -x scripts/sync-skills.sh ] || err "scripts/sync-skills.sh missing or not executable"
     grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task missing (use_skills_sync default on)"
