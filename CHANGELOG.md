@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.26.0](https://github.com/evanharmon1/harmon-init/compare/v3.25.0...v3.26.0) (2026-07-13)
+
+
+### Features
+
+* foreman v1 — deterministic supervisor for milestone-driven agent dispatch ([#277](https://github.com/evanharmon1/harmon-init/issues/277)) ([b77d3c1](https://github.com/evanharmon1/harmon-init/commit/b77d3c15a41f10f16d8e075417b667aadd2f26f9))
+
+
+### Bug Fixes
+
+* **template:** review-findings batch — checkout hardening, secret-helper guards, a11y 2.2 tags ([#276](https://github.com/evanharmon1/harmon-init/issues/276)) ([bb67c3f](https://github.com/evanharmon1/harmon-init/commit/bb67c3f70b0c969468c47293b3504c20ce3f990e))
+
 ## [3.25.0](https://github.com/evanharmon1/harmon-init/compare/v3.24.0...v3.25.0) (2026-07-12)
 
 
