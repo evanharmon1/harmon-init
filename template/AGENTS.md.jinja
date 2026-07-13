@@ -41,7 +41,17 @@ task check       # all linters
 task fix         # auto-format then lint
 task test        # tests
 task security    # gitleaks + dependency audit
+[% if use_foreman %]
+task foreman:plan -- --milestone <n>  # foreman: dry-run the dispatch graph
+[% endif %]
 ```
+[% if use_foreman %]
+
+**Foreman** (`task foreman:*`) is the deterministic supervisor that dispatches
+armed issues to headless agents, verifies their output with `task ci`, opens
+PRs, and shepherds them to mergeable — merging is always a human decision.
+See `docs/architecture/foreman.md`.
+[% endif %]
 
 `verify` is deliberately kept fast (lint[% if use_node %] + typecheck + build[% endif %] + the quick
 Taskfile/hook guards) so editors, git hooks, and AI agents can run it on every

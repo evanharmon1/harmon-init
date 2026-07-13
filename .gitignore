@@ -79,6 +79,12 @@ Thumbs.db
 .worktrees/
 .lefthook-local.yml
 
+# Foreman runtime artifacts (logs, prompts, resume states — never state-of-record)
+.foreman/
+.foreman-stop
+__pycache__/
+*.pyc
+
 # Local editor/AI settings
 settings.local.json
 

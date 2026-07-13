@@ -139,6 +139,11 @@ skill_categories:
     + (['infra'] if (include_terraform or include_ansible or project_type == 'iac') else []) ]]
   when: "[[ use_skills_sync ]]"
 
+use_foreman:
+  type: bool
+  help: "FOREMAN: Include foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:*; Python 3.11+ at runtime)?"
+  default: yes
+
 devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"

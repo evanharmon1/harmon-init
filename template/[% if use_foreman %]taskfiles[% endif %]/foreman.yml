@@ -1,0 +1,75 @@
+# Foreman — deterministic supervisor for milestone-driven agent dispatch.
+# Included by the root Taskfile under the `foreman:` namespace; every task is
+# a thin wrapper over scripts/foreman/ (see docs/architecture/foreman.md and
+# `python3 -m foreman --help`). All heavy logic lives in Python, not here.
+#
+# Targeting: every orchestration task takes `-- --milestone <n|title>` or
+# `-- --issue <n>`, e.g. `task foreman:plan -- --milestone 4`.
+version: "3"
+
+tasks:
+  plan:
+    desc: "Dry run: graph, waves, ready set, input mode, validation (no side effects)"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman plan {{.CLI_ARGS}}
+
+  preflight:
+    desc: "Read-only agent analysis of the target; drafts correction comments for human approval (--post publishes them)"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman preflight {{.CLI_ARGS}}
+
+  dispatch:
+    desc: "Dispatch ready units to agents in worktrees, verify, open PRs (idempotent)"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman dispatch {{.CLI_ARGS}}
+
+  shepherd:
+    desc: "Keep open foreman PRs healthy: repair CI, adjudicate reviews, rebase, report merge order"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman shepherd {{.CLI_ARGS}}
+
+  watch:
+    desc: "Loop plan→dispatch→shepherd with heartbeats until done (stop file: .foreman-stop)"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman watch {{.CLI_ARGS}}
+
+  status:
+    desc: "Read-only snapshot: unit table + consolidated human-action queue"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman status {{.CLI_ARGS}}
+
+  retry:
+    desc: "Re-dispatch a unit whose PR a human closed (usage: task foreman:retry -- --unit N)"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman retry {{.CLI_ARGS}}
+
+  cleanup:
+    desc: "Prune worktrees + foreman-created branches for closed units (in-flight untouched)"
+    cmds:
+      - PYTHONPATH=scripts python3 -m foreman cleanup {{.CLI_ARGS}}
+
+  lint:
+    desc: "Ruff + Black (check mode) over scripts/foreman (skips when uv is unavailable)"
+    vars:
+      # renovate: datasource=pypi depName=ruff
+      RUFF_VERSION: 0.15.21
+      # renovate: datasource=pypi depName=black
+      BLACK_VERSION: 26.5.1
+    cmds:
+      - |
+        if ! command -v uvx >/dev/null 2>&1; then
+          echo "foreman:lint: uv not installed -- skipping (install: brew install uv)"
+          exit 0
+        fi
+        uvx --from "ruff=={{.RUFF_VERSION}}" ruff check scripts/foreman
+        uvx --from "black=={{.BLACK_VERSION}}" black --check --quiet scripts/foreman
+
+  test:
+    desc: "Foreman unit tests (stdlib unittest; hermetic — fake gh transport, no network)"
+    cmds:
+      - |
+        if [ ! -d scripts/foreman/tests ]; then
+          echo "foreman:test: no test suite vendored in this repo -- skipping (suite lives in harmon-init)"
+          exit 0
+        fi
+        PYTHONPATH=scripts python3 -m unittest discover -s scripts/foreman/tests -t scripts

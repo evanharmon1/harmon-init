@@ -75,6 +75,9 @@ minimal)
     # Exercise the devcontainer OFF branch (default on -> every other profile
     # covers the ON branch; full also sets it explicitly).
     data_args+=(--data devcontainer=false)
+    # Exercise the foreman OFF branch (default on -> every other profile
+    # covers the ON branch + its conditionally-named files).
+    data_args+=(--data use_foreman=false)
     ;;
 web)
     data_args+=(--data project_type=web-astro)
@@ -379,6 +382,28 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     grep -q '^  - universal$' .skills-sync.yaml || err ".skills-sync.yaml categories missing 'universal' (skill_categories default)"
     ;;
 esac
+
+# ── 9d2. foreman renders per use_foreman (default on) ───────────────
+# minimal renders with use_foreman=false (OFF branch); every other profile
+# uses the default (on). The Taskfile include, scripts, config, and agent
+# definitions are all conditionally named — assert they appear/disappear
+# together so a broken gate can't ship silently.
+if [ "$profile" = "minimal" ]; then
+    [ ! -d scripts/foreman ] || err "scripts/foreman/ rendered but use_foreman=false"
+    [ ! -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml rendered but use_foreman=false"
+    [ ! -f .foreman.toml ] || err ".foreman.toml rendered but use_foreman=false"
+    [ ! -d .claude/agents ] || err ".claude/agents rendered but use_foreman=false"
+    ! grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman include rendered but use_foreman=false"
+else
+    [ -d scripts/foreman ] || err "scripts/foreman/ missing (use_foreman default on)"
+    [ -x scripts/foreman/backends/claude.sh ] || err "foreman claude.sh backend missing or not executable"
+    [ -x scripts/foreman/backends/mock.sh ] || err "foreman mock.sh backend missing or not executable"
+    [ -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml missing (use_foreman default on)"
+    [ -f .foreman.toml ] || err ".foreman.toml missing (use_foreman default on)"
+    [ -f .claude/agents/foreman-implementer.md ] || err "foreman agent definitions missing"
+    grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman Taskfile include missing"
+    grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
+fi
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
 # minimal renders with devcontainer=false; every other profile has it on.

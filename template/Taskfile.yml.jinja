@@ -6,6 +6,13 @@ output:
   group:
     begin: "::group::{{.TASK}}"
     end: "::endgroup::"
+[% if use_foreman %]
+
+includes:
+  # Foreman — deterministic supervisor for milestone-driven agent dispatch
+  # (task foreman:plan / dispatch / shepherd / watch ...; docs/architecture/foreman.md)
+  foreman: taskfiles/foreman.yml
+[% endif %]
 
 # ── Entry Points ───────────────────────────────────────────────────
 tasks:
@@ -66,6 +73,9 @@ tasks:
 [% endif %]
       - task: validate
       - task: test:tasks
+[% if use_foreman %]
+      - task: foreman:test
+[% endif %]
 [% if devcontainer %]
       - task: test:hooks
 [% endif %]
@@ -93,6 +103,9 @@ tasks:
 [% endif %]
 [% if use_python %]
       - lint:python
+[% endif %]
+[% if use_foreman %]
+      - foreman:lint
 [% endif %]
 [% if include_terraform %]
       - lint:terraform

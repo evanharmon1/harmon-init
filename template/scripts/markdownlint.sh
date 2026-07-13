@@ -32,6 +32,7 @@ default_globs=(
     '#**/.terraform/**'
     '#**/.venv/**'
     '#**/.task/**'
+    '#.foreman/**'
 )
 
 if [ -x node_modules/.bin/markdownlint-cli2 ]; then

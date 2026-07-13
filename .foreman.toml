@@ -1,0 +1,32 @@
+# Foreman configuration for harmon-init (docs/architecture/foreman.md).
+#
+# harmon-init is a personal-account repo, so issue custom fields are
+# unavailable (org-only feature) — `inputs = "auto"` resolves to label mode
+# here (`foreman:claude`, `foreman:hold`, ...). Explicit approval is required
+# before any issue is dispatchable.
+
+backend = "claude"
+require_approval = true
+inputs = "auto"
+verify_command = ["task", "ci"]
+max_parallel = 3
+branch_prefix = "foreman"
+expected_login = "evanharmon1-bot"
+
+# subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD
+# budgets are inert (guardrails bind on timeout/turns). api: adapters export
+# FOREMAN_ANTHROPIC_API_KEY process-locally; USD budgets bind.
+billing = "subscription"
+
+# Set FOREMAN_SANDBOXED=1 (env) inside the egress-limited bot devcontainer to
+# let adapters run with a relaxed permission mode; the committed default stays
+# conservative for any other host.
+sandboxed = false
+
+[budgets]
+dispatch_usd = 20.0
+shepherd_usd = 10.0
+
+[timeouts]
+dispatch_min = 90
+shepherd_min = 30
