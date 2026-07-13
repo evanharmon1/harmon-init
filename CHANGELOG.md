@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.26.1](https://github.com/evanharmon1/harmon-init/compare/v3.26.0...v3.26.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **template:** harden sync-skills dest against absolute/traversal paths ([#282](https://github.com/evanharmon1/harmon-init/issues/282)) ([1f995c0](https://github.com/evanharmon1/harmon-init/commit/1f995c070788b813dfc8a250e56c5dfda011bbb5))
+
 ## [3.26.0](https://github.com/evanharmon1/harmon-init/compare/v3.25.0...v3.26.0) (2026-07-13)
 
 
