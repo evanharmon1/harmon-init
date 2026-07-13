@@ -8,6 +8,7 @@ ignore:
   - node_modules/
   - .task/
   - .worktrees/
+  - .foreman/
 
 rules:
   braces:

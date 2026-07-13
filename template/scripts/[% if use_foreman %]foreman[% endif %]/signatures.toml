@@ -1,0 +1,26 @@
+# Environmental-failure signature catalog.
+#
+# The shepherd matches red-CI output (and dispatch matches agent-log tails)
+# against these BEFORE any LLM sees the failure. `environment` = retry once
+# via empty commit, then escalate to the human queue — never let an agent
+# "fix" an infra problem by weakening code. `quota_wait` = the agent
+# backend's own usage window is exhausted: idle until it resets, don't burn
+# retries, don't mark the unit failed.
+#
+# When an unmatched failure gets an LLM diagnosis, add its signature here:
+# the LLM diagnoses once, code recognizes forever.
+
+[[signature]]
+name = "convex-deployment-quota"
+pattern = 'DeploymentQuotaReached'
+action = "environment"
+
+[[signature]]
+name = "github-actions-billing"
+pattern = 'recent account payments have failed|spending limit needs to be increased'
+action = "environment"
+
+[[signature]]
+name = "claude-usage-limit"
+pattern = 'usage limit reached|hit your (usage|rate) limit|limit will reset|out of extra usage'
+action = "quota_wait"

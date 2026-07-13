@@ -56,6 +56,13 @@ item). The lane is built for future automation, though — an agent can watch *A
 Queue + Agent-set + priority* (the Agent-queue view below) and pull the top item on
 its own — and either way the item moves to **In Progress** once work starts.
 
+> **Foreman is that automation** for issue-driven delivery: arm the issue
+> (`foreman:*` label, or the org `foreman` issue field) and
+> `task foreman:dispatch` / `foreman:watch` pulls ready items, opens verified
+> PRs, and shepherds them to a human merge. The Project stays the human
+> dashboard — foreman neither reads nor writes it (issue state, labels/fields,
+> and PRs are its interface). See `docs/architecture/foreman.md`.
+
 ## Status is not issue state
 
 GitHub has **two independent state machines**, and conflating them is the most

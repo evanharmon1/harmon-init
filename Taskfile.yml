@@ -13,6 +13,11 @@ output:
     begin: "::group::{{.TASK}}"
     end: "::endgroup::"
 
+includes:
+  # Foreman — deterministic supervisor for milestone-driven agent dispatch
+  # (task foreman:plan / dispatch / shepherd / watch ...; docs/architecture/foreman.md)
+  foreman: taskfiles/foreman.yml
+
 tasks:
   default:
     desc: Interactive task menu (tv)
@@ -52,6 +57,7 @@ tasks:
     cmds:
       - task: check
       - task: test:tasks
+      - task: foreman:test
       - task: test:hooks
       - task: test:devcontainer:permissions
       - task: test
@@ -67,6 +73,7 @@ tasks:
       - task: check
       - task: test:tasks
       - task: test:dogfood-parity
+      - task: foreman:test
       - task: test:hooks
       - task: test:template
 
@@ -83,6 +90,7 @@ tasks:
       - lint:markdown
       - lint:actions
       - lint:hygiene
+      - foreman:lint
 
   lint:yaml:
     desc: yamllint (template/ excluded via .yamllint ignore)
@@ -113,7 +121,7 @@ tasks:
         if [ -n "{{.CLI_ARGS}}" ]; then
           npx --yes markdownlint-cli2 {{.CLI_ARGS}}
         else
-          npx --yes markdownlint-cli2 '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**'
+          npx --yes markdownlint-cli2 '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**' '#.foreman/**'
         fi
 
   lint:actions:
@@ -159,7 +167,7 @@ tasks:
       # Best-effort: markdownlint --fix auto-fixes what it can but must NOT abort
       # `format` on un-auto-fixable rule violations (e.g. MD024 duplicate heading,
       # MD040 missing fence language) — `lint:markdown` (check-only) is the gate.
-      - npx --yes markdownlint-cli2 --fix '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**' || true
+      - npx --yes markdownlint-cli2 --fix '**/*.md' '#template/**' '#.claude/**' '#**/node_modules/**' '#.worktrees/**' '#.foreman/**' || true
 
   format:file:
     desc: "Format a single file by extension (usage: task format:file -- <path>)"
@@ -327,7 +335,7 @@ tasks:
   security:sast:
     desc: Static application security testing (source code)
     cmds:
-      - snyk code test --exclude=.worktrees --severity-threshold=high
+      - snyk code test --exclude=.worktrees,.foreman --severity-threshold=high
 
   security:sca:
     desc: Software composition analysis (Snyk)

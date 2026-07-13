@@ -33,6 +33,9 @@ onward (diagrams and component deep-dives also live here):
 - [security.md](security.md) — the posture across config, secret state, and GitHub settings; holds the threat-model framing, not the config.
 - [branch-protection.md](branch-protection.md) — in-repo (CODEOWNERS) + out-of-repo (ruleset, Actions toggles, bot model) stitched into one picture (grep can't see GitHub settings).
 - [tests.md](tests.md) — the testing strategy holistically (shape, layers, what's tested where); routes to the testing decision and the guides.
+[% if use_foreman %]
+- [foreman.md](foreman.md) — the deterministic supervisor that dispatches armed issues to headless agents and shepherds their PRs to a human merge; state of record is GitHub + git.
+[% endif %]
 [% if project_type in ['web-astro', 'web-app'] %]
 - [design-language.md](design-language.md) — the holistic visual/UX/brand language; philosophy here, with pointers to the live tokens, [DESIGN.md](../../DESIGN.md), and design ADRs.
 [% endif %]

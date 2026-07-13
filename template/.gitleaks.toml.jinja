@@ -9,6 +9,9 @@ paths = [
     '''\.git/''',
     '''\.task/''',
     '''\.worktrees/''',
+[% if use_foreman %]
+    '''\.foreman/''',
+[% endif %]
 [% if use_node %]
     '''node_modules/''',
     '''dist/''',

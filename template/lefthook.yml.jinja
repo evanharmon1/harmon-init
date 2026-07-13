@@ -51,6 +51,11 @@ pre-commit:
       glob: "*.py"
       run: task lint:python -- {staged_files}
 [% endif %]
+[% if use_foreman %]
+    foreman-lint:
+      glob: "*.py"
+      run: task foreman:lint
+[% endif %]
 [% if include_terraform %]
     terraform:
       glob: "*.{tf,tfvars}"
