@@ -44,6 +44,10 @@ template to every generated repo, on these principles:
 - **Explicit arming by default** (v1 decision, flipping the spec draft):
   only issues carrying the `foreman` input dispatch; its value also selects
   the backend. `require_approval = false` opts a repo into default-armed.
+- **Explicit repository adoption**: the Copier `use_foreman` answer defaults
+  off. The supervisor pays for its sizeable operational surface in active,
+  milestone-driven agent delivery; smaller repos should not inherit it merely
+  because an update introduced a new question.
 - **Foreman opens PRs, not agents** (v1 decision): agents hand results over
   a validated sidecar contract (summary, handoff, human tasks, AC→test map,
   blocked question); foreman verifies with the repo's own `verify_command`

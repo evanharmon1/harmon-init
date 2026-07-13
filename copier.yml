@@ -117,7 +117,9 @@ use_release_please:
 use_skills_sync:
   type: bool
   help: "SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned, drift-checked)?"
-  default: yes
+  # The universal category is intentionally empty today, so a general repo
+  # would otherwise install sync machinery that manages no usable skills.
+  default: "[[ project_type != 'general' ]]"
 
 skill_categories:
   type: str
@@ -142,7 +144,9 @@ skill_categories:
 use_foreman:
   type: bool
   help: "FOREMAN: Include foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:*; Python 3.11+ at runtime)?"
-  default: yes
+  # Deliberate opt-in: this is a substantial operational subsystem, valuable
+  # for milestone-driven agent delivery but needless surface in smaller repos.
+  default: no
 
 devcontainer:
   type: bool

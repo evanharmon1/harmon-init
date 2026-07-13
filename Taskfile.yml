@@ -52,14 +52,13 @@ tasks:
   ci:
     # Full local mirror of this repo's CI — run on demand to catch everything CI
     # would (the lint job's guards, the template render matrix, security) without
-    # waiting on a PR. test:devcontainer:permissions needs a Docker daemon.
+    # waiting on a PR.
     desc: Full CI mirror (check → guards → test → security)
     cmds:
       - task: check
       - task: test:tasks
       - task: foreman:test
       - task: test:hooks
-      - task: test:devcontainer:permissions
       - task: test
       - task: security
 
@@ -75,6 +74,7 @@ tasks:
       - task: test:dogfood-parity
       - task: foreman:test
       - task: test:hooks
+      - task: test:devcontainer:permissions
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -99,16 +99,8 @@ tasks:
 
   lint:shell:
     desc: shellcheck + shfmt (template/ excluded — jinja-named paths contain spaces; rendered scripts are checked by test:template)
-    vars:
-      SHELL_FILES:
-        sh: git ls-files '*.sh' '*.bash' ':(exclude)template/*' 2>/dev/null | tr '\n' ' '
     cmds:
-      - |
-        files="{{.CLI_ARGS}}"
-        [ -z "$files" ] && files="{{.SHELL_FILES}}"
-        [ -z "$files" ] && exit 0
-        shellcheck --severity=error $files
-        shfmt -d $files
+      - ./scripts/shell-quality.sh check --exclude-template {{.CLI_ARGS}}
 
   lint:markdown:
     # Check-only (no --fix) so this is a read-only gate like lint:prettier /
@@ -158,9 +150,7 @@ tasks:
   format:
     desc: Auto-format code
     cmds:
-      - |
-        files=$(git ls-files '*.sh' '*.bash')
-        [ -n "$files" ] && shfmt -w $files || true
+      - ./scripts/shell-quality.sh format --exclude-template
       # Best-effort markdown auto-fix (bin-vs-npx dispatch + default globs in the
       # helper; template/ excluded — jinja markdown); must NOT abort `format` on
       # un-auto-fixable rule violations — `lint:markdown` (check-only) is the gate.

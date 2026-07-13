@@ -69,14 +69,14 @@ minimal)
     # so every other profile already covers the ON branch + its
     # conditionally-named release-please files.
     data_args+=(--data use_release_please=false)
-    # Exercise the skills-sync OFF branch too (default on -> every other profile
-    # covers the ON branch + its conditionally-named files).
+    # Exercise the skills-sync OFF branch too (general repos default off while
+    # every non-general profile covers the ON branch + conditional files).
     data_args+=(--data use_skills_sync=false)
     # Exercise the devcontainer OFF branch (default on -> every other profile
     # covers the ON branch; full also sets it explicitly).
     data_args+=(--data devcontainer=false)
-    # Exercise the foreman OFF branch (default on -> every other profile
-    # covers the ON branch + its conditionally-named files).
+    # Foreman is opt-in; keep the smallest profile explicitly off so its answer
+    # remains obvious in this coverage fixture.
     data_args+=(--data use_foreman=false)
     ;;
 web)
@@ -98,6 +98,7 @@ full)
         --data project_type=web-astro
         --data include_terraform=true
         --data include_ansible=true
+        --data use_foreman=true
         --data devcontainer=true
         --data ci_runner=self-hosted
         --data github_org=test-org
@@ -365,9 +366,9 @@ if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
     esac
 fi
 
-# ── 9d. skills-sync renders per use_skills_sync (default on) ────────
-# minimal renders with use_skills_sync=false (OFF branch); every other profile
-# uses the default (on). Assert the conditionally-named files + gated tasks
+# ── 9d. skills-sync renders per use_skills_sync ─────────────────────
+# Minimal/general renders with use_skills_sync=false; every non-general profile
+# uses its default (on). Assert the conditionally-named files + gated tasks
 # appear/disappear together so a broken gate can't ship silently.
 case "$profile" in
 minimal) # use_skills_sync=false -> none of the machinery renders
@@ -383,23 +384,21 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     ;;
 esac
 
-# ── 9d2. foreman renders per use_foreman (default on) ───────────────
-# minimal renders with use_foreman=false (OFF branch); every other profile
-# uses the default (on). The Taskfile include, scripts, config, and agent
-# definitions are all conditionally named — assert they appear/disappear
-# together so a broken gate can't ship silently.
-if [ "$profile" = "minimal" ]; then
+# ── 9d2. foreman renders per use_foreman (default off) ──────────────
+# Full explicitly enables Foreman; every other profile exercises the safer
+# default-off branch. Assert all gated pieces appear/disappear together.
+if [ "$profile" != "full" ]; then
     [ ! -d scripts/foreman ] || err "scripts/foreman/ rendered but use_foreman=false"
     [ ! -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml rendered but use_foreman=false"
     [ ! -f .foreman.toml ] || err ".foreman.toml rendered but use_foreman=false"
     [ ! -d .claude/agents ] || err ".claude/agents rendered but use_foreman=false"
     ! grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman include rendered but use_foreman=false"
 else
-    [ -d scripts/foreman ] || err "scripts/foreman/ missing (use_foreman default on)"
+    [ -d scripts/foreman ] || err "scripts/foreman/ missing (use_foreman=true)"
     [ -x scripts/foreman/backends/claude.sh ] || err "foreman claude.sh backend missing or not executable"
     [ -x scripts/foreman/backends/mock.sh ] || err "foreman mock.sh backend missing or not executable"
-    [ -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml missing (use_foreman default on)"
-    [ -f .foreman.toml ] || err ".foreman.toml missing (use_foreman default on)"
+    [ -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml missing (use_foreman=true)"
+    [ -f .foreman.toml ] || err ".foreman.toml missing (use_foreman=true)"
     [ -f .claude/agents/foreman-implementer.md ] || err "foreman agent definitions missing"
     grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman Taskfile include missing"
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"

@@ -18,6 +18,7 @@ brew "shellcheck"
 brew "shfmt"
 brew "actionlint"
 brew "yamllint"
+brew "markdownlint-cli2"
 
 # Security
 brew "gitleaks"
@@ -26,6 +27,7 @@ brew "snyk/tap/snyk"
 
 # Devcontainer
 brew "hadolint"
+brew "devcontainer"
 
 # Skills sync (scripts/sync-skills.sh reads .skills-sync.yaml)
 brew "yq"
@@ -36,7 +38,11 @@ brew "uv"
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)
 brew "node"
 
+# Universal scripts parse JSON/TOML and Foreman requires Python 3.11+
+brew "python"
+
 # Utilities
+brew "coreutils"    # `timeout` portability (`gtimeout` on macOS)
 brew "direnv"
 brew "jq"
 brew "fzf"

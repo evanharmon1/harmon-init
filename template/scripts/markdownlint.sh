@@ -2,11 +2,11 @@
 # markdownlint.sh — resolve markdownlint-cli2 and run it in check or fix mode.
 #
 # Prefer the repo-pinned binary (node_modules/.bin) so hooks/CI match the
-# lockfile; fall back to npx for non-node repos and fresh scaffolds. Invoking
-# the .bin shim directly is package-manager-agnostic (works under npm too,
-# where `pnpm exec` would break). Keeps this bin-vs-npx dispatch out of the
-# Taskfile per the "keep cmds trivial; non-trivial shell lives in scripts/*.sh"
-# rule.
+# lockfile, then the Brew-installed global binary; use an explicitly pinned
+# npx fallback for fresh scaffolds. Invoking the .bin shim directly is package-
+# manager-agnostic (works under npm too, where `pnpm exec` would break). Keeps
+# this resolution logic out of the Taskfile per the "keep cmds trivial; non-
+# trivial shell lives in scripts/*.sh" rule.
 #
 # Usage:
 #   markdownlint.sh check [glob-or-file ...]   # read-only gate
@@ -35,10 +35,15 @@ default_globs=(
     '#.foreman/**'
 )
 
+# renovate: datasource=npm depName=markdownlint-cli2
+MARKDOWNLINT_CLI2_VERSION="0.22.1"
+
 if [ -x node_modules/.bin/markdownlint-cli2 ]; then
     run=(node_modules/.bin/markdownlint-cli2)
+elif command -v markdownlint-cli2 >/dev/null 2>&1; then
+    run=(markdownlint-cli2)
 else
-    run=(npx --yes markdownlint-cli2)
+    run=(npx --yes "markdownlint-cli2@${MARKDOWNLINT_CLI2_VERSION}")
 fi
 
 if [ "$#" -eq 0 ]; then

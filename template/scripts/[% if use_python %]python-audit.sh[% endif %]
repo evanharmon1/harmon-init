@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Audit the exact locked Python dependency graph (including development tools).
+# Fresh scaffolds do not have uv.lock yet, so compile the project + dev group to
+# a temporary requirements file without mutating the repository.
+set -euo pipefail
+
+requirements="$(mktemp)"
+trap 'rm -f "$requirements"' EXIT
+
+if [ -f uv.lock ]; then
+    uv export \
+        --frozen \
+        --all-extras \
+        --all-groups \
+        --no-emit-project \
+        --no-hashes \
+        --quiet \
+        --output-file "$requirements"
+else
+    uv pip compile pyproject.toml \
+        --all-extras \
+        --group dev \
+        --quiet \
+        --output-file "$requirements"
+fi
+
+# renovate: datasource=pypi depName=pip-audit
+PIP_AUDIT_VERSION="2.10.1"
+uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+    --desc \
+    --requirement "$requirements"

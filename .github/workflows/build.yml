@@ -17,7 +17,9 @@ permissions:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> ubuntu-latest;
+    # set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -80,7 +82,9 @@ jobs:
       - run: task test:devcontainer:permissions
 
   security:
-    runs-on: ubuntu-latest
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> ubuntu-latest;
+    # set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -103,14 +107,16 @@ jobs:
         run: |
           # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
           GITLEAKS_VERSION=8.24.3
-          curl -sSL -o /tmp/gitleaks.tgz \
+          curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf /tmp/gitleaks.tgz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
       - run: task security:secrets
 
   template-test:
-    runs-on: ubuntu-latest
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> ubuntu-latest;
+    # set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -140,12 +146,12 @@ jobs:
           npm install -g @devcontainers/cli lefthook pnpm
           # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
           ACTIONLINT_VERSION=1.7.12
-          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+          curl -fsSL --retry 3 "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
             | tar -xz -C /tmp actionlint
           sudo mv /tmp/actionlint /usr/local/bin/
           # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
           GITLEAKS_VERSION=8.24.3
-          curl -sSL -o /tmp/gitleaks.tgz \
+          curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf /tmp/gitleaks.tgz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
@@ -158,12 +164,15 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, template-test]
-    runs-on: ubuntu-latest
+    needs: [lint, security, template-test]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> ubuntu-latest;
+    # set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     steps:
       - name: Check job results
         run: |
           if [[ "${{ needs.lint.result }}" != "success" ]] ||
+             [[ "${{ needs.security.result }}" != "success" ]] ||
              [[ "${{ needs.template-test.result }}" != "success" ]]; then
             echo "One or more required jobs failed."
             exit 1

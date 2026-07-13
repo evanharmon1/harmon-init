@@ -49,14 +49,10 @@ tasks:
   ci:
     # Full local mirror of the CI pipeline — run before (or instead of) opening
     # a PR to catch everything CI would, on demand, without waiting on a PR run.
-    # Builds on `verify` and adds the heavier / environment-dependent checks
-    # (the devcontainer permission assert needs a Docker daemon, like CI has).
-    desc: Full CI mirror (verify → [test:devcontainer:permissions →] test → security)
+    # Builds on `verify` and adds the heavier test + security checks.
+    desc: Full CI mirror (verify → test → security)
     cmds:
       - task: verify
-[% if devcontainer %]
-      - task: test:devcontainer:permissions
-[% endif %]
       - task: test
       - task: security
 
@@ -64,7 +60,7 @@ tasks:
     # Fast local gate (target: well under a minute) — safe for editors, git
     # hooks, and AI agents to run on every change without getting bogged down.
     # Add a check here ONLY if it stays fast; heavier or environment-dependent
-    # checks (test, security, the devcontainer permission assert) live in `ci`.
+    # checks (test and security) live in `ci`.
     desc: Fast local gate (check[% if use_node %] → build[% endif %] → validate → guards)
     cmds:
       - task: check
@@ -78,6 +74,7 @@ tasks:
 [% endif %]
 [% if devcontainer %]
       - task: test:hooks
+      - task: test:devcontainer:permissions
 [% endif %]
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -121,16 +118,8 @@ tasks:
 
   lint:shell:
     desc: shellcheck + shfmt
-    vars:
-      SHELL_FILES:
-        sh: git ls-files '*.sh' '*.bash' 2>/dev/null | tr '\n' ' '
     cmds:
-      - |
-        files="{{.CLI_ARGS}}"
-        [ -z "$files" ] && files="{{.SHELL_FILES}}"
-        [ -z "$files" ] && exit 0
-        shellcheck --severity=error $files
-        shfmt -d $files
+      - ./scripts/shell-quality.sh check {{.CLI_ARGS}}
 
   lint:markdown:
     # Check-only (no --fix) so this is a read-only gate like lint:prettier /
@@ -366,9 +355,7 @@ tasks:
 [% if include_terraform %]
       - terraform fmt -recursive terraform/
 [% endif %]
-      - |
-        files=$(git ls-files '*.sh' '*.bash')
-        [ -n "$files" ] && shfmt -w $files || true
+      - ./scripts/shell-quality.sh format
       # Best-effort markdown auto-fix (bin-vs-npx dispatch in the helper); must
       # NOT abort `format` on un-auto-fixable rule violations — `lint:markdown`
       # (check-only) is the gate.
@@ -550,7 +537,7 @@ tasks:
       - pnpm audit --audit-level=high
 [% endif %]
 [% if use_python %]
-      - uvx pip-audit --desc --requirement <(uv pip compile pyproject.toml 2>/dev/null) || true
+      - ./scripts/python-audit.sh
 [% endif %]
 [% if not use_node and not use_python %]
       - echo "No package manifests to audit yet."

@@ -32,6 +32,24 @@ else
     echo "    (skipped: brew not on PATH)"
 fi
 
+echo "==> shell quality helper preserves a path containing spaces"
+shell_tmp="$(mktemp -d)"
+trap 'rm -rf "$shell_tmp"' EXIT
+shell_fixture="${shell_tmp}/fixture with spaces.sh"
+cat >"$shell_fixture" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "ok"
+EOF
+./scripts/shell-quality.sh check "$shell_fixture"
+
+echo "==> hygiene parser preserves quoted paths"
+json_fixture="${shell_tmp}/fixture's data.json"
+toml_fixture="${shell_tmp}/fixture's data.toml"
+printf '%s\n' '{"ok": true}' >"$json_fixture"
+printf '%s\n' 'ok = true' >"$toml_fixture"
+./scripts/lint-hygiene.sh "$json_fixture" "$toml_fixture"
+
 echo "==> secret helper tasks reject missing destination metadata"
 # Assert the stable missing-destination diagnostic, not just a nonzero exit:
 # a bare `if ! task ...` would also be satisfied by an unrelated failure

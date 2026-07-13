@@ -13,7 +13,9 @@ permissions:
 jobs:
   close-milestone:
     name: Close matching milestone
-    runs-on: [ "ubuntu-latest" ]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> ubuntu-latest;
+    # set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - name: Close the milestone named after the tag

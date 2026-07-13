@@ -198,7 +198,7 @@ jobs:
         run: |
           # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
           GITLEAKS_VERSION=8.24.3
-          curl -sSL -o /tmp/gitleaks.tgz \
+          curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf /tmp/gitleaks.tgz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
