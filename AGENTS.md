@@ -83,8 +83,9 @@ the `ref` pin, run `task sync:skills`, and commit the refresh.
 ## Common Commands
 
 ```bash
-# Generate a new project from this template
-copier copy harmon-init new-project --trust
+# Generate a real project from the canonical source at a released tag
+copier copy --trust --vcs-ref=v3.26.1 \
+  https://github.com/evanharmon1/harmon-init.git new-project
 
 # Local verification gate (lint + fast guards + template generation tests)
 task verify
@@ -118,11 +119,17 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 
 ## Critical Copier Gotchas
 
-- **`--vcs-ref=HEAD` is load-bearing.** Without it, `copier copy` from a local path
-  renders the **latest git tag**, silently ignoring all uncommitted AND committed-
-  but-untagged work. With it, copier auto-includes dirty/untracked changes via a
-  throwaway commit in a temp clone (`DirtyLocalWarning`) — your working tree is
-  never touched. `scripts/test-template.sh` always passes it.
+- **`--vcs-ref=HEAD` is load-bearing for local template development and tests.**
+  Without it, `copier copy` from a local path renders the **latest git tag**,
+  silently ignoring all uncommitted AND committed-but-untagged work. With it,
+  Copier auto-includes dirty/untracked changes via a throwaway commit in a temp
+  clone (`DirtyLocalWarning`) — your working tree is never touched.
+  `scripts/test-template.sh` always passes it. Do not use dirty local `HEAD` to
+  establish a production repo's lineage: the recorded temporary `_commit` may
+  be unreachable on the canonical remote. Never rewrite only `_src_path` in
+  `.copier-answers.yml` unless that recorded commit is verified reachable from
+  the replacement source. Production scaffolds/adoptions use the canonical
+  GitHub URL at an explicit released tag.
 - Side-effectful copier answers (`bunch_add`, `github_remote_create`,
   `github_release_init`, `run_task_install`) must default to **no** so
   `copier copy --defaults` is CI-safe.

@@ -10,6 +10,19 @@ The pipeline runs `check → build → validate → test → security` (see
 [../conventions.md](../conventions.md)). `build.yml` runs these as parallel jobs
 plus an aggregate **`verify`** job; branch protection requires `verify` +
 `security` to pass before a PR can merge to `main`.
+
+Repository-controlled leaf jobs deliberately skip untrusted fork PRs. The
+aggregate accepts that state only when the event is actually a fork and every
+suppressed leaf reports `skipped`; its fork path is an inline diagnostic that
+does not check out or execute repository code. Same-repository PRs and all
+non-PR events require every leaf to report `success`.[% if devcontainer %] The
+devcontainer aggregate follows the same contract.[% endif %]
+
+This contract does not make persistent self-hosted runners generally safe for
+public repositories. Treat runner exposure as a manual policy check: keep
+untrusted contribution workflows on GitHub-hosted runners, and audit every
+custom workflow for fork, `pull_request_target`, and other untrusted-input paths
+before allowing it to target a self-hosted runner.
 [% if include_terraform %]
 The lint job installs pinned TFLint and uv; `task check` then runs Terraform fmt,
 TFLint, pinned Checkov via `uvx`, and a non-mutating multi-platform provider-lock

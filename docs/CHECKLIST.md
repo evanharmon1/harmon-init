@@ -23,6 +23,13 @@ config, toolchain, devcontainer, and dev environment — against the items below
       reporting**. Do NOT add dependabot.yml — Renovate owns version updates.
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. Prefer the UI over a blind API `POST`, which is not idempotent and creates duplicate rulesets. The REST API supports `merge_queue`, but safe automation must discover the existing ruleset and update its id with `PUT`. Later changes should edit the existing ruleset rather than re-importing.
 
+- [ ] Review the **fork/self-hosted runner policy**. The generated build and
+      devcontainer aggregates verify intentional fork skips without checking
+      out fork code, but that is not a repo-wide guarantee. For a public repo,
+      keep untrusted contribution workflows off persistent self-hosted runners
+      and manually audit every custom workflow before enabling a self-hosted
+      `CI_RUNS_ON` override.
+
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
 - [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),

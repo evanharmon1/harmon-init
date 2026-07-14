@@ -11,6 +11,19 @@ The pipeline runs `check → build → validate → test → security` (see
 plus an aggregate **`verify`** job; branch protection requires `verify` +
 `security` to pass before a PR can merge to `main`.
 
+Repository-controlled leaf jobs deliberately skip untrusted fork PRs. The
+aggregate accepts that state only when the event is actually a fork and every
+suppressed leaf reports `skipped`; its fork path is an inline diagnostic that
+does not check out or execute repository code. Same-repository PRs and all
+non-PR events require every leaf to report `success`. The devcontainer
+aggregate follows the same contract.
+
+This contract does not make persistent self-hosted runners generally safe for
+public repositories. Treat runner exposure as a manual policy check: keep
+untrusted contribution workflows on GitHub-hosted runners, and audit every
+custom workflow for fork, `pull_request_target`, and other untrusted-input paths
+before allowing it to target a self-hosted runner.
+
 ## Workflows
 
 - `build.yml` — on push/PR to `main`: lint, security, then the aggregate **`verify`** job.

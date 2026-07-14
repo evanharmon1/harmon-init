@@ -35,8 +35,15 @@ This repo is part of **harmon-platform** — my custom development platform with
 ### New project
 
 ```bash
-copier copy harmon-init new-project --trust
+# Update the ref deliberately when adopting a newer harmon-init release.
+copier copy --trust --vcs-ref=v3.26.1 \
+  https://github.com/evanharmon1/harmon-init.git new-project
 ```
+
+Use the canonical GitHub source and a released tag for a real project. That
+gives Copier a durable source/commit lineage it can fetch again during future
+`copier update` runs. A local dirty `HEAD` is for template development and
+pre-release previews only.
 
 Key questions: `project_type` (general | web-astro | web-app | iac | docs),
 `github_org`, `ci_runner` (ubuntu-latest | self-hosted), `devcontainer`,
@@ -57,14 +64,15 @@ right one for you; the underlying commands are:
 | Situation | Operation |
 |---|---|
 | New, empty project | `copier copy` (scaffold) |
-| Existing repo, never templated, **or** generated from **v2** (pre-v3 breaking redesign) | `copier copy … --vcs-ref=HEAD` over it, then reconcile by hand |
+| Existing repo, never templated, **or** generated from **v2** (pre-v3 breaking redesign) | `copier copy` from the canonical GitHub source at a released ref, then reconcile by hand |
 | Existing repo generated from **v3+** (has `.copier-answers.yml`) | `copier update` (three-way merge) |
 
 ```bash
 cd existing-project
 copier update --trust            # v3+ repo: merge in the latest template
 # or, to adopt a repo that was never templated / is on v2:
-copier copy --trust ~/git/harmon-init . --vcs-ref=HEAD
+copier copy --trust --vcs-ref=v3.26.1 \
+  https://github.com/evanharmon1/harmon-init.git .
 ```
 
 #### How updates keep repos current (copier's three-way merge)
@@ -106,7 +114,11 @@ which shows exactly which template-owned files are behind the template.
 NOT your working tree. When testing template changes, always pass
 `--vcs-ref=HEAD`. With it, copier auto-includes dirty/untracked changes via a
 throwaway commit in a temp clone (`DirtyLocalWarning`); your working tree is
-never touched. `task test:template` handles this for you.
+never touched. That temporary commit may not exist on the canonical remote, so
+do not use a dirty local `HEAD` to establish a real project's Copier lineage and
+do not "repair" it by rewriting only `_src_path` in `.copier-answers.yml` unless
+the recorded `_commit` is verified reachable from the canonical source. `task
+test:template` handles the local preview correctly for template development.
 
 ## Architecture: two layers
 

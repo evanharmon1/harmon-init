@@ -98,6 +98,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       re-run with the full list to add a repo. Drives release-please, the claude-*
       workflows, and project-automation; blast-radius + rotation in
       docs/architecture/security.md.
+- [ ] Review the **fork/self-hosted runner policy**. The generated build
+      aggregate verifies intentional fork skips without checking out fork code;
+      the devcontainer aggregate follows the same contract when present. That is
+      not a repo-wide guarantee. For a public repo, keep untrusted contribution
+      workflows off persistent self-hosted runners and manually audit every
+      custom workflow before enabling a self-hosted `CI_RUNS_ON` override.
 [% if devcontainer %]
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `[[ devcontainer_image ]]` on merge to main
