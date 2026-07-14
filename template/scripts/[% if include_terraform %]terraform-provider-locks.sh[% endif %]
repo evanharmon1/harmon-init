@@ -68,7 +68,13 @@ for root in "$@"; do
     # Prove clean-checkout behavior even when the caller has initialized this
     # root locally. All module/provider discovery happens in the scratch copy.
     rm -rf "$scratch_root/.terraform"
-    if ! "$terraform_bin" "-chdir=$scratch_root" init -backend=false -input=false >/dev/null; then
+    init_args=(-backend=false -input=false)
+    if [ "$mode" = update ]; then
+        # Permit intentional provider constraint/version changes. Check mode
+        # must keep selecting from the committed lock and remain read-only.
+        init_args+=(-upgrade)
+    fi
+    if ! "$terraform_bin" "-chdir=$scratch_root" init "${init_args[@]}" >/dev/null; then
         echo "Could not initialize Terraform modules/providers in $root" >&2
         exit 1
     fi

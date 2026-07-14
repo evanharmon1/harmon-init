@@ -24,6 +24,20 @@ shift
 
 case "${1:-}" in
 init)
+    upgrade=false
+    for arg in "$@"; do
+        if [ "$arg" = -upgrade ]; then
+            upgrade=true
+        fi
+    done
+    if [ -f "$root/expect-init-upgrade.fixture" ] && [ "$upgrade" != true ]; then
+        echo "update init omitted -upgrade" >&2
+        exit 8
+    fi
+    if [ -f "$root/forbid-init-upgrade.fixture" ] && [ "$upgrade" = true ]; then
+        echo "check init unexpectedly used -upgrade" >&2
+        exit 8
+    fi
     if [ -f "$root/local-module.fixture" ] &&
         [ ! -f "$root/../../modules/example/main.tf" ]; then
         echo "local module was not copied" >&2
@@ -70,6 +84,7 @@ after="$(cksum "$incomplete_root/.terraform.lock.hcl")"
 complete_root="$tmp/complete"
 mkdir "$complete_root"
 : >"$complete_root/required-provider.fixture"
+: >"$complete_root/forbid-init-upgrade.fixture"
 printf '%s\n' \
     '# platform: darwin_arm64' \
     '# platform: linux_amd64' >"$complete_root/.terraform.lock.hcl"
@@ -79,6 +94,8 @@ TERRAFORM_BIN="$fake_terraform" "$helper" check "$complete_root" >/dev/null ||
 update_root="$tmp/update"
 mkdir "$update_root"
 : >"$update_root/required-provider.fixture"
+: >"$update_root/expect-init-upgrade.fixture"
+printf '%s\n' '# stale provider selection' >"$update_root/.terraform.lock.hcl"
 TERRAFORM_BIN="$fake_terraform" "$helper" update "$update_root" >/dev/null ||
     fail "provider-lock update failed"
 grep -Fq '# platform: darwin_arm64' "$update_root/.terraform.lock.hcl" ||
