@@ -2,7 +2,7 @@
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
 # Usage: ./scripts/test-template.sh <profile>
-# Profiles: minimal | web | iac | full | meta
+# Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
 # unless some profile makes the condition true (copier skips files whose
@@ -86,7 +86,13 @@ webapp)
     data_args+=(--data project_type=web-app)
     ;;
 iac)
-    data_args+=(--data project_type=iac)
+    # Private infrastructure repos may not have GitHub Code Security. Exercise
+    # the explicit CodeQL-off branch so they do not render a workflow whose
+    # SARIF upload can never succeed.
+    data_args+=(
+        --data project_type=iac
+        --data use_codeql=false
+    )
     ;;
 full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
@@ -389,7 +395,27 @@ minimal | iac) # use_skills_sync=false -> none of the machinery renders
     ;;
 esac
 
-# ── 9d2. foreman renders per use_foreman (default off) ──────────────
+# ── 9d2. CodeQL renders only when explicitly selected for a supported stack ──
+# The iac profile models a private repo without GitHub Code Security and sets
+# use_codeql=false. Full still covers the enabled Terraform/Python + Node matrix.
+case "$profile" in
+minimal | iac)
+    [ ! -f .github/workflows/codeql.yml ] || err "codeql.yml rendered for CodeQL-off profile '$profile'"
+    ! grep -q 'workflows/codeql.yml' README.md || err "CodeQL badge rendered for CodeQL-off profile '$profile'"
+    ! grep -q 'FULL_SECURITY_SCAN' Taskfile.yml || err "setup:github enables CodeQL for CodeQL-off profile '$profile'"
+    ;;
+*)
+    [ -f .github/workflows/codeql.yml ] || err "codeql.yml missing for CodeQL-enabled profile '$profile'"
+    grep -q 'workflows/codeql.yml' README.md || err "CodeQL badge missing for CodeQL-enabled profile '$profile'"
+    grep -q 'FULL_SECURITY_SCAN' Taskfile.yml || err "setup:github does not enable selected CodeQL workflow"
+    ;;
+esac
+if [ "$profile" = "iac" ]; then
+    grep -q '^use_codeql: false$' .copier-answers.yml || err "iac fixture did not persist use_codeql=false"
+    grep -q 'CodeQL is deliberately omitted' docs/architecture/security.md || err "CodeQL-off security docs do not explain the SAST gap"
+fi
+
+# ── 9d3. foreman renders per use_foreman (default off) ──────────────
 # Full explicitly enables Foreman; every other profile exercises the safer
 # default-off branch. Assert all gated pieces appear/disappear together.
 if [ "$profile" != "full" ]; then

@@ -20,7 +20,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
-      reporting**, sets the `FULL_SECURITY_SCAN` variable (CodeQL). Do NOT add dependabot.yml — Renovate owns version updates.
+      reporting**. Do NOT add dependabot.yml — Renovate owns version updates.
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. Prefer the UI over a blind API `POST`, which is not idempotent and creates duplicate rulesets. The REST API supports `merge_queue`, but safe automation must discover the existing ruleset and update its id with `PUT`. Later changes should edit the existing ruleset rather than re-importing.
 
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo

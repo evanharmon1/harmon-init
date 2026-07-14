@@ -89,6 +89,12 @@ include_ansible:
   help: "ANSIBLE: Include an ansible/ skeleton + ansible linting?"
   default: "[[ project_type == 'iac' ]]"
 
+use_codeql:
+  type: bool
+  help: "CODEQL: Include GitHub CodeQL SAST? Private repositories require GitHub Code Security; turn this off when that feature is unavailable."
+  default: "[[ project_type in ['web-astro', 'web-app', 'iac'] or include_ansible ]]"
+  when: "[[ project_type in ['web-astro', 'web-app', 'iac'] or include_ansible ]]"
+
 ci_runner:
   type: str
   help: "CI RUNNER: default GitHub Actions runner (the CI_RUNS_ON repo/org variable overrides at runtime)"

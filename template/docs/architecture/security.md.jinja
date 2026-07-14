@@ -30,7 +30,11 @@ and needs no paid service.**
 
 | Axis | Catches | Default tool | Where it runs |
 |---|---|---|---|
-| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** (`codeql.yml`; JS/TS + Python) | CI, opt-in via the `FULL_SECURITY_SCAN=true` repo variable; results land in the GitHub Security tab |
+[% if use_codeql and (use_node or use_python) %]
+| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** (`codeql.yml`; JS/TS + Python) | CI, included by `use_codeql` and enabled via `FULL_SECURITY_SCAN=true`; private repos require GitHub Code Security |
+[% else %]
+| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **Not configured** | Choose a SAST tool appropriate to this repo before treating the security stack as complete |
+[% endif %]
 | **SCA** — CVEs in *dependencies* | vulnerable third-party packages | **Dependabot alerts** + **`task security:audit`** (`pnpm audit` / `pip-audit`) | Dependabot continuous (GitHub-native); audit in the CI `security` job + `task security` locally |
 | **Secrets** — committed credentials | keys, tokens, certs, `.env` | **gitleaks** (`task security:secrets`) | pre-push git hook + CI `security` job |
 | **IaC** — insecure infrastructure | open security groups, public buckets, … | **checkov** (`task lint:terraform:security`) | CI `lint` job + `task check` locally (Terraform repos) |
@@ -38,16 +42,27 @@ and needs no paid service.**
 
 - **`task security`** (the CI `security` job) is `security:secrets` (gitleaks) +
   `security:audit` (dependency audit). It does **not** run Snyk.
-- **CodeQL is opt-in** — its analyze jobs skip unless `FULL_SECURITY_SCAN=true`,
-  which `task setup:github` sets. If CodeQL is your only SAST, confirm it is on.
+[% if use_codeql and (use_node or use_python) %]
+- **CodeQL has two gates** — `use_codeql` includes the workflow, while its analyze
+  jobs skip unless `FULL_SECURITY_SCAN=true`, which `task setup:github` sets.
+  Private repositories must also have GitHub Code Security enabled; otherwise
+  SARIF uploads fail. Re-render with `use_codeql=false` when that feature is not
+  available.
+[% else %]
+- **CodeQL is deliberately omitted** (`use_codeql=false` or no supported
+  language). Dependabot and gitleaks do not replace first-party-code SAST. If a
+  private repository later adopts CodeQL, enable GitHub Code Security first and
+  re-render with `use_codeql=true`.
+[% endif %]
 - **`task setup:github`** turns on the GitHub-native layers: Dependabot alerts,
-  Private Vulnerability Reporting, and the `FULL_SECURITY_SCAN` variable; the branch
+  Private Vulnerability Reporting[% if use_codeql and (use_node or use_python) %], and the `FULL_SECURITY_SCAN` variable[% endif %]; the branch
   ruleset makes `verify` + `security`[% if include_terraform %] + `terraform-verify`[% endif %] required checks. See
   [../CHECKLIST.md](../CHECKLIST.md).
 - Which tools apply depends on the stack: SAST/SCA need code + a manifest (web/app,
   or Python for iac); IaC scanning is Terraform-only. A `general`/`docs` repo leans
   mainly on secrets + audit.
 
+[% if use_codeql and (use_node or use_python) %]
 ### Snyk is optional and redundant by default
 
 The template ships Snyk targets — `task security:sast` (`snyk code test`, SAST) and
@@ -57,6 +72,16 @@ in CI**, because the default stack already covers both axes: **CodeQL** for SAST
 it off. (`SNYK_TOKEN` is a local credential, not a CI secret; and if the Snyk GitHub
 App is installed, its `code/snyk`/`security/snyk` PR checks are **not** required by
 the branch ruleset — remove the app to drop them.)
+[% else %]
+### Add SAST deliberately
+
+The template still ships opt-in, local-only Snyk targets (`task security:sast` and
+`task security:sca`), but CodeQL is absent, so Snyk SAST is not redundant here.
+Choose and document a supported first-party-code scanner (for example Snyk Code,
+Semgrep, or CodeQL after GitHub Code Security becomes available); do not mistake
+Dependabot, dependency audits, or gitleaks for SAST coverage. `SNYK_TOKEN` remains
+a local credential unless CI integration is added deliberately.
+[% endif %]
 
 ### Exception: a shipped product (e.g. a B2B SaaS web app)
 

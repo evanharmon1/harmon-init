@@ -15,8 +15,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 - `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job.
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
-[% if use_node or use_python %]
-- `codeql.yml` — CodeQL analysis (opt-in via the `FULL_SECURITY_SCAN` variable).
+[% if use_codeql and (use_node or use_python) %]
+- `codeql.yml` — CodeQL analysis (included by `use_codeql`, then enabled via
+  `FULL_SECURITY_SCAN`; private repositories also require GitHub Code Security).
 [% endif %]
 [% if devcontainer %]
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.

@@ -32,7 +32,11 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
-      reporting**, sets the `FULL_SECURITY_SCAN` variable (CodeQL)[% if github_org != author_git_provider_username %], and adds
+      reporting**[% if use_codeql and (use_node or use_python) %], and sets the
+      `FULL_SECURITY_SCAN` variable (CodeQL). On a private repository, enable
+      **GitHub Code Security** before running this task or CodeQL SARIF uploads
+      will fail; if that feature is unavailable, re-render with
+      `use_codeql=false` instead[% endif %][% if github_org != author_git_provider_username %], and adds
       the `[[ author_git_provider_username ]]-bot` machine account as a Write
       collaborator[% endif %]. Do NOT add dependabot.yml — Renovate owns version updates.
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. Prefer the UI over a blind API `POST`, which is not idempotent and creates duplicate rulesets. The REST API supports `merge_queue`, but safe automation must discover the existing ruleset and update its id with `PUT`. Later changes should edit the existing ruleset rather than re-importing.
@@ -51,7 +55,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       it) to drop them.
 [% if project_type == 'web-app' %]
 - [ ] **Product security** (this is a web-app — likely a customer-facing product):
+[% if use_codeql %]
       the default CodeQL + Dependabot + gitleaks stack is the floor; for a real SaaS
+[% else %]
+      CodeQL is not configured, so Dependabot + gitleaks leave first-party code
+      without SAST coverage; choose a supported SAST tool before launch. For a real SaaS
+[% endif %]
       also weigh a **paid Snyk tier** (licence compliance + reachability +
       defense-in-depth; removes the Snyk-Code free limit), **DAST** against the
       running app, and a **multi-tenant isolation** review before onboarding

@@ -8,7 +8,9 @@ on:
   schedule:
     - cron: "0 6 * * 1"
 
-# Opt-in via the FULL_SECURITY_SCAN repository variable (see docs/CHECKLIST.md).
+# Included by the use_codeql Copier answer, then enabled at runtime via the
+# FULL_SECURITY_SCAN repository variable (see docs/CHECKLIST.md). Private repos
+# also need GitHub Code Security enabled for SARIF uploads.
 
 concurrency:
   group: codeql-${{ github.ref }}

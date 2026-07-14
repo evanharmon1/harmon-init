@@ -3,7 +3,7 @@
 [[ project_description ]]
 
 [![Build & Validate]([[ repo_url ]]/actions/workflows/build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/build.yml)
-[% if use_node or use_python %]
+[% if use_codeql and (use_node or use_python) %]
 [![CodeQL]([[ repo_url ]]/actions/workflows/codeql.yml/badge.svg)]([[ repo_url ]]/actions/workflows/codeql.yml)
 [% endif %]
 [% if devcontainer %]
@@ -129,8 +129,8 @@ same `task` targets as local hooks.
 | Workflow | Purpose |
 |---|---|
 | `build.yml` | lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security → aggregate `verify` gate |
-[% if use_node or use_python %]
-| `codeql.yml` | CodeQL analysis (opt-in via `FULL_SECURITY_SCAN` repo variable) |
+[% if use_codeql and (use_node or use_python) %]
+| `codeql.yml` | CodeQL analysis (included by `use_codeql`, then enabled via `FULL_SECURITY_SCAN`; private repos require GitHub Code Security) |
 [% endif %]
 [% if devcontainer %]
 | `devcontainer-build.yml` | Prebuilds devcontainer images to GHCR on merge to main |

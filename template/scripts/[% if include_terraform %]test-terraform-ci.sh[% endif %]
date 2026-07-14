@@ -113,7 +113,8 @@ GITHUB_STEP_SUMMARY="$summary_file" run_ci summary
 grep -q 'exact saved plan summary' "$summary_file" || fail "summary is not rendered from the saved plan"
 
 if PATH="${fake_bin}:${PATH}" RUNNER_TEMP="$runner_temp" TF_CI_RUN_KEY="$run_key" \
-    TF_APPLY_MARKER="$apply_marker" ./scripts/terraform-ci.sh apply "$terraform_root" >/dev/null 2>&1; then
+    TF_APPLY_MARKER="$apply_marker" GITHUB_ACTIONS= \
+    ./scripts/terraform-ci.sh apply "$terraform_root" >/dev/null 2>&1; then
     fail "Terraform CI apply was callable outside GitHub Actions"
 fi
 [ ! -e "$apply_marker" ] || fail "local Terraform apply reached the saved plan"

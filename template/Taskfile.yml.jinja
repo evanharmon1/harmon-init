@@ -638,9 +638,7 @@ tasks:
   # Renovate/CodeRabbit app installs, Actions secrets, the CI GitHub App).
   setup:github:
     desc: >-
-      Apply idempotent GitHub repo settings via gh (Dependabot alerts, private
-      vulnerability reporting, CodeQL
-      variable[% if github_org != author_git_provider_username %], bot collaborator[% endif %])
+      Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting[% if use_codeql and (use_node or use_python) %], CodeQL variable[% endif %][% if github_org != author_git_provider_username %], bot collaborator[% endif %])
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
@@ -654,7 +652,11 @@ tasks:
         else
           echo "Skipping private vulnerability reporting ({{.REPO}} is private; public-repo-only feature)."
         fi
+[% if use_codeql and (use_node or use_python) %]
+      # Enabling the variable starts CodeQL. Private repositories must also
+      # have GitHub Code Security enabled or SARIF uploads will fail.
       - gh variable set FULL_SECURITY_SCAN --repo "{{.REPO}}" --body true
+[% endif %]
 [% if github_org != author_git_provider_username %]
       - gh api "repos/{{.REPO}}/collaborators/[[ author_git_provider_username ]]-bot" --method PUT -f permission=push
 [% endif %]
