@@ -96,6 +96,11 @@ EOF
     esac
 fi
 
+if [ -x ./scripts/test-terraform-ci.sh ]; then
+    echo "==> Terraform CI preserves saved-plan and lock invariants"
+    ./scripts/test-terraform-ci.sh
+fi
+
 echo "==> hygiene parser preserves quoted paths"
 json_fixture="${shell_tmp}/fixture's data.json"
 toml_fixture="${shell_tmp}/fixture's data.toml"

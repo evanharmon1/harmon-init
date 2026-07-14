@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Shared Terraform CI operations. Saved plans can contain sensitive values, so
+# artifacts live in a private per-run directory (or an ignored local fallback).
+set -euo pipefail
+umask 077
+
+mode="${1:-}"
+shift || true
+
+usage() {
+    echo "Usage: $0 <validate ROOT...|plan ROOT|summary|apply ROOT|converge ROOT|cleanup>" >&2
+    exit 2
+}
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+artifact_dir="${TF_CI_ARTIFACT_DIR:-}"
+if [ -z "$artifact_dir" ]; then
+    if [ -n "${RUNNER_TEMP:-}" ]; then
+        run_key="${TF_CI_RUN_KEY:-terraform-${GITHUB_REPOSITORY_ID:-local}-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
+        case "$run_key" in
+        "" | "." | ".." | */*)
+            echo "Invalid Terraform CI run key: ${run_key:-<empty>}" >&2
+            exit 1
+            ;;
+        esac
+        artifact_dir="${RUNNER_TEMP}/${run_key}"
+    else
+        artifact_dir="${repo_root}/.terraform-ci"
+    fi
+fi
+plan_file="${artifact_dir}/tfplan"
+plan_text_file="${artifact_dir}/tfplan.txt"
+converge_text_file="${artifact_dir}/tfconverge.txt"
+
+validate_artifact_dir() {
+    case "$artifact_dir" in
+    "" | "/" | "$repo_root")
+        echo "Refusing unsafe Terraform CI artifact directory: ${artifact_dir:-<empty>}" >&2
+        exit 1
+        ;;
+    esac
+    if [ -L "$artifact_dir" ]; then
+        echo "Refusing symlinked Terraform CI artifact directory: ${artifact_dir}" >&2
+        exit 1
+    fi
+}
+
+prepare_artifact_dir() {
+    validate_artifact_dir
+    mkdir -p "$artifact_dir"
+    chmod 700 "$artifact_dir"
+}
+
+cleanup_artifacts() {
+    validate_artifact_dir
+    rm -f -- "$plan_file" "$plan_text_file" "$converge_text_file"
+    rmdir "$artifact_dir" 2>/dev/null || true
+}
+
+terraform_init() {
+    root="$1"
+    shift
+    if [ -f "${root}/.terraform.lock.hcl" ]; then
+        terraform -chdir="$root" init "$@" -lockfile=readonly
+    else
+        terraform -chdir="$root" init "$@"
+    fi
+}
+
+case "$mode" in
+validate)
+    [ "$#" -gt 0 ] || usage
+    data_root="$(mktemp -d)"
+    trap 'rm -rf "$data_root"' EXIT
+    index=0
+    for root in "$@"; do
+        index=$((index + 1))
+        data_dir="${data_root}/${index}"
+        echo "==> terraform validate: ${root}"
+        (
+            export TF_DATA_DIR="$data_dir"
+            terraform_init "$root" -backend=false -input=false
+            terraform -chdir="$root" validate -no-color
+        )
+    done
+    ;;
+plan)
+    [ "$#" -eq 1 ] || usage
+    root="$1"
+    prepare_artifact_dir
+    rm -f -- "$plan_file" "$plan_text_file" "$converge_text_file"
+    terraform_init "$root" -input=false
+    terraform -chdir="$root" plan -input=false -lock-timeout=5m -out="$plan_file"
+    terraform -chdir="$root" show -no-color "$plan_file" | tee "$plan_text_file"
+    ;;
+summary)
+    [ "$#" -eq 0 ] || usage
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || {
+        echo "GITHUB_STEP_SUMMARY is required for summary mode." >&2
+        exit 1
+    }
+    {
+        echo "## Terraform plan"
+        echo '```'
+        if [ -f "$plan_text_file" ]; then
+            tail -n 100 "$plan_text_file"
+        else
+            echo "Plan output is unavailable; inspect the failed plan step."
+        fi
+        echo '```'
+    } >>"$GITHUB_STEP_SUMMARY"
+    ;;
+apply)
+    [ "$#" -eq 1 ] || usage
+    [ "${GITHUB_ACTIONS:-}" = "true" ] || {
+        echo "Refusing Terraform CI apply outside GitHub Actions." >&2
+        exit 1
+    }
+    prepare_artifact_dir
+    [ -f "$plan_file" ] || {
+        echo "Saved plan $plan_file is missing; refusing to re-plan during apply." >&2
+        exit 1
+    }
+    terraform -chdir="$1" apply -input=false -no-color "$plan_file"
+    ;;
+converge)
+    [ "$#" -eq 1 ] || usage
+    root="$1"
+    prepare_artifact_dir
+    rm -f -- "$converge_text_file"
+    trap cleanup_artifacts EXIT
+    if ! terraform -chdir="$root" plan -detailed-exitcode -no-color -input=false \
+        -lock-timeout=5m >"$converge_text_file" 2>&1; then
+        echo "Post-apply plan is not clean — state did not converge:"
+        tail -n 60 "$converge_text_file"
+        exit 1
+    fi
+    echo "Converged: post-apply plan reports no changes."
+    ;;
+cleanup)
+    [ "$#" -eq 0 ] || usage
+    cleanup_artifacts
+    ;;
+*)
+    usage
+    ;;
+esac

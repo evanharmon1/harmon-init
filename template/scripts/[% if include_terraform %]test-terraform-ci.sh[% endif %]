@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# Hermetic regression for saved-plan, private-artifact, and readonly-lock CI
+# invariants. No backend, provider, network, or real Terraform binary is used.
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fake_bin="${tmp}/bin"
+runner_temp="${tmp}/runner-temp"
+terraform_root="${tmp}/terraform"
+run_key="terraform-123-456-1"
+artifact_dir="${runner_temp}/${run_key}"
+apply_marker="${tmp}/apply-called"
+init_args="${tmp}/init-args"
+summary_file="${tmp}/summary"
+tracked_lock_snapshot="${tmp}/tracked-lock"
+mkdir -p "$fake_bin" "$runner_temp" "$terraform_root"
+printf '%s\n' "reviewed provider lock" >"${terraform_root}/.terraform.lock.hcl"
+cp "${terraform_root}/.terraform.lock.hcl" "$tracked_lock_snapshot"
+
+cat >"${fake_bin}/terraform" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode=""
+root=""
+for arg in "$@"; do
+    case "$arg" in
+    -chdir=*) root="${arg#-chdir=}" ;;
+    init | validate | plan | show | apply)
+        mode="$arg"
+        ;;
+    esac
+done
+
+case "$mode" in
+init)
+    printf '%s\n' "$*" >"${TF_INIT_ARGS:?}"
+    case " $* " in
+    *" -lockfile=readonly "*) ;;
+    *) printf '%s\n' "fresh provider lock" >"${root:?}/.terraform.lock.hcl" ;;
+    esac
+    ;;
+validate)
+    ;;
+plan)
+    case " $* " in
+    *" -detailed-exitcode "*) exit 0 ;;
+    esac
+    plan_path=""
+    for arg in "$@"; do
+        case "$arg" in
+        -out=*) plan_path="${arg#-out=}" ;;
+        esac
+    done
+    [ -n "$plan_path" ] || exit 96
+    printf '%s\n' "saved plan" >"$plan_path"
+    ;;
+show)
+    printf '%s\n' "exact saved plan summary"
+    ;;
+apply)
+    plan_path=""
+    for arg in "$@"; do
+        plan_path="$arg"
+    done
+    [ -f "$plan_path" ] || exit 97
+    : >"${TF_APPLY_MARKER:?}"
+    ;;
+*)
+    exit 98
+    ;;
+esac
+EOF
+chmod +x "${fake_bin}/terraform"
+
+run_ci() {
+    PATH="${fake_bin}:${PATH}" \
+        RUNNER_TEMP="$runner_temp" \
+        TF_CI_RUN_KEY="$run_key" \
+        TF_APPLY_MARKER="$apply_marker" \
+        TF_INIT_ARGS="$init_args" \
+        GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}" \
+        GITHUB_ACTIONS=true \
+        ./scripts/terraform-ci.sh "$@"
+}
+
+file_mode() {
+    case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    *) stat -c '%a' "$1" ;;
+    esac
+}
+
+run_ci plan "$terraform_root" >/dev/null
+[ -f "${artifact_dir}/tfplan" ] || fail "plan was not saved under the run-scoped directory"
+[ -f "${artifact_dir}/tfplan.txt" ] || fail "saved plan was not rendered for review"
+[ "$(file_mode "$artifact_dir")" = "700" ] || fail "artifact directory is not private"
+[ "$(file_mode "${artifact_dir}/tfplan")" = "600" ] || fail "saved plan is not private"
+[ "$(file_mode "${artifact_dir}/tfplan.txt")" = "600" ] || fail "plan summary is not private"
+grep -q -- '-lockfile=readonly' "$init_args" || fail "tracked provider lock is mutable in CI"
+cmp -s "${terraform_root}/.terraform.lock.hcl" "$tracked_lock_snapshot" || fail "readonly init rewrote the tracked provider lock"
+
+GITHUB_STEP_SUMMARY="$summary_file" run_ci summary
+grep -q 'exact saved plan summary' "$summary_file" || fail "summary is not rendered from the saved plan"
+
+if PATH="${fake_bin}:${PATH}" RUNNER_TEMP="$runner_temp" TF_CI_RUN_KEY="$run_key" \
+    TF_APPLY_MARKER="$apply_marker" ./scripts/terraform-ci.sh apply "$terraform_root" >/dev/null 2>&1; then
+    fail "Terraform CI apply was callable outside GitHub Actions"
+fi
+[ ! -e "$apply_marker" ] || fail "local Terraform apply reached the saved plan"
+
+run_ci apply "$terraform_root" >/dev/null
+[ -e "$apply_marker" ] || fail "apply did not consume the saved run-scoped plan"
+[ -f "${artifact_dir}/tfplan" ] || fail "apply removed the plan before convergence check"
+
+run_ci converge "$terraform_root" >/dev/null
+[ ! -e "$artifact_dir" ] || fail "converge did not clean Terraform CI artifacts"
+
+rm -f "${terraform_root}/.terraform.lock.hcl"
+run_ci validate "$terraform_root" >/dev/null
+! grep -q -- '-lockfile=readonly' "$init_args" || fail "fresh scaffold cannot create its initial provider lock"
+[ -f "${terraform_root}/.terraform.lock.hcl" ] || fail "fresh scaffold did not create its initial provider lock"
+
+grep -Fxq '.terraform-ci/' .gitignore || fail "local Terraform CI artifact fallback is not ignored"
+if grep -Eq '/tmp/tf(plan|converge)|-lock=false' scripts/terraform-ci.sh .github/workflows/terraform.yml; then
+    fail "unsafe shared artifacts or disabled state locking remain"
+fi
+grep -Fq 'TF_CI_RUN_KEY: terraform-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}' \
+    .github/workflows/terraform.yml || fail "workflow artifact key is not repository/run scoped"
+grep -Fq './scripts/terraform-ci.sh cleanup' .github/workflows/terraform.yml ||
+    fail "workflow does not clean Terraform CI artifacts on completion"
+
+echo "Terraform CI artifact and lock invariants: PASS"

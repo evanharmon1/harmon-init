@@ -1,27 +1,23 @@
 name: Terraform
-# GitOps deploy-on-merge (harmonops/harmon-infra ADR-0006, the shared infra
-# standard): PRs produce a plan (the review gate), pushes to main apply, and a
-# post-apply re-plan asserts the state converged.
+# Always emits terraform-verify so the ruleset can require it. A change detector
+# makes unrelated changes a fast successful no-op. Pull requests and merge
+# groups plan only; pushes and manual dispatches on main apply that exact saved
+# plan, then prove state convergence.
 #
-# The plan/apply job is dormant until remote state exists: configure an
-# S3-compatible backend with native locking (use_lockfile, Terraform >= 1.10 —
-# Cloudflare R2 supports it), add the R2_* backend credentials and provider
-# TF_VAR_* secrets, then set the TERRAFORM_CI_ENABLED repo variable to 'true'.
+# Credentialed plan/apply stays dormant until remote state exists: configure an
+# S3-compatible backend with native locking (use_lockfile, Terraform >= 1.10),
+# add R2_* backend credentials and provider TF_VAR_* secrets, then set the
+# TERRAFORM_CI_ENABLED repo variable to 'true'.
 on:
   push:
     branches: [main]
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
+  merge_group:
   workflow_dispatch:
 
-# Never cancel an in-flight apply on main — a killed apply can strand
-# half-created resources; PR runs are plan-only and safe to cancel.
+# Never cancel an in-flight main apply. PR runs are plan-only and safe to
+# supersede when a newer commit arrives.
 concurrency:
   group: terraform-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -30,12 +26,36 @@ permissions:
   contents: read
 
 jobs:
-  terraform-validate:
+  changes:
+    # Never execute pull-request-controlled repository code from a fork on a
+    # potentially self-hosted runner. The aggregate handles this deliberate skip.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ubuntu-latest
+    outputs:
+      terraform: ${{ steps.filter.outputs.changed }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect Terraform-owned changes
+        id: filter
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: ./scripts/terraform-changed.sh >> "$GITHUB_OUTPUT"
+
+  terraform-validate:
+    needs: changes
+    if: >-
+      needs.changes.outputs.terraform == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 15
     steps:
@@ -43,23 +63,25 @@ jobs:
         with:
           persist-credentials: false
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-      - name: terraform fmt
-        run: terraform fmt -check -recursive terraform/
-      - name: terraform validate
-        run: |
-          terraform -chdir=terraform init -backend=false -input=false
-          terraform -chdir=terraform validate -no-color
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task lint:terraform
+      - run: task terraform:validate
 
   terraform-plan-apply:
-    # Dormant until TERRAFORM_CI_ENABLED=true (repo variable) — needs remote
-    # state + credentials, see the header comment.
+    needs: [changes, terraform-validate]
     if: >-
+      needs.changes.outputs.terraform == 'true' &&
       vars.TERRAFORM_CI_ENABLED == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 15
     env:
+      TF_CI_RUN_KEY: terraform-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
       # The S3-compatible backend (Cloudflare R2) reads AWS-style env vars.
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -72,56 +94,73 @@ jobs:
         with:
           persist-credentials: false
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-      - name: terraform plan
-        run: |
-          terraform -chdir=terraform init -input=false
-          terraform -chdir=terraform plan -no-color -input=false -lock=false \
-            | tee /tmp/tfplan.txt
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Terraform plan
+        run: task terraform:ci:plan
       - name: Plan summary
         if: always()
-        run: |
-          {
-            echo "## Terraform plan"
-            echo '```'
-            tail -n 100 /tmp/tfplan.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      # Deploy-on-merge: merging the reviewed plan is the approval. Applies
-      # take the state lock (no -lock=false here). workflow_dispatch on main
-      # re-applies — useful to reconcile drift without an empty commit.
-      - name: terraform apply
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: terraform -chdir=terraform apply -auto-approve -input=false -no-color
-      # Post-apply smoke: a clean re-plan proves the applied state converged
-      # (exit 2 = unexpected residual diff, exit 1 = plan error).
-      - name: converge check (post-apply re-plan)
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: |
-          terraform -chdir=terraform plan -detailed-exitcode -no-color -input=false -lock=false \
-            > /tmp/tfconverge.txt 2>&1 || {
-              echo "Post-apply plan is not clean — state did not converge:"
-              tail -n 60 /tmp/tfconverge.txt
-              exit 1
-            }
-          echo "Converged: post-apply plan reports no changes."
+        run: ./scripts/terraform-ci.sh summary
+      # GitOps deploy-on-merge: the reviewed code is planned on the trusted main
+      # event, and that exact generated artifact is applied without re-planning.
+      - name: Terraform apply
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: task terraform:ci:apply
+      - name: Converge check
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: task terraform:ci:converge
+      - name: Clean Terraform CI artifacts
+        if: always()
+        run: ./scripts/terraform-ci.sh cleanup
 
   terraform-verify:
     if: always()
-    needs: [terraform-validate, terraform-plan-apply]
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    needs: [changes, terraform-validate, terraform-plan-apply]
+    runs-on: ubuntu-latest
     steps:
-      - name: Check job results
-        # POSIX single-bracket tests on purpose: bash's double-bracket test
-        # syntax collides with this template's jinja delimiters.
+      - name: Check Terraform job results
+        env:
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          TERRAFORM_CHANGED: ${{ needs.changes.outputs.terraform }}
+          TERRAFORM_CI_ENABLED: ${{ vars.TERRAFORM_CI_ENABLED == 'true' }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          VALIDATE_RESULT: ${{ needs.terraform-validate.result }}
+          PLAN_RESULT: ${{ needs.terraform-plan-apply.result }}
         run: |
-          fail=0
-          check() {
-            [ "$2" = "success" ] || [ "$2" = "skipped" ] || { echo "Job $1 result: $2"; fail=1; }
+          expect() {
+            if [ "$2" != "$3" ]; then
+              echo "Job $1 result: $2 (expected $3)"
+              return 1
+            fi
           }
-          check terraform-validate "${{ needs.terraform-validate.result }}"
-          check terraform-plan-apply "${{ needs.terraform-plan-apply.result }}"
-          if [ "$fail" -ne 0 ]; then
-            echo "One or more required jobs failed."
-            exit 1
+
+          fail=0
+          if [ "$IS_FORK" = "true" ]; then
+            expect changes "$CHANGES_RESULT" skipped || fail=1
+            expect terraform-validate "$VALIDATE_RESULT" skipped || fail=1
+            expect terraform-plan-apply "$PLAN_RESULT" skipped || fail=1
+          else
+            expect changes "$CHANGES_RESULT" success || fail=1
+            case "$TERRAFORM_CHANGED" in
+              true | false) ;;
+              *)
+                echo "Invalid Terraform change output: ${TERRAFORM_CHANGED:-<empty>}"
+                fail=1
+                ;;
+            esac
+            if [ "$TERRAFORM_CHANGED" = "true" ]; then
+              expect terraform-validate "$VALIDATE_RESULT" success || fail=1
+            else
+              expect terraform-validate "$VALIDATE_RESULT" skipped || fail=1
+            fi
+            if [ "$TERRAFORM_CHANGED" = "true" ] && [ "$TERRAFORM_CI_ENABLED" = "true" ]; then
+              expect terraform-plan-apply "$PLAN_RESULT" success || fail=1
+            else
+              expect terraform-plan-apply "$PLAN_RESULT" skipped || fail=1
+            fi
           fi
-          echo "All required jobs passed."
+          [ "$fail" -eq 0 ] || exit 1
+          echo "Terraform checks passed or were deliberately not applicable."

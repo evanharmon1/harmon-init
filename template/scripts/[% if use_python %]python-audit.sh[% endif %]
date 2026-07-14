@@ -7,9 +7,11 @@ set -euo pipefail
 requirements="$(mktemp)"
 trap 'rm -f "$requirements"' EXIT
 
+# Existing locks must still match pyproject.toml; --locked fails instead of
+# auditing a stale dependency graph or rewriting the lock in CI.
 if [ -f uv.lock ]; then
     uv export \
-        --frozen \
+        --locked \
         --all-extras \
         --all-groups \
         --no-emit-project \

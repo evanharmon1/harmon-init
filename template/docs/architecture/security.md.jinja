@@ -42,7 +42,7 @@ and needs no paid service.**
   which `task setup:github` sets. If CodeQL is your only SAST, confirm it is on.
 - **`task setup:github`** turns on the GitHub-native layers: Dependabot alerts,
   Private Vulnerability Reporting, and the `FULL_SECURITY_SCAN` variable; the branch
-  ruleset makes `verify` + `security` required checks. See
+  ruleset makes `verify` + `security`[% if include_terraform %] + `terraform-verify`[% endif %] required checks. See
   [../CHECKLIST.md](../CHECKLIST.md).
 - Which tools apply depends on the stack: SAST/SCA need code + a manifest (web/app,
   or Python for iac); IaC scanning is Terraform-only. A `general`/`docs` repo leans

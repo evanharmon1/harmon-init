@@ -235,7 +235,27 @@ tasks:
   lint:terraform:validate:
     desc: Terraform validate
     cmds:
-      - terraform -chdir=terraform validate -no-color
+      - task: terraform:validate
+
+  terraform:validate:
+    desc: Initialize without backend changes and validate the Terraform root
+    cmds:
+      - ./scripts/terraform-ci.sh validate terraform
+
+  terraform:ci:plan:
+    desc: Create and render the exact saved Terraform plan used by CI apply
+    cmds:
+      - ./scripts/terraform-ci.sh plan terraform
+
+  terraform:ci:apply:
+    desc: Apply the exact saved Terraform plan created by terraform:ci:plan
+    cmds:
+      - ./scripts/terraform-ci.sh apply terraform
+
+  terraform:ci:converge:
+    desc: Assert the applied Terraform root has no residual diff
+    cmds:
+      - ./scripts/terraform-ci.sh converge terraform
 [% endif %]
 [% if include_ansible %]
 

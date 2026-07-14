@@ -8,8 +8,8 @@ This document explains the branch protection ruleset applied to `main` and how i
 
 An importable copy of the ruleset ships in this repo at
 `.github/Branch Protection Ruleset - Protect Main.json`. Apply it through the
-GitHub **UI import** (do this once `build.yml` is on `main`, so the required
-`verify`/`security` checks resolve):
+GitHub **UI import** (do this once the required workflow files are on `main`, so
+`verify`/`security`[% if include_terraform %]/`terraform-verify`[% endif %] resolve):
 
 > Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select
 > `.github/Branch Protection Ruleset - Protect Main.json`.
@@ -135,7 +135,12 @@ This mirrors the importable
           {
             "context": "security",
             "integration_id": 15368
+          }[% if include_terraform %],
+          {
+            "context": "terraform-verify",
+            "integration_id": 15368
           }
+[% endif %]
         ]
       }
 [% if github_org != author_git_provider_username %]
@@ -242,16 +247,19 @@ This is the core rule that prevents the AI agent from pushing directly to `main`
 
 All specified CI checks must pass before the PR can merge. The `strict_required_status_checks_policy: true` setting means the PR branch must be up-to-date with `main` before merging — if `main` advances after the checks ran, the checks must re-run. The `do_not_enforce_on_create: true` setting skips enforcement when the branch is first created (before any CI has had a chance to run).
 
-The required checks are the two aggregate jobs from `build.yml` (see
-[ci-cd.md](ci-cd.md)):
+The required checks are stable aggregate jobs from `build.yml`[% if include_terraform %]
+and `terraform.yml`[% endif %] (see [ci-cd.md](ci-cd.md)):
 
 | Check      | Purpose                                                                                          |
 | ---------- | ----------------------------------------------------------------------------------------------- |
 | `verify`   | Aggregate gate — rolls up `lint`[% if use_node %], `build-test`[% endif %][% if project_type == 'web-astro' %], `lighthouse`[% endif %], and `security` so one check reports overall pass/fail |
 | `security` | Secret scanning (gitleaks) + dependency audit                                                    |
+[% if include_terraform %]
+| `terraform-verify` | Stable Terraform aggregate — validates changed Terraform roots and requires the credentialed plan when enabled; unrelated changes are a deliberate no-op |
+[% endif %]
 
-Requiring the aggregate `verify` (rather than each leaf job) keeps the required-check
-list stable as jobs are added inside `build.yml`.
+Requiring aggregate jobs rather than every leaf keeps the required-check list
+stable as internal jobs are added or path-gated.
 
 [% if github_org != author_git_provider_username %]
 ### `merge_queue`

@@ -65,8 +65,10 @@ it points here.
 - **Python:** Black in check mode (`task lint:python`); managed with uv.
 [% endif %]
 [% if include_terraform %]
-- **Terraform:** `terraform fmt` + `validate`; provider tokens are sensitive
-  variables; use `lifecycle.ignore_changes` for mutable fields.
+- **Terraform:** `terraform fmt` + `validate`; commit provider lockfiles and keep
+  them readonly in CI. Apply only the exact saved plan generated and reported
+  by CI. Provider tokens are sensitive variables; use `lifecycle.ignore_changes`
+  for mutable fields.
 [% endif %]
 [% if include_ansible %]
 - **Ansible:** ansible-lint; idempotency required; roles under `ansible/roles/`,

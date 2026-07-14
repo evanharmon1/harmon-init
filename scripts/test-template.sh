@@ -436,6 +436,41 @@ if [ -f .prettierignore ]; then
     fi
 fi
 
+# ── 9g. Python CI fails closed on a stale committed lockfile ─────────
+# `uv --frozen` deliberately skips the project-metadata freshness check. A
+# security audit must instead reject a uv.lock that no longer matches
+# pyproject.toml, while a freshly scaffolded repo with no lock may still resolve
+# its initial environment.
+if [ -f scripts/python-audit.sh ]; then
+    grep -q -- '--locked' scripts/python-audit.sh || err "python-audit.sh does not require a current uv.lock"
+    ! grep -q -- '--frozen' scripts/python-audit.sh || err "python-audit.sh accepts a potentially stale uv.lock"
+    grep -q 'uv sync --locked' .github/workflows/build.yml || err "Python CI sync can silently rewrite a stale uv.lock"
+fi
+
+# ── 9h. Terraform has a stable required gate and applies its exact saved plan
+ruleset='.github/Branch Protection Ruleset - Protect Main.json'
+if [ -f .github/workflows/terraform.yml ]; then
+    [ -x scripts/terraform-ci.sh ] || err "Terraform CI helper missing or not executable"
+    [ -x scripts/terraform-changed.sh ] || err "Terraform change detector missing or not executable"
+    [ -x scripts/test-terraform-ci.sh ] || err "Terraform CI regression missing or not executable"
+    grep -q '^  merge_group:$' .github/workflows/terraform.yml || err "Terraform required check cannot run in merge queue"
+    ! grep -q '^    paths:$' .github/workflows/terraform.yml || err "required Terraform workflow is suppressed by path filters"
+    grep -q 'Invalid Terraform change output' .github/workflows/terraform.yml || err "Terraform aggregate accepts a missing change decision"
+    grep -q 'needs: \[changes, terraform-validate\]' .github/workflows/terraform.yml || err "Terraform apply can outrun validation"
+    grep -q '"context": "terraform-verify"' "$ruleset" || err "ruleset does not require terraform-verify"
+    grep -q '^  terraform:ci:apply:$' Taskfile.yml || err "Terraform apply is not isolated as a CI-only task"
+    grep -q 'Refusing Terraform CI apply outside GitHub Actions' scripts/terraform-ci.sh || err "Terraform CI apply lacks its local-mutation guard"
+    grep -q -- '-lockfile=readonly' scripts/terraform-ci.sh || err "Terraform CI can rewrite a committed provider lock"
+    grep -q -- '-out="$plan_file"' scripts/terraform-ci.sh || err "Terraform apply has no saved review artifact"
+    ! grep -Eq '/tmp/tf(plan|converge)|-lock=false' scripts/terraform-ci.sh .github/workflows/terraform.yml || err "Terraform CI retains unsafe shared artifacts or disabled state locking"
+    ./scripts/test-terraform-ci.sh || err "Terraform saved-plan regression failed"
+else
+    [ ! -f scripts/terraform-ci.sh ] || err "Terraform helper rendered when include_terraform=false"
+    [ ! -f scripts/terraform-changed.sh ] || err "Terraform change detector rendered when include_terraform=false"
+    [ ! -f scripts/test-terraform-ci.sh ] || err "Terraform regression rendered when include_terraform=false"
+    ! grep -q '"context": "terraform-verify"' "$ruleset" || err "ruleset requires Terraform for a non-Terraform repo"
+fi
+
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"

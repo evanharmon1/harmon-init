@@ -99,7 +99,13 @@ jobs:
 [% endif %]
           pip install yamllint
 [% if use_python %]
-      - run: uv sync
+      - name: Sync Python dependencies
+        run: |
+          if [ -f uv.lock ]; then
+            uv sync --locked
+          else
+            uv sync
+          fi
 [% endif %]
 [% if use_node %]
       - name: Install dependencies

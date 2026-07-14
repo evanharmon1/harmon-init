@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Emit whether Terraform-owned paths changed. The workflow always runs so its
+# stable terraform-verify aggregate can safely be required for every PR.
+set -euo pipefail
+
+event="${GITHUB_EVENT_NAME:-}"
+base=""
+head="${GITHUB_SHA:-HEAD}"
+
+case "$event" in
+workflow_dispatch)
+    echo "changed=true"
+    exit 0
+    ;;
+pull_request)
+    base="${PR_BASE_SHA:-}"
+    head="${PR_HEAD_SHA:-$head}"
+    ;;
+merge_group)
+    base="${MERGE_BASE_SHA:-}"
+    head="${MERGE_HEAD_SHA:-$head}"
+    ;;
+push)
+    base="${PUSH_BEFORE_SHA:-}"
+    ;;
+*)
+    echo "changed=true"
+    exit 0
+    ;;
+esac
+
+# Missing comparison metadata must run the check, never silently skip it.
+case "$base" in
+"" | 0000000000000000000000000000000000000000)
+    echo "changed=true"
+    exit 0
+    ;;
+esac
+
+if git diff --quiet "$base" "$head" -- terraform/ .github/workflows/terraform.yml \
+    Taskfile.yml scripts/terraform-ci.sh scripts/terraform-changed.sh; then
+    echo "changed=false"
+else
+    echo "changed=true"
+fi

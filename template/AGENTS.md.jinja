@@ -103,6 +103,10 @@ Full reference: [docs/conventions.md](docs/conventions.md). Highlights:
 [% if include_terraform %]
 - Terraform: provider tokens are sensitive variables; use
   `lifecycle.ignore_changes` for mutable fields.
+- Never run `terraform apply`, `destroy`, `import`, or state-mutating commands
+  without explicit approval for that exact operation. The trusted main-branch
+  CI workflow is the defined automation exception: it applies only its saved
+  plan after the code change has passed review.
 [% endif %]
 [% if include_ansible %]
 - Ansible: idempotency required; roles under `ansible/roles/`; new playbooks

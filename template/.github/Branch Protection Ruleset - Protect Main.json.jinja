@@ -48,7 +48,12 @@
           {
             "context": "security",
             "integration_id": 15368
+          }[% if include_terraform %],
+          {
+            "context": "terraform-verify",
+            "integration_id": 15368
           }
+[% endif %]
         ]
       }
 [% if github_org != author_git_provider_username %]
