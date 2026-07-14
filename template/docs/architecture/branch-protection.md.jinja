@@ -250,8 +250,11 @@ This is the core rule that prevents the AI agent from pushing directly to `main`
 
 All specified CI checks must pass before the PR can merge. The `strict_required_status_checks_policy: true` setting means the PR branch must be up-to-date with `main` before merging — if `main` advances after the checks ran, the checks must re-run. The `do_not_enforce_on_create: true` setting skips enforcement when the branch is first created (before any CI has had a chance to run).
 
-The required checks are stable aggregate jobs from `build.yml`[% if include_terraform %]
-and `terraform.yml`[% endif %] (see [ci-cd.md](ci-cd.md)):
+The required check contexts come from `build.yml`[% if include_terraform %] and
+`terraform.yml`[% endif %] (see [ci-cd.md](ci-cd.md)): `verify` is the build
+aggregate, while `security` is its security leaf required directly as a redundant,
+visible control[% if include_terraform %]; `terraform-verify` is a separate
+Terraform aggregate[% endif %].
 
 | Check      | Purpose                                                                                          |
 | ---------- | ----------------------------------------------------------------------------------------------- |
@@ -261,8 +264,9 @@ and `terraform.yml`[% endif %] (see [ci-cd.md](ci-cd.md)):
 | `terraform-verify` | Stable Terraform aggregate — validates changed Terraform roots and requires the credentialed plan when enabled; unrelated changes are a deliberate no-op |
 [% endif %]
 
-Requiring aggregate jobs rather than every leaf keeps the required-check list
-stable as internal jobs are added or path-gated.
+Requiring the stable aggregate[% if include_terraform %]s[% endif %] alongside the
+direct `security` context keeps the required-check list small while preserving
+explicit security visibility as internal jobs are added or path-gated.
 
 [% if github_org != author_git_provider_username %]
 ### `merge_queue`
