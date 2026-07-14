@@ -135,10 +135,13 @@ This mirrors the importable
           {
             "context": "security",
             "integration_id": 15368
-          }[% if include_terraform %],
+[% if include_terraform %]
+          },
           {
             "context": "terraform-verify",
             "integration_id": 15368
+          }
+[% else %]
           }
 [% endif %]
         ]
