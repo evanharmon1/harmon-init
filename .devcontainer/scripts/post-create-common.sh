@@ -175,11 +175,6 @@ if [ -d services/harmon-lab-proxy/homepage ]; then
     (cd services/harmon-lab-proxy/homepage && npm ci)
 fi
 
-if command -v uv &>/dev/null; then
-    echo "==> Installing checkov..."
-    uv tool install checkov || true
-fi
-
 if [ -f lefthook.yml ] && command -v lefthook &>/dev/null; then
     echo "==> Setting up git hooks via lefthook..."
     lefthook install

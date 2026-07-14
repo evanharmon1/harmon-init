@@ -56,7 +56,7 @@ jobs:
           category: /language:${{ matrix.language }}
 
   # Stable aggregate status (the matrixed analyze jobs have dynamic names and
-  # are skipped unless FULL_SECURITY_SCAN is set). Named codeql-verify so it
+  # are skipped unless FULL_SECURITY_SCAN is exactly true). Named codeql-verify so it
   # does not collide with the build workflow's required `verify` check.
   codeql-verify:
     if: always()
@@ -64,12 +64,46 @@ jobs:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          persist-credentials: false
       - name: Check analyze result
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          FULL_SECURITY_SCAN: ${{ vars.FULL_SECURITY_SCAN }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
+        run: ./scripts/verify-codeql-result.sh
+      # Never check out or execute fork-controlled repository code on a
+      # potentially self-hosted aggregate runner. The workflow-defined check is
+      # intentionally tiny; the full truth table remains hermetically tested in
+      # scripts/test-codeql-result.sh.
+      - name: Check deliberate fork skip
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          FULL_SECURITY_SCAN: ${{ vars.FULL_SECURITY_SCAN }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
         run: |
-          result="${{ needs.analyze.result }}"
-          if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
-            echo "CodeQL analyze result: $result"
+          scan="${FULL_SECURITY_SCAN:-false}"
+          case "$scan" in
+            true | false) ;;
+            *)
+              echo "Invalid FULL_SECURITY_SCAN value: $scan"
+              exit 1
+              ;;
+          esac
+          if [ "$ANALYZE_RESULT" != "skipped" ]; then
+            echo "CodeQL analyze result on fork: $ANALYZE_RESULT (expected skipped)"
             exit 1
           fi
-          echo "CodeQL analyze: $result"
+          echo "CodeQL analyze deliberately skipped for an untrusted fork."

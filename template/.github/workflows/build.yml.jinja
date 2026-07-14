@@ -48,14 +48,16 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.14"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 [% endif %]
-[% if use_foreman and not use_python %]
-      # uv provides uvx for foreman:lint's pinned ruff/black (see taskfiles/foreman.yml)
+[% if use_python or use_foreman or include_terraform %]
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 [% endif %]
 [% if include_terraform %]
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0
+        with:
+          # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v(?<version>.+)$
+          tflint_version: v0.63.1
 [% endif %]
       - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:

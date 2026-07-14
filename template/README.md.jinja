@@ -113,6 +113,9 @@ See [DESIGN.md](DESIGN.md) for visual/UX direction.
 | `task dev` | Dev server with hot reload |
 | `task build` | Production build |
 [% endif %]
+[% if include_terraform %]
+| `task terraform:providers:lock` | Update provider locks for macOS arm64 + Linux amd64 |
+[% endif %]
 | `task test` | Run tests (see [docs/architecture/tests.md](docs/architecture/tests.md)) |
 | `task security` | gitleaks + dependency audit |
 | `task release:patch` | Tag + GitHub release (also `:minor` / `:major`) |
@@ -130,7 +133,7 @@ same `task` targets as local hooks.
 |---|---|
 | `build.yml` | lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security → aggregate `verify` gate |
 [% if use_codeql and (use_node or use_python) %]
-| `codeql.yml` | CodeQL analysis (included by `use_codeql`, then enabled via `FULL_SECURITY_SCAN`; private repos require GitHub Code Security) |
+| `codeql.yml` | CodeQL analysis (included by `use_codeql`, then enabled via exact `FULL_SECURITY_SCAN=true`; private repos require GitHub Code Security) |
 [% endif %]
 [% if devcontainer %]
 | `devcontainer-build.yml` | Prebuilds devcontainer images to GHCR on merge to main |

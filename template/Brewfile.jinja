@@ -31,15 +31,16 @@ brew "python"
 brew "pnpm"
 brew "lychee"
 [% endif %]
-[% if use_python or use_foreman %]
+[% if use_python or use_foreman or include_terraform %]
 
-# Python tooling (uv[% if use_foreman %]; foreman lint runs pinned ruff/black via uvx[% endif %])
+# Reproducible Python tools (uvx[% if use_foreman %]; foreman lint runs pinned ruff/black[% endif %][% if include_terraform %]; Terraform security uses pinned Checkov[% endif %])
 brew "uv"
 [% endif %]
 [% if include_terraform %]
 
-# Terraform
+# Terraform + static analysis
 brew "terraform"
+brew "tflint"
 [% endif %]
 [% if devcontainer %]
 

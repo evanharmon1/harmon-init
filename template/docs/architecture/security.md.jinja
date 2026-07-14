@@ -37,14 +37,19 @@ and needs no paid service.**
 [% endif %]
 | **SCA** — CVEs in *dependencies* | vulnerable third-party packages | **Dependabot alerts** + **`task security:audit`** (`pnpm audit` / `pip-audit`) | Dependabot continuous (GitHub-native); audit in the CI `security` job + `task security` locally |
 | **Secrets** — committed credentials | keys, tokens, certs, `.env` | **gitleaks** (`task security:secrets`) | pre-push git hook + CI `security` job |
+[% if include_terraform %]
 | **IaC** — insecure infrastructure | open security groups, public buckets, … | **checkov** (`task lint:terraform:security`) | CI `lint` job + `task check` locally (Terraform repos) |
+[% endif %]
 | **Freshness** — stale dependencies | a widening exposure window | **Renovate** (`minimumReleaseAge: 3 days`) | continuous, grouped update PRs |
 
 - **`task security`** (the CI `security` job) is `security:secrets` (gitleaks) +
   `security:audit` (dependency audit). It does **not** run Snyk.
 [% if use_codeql and (use_node or use_python) %]
 - **CodeQL has two gates** — `use_codeql` includes the workflow, while its analyze
-  jobs skip unless `FULL_SECURITY_SCAN=true`, which `task setup:github` sets.
+  jobs skip unless `FULL_SECURITY_SCAN=true`, which `task setup:github` sets. The
+  aggregate treats an unset/empty variable as disabled; any nonempty value must
+  be exactly `true` or `false`, so malformed configuration fails instead of
+  disguising an error as a skip.
   Private repositories must also have GitHub Code Security enabled; otherwise
   SARIF uploads fail. Analysis and upload failures fail closed; they are not
   downgraded to warnings. Re-render with `use_codeql=false` when GitHub Code
@@ -54,6 +59,11 @@ and needs no paid service.**
   language). Dependabot and gitleaks do not replace first-party-code SAST. If a
   private repository later adopts CodeQL, enable GitHub Code Security first and
   re-render with `use_codeql=true`.
+[% endif %]
+[% if include_terraform %]
+- **Terraform lint is layered and pinned** — `task lint:terraform` runs format,
+  TFLint, Checkov through a Renovate-managed `uvx` pin, and the provider-lock
+  completeness check. CI installs pinned TFLint and uv, then calls the same task.
 [% endif %]
 - **`task setup:github`** turns on the GitHub-native layers: Dependabot alerts,
   Private Vulnerability Reporting[% if use_codeql and (use_node or use_python) %], and the `FULL_SECURITY_SCAN` variable[% endif %]; the branch

@@ -101,6 +101,16 @@ if [ -x ./scripts/test-terraform-ci.sh ]; then
     ./scripts/test-terraform-ci.sh
 fi
 
+if [ -x ./scripts/test-terraform-provider-locks.sh ]; then
+    echo "==> Terraform provider locks cover developer and CI platforms"
+    ./scripts/test-terraform-provider-locks.sh
+fi
+
+if [ -x ./scripts/test-codeql-result.sh ]; then
+    echo "==> CodeQL aggregate accepts only intentional results"
+    ./scripts/test-codeql-result.sh
+fi
+
 echo "==> hygiene parser preserves quoted paths"
 json_fixture="${shell_tmp}/fixture's data.json"
 toml_fixture="${shell_tmp}/fixture's data.toml"

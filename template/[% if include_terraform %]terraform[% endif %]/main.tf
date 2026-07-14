@@ -11,6 +11,8 @@ terraform {
   #     version = "~> 5.0"
   #   }
   # }
+  # After declaring providers, run `task terraform:providers:lock` and commit
+  # the darwin_arm64 + linux_amd64 checksums in .terraform.lock.hcl.
 
   # TODO: configure remote state (recommended) instead of local state.
   # backend "s3" {}

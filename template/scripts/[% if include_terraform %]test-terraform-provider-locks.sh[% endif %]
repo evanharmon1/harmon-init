@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# test-terraform-provider-locks.sh — hermetic regression for provider-lock
+# update/check behavior. A fake Terraform binary avoids registry access.
+set -euo pipefail
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+tmp="$(mktemp -d -t test-terraform-provider-locks-XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+fake_terraform="$tmp/terraform"
+
+cat >"$fake_terraform" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+-chdir=*) root="${1#-chdir=}" ;;
+*) exit 2 ;;
+esac
+shift
+
+case "${1:-}" in
+init)
+    if [ -f "$root/local-module.fixture" ] &&
+        [ ! -f "$root/../../modules/example/main.tf" ]; then
+        echo "local module was not copied" >&2
+        exit 9
+    fi
+    ;;
+providers)
+    shift
+    [ "${1:-}" = lock ] || exit 2
+    [ -f "$root/required-provider.fixture" ] || exit 0
+    lock="$root/.terraform.lock.hcl"
+    touch "$lock"
+    grep -Fq '# platform: darwin_arm64' "$lock" ||
+        printf '%s\n' '# platform: darwin_arm64' >>"$lock"
+    grep -Fq '# platform: linux_amd64' "$lock" ||
+        printf '%s\n' '# platform: linux_amd64' >>"$lock"
+    ;;
+*) exit 2 ;;
+esac
+EOF
+chmod +x "$fake_terraform"
+
+helper=./scripts/terraform-provider-locks.sh
+
+empty_root="$tmp/empty"
+mkdir "$empty_root"
+printf '%s\n' 'terraform {}' >"$empty_root/main.tf"
+TERRAFORM_BIN="$fake_terraform" "$helper" check "$empty_root" >/dev/null ||
+    fail "provider-free root did not skip cleanly"
+[ ! -e "$empty_root/.terraform.lock.hcl" ] ||
+    fail "provider-free check created a lockfile"
+
+incomplete_root="$tmp/incomplete"
+mkdir "$incomplete_root"
+: >"$incomplete_root/required-provider.fixture"
+printf '%s\n' '# platform: darwin_arm64' >"$incomplete_root/.terraform.lock.hcl"
+before="$(cksum "$incomplete_root/.terraform.lock.hcl")"
+if TERRAFORM_BIN="$fake_terraform" "$helper" check "$incomplete_root" >/dev/null 2>&1; then
+    fail "incomplete multi-platform lock passed"
+fi
+after="$(cksum "$incomplete_root/.terraform.lock.hcl")"
+[ "$before" = "$after" ] || fail "lock check mutated the checkout"
+
+complete_root="$tmp/complete"
+mkdir "$complete_root"
+: >"$complete_root/required-provider.fixture"
+printf '%s\n' \
+    '# platform: darwin_arm64' \
+    '# platform: linux_amd64' >"$complete_root/.terraform.lock.hcl"
+TERRAFORM_BIN="$fake_terraform" "$helper" check "$complete_root" >/dev/null ||
+    fail "complete multi-platform lock failed"
+
+update_root="$tmp/update"
+mkdir "$update_root"
+: >"$update_root/required-provider.fixture"
+TERRAFORM_BIN="$fake_terraform" "$helper" update "$update_root" >/dev/null ||
+    fail "provider-lock update failed"
+grep -Fq '# platform: darwin_arm64' "$update_root/.terraform.lock.hcl" ||
+    fail "update omitted darwin_arm64"
+grep -Fq '# platform: linux_amd64' "$update_root/.terraform.lock.hcl" ||
+    fail "update omitted linux_amd64"
+
+module_repo="$tmp/module repo"
+module_root="$module_repo/terraform/environments/production env"
+mkdir -p "$module_root" "$module_repo/terraform/modules/example"
+git -C "$module_repo" init -q
+: >"$module_root/required-provider.fixture"
+: >"$module_root/local-module.fixture"
+printf '%s\n' \
+    '# platform: darwin_arm64' \
+    '# platform: linux_amd64' >"$module_root/.terraform.lock.hcl"
+printf '%s\n' 'module "example" { source = "../../modules/example" }' >"$module_root/main.tf"
+printf '%s\n' 'terraform {}' >"$module_repo/terraform/modules/example/main.tf"
+git -C "$module_repo" add .
+module_status_before="$(git -C "$module_repo" status --porcelain)"
+TERRAFORM_BIN="$fake_terraform" "$helper" check "$module_root" >/dev/null ||
+    fail "uninitialized local-module root failed in the scratch checkout"
+module_status_after="$(git -C "$module_repo" status --porcelain)"
+[ "$module_status_before" = "$module_status_after" ] ||
+    fail "local-module lock check mutated the checkout"
+
+echo "Terraform provider-lock regression: PASS"

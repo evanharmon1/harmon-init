@@ -6,7 +6,7 @@ How testing works in [[ project_name ]].
 
 | Layer | Tool | Command |
 |---|---|---|
-| Lint / static analysis | shellcheck, yamllint, markdownlint, actionlint[% if use_node %], eslint, prettier, tsc/astro check[% endif %][% if use_python %], black[% endif %] | `task check` |
+| Lint / static analysis | shellcheck, yamllint, markdownlint, actionlint[% if use_node %], eslint, prettier, tsc/astro check[% endif %][% if use_python %], black[% endif %][% if include_terraform %], Terraform fmt, TFLint, Checkov, provider-lock completeness[% endif %] | `task check` |
 [% if use_node %]
 | Unit / component tests | vitest | `task test` |
 | End-to-end | Playwright | `task test:e2e` |

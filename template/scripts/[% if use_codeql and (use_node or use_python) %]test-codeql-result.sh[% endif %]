@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# test-codeql-result.sh — hermetic truth-table regression for the CodeQL
+# aggregate. No GitHub context or network access is required.
+set -euo pipefail
+
+verify=./scripts/verify-codeql-result.sh
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+accept() {
+    label="$1"
+    scan="$2"
+    fork="$3"
+    result="$4"
+    FULL_SECURITY_SCAN="$scan" IS_FORK="$fork" ANALYZE_RESULT="$result" \
+        "$verify" >/dev/null || fail "$label should pass"
+}
+
+reject() {
+    label="$1"
+    scan="$2"
+    fork="$3"
+    result="$4"
+    if FULL_SECURITY_SCAN="$scan" IS_FORK="$fork" ANALYZE_RESULT="$result" \
+        "$verify" >/dev/null 2>&1; then
+        fail "$label should fail"
+    fi
+}
+
+accept "disabled scan" false false skipped
+accept "empty scan defaults disabled" "" false skipped
+accept "disabled fork scan" false true skipped
+accept "enabled fork scan" true true skipped
+accept "enabled internal scan" true false success
+
+if ! (
+    unset FULL_SECURITY_SCAN
+    export IS_FORK=false ANALYZE_RESULT=skipped
+    "$verify" >/dev/null
+); then
+    fail "unset scan should default disabled"
+fi
+
+reject "enabled scan unexpectedly skipped" true false skipped
+reject "disabled scan unexpectedly ran" false false success
+reject "failed analysis" true false failure
+reject "cancelled analysis" true false cancelled
+reject "malformed scan predicate" enabled false skipped
+reject "malformed fork predicate" true internal success
+reject "unknown analysis result" true false neutral
+
+echo "CodeQL aggregate truth table: PASS"

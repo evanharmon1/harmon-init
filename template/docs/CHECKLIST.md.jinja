@@ -11,6 +11,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] `task install` — Brewfile deps[% if use_python %], `uv sync`[% endif %][% if use_node %], `pnpm install`[% endif %], and lefthook git hooks
 - [ ] `task verify` passes locally
+[% if include_terraform %]
+- [ ] After declaring Terraform providers, run `task terraform:providers:lock`
+      and commit `.terraform.lock.hcl`. It must contain checksums for both the
+      developer platform (`darwin_arm64`) and CI (`linux_amd64`); `task check`
+      verifies this on a temporary copy without changing the checkout.
+[% endif %]
 [% if use_skills_sync %]
 - [ ] **Vendor shared agent skills**: `.skills-sync.yaml` pins which harmon-devkit
       skill categories this repo gets (from your `skill_categories` answer). Set

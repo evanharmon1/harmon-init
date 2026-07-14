@@ -103,6 +103,9 @@ Full reference: [docs/conventions.md](docs/conventions.md). Highlights:
 [% if include_terraform %]
 - Terraform: provider tokens are sensitive variables; use
   `lifecycle.ignore_changes` for mutable fields.
+- After provider changes, run `task terraform:providers:lock` and commit the
+  `darwin_arm64` + `linux_amd64` checksums; `task check` verifies locks without
+  mutating the checkout.
 - Never run `terraform apply`, `destroy`, `import`, or state-mutating commands
   without explicit approval for that exact operation. The trusted main-branch
   CI workflow is the defined automation exception: it applies only its saved

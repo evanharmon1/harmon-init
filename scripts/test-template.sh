@@ -45,6 +45,40 @@ err() {
     fail=1
 }
 
+# Inspect only the CodeQL analyze job and analyze-action step. Other jobs may
+# legitimately contain best-effort cleanup with continue-on-error; the security
+# analysis itself must never be downgraded to a warning.
+codeql_analyze_fails_closed() {
+    awk '
+        $0 == "  analyze:" {
+            in_job = 1
+            next
+        }
+        in_job && /^  [^[:space:]#][^:]*:[[:space:]]*$/ {
+            in_job = 0
+        }
+        in_job && /^    continue-on-error:[[:space:]]*true[[:space:]]*$/ {
+            fail_open = 1
+        }
+        $0 == "      - name: Perform CodeQL Analysis" {
+            in_step = 1
+            next
+        }
+        in_step && $0 !~ /^        / && $0 !~ /^[[:space:]]*$/ {
+            in_step = 0
+        }
+        in_step && /uses: github\/codeql-action\/analyze@/ {
+            found_action = 1
+        }
+        in_step && /^        continue-on-error:[[:space:]]*true[[:space:]]*$/ {
+            fail_open = 1
+        }
+        END {
+            exit !(found_action && !fail_open)
+        }
+    ' "$1"
+}
+
 # Answers shared by every profile. Side-effectful answers are forced off so
 # this is safe to run anywhere (no gh repo create, no iCloud moves). The meta
 # profile re-enables bunch/obsidian but renders with --skip-tasks.
@@ -403,14 +437,55 @@ minimal | iac)
     [ ! -f .github/workflows/codeql.yml ] || err "codeql.yml rendered for CodeQL-off profile '$profile'"
     ! grep -q 'workflows/codeql.yml' README.md || err "CodeQL badge rendered for CodeQL-off profile '$profile'"
     ! grep -q 'FULL_SECURITY_SCAN' Taskfile.yml || err "setup:github enables CodeQL for CodeQL-off profile '$profile'"
+    [ ! -f scripts/verify-codeql-result.sh ] || err "CodeQL verifier rendered for CodeQL-off profile '$profile'"
+    [ ! -f scripts/test-codeql-result.sh ] || err "CodeQL regression rendered for CodeQL-off profile '$profile'"
     ;;
 *)
     [ -f .github/workflows/codeql.yml ] || err "codeql.yml missing for CodeQL-enabled profile '$profile'"
     grep -q 'workflows/codeql.yml' README.md || err "CodeQL badge missing for CodeQL-enabled profile '$profile'"
     grep -q 'FULL_SECURITY_SCAN' Taskfile.yml || err "setup:github does not enable selected CodeQL workflow"
-    ! grep -q 'continue-on-error: true' .github/workflows/codeql.yml || err "CodeQL analysis is allowed to fail open"
-    grep -Fq 'result="${{ needs.analyze.result }}"' .github/workflows/codeql.yml || err "CodeQL aggregate does not inspect the analyze result"
-    grep -Fq '[ "$result" != "success" ] && [ "$result" != "skipped" ]' .github/workflows/codeql.yml || err "CodeQL aggregate does not reject analysis failures"
+    codeql_analyze_fails_closed .github/workflows/codeql.yml || err "CodeQL analyze job or action is allowed to fail open"
+    grep -Fq 'FULL_SECURITY_SCAN: ${{ vars.FULL_SECURITY_SCAN }}' .github/workflows/codeql.yml || err "CodeQL aggregate does not inspect the exact scan predicate"
+    grep -Fq "IS_FORK: \${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}" .github/workflows/codeql.yml || err "CodeQL aggregate does not inspect the explicit fork predicate"
+    grep -Fq 'ANALYZE_RESULT: ${{ needs.analyze.result }}' .github/workflows/codeql.yml || err "CodeQL aggregate does not inspect the analyze result"
+    grep -Fq 'run: ./scripts/verify-codeql-result.sh' .github/workflows/codeql.yml || err "CodeQL aggregate bypasses its fail-closed verifier"
+    [ "$(grep -c 'uses: actions/checkout@' .github/workflows/codeql.yml)" -eq 2 ] || err "CodeQL aggregate does not check out its verifier"
+    grep -Fq 'CodeQL analyze deliberately skipped for an untrusted fork.' .github/workflows/codeql.yml || err "CodeQL aggregate does not verify the fork skip without executing fork code"
+    [ -x scripts/verify-codeql-result.sh ] || err "CodeQL aggregate verifier missing or not executable"
+    [ -x scripts/test-codeql-result.sh ] || err "CodeQL aggregate regression missing or not executable"
+    ./scripts/test-codeql-result.sh || err "CodeQL aggregate truth-table regression failed"
+
+    # Positive/negative scope regressions: an unrelated best-effort cleanup is
+    # valid, but continue-on-error on the analyze action must be rejected.
+    codeql_scope_fixture="$(mktemp -t codeql-scope-XXXXXX.yml)"
+    cp .github/workflows/codeql.yml "$codeql_scope_fixture"
+    printf '%s\n' \
+        '  cleanup-fixture:' \
+        '    steps:' \
+        '      - name: Best-effort cleanup' \
+        '        continue-on-error: true' \
+        '        run: cleanup' >>"$codeql_scope_fixture"
+    codeql_analyze_fails_closed "$codeql_scope_fixture" || err "CodeQL fail-closed check rejects unrelated best-effort cleanup"
+    awk '
+        { print }
+        /uses: github\/codeql-action\/analyze@/ {
+            print "        continue-on-error: true"
+        }
+    ' .github/workflows/codeql.yml >"${codeql_scope_fixture}.fail-open"
+    if codeql_analyze_fails_closed "${codeql_scope_fixture}.fail-open"; then
+        err "CodeQL fail-closed check accepts continue-on-error on analyze"
+    fi
+    awk '
+        { print }
+        $0 == "  analyze:" {
+            print "    continue-on-error: true"
+        }
+    ' .github/workflows/codeql.yml >"${codeql_scope_fixture}.job-fail-open"
+    if codeql_analyze_fails_closed "${codeql_scope_fixture}.job-fail-open"; then
+        err "CodeQL fail-closed check accepts continue-on-error on the analyze job"
+    fi
+    rm -f "$codeql_scope_fixture" "${codeql_scope_fixture}.fail-open" \
+        "${codeql_scope_fixture}.job-fail-open"
     ;;
 esac
 if [ "$profile" = "iac" ]; then
@@ -482,6 +557,8 @@ if [ -f .github/workflows/terraform.yml ]; then
     [ -x scripts/terraform-ci.sh ] || err "Terraform CI helper missing or not executable"
     [ -x scripts/terraform-changed.sh ] || err "Terraform change detector missing or not executable"
     [ -x scripts/test-terraform-ci.sh ] || err "Terraform CI regression missing or not executable"
+    [ -x scripts/terraform-provider-locks.sh ] || err "Terraform provider-lock helper missing or not executable"
+    [ -x scripts/test-terraform-provider-locks.sh ] || err "Terraform provider-lock regression missing or not executable"
     grep -q '^  merge_group:$' .github/workflows/terraform.yml || err "Terraform required check cannot run in merge queue"
     ! grep -q '^    paths:$' .github/workflows/terraform.yml || err "required Terraform workflow is suppressed by path filters"
     grep -q 'Invalid Terraform change output' .github/workflows/terraform.yml || err "Terraform aggregate accepts a missing change decision"
@@ -493,10 +570,44 @@ if [ -f .github/workflows/terraform.yml ]; then
     grep -q -- '-out="$plan_file"' scripts/terraform-ci.sh || err "Terraform apply has no saved review artifact"
     ! grep -Eq '/tmp/tf(plan|converge)|-lock=false' scripts/terraform-ci.sh .github/workflows/terraform.yml || err "Terraform CI retains unsafe shared artifacts or disabled state locking"
     ./scripts/test-terraform-ci.sh || err "Terraform saved-plan regression failed"
+
+    grep -q '^  lint:terraform:fmt:$' Taskfile.yml || err "Terraform fmt task missing"
+    grep -q '^  lint:terraform:tflint:$' Taskfile.yml || err "TFLint task missing"
+    grep -q '^  lint:terraform:security:$' Taskfile.yml || err "Checkov task missing"
+    grep -q '^  lint:terraform:locks:$' Taskfile.yml || err "provider-lock lint task missing"
+    grep -q '^  terraform:providers:lock:$' Taskfile.yml || err "provider-lock update task missing"
+    grep -Fq 'CHECKOV_VERSION: "3.3.8"' Taskfile.yml || err "Checkov version is not pinned"
+    grep -Fq 'uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov' Taskfile.yml || err "Checkov does not use the pinned uvx path"
+    grep -Fq 'tflint --recursive --chdir=terraform/ --minimum-failure-severity=warning' Taskfile.yml || err "TFLint task does not fail on findings"
+    grep -Fq -- '-platform=darwin_arm64' scripts/terraform-provider-locks.sh || err "provider locks omit darwin_arm64"
+    grep -Fq -- '-platform=linux_amd64' scripts/terraform-provider-locks.sh || err "provider locks omit linux_amd64"
+    grep -Fq 'uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0' .github/workflows/build.yml || err "CI does not use the pinned TFLint setup action"
+    grep -Fq 'tflint_version: v0.63.1' .github/workflows/build.yml || err "CI does not pin TFLint"
+    grep -Fq 'uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0' .github/workflows/build.yml || err "CI does not provide pinned uv for Checkov"
+    grep -Fq 'brew "tflint"' Brewfile || err "local Brewfile omits TFLint"
+    grep -Fq 'brew "uv"' Brewfile || err "local Brewfile omits uv for pinned Checkov"
+
+    terraform_lint_dry="$(task --dry lint:terraform 2>&1)" || err "Terraform lint aggregate cannot be evaluated hermetically"
+    case "$terraform_lint_dry" in
+    *'terraform fmt -check -recursive terraform/'*'tflint --recursive --chdir=terraform/'* | \
+        *'tflint --recursive --chdir=terraform/'*'terraform fmt -check -recursive terraform/'*) ;;
+    *) err "Terraform lint aggregate does not reach fmt and TFLint" ;;
+    esac
+    case "$terraform_lint_dry" in
+    *'uvx --from "checkov=='*'checkov -d terraform/'*) ;;
+    *) err "Terraform lint aggregate does not reach pinned Checkov" ;;
+    esac
+    case "$terraform_lint_dry" in
+    *'terraform-provider-locks.sh check terraform'*) ;;
+    *) err "Terraform lint aggregate does not reach the provider-lock check" ;;
+    esac
+    ./scripts/test-terraform-provider-locks.sh || err "Terraform provider-lock regression failed"
 else
     [ ! -f scripts/terraform-ci.sh ] || err "Terraform helper rendered when include_terraform=false"
     [ ! -f scripts/terraform-changed.sh ] || err "Terraform change detector rendered when include_terraform=false"
     [ ! -f scripts/test-terraform-ci.sh ] || err "Terraform regression rendered when include_terraform=false"
+    [ ! -f scripts/terraform-provider-locks.sh ] || err "Terraform provider-lock helper rendered when include_terraform=false"
+    [ ! -f scripts/test-terraform-provider-locks.sh ] || err "Terraform provider-lock regression rendered when include_terraform=false"
     ! grep -q '"context": "terraform-verify"' "$ruleset" || err "ruleset requires Terraform for a non-Terraform repo"
 fi
 

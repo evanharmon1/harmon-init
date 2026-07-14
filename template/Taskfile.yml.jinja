@@ -228,9 +228,35 @@ tasks:
 [% if include_terraform %]
 
   lint:terraform:
+    desc: Terraform format, TFLint, Checkov, and provider-lock checks
+    deps:
+      - lint:terraform:fmt
+      - lint:terraform:tflint
+      - lint:terraform:security
+      - lint:terraform:locks
+
+  lint:terraform:fmt:
     desc: Terraform format check
     cmds:
       - terraform fmt -check -recursive terraform/
+
+  lint:terraform:tflint:
+    desc: TFLint
+    cmds:
+      - tflint --recursive --chdir=terraform/ --minimum-failure-severity=warning
+
+  lint:terraform:security:
+    desc: Checkov security scan for Terraform
+    vars:
+      # renovate: datasource=pypi depName=checkov
+      CHECKOV_VERSION: "3.3.8"
+    cmds:
+      - uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov -d terraform/ --framework terraform --quiet
+
+  lint:terraform:locks:
+    desc: Check provider locks cover macOS arm64 and Linux amd64
+    cmds:
+      - ./scripts/terraform-provider-locks.sh check terraform
 
   lint:terraform:validate:
     desc: Terraform validate
@@ -241,6 +267,11 @@ tasks:
     desc: Initialize without backend changes and validate the Terraform root
     cmds:
       - ./scripts/terraform-ci.sh validate terraform
+
+  terraform:providers:lock:
+    desc: Update provider locks for macOS arm64 and Linux amd64
+    cmds:
+      - ./scripts/terraform-provider-locks.sh update terraform
 
   terraform:ci:plan:
     desc: Create and render the exact saved Terraform plan used by CI apply

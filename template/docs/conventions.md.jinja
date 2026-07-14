@@ -65,10 +65,14 @@ it points here.
 - **Python:** Black in check mode (`task lint:python`); managed with uv.
 [% endif %]
 [% if include_terraform %]
-- **Terraform:** `terraform fmt` + `validate`; commit provider lockfiles and keep
-  them readonly in CI. Apply only the exact saved plan generated and reported
-  by CI. Provider tokens are sensitive variables; use `lifecycle.ignore_changes`
-  for mutable fields.
+- **Terraform:** `task lint:terraform` runs `terraform fmt`, TFLint, pinned
+  Checkov, and provider-lock completeness; `task validate` runs `terraform
+  validate`. After adding or changing providers, run `task
+  terraform:providers:lock` and commit `.terraform.lock.hcl`; the canonical lock
+  covers `darwin_arm64` development and `linux_amd64` CI, and checks never mutate
+  the working tree. Apply only the exact saved plan generated and reported by CI.
+  Provider tokens are sensitive variables; use `lifecycle.ignore_changes` for
+  mutable fields.
 [% endif %]
 [% if include_ansible %]
 - **Ansible:** ansible-lint; idempotency required; roles under `ansible/roles/`,

@@ -10,6 +10,11 @@ The pipeline runs `check → build → validate → test → security` (see
 [../conventions.md](../conventions.md)). `build.yml` runs these as parallel jobs
 plus an aggregate **`verify`** job; branch protection requires `verify` +
 `security` to pass before a PR can merge to `main`.
+[% if include_terraform %]
+The lint job installs pinned TFLint and uv; `task check` then runs Terraform fmt,
+TFLint, pinned Checkov via `uvx`, and a non-mutating multi-platform provider-lock
+check just as it does locally.
+[% endif %]
 
 ## Workflows
 
@@ -17,7 +22,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
 [% if use_codeql and (use_node or use_python) %]
 - `codeql.yml` — CodeQL analysis (included by `use_codeql`, then enabled via
-  `FULL_SECURITY_SCAN`; private repositories also require GitHub Code Security).
+  `FULL_SECURITY_SCAN=true`; unset/empty means disabled, while any nonempty value
+  must be exactly `true` or `false`; private repositories also require GitHub
+  Code Security).
 [% endif %]
 [% if devcontainer %]
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
