@@ -46,8 +46,9 @@ and needs no paid service.**
 - **CodeQL has two gates** — `use_codeql` includes the workflow, while its analyze
   jobs skip unless `FULL_SECURITY_SCAN=true`, which `task setup:github` sets.
   Private repositories must also have GitHub Code Security enabled; otherwise
-  SARIF uploads fail. Re-render with `use_codeql=false` when that feature is not
-  available.
+  SARIF uploads fail. Analysis and upload failures fail closed; they are not
+  downgraded to warnings. Re-render with `use_codeql=false` when GitHub Code
+  Security is not available.
 [% else %]
 - **CodeQL is deliberately omitted** (`use_codeql=false` or no supported
   language). Dependabot and gitleaks do not replace first-party-code SAST. If a

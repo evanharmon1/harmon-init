@@ -408,6 +408,9 @@ minimal | iac)
     [ -f .github/workflows/codeql.yml ] || err "codeql.yml missing for CodeQL-enabled profile '$profile'"
     grep -q 'workflows/codeql.yml' README.md || err "CodeQL badge missing for CodeQL-enabled profile '$profile'"
     grep -q 'FULL_SECURITY_SCAN' Taskfile.yml || err "setup:github does not enable selected CodeQL workflow"
+    ! grep -q 'continue-on-error: true' .github/workflows/codeql.yml || err "CodeQL analysis is allowed to fail open"
+    grep -Fq 'result="${{ needs.analyze.result }}"' .github/workflows/codeql.yml || err "CodeQL aggregate does not inspect the analyze result"
+    grep -Fq '[ "$result" != "success" ] && [ "$result" != "skipped" ]' .github/workflows/codeql.yml || err "CodeQL aggregate does not reject analysis failures"
     ;;
 esac
 if [ "$profile" = "iac" ]; then
