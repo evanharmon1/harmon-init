@@ -25,13 +25,16 @@ current — it is the reference for "where do secrets live and who can do what".
 
 Scanning is layered across a few axes. Each check runs at a defined place — a
 `task` target, a CI job, a git hook, or a GitHub-native setting — so local runs,
-git hooks, and CI stay identical. **The default stack is GitHub-native + CI-local
-and needs no paid service.**
+git hooks, and CI stay identical. The CI-local layers need no paid service.
+GitHub-hosted features still depend on repository visibility and the owner's
+plan: in particular, private/internal CodeQL requires GitHub Code Security,
+which may be unavailable or separately licensed. Confirm that capability rather
+than assuming the workflow's presence provides coverage.
 
 | Axis | Catches | Default tool | Where it runs |
 |---|---|---|---|
 [% if use_codeql and (use_node or use_python) %]
-| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** (`codeql.yml`; JS/TS + Python) | CI, included by `use_codeql` and enabled via `FULL_SECURITY_SCAN=true`; private repos require GitHub Code Security |
+| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** (`codeql.yml`; [% if use_node %]JavaScript/TypeScript[% endif %][% if use_node and use_python %] + [% endif %][% if use_python %]Python[% endif %]) | CI, installed by `use_codeql`, run only when `FULL_SECURITY_SCAN=true`; private/internal repos also require GitHub Code Security |
 [% else %]
 | **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **Not configured** | Choose a SAST tool appropriate to this repo before treating the security stack as complete |
 [% endif %]
@@ -45,15 +48,28 @@ and needs no paid service.**
 - **`task security`** (the CI `security` job) is `security:secrets` (gitleaks) +
   `security:audit` (dependency audit). It does **not** run Snyk.
 [% if use_codeql and (use_node or use_python) %]
-- **CodeQL has two gates** — `use_codeql` includes the workflow, while its analyze
-  jobs skip unless `FULL_SECURITY_SCAN=true`, which `task setup:github` sets. The
-  aggregate treats an unset/empty variable as disabled; any nonempty value must
-  be exactly `true` or `false`, so malformed configuration fails instead of
-  disguising an error as a skip.
-  Private repositories must also have GitHub Code Security enabled; otherwise
-  SARIF uploads fail. Analysis and upload failures fail closed; they are not
-  downgraded to warnings. Re-render with `use_codeql=false` when GitHub Code
-  Security is not available.
+- **CodeQL has two template-controlled gates plus an external service
+  capability:**
+
+  1. **Installed state:** `use_codeql=true` includes the workflow; `false` omits
+     it.
+  2. **Runtime state:** installed analysis runs only when
+     `FULL_SECURITY_SCAN=true`, which `task setup:github` sets. Unset/empty
+     normalizes to disabled; every nonempty value must be exactly `true` or
+     `false`, so malformed configuration fails instead of disguising an error as
+     a skip.
+  3. **Service state:** private/internal repositories must separately have
+     GitHub Code Security available and enabled. That is an external capability,
+     not a Copier/runtime gate, and it may depend on the owner's plan. Without
+     it, SARIF upload fails; re-render with `use_codeql=false` if it will remain
+     unavailable.
+
+  Analysis and upload failures fail closed inside the CodeQL workflow; they are
+  not downgraded to warnings. However, the generated branch ruleset currently
+  does **not** require `codeql-verify`, and `codeql.yml` does not run on
+  `merge_group`, so this is not yet a merge-gating SAST control. Confirm a real
+  successful analysis/upload rather than inferring coverage from the workflow,
+  variable, or unrelated required checks.
 [% else %]
 - **CodeQL is deliberately omitted** (`use_codeql=false` or no supported
   language). Dependabot and gitleaks do not replace first-party-code SAST. If a
@@ -74,15 +90,16 @@ and needs no paid service.**
   mainly on secrets + audit.
 
 [% if use_codeql and (use_node or use_python) %]
-### Snyk is optional and redundant by default
+### Snyk is optional; compare it with active coverage
 
 The template ships Snyk targets — `task security:sast` (`snyk code test`, SAST) and
 `task security:sca` (`snyk test`, SCA) — but they are **opt-in, local-only, and not
-in CI**, because the default stack already covers both axes: **CodeQL** for SAST and
-**Dependabot + `security:audit`** for SCA. On a normal repo Snyk is redundant — leave
-it off. (`SNYK_TOKEN` is a local credential, not a CI secret; and if the Snyk GitHub
-App is installed, its `code/snyk`/`security/snyk` PR checks are **not** required by
-the branch ruleset — remove the app to drop them.)
+in CI**. Snyk overlaps with **CodeQL** for SAST only when CodeQL is actually
+installed, runtime-enabled, service-enabled, and successfully uploading results;
+**Dependabot + `security:audit`** cover the SCA axis. If any CodeQL state is off,
+Snyk SAST is not redundant. (`SNYK_TOKEN` is a local credential, not a CI secret;
+and if the Snyk GitHub App is installed, its `code/snyk`/`security/snyk` PR checks
+are **not** required by the branch ruleset — remove the app to drop them.)
 [% else %]
 ### Add SAST deliberately
 

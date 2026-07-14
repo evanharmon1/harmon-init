@@ -62,7 +62,8 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% if project_type == 'web-app' %]
 - [ ] **Product security** (this is a web-app — likely a customer-facing product):
 [% if use_codeql %]
-      the default CodeQL + Dependabot + gitleaks stack is the floor; for a real SaaS
+      CodeQL + Dependabot + gitleaks are the floor only after CodeQL is runtime-
+      enabled, service-enabled, and proven by a successful analysis/upload; for a real SaaS
 [% else %]
       CodeQL is not configured, so Dependabot + gitleaks leave first-party code
       without SAST coverage; choose a supported SAST tool before launch. For a real SaaS
