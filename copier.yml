@@ -66,6 +66,11 @@ code_owner:
   help: "CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
   default: "[[ github_org ]]"
 
+claude_authorized_members:
+  type: str
+  help: "CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger @claude plan/implement/review. An explicit allowlist (not org membership); the review workflow additionally allows the renovate/coderabbit/dependabot bots. Add more with `user-a,user-b`."
+  default: "[[ author_git_provider_username ]]"
+
 project_type:
   type: str
   help: "TYPE: What kind of project is this? (drives Taskfile, CI jobs, devcontainer tooling)"

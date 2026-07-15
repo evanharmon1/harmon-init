@@ -14,9 +14,12 @@ on:
     types: [opened, assigned, labeled]
 jobs:
   implement:
+    # Authorized senders — an explicit allowlist (claude_authorized_members),
+    # not org membership. The `if:` gate and the Verify step below both derive
+    # from this list, so they stay in sync.
+[% set _members = claude_authorized_members.split(',') | map('trim') | select | list %]
     if: >-
-      (github.event.sender.login == '[[ author_git_provider_username ]]' ||
-       github.event.sender.login == '[[ author_git_provider_username ]]-bot') &&
+      ([% for s in _members %]github.event.sender.login == '[[ s ]]'[% if not loop.last %] || [% endif %][% endfor %]) &&
       (contains(github.event.comment.body, '@claude implement') ||
        contains(github.event.review.body, '@claude implement') ||
        contains(github.event.issue.body, '@claude implement') ||
@@ -65,11 +68,26 @@ jobs:
             releases.hashicorp.com:443
             registry.terraform.io:443
 [% endif %]
-      # Two tokens by blast radius. Claude runs with Bash, so the token it can
-      # reach via git/gh is deliberately narrow: push commits (contents), open
-      # PRs (pull-requests), comment (issues) — nothing more. Notably it lacks
-      # workflows:write, so a push that edits .github/workflows/ is rejected by
-      # GitHub, keeping a prompt-injected run from rewriting CI.
+      # Defense in depth behind the job-level `if:` sender gate: re-assert the
+      # authorized-sender allowlist server-side BEFORE anything privileged runs,
+      # so a spoof-shaped gap in the `if:` expression can never even mint a
+      # push-capable token, let alone use it. Token-free — mirrors the `if:` gate.
+      - name: Verify sender is authorized
+        env:
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          case "$SENDER" in
+[% for s in _members %]
+            "[[ s ]]") echo "$SENDER is authorized"; exit 0 ;;
+[% endfor %]
+          esac
+          echo "::error::$SENDER is not an authorized sender"
+          exit 1
+      # The narrow token Claude reaches via git/gh: push commits (contents), open
+      # PRs (pull-requests), comment (issues) — nothing more, and minted only
+      # AFTER the sender is authorized. It lacks workflows:write, so a push that
+      # edits .github/workflows/ is rejected by GitHub, keeping a prompt-injected
+      # run from rewriting CI.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
@@ -79,53 +97,19 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
 [% if github_org != author_git_provider_username %]
-      # Privileged token for the sender check and the project-board update only:
-      # members:read backs the org-membership gate, organization-projects:write
-      # + issues:read move the Status card and resolve it by issue number.
-      # Claude must inherit none of these, so it is never wired into checkout,
-      # git identity, or the Claude step. Required (no continue-on-error): it is
-      # load-bearing for the sender gate below, and org-projects is gated to org
-      # repos so minting fails loudly on a personal fork.
+      # Separate token for the project-board update only — organization-projects
+      # to move the Status card plus issues:read to resolve it by issue number.
+      # Claude inherits neither, so it is never wired into checkout, git identity,
+      # or the Claude step. continue-on-error: a missing org grant (e.g. on a
+      # personal fork) skips the board update instead of aborting the job.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: app-token-privileged
+        id: app-token-projects
+        continue-on-error: true
         with:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
-          permission-members: read
           permission-organization-projects: write
           permission-issues: read
-[% endif %]
-      # Defense in depth behind the job-level `if:` sender gate: re-verify the
-      # sender server-side (org membership / repo owner) BEFORE the privileged
-      # checkout, so a spoof-shaped gap in the expression can never reach a
-      # push-capable token.
-      - name: Verify sender is authorized
-        env:
-[% if github_org != author_git_provider_username %]
-          GH_TOKEN: ${{ steps.app-token-privileged.outputs.token }}
-[% else %]
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-[% endif %]
-          SENDER: ${{ github.event.sender.login }}
-        run: |
-          if [ "$SENDER" = "[[ author_git_provider_username ]]-bot" ]; then
-            echo "Bot $SENDER allowed"
-            exit 0
-          fi
-[% if github_org != author_git_provider_username %]
-          if gh api "orgs/[[ github_org ]]/members/$SENDER" --silent 2>/dev/null; then
-            echo "$SENDER is a [[ github_org ]] org member"
-          else
-            echo "::error::$SENDER is not authorized (not a [[ github_org ]] org member)"
-            exit 1
-          fi
-[% else %]
-          if [ "$SENDER" = "[[ author_git_provider_username ]]" ]; then
-            echo "$SENDER is the repo owner"
-          else
-            echo "::error::$SENDER is not authorized"
-            exit 1
-          fi
 [% endif %]
       # Exception to the repo-wide `persist-credentials: false` hardening:
       # this checkout deliberately persists the short-lived narrow CI App token
@@ -156,9 +140,10 @@ jobs:
           cache: "false"
 [% if github_org != author_git_provider_username %]
       - name: Set issue status to In Progress
+        if: steps.app-token-projects.outputs.token != ''
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.app-token-privileged.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token-projects.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ORG_PROJECT_ID: ${{ vars.ORG_PROJECT_ID }}
         run: |
