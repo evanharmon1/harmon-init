@@ -32,6 +32,29 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # Egress firewall (must be the first step): bound where the runner can
+      # talk. This workflow is read-only (Bash is disallowed below), so this is
+      # defense in depth for the action's own supply chain rather than a Claude
+      # sandbox. Targets GitHub-hosted ubuntu runners. STARTER LIST — the first
+      # real run logs any blocked endpoint in its run summary; telemetry is off,
+      # so nothing leaves for StepSecurity.
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            uploads.github.com:443
+            pipelines.actions.githubusercontent.com:443
+            registry.npmjs.org:443
+            nodejs.org:443
+            api.anthropic.com:443
+            statsig.anthropic.com:443
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
