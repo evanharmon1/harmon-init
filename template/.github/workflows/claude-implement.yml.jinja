@@ -32,24 +32,68 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # Egress firewall (must be the first step). Claude runs with Bash on a
+      # throwaway runner, so bound where that runner can talk: block all
+      # outbound traffic except the endpoints the toolchain + Claude genuinely
+      # need. This is the real exfiltration/callback boundary behind the scoped
+      # Bash allowlist. Targets GitHub-hosted ubuntu runners; if CI_RUNS_ON
+      # points at a self-hosted runner, harden-runner degrades to best-effort.
+      # STARTER LIST: the first real run logs any blocked endpoint in its run
+      # summary — add legitimate ones. Telemetry is off, so nothing leaves for
+      # StepSecurity.
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            uploads.github.com:443
+            pipelines.actions.githubusercontent.com:443
+            registry.npmjs.org:443
+            nodejs.org:443
+            get.pnpm.io:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            api.anthropic.com:443
+            statsig.anthropic.com:443
+[% if include_terraform %]
+            releases.hashicorp.com:443
+            registry.terraform.io:443
+[% endif %]
+      # Two tokens by blast radius. Claude runs with Bash, so the token it can
+      # reach via git/gh is deliberately narrow: push commits (contents), open
+      # PRs (pull-requests), comment (issues) — nothing more. Notably it lacks
+      # workflows:write, so a push that edits .github/workflows/ is rejected by
+      # GitHub, keeping a prompt-injected run from rewriting CI.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
-          # Least-privilege token: implement pushes commits (contents), opens
-          # PRs (pull-requests), comments (issues), and may touch
-          # .github/workflows/ (workflows, write-only). org-projects (project
-          # Status updates) and members:read (the org-membership sender check)
-          # are gated to org repos only — an ungranted permission would fail
-          # token minting.
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
-          permission-workflows: write
 [% if github_org != author_git_provider_username %]
-          permission-organization-projects: write
+      # Privileged token for the sender check and the project-board update only:
+      # members:read backs the org-membership gate, organization-projects:write
+      # + issues:read move the Status card and resolve it by issue number.
+      # Claude must inherit none of these, so it is never wired into checkout,
+      # git identity, or the Claude step. Required (no continue-on-error): it is
+      # load-bearing for the sender gate below, and org-projects is gated to org
+      # repos so minting fails loudly on a personal fork.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token-privileged
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           permission-members: read
+          permission-organization-projects: write
+          permission-issues: read
 [% endif %]
       # Defense in depth behind the job-level `if:` sender gate: re-verify the
       # sender server-side (org membership / repo owner) BEFORE the privileged
@@ -57,7 +101,11 @@ jobs:
       # push-capable token.
       - name: Verify sender is authorized
         env:
+[% if github_org != author_git_provider_username %]
+          GH_TOKEN: ${{ steps.app-token-privileged.outputs.token }}
+[% else %]
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+[% endif %]
           SENDER: ${{ github.event.sender.login }}
         run: |
           if [ "$SENDER" = "[[ author_git_provider_username ]]-bot" ]; then
@@ -80,8 +128,8 @@ jobs:
           fi
 [% endif %]
       # Exception to the repo-wide `persist-credentials: false` hardening:
-      # this checkout deliberately persists the short-lived CI App token so
-      # Claude's `git push` of the working branch can authenticate. The token
+      # this checkout deliberately persists the short-lived narrow CI App token
+      # so Claude's `git push` of the working branch can authenticate. The token
       # is least-privilege (minted above) and expires with the job.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -96,11 +144,21 @@ jobs:
           bot_id=$(gh api "/users/${bot}" --jq .id)
           git config --global user.name "$bot"
           git config --global user.email "${bot_id}+${bot}@users.noreply.github.com"
+      # Provision the full toolchain Claude needs to run `task verify` (and the
+      # git hooks its push triggers): the shared setup action + the lint CLIs
+      # that back `task check` and gitleaks for the pre-push `task security`
+      # hook. cache: false — this job holds a push-capable token, so it takes
+      # the cold-install trade rather than the PR-poisonable pnpm cache.
+      - uses: ./.github/actions/setup
+        with:
+          lint-tools: "true"
+          gitleaks: "true"
+          cache: "false"
 [% if github_org != author_git_provider_username %]
       - name: Set issue status to In Progress
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token-privileged.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ORG_PROJECT_ID: ${{ vars.ORG_PROJECT_ID }}
         run: |
@@ -152,6 +210,11 @@ jobs:
           echo "Set issue #$ISSUE_NUMBER to In Progress"
 [% endif %]
       - uses: anthropics/claude-code-action@d5726de019ec4498aa667642bc3a80fca83aa102 # v1.0.148
+        # GH_TOKEN lets Claude's own `gh` calls (e.g. `gh pr create`)
+        # authenticate as the CI app bot with the narrow token, matching the git
+        # identity above.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
@@ -164,7 +227,21 @@ jobs:
           # --max-budget-usd caps API-key spend; likely a no-op under
           # CLAUDE_CODE_OAUTH_TOKEN (subscription) billing. Real runaway guards
           # are timeout-minutes (job-level) and --max-turns.
-          claude_args: "--model opus --effort high --max-budget-usd 25 --max-turns 200"
+          # --allowedTools grants the file-editing tools plus a SCOPED Bash
+          # allowlist (space-separated `Bash(cmd *)` form per the Claude Code
+          # settings reference): the project runners, git, gh, and read-only
+          # inspection utilities — enough to implement a change, run
+          # `task verify`, commit, push, and open a PR. Deliberately NOT allowed:
+          # curl/wget (exfiltration; also covered by the egress firewall),
+          # rm/chmod/sudo, and arbitrary `bash -c`/`eval`. Claude edits files via
+          # the Edit/Write tools or `task` targets. Prefix matching is coarse and
+          # shell can compose, so this is defense-in-depth, not a hard sandbox —
+          # the real boundaries are the narrow token, the egress firewall, branch
+          # protection, and the ephemeral runner. Widen if a real run stalls on a
+          # denied command.
+          claude_args: >-
+            --model opus --effort high --max-budget-usd 25 --max-turns 200
+            --allowedTools "Edit,MultiEdit,Write,Read,NotebookEdit,Glob,Grep,LS,TodoWrite,WebFetch,Bash(task *),Bash(pnpm *),Bash(npx *),Bash(node *),Bash(git *),Bash(gh *),Bash(cd *),Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(rg *),Bash(find *),Bash(sed *),Bash(awk *),Bash(jq *),Bash(wc *),Bash(sort *),Bash(diff *),Bash(echo *),Bash(mkdir *),Bash(cp *),Bash(mv *),Bash(which *),Bash(pwd)"
           prompt: |
             Implement the change requested in this issue or comment.
 

@@ -12,7 +12,8 @@ on:
 
 # Parallel jobs that all call into the Taskfile so local + CI run identical commands.
 # A final `verify` job aggregates statuses for branch protection
-# (required checks: verify + security).
+# (required checks: verify + security). Every job's toolchain setup goes through
+# the shared ./.github/actions/setup composite action.
 
 concurrency:
   group: build-${{ github.ref }}
@@ -34,78 +35,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-[% if use_node %]
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-[% endif %]
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: ./.github/actions/setup
         with:
-          # renovate: datasource=node-version
-          node-version: "24"
-[% if use_node %]
-          cache: pnpm
-[% endif %]
-[% if use_python %]
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.14"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-[% endif %]
-[% if use_foreman and not use_python %]
-      # uv provides uvx for foreman:lint's pinned ruff/black (see taskfiles/foreman.yml)
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-[% endif %]
-[% if include_terraform %]
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-[% endif %]
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install lint tools (shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync %], yq[% endif %])
-        run: |
-          # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
-          SHELLCHECK_VERSION=0.10.0
-          curl -fsSL --retry 3 -o /tmp/shellcheck.tar.xz \
-            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
-          sudo install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
-          # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
-          SHFMT_VERSION=3.13.1
-          # Raw-binary download: fail closed on a checksum mismatch (a version
-          # bump must update the pinned hash). Archive downloads (shellcheck,
-          # actionlint) already fail loudly at extract time on corruption; a
-          # hash-pinned toolchain image is the follow-on refactor.
-          SHFMT_SHA256=fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1
-          curl -fsSL --retry 3 -o /tmp/shfmt \
-            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
-          echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
-          sudo install -m 0755 /tmp/shfmt /usr/local/bin/shfmt
-          # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
-          ACTIONLINT_VERSION=1.7.12
-          curl -fsSL --retry 3 "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
-            | tar -xz -C /tmp actionlint
-          sudo mv /tmp/actionlint /usr/local/bin/
-[% if use_skills_sync %]
-          # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
-          YQ_VERSION=4.44.3
-          # Raw-binary download: fail closed on a checksum mismatch (a version
-          # bump must update the pinned hash).
-          YQ_SHA256=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
-          curl -fsSL --retry 3 -o /tmp/yq \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
-          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
-[% endif %]
-          pip install yamllint
-[% if use_python %]
-      - run: uv sync
-[% endif %]
-[% if use_node %]
-      - name: Install dependencies
-        run: |
-          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
-[% endif %]
+          lint-tools: "true"
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
       - run: task test:tasks
@@ -134,20 +66,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          # renovate: datasource=node-version
-          node-version: "24"
-          cache: pnpm
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dependencies
-        run: |
-          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+      - uses: ./.github/actions/setup
 [% if project_type == 'web-astro' %]
       - name: Install lychee
         uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
@@ -176,37 +95,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: ./.github/actions/setup
         with:
-          # renovate: datasource=node-version
-          node-version: "24"
-[% if use_node %]
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-[% endif %]
-[% if use_python %]
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.14"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-[% endif %]
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install gitleaks
-        run: |
-          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
-          GITLEAKS_VERSION=8.24.3
-          curl -sSL -o /tmp/gitleaks.tgz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          tar -xzf /tmp/gitleaks.tgz -C /tmp
-          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
-[% if use_node %]
-      - name: Install dependencies
-        run: |
-          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
-[% endif %]
+          gitleaks: "true"
       - name: Security scan
         run: task security
 [% if project_type == 'web-astro' %]
@@ -226,20 +117,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          # renovate: datasource=node-version
-          node-version: "24"
-          cache: pnpm
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dependencies
-        run: |
-          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+      - uses: ./.github/actions/setup
       - name: Install Chrome (required for Lighthouse)
         uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1.7.3
         id: setup-chrome
@@ -334,20 +212,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          # renovate: datasource=node-version
-          node-version: "24"
-          cache: pnpm
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dependencies
-        run: |
-          if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+      - uses: ./.github/actions/setup
       - name: Detect Playwright config
         id: pw
         run: |
