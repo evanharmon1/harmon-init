@@ -61,42 +61,24 @@ jobs:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           # Least-privilege token: review only comments (issues/pull-requests)
-          # and reads the repo (no push). members:read is gated to org repos —
-          # it backs the org-membership sender check; personal repos lack it
-          # and requesting it would fail token minting.
+          # and reads the repo (no push).
           permission-contents: read
           permission-pull-requests: write
           permission-issues: write
-[% if github_org != author_git_provider_username %]
-          permission-members: read
-[% endif %]
+      # Authorized senders — the explicit claude_authorized_members allowlist
+      # (not org membership) plus the automation bots whose PRs review runs on.
+[% set _review_senders = (claude_authorized_members.split(',') | map('trim') | select | list) + ['renovate[bot]', 'coderabbitai[bot]', 'dependabot[bot]'] %]
       - name: Verify sender is authorized
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SENDER: ${{ github.event.sender.login }}
         run: |
-          if [ "$SENDER" = "[[ author_git_provider_username ]]-bot" ] || \
-             [ "$SENDER" = "renovate[bot]" ] || \
-             [ "$SENDER" = "coderabbitai[bot]" ] || \
-             [ "$SENDER" = "dependabot[bot]" ]; then
-            echo "Bot $SENDER allowed"
-            exit 0
-          fi
-[% if github_org != author_git_provider_username %]
-          if gh api "orgs/[[ github_org ]]/members/$SENDER" --silent 2>/dev/null; then
-            echo "$SENDER is a [[ github_org ]] org member"
-          else
-            echo "::error::$SENDER is not authorized (not a [[ github_org ]] org member)"
-            exit 1
-          fi
-[% else %]
-          if [ "$SENDER" = "[[ author_git_provider_username ]]" ]; then
-            echo "$SENDER is the repo owner"
-          else
-            echo "::error::$SENDER is not authorized"
-            exit 1
-          fi
-[% endif %]
+          case "$SENDER" in
+[% for s in _review_senders %]
+            "[[ s ]]") echo "$SENDER is authorized"; exit 0 ;;
+[% endfor %]
+          esac
+          echo "::error::$SENDER is not an authorized sender"
+          exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false

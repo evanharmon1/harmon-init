@@ -14,9 +14,12 @@ on:
     types: [opened, assigned, labeled]
 jobs:
   plan:
+    # Authorized senders — an explicit allowlist (claude_authorized_members),
+    # not org membership. The `if:` gate and the Verify step below both derive
+    # from this list, so they stay in sync.
+[% set _members = claude_authorized_members.split(',') | map('trim') | select | list %]
     if: >-
-      (github.event.sender.login == '[[ author_git_provider_username ]]' ||
-       github.event.sender.login == '[[ author_git_provider_username ]]-bot') &&
+      ([% for s in _members %]github.event.sender.login == '[[ s ]]'[% if not loop.last %] || [% endif %][% endfor %]) &&
       (contains(github.event.comment.body, '@claude plan') ||
        contains(github.event.review.body, '@claude plan') ||
        contains(github.event.issue.body, '@claude plan') ||
@@ -61,44 +64,30 @@ jobs:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           # Least-privilege token: plan only comments (issues/pull-requests) and
-          # reads the repo (no push). org-projects (project Status updates) and
-          # members:read (the org-membership sender check) are gated to org
-          # repos — requesting a permission the installation lacks makes this
-          # step fail.
+          # reads the repo (no push). org-projects (project Status updates) is
+          # gated to org repos — requesting a permission the installation lacks
+          # makes this step fail.
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
 [% if github_org != author_git_provider_username %]
           permission-organization-projects: write
-          permission-members: read
 [% endif %]
-      # Defense in depth behind the job-level `if:` sender gate: re-verify the
-      # sender server-side (org membership / repo owner) so a spoof-shaped gap
-      # in the expression can never reach the Claude step.
+      # Defense in depth behind the job-level `if:` sender gate: re-assert the
+      # authorized-sender allowlist server-side so a spoof-shaped gap in the
+      # `if:` expression can never reach the Claude step. Token-free — mirrors
+      # the `if:` gate.
       - name: Verify sender is authorized
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SENDER: ${{ github.event.sender.login }}
         run: |
-          if [ "$SENDER" = "[[ author_git_provider_username ]]-bot" ]; then
-            echo "Bot $SENDER allowed"
-            exit 0
-          fi
-[% if github_org != author_git_provider_username %]
-          if gh api "orgs/[[ github_org ]]/members/$SENDER" --silent 2>/dev/null; then
-            echo "$SENDER is a [[ github_org ]] org member"
-          else
-            echo "::error::$SENDER is not authorized (not a [[ github_org ]] org member)"
-            exit 1
-          fi
-[% else %]
-          if [ "$SENDER" = "[[ author_git_provider_username ]]" ]; then
-            echo "$SENDER is the repo owner"
-          else
-            echo "::error::$SENDER is not authorized"
-            exit 1
-          fi
-[% endif %]
+          case "$SENDER" in
+[% for s in _members %]
+            "[[ s ]]") echo "$SENDER is authorized"; exit 0 ;;
+[% endfor %]
+          esac
+          echo "::error::$SENDER is not an authorized sender"
+          exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
