@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.27.0](https://github.com/evanharmon1/harmon-init/compare/v3.26.1...v3.27.0) (2026-07-15)
+
+
+### Features
+
+* **ci:** explicit claude sender allowlist (configurable members) instead of org membership ([#293](https://github.com/evanharmon1/harmon-init/issues/293)) ([601eb24](https://github.com/evanharmon1/harmon-init/commit/601eb244c5e3bac62917d724d6fee32b132ecbf3))
+* **ci:** shared setup composite action + hardened claude-implement; ADR for release-gated static-site deploys ([#291](https://github.com/evanharmon1/harmon-init/issues/291)) ([7502958](https://github.com/evanharmon1/harmon-init/commit/75029587eda4fb89b335268b15755a09abc3b07a))
+
 ## [3.26.1](https://github.com/evanharmon1/harmon-init/compare/v3.26.0...v3.26.1) (2026-07-13)
 
 
