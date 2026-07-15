@@ -68,10 +68,11 @@ jobs:
             releases.hashicorp.com:443
             registry.terraform.io:443
 [% endif %]
-      # Defense in depth behind the job-level `if:` sender gate: re-assert the
-      # authorized-sender allowlist server-side BEFORE anything privileged runs,
-      # so a spoof-shaped gap in the `if:` expression can never even mint a
-      # push-capable token, let alone use it. Token-free — mirrors the `if:` gate.
+      # Defense in depth behind the job-level `if:` sender gate: an explicit
+      # step (runs on the runner, unlike the GitHub-evaluated `if:`) that
+      # re-asserts the authorized-sender allowlist BEFORE anything privileged
+      # runs, so a spoof-shaped gap in the `if:` expression can never even mint
+      # a push-capable token, let alone use it. Token-free — mirrors the `if:`.
       - name: Verify sender is authorized
         env:
           SENDER: ${{ github.event.sender.login }}
@@ -131,13 +132,18 @@ jobs:
       # Provision the full toolchain Claude needs to run `task verify` (and the
       # git hooks its push triggers): the shared setup action + the lint CLIs
       # that back `task check` and gitleaks for the pre-push `task security`
-      # hook. cache: false — this job holds a push-capable token, so it takes
-      # the cold-install trade rather than the PR-poisonable pnpm cache.
+      # hook.
+[% if use_node %]
+      # cache: false — this job holds a push-capable token, so it takes the
+      # cold-install trade rather than the PR-poisonable pnpm cache.
+[% endif %]
       - uses: ./.github/actions/setup
         with:
           lint-tools: "true"
           gitleaks: "true"
+[% if use_node %]
           cache: "false"
+[% endif %]
 [% if github_org != author_git_provider_username %]
       - name: Set issue status to In Progress
         if: steps.app-token-projects.outputs.token != ''
@@ -226,7 +232,7 @@ jobs:
           # denied command.
           claude_args: >-
             --model opus --effort high --max-budget-usd 25 --max-turns 200
-            --allowedTools "Edit,MultiEdit,Write,Read,NotebookEdit,Glob,Grep,LS,TodoWrite,WebFetch,Bash(task *),Bash(pnpm *),Bash(npx *),Bash(node *),Bash(git *),Bash(gh *),Bash(cd *),Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(rg *),Bash(find *),Bash(sed *),Bash(awk *),Bash(jq *),Bash(wc *),Bash(sort *),Bash(diff *),Bash(echo *),Bash(mkdir *),Bash(cp *),Bash(mv *),Bash(which *),Bash(pwd)"
+            --allowedTools "Edit,MultiEdit,Write,Read,NotebookEdit,Glob,Grep,LS,TodoWrite,Bash(task *),Bash(pnpm *),Bash(npx *),Bash(node *),Bash(git *),Bash(gh *),Bash(cd *),Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(rg *),Bash(find *),Bash(sed *),Bash(awk *),Bash(jq *),Bash(wc *),Bash(sort *),Bash(diff *),Bash(echo *),Bash(mkdir *),Bash(cp *),Bash(mv *),Bash(which *),Bash(pwd)"
           prompt: |
             Implement the change requested in this issue or comment.
 
