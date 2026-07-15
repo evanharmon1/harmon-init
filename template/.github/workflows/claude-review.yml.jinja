@@ -14,11 +14,16 @@ on:
     types: [labeled]
 jobs:
   review:
+    # Authorized senders — the explicit claude_authorized_members allowlist plus
+    # the automation bots whose PRs review runs on. Used by both the `if:` gate
+    # (so unauthorized events never provision a runner) and the Verify step.
+[% set _review_senders = (claude_authorized_members.split(',') | map('trim') | select | list) + ['renovate[bot]', 'coderabbitai[bot]', 'dependabot[bot]'] %]
     if: >-
       (github.event.issue.pull_request != null ||
        github.event_name == 'pull_request_review_comment' ||
        github.event_name == 'pull_request_review' ||
        github.event_name == 'pull_request') &&
+      ([% for s in _review_senders %]github.event.sender.login == '[[ s ]]'[% if not loop.last %] || [% endif %][% endfor %]) &&
       (contains(github.event.comment.body, '@claude review') ||
        contains(github.event.review.body, '@claude review') ||
        (github.event.action == 'labeled' &&
@@ -33,9 +38,9 @@ jobs:
       id-token: write
     steps:
       # Egress firewall (must be the first step): bound where the runner can
-      # talk. This workflow is read-only (Bash is disallowed below), so this is
-      # defense in depth for the action's own supply chain rather than a Claude
-      # sandbox. Targets GitHub-hosted ubuntu runners. STARTER LIST — the first
+      # talk. Claude runs read-only here (Bash disallowed via claude_args
+      # below), so this is defense in depth for the action's own supply chain
+      # rather than a Claude sandbox. Targets GitHub-hosted ubuntu runners. STARTER LIST — the first
       # real run logs any blocked endpoint in its run summary; telemetry is off,
       # so nothing leaves for StepSecurity.
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -55,19 +60,12 @@ jobs:
             nodejs.org:443
             api.anthropic.com:443
             statsig.anthropic.com:443
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: app-token
-        with:
-          client-id: ${{ vars.CI_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
-          # Least-privilege token: review only comments (issues/pull-requests)
-          # and reads the repo (no push).
-          permission-contents: read
-          permission-pull-requests: write
-          permission-issues: write
-      # Authorized senders — the explicit claude_authorized_members allowlist
-      # (not org membership) plus the automation bots whose PRs review runs on.
-[% set _review_senders = (claude_authorized_members.split(',') | map('trim') | select | list) + ['renovate[bot]', 'coderabbitai[bot]', 'dependabot[bot]'] %]
+      # Defense in depth behind the job-level `if:` sender gate (which now
+      # carries the same allowlist, so unauthorized events never provision a
+      # runner). Runs BEFORE minting the App token (the job GITHUB_TOKEN exists
+      # earlier for e.g. harden-runner, but no App token does yet) so a gap in
+      # that expression can't reach credential creation. Quoting makes `[bot]` a
+      # literal in the case pattern, not a glob class. Keep in sync with `if:`.
       - name: Verify sender is authorized
         env:
           SENDER: ${{ github.event.sender.login }}
@@ -79,6 +77,16 @@ jobs:
           esac
           echo "::error::$SENDER is not an authorized sender"
           exit 1
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege token: review only comments (issues/pull-requests)
+          # and reads the repo (no push).
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: write
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false

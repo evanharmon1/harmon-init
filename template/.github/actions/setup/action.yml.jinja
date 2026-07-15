@@ -1,6 +1,6 @@
 name: Setup toolchain
 description: >-
-  Install the shared toolchain (Node/pnpm[% if use_python %], Python/uv[% endif %][% if include_terraform %], Terraform[% endif %], Task), project
+  Install the shared toolchain (Node[% if use_node %]/pnpm[% endif %][% if use_python %], Python/uv[% endif %][% if include_terraform %], Terraform[% endif %], Task), project
   dependencies, and — behind inputs — the lint + security CLIs. Single source of
   truth for the CI jobs and the Claude automation workflows so local, CI, and
   agent runs all execute the same Taskfile targets. Callers must run
@@ -18,12 +18,14 @@ inputs:
   gitleaks:
     description: Install gitleaks — required by `task security`.
     default: "false"
+[% if use_node %]
   cache:
     description: >-
       Enable the pnpm dependency cache. Turn OFF for credential-holding jobs —
       the repo-wide Actions cache is writable from lower-trust PR runs, so a
       job with push/deploy tokens takes the cold-install trade instead.
     default: "true"
+[% endif %]
 
 runs:
   using: composite
@@ -93,14 +95,16 @@ runs:
         echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
         sudo install -m 0755 /tmp/yq /usr/local/bin/yq
 [% endif %]
-        pip install yamllint
+        # renovate: datasource=pypi depName=yamllint
+        YAMLLINT_VERSION=1.38.0
+        python3 -m pip install "yamllint==${YAMLLINT_VERSION}"
     - name: Install gitleaks
       if: inputs.gitleaks == 'true'
       shell: bash
       run: |
         # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
         GITLEAKS_VERSION=8.24.3
-        curl -sSL -o /tmp/gitleaks.tgz \
+        curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
           "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
         tar -xzf /tmp/gitleaks.tgz -C /tmp
         sudo mv /tmp/gitleaks /usr/local/bin/gitleaks

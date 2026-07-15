@@ -36,9 +36,9 @@ jobs:
       id-token: write
     steps:
       # Egress firewall (must be the first step): bound where the runner can
-      # talk. This workflow is read-only (Bash is disallowed below), so this is
-      # defense in depth for the action's own supply chain rather than a Claude
-      # sandbox. Targets GitHub-hosted ubuntu runners. STARTER LIST — the first
+      # talk. Claude runs read-only here (Bash disallowed via claude_args
+      # below), so this is defense in depth for the action's own supply chain
+      # rather than a Claude sandbox. Targets GitHub-hosted ubuntu runners. STARTER LIST — the first
       # real run logs any blocked endpoint in its run summary; telemetry is off,
       # so nothing leaves for StepSecurity.
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -58,25 +58,10 @@ jobs:
             nodejs.org:443
             api.anthropic.com:443
             statsig.anthropic.com:443
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: app-token
-        with:
-          client-id: ${{ vars.CI_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
-          # Least-privilege token: plan only comments (issues/pull-requests) and
-          # reads the repo (no push). org-projects (project Status updates) is
-          # gated to org repos — requesting a permission the installation lacks
-          # makes this step fail.
-          permission-contents: read
-          permission-issues: write
-          permission-pull-requests: write
-[% if github_org != author_git_provider_username %]
-          permission-organization-projects: write
-[% endif %]
-      # Defense in depth behind the job-level `if:` sender gate: re-assert the
-      # authorized-sender allowlist server-side so a spoof-shaped gap in the
-      # `if:` expression can never reach the Claude step. Token-free — mirrors
-      # the `if:` gate.
+      # Defense in depth behind the job-level `if:` sender gate: an explicit
+      # step that re-asserts the authorized-sender allowlist BEFORE minting any
+      # token, so a spoof-shaped gap in the `if:` expression can never mint
+      # credentials. Token-free — mirrors the `if:` gate.
       - name: Verify sender is authorized
         env:
           SENDER: ${{ github.event.sender.login }}
@@ -88,14 +73,39 @@ jobs:
           esac
           echo "::error::$SENDER is not an authorized sender"
           exit 1
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Least-privilege token: plan only comments (issues/pull-requests) and
+          # reads the repo (no push).
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+[% if github_org != author_git_provider_username %]
+      # Separate token for the project-board update only. continue-on-error so a
+      # missing organization-projects grant (e.g. a personal fork) skips the
+      # status update instead of failing the whole plan job. issues:read lets
+      # the board lookup resolve items by issue number (`...on Issue { number }`).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token-projects
+        continue-on-error: true
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          permission-organization-projects: write
+          permission-issues: read
+[% endif %]
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 [% if github_org != author_git_provider_username %]
       - name: Set issue status to Shaping
+        if: steps.app-token-projects.outputs.token != ''
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token-projects.outputs.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ORG_PROJECT_ID: ${{ vars.ORG_PROJECT_ID }}
         run: |
