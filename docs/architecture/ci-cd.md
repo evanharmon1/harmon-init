@@ -15,6 +15,14 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 - `build.yml` — on push/PR to `main`: lint, security, then the aggregate **`verify`** job.
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
+- `codeql.yml` — Python CodeQL SAST. It runs automatically because Harmon Init is
+  public; the private-repository path requires paid GitHub Code Security and
+  `FULL_SECURITY_SCAN=true`.
+- The `build.yml` security job runs gitleaks + dependency audit and, when a
+  repository is private without the paid CodeQL opt-in, Semgrep CE.
+- Generated repositories may explicitly opt into `snyk-scheduled.yml` at a
+  weekly or daily cadence. It has only schedule/manual triggers, runs Snyk SAST
+  and SCA as advisory second-opinion scans, and is never a required PR check.
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 - `release.yml` — release-please maintains the rolling release PR.
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.

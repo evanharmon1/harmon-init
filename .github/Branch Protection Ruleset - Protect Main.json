@@ -48,6 +48,10 @@
           {
             "context": "security",
             "integration_id": 15368
+          },
+          {
+            "context": "codeql-verify",
+            "integration_id": 15368
           }
         ]
       }

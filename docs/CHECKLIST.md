@@ -20,18 +20,37 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
-      reporting**, sets the `FULL_SECURITY_SCAN` variable (CodeQL). Do NOT add dependabot.yml — Renovate owns version updates.
+      reporting**. Do not add `dependabot.yml`: Renovate owns routine and
+      vulnerability-remediation PRs; Dependabot owns advisory alerts.
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is
       scoped to one resource owner, so a **new owner needs a new PAT**. Both layers
       are required — the collaborator grant sets the ceiling, the PAT's repo list
       reaches it. Procedure: [guides/bot-account.md](guides/bot-account.md).
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `codeql.yml` are on `main` so the required `verify`/`security`/`codeql-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
-- [ ] Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows),
-      `SNYK_TOKEN` (snyk tasks)
+- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows)
+- [ ] **Free SAST coverage** — Harmon Init's public `codeql.yml` runs CodeQL
+      automatically and uploads results to the Security tab. Confirm a successful
+      run. Generated supported public stacks do the same; free private repos use
+      Semgrep CE in `build.yml` unless paid private CodeQL is explicitly enabled.
+- [ ] **Choose the Snyk posture** — Harmon Init currently uses the public-repo
+      default (CodeQL + Dependabot alerts/Renovate + gitleaks), so Snyk remains
+      off. Free private repos keep Snyk manual/local via
+      `task security:sast:snyk` and `task security:sca:snyk`; local tests consume
+      the same Snyk Organization quota. Do not install the Snyk GitHub App for
+      this posture; its PR checks are not required by the branch ruleset.
+- [ ] **Optional scheduled Snyk** — for a selected important public repository,
+      choose `snyk_scan_schedule=weekly` (conservative) or `daily` (public or
+      accepted unlimited OSS), commit the generated `snyk-scheduled.yml`, set the
+      Actions secret `SNYK_TOKEN`, and run it once with **Run workflow**. It runs
+      SAST + SCA only on its schedule/manual dispatch—never on PR or push—and
+      remains advisory. Confirm Snyk recognizes the public Git remote and does
+      not debit private-test usage; if it does, run `snyk monitor` once and set
+      the Project's Git remote URL in Snyk. Prefer weekly for any deliberately
+      budgeted private repo and check Organization Usage before enabling it.
 - [ ] CI GitHub App `evanharmon1-ci`: create it by hand for this org (one App
       per org; **Settings → Developer settings → GitHub Apps**), or reuse the
       org's existing one;

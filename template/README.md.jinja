@@ -33,11 +33,12 @@ diagram that must stay in sync with reality) lives in
 ### Requirements
 
 - [Homebrew](https://brew.sh) and [go-task](https://taskfile.dev)
+- [uv](https://docs.astral.sh/uv/) (runs the pinned Semgrep CE baseline[% if use_python %] and manages Python dependencies[% endif %])
 [% if use_node %]
 - Node >= 22 and [pnpm](https://pnpm.io)
 [% endif %]
 [% if use_python %]
-- [uv](https://docs.astral.sh/uv/) (Python is pinned in `.python-version`)
+- Python is pinned in `.python-version`
 [% endif %]
 
 ### Install
@@ -114,7 +115,9 @@ See [DESIGN.md](DESIGN.md) for visual/UX direction.
 | `task build` | Production build |
 [% endif %]
 | `task test` | Run tests (see [docs/architecture/tests.md](docs/architecture/tests.md)) |
-| `task security` | gitleaks + dependency audit |
+| `task security` | Free local baseline: Semgrep CE + gitleaks + dependency audit |
+| `task security:sast` / `security:sca` | Semgrep CE / package-manager dependency audit |
+| `task security:sast:snyk` / `security:sca:snyk` | Optional Snyk second-opinion scans (manual or explicitly scheduled) |
 | `task release:patch` | Tag + GitHub release (also `:minor` / `:major`) |
 | `task status` | Project status dashboard (also `status:git`/`:gh`/`:code`/`:env`) |
 | `task status:setup` | Setup audit: GitHub config, toolchain, devcontainer, dev env |
@@ -130,7 +133,10 @@ same `task` targets as local hooks.
 |---|---|
 | `build.yml` | lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security → aggregate `verify` gate |
 [% if use_node or use_python %]
-| `codeql.yml` | CodeQL analysis (opt-in via `FULL_SECURITY_SCAN` repo variable) |
+| `codeql.yml` | CodeQL SAST: automatic and free for public repos; private/internal repos require GitHub Code Security + `FULL_SECURITY_SCAN=true` |
+[% endif %]
+[% if snyk_scan_schedule != 'off' %]
+| `snyk-scheduled.yml` | Optional [[ snyk_scan_schedule ]] Snyk SAST/SCA second opinion; advisory and never a required PR check |
 [% endif %]
 [% if devcontainer %]
 | `devcontainer-build.yml` | Prebuilds devcontainer images to GHCR on merge to main |
@@ -141,7 +147,7 @@ same `task` targets as local hooks.
 [% endif %]
 
 Branch protection: `main` requires a PR with code-owner approval and the
-`verify` + `security` checks (importable ruleset in `.github/`; see
+`verify` + `security`[% if use_node or use_python %] + `codeql-verify`[% endif %] checks (importable ruleset in `.github/`; see
 [docs/architecture/branch-protection.md](docs/architecture/branch-protection.md)).
 [% if use_release_please %]
 **Releases are intentional** — release-please keeps a rolling release PR from

@@ -18,8 +18,6 @@ brew "yamllint"
 
 # Security
 brew "gitleaks"
-tap "snyk/tap"
-brew "snyk/tap/snyk"
 
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)
 brew "node"
@@ -27,11 +25,8 @@ brew "node"
 brew "pnpm"
 brew "lychee"
 [% endif %]
-[% if use_python or use_foreman %]
-
-# Python tooling (uv[% if use_foreman %]; foreman lint runs pinned ruff/black via uvx[% endif %])
+# Python tool runner (Semgrep CE[% if use_python %] + project dependencies[% endif %][% if use_foreman %] + foreman lint[% endif %] use uv/uvx)
 brew "uv"
-[% endif %]
 [% if include_terraform %]
 
 # Terraform

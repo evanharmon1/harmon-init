@@ -1,6 +1,6 @@
 name: Setup toolchain
 description: >-
-  Install the shared toolchain (Node[% if use_node %]/pnpm[% endif %][% if use_python %], Python/uv[% endif %][% if include_terraform %], Terraform[% endif %], Task), project
+  Install the shared toolchain (Node[% if use_node %]/pnpm[% endif %], Python/uv[% if include_terraform %], Terraform[% endif %], Task), project
   dependencies, and — behind inputs — the lint + security CLIs. Single source of
   truth for the CI jobs and the Claude automation workflows so local, CI, and
   agent runs all execute the same Taskfile targets. Callers must run
@@ -16,7 +16,10 @@ inputs:
       `task check` / `task verify`.
     default: "false"
   gitleaks:
-    description: Install gitleaks — required by `task security`.
+    description: Install gitleaks — required by `task security:secrets`.
+    default: "false"
+  snyk:
+    description: Install the pinned Snyk CLI for an explicitly enabled scan.
     default: "false"
 [% if use_node %]
   cache:
@@ -40,16 +43,16 @@ runs:
 [% if use_node %]
         cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
 [% endif %]
-[% if use_python %]
     - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
+[% if use_python %]
         python-version: "3.14"
-    - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+[% else %]
+        python-version: "3.13"
 [% endif %]
-[% if use_foreman and not use_python %]
-    # uv provides uvx for foreman:lint's pinned ruff/black (see taskfiles/foreman.yml)
+    # uv provides uvx for pinned Semgrep CE[% if use_foreman %] and foreman:lint's
+    # ruff/black (see taskfiles/foreman.yml)[% endif %].
     - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-[% endif %]
 [% if include_terraform %]
     - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 [% endif %]
@@ -108,6 +111,13 @@ runs:
           "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
         tar -xzf /tmp/gitleaks.tgz -C /tmp
         sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+    - name: Install Snyk CLI
+      if: inputs.snyk == 'true'
+      shell: bash
+      run: |
+        # renovate: datasource=npm depName=snyk
+        SNYK_VERSION=1.1305.2
+        npm install --global "snyk@${SNYK_VERSION}"
 [% if use_python %]
     - name: Install Python dependencies
       if: inputs.install-deps == 'true'

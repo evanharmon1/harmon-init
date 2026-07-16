@@ -9,7 +9,7 @@ This document explains the branch protection ruleset applied to `main` and how i
 An importable copy of the ruleset ships in this repo at
 `.github/Branch Protection Ruleset - Protect Main.json`. Apply it through the
 GitHub **UI import** (do this once `build.yml` is on `main`, so the required
-`verify`/`security` checks resolve):
+`verify`/`security`/`codeql-verify` checks resolve):
 
 > Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select
 > `.github/Branch Protection Ruleset - Protect Main.json`.
@@ -25,14 +25,12 @@ every rule type and is the GitHub-native way to apply an exported ruleset.
 
 ## Dependabot and Renovate
 
-Version updates are owned by **Renovate** (`renovate.json`) — do not add a
-`dependabot.yml`, it would duplicate Renovate's PRs. Dependabot still has a
-role as a GitHub-native security layer; enable these in
-Settings → Advanced Security:
+Routine updates and vulnerability-remediation PRs are owned by **Renovate**
+(`renovate.json`, with `vulnerabilityAlerts.enabled=true`) — do not add a
+`dependabot.yml`, which would create competing update PRs. Dependabot still owns
+the GitHub-native advisory feed; enable these in Settings → Advanced Security:
 
 - Dependabot alerts
-- Dependabot security updates (optional — alerts may be enough since Renovate
-  proposes the same bumps)
 - Private vulnerability reporting (used by `.github/SECURITY.md`)
 
 ## Security Model Overview
@@ -95,7 +93,7 @@ Every permission here is one a prompt-injected agent has.
 | --- | --- |
 | **Workflows** | The agent could rewrite `.github/workflows/`, then let CI run it with every Actions secret. The classic escalation. |
 | **Administration** | Rulesets, settings, bypass lists. The bot must not be able to unlock the door it is locked behind. |
-| **Variables — write** | Read is granted; write is not. Write lets the agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate bypass that never appears in a PR diff. |
+| **Variables — write** | Read is granted; write is not. Write could opt a private repo into paid CodeQL or mutate another security/deploy switch without a PR diff. Public CodeQL cannot be disabled with `FULL_SECURITY_SCAN`. |
 | **Deployments** | Write lets the agent create deployments, colliding with release-gated deploys. Read buys nothing the agent's loop uses. |
 | **Secrets**, **Environments**, **Webhooks**, … | Never needed; each is one more thing a leaked token reaches. |
 
@@ -239,13 +237,22 @@ This is the core rule that prevents the AI agent from pushing directly to `main`
 
 All specified CI checks must pass before the PR can merge. The `strict_required_status_checks_policy: true` setting means the PR branch must be up-to-date with `main` before merging — if `main` advances after the checks ran, the checks must re-run. The `do_not_enforce_on_create: true` setting skips enforcement when the branch is first created (before any CI has had a chance to run).
 
-The required checks are the two aggregate jobs from `build.yml` (see
+The required checks are the build gates plus CodeQL's stable aggregate (see
 [ci-cd.md](ci-cd.md)):
 
 | Check      | Purpose                                                                                          |
 | ---------- | ----------------------------------------------------------------------------------------------- |
-| `verify`   | Aggregate gate — rolls up `lint`, and `security` so one check reports overall pass/fail |
-| `security` | Secret scanning (gitleaks) + dependency audit                                                    |
+| `verify`   | Aggregate build gate — rolls up root lint/template validation |
+| `security` | gitleaks + dependency audit; Semgrep CE when this job owns the visibility/profile SAST route |
+| `codeql-verify` | Requires CodeQL success on this public repo; reports not-applicable only on free private repos and fork PRs |
+
+Snyk PR/App checks are absent by default. An optional generated scheduled Snyk
+workflow is advisory and never a required check; it has no PR or push trigger.
+Only a high-consequence repository that deliberately adopts paid Snyk should
+consider per-PR scans and decide whether to make them merge requirements.
+Harmon Init's public CodeQL workflow is merge-gating through `codeql-verify`.
+Generated Node/Python repos receive the same stable gate and public/free,
+private/paid routing; see [security.md](security.md).
 
 Requiring the aggregate `verify` (rather than each leaf job) keeps the required-check
 list stable as jobs are added inside `build.yml`.

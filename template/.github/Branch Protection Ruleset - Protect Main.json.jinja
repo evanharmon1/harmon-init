@@ -48,6 +48,12 @@
           {
             "context": "security",
             "integration_id": 15368
+[% if use_node or use_python %]
+          },
+          {
+            "context": "codeql-verify",
+            "integration_id": 15368
+[% endif %]
           }
         ]
       }

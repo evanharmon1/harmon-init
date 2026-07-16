@@ -82,6 +82,18 @@ project_type:
     docs (documentation/Obsidian): docs
   default: general
 
+snyk_scan_schedule:
+  type: str
+  help: >-
+    SNYK: Optional advisory SAST/SCA schedule. Off keeps Snyk manual/local;
+    weekly is the quota-aware opt-in; daily is intended for public repos or
+    accepted unlimited open-source projects.
+  choices:
+    "Off (manual/local only)": "off"
+    "Weekly (quota-aware)": weekly
+    "Daily (public or unlimited OSS)": daily
+  default: "off"
+
 include_terraform:
   type: bool
   help: "TERRAFORM: Include a terraform/ skeleton + terraform linting?"

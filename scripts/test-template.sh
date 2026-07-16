@@ -102,6 +102,7 @@ full)
         --data ci_runner=self-hosted
         --data github_org=test-org
         --data project_management=github
+        --data snyk_scan_schedule=weekly
     )
     ;;
 meta)
@@ -116,6 +117,7 @@ meta)
         --data bunch_add=true
         --data obsidian_project_add=true
         --data project_management=linear
+        --data snyk_scan_schedule=daily
     )
     copier_flags+=(--skip-tasks)
     ;;
@@ -179,6 +181,49 @@ if [ -f Taskfile.yml ]; then
     fi
 else
     err "no Taskfile.yml generated"
+fi
+
+# ── 1b. Free security policy renders as a coherent stack ───────────
+[ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
+grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"
+! grep -qi 'snyk' Brewfile || err "Brewfile must not install optional Snyk"
+grep -q '^  security:sast:snyk:' Taskfile.yml || err "explicit optional Snyk SAST target missing"
+grep -q '^  security:sca:snyk:' Taskfile.yml || err "explicit optional Snyk SCA target missing"
+grep -q 'snyk test --all-projects' Taskfile.yml || err "Snyk SCA must scan every detected manifest"
+grep -q '^  snyk:' .github/actions/setup/action.yml || err "shared setup action is missing the opt-in Snyk installer"
+grep -q 'SNYK_VERSION=' .github/actions/setup/action.yml || err "Snyk CLI must be pinned and Renovate-manageable"
+grep -q 'task security:sast' .github/workflows/build.yml || err "build workflow is missing the Semgrep SAST route"
+jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
+    err "Renovate vulnerability-alert remediation must be enabled"
+if [ -f .github/workflows/codeql.yml ]; then
+    grep -q 'github.event.repository.private == false' .github/workflows/codeql.yml ||
+        err "CodeQL must run automatically on public repositories"
+    grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
+        err "supported-stack ruleset must require codeql-verify"
+else
+    ! grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
+        err "ruleset requires codeql-verify but this profile has no CodeQL workflow"
+fi
+
+case "$profile" in
+full)
+    [ -f .github/workflows/snyk-scheduled.yml ] || err "weekly Snyk workflow did not render"
+    grep -q '23 6 \* \* 1' .github/workflows/snyk-scheduled.yml || err "weekly Snyk cron is incorrect"
+    ;;
+meta)
+    [ -f .github/workflows/snyk-scheduled.yml ] || err "daily Snyk workflow did not render"
+    grep -q '23 6 \* \* \*' .github/workflows/snyk-scheduled.yml || err "daily Snyk cron is incorrect"
+    ;;
+*)
+    [ ! -f .github/workflows/snyk-scheduled.yml ] || err "Snyk workflow rendered despite default schedule=off"
+    ;;
+esac
+if [ -f .github/workflows/snyk-scheduled.yml ]; then
+    grep -q 'workflow_dispatch:' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow needs manual dispatch"
+    ! grep -q '^  pull_request:\|^  push:' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow must not scan PRs or pushes"
+    grep -q 'SNYK_TOKEN' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow is missing token wiring"
+    grep -q 'remote-repo-url' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow must identify public repository context"
+    grep -q 'matrix.scan' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow must run SAST and SCA"
 fi
 
 # ── 2. No unrendered Copier variables leaked into output ────────────

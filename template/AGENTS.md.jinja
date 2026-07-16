@@ -40,7 +40,7 @@ task ci          # FULL CI mirror — run before/instead of opening a PR
 task check       # all linters
 task fix         # auto-format then lint
 task test        # tests
-task security    # gitleaks + dependency audit
+task security    # Semgrep CE + gitleaks + dependency audit
 [% if use_foreman %]
 task foreman:plan -- --milestone <n>  # foreman: dry-run the dispatch graph
 [% endif %]
