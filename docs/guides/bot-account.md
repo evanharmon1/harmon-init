@@ -56,8 +56,8 @@ Two consequences worth internalising, because both cause confusing failures:
 ## One PAT per resource owner
 
 A fine-grained PAT is scoped to a single **resource owner** — a user *or* an org,
-never both. A token owned by `evanharmon1` cannot reach
-`evanharmon1/…` repos, and vice versa.
+never both. A token owned by a *user* cannot reach org-owned repos, and a token
+owned by an *org* cannot reach user-owned repos.
 
 So you need **one PAT per owner whose repos the bot works on**, each with its own
 selected-repo list. This is the same containment logic as one CI App per org: a
