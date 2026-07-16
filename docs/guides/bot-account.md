@@ -98,7 +98,7 @@ access tokens → **Fine-grained tokens** → Generate new token.
 
 | Field | Value | Why |
 |---|---|---|
-| **Resource owner** | the owner of the repos — `evanharmon1` | Pick the *user* and org repos are unreachable, no matter the permissions. An org may require approval before the token works. |
+| **Resource owner** | the owner of the repos — `evanharmon1` | Pick the wrong owner and the target repos are unreachable, no matter the permissions. If the owner is an org, it may require approval before the token works. |
 | **Repository access** | *Only select repositories* — exactly the repos the bot works on | This list **is** the blast radius. Never "All repositories". |
 | **Repository permissions** | the table in [branch-protection.md](../architecture/branch-protection.md#bot-account-pat-permissions), and nothing more | Notably **no Workflows** and **no Administration** — see [security.md](../architecture/security.md). |
 | **Expiration** | set one; record the date | A token that never expires is a credential you will never rotate. |
