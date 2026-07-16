@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.28.0](https://github.com/evanharmon1/harmon-init/compare/v3.27.0...v3.28.0) (2026-07-15)
+
+
+### Features
+
+* **ci:** fold the review-phase hardening back into the template ([#294](https://github.com/evanharmon1/harmon-init/issues/294)) ([e03e2fe](https://github.com/evanharmon1/harmon-init/commit/e03e2fe68e5140e7c843d3c90dcae95f166dd2cb))
+
 ## [3.27.0](https://github.com/evanharmon1/harmon-init/compare/v3.26.1...v3.27.0) (2026-07-15)
 
 
