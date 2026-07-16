@@ -106,9 +106,15 @@ creating one is [guides/bot-account.md](../guides/bot-account.md).
   consequence: reading a ruleset's bypass actors needs a permission the bot does
   not have, so a preflight check that wants it must use a different identity or
   be dropped.
-- **Tailscale and production credentials** — the bot profile installs no
-  Tailscale and no 1Password CLI, so the container holds no path to production
-  secrets (see [guides/devcontainers.md](../guides/devcontainers.md)).
+- **Tailscale and on-demand secret fetch** — the bot profile installs no
+  1Password CLI, so there is **no path to pull arbitrary secrets on demand**, and
+  no Tailscale, so no tailnet reach (see
+  [guides/devcontainers.md](../guides/devcontainers.md)). Note what this does
+  *not* say: the container is not secret-free. It holds whatever the env-file
+  carries. That set is a **property of the 1Password Environment behind the
+  env-file** — a convention you maintain, not a guarantee the profile enforces.
+  Put a production credential in that Environment and it lands in the container,
+  next to the agent.
 
 ### Effective access = min(collaborator grant, PAT permissions)
 
@@ -126,7 +132,12 @@ back a mix of read-only and writable repos.
 
 Two practical consequences:
 
-- **To narrow the bot on a repo, change the collaborator grant, not the PAT.**
+- **Two levers, different jobs** — picking the wrong one is why this gets
+  confusing. To change the *level* on a repo the bot still works (write → read),
+  change the **collaborator grant**; a PAT cannot express per-repo levels. To stop
+  *this token* reaching a repo while the bot keeps access, remove it from the PAT's
+  **selected-repo list**. To revoke the bot entirely, drop the grant — and the list
+  entry too, so the token stops carrying reach it cannot use.
 - **Adding a repo to the PAT's list is not enough** if the bot has no access to
   it; and granting access is not enough if the repo is not in the list. Both, in
   that order.
