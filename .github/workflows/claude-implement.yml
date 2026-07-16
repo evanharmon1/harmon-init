@@ -34,35 +34,6 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      # Egress firewall (must be the first step). Claude runs with Bash on a
-      # throwaway runner, so bound where that runner can talk: block all
-      # outbound traffic except the endpoints the toolchain + Claude genuinely
-      # need. This is the real exfiltration/callback boundary behind the scoped
-      # Bash allowlist. Targets GitHub-hosted ubuntu runners; if CI_RUNS_ON
-      # points at a self-hosted runner, harden-runner degrades to best-effort.
-      # STARTER LIST: the first real run logs any blocked endpoint in its run
-      # summary — add legitimate ones. Telemetry is off, so nothing leaves for
-      # StepSecurity.
-      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: block
-          disable-telemetry: true
-          allowed-endpoints: >
-            github.com:443
-            api.github.com:443
-            codeload.github.com:443
-            objects.githubusercontent.com:443
-            release-assets.githubusercontent.com:443
-            raw.githubusercontent.com:443
-            uploads.github.com:443
-            pipelines.actions.githubusercontent.com:443
-            registry.npmjs.org:443
-            nodejs.org:443
-            get.pnpm.io:443
-            pypi.org:443
-            files.pythonhosted.org:443
-            api.anthropic.com:443
-            statsig.anthropic.com:443
       # Defense in depth behind the job-level `if:` sender gate: an explicit
       # step (runs on the runner, unlike the GitHub-evaluated `if:`) that
       # re-asserts the authorized-sender allowlist BEFORE anything privileged
@@ -72,7 +43,7 @@ jobs:
         env:
           SENDER: ${{ github.event.sender.login }}
         run: |
-          case "$SENDER" in
+          case "$(printf '%s' "$SENDER" | tr '[:upper:]' '[:lower:]')" in
             "evanharmon1") echo "$SENDER is authorized"; exit 0 ;;
           esac
           echo "::error::$SENDER is not an authorized sender"
@@ -138,13 +109,12 @@ jobs:
           # settings reference): the project runners, git, gh, and read-only
           # inspection utilities — enough to implement a change, run
           # `task verify`, commit, push, and open a PR. Deliberately NOT allowed:
-          # curl/wget (exfiltration; also covered by the egress firewall),
+          # curl/wget (not needed; removing easy callback/exfiltration paths),
           # rm/chmod/sudo, and arbitrary `bash -c`/`eval`. Claude edits files via
           # the Edit/Write tools or `task` targets. Prefix matching is coarse and
           # shell can compose, so this is defense-in-depth, not a hard sandbox —
-          # the real boundaries are the narrow token, the egress firewall, branch
-          # protection, and the ephemeral runner. Widen if a real run stalls on a
-          # denied command.
+          # the real boundaries are the narrow token, branch protection, and the
+          # ephemeral runner. Widen if a real run stalls on a denied command.
           claude_args: >-
             --model opus --effort high --max-budget-usd 25 --max-turns 200
             --allowedTools "Edit,MultiEdit,Write,Read,NotebookEdit,Glob,Grep,LS,TodoWrite,Bash(task *),Bash(pnpm *),Bash(npx *),Bash(node *),Bash(git *),Bash(gh *),Bash(cd *),Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(rg *),Bash(find *),Bash(sed *),Bash(awk *),Bash(jq *),Bash(wc *),Bash(sort *),Bash(diff *),Bash(echo *),Bash(mkdir *),Bash(cp *),Bash(mv *),Bash(which *),Bash(pwd)"

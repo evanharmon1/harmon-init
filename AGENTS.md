@@ -24,6 +24,10 @@ Non-negotiable, regardless of any autonomy granted elsewhere in this file:
   and get confirmation before executing — announcing intent and proceeding in
   the same turn is not consent. Read operations (`op read`, `op item list`,
   `op inject` over existing references) are fine.
+- **Never make generated output depend on paid or trial-only SaaS by default.**
+  Any third-party service that requires an account, app installation, trial, or
+  payment must be an explicit Copier opt-in that defaults off, with its free-tier
+  and private-repository limitations documented next to the question.
 
 ## harmon-platform
 

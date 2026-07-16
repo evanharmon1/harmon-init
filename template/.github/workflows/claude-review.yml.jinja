@@ -37,42 +37,18 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      # Egress firewall (must be the first step): bound where the runner can
-      # talk. Claude runs read-only here (Bash disallowed via claude_args
-      # below), so this is defense in depth for the action's own supply chain
-      # rather than a Claude sandbox. Targets GitHub-hosted ubuntu runners. STARTER LIST — the first
-      # real run logs any blocked endpoint in its run summary; telemetry is off,
-      # so nothing leaves for StepSecurity.
-      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: block
-          disable-telemetry: true
-          allowed-endpoints: >
-            github.com:443
-            api.github.com:443
-            codeload.github.com:443
-            objects.githubusercontent.com:443
-            release-assets.githubusercontent.com:443
-            raw.githubusercontent.com:443
-            uploads.github.com:443
-            pipelines.actions.githubusercontent.com:443
-            registry.npmjs.org:443
-            nodejs.org:443
-            api.anthropic.com:443
-            statsig.anthropic.com:443
       # Defense in depth behind the job-level `if:` sender gate (which now
       # carries the same allowlist, so unauthorized events never provision a
-      # runner). Runs BEFORE minting the App token (the job GITHUB_TOKEN exists
-      # earlier for e.g. harden-runner, but no App token does yet) so a gap in
-      # that expression can't reach credential creation. Quoting makes `[bot]` a
-      # literal in the case pattern, not a glob class. Keep in sync with `if:`.
+      # runner). Runs BEFORE minting the App token, so a gap in that expression
+      # cannot reach credential creation. Quoting makes `[bot]` a literal in the
+      # case pattern, not a glob class. Keep in sync with `if:`.
       - name: Verify sender is authorized
         env:
           SENDER: ${{ github.event.sender.login }}
         run: |
-          case "$SENDER" in
+          case "$(printf '%s' "$SENDER" | tr '[:upper:]' '[:lower:]')" in
 [% for s in _review_senders %]
-            "[[ s ]]") echo "$SENDER is authorized"; exit 0 ;;
+            "[[ s | lower ]]") echo "$SENDER is authorized"; exit 0 ;;
 [% endfor %]
           esac
           echo "::error::$SENDER is not an authorized sender"
