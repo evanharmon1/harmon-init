@@ -94,6 +94,9 @@ it points here.
 - **Pin third-party actions by full commit SHA** with a trailing `# vX.Y.Z`
   comment, and annotate tool versions with `# renovate: datasource=…` so
   Renovate keeps them current.
+- Third-party CI/SaaS integrations that require an account, app installation,
+  trial, or payment must be explicit opt-ins that default off. Document free-tier
+  and private-repository limitations before adding them to generated output.
 - **Least-privilege `permissions:`** per job; never log secrets.
 - CI authenticates as the **`[[ github_org ]]-ci` GitHub App** (short-lived
   tokens), not a PAT — see [architecture/security.md](architecture/security.md).

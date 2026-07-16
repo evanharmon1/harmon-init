@@ -207,6 +207,17 @@ if [ -d .github/workflows ]; then
     else
         required actionlint "workflow lint" || fail=1
     fi
+
+    if grep -Rqs 'step-security/harden-runner' .github/workflows; then
+        err "rendered workflows include paid-only StepSecurity private-repo integration by default"
+    fi
+
+    for workflow in claude-plan.yml claude-implement.yml claude-review.yml; do
+        if [ -f ".github/workflows/$workflow" ] &&
+            ! grep -Fq "tr '[:upper:]' '[:lower:]'" ".github/workflows/$workflow"; then
+            err "$workflow does not normalize GitHub login case before sender authorization"
+        fi
+    done
 fi
 
 # ── 3b. Rendered JS/TS/JSON is Prettier-clean (node projects) ────────
