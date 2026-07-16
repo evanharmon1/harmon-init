@@ -1,6 +1,6 @@
 name: Setup toolchain
 description: >-
-  Install the shared toolchain (Node[% if use_node %]/pnpm[% endif %][% if use_python %], Python/uv[% endif %][% if include_terraform %], Terraform[% endif %], Task), project
+  Install the shared toolchain (Node, Task), project
   dependencies, and — behind inputs — the lint + security CLIs. Single source of
   truth for the CI jobs and the Claude automation workflows so local, CI, and
   agent runs all execute the same Taskfile targets. Callers must run
@@ -8,57 +8,32 @@ description: >-
 
 inputs:
   install-deps:
-    description: Install project dependencies ([% if use_node %]pnpm install[% if use_python %], [% endif %][% endif %][% if use_python %]uv sync[% endif %]) when present.
+    description: Install project dependencies () when present.
     default: "true"
   lint-tools:
     description: >-
-      Install shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync %], yq[% endif %] — required by
+      Install shellcheck, shfmt, actionlint, yamllint, yq — required by
       `task check` / `task verify`.
     default: "false"
   gitleaks:
     description: Install gitleaks — required by `task security`.
     default: "false"
-[% if use_node %]
-  cache:
-    description: >-
-      Enable the pnpm dependency cache. Turn OFF for credential-holding jobs —
-      the repo-wide Actions cache is writable from lower-trust PR runs, so a
-      job with push/deploy tokens takes the cold-install trade instead.
-    default: "true"
-[% endif %]
 
 runs:
   using: composite
   steps:
-[% if use_node %]
-    - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-[% endif %]
     - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       with:
         # renovate: datasource=node-version
         node-version: "24"
-[% if use_node %]
-        cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
-[% endif %]
-[% if use_python %]
-    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-      with:
-        python-version: "3.14"
-    - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-[% endif %]
-[% if use_foreman and not use_python %]
     # uv provides uvx for foreman:lint's pinned ruff/black (see taskfiles/foreman.yml)
     - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-[% endif %]
-[% if include_terraform %]
-    - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-[% endif %]
     - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
       with:
         # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
         version: 3.51.1
         repo-token: ${{ github.token }}
-    - name: Install lint tools (shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync %], yq[% endif %])
+    - name: Install lint tools (shellcheck, shfmt, actionlint, yamllint, yq)
       if: inputs.lint-tools == 'true'
       shell: bash
       run: |
@@ -84,7 +59,6 @@ runs:
         curl -fsSL --retry 3 "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
           | tar -xz -C /tmp actionlint
         sudo mv /tmp/actionlint /usr/local/bin/
-[% if use_skills_sync %]
         # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
         YQ_VERSION=4.44.3
         # Raw-binary download: fail closed on a checksum mismatch (a version
@@ -94,7 +68,6 @@ runs:
           "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
         echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
         sudo install -m 0755 /tmp/yq /usr/local/bin/yq
-[% endif %]
         # renovate: datasource=pypi depName=yamllint
         YAMLLINT_VERSION=1.38.0
         python3 -m pip install "yamllint==${YAMLLINT_VERSION}"
@@ -108,16 +81,3 @@ runs:
           "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
         tar -xzf /tmp/gitleaks.tgz -C /tmp
         sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
-[% if use_python %]
-    - name: Install Python dependencies
-      if: inputs.install-deps == 'true'
-      shell: bash
-      run: uv sync
-[% endif %]
-[% if use_node %]
-    - name: Install dependencies
-      if: inputs.install-deps == 'true'
-      shell: bash
-      run: |
-        if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
-[% endif %]
