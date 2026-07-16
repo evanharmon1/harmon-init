@@ -100,7 +100,7 @@ access tokens → **Fine-grained tokens** → Generate new token.
 |---|---|---|
 | **Resource owner** | the owner of the repos — `evanharmon1` | Pick the *user* and org repos are unreachable, no matter the permissions. An org may require approval before the token works. |
 | **Repository access** | *Only select repositories* — exactly the repos the bot works on | This list **is** the blast radius. Never "All repositories". |
-| **Permissions** | the table in [branch-protection.md](../architecture/branch-protection.md#bot-account-pat-permissions), and nothing more | Notably **no Workflows** and **no Administration** — see [security.md](../architecture/security.md). |
+| **Repository permissions** | the table in [branch-protection.md](../architecture/branch-protection.md#bot-account-pat-permissions), and nothing more | Notably **no Workflows** and **no Administration** — see [security.md](../architecture/security.md). |
 | **Expiration** | set one; record the date | A token that never expires is a credential you will never rotate. |
 
 Copy the value once — GitHub will not show it again.

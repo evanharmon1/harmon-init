@@ -71,6 +71,21 @@ Two practical consequences:
   bot has no access to it; granting access does nothing if the repo is not in the
   list.
 
+### What a leaked bot PAT reaches
+
+Write it down rather than re-derive it under pressure:
+
+- **The selected repos** — at the level each collaborator grant allows, capped by
+  the permission table. It can push branches, open PRs, and comment. It **cannot**
+  merge `main` (ruleset + CODEOWNERS), edit workflows, or change settings.
+
+**Read is cheap; write is the line.** Variables are read-only deliberately: write
+would let an agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate
+bypass that never appears in a PR diff, the same shape as the Workflows
+exclusion. The read grant is safe only because GitHub separates Secrets from
+Variables; if a variable ever holds something sensitive, read becomes
+exfiltration. Check when adding a variable, not forever.
+
 ## CI automation identity (GitHub App)
 
 CI workflows that act on the repo as a bot — release-please, the

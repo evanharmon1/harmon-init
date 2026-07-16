@@ -130,6 +130,29 @@ Two practical consequences:
 - **Adding a repo to the PAT's list is not enough** if the bot has no access to
   it; and granting access is not enough if the repo is not in the list. Both, in
   that order.
+
+### What a leaked bot PAT reaches
+
+Write it down rather than re-derive it under pressure:
+
+- **The selected repos** — at the level each collaborator grant allows, capped by
+  the permission table. It can push branches, open PRs, and comment. It **cannot**
+  merge `main` (ruleset + CODEOWNERS), edit workflows, or change settings.
+[% if github_org != author_git_provider_username %]
+- **Plus every project and variable in the org** — because **organization
+  permissions are org-scoped and the selected-repo list does not bound them**. A
+  repository permission stops at the repos you picked; an organization permission
+  does not. That reach is accepted for read-only Projects and Variables — board
+  metadata and non-secret config — and is worth revisiting the day the org holds a
+  repo the bot should not see.
+[% endif %]
+
+**Read is cheap; write is the line.** Variables are read-only deliberately: write
+would let an agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate
+bypass that never appears in a PR diff, the same shape as the Workflows
+exclusion. The read grant is safe only because GitHub separates Secrets from
+Variables; if a variable ever holds something sensitive, read becomes
+exfiltration. Check when adding a variable, not forever.
 [% endif %]
 
 ## CI automation identity (GitHub App)
