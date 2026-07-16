@@ -12,6 +12,14 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Released harmon-devkit tag pinned by root and template skills-sync manifests",
+      "managerFilePatterns": ["/\\.skills-sync\\.ya?ml/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+ref:\\s*(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Devcontainer Dockerfile ARG pins — suffix-matched so the template's Dockerfile.jinja (inside a jinja-named directory) is managed too",
       "managerFilePatterns": ["/Dockerfile(\\.jinja)?$/"],
       "matchStrings": [
@@ -92,6 +100,17 @@
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["template/.github/workflows/**"],
       "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["evanharmon1/harmon-devkit"],
+      "groupName": "harmon-devkit skills",
+      "dependencyDashboardApproval": true,
+      "dependencyDashboardCategory": "Agent skills",
+      "prBodyNotes": [
+        "After approving this update, run `task sync:skills` and push the refreshed `.claude/skills/` as a separate commit; do not amend Renovate's commit."
+      ]
     },
     {
       "description": "Batch the web-astro test-fixture dependency bumps into one PR (the fixture validates the shipped ESLint config; its deps move together)",

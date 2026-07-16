@@ -20,8 +20,11 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `.claude/skills/`. Until then the `verify:skills*` drift checks skip
       cleanly (CI + pre-push). **Pin bumps are a two-step:** edit `ref` in
       `.skills-sync.yaml`, then run `task sync:skills` and commit the refreshed
-      `.claude/skills/` in the same PR — Renovate can bump the ref but can't do
-      the re-sync, so a ref-only commit fails the drift check.
+      `.claude/skills/` in the same PR. Renovate surfaces a new release in the
+      Dependency Dashboard; approve it there to open the pin PR, then run the
+      sync and push its output as a separate commit (do not amend Renovate's
+      commit). Renovate cannot do the re-sync, so a ref-only commit fails the
+      drift check.
 [% endif %]
 - [ ] Verify `[[ project_slug ]].code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
 - [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)

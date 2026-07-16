@@ -430,12 +430,17 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     [ ! -f .skills-sync.yaml ] || err ".skills-sync.yaml rendered but use_skills_sync=false"
     [ ! -f scripts/sync-skills.sh ] || err "scripts/sync-skills.sh rendered but use_skills_sync=false"
     ! grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task rendered but use_skills_sync=false"
+    ! grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule rendered but use_skills_sync=false"
     ;;
 *) # use_skills_sync defaults on -> manifest, engine, and tasks all present
     [ -f .skills-sync.yaml ] || err ".skills-sync.yaml missing (use_skills_sync default on)"
     [ -x scripts/sync-skills.sh ] || err "scripts/sync-skills.sh missing or not executable"
     grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task missing (use_skills_sync default on)"
     grep -q '^  - universal$' .skills-sync.yaml || err ".skills-sync.yaml categories missing 'universal' (skill_categories default)"
+    grep -q 'datasource=github-releases depName=evanharmon1/harmon-devkit' .skills-sync.yaml || err ".skills-sync.yaml missing Renovate annotation"
+    grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule missing"
+    grep -q 'dependencyDashboardApproval' renovate.json || err "skills-sync Renovate rule is not approval-gated"
+    grep -q 'task sync:skills' renovate.json || err "skills-sync Renovate PR instructions missing"
     ;;
 esac
 
