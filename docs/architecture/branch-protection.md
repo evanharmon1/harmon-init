@@ -66,16 +66,39 @@ Replace `@evanharmon1` with the GitHub username of the human who should approve 
 > [security.md](security.md) for that App and its permissions. The ruleset below
 > protects `main` from every actor (App, bot PAT, or human) equally.
 
-The machine user account's fine-grained PAT should have these permissions and nothing more:
+The machine user account's fine-grained PAT should have these **repository**
+permissions and nothing more:
 
-| Permission      | Level          | Purpose                              |
-| --------------- | -------------- | ------------------------------------ |
-| Contents        | Read and write | Clone, push, create branches, commit |
-| Pull requests   | Read and write | Open PRs, update PRs, comment        |
-| Metadata        | Read-only      | Required by all tokens               |
-| Actions         | Read-only      | View CI workflow run status          |
-| Checks          | Read-only      | View check runs on PRs               |
-| Commit statuses | Read-only      | View status checks on commits        |
+| Permission      | Level          | Purpose                                             |
+| --------------- | -------------- | --------------------------------------------------- |
+| Contents        | Read and write | Clone, push, create branches, commit                |
+| Issues          | Read and write | Read the issue graph; apply labels; post comments   |
+| Pull requests   | Read and write | Open PRs, update PRs, comment                       |
+| Metadata        | Read-only      | Mandatory — granted to every fine-grained PAT       |
+| Actions         | Read-only      | Read workflow run status (red-CI triage)            |
+| Commit statuses | Read-only      | Read the PR status rollup                           |
+
+> **There is no `Checks` permission for fine-grained PATs.** Only GitHub Apps can
+> hold it — it was briefly offered, then withdrawn. Don't go looking for it: CI
+> state comes from **Actions** (workflow runs) and **Commit statuses** (the PR
+> rollup), which is what the tooling actually reads.
+
+**Deliberately excluded.** This list is _what the bot needs_, not what might be
+handy — and the distinction is load-bearing, because the bot's PAT is the
+**agent's own credential**: anything running in the bot devcontainer can read it
+out of the environment. Every permission here is one a prompt-injected agent has.
+
+| Not granted | Why |
+| --- | --- |
+| **Workflows** | The agent could rewrite `.github/workflows/`, then let CI run it with every Actions secret. The classic escalation. |
+| **Administration** | Rulesets, settings, bypass lists. The bot must not be able to unlock the door it is locked behind. |
+| **Variables** | _Write_ lets the agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate bypass that never shows up in a PR. _Read_ is harmless but pointless: workflow files are already readable via Contents. |
+| **Deployments** | _Write_ lets the agent create deployments, colliding with release-gated deploys. _Read_ buys nothing the agent's loop uses. |
+| **Secrets**, **Environments**, **Webhooks**, … | Never needed; each is one more thing a leaked token reaches. |
+
+The asymmetry is the argument: granting a permission when something is genuinely
+blocked is one click. Un-leaking a token that already had it is a postmortem. Add
+on demand, with a reason — not in advance, in case.
 
 ## Ruleset Configuration
 
