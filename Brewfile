@@ -21,8 +21,6 @@ brew "yamllint"
 
 # Security
 brew "gitleaks"
-tap "snyk/tap"
-brew "snyk/tap/snyk"
 
 # Devcontainer
 brew "hadolint"

@@ -98,8 +98,8 @@ task check
 # Render the template into a temp dir and validate the output
 task test:template
 
-# Secrets scan
-task security:secrets
+# Free security baseline (Semgrep CE + gitleaks + dependency audit)
+task security
 
 # Foreman: dispatch ready issues to headless agents, shepherd their PRs
 task foreman:plan -- --milestone <n|title>   # dry-run the graph/waves
@@ -133,7 +133,7 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 
 - No direct commits to main (enforced by lefthook `guard:no-commit-to-main` and the
   branch ruleset). Work on feature branches; PRs require code-owner review and the
-  `verify` + `security` status checks.
+  `verify` + `security` + `codeql-verify` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
   the ruleset would allow it. Open the PR, report that checks pass, then stop;

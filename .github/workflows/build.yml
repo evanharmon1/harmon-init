@@ -62,7 +62,13 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           gitleaks: "true"
-      - run: task security:secrets
+      - name: Secrets scan
+        run: task security:secrets
+      - name: Dependency audit
+        run: task security:audit
+      - name: Private-repo SAST fallback (Semgrep CE)
+        if: github.event.repository.private && vars.FULL_SECURITY_SCAN != 'true'
+        run: task security:sast
 
   template-test:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered

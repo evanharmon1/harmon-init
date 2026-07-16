@@ -14,6 +14,7 @@ Common issues in Harmon Init and how to fix them.
 
 ## CI
 
-- **`verify` check missing on a PR** — ensure the Build & Validate workflow ran; required checks are `verify` and `security`.
+- **Required check missing on a PR** — ensure Build & Validate and CodeQL ran;
+  required checks are `verify`, `security`, and `codeql-verify`.
 
 TODO: add project-specific issues as they come up.

@@ -6,6 +6,9 @@
   "prConcurrentLimit": 10,
   "automerge": false,
   "dependencyDashboard": true,
+  "vulnerabilityAlerts": {
+    "enabled": true
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -25,8 +28,8 @@
     },
     {
       "customType": "regex",
-      "description": "Workflow tool pins, `FOO_VERSION=x.y.z` shell-variable style",
-      "managerFilePatterns": ["/workflows/.*\\.ya?ml(\\.jinja)?$/"],
+      "description": "Workflow/composite-action and script tool pins, `FOO_VERSION=x.y.z` shell-variable style",
+      "managerFilePatterns": ["/(\\.github/(actions|workflows)/.*\\.ya?ml(\\.jinja)?|scripts/.*\\.sh)$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]

@@ -3,14 +3,18 @@
 A [Copier](https://copier.readthedocs.io/en/stable/) project template that
 bootstraps repos with a complete set of standardized conventions: go-task
 Taskfile, lefthook git hooks, conventional commits, GitHub Actions CI (with
-Claude Code plan/implement/review workflows), gitleaks/snyk/CodeQL security,
-Renovate, CodeRabbit, a dual-profile devcontainer (AI bot + human) with GHCR
+Claude Code plan/implement/review workflows), CodeQL for supported public
+repositories, Semgrep Community Edition as the free private-repository SAST
+fallback, gitleaks, Dependabot alerts, Renovate, optional Snyk Free scheduled or
+local second-opinion scans, paid security escalation, CodeRabbit, a dual-profile
+devcontainer (AI bot + human) with GHCR
 prebuilds, a docs tree, and AI steering docs (canonical `AGENTS.md`). It can
 also be applied to existing repos to standardize them.
 
 Author: Evan Harmon
 
 [![Build & Validate](https://github.com/evanharmon1/harmon-init/actions/workflows/build.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/build.yml)
+[![CodeQL](https://github.com/evanharmon1/harmon-init/actions/workflows/codeql.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/codeql.yml)
 [![Devcontainer Build](https://github.com/evanharmon1/harmon-init/actions/workflows/devcontainer-build.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/devcontainer-build.yml)
 [![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/evanharmon1/harmon-init)
 [![Latest Release](https://img.shields.io/github/v/release/evanharmon1/harmon-init?sort=semver)](https://github.com/evanharmon1/harmon-init/releases)
@@ -165,7 +169,9 @@ and canonical AGENTS.md. Projects generated from v2 should be re-templated
 |---|---|
 | `task verify` | Lint + template generation matrix (merge gate) |
 | `task check` | Root linters (template/ excluded — jinja isn't valid YAML) |
-| `task security:secrets` | gitleaks scan |
+| `task security` | Free local baseline: Semgrep CE + gitleaks + dependency audit |
+| `task security:sast` / `security:sca` | Semgrep CE / package-manager dependency audit |
+| `task security:sast:snyk` / `security:sca:snyk` | Optional Snyk second-opinion scans (manual or explicitly scheduled) |
 | `task install` | Brewfile deps + lefthook hooks |
 | `task release:patch` | Tag + GitHub release (also `:minor`/`:major`) |
 | `task status` | Project dashboard (also `status:git`/`:gh`/`:code`/`:env`) |

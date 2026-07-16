@@ -13,10 +13,19 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job.
+- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_node or use_python %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
 [% if use_node or use_python %]
-- `codeql.yml` — CodeQL analysis (opt-in via the `FULL_SECURITY_SCAN` variable).
+- `codeql.yml` — CodeQL SAST runs automatically and for free on public
+  repositories. Private/internal repositories require paid GitHub Code Security
+  plus `FULL_SECURITY_SCAN=true`; otherwise `build.yml` supplies Semgrep CE.
+  Confirm successful uploads in the Security tab.
+[% endif %]
+[% if snyk_scan_schedule != 'off' %]
+- `snyk-scheduled.yml` — optional [[ snyk_scan_schedule ]] Snyk Code + Open
+  Source second-opinion scans. It has schedule/manual triggers only, consumes no
+  PR checks, and is not part of branch protection. See
+  [security.md](security.md) for quota guidance.
 [% endif %]
 [% if devcontainer %]
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.

@@ -98,8 +98,15 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           gitleaks: "true"
-      - name: Security scan
-        run: task security
+      - name: Secrets scan
+        run: task security:secrets
+      - name: Dependency audit
+        run: task security:audit
+      - name: SAST (Semgrep Community Edition)
+[% if use_node or use_python %]
+        if: github.event.repository.private && vars.FULL_SECURITY_SCAN != 'true'
+[% endif %]
+        run: task security:sast
 [% if project_type == 'web-astro' %]
 
   lighthouse:

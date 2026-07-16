@@ -19,6 +19,136 @@ current — it is the reference for "where do secrets live and who can do what".
 - **Auditable changes.** `main` is protected; changes land via reviewed PRs
   (see [branch-protection.md](branch-protection.md)).
 
+## Security scanning: SAST, SCA, secrets & audits
+
+Harmon Init's scanner policy separates a free baseline from optional commercial
+defense in depth. GitHub-hosted CodeQL is the preferred SAST engine where it is
+free: every public repository with a supported language. Semgrep Community
+Edition (CE) is the free CI fallback for private repositories and for generated
+profiles that do not have a CodeQL workflow.
+
+| Axis | Root status | Default for generated repos |
+|---|---|---|
+| **SAST** — flaws in first-party code | CodeQL in public CI; Semgrep CE via `task security:sast` locally | Public Node/Python: CodeQL; free private Node/Python: Semgrep CE; other profiles: Semgrep CE |
+| **SCA** — dependency CVEs | Dependabot alerts + `task security:audit` (no root manifests today) | Dependabot alerts + `pnpm audit` / `pip-audit` |
+| **Secrets** | gitleaks in pre-push and CI | gitleaks in pre-push and CI |
+| **IaC** | N/A at the root | checkov for Terraform profiles |
+| **Freshness/remediation** | Renovate, including Dependabot-alert remediation | Renovate, including Dependabot-alert remediation |
+
+The repository-class policy is:
+
+| Repository class | Standard |
+|---|---|
+| Public, CodeQL-supported | CodeQL + Dependabot alerts/Renovate + gitleaks; no Snyk by default |
+| Selected important public | Optionally add Snyk Free as a scheduled SAST/SCA second opinion; private-test quotas do not apply to public repositories |
+| Private | Semgrep CE is the dependable free CI SAST baseline; keep Snyk Free manual/local by default because its Organization-wide quotas can stop scans mid-month |
+| Important private | Consider paid GitHub Code Security/private CodeQL and/or paid Snyk, then decide whether per-PR scans should be merge-gating |
+| Qualifying public OSS | Consider Snyk's [Secure Developer Program](https://snyk.io/open-source/) for full entitlements without usage limits |
+
+`task security` is the portable free local baseline: Semgrep CE + gitleaks + the
+package-manager dependency audit. `security:sca` is an alias for that free
+audit. CI routes SAST by repository visibility instead of running two engines by
+default:
+
+- public repo + supported CodeQL workflow → CodeQL;
+- private repo + no paid private CodeQL opt-in → Semgrep CE;
+- profile without a CodeQL workflow → Semgrep CE at either visibility;
+- private repo + GitHub Code Security + `FULL_SECURITY_SCAN=true` → CodeQL.
+
+This avoids paying for the ordinary baseline or generating duplicate findings.
+Semgrep CE is useful, open-source, and runs without a hosted account, but it is
+not CodeQL-equivalent: its community analysis is principally intraprocedural
+and typically has shallower data-flow coverage than CodeQL or commercial
+engines. It is the private-repo floor, not a claim of full vulnerability
+coverage.
+
+### CodeQL eligibility
+
+CodeQL runs automatically for Harmon Init and every generated public Node/Python
+repository. GitHub code scanning and standard GitHub-hosted Actions runners are
+free for public repositories. CodeQL is preferred over Semgrep CE there because
+its supported-language queries include deeper interprocedural and data-flow
+analysis and integrate directly with GitHub's Security tab.
+
+For private/internal repositories, CodeQL code scanning requires an organization
+on GitHub Team or Enterprise with
+[GitHub Code Security enabled](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/private-repository-enablement).
+It is
+[billed by active committer](https://docs.github.com/en/billing/concepts/product-billing/github-advanced-security),
+and hosted Actions usage can also consume plan minutes.
+
+`FULL_SECURITY_SCAN=true` is only a workflow run switch. It does not grant the
+paid entitlement, create a missing workflow, or prove that analysis uploaded
+successfully. Confirm a successful run and results in the Security tab before
+counting private CodeQL as coverage. Leave it unset on free private repositories;
+the build workflow then runs Semgrep CE automatically. Public CodeQL cannot be
+disabled with this variable.
+
+### Dependency monitoring and update ownership
+
+Dependabot **alerts** are free for public and private repositories and are the
+continuous GitHub advisory feed. Renovate owns both routine dependency update PRs
+and alert-remediation PRs (`vulnerabilityAlerts.enabled=true`). Do not add a
+`dependabot.yml`: enabling Dependabot version/security update PRs alongside
+Renovate would create competing automation. Package-manager audits remain in CI
+as an immediate, provider-independent check.
+
+### Snyk second opinion and scheduling
+
+Snyk is not installed by default and is not part of `task security` or required
+PR CI. The explicit `task security:sast:snyk` and `task security:sca:snyk`
+targets provide manual/local second-opinion scans. `security:sca:snyk` uses
+`--all-projects`, so every detected manifest is scanned—and each manifest can
+consume a separate Snyk Open Source test on a private repository.
+
+The Copier answer `snyk_scan_schedule` controls the optional generated workflow:
+
+- `off` (default) — no workflow; keep `SNYK_TOKEN` local;
+- `weekly` — quota-aware advisory scans, appropriate for a selected repository;
+- `daily` — intended for public repositories or an accepted unlimited OSS
+  project, not the ordinary private Free-plan posture.
+
+When enabled, `snyk-scheduled.yml` installs a pinned CLI and runs Snyk Code
+(SAST) plus Snyk Open Source (SCA) as separate matrix jobs. It triggers only on
+its schedule or manual dispatch—not on pull requests or pushes—and is excluded
+from branch protection. Add the `SNYK_TOKEN` Actions secret only for this
+explicit scheduled opt-in. Run it manually once and watch the Snyk Organization
+Usage page. The workflow passes the public Git remote explicitly; if Snyk still
+debits private-test usage for a public repo, follow Snyk's
+[documented remedy](https://docs.snyk.io/developer-tools/snyk-cli/getting-started-with-the-snyk-cli#running-out-of-tests):
+run `snyk monitor` once and set the public Git remote URL in the Snyk Project.
+Scheduled and local CLI tests draw from the same private-repository allocation.
+Weekly is the conservative cadence. Daily Snyk Code alone is about 30 tests per
+repository per month, before manual tests, and SCA multiplies by the number of
+manifests.
+
+The scheduled workflow is intended primarily for selected important public
+repositories because Snyk's private-test limits do not apply there. A private
+repository may deliberately choose weekly after estimating Organization-wide
+usage, but the standard remains Semgrep CE in CI plus occasional local Snyk.
+Dependabot already monitors dependency advisories continuously, so weekly Snyk
+is normally enough for a second opinion.
+
+No Snyk GitHub App is needed for local or scheduled CLI scans. Leave it off on
+ordinary repositories. If installed, its PR checks are not required by the
+branch ruleset; remove the repository from the integration to eliminate them.
+
+### Paid escalation for a high-consequence product
+
+For a high-consequence product, choose paid controls based on the missing
+capability rather than enabling everything reflexively:
+
+- **GitHub Code Security** supplies private-repository CodeQL and keeps results
+  and remediation in GitHub.
+- **Paid Snyk** can be an alternative or a second SAST/SCA opinion, especially
+  when license policy, reachability prioritization, or vendor reporting matters.
+- **GitHub Secret Protection** adds server-side secret scanning, push protection,
+  and governance; gitleaks remains useful locally and in CI but does not block a
+  secret before it reaches GitHub in every client/path.
+- **DAST**, tenant-isolation tests, and container/image scanning are separate,
+  application-specific controls. A deployed web application should evaluate
+  them; a library or docs repository usually should not.
+
 ## Two identities: the bot vs the operator
 
 - **AI bot** (`evanharmon1-bot`) — runs in the primary
@@ -90,12 +220,13 @@ Write it down rather than re-derive it under pressure:
   the permission table. It can push branches, open PRs, and comment. It **cannot**
   merge `main` (ruleset + CODEOWNERS), edit workflows, or change settings.
 
-**Read is cheap; write is the line.** Variables are read-only deliberately: write
-would let an agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate
-bypass that never appears in a PR diff, the same shape as the Workflows
-exclusion. The read grant is safe only because GitHub separates Secrets from
-Variables; if a variable ever holds something sensitive, read becomes
-exfiltration. Check when adding a variable, not forever.
+**Read is cheap; write is the line.** Variables are read-only deliberately:
+write could opt a private repository into paid CodeQL or mutate other
+security/deployment switches without a PR diff. Public CodeQL does not depend on
+`FULL_SECURITY_SCAN` and cannot be disabled through that variable. The read grant
+is safe only because GitHub separates Secrets from Variables; if a variable ever
+holds something sensitive, read becomes exfiltration. Check when adding a
+variable, not forever.
 
 ## CI automation identity (GitHub App)
 
@@ -221,7 +352,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 |---|---|---|---|
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-* | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
-| `SNYK_TOKEN` | `task security:sast`/`sca` | repo Actions secret | TODO |
+| `SNYK_TOKEN` | optional Snyk CLI scans; also `snyk-scheduled.yml` when explicitly generated | local env / 1Password by default; Actions secret only for scheduled/paid CI | manual |
 | `GH_TOKEN` (the bot's PAT) | the devcontainer agent's `gh`/git operations | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 | TODO | TODO | TODO | TODO |
 
