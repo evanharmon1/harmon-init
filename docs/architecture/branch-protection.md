@@ -66,16 +66,48 @@ Replace `@evanharmon1` with the GitHub username of the human who should approve 
 > [security.md](security.md) for that App and its permissions. The ruleset below
 > protects `main` from every actor (App, bot PAT, or human) equally.
 
-The machine user account's fine-grained PAT should have these permissions and nothing more:
+The machine user account's fine-grained PAT should have these **repository**
+permissions and nothing more:
 
-| Permission      | Level          | Purpose                              |
-| --------------- | -------------- | ------------------------------------ |
-| Contents        | Read and write | Clone, push, create branches, commit |
-| Pull requests   | Read and write | Open PRs, update PRs, comment        |
-| Metadata        | Read-only      | Required by all tokens               |
-| Actions         | Read-only      | View CI workflow run status          |
-| Checks          | Read-only      | View check runs on PRs               |
-| Commit statuses | Read-only      | View status checks on commits        |
+| Permission      | Level          | Purpose                                               |
+| --------------- | -------------- | ----------------------------------------------------- |
+| Contents        | Read and write | Clone, push, create branches, commit                  |
+| Issues          | Read and write | Read the issue graph; apply labels; post comments     |
+| Pull requests   | Read and write | Open PRs, update PRs, comment                         |
+| Metadata        | Read-only      | Mandatory — granted to every fine-grained PAT         |
+| Actions         | Read-only      | Read workflow run status (red-CI triage)              |
+| Commit statuses | Read-only      | Read the PR status rollup                             |
+| Variables       | Read-only      | Read CI configuration when reasoning about a workflow |
+
+> **There is no `Checks` permission for fine-grained PATs.** Only GitHub Apps can
+> hold it — it was briefly offered, then withdrawn. Don't go looking for it: CI
+> state comes from **Actions** (workflow runs) and **Commit statuses** (the PR
+> rollup), which is what the tooling actually reads.
+**Read is cheap; write is the line.** Variables and Projects are read-only above
+for a reason that is not squeamishness — see the exclusions below.
+
+**Deliberately excluded.** This list is _what the bot needs_, and the distinction
+is load-bearing, because the bot's PAT is the **agent's own credential**:
+anything running in the bot devcontainer can read it out of the environment.
+Every permission here is one a prompt-injected agent has.
+
+| Not granted | Why |
+| --- | --- |
+| **Workflows** | The agent could rewrite `.github/workflows/`, then let CI run it with every Actions secret. The classic escalation. |
+| **Administration** | Rulesets, settings, bypass lists. The bot must not be able to unlock the door it is locked behind. |
+| **Variables — write** | Read is granted; write is not. Write lets the agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate bypass that never appears in a PR diff. |
+| **Deployments** | Write lets the agent create deployments, colliding with release-gated deploys. Read buys nothing the agent's loop uses. |
+| **Secrets**, **Environments**, **Webhooks**, … | Never needed; each is one more thing a leaked token reaches. |
+
+Variables are **non-secret by design** — GitHub separates Secrets from Variables
+precisely so config can be read without exposing credentials. That makes the read
+grant above safe, and it depends on the separation being honoured: if a variable
+ever holds something sensitive, read becomes exfiltration. Check once, when
+adding a variable — not forever.
+
+Grant on demand, with a reason. You can edit a fine-grained PAT's permissions
+later without regenerating the token, so there is no cost to waiting until
+something is genuinely blocked.
 
 ## Ruleset Configuration
 

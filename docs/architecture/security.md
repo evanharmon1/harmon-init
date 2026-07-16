@@ -27,8 +27,64 @@ current — it is the reference for "where do secrets live and who can do what".
   separately as the `evanharmon1-ci` GitHub App — see below.)
 - **Operator** (you) — full access from the human `dev/` devcontainer or host.
 
-TODO: note the exact PAT scopes and any capabilities the bot is intentionally
-denied (e.g. no Tailscale, no production credentials).
+### The bot's fine-grained PAT
+
+Permissions live in
+[branch-protection.md](branch-protection.md#bot-account-pat-permissions) — that
+table is the source of truth. **Nothing beyond it.** The step-by-step for
+creating one is [guides/bot-account.md](../guides/bot-account.md).
+
+**Deliberately denied**, each load-bearing rather than incidental:
+
+- **Workflows** — the bot cannot edit `.github/workflows/`. This is what stops
+  the classic escalation: rewrite a workflow, let it run with Actions secrets,
+  exfiltrate. It matters more than it looks, because any agent sharing the bot's
+  devcontainer can read this token out of the environment — so this one
+  restriction is much of what stands between a prompt-injected agent and every
+  Actions secret. Assert it; do not assume it.
+- **Administration** — no ruleset, settings, or bypass changes. Note the
+  consequence: reading a ruleset's bypass actors needs a permission the bot does
+  not have, so a preflight check that wants it must use a different identity or
+  be dropped.
+- **Tailscale and production credentials** — the bot profile installs no
+  Tailscale and no 1Password CLI, so the container holds no path to production
+  secrets (see [guides/devcontainers.md](../guides/devcontainers.md)).
+
+### Effective access = min(collaborator grant, PAT permissions)
+
+A fine-grained PAT is a **delegation of its owner's access** and can never exceed
+it. Two independent layers must *both* allow an operation:
+
+1. **The repo collaborator grant** on the bot account — *per repo*, and where
+   granularity actually lives.
+2. **The PAT's selected-repo list and permission set** — the permission set is
+   **uniform across every selected repo**; there is no per-repo matrix.
+
+So a repo where the bot is a `pull` collaborator stays read-only even though the
+PAT carries `contents: write` — the grant caps the token. One PAT can therefore
+back a mix of read-only and writable repos.
+
+Two practical consequences:
+
+- **To narrow the bot on a repo, change the collaborator grant, not the PAT.**
+- **Both layers, in order.** Adding a repo to the PAT's list does nothing if the
+  bot has no access to it; granting access does nothing if the repo is not in the
+  list.
+
+### What a leaked bot PAT reaches
+
+Write it down rather than re-derive it under pressure:
+
+- **The selected repos** — at the level each collaborator grant allows, capped by
+  the permission table. It can push branches, open PRs, and comment. It **cannot**
+  merge `main` (ruleset + CODEOWNERS), edit workflows, or change settings.
+
+**Read is cheap; write is the line.** Variables are read-only deliberately: write
+would let an agent flip `FULL_SECURITY_SCAN` and silently stop CodeQL — a gate
+bypass that never appears in a PR diff, the same shape as the Workflows
+exclusion. The read grant is safe only because GitHub separates Secrets from
+Variables; if a variable ever holds something sensitive, read becomes
+exfiltration. Check when adding a variable, not forever.
 
 ## CI automation identity (GitHub App)
 
@@ -155,6 +211,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-* | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
 | `SNYK_TOKEN` | `task security:sast`/`sca` | repo Actions secret | TODO |
+| `GH_TOKEN` (the bot's PAT) | the devcontainer agent's `gh`/git operations | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 | TODO | TODO | TODO | TODO |
 
 ## Rotation & incident notes
