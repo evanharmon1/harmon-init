@@ -201,24 +201,6 @@ push so the remote exists.
     --method PUT -f permission=push
   ```
 
-- [ ] **[HUMAN — not scriptable]** Add this repo to the bot's **fine-grained
-      PAT**. The collaborator grant above is only half: a PAT reaches only the
-      repos in its *selected repositories* list, so without this the bot has
-      access it cannot use. There is no API for creating or editing a PAT.
-
-  > **Effective access = min(collaborator grant, PAT permissions).** A PAT
-  > delegates its owner's access and cannot exceed it, and its permission set is
-  > *uniform across all selected repos* — so per-repo granularity lives in the
-  > collaborator grant, not the token. To narrow the bot on a repo, change the
-  > grant.
-  >
-  > **A PAT is scoped to one resource owner**, so a new org needs a *new* PAT —
-  > a token for `<author_git_provider_username>` cannot reach `<org>/…`.
-  >
-  > Permissions and the full rationale live in
-  > `docs/architecture/branch-protection.md`; the procedure is
-  > `docs/guides/bot-account.md`.
-
 ---
 
 ## 3. Framework scaffolding (conventions-only template)
