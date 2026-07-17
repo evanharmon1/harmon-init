@@ -51,21 +51,20 @@ tasks:
     # a PR to catch everything CI would, on demand, without waiting on a PR run.
     # Builds on `verify` and adds the heavier / environment-dependent checks
     # (the devcontainer permission assert needs a Docker daemon, like CI has).
-    desc: Full CI mirror (verify → [test:devcontainer:permissions →] test → security)
+    desc: Full CI mirror (verify → [test:devcontainer:permissions →] security)
     cmds:
       - task: verify
 [% if devcontainer %]
       - task: test:devcontainer:permissions
 [% endif %]
-      - task: test
       - task: security
 
   verify:
-    # Fast local gate (target: well under a minute) — safe for editors, git
-    # hooks, and AI agents to run on every change without getting bogged down.
-    # Add a check here ONLY if it stays fast; heavier or environment-dependent
-    # checks (test, security, the devcontainer permission assert) live in `ci`.
-    desc: Fast local gate (check[% if use_node %] → build[% endif %] → validate → guards)
+    # The definition-of-done gate — everything that must pass before a change
+    # is done (Foreman v2 task vocabulary: verify = check + build + test).
+    # For the fast inner loop use `check`; heavier environment-dependent
+    # checks (security, the devcontainer permission assert) stay in `ci`.
+    desc: Definition-of-done gate (check[% if use_node %] → build[% endif %] → validate → guards → test)
     cmds:
       - task: check
 [% if use_node %]
@@ -79,10 +78,13 @@ tasks:
 [% if devcontainer %]
       - task: test:hooks
 [% endif %]
+      - task: test
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
-    desc: Run all linters[% if use_node %] + typecheck[% endif %] (parallel)
+    # Fast local gate (target: well under a minute) — safe for editors, git
+    # hooks, and AI agents to run on every change without getting bogged down.
+    desc: Fast local gate — all linters[% if use_node %] + typecheck[% endif %] (parallel)
     deps:
       - lint
 [% if use_node %]
