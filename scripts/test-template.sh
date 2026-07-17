@@ -487,11 +487,12 @@ if [ "$profile" = "minimal" ]; then
     [ ! -d .devcontainer ] || err ".devcontainer/ rendered but devcontainer=false"
     [ ! -f scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh rendered but devcontainer=false"
     [ ! -f scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh rendered but devcontainer=false"
-    ! grep -q 'test:devcontainer:permissions:' Taskfile.yml || err "test:devcontainer tasks rendered but devcontainer=false"
+    ! grep -q 'test:devcontainer:permissions' Taskfile.yml || err "test:devcontainer references rendered but devcontainer=false"
 else
     [ -d .devcontainer ] || err ".devcontainer/ missing (devcontainer on for profile '$profile')"
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
+    grep -q -- '- task: test:devcontainer:permissions' Taskfile.yml || err "ci task is missing the devcontainer permission assertion"
 fi
 
 # ── 9f. .prettierignore: web-app-only entries are gated by project type ──
