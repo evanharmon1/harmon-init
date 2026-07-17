@@ -1,15 +1,17 @@
 name: Setup toolchain
 description: >-
-  Install the shared toolchain (Node[% if use_node %]/pnpm[% endif %], Python/uv[% if include_terraform %], Terraform[% endif %], Task), project
-  dependencies, and — behind inputs — the lint + security CLIs. Single source of
+  Install the shared toolchain (Node[% if use_node %]/pnpm[% endif %], Python/uv[% if include_terraform %], Terraform[% endif %], Task)[% if use_node or use_python %], project
+  dependencies,[% endif %] and — behind inputs — the lint + security CLIs. Single source of
   truth for the CI jobs and the Claude automation workflows so local, CI, and
   agent runs all execute the same Taskfile targets. Callers must run
   actions/checkout first.
 
 inputs:
+[% if use_node or use_python %]
   install-deps:
     description: Install project dependencies ([% if use_node %]pnpm install[% if use_python %], [% endif %][% endif %][% if use_python %]uv sync[% endif %]) when present.
     default: "true"
+[% endif %]
   lint-tools:
     description: >-
       Install shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync %], yq[% endif %] — required by
@@ -122,7 +124,12 @@ runs:
     - name: Install Python dependencies
       if: inputs.install-deps == 'true'
       shell: bash
-      run: uv sync
+      run: |
+        if [ -f uv.lock ]; then
+          uv sync --locked
+        else
+          uv sync
+        fi
 [% endif %]
 [% if use_node %]
     - name: Install dependencies

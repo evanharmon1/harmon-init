@@ -192,6 +192,19 @@ grep -q '^  security:sca:snyk:' Taskfile.yml || err "explicit optional Snyk SCA 
 grep -q 'snyk test --all-projects' Taskfile.yml || err "Snyk SCA must scan every detected manifest"
 grep -q '^  snyk:' .github/actions/setup/action.yml || err "shared setup action is missing the opt-in Snyk installer"
 grep -q 'SNYK_VERSION=' .github/actions/setup/action.yml || err "Snyk CLI must be pinned and Renovate-manageable"
+if [ -f prettier.config.cjs ] || [ -f pyproject.toml ]; then
+    grep -q '^  install-deps:' .github/actions/setup/action.yml ||
+        err "dependency-bearing profiles must expose the install-deps input"
+else
+    ! grep -q '^  install-deps:' .github/actions/setup/action.yml ||
+        err "dependency-free profiles must not expose an unused install-deps input"
+fi
+if [ -f pyproject.toml ]; then
+    grep -q 'if \[ -f uv.lock \]; then' .github/actions/setup/action.yml ||
+        err "Python setup must detect a committed uv.lock"
+    grep -q 'uv sync --locked' .github/actions/setup/action.yml ||
+        err "Python setup must enforce the committed uv.lock"
+fi
 grep -q 'task security:sast' .github/workflows/build.yml || err "build workflow is missing the Semgrep SAST route"
 jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
     err "Renovate vulnerability-alert remediation must be enabled"
