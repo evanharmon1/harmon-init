@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.0.1](https://github.com/evanharmon1/harmon-init/compare/v4.0.0...v4.0.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **ci:** harden shared setup and Semgrep wrapper ([#307](https://github.com/evanharmon1/harmon-init/issues/307)) ([69e6faa](https://github.com/evanharmon1/harmon-init/commit/69e6faa05c9fd6f0bed371d9dc75e99819112f45))
+
 ## [4.0.0](https://github.com/evanharmon1/harmon-init/compare/v3.29.1...v4.0.0) (2026-07-17)
 
 
