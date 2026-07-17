@@ -18,7 +18,9 @@ class ExternalDependencies(unittest.TestCase):
     def test_open_issue_is_unsatisfied(self):
         gh, runner = make_github(cfg_with_bot())
         runner.when(["issue", "view", "5"], issue_json(5, state="OPEN"))
-        done = dependency_satisfied(gh, cfg_with_bot(), 5)
+        done = dependency_satisfied(
+            gh, cfg_with_bot(), 5, inputs=UnitInputs(external=True)
+        )
         self.assertFalse(done.satisfied)
         self.assertEqual(done.how, "open")
 
@@ -28,7 +30,9 @@ class ExternalDependencies(unittest.TestCase):
             ["issue", "view", "5"],
             issue_json(5, state="CLOSED", state_reason="completed"),
         )
-        done = dependency_satisfied(gh, cfg_with_bot(), 5)
+        done = dependency_satisfied(
+            gh, cfg_with_bot(), 5, inputs=UnitInputs(external=True)
+        )
         self.assertTrue(done.satisfied)
         self.assertIn("external", done.how)
 
@@ -38,7 +42,9 @@ class ExternalDependencies(unittest.TestCase):
             ["issue", "view", "5"],
             issue_json(5, state="CLOSED", state_reason="not_planned"),
         )
-        done = dependency_satisfied(gh, cfg_with_bot(), 5)
+        done = dependency_satisfied(
+            gh, cfg_with_bot(), 5, inputs=UnitInputs(external=True)
+        )
         self.assertFalse(done.satisfied)
         self.assertTrue(done.warnings)
 
@@ -49,7 +55,9 @@ class ExternalDependencies(unittest.TestCase):
             ["issue", "view", "5"],
             issue_json(5, state="CLOSED", state_reason="not_planned"),
         )
-        self.assertTrue(dependency_satisfied(gh, cfg, 5).satisfied)
+        self.assertTrue(
+            dependency_satisfied(gh, cfg, 5, inputs=UnitInputs(external=True)).satisfied
+        )
 
     def test_human_override_wins_even_when_open(self):
         gh, runner = make_github(cfg_with_bot())
@@ -76,6 +84,17 @@ class ForemanManagedDependencies(unittest.TestCase):
         done = dependency_satisfied(gh, cfg, 7)
         self.assertTrue(done.satisfied)
         self.assertIn("PR #90 merged into main", done.how)
+
+    def test_closed_issue_without_marked_pr_fails_loud(self):
+        cfg = cfg_with_bot()
+        gh, runner = make_github(cfg)
+        runner.when(
+            ["issue", "view", "7"],
+            issue_json(7, state="CLOSED", state_reason="completed"),
+        )
+        done = dependency_satisfied(gh, cfg, 7, inputs=UnitInputs())
+        self.assertFalse(done.satisfied)
+        self.assertTrue(done.warnings)
 
     def test_unmerged_marker_pr_fails_loud(self):
         gh, cfg = self._gh(pr_kwargs={"merged": False})

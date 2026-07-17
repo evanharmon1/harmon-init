@@ -23,7 +23,7 @@ import json
 from typing import Any, Callable
 
 from foreman.config import Config
-from foreman.util import ForemanError, run, warn
+from foreman.util import ForemanError, run
 
 Runner = Callable[[list[str], str | None], tuple[int, str, str]]
 
@@ -71,7 +71,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           isOutdated
           path
           comments(first: 50) {
-            nodes { author { login } body url }
+            nodes { author { login } authorAssociation body url }
           }
         }
       }
@@ -271,11 +271,21 @@ class GitHub:
                 f"number={number}",
             ]
         )
+        if not isinstance(out, dict) or out.get("errors"):
+            raise ForemanError(
+                f"review threads: indeterminate GraphQL response for PR #{number}"
+            )
         try:
-            return out["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-        except (KeyError, TypeError):
-            warn(f"review threads: unexpected GraphQL shape for PR #{number}")
-            return []
+            nodes = out["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        except (KeyError, TypeError) as exc:
+            raise ForemanError(
+                f"review threads: unexpected GraphQL shape for PR #{number}"
+            ) from exc
+        if not isinstance(nodes, list) or not all(
+            isinstance(thread, dict) for thread in nodes
+        ):
+            raise ForemanError(f"review threads: invalid thread list for PR #{number}")
+        return nodes
 
     def branch_exists_remote(self, branch: str) -> bool:
         return self.gh.ok(["api", f"repos/{self.repo_slug()}/branches/{branch}"])

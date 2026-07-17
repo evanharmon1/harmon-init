@@ -8,7 +8,7 @@ Deterministic triggers → bounded agent actions:
                 ones go to the agent (rebase additively, re-verify, push)
   unresolved review-bot threads → resume the agent to adjudicate each finding
                 (apply or decline-with-reasoning; blanket-accepting prohibited)
-  green ∧ adjudicated ∧ mergeable ∧ not behind → label ready-to-merge and
+  green ∧ adjudicated ∧ mergeStateStatus=CLEAN → label ready-to-merge and
                 report a dependency-aware suggested merge order.
 
 Foreman never merges. `gh run rerun` is assumed unavailable to the bot token;
@@ -92,6 +92,35 @@ def classify_checks(rollup: list[dict] | None) -> tuple[str, list[dict]]:
     return "green", []
 
 
+def trusted_review_threads(
+    gh: GitHub, cfg: Config, threads: list[dict]
+) -> tuple[list[dict], int]:
+    """Threads safe to embed in prompts + count requiring human handling."""
+    kept: list[dict] = []
+    excluded = 0
+    viewer = gh.viewer().casefold()
+    trusted_senders = {login.casefold() for login in cfg.review_sender_trust}
+    trusted_associations = set(cfg.comment_trust)
+    for thread in threads:
+        comments = (thread.get("comments") or {}).get("nodes") or []
+        safe = bool(comments)
+        for comment in comments:
+            author = (comment.get("author") or {}).get("login", "")
+            association = comment.get("authorAssociation", "")
+            if (
+                association not in trusted_associations
+                and author.casefold() != viewer
+                and author.casefold() not in trusted_senders
+            ):
+                safe = False
+                break
+        if safe:
+            kept.append(thread)
+        else:
+            excluded += 1
+    return kept, excluded
+
+
 def _failure_text(gh: GitHub, failed: list[dict]) -> str:
     parts = []
     for ctx in failed[:5]:
@@ -131,6 +160,8 @@ def _resume_agent(
     work: PrWork,
     prompt_name: str,
     tokens: dict[str, str],
+    *,
+    allow_github: bool = False,
 ) -> backend_mod.BackendResult:
     run_dir = backend_mod.unit_dir(cfg, root, work.unit_number)
     prompt = spec.load_prompt(prompt_name, tokens)
@@ -163,6 +194,7 @@ def _resume_agent(
         prompt_file=prompt_file,
         timeout_min=cfg.shepherd_timeout_min,
         resume_ref=resume_ref,
+        allow_github=allow_github,
     )
 
 
@@ -287,7 +319,8 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             work.state, work.detail = "escalated", "agent could not resolve the rebase"
         return work
 
-    threads = [t for t in gh.review_threads(work.number) if not t.get("isResolved")]
+    unresolved = [t for t in gh.review_threads(work.number) if not t.get("isResolved")]
+    threads, excluded_threads = trusted_review_threads(gh, cfg, unresolved)
     if threads:
         work.actions += 1
         rendered = []
@@ -301,7 +334,15 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             )
         tokens = _common_tokens(gh, cfg, work)
         tokens["THREADS"] = "\n".join(rendered)
-        result = _resume_agent(gh, cfg, root, work, "shepherd-adjudicate", tokens)
+        result = _resume_agent(
+            gh,
+            cfg,
+            root,
+            work,
+            "shepherd-adjudicate",
+            tokens,
+            allow_github=True,
+        )
         wt_path = _ensure_worktree(
             cfg, root, work.unit_number, work.branch, remote_name
         )
@@ -319,7 +360,15 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             ]
             if remaining:
                 work.state = "escalated"
-                work.detail = f"{len(remaining)} review thread(s) still undispositioned"
+                if excluded_threads:
+                    work.detail = (
+                        f"{excluded_threads} review thread(s) from untrusted authors "
+                        f"require human handling; {len(remaining)} total still undispositioned"
+                    )
+                else:
+                    work.detail = (
+                        f"{len(remaining)} review thread(s) still undispositioned"
+                    )
             else:
                 work.state, work.detail = (
                     "adjudicated",
@@ -329,12 +378,19 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             work.state, work.detail = "escalated", "adjudication agent failed"
         return work
 
-    mergeable = (status.get("mergeable") or "").upper()
-    if merge_state == "CLEAN" or mergeable == "MERGEABLE":
+    if excluded_threads:
+        work.state = "escalated"
+        work.detail = (
+            f"{excluded_threads} unresolved review thread(s) from untrusted authors "
+            "require human handling"
+        )
+        return work
+
+    if merge_state == "CLEAN":
         gh.label_own_pr(work.number, add=["ready-to-merge"])
         work.state, work.detail = (
             "ready",
-            "green, adjudicated, mergeable — awaiting human merge",
+            "green, adjudicated, mergeState=CLEAN — awaiting human merge",
         )
     else:
         work.state, work.detail = "healthy", f"mergeState={merge_state or 'UNKNOWN'}"

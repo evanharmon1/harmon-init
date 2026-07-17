@@ -42,12 +42,13 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 # 1Password item JSON from the pipeline.
 exec 3<&0
 
-op item get "$item" --vault "$vault" --format json --reveal |
-    jq \
-        --arg field "$field" \
-        --arg section "$section" \
-        --rawfile secret /dev/fd/3 \
-        '
+updated_item="$(
+    op item get "$item" --vault "$vault" --format json --reveal |
+        jq \
+            --arg field "$field" \
+            --arg section "$section" \
+            --rawfile secret /dev/fd/3 \
+            '
         def secret_value:
           $secret | sub("\r?\n$"; "");
 
@@ -71,7 +72,7 @@ op item get "$item" --vault "$vault" --format json --reveal |
         # field carrying a structured (object) value — plain STRING/CONCEALED
         # fields are scalars, so an object value marks a passkey/SSH-key/document
         # credential we must not touch.
-        | if (.category == "SSHKEY" or .category == "PASSKEY")
+        | if (.category == "SSH_KEY" or .category == "SSHKEY" or .category == "PASSKEY")
              or (([.fields[] | select((.value | type) == "object")] | length) > 0) then
             error("item holds a passkey or SSH key; refusing full-item edit (op would clobber it)")
           else
@@ -90,7 +91,10 @@ op item get "$item" --vault "$vault" --format json --reveal |
           else
             (.fields[] |= if field_matches then .value = $value else . end)
           end
-        ' |
+        '
+)"
+printf '%s\n' "$updated_item" |
     op item edit "$item" --vault "$vault" >/dev/null
+unset updated_item
 
 echo "Updated 1Password item '$item' field '$field'."

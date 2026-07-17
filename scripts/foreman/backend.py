@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -30,6 +31,48 @@ from foreman.config import Config
 from foreman.util import ForemanError, run, tail, utc_now_iso, write_text
 
 BACKENDS_DIR = Path(__file__).resolve().parent / "backends"
+BACKEND_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+# Process/runtime settings required by the adapter and Claude CLI. Secrets are
+# added conditionally below; arbitrary parent credentials never cross the
+# backend boundary.
+BACKEND_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LANG",
+        "TERM",
+        "COLORTERM",
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "TZ",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "NODE_EXTRA_CA_CERTS",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "FOREMAN_READONLY",
+        "FOREMAN_MOCK_STATUS",
+        "FOREMAN_MOCK_FILE",
+    }
+)
 
 RESULT_STATUSES = ("completed", "blocked")
 
@@ -48,13 +91,43 @@ class BackendResult:
 
 
 def adapter_path(name: str) -> Path:
-    path = BACKENDS_DIR / f"{name}.sh"
-    if not path.exists():
+    backends_dir = BACKENDS_DIR.resolve()
+    path = (backends_dir / f"{name}.sh").resolve()
+    if (
+        BACKEND_NAME_RE.fullmatch(name) is None
+        or path.parent != backends_dir
+        or not path.is_file()
+    ):
         available = sorted(p.stem for p in BACKENDS_DIR.glob("*.sh"))
         raise ForemanError(
             f"unknown backend '{name}' (available: {', '.join(available)})"
         )
     return path
+
+
+def backend_environment(cfg: Config, *, allow_github: bool = False) -> dict[str, str]:
+    """Least-privilege environment for a backend subprocess."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in BACKEND_ENV_ALLOWLIST or key.startswith("LC_")
+    }
+    if cfg.billing == "api":
+        api_key = os.environ.get("FOREMAN_ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise ForemanError("billing=api but FOREMAN_ANTHROPIC_API_KEY is not set")
+        env["FOREMAN_ANTHROPIC_API_KEY"] = api_key
+    else:
+        oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        if oauth_token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    # Adjudication alone needs the scoped bot credential to reply and resolve.
+    # Dispatch, CI repair, rebase, and preflight agents never receive it.
+    if allow_github:
+        gh_token = os.environ.get("GH_TOKEN", "")
+        if gh_token:
+            env["GH_TOKEN"] = gh_token
+    return env
 
 
 def capabilities(adapter: Path) -> set[str]:
@@ -92,6 +165,7 @@ def run_backend(
     prompt_file: Path,
     timeout_min: int,
     resume_ref: str | None = None,
+    allow_github: bool = False,
 ) -> BackendResult:
     session_file = unit_run_dir / "session"
     log_file = unit_run_dir / "agent.log"
@@ -100,7 +174,7 @@ def run_backend(
     if result_file.exists():
         result_file.unlink()
 
-    env = os.environ.copy()
+    env = backend_environment(cfg, allow_github=allow_github)
     env.update(
         {
             "FOREMAN_PROMPT_FILE": str(prompt_file),
@@ -113,9 +187,6 @@ def run_backend(
             "FOREMAN_MAX_TURNS": str(cfg.max_turns),
         }
     )
-    if cfg.billing == "api" and not env.get("FOREMAN_ANTHROPIC_API_KEY"):
-        raise ForemanError("billing=api but FOREMAN_ANTHROPIC_API_KEY is not set")
-
     argv = [str(adapter), "resume", resume_ref] if resume_ref else [str(adapter), "run"]
     timed_out = False
     with stdout_file.open("a", encoding="utf-8") as out_fh:

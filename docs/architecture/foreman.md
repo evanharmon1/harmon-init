@@ -15,8 +15,8 @@ progression. Zero tokens are spent on coordination.
 
 - **No AI ever merges to main. Ever.** No auto-merge, no enabling flag. The
   human merge is the only mechanism that advances the dependency graph;
-  foreman's job ends at "this PR is verified, adjudicated, and mergeable —
-  here is the suggested merge order." Server-side enforcement (branch
+  foreman's job ends at "this PR is verified, adjudicated, and has GitHub
+  `mergeStateStatus=CLEAN` — here is the suggested merge order." Server-side enforcement (branch
   ruleset, code-owner review, bot token without bypass) is the boundary;
   prompts are only a mitigation.
 - **Stateless in the repo.** Human inputs are stored (issue bodies, labels /
@@ -150,9 +150,9 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   (commit + reply + resolve) or decline with technical reasoning (bots are
   sometimes wrong; deterministic facts beat speculation). Blanket-accepting
   is prohibited. Foreman re-checks disposition completeness afterwards.
-- **Green + adjudicated + mergeable** → `ready-to-merge` label plus a
-  dependency-aware suggested merge order. Foreman performs no merge action
-  of any kind.
+- **Green + adjudicated + `mergeStateStatus=CLEAN`** → `ready-to-merge` label
+  plus a dependency-aware suggested merge order. Foreman performs no merge
+  action of any kind.
 
 ## Watch mode and unattended runs
 
@@ -194,11 +194,19 @@ USD budgets bind. Switching is a config flip plus one secret.
   or reopen issues, edit issue bodies/titles, touch human comments, or write
   fields/types/dependency edges — those operations do not exist in the
   module, and the test suite greps to keep them absent.
-- **Prompt-injection surface**: only trusted-association comments enter
-  prompts; review-bot findings and CI logs are framed as claims to
+- **Prompt-injection surface**: only trusted-association issue comments and
+  review threads whose authors match a trusted association, Foreman's account,
+  or `review_sender_trust` enter prompts. Other unresolved review threads go to
+  the human queue. Trusted review-bot findings and CI logs are framed as claims to
   adjudicate, not instructions; agents run with conservative permission
   modes outside the sandboxed bot devcontainer (`FOREMAN_SANDBOXED=1`
   relaxes inside it).
+- **Backend environment**: agent subprocesses receive an explicit runtime and
+  authentication allowlist, not the complete parent environment. Dispatch,
+  CI-repair, rebase, and preflight agents do not receive `GH_TOKEN`; only the
+  adjudication agent receives the intentionally scoped bot token needed for its
+  reply-and-resolve contract. Cloud, 1Password, SSH-agent, and unrelated host
+  credentials never cross the adapter boundary.
 
 ## Configuration (.foreman.toml)
 
@@ -212,6 +220,7 @@ branch_prefix = "foreman"
 expected_login = "your-bot"   # identity assertion; "" skips
 billing = "subscription"      # subscription | api
 sandboxed = false             # FOREMAN_SANDBOXED=1 env inside the bot container
+review_sender_trust = ["coderabbitai", "Copilot"]
 
 [budgets]
 dispatch_usd = 20.0           # binds in api billing mode
