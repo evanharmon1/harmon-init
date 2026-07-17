@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [3.29.0](https://github.com/evanharmon1/harmon-init/compare/v3.28.0...v3.29.0) (2026-07-17)
+
+
+### Features
+
+* **renovate:** track harmon-devkit skill releases ([#300](https://github.com/evanharmon1/harmon-init/issues/300)) ([d78a906](https://github.com/evanharmon1/harmon-init/commit/d78a906254b780366092be571ad2ba361a0130cb))
+* **security:** establish tiered repository scanning policy ([#299](https://github.com/evanharmon1/harmon-init/issues/299)) ([6d14b6b](https://github.com/evanharmon1/harmon-init/commit/6d14b6bd451add59c18d6808c57fdcc6e3ee16ce))
+
+
+### Bug Fixes
+
+* **ci:** remove paid Harden Runner dependency ([#298](https://github.com/evanharmon1/harmon-init/issues/298)) ([33095c0](https://github.com/evanharmon1/harmon-init/commit/33095c00691f32a4795150ed7d25dc8b0e704e8c))
+
 ## [3.28.0](https://github.com/evanharmon1/harmon-init/compare/v3.27.0...v3.28.0) (2026-07-15)
 
 
