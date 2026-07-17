@@ -15,8 +15,8 @@ progression. Zero tokens are spent on coordination.
 
 - **No AI ever merges to main. Ever.** No auto-merge, no enabling flag. The
   human merge is the only mechanism that advances the dependency graph;
-  foreman's job ends at "this PR is verified, adjudicated, and mergeable —
-  here is the suggested merge order." Server-side enforcement (branch
+  foreman's job ends at "this PR is verified, adjudicated, and has GitHub
+  `mergeStateStatus=CLEAN` — here is the suggested merge order." Server-side enforcement (branch
   ruleset, code-owner review, bot token without bypass) is the boundary;
   prompts are only a mitigation.
 - **Stateless in the repo.** Human inputs are stored (issue bodies, labels /
@@ -150,9 +150,9 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   (commit + reply + resolve) or decline with technical reasoning (bots are
   sometimes wrong; deterministic facts beat speculation). Blanket-accepting
   is prohibited. Foreman re-checks disposition completeness afterwards.
-- **Green + adjudicated + mergeable** → `ready-to-merge` label plus a
-  dependency-aware suggested merge order. Foreman performs no merge action
-  of any kind.
+- **Green + adjudicated + `mergeStateStatus=CLEAN`** → `ready-to-merge` label
+  plus a dependency-aware suggested merge order. Foreman performs no merge
+  action of any kind.
 
 ## Watch mode and unattended runs
 

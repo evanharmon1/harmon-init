@@ -8,7 +8,7 @@ Deterministic triggers → bounded agent actions:
                 ones go to the agent (rebase additively, re-verify, push)
   unresolved review-bot threads → resume the agent to adjudicate each finding
                 (apply or decline-with-reasoning; blanket-accepting prohibited)
-  green ∧ adjudicated ∧ mergeable ∧ not behind → label ready-to-merge and
+  green ∧ adjudicated ∧ mergeStateStatus=CLEAN → label ready-to-merge and
                 report a dependency-aware suggested merge order.
 
 Foreman never merges. `gh run rerun` is assumed unavailable to the bot token;
@@ -386,12 +386,11 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         )
         return work
 
-    mergeable = (status.get("mergeable") or "").upper()
-    if merge_state == "CLEAN" or mergeable == "MERGEABLE":
+    if merge_state == "CLEAN":
         gh.label_own_pr(work.number, add=["ready-to-merge"])
         work.state, work.detail = (
             "ready",
-            "green, adjudicated, mergeable — awaiting human merge",
+            "green, adjudicated, mergeState=CLEAN — awaiting human merge",
         )
     else:
         work.state, work.detail = "healthy", f"mergeState={merge_state or 'UNKNOWN'}"
