@@ -18,6 +18,9 @@ fail() {
     exit 1
 }
 
+test_tmp="$(mktemp -d)"
+trap 'rm -rf "$test_tmp"' EXIT
+
 echo "==> Taskfile compiles (every task parses)"
 if ! task --list-all >/dev/null 2>&1; then
     fail "task --list-all failed — the Taskfile does not compile"
@@ -30,6 +33,23 @@ if command -v brew >/dev/null 2>&1; then
     fi
 else
     echo "    (skipped: brew not on PATH)"
+fi
+
+echo "==> Semgrep wrapper preserves explicit scan targets"
+semgrep_bin="${test_tmp}/semgrep-bin"
+semgrep_args="${test_tmp}/semgrep-args"
+mkdir -p "$semgrep_bin"
+cat >"${semgrep_bin}/uvx" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"${SEMGREP_ARGS:?}"
+EOF
+chmod +x "${semgrep_bin}/uvx"
+PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
+    ./scripts/run-semgrep.sh scripts
+[ "$(tail -n 1 "$semgrep_args")" = "scripts" ] ||
+    fail "Semgrep wrapper did not preserve the explicit target"
+if grep -Fxq . "$semgrep_args"; then
+    fail "Semgrep wrapper appended a repository-wide target"
 fi
 
 echo "==> secret helper tasks reject missing destination metadata"

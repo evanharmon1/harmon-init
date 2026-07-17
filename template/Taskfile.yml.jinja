@@ -49,9 +49,14 @@ tasks:
   ci:
     # Full local mirror of the CI pipeline — run before (or instead of) opening
     # a PR to catch everything CI would, on demand, without waiting on a PR run.
-    # Builds on `verify` and adds the heavier / environment-dependent checks
-    # (the devcontainer permission assert needs a Docker daemon, like CI has).
-    desc: Full CI mirror (verify → [test:devcontainer:permissions →] security)
+[% if devcontainer %]
+    # Builds on `verify` and adds the devcontainer permission assertion plus the
+    # heavier security checks.
+    desc: Full CI mirror (verify → test:devcontainer:permissions → security)
+[% else %]
+    # Builds on `verify` and adds the heavier security checks.
+    desc: Full CI mirror (verify → security)
+[% endif %]
     cmds:
       - task: verify
 [% if devcontainer %]
@@ -63,8 +68,7 @@ tasks:
     # The definition-of-done gate — everything that must pass before a change
     # is done. Foreman v2 calls this the "check + build + test" tier; the desc
     # below lists this repo's exact steps. For the fast inner loop use `check`;
-    # heavier environment-dependent checks (security, the devcontainer
-    # permission assert) stay in `ci`.
+    # heavier security checks[% if devcontainer %] and the devcontainer permission assertion[% endif %] stay in `ci`.
     desc: Definition-of-done gate (check[% if use_node %] → build[% endif %] → validate → guards → test)
     cmds:
       - task: check

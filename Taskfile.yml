@@ -52,7 +52,8 @@ tasks:
   ci:
     # Full local mirror of this repo's CI — run on demand to catch everything CI
     # would (the lint job's guards, the template render matrix, security) without
-    # waiting on a PR. test:devcontainer:permissions needs a Docker daemon.
+    # waiting on a PR. The devcontainer permission assertion is a unit check and
+    # does not build or start a container.
     desc: Full CI mirror (check → guards → test → security)
     cmds:
       - task: check
