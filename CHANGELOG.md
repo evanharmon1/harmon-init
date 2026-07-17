@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.0.2](https://github.com/evanharmon1/harmon-init/compare/v4.0.1...v4.0.2) (2026-07-17)
+
+
+### Bug Fixes
+
+* **foreman:** harden review and execution boundaries ([#309](https://github.com/evanharmon1/harmon-init/issues/309)) ([cc2f8da](https://github.com/evanharmon1/harmon-init/commit/cc2f8da9bc0815d3214be60f7d168a24628da101))
+
 ## [4.0.1](https://github.com/evanharmon1/harmon-init/compare/v4.0.0...v4.0.1) (2026-07-17)
 
 
