@@ -8,6 +8,22 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.0.0](https://github.com/evanharmon1/harmon-init/compare/v3.29.1...v4.0.0) (2026-07-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **taskfile:** `task verify` now runs the test suite - it is the definition-of-done gate, not the <1-minute fast gate. Use `task check` for the fast inner loop; hooks are unaffected (they already call granular targets). Consumers pick this up via `copier update`.
+
+### Features
+
+* **taskfile:** verify becomes the definition-of-done gate; check is the fast gate ([#304](https://github.com/evanharmon1/harmon-init/issues/304)) ([f4a3138](https://github.com/evanharmon1/harmon-init/commit/f4a3138b4d6be11ce3965b4d5c6d613aca3a7ce4))
+
+
+### Bug Fixes
+
+* **devcontainer:** install yamllint in the devcontainer image ([#305](https://github.com/evanharmon1/harmon-init/issues/305)) ([6a36125](https://github.com/evanharmon1/harmon-init/commit/6a36125e4476400007c125a62b67ab02c1116e7d))
+
 ## [3.29.1](https://github.com/evanharmon1/harmon-init/compare/v3.29.0...v3.29.1) (2026-07-17)
 
 
