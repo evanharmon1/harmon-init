@@ -218,7 +218,17 @@ def dependency_satisfied(
         return Doneness(False, "open")
 
     marked_prs = foreman_prs_for_issue(gh, cfg, number)
-    if marked_prs and not (inputs is not None and inputs.external):
+    external = inputs is not None and inputs.external
+    if not external:
+        if not marked_prs:
+            return Doneness(
+                False,
+                "closed, but no foreman PR satisfies the merge chain",
+                warnings=[
+                    f"#{number}: closed managed issue has no foreman-marked PR — "
+                    "resolve manually, mark foreman:satisfied, or mark foreman:external"
+                ],
+            )
         expected_author = cfg.expected_login or gh.viewer()
         default_branch = gh.default_branch()
         for pr in marked_prs:

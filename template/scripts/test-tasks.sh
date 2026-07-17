@@ -76,4 +76,11 @@ case "$out" in
 *) fail "task secret:set:gh failed for the wrong reason: $out" ;;
 esac
 
+echo "==> 1Password helper recognizes the SSH Key category"
+grep -Fq '.category == "SSH_KEY"' scripts/secret-set-1p.sh ||
+    fail "secret:set:1p does not fail closed for SSH_KEY items"
+if grep -Fq '.category == "SSHKEY"' scripts/secret-set-1p.sh; then
+    fail "secret:set:1p uses the invalid SSHKEY category spelling"
+fi
+
 echo "==> task targets OK (compile + bootstrap idempotency)"

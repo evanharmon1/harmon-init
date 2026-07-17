@@ -71,7 +71,7 @@ op item get "$item" --vault "$vault" --format json --reveal |
         # field carrying a structured (object) value — plain STRING/CONCEALED
         # fields are scalars, so an object value marks a passkey/SSH-key/document
         # credential we must not touch.
-        | if (.category == "SSHKEY" or .category == "PASSKEY")
+        | if (.category == "SSH_KEY" or .category == "PASSKEY")
              or (([.fields[] | select((.value | type) == "object")] | length) > 0) then
             error("item holds a passkey or SSH key; refusing full-item edit (op would clobber it)")
           else

@@ -160,6 +160,8 @@ def _resume_agent(
     work: PrWork,
     prompt_name: str,
     tokens: dict[str, str],
+    *,
+    allow_github: bool = False,
 ) -> backend_mod.BackendResult:
     run_dir = backend_mod.unit_dir(cfg, root, work.unit_number)
     prompt = spec.load_prompt(prompt_name, tokens)
@@ -192,6 +194,7 @@ def _resume_agent(
         prompt_file=prompt_file,
         timeout_min=cfg.shepherd_timeout_min,
         resume_ref=resume_ref,
+        allow_github=allow_github,
     )
 
 
@@ -331,7 +334,15 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             )
         tokens = _common_tokens(gh, cfg, work)
         tokens["THREADS"] = "\n".join(rendered)
-        result = _resume_agent(gh, cfg, root, work, "shepherd-adjudicate", tokens)
+        result = _resume_agent(
+            gh,
+            cfg,
+            root,
+            work,
+            "shepherd-adjudicate",
+            tokens,
+            allow_github=True,
+        )
         wt_path = _ensure_worktree(
             cfg, root, work.unit_number, work.branch, remote_name
         )

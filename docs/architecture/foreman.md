@@ -201,6 +201,12 @@ USD budgets bind. Switching is a config flip plus one secret.
   adjudicate, not instructions; agents run with conservative permission
   modes outside the sandboxed bot devcontainer (`FOREMAN_SANDBOXED=1`
   relaxes inside it).
+- **Backend environment**: agent subprocesses receive an explicit runtime and
+  authentication allowlist, not the complete parent environment. Dispatch,
+  CI-repair, rebase, and preflight agents do not receive `GH_TOKEN`; only the
+  adjudication agent receives the intentionally scoped bot token needed for its
+  reply-and-resolve contract. Cloud, 1Password, SSH-agent, and unrelated host
+  credentials never cross the adapter boundary.
 
 ## Configuration (.foreman.toml)
 
