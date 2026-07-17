@@ -5,7 +5,9 @@ from __future__ import annotations
 import unittest
 
 from foreman import signatures as signatures_mod
-from foreman.shepherd import classify_checks
+from foreman.config import Config
+from foreman.shepherd import classify_checks, trusted_review_threads
+from foreman.tests.fakes import make_github
 
 
 class ClassifyChecks(unittest.TestCase):
@@ -40,6 +42,61 @@ class ClassifyChecks(unittest.TestCase):
         state, failed = classify_checks([{"state": "FAILURE", "context": "ci/legacy"}])
         self.assertEqual(state, "red")
         self.assertEqual(failed[0]["context"], "ci/legacy")
+
+
+class TrustedReviewThreads(unittest.TestCase):
+    def test_untrusted_authors_are_excluded(self):
+        cfg = Config()
+        gh, _runner = make_github(cfg)
+
+        def thread(author: str, association: str) -> dict:
+            return {
+                "id": author,
+                "comments": {
+                    "nodes": [
+                        {
+                            "author": {"login": author},
+                            "authorAssociation": association,
+                            "body": f"finding from {author}",
+                        }
+                    ]
+                },
+            }
+
+        threads = [
+            thread("owner", "OWNER"),
+            thread("CodeRabbitAI", "NONE"),
+            thread("bot", "NONE"),
+            thread("rando", "NONE"),
+            {"id": "empty", "comments": {"nodes": []}},
+        ]
+        kept, excluded = trusted_review_threads(gh, cfg, threads)
+        self.assertEqual(
+            [item["id"] for item in kept], ["owner", "CodeRabbitAI", "bot"]
+        )
+        self.assertEqual(excluded, 2)
+
+    def test_any_untrusted_reply_excludes_the_thread(self):
+        cfg = Config()
+        gh, _runner = make_github(cfg)
+        thread = {
+            "id": "mixed",
+            "comments": {
+                "nodes": [
+                    {
+                        "author": {"login": "coderabbitai"},
+                        "authorAssociation": "NONE",
+                    },
+                    {
+                        "author": {"login": "rando"},
+                        "authorAssociation": "NONE",
+                    },
+                ]
+            },
+        }
+        kept, excluded = trusted_review_threads(gh, cfg, [thread])
+        self.assertEqual(kept, [])
+        self.assertEqual(excluded, 1)
 
 
 class SignatureCatalog(unittest.TestCase):

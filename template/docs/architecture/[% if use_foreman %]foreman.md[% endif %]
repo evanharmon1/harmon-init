@@ -194,8 +194,10 @@ USD budgets bind. Switching is a config flip plus one secret.
   or reopen issues, edit issue bodies/titles, touch human comments, or write
   fields/types/dependency edges — those operations do not exist in the
   module, and the test suite greps to keep them absent.
-- **Prompt-injection surface**: only trusted-association comments enter
-  prompts; review-bot findings and CI logs are framed as claims to
+- **Prompt-injection surface**: only trusted-association issue comments and
+  review threads whose authors match a trusted association, Foreman's account,
+  or `review_sender_trust` enter prompts. Other unresolved review threads go to
+  the human queue. Trusted review-bot findings and CI logs are framed as claims to
   adjudicate, not instructions; agents run with conservative permission
   modes outside the sandboxed bot devcontainer (`FOREMAN_SANDBOXED=1`
   relaxes inside it).
@@ -212,6 +214,7 @@ branch_prefix = "foreman"
 expected_login = "your-bot"   # identity assertion; "" skips
 billing = "subscription"      # subscription | api
 sandboxed = false             # FOREMAN_SANDBOXED=1 env inside the bot container
+review_sender_trust = ["coderabbitai", "Copilot"]
 
 [budgets]
 dispatch_usd = 20.0           # binds in api billing mode

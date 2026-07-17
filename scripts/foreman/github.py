@@ -71,7 +71,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           isOutdated
           path
           comments(first: 50) {
-            nodes { author { login } body url }
+            nodes { author { login } authorAssociation body url }
           }
         }
       }

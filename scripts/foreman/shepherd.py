@@ -92,6 +92,35 @@ def classify_checks(rollup: list[dict] | None) -> tuple[str, list[dict]]:
     return "green", []
 
 
+def trusted_review_threads(
+    gh: GitHub, cfg: Config, threads: list[dict]
+) -> tuple[list[dict], int]:
+    """Threads safe to embed in prompts + count requiring human handling."""
+    kept: list[dict] = []
+    excluded = 0
+    viewer = gh.viewer().casefold()
+    trusted_senders = {login.casefold() for login in cfg.review_sender_trust}
+    trusted_associations = set(cfg.comment_trust)
+    for thread in threads:
+        comments = (thread.get("comments") or {}).get("nodes") or []
+        safe = bool(comments)
+        for comment in comments:
+            author = (comment.get("author") or {}).get("login", "")
+            association = comment.get("authorAssociation", "")
+            if (
+                association not in trusted_associations
+                and author.casefold() != viewer
+                and author.casefold() not in trusted_senders
+            ):
+                safe = False
+                break
+        if safe:
+            kept.append(thread)
+        else:
+            excluded += 1
+    return kept, excluded
+
+
 def _failure_text(gh: GitHub, failed: list[dict]) -> str:
     parts = []
     for ctx in failed[:5]:
@@ -287,7 +316,8 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             work.state, work.detail = "escalated", "agent could not resolve the rebase"
         return work
 
-    threads = [t for t in gh.review_threads(work.number) if not t.get("isResolved")]
+    unresolved = [t for t in gh.review_threads(work.number) if not t.get("isResolved")]
+    threads, excluded_threads = trusted_review_threads(gh, cfg, unresolved)
     if threads:
         work.actions += 1
         rendered = []
@@ -319,7 +349,15 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             ]
             if remaining:
                 work.state = "escalated"
-                work.detail = f"{len(remaining)} review thread(s) still undispositioned"
+                if excluded_threads:
+                    work.detail = (
+                        f"{excluded_threads} review thread(s) from untrusted authors "
+                        f"require human handling; {len(remaining)} total still undispositioned"
+                    )
+                else:
+                    work.detail = (
+                        f"{len(remaining)} review thread(s) still undispositioned"
+                    )
             else:
                 work.state, work.detail = (
                     "adjudicated",
@@ -327,6 +365,14 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 )
         else:
             work.state, work.detail = "escalated", "adjudication agent failed"
+        return work
+
+    if excluded_threads:
+        work.state = "escalated"
+        work.detail = (
+            f"{excluded_threads} unresolved review thread(s) from untrusted authors "
+            "require human handling"
+        )
         return work
 
     mergeable = (status.get("mergeable") or "").upper()
