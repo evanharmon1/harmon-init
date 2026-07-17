@@ -10,6 +10,16 @@
     "enabled": true
   },
   "customManagers": [
+[% if use_skills_sync %]
+    {
+      "customType": "regex",
+      "description": "Released harmon-devkit tag pinned by the skills-sync manifest",
+      "managerFilePatterns": ["/\\.skills-sync\\.ya?ml/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+ref:\\s*(?<currentValue>\\S+)"
+      ]
+    },
+[% endif %]
 [% if devcontainer %]
     {
       "customType": "regex",
@@ -86,7 +96,18 @@
       "description": "Batch all Docker image updates into one PR",
       "matchDatasources": ["docker"],
       "groupName": "Docker images"
-    }[% if devcontainer %],
+    }[% if use_skills_sync %],
+    {
+      "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["evanharmon1/harmon-devkit"],
+      "groupName": "harmon-devkit skills",
+      "dependencyDashboardApproval": true,
+      "dependencyDashboardCategory": "Agent skills",
+      "prBodyNotes": [
+        "After approving this update, run `task sync:skills` and push the refreshed `.claude/skills/` as a separate commit; do not amend Renovate's commit."
+      ]
+    }[% endif %][% if devcontainer %],
     {
       "description": "Batch all devcontainer updates (base image + annotated tools) into one PR — must come after the Docker images rule so the base image lands here instead",
       "matchFileNames": [".devcontainer/**"],
