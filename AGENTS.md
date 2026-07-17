@@ -149,6 +149,14 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 - Commit messages follow **Conventional Commits** (enforced by commitlint):
   types `build, chore, ci, docs, feat, fix, perf, refactor, revert, style,
   test`.
+- **A PR that changes `template/` must use a `fix:`/`feat:` (or breaking) PR
+  title.** Consumers receive harmon-init only via `copier update` to a released
+  tag, and squash-merge feeds the PR title to release-please, which tags only
+  feat/fix/breaking — so a `chore:`/`docs:` title over `template/` would merge
+  without cutting a release and downstream repos would never pick the change up.
+  The `release-content-guard.yml` check enforces this; **retitle rather than
+  bypass** (e.g. `fix: update to harmon-init …`, not `chore:`). Non-`template/`
+  changes (docs, this repo's own tooling) keep their normal type.
 
 ## Code Style
 
@@ -188,3 +196,9 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
   (`.coderabbit.yaml`).
 - `release.yml` runs release-please: releases stay intentional (merge the rolling
   release PR to cut a tag); `task release:*` remains a manual override.
+- `release-content-guard.yml` fails a PR that changes `template/` under a
+  non-releasing title (see Development Workflow) — the guard logic is
+  `scripts/require-release-title.sh` (unit-tested by `task test:release-title`),
+  driven by the `RELEASE_CONTENT_PATHS` var on the `release:guard-title` task.
+  Generated repos render the same guard from the `release_content_paths` copier
+  answer (empty = no guard).

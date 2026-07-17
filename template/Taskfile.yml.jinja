@@ -77,6 +77,9 @@ tasks:
 [% endif %]
       - task: validate
       - task: test:tasks
+[% if use_release_please %]
+      - task: test:release-title
+[% endif %]
 [% if use_foreman %]
       - task: foreman:test
 [% endif %]
@@ -462,6 +465,13 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
+[% if use_release_please %]
+
+  test:release-title:
+    desc: Unit-test the release-content title guard (require-release-title.sh)
+    cmds:
+      - ./scripts/test-release-title.sh
+[% endif %]
 [% if devcontainer %]
 
   test:devcontainer:root:
@@ -706,6 +716,20 @@ tasks:
   # v0.1.0 tag; the release:patch/minor/major tasks remain as a manual override.
 [% else %]
   # Releases are intentional — never automated on merge to main.
+[% endif %]
+[% if use_release_please and release_content_paths %]
+  release:guard-title:
+    # CI-only (release-content-guard.yml): fail a PR that changes release-worthy
+    # content under a non-releasing title, which squash-merge + release-please
+    # would otherwise merge without cutting a tag. RELEASE_CONTENT_PATHS comes
+    # from the release_content_paths copier answer. Needs PR_TITLE (+ PR_BODY)
+    # and CHANGED_FILES or BASE_SHA/HEAD_SHA in the env.
+    desc: "Guard: a PR touching release-worthy paths needs a fix:/feat: title"
+    vars:
+      RELEASE_CONTENT_PATHS: "[[ release_content_paths ]]"
+    cmds:
+      - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
+
 [% endif %]
   release:init:
     desc: Create initial v0.1.0 tag

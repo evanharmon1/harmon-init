@@ -41,6 +41,9 @@ jobs:
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
       - run: task test:tasks
+[% if use_release_please %]
+      - run: task test:release-title
+[% endif %]
 [% if use_foreman %]
       - run: task foreman:test
 [% endif %]
