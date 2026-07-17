@@ -108,8 +108,10 @@ Naming & structure conventions:
   is green" is not "CI is green"; use `ci` for that.
 - **Parallel deps:** umbrella tasks fan out via `deps:` (which run in parallel),
   e.g. `lint` deps on `lint:yaml`, `lint:shell`, `lint:markdown`,
-  `lint:actions`, `lint:hygiene`; `security` deps on `security:secrets` +
-  `security:audit`; `check` deps on `lint` (+ `typecheck`).
+  `lint:actions`, `lint:hygiene`; `security` deps on `security:sast` +
+  `security:secrets` + `security:audit`; `check` deps on `lint` (+
+  `lint:typescript` on node repos — the old bare `typecheck` name survives as an
+  alias).
 - **`{{.CLI_ARGS | default "."}}` passthrough:** lint tasks accept a file list
   (`task lint:yaml -- file.yml`) and default to the whole tree; lefthook passes
   `{staged_files}` through this so hooks lint only staged files.
@@ -123,9 +125,11 @@ Universal task targets every repo has (from the template):
 `lint:shell`, `lint:markdown`, `lint:actions`, `lint:hygiene`,
 `lint:commit-msg`, `validate`, `guard:no-commit-to-main`, `format`, `fix`,
 `test`, `security`, `security:secrets`, `security:audit`, `security:sast`
-(Snyk), `security:sca` (Snyk), `bootstrap`, `install`, `install:hooks`,
-`release:init`, `release:patch`, `release:minor`, `release:major`, `clean`,
-`status` (+ `status:git|gh|code|env`), `status:setup`, `util:bunch-add`,
+(Semgrep CE), `security:sca` (free package-audit alias),
+`security:sast:snyk`, `security:sca:snyk`, `secret:set:1p`, `secret:set:gh`,
+`bootstrap`, `install`, `install:hooks`, `release:init`, `release:patch`,
+`release:minor`, `release:major`, `clean`, `status` (+
+`status:git|gh|code|env`), `status:setup`, `util:bunch-add`,
 `util:obsidian-add`.
 
 **Lint vs. format discipline (read-only gates).** Every `lint:*` target and the
@@ -144,18 +148,29 @@ are check-only by design.
 `status:setup` is a **setup-completeness audit** (run by hand, not part of the
 default dashboard): it checks the repo against `docs/CHECKLIST.md` and reports
 ✓/✗/?/– per item across GitHub config (ruleset, Dependabot alerts, private vuln
-reporting, Renovate/CodeRabbit apps, Actions secrets/variables by name only,
-GHCR image, linked Project, release), toolchain (`brew bundle check`),
-devcontainer profiles, and dev environment (1Password CLI, direnv). Useful as a
-quick first pass when auditing an already-standardized repo.
+reporting, visibility-appropriate SAST route, Renovate/CodeRabbit apps, Actions
+secrets/variables by name only, GHCR image, linked Project, release), toolchain
+(`brew bundle check`), devcontainer profiles, and dev environment (1Password
+CLI, direnv). Useful as a quick first pass when auditing an already-standardized
+repo.
 
 Notable command bodies (for an auditor checking they match):
 
 - `lint:shell` → `shellcheck --severity=error` + `shfmt -d`
-- `lint:markdown` → `npx --yes markdownlint-cli2 '**/*.md' '#.claude/**' …`
-  (check-only; **no `--fix`** — auto-fix lives in `format`)
+- `lint:markdown` → markdownlint-cli2 `'**/*.md' '#.claude/**' …` — prefers the
+  repo-pinned `node_modules/.bin` copy via `pnpm exec` when installed, falls
+  back to `npx --yes` (non-node repos, fresh scaffolds); same pattern in
+  `format`/`format:file` for prettier + markdownlint (check-only here; **no
+  `--fix`** — auto-fix lives in `format`)
 - `lint:hygiene` → `./scripts/lint-hygiene.sh`
 - `security:secrets` → `gitleaks detect --no-banner --redact --source .`
+- `security:sast` → `./scripts/run-semgrep.sh` (Semgrep CE; no account/token)
+- `security:sca` → the same free package-manager audit as `security:audit`
+- `security:sast:snyk` / `security:sca:snyk` → explicit optional Snyk Code /
+  Open Source second-opinion scans; the latter uses `--all-projects`; both accept
+  CLI args so the scheduled workflow can pass the repository URL
+- `secret:set:1p` / `secret:set:gh` → `./scripts/secret-set-{1p,gh}.sh` —
+  destination-only secret writes, value on **stdin** (see §1.8)
 - `install` → `brew bundle --file=Brewfile` (+ `uv sync` / `pnpm install`) →
   `install:hooks`
 - `install:hooks` → `lefthook install`
@@ -248,10 +263,13 @@ Project-type stages (added conditionally): pre-commit `prettier`/`eslint`/
 **[copier]** generates `.devcontainer/` with **two profiles**:
 
 - **BOT profile** (`.devcontainer/devcontainer.json`) — for AI agents (Claude
-  Code, Codex, Gemini). **No Tailscale.** `containerName:
-  devcontainer-<slug>-bot`. `CLAUDE_CODE_EFFORT_LEVEL: max`.
+  Code, Codex, Gemini). **No Tailscale and no 1Password CLI feature** — the bot
+  container must hold no path to the tailnet or a credential store
+  (`devcontainer-assert.sh` enforces both structurally, per profile).
+  `containerName: devcontainer-<slug>-bot`. `CLAUDE_CODE_EFFORT_LEVEL: max`.
 - **DEV profile** (`.devcontainer/dev/devcontainer.json`) — human dev. Adds the
-  Tailscale feature + `--device=/dev/net/tun` + `TS_AUTHKEY`.
+  Tailscale feature + `--device=/dev/net/tun` + `TS_AUTHKEY` + the 1Password
+  CLI feature.
 
 Shared structure:
 
@@ -263,8 +281,8 @@ Shared structure:
   like `@anthropic-ai/claude-code` LAST so frequent bumps don't bust the
   Chromium/Playwright layers).
 - **`devcontainer.json` `features`:** python 3.14, docker-in-docker, github-cli,
-  go-task, 1password; terraform feature when `include_terraform`; tailscale only
-  in dev.
+  go-task; terraform feature when `include_terraform`; 1password and tailscale
+  only in dev.
 - **`devcontainer.json` `hostRequirements`:** a minimum floor (`cpus: 2`,
   `memory: 4gb`) on both profiles — a hard gate (Codespaces won't offer a smaller
   machine; VS Code warns; Coder ignores it), not a comfort target. Recommended
@@ -319,7 +337,8 @@ Shared structure:
 - **`merge_group`** trigger on `build.yml` (merge-queue support).
 - **Aggregate gate:** a final `verify` job (`if: always()`, `needs: [lint,
   security, …]`) reports one rollup status. Branch protection requires the
-  **`verify`** and **`security`** checks.
+  **`verify`** and **`security`** checks, plus **`codeql-verify`** when a
+  Node/Python profile generates CodeQL.
 - Fork-PR guard: jobs gate on
   `github.event.pull_request.head.repo.full_name == github.repository`.
 
@@ -327,12 +346,13 @@ Workflow inventory:
 
 | Workflow | Triggers / role | Source |
 |---|---|---|
-| `build.yml` (`Build & Validate`) | push/PR/`merge_group`/dispatch; jobs `lint`, `security` (+ `build-test` node, `lighthouse` web-astro), aggregate `verify` | [copier] |
+| `build.yml` (`Build & Validate`) | push/PR/`merge_group`/dispatch; jobs `lint`, `security` (+ `build-test` node, `lighthouse` web-astro); Semgrep runs for free private repos or profiles without CodeQL; aggregate `verify` | [copier] |
 | `claude-plan.yml` | `@claude plan` / `claude-plan` label → posts a plan, no writes (`--disallowedTools Edit Write Bash`, `--model opus`) | [copier] |
 | `claude-implement.yml` | `@claude implement` / label → opens a PR on a `claude/` branch (`--model sonnet`) | [copier] |
 | `claude-review.yml` | `@claude review` / label → review comment, no writes (sticky comment) | [copier] |
 | `release.yml` | release-please; only when `use_release_please` | [copier] |
-| `codeql.yml` | only when `use_node or use_python`; **opt-in via `FULL_SECURITY_SCAN=true`** variable; aggregate `codeql-verify` | [copier] |
+| `codeql.yml` | only when `use_node or use_python`; automatic/free for public repos; private/internal requires paid GitHub Code Security + `FULL_SECURITY_SCAN=true`; aggregate `codeql-verify` always reports | [copier] |
+| `snyk-scheduled.yml` | only when `snyk_scan_schedule` is `weekly` or `daily`; schedule/manual advisory SAST + SCA, no PR/push trigger or required check | [copier] |
 | `devcontainer-build.yml` | only when `devcontainer`; builds bot+dev images, pushes GHCR caches on merge to main | [copier] |
 | `project-automation.yml` | only when `github_org != author_git_provider_username` (org repos); syncs org Project V2 Status field | [copier] |
 
@@ -350,25 +370,58 @@ lacks fails token minting — that's why org-only perms are jinja-gated.
 **[manual]:** create the App, install it on the repo, set the variable + secret.
 
 Required secrets/variables (**[manual]**, in CHECKLIST): `CLAUDE_CODE_OAUTH_TOKEN`
-(secret), `SNYK_TOKEN` (secret), `CI_APP_CLIENT_ID` (variable) + `CI_APP_PRIVATE_KEY`
-(secret), `FULL_SECURITY_SCAN=true` (variable, to enable CodeQL).
+(secret), `CI_APP_CLIENT_ID` (variable) + `CI_APP_PRIVATE_KEY` (secret).
+`FULL_SECURITY_SCAN=true` is optional and only means a private/internal owner has
+enabled paid GitHub Code Security. `SNYK_TOKEN` remains local when
+`snyk_scan_schedule=off`; it becomes an Actions secret only when the optional
+scheduled workflow is generated (or a paid Snyk CI posture is deliberately
+adopted).
 
 ### 1.8 Security
+
+The repository-class policy is:
+
+| Repository class | Standard |
+|---|---|
+| Public, CodeQL-supported | CodeQL + Dependabot alerts/Renovate + gitleaks; no Snyk by default |
+| Selected important public | Optionally add Snyk Free as a scheduled SAST/SCA second opinion |
+| Private | Semgrep CE is the dependable free CI SAST baseline; keep Snyk Free manual/local by default because Organization-wide quotas can stop scans mid-month |
+| Important private | Consider paid GitHub Code Security/private CodeQL and/or paid Snyk, then decide whether per-PR scans should be merge-gating |
+| Qualifying public OSS | Consider Snyk's [unlimited open-source program](https://snyk.io/open-source/) |
 
 - **gitleaks** — `.gitleaks.toml` (`[extend] useDefault = true` + an
   `[allowlist] paths` of build/cache dirs). Runs at pre-push (`task
   security:secrets`) and in the `build.yml` `security` job (with the
   `summarize-gitleaks.mjs` GH step summary). **[copier]**
-- **Snyk** — `task security:sast` (`snyk code test`) + `security:sca` (`snyk
-  test`); needs `SNYK_TOKEN`. **[copier]** for tasks; **[manual]** for the token.
-- **CodeQL** — `codeql.yml`, opt-in via `FULL_SECURITY_SCAN`. **[copier]** /
-  **[manual]** to enable.
+- **Semgrep CE** — `task security:sast` via `scripts/run-semgrep.sh`; part of the
+  free local `task security` baseline. `build.yml` uses it for free private
+  repositories and profiles without generated CodeQL. **[copier]**
+- **Dependabot alerts + package audit** — Dependabot supplies continuous advisory
+  monitoring for public and private repositories; `task security:audit` /
+  `security:sca` runs the package-manager audit. **[manual]** to enable alerts;
+  **[copier]** for tasks.
+- **CodeQL** — `codeql.yml` is generated for Node/Python. It runs automatically
+  on public repositories; private/internal repositories run it only with paid
+  GitHub Code Security + `FULL_SECURITY_SCAN=true`, otherwise `build.yml` uses
+  Semgrep CE. **[copier]**; **[manual]** only for the paid private opt-in.
+- **Snyk** — optional `security:sast:snyk` (`snyk code test`) +
+  `security:sca:snyk` (`snyk test --all-projects`) second opinions. The default
+  `snyk_scan_schedule=off` keeps `SNYK_TOKEN` local and Snyk outside required PR
+  CI. `weekly`/`daily` generates an advisory schedule/manual-only matrix workflow;
+  daily is intended for public or accepted unlimited OSS projects. Public repos
+  must be classified with their public Git remote so private tests are not
+  debited. Free private repos normally stay manual/local; weekly is a deliberate
+  quota-budgeted exception. A daily Snyk Code schedule is about 30 tests/month
+  before manual runs, and SCA can consume one test per detected manifest. No Snyk
+  GitHub App is required. **[copier]** for tasks/workflow; **[manual]** for the
+  token and posture decision.
 - **Branch protection ruleset** — `.github/Branch Protection Ruleset - Protect
   Main.json`: blocks deletion/non-ff/creation, requires linear history, PR with 1
   code-owner approval + thread resolution + last-push approval, required status
-  checks `verify` + `security`, merge methods squash/rebase; org repos add a
-  `merge_queue` rule. **[copier]** ships the file; **[manual]** import via the
-  GitHub UI (Settings → Rules → Rulesets → **Import a ruleset**) — not
+  checks `verify` + `security` (+ `codeql-verify` for Node/Python), merge methods
+  squash/rebase; org repos add a `merge_queue` rule. Scheduled Snyk and Snyk App
+  checks are never required by default. **[copier]** ships the file; **[manual]**
+  import via the GitHub UI (Settings → Rules → Rulesets → **Import a ruleset**) — not
   `gh api … rulesets`, whose `POST` is non-idempotent (duplicates the ruleset)
   and rejects the `merge_queue` rule (422); edit the existing ruleset in the UI
   to change it later.
@@ -379,8 +432,17 @@ Required secrets/variables (**[manual]**, in CHECKLIST): `CLAUDE_CODE_OAUTH_TOKE
   `dependabot.yml`** — Renovate owns updates. **[manual]** repo settings.
 - **`CODEOWNERS`** = `* @<code_owner>` — an asked question that defaults to `github_org`. **[copier]**
 - **Secrets via 1Password** locally (`op run`/`op inject`); CI reads Actions
-  secrets. **`.env` is fully gitignored** (`.env`, `**/.env`, `.env.*`); commit
-  only `.env.example`-style files. **[copier]** gitignore; **[manual]** wiring.
+  secrets. **`.env` is fully gitignored** (`.env`, `**/.env`, `.env.*`) with a
+  single committed exception, `!/.env.example` (names/placeholders only; node
+  repos ship a stub). **[copier]** gitignore; **[manual]** wiring.
+- **Destination-only secret writes** — `task secret:set:1p VAULT=… ITEM=…
+  FIELD=… [SECTION=…]` (existing 1Password fields) and `task secret:set:gh
+  NAME=… REPO=owner/repo` (GitHub repo secrets), backed by
+  `scripts/secret-set-{1p,gh}.sh`: the value is read from **stdin only** — never
+  argv, `--body`, exported env vars, or Taskfile vars (history/process-listing
+  hygiene). Both fail without destination metadata (`test-tasks.sh` asserts it),
+  and agents still must not write to a password manager without explicit
+  per-write confirmation. **[copier]**
 - **1Password credential naming (source of truth).** Authoritative convention is
   in the generated repo's `docs/architecture/security.md` ("1Password
   conventions"); when creating a repo's credentials, follow it verbatim:
@@ -440,7 +502,28 @@ install the Renovate GitHub App on the repo. Conventions:
   rules above are the harness backstop (note: `ask` is skipped under
   `bypassPermissions`, e.g. the devcontainer bot profile — the AGENTS.md rule
   is the binding convention there). **[copier]**
-- **`.claude/skills/`** with a `.gitkeep`. **[copier]**
+- **`.claude/skills/`** — vendored shared agent skills from harmon-devkit via
+  **skills-sync**, gated on the **`use_skills_sync`** copier answer (default yes;
+  a repo may opt out — its ABSENCE of vendoring is then deliberate, not drift).
+  When on: `.skills-sync.yaml` (categories from the **`skill_categories`**
+  multiselect, seeded from `project_type` — `general`→`universal`,
+  `web-astro`→`+frontend`, `web-app`→`+frontend,backend`, `iac`→`+infra`),
+  `scripts/sync-skills.sh`, the
+  `sync:skills`/`verify:skills`/`verify:skills:offline` tasks, a CI drift check
+  (in the `lint` job) and a pre-push offline check. The drift checks skip cleanly
+  until the first `task sync:skills`, so a fresh scaffold stays green. **[copier]**
+  ships the machinery + an empty `.claude/skills/` (`.gitkeep`); pinning the
+  manifest `ref` to a harmon-devkit release and running `task sync:skills` is
+  **[manual]**. harmon-devkit is public, so no token is needed. The dest is
+  **shared**: the sync manages only the dirs on the provenance `# managed:`
+  line — any other `.claude/skills/<name>` is a **local skill** the repo owns
+  (coexists freely; never drift, never touched by sync/verify; a name collision
+  with an incoming vendored skill fails the sync loudly before any deletion).
+  Pin bumps are the manual pair "bump `ref` → `task sync:skills` → commit"
+  (Renovate can't do the re-sync half). Source-repo exception: **harmon-devkit
+  itself sets `use_skills_sync: false`** — it IS the source of the skills;
+  self-vendoring a pinned copy of its own `ai/skills/` would be circular.
+  **[copier]**
 - Devcontainer ships richer `config/claude-settings.json` as managed settings (see
   1.6). **[copier]**
 - **`DESIGN.md`** — AI-facing statement of design intent (the *why*/prose rules);
@@ -449,11 +532,14 @@ install the Renovate GitHub App on the repo. Conventions:
 
 ### 1.11 Package / tool management
 
-> **Local ↔ devcontainer parity (a hard goal).** Every tool the repo's
-> `Taskfile` targets, lefthook hooks, and `scripts/` invoke must be installable
-> **locally via the `Brewfile`** — the repo's tooling has to run on a bare host,
-> not only inside the devcontainer. When the repo ships a devcontainer, the
-> `Brewfile` (host) and the devcontainer `Dockerfile` (container) must cover the
+> **Local ↔ devcontainer parity (a hard goal).** Every binary that the repo's
+> routine `Taskfile` gates, lefthook hooks, and `scripts/` invoke must be
+> installable **locally via the `Brewfile`** — the repo's baseline tooling has
+> to run on a bare host, not only inside the devcontainer. Explicit optional
+> integrations are exempt: local `*:snyk` use requires a separately installed
+> CLI, and the optional scheduled workflow installs its own pinned CLI. When the
+> repo ships a devcontainer, the `Brewfile` (host) and the devcontainer
+> `Dockerfile` (container) must cover the
 > **same toolset** so `task <anything>` behaves identically in both. Concretely:
 > if a task/script/hook calls a binary (e.g. `gum`, `tv`/television, `tokei`,
 > `jq`, `gitleaks`, `shfmt`), that binary belongs in the `Brewfile` — and, if a
@@ -461,9 +547,11 @@ install the Renovate GitHub App on the repo. Conventions:
 > check (see mode-audit drift class **I**).
 
 - **`Brewfile`** — pins the core toolchain (go-task, lefthook, git, gh,
-  shellcheck, shfmt, actionlint, yamllint, gitleaks, snyk, node, jq, fzf, fd,
-  ripgrep, bat, tokei, gum, television; conditionally pnpm/lychee, uv, terraform,
-  hadolint). `gum` + `television` (the `tv` binary) power the universal
+  shellcheck, shfmt, actionlint, yamllint, gitleaks, uv, node, jq, fzf, fd,
+  ripgrep, bat, tokei, gum, television; conditionally pnpm/lychee, terraform,
+  hadolint). Semgrep CE is pinned by `scripts/run-semgrep.sh` and executed through
+  `uvx`, so the same version runs on a host and in CI. `gum` + `television` (the
+  `tv` binary) power the universal
   `status`/`status:*` dashboard and the interactive `task` menu (`menu-tv`), so
   they are required for the dashboard and the bare-`task` menu to work on a host.
   Installed via `task install`. `Brewfile.lock.json` is gitignored. **[copier]**
@@ -601,10 +689,14 @@ unless ansible/terraform opted in.
 
 Adds (all [copier] unless noted):
 
-- **Taskfile:** `build` (`pnpm build`), `build:preview`, `dev`, `typecheck`
-  (`astro check`), `lint:prettier`, `lint:eslint`, `test` (vitest if config
-  present), `test:e2e[:screenshot|:pdf]` (Playwright); `verify`/`ci` include
-  `build`.
+- **Taskfile:** `build` (`pnpm build`), `build:preview`, `dev`,
+  `lint:typescript` (`astro check`; `typecheck` alias kept), `lint:prettier`,
+  `lint:eslint`, `test` (vitest if config present),
+  `test:e2e[:screenshot|:pdf]` (Playwright); `verify`/`ci` include `build`.
+  `test:e2e` loads `.env.local` and runs **`scripts/e2e-env-guard.sh` first** —
+  a fail-closed guard against production-capable credentials/targets in the e2e
+  environment that **fails until configured** with the app's providers and prod
+  domains ([manual] at scaffold time; omator's guard is the reference).
 - **prettier.config.cjs**, eslint task. **lefthook** adds prettier/eslint/
   typecheck (pre-commit) + typecheck (pre-push).
 - **`lighthouserc.json`** + a **`lighthouse`** CI job in `build.yml` (Chrome
@@ -615,21 +707,51 @@ Adds (all [copier] unless noted):
 - `codeql.yml` analyzes `javascript-typescript`.
 - **[manual] CHECKLIST:** `pnpm create astro@latest .`; add **Tailwind v4**
   (`@tailwindcss/vite`), **zod**, **vitest**, **lucide**; move lint tooling into
-  `devDependencies`; switch Taskfile `npx --yes` calls to `pnpm exec`; review
-  `lighthouserc.json` URLs; enable **mobile device projects** in
-  `playwright.config.ts` (e.g. Pixel + iPhone — the scaffold ships them
-  commented out, and mobile-first is the stated convention).
+  `devDependencies` (the Taskfile auto-prefers repo-pinned `node_modules` bins
+  over `npx --yes` once installed); review `lighthouserc.json` URLs; enable
+  **mobile device projects** in `playwright.config.ts` (e.g. Pixel + iPhone —
+  the scaffold ships them commented out, and mobile-first is the stated
+  convention).
 
 ### 2.3 web-app (TanStack/React apps) — `use_node: true`
 
 Same node tooling as web-astro **except**:
 
-- `typecheck` uses `tsc --noEmit` (not `astro check`). [copier]
+- `lint:typescript` uses `tsc --noEmit` (not `astro check`) — and when the root
+  `tsconfig.json` is **solution-style** (`files: []` + `references`) it
+  auto-detects that and runs **`tsc -b`** instead (a plain `--noEmit` against a
+  solution file type-checks nothing and reports green). [copier]
+- **Shipped `eslint.config.js` is ESLint 10 with type-aware linting on by
+  default**: `tseslint.configs.recommendedTypeChecked` + `projectService`
+  (catches floating/misused promises against async backend APIs like Convex
+  `ctx`); **no `eslint-plugin-react`** (not v10-ready; ESLint 10 tracks JSX
+  natively) — react-hooks, `@tanstack/eslint-plugin-router`, and
+  `@convex-dev/eslint-plugin` plugins; `eslint-config-prettier` last; typed
+  rules disabled for plain `js/cjs/mjs` config files. Generated files are
+  committed but never linted/formatted: `src/routeTree.gen.ts` +
+  `convex/_generated/` sit in the ESLint `ignores` and `.prettierignore`.
+  Under `projectService` **every linted TS file must belong to a tsconfig
+  project** — `convex/` carries its own runtime-accurate `convex/tsconfig.json`
+  (`"types": []`, excludes `./_generated`). [copier]
+- `pnpm-workspace.yaml`: `sharp: false` (web-astro keeps `true` for Astro's
+  image pipeline); `workerd: true` only when deploying to Cloudflare Workers.
+  pnpm 11's default `minimumReleaseAge` (1 day) is documented in the file —
+  version-pinned `minimumReleaseAgeExclude` entries unblock a freshly published
+  pin and age into no-ops. [copier]
+- `prettier.config.cjs` ships `tailwindStylesheet` **commented** (Tailwind v4
+  has no config file for the plugin to discover; the plugin hard-fails on a
+  missing path) — uncomment once the app's main stylesheet exists. [copier] +
+  [manual] activation.
 - **No** Lighthouse job / `lighthouserc.json` (that's web-astro only). [copier]
 - DESIGN.md / design-language reference **shadcn/ui** as the component set. [copier]
 - **[manual] CHECKLIST:** `pnpm create @tanstack/start@latest` (TanStack Start)
   or vite + react; add **Tailwind v4**, **shadcn/ui**, **zod**, **vitest**,
-  **lucide**; move lint tooling to `devDependencies`; switch to `pnpm exec`.
+  **lucide**; move lint tooling to `devDependencies` (Taskfile auto-prefers the
+  pinned bins); install the ESLint 10 plugin set; configure
+  `scripts/e2e-env-guard.sh` before the first e2e run; document env vars in
+  `.env.example`; split `vitest.config.ts` into **projects** when the backend
+  needs a different runtime (e.g. `react`/jsdom + `convex`/edge-runtime with
+  `convex-test`).
 
 ### 2.4 iac (Terraform/Ansible) — `use_python: true`
 
@@ -741,6 +863,19 @@ them:
 - **Stale `requirements.txt`** alongside `pyproject.toml`/`uv.lock` — the current
   template is uv/pyproject-only. (Removed from harmon-infra 2026-07-03 once its
   last consumer, a legacy Snyk CI step, was dropped.)
+- **Bare `typecheck` task** (no `lint:typescript`): repos rendered before the
+  omator retro (harmon-init ≤ v3.23) predate the rename; the current template
+  names it `lint:typescript` with a `typecheck` alias, so both invocations work
+  after an update. Lefthook hook *names* legitimately stay `typecheck`.
+- **1Password CLI feature in the BOT devcontainer profile:** pre-retro renders
+  ship `ghcr.io/itsmechlark/features/1password` in both profiles; the current
+  standard is **dev-profile only** (the bot container must hold no credential-
+  store path, enforced by `devcontainer-assert.sh`). Unlike most 3.3 lag this
+  one is security-relevant — recommend the update rather than just noting it.
+- **Missing `secret:set:*` tasks / `scripts/secret-set-*.sh`, or a bare
+  `npx --yes`-only `lint:markdown`/`format`:** pre-retro renders lack the
+  destination-only secret helpers and the pinned-bin preference — `copier
+  update` brings both in.
 
 When auditing: distinguish "**legit conditional/stack difference**" (3.1, 3.2 —
 leave alone) from "**template-version lag**" (3.3 — candidate for an update toward
