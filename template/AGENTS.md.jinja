@@ -36,7 +36,7 @@ and humans run the same targets):
 
 ```bash
 task check       # FAST gate (<~1 min) — run constantly; safe for hooks/agents
-task verify      # definition-of-done gate — check + build + test; run before finishing
+task verify      # definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test; run before finishing
 task ci          # FULL CI mirror — run before/instead of opening a PR
 task fix         # auto-format then lint
 task test        # tests

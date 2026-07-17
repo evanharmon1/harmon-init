@@ -61,9 +61,10 @@ tasks:
 
   verify:
     # The definition-of-done gate — everything that must pass before a change
-    # is done (Foreman v2 task vocabulary: verify = check + build + test).
-    # For the fast inner loop use `check`; heavier environment-dependent
-    # checks (security, the devcontainer permission assert) stay in `ci`.
+    # is done. Foreman v2 calls this the "check + build + test" tier; the desc
+    # below lists this repo's exact steps. For the fast inner loop use `check`;
+    # heavier environment-dependent checks (security, the devcontainer
+    # permission assert) stay in `ci`.
     desc: Definition-of-done gate (check[% if use_node %] → build[% endif %] → validate → guards → test)
     cmds:
       - task: check
