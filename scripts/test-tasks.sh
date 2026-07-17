@@ -76,11 +76,44 @@ case "$out" in
 *) fail "task secret:set:gh failed for the wrong reason: $out" ;;
 esac
 
-echo "==> 1Password helper recognizes the SSH Key category"
-grep -Fq '.category == "SSH_KEY"' scripts/secret-set-1p.sh ||
-    fail "secret:set:1p does not fail closed for SSH_KEY items"
-if grep -Fq '.category == "SSHKEY"' scripts/secret-set-1p.sh; then
-    fail "secret:set:1p uses the invalid SSHKEY category spelling"
-fi
+echo "==> 1Password helper rejects SSH Key categories at runtime"
+op_bin="${test_tmp}/op-bin"
+op_edit_called="${test_tmp}/op-edit-called"
+mkdir -p "$op_bin"
+cat >"${op_bin}/op" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+"item get")
+    printf '{"category":"%s","fields":[{"label":"password","type":"CONCEALED","value":"old"}]}\n' \
+        "${OP_FIXTURE_CATEGORY:?}"
+    ;;
+"item edit")
+    : >"${OP_EDIT_CALLED:?}"
+    cat >/dev/null
+    ;;
+*)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "${op_bin}/op"
+for category in SSH_KEY SSHKEY; do
+    rm -f "$op_edit_called"
+    out=$(printf '%s' 'dummy-secret' |
+        PATH="${op_bin}:${PATH}" OP_FIXTURE_CATEGORY="$category" \
+            OP_EDIT_CALLED="$op_edit_called" VAULT=test ITEM=test FIELD=password \
+            ./scripts/secret-set-1p.sh 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        fail "secret:set:1p accepted unsupported category $category"
+    fi
+    case "$out" in
+    *"item holds a passkey or SSH key"*) ;;
+    *) fail "secret:set:1p rejected $category for the wrong reason: $out" ;;
+    esac
+    if [ -e "$op_edit_called" ]; then
+        fail "secret:set:1p attempted an item edit for $category"
+    fi
+done
 
 echo "==> task targets OK (compile + bootstrap idempotency)"
