@@ -64,10 +64,10 @@ tasks:
       - task: security
 
   verify:
-    # Local gate for this template repo. Unlike a generated repo's `verify` (which
-    # is tuned to stay under a minute for agents/hooks), this one renders the whole
-    # template via test:template, so it is inherently heavier — but it still runs
-    # the same fast Taskfile/hook guards a generated repo's verify does.
+    # Local gate for this template repo. Like a generated repo's `verify` (the
+    # Foreman v2 vocabulary: the definition-of-done gate — check + build +
+    # test), it runs check, the quick guards, and its test tier — which here
+    # renders the whole template via test:template, so it is inherently heavier.
     desc: Local verification gate (check → guards → test:template)
     cmds:
       - task: check

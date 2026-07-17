@@ -107,8 +107,8 @@ See [DESIGN.md](DESIGN.md) for visual/UX direction.
 
 | Command | What it does |
 |---|---|
-| `task verify` | Local merge gate: lint[% if use_node %] + typecheck + build[% endif %] |
-| `task check` | All linters in parallel |
+| `task check` | Fast gate: all linters[% if use_node %] + typecheck[% endif %], in parallel |
+| `task verify` | Definition-of-done gate: check[% if use_node %] + build[% endif %] + validate + tests |
 | `task fix` | Auto-format, then lint |
 [% if use_node %]
 | `task dev` | Dev server with hot reload |
