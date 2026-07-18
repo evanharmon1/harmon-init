@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.1.0](https://github.com/evanharmon1/harmon-init/compare/v4.0.2...v4.1.0) (2026-07-18)
+
+
+### Features
+
+* **ci:** guard release-worthy content against non-releasing PR titles ([#311](https://github.com/evanharmon1/harmon-init/issues/311)) ([1bde59d](https://github.com/evanharmon1/harmon-init/commit/1bde59de0b949451160aeb2f0df88fdea54e1919))
+
 ## [4.0.2](https://github.com/evanharmon1/harmon-init/compare/v4.0.1...v4.0.2) (2026-07-17)
 
 
