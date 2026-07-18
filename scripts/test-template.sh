@@ -510,7 +510,7 @@ fi
 
 # ── 9g. release-content guard renders per use_release_please + paths ──
 # The guard SCRIPT + unit test are gated on use_release_please; the WORKFLOW and
-# the release:guard-title task additionally need a non-empty release_content_paths.
+# the guard:release-title task additionally need a non-empty release_content_paths.
 # 'minimal' has use_release_please=false (nothing renders); 'full' sets
 # release_content_paths (everything renders); the rest default to "" (script +
 # unit test present, but no workflow wired). Assert they move together so a broken
@@ -524,13 +524,13 @@ elif [ "$profile" = "full" ]; then # use_release_please on + release_content_pat
     [ -x scripts/require-release-title.sh ] || err "require-release-title.sh missing or not executable (use_release_please on)"
     grep -q 'test:release-title' Taskfile.yml || err "test:release-title task missing (use_release_please on)"
     [ -f .github/workflows/release-content-guard.yml ] || err "release-content-guard.yml missing (release_content_paths set)"
-    grep -q '^  release:guard-title:' Taskfile.yml || err "release:guard-title task missing (release_content_paths set)"
-    grep -q 'RELEASE_CONTENT_PATHS: "src docs"' Taskfile.yml || err "release:guard-title missing the configured RELEASE_CONTENT_PATHS"
+    grep -q '^  guard:release-title:' Taskfile.yml || err "guard:release-title task missing (release_content_paths set)"
+    grep -q 'RELEASE_CONTENT_PATHS: "src docs"' Taskfile.yml || err "guard:release-title missing the configured RELEASE_CONTENT_PATHS"
 else # use_release_please default on, release_content_paths="" (guard present, unwired)
     [ -x scripts/require-release-title.sh ] || err "require-release-title.sh missing (use_release_please on)"
     grep -q 'test:release-title' Taskfile.yml || err "test:release-title task missing (use_release_please on)"
     [ ! -f .github/workflows/release-content-guard.yml ] || err "release-content-guard.yml rendered but release_content_paths empty"
-    ! grep -q 'release:guard-title' Taskfile.yml || err "release:guard-title task rendered but release_content_paths empty"
+    ! grep -q 'guard:release-title' Taskfile.yml || err "guard:release-title task rendered but release_content_paths empty"
 fi
 
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────

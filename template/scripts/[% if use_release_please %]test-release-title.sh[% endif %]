@@ -36,6 +36,10 @@ echo "==> a feat title passes"
 echo "==> a breaking-change (!) chore-shaped title passes"
 [ "$(run 'refactor!: drop a skill' 'ai/skills/old.md' ai/skills)" = 0 ] || fail "! breaking should pass"
 
+echo "==> a stray '!:' later in a chore title does NOT bypass the guard"
+[ "$(run 'chore: update docs !: not breaking' 'ai/skills/x.md' ai/skills)" = 1 ] ||
+    fail "a bare !: elsewhere in the title must not count as breaking"
+
 echo "==> BREAKING CHANGE in the body passes even with a chore title"
 _rc=0
 PR_TITLE='chore: x' PR_BODY='BREAKING CHANGE: removed foo' CHANGED_FILES='ai/skills/x.md' \
@@ -57,6 +61,10 @@ echo "==> a nested file under a prefix matches"
 echo "==> prefix boundary: a sibling dir sharing a name prefix does NOT match"
 [ "$(run 'chore: x' 'ai/skills-extra/x.md' ai/skills)" = 0 ] ||
     fail "ai/skills-extra must not match the ai/skills prefix"
+
+echo "==> a configured prefix written with a trailing slash still matches"
+[ "$(run 'chore: x' 'templates/x.sh' templates/)" = 1 ] ||
+    fail "a trailing-slash prefix (templates/) must still match templates/x.sh"
 
 echo "==> an unconventional title with a content change fails"
 [ "$(run 'update the skills' 'ai/skills/x.md' ai/skills)" = 1 ] ||

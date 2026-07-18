@@ -86,6 +86,8 @@ run locally on demand instead of waiting on a PR.
   paths would merge without cutting a release, and consumers pinning a released
   tag would never receive the change. The `release-content-guard.yml` check
   enforces this; retitle rather than bypass. Other changes keep their normal type.
+  Pre-flight it locally with your intended title:
+  `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
 [% endif %]
 
 ## Conventions

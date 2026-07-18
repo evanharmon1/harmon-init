@@ -334,6 +334,23 @@ tasks:
           echo "Direct commits to main are blocked. Use a feature branch."
           exit 1
         fi
+[% if use_release_please and release_content_paths %]
+
+  guard:release-title:
+    # The CI counterpart of a pre-commit hook — enforced by release-content-guard.yml
+    # at PR time because the thing it checks (the PR title, which squash-merge feeds
+    # to release-please) does not exist locally. A non-releasing title over
+    # release-worthy content would merge without cutting a tag. RELEASE_CONTENT_PATHS
+    # comes from the release_content_paths copier answer. Pre-flight before opening a
+    # PR with an intended title:
+    #   PR_TITLE="<title>" BASE_SHA=main task guard:release-title
+    # (CI passes PR_TITLE/PR_BODY + BASE_SHA/HEAD_SHA; CHANGED_FILES overrides the diff.)
+    desc: "Guard: a PR touching release-worthy paths needs a fix:/feat: title"
+    vars:
+      RELEASE_CONTENT_PATHS: "[[ release_content_paths ]]"
+    cmds:
+      - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
+[% endif %]
 [% if use_skills_sync %]
 
   # ── Skills sync ────────────────────────────────────────────────
@@ -716,20 +733,6 @@ tasks:
   # v0.1.0 tag; the release:patch/minor/major tasks remain as a manual override.
 [% else %]
   # Releases are intentional — never automated on merge to main.
-[% endif %]
-[% if use_release_please and release_content_paths %]
-  release:guard-title:
-    # CI-only (release-content-guard.yml): fail a PR that changes release-worthy
-    # content under a non-releasing title, which squash-merge + release-please
-    # would otherwise merge without cutting a tag. RELEASE_CONTENT_PATHS comes
-    # from the release_content_paths copier answer. Needs PR_TITLE (+ PR_BODY)
-    # and CHANGED_FILES or BASE_SHA/HEAD_SHA in the env.
-    desc: "Guard: a PR touching release-worthy paths needs a fix:/feat: title"
-    vars:
-      RELEASE_CONTENT_PATHS: "[[ release_content_paths ]]"
-    cmds:
-      - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
-
 [% endif %]
   release:init:
     desc: Create initial v0.1.0 tag

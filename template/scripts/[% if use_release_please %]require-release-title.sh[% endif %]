@@ -41,18 +41,23 @@ title="${PR_TITLE:-}"
 is_releasing_title() {
     _rt_title="$1"
     _rt_body="${2:-}"
-    # Breaking change flagged with `!` before the colon: feat!:, fix(api)!:.
+    # The conventional "type(scope)!" prefix is everything before the FIRST colon;
+    # a title with no colon has no type line (only the body can declare breaking).
     case "$_rt_title" in
-    *"!:"*) return 0 ;;
+    *:*) _rt_head="${_rt_title%%:*}" ;;
+    *) _rt_head="" ;;
+    esac
+    # Breaking change: a `!` immediately before that first colon (feat!:, fix(api)!:).
+    # Matching a bare "!:" anywhere would let `chore: … !: …` bypass the guard.
+    case "$_rt_head" in
+    *"!") return 0 ;;
     esac
     # Breaking change footer in the body.
     case "$_rt_body" in
     *"BREAKING CHANGE"* | *"BREAKING-CHANGE"*) return 0 ;;
     esac
-    # Leading conventional type, before an optional (scope) and the colon.
-    _rt_type="${_rt_title%%:*}" # everything up to the first ':'
-    _rt_type="${_rt_type%%(*}"  # drop an optional '(scope)'
-    _rt_type="${_rt_type%%\!*}" # drop a trailing '!' (defensive)
+    # Leading conventional type (feat/fix), before an optional (scope).
+    _rt_type="${_rt_head%%(*}"
     case "$_rt_type" in
     feat | fix) return 0 ;;
     *) return 1 ;;
@@ -79,6 +84,7 @@ matched=""
 while IFS= read -r f; do
     [ -n "$f" ] || continue
     for prefix in "$@"; do
+        prefix="${prefix%/}" # tolerate a configured prefix written as "dir/"
         case "$f" in
         "$prefix" | "$prefix"/*)
             matched="${matched}  - ${f}"$'\n'

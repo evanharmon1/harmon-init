@@ -158,6 +158,21 @@ tasks:
           exit 1
         fi
 
+  guard:release-title:
+    # The CI counterpart of a pre-commit hook — enforced by release-content-guard.yml
+    # at PR time because the thing it checks (the PR title, which squash-merge feeds
+    # to release-please) does not exist locally. A non-releasing title over
+    # release-worthy content would merge without cutting a tag. RELEASE_CONTENT_PATHS
+    # is this repo's guarded prefixes; generated repos render it from
+    # release_content_paths. Pre-flight before opening a PR with an intended title:
+    #   PR_TITLE="<title>" BASE_SHA=main task guard:release-title
+    # (CI passes PR_TITLE/PR_BODY + BASE_SHA/HEAD_SHA; CHANGED_FILES overrides the diff.)
+    desc: "Guard: a PR touching release-worthy paths needs a fix:/feat: title"
+    vars:
+      RELEASE_CONTENT_PATHS: template
+    cmds:
+      - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
+
   format:
     desc: Auto-format code
     cmds:
@@ -430,18 +445,6 @@ tasks:
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.
-  release:guard-title:
-    # CI-only (release-content-guard.yml): fail a PR that changes release-worthy
-    # content under a non-releasing title, which squash-merge + release-please
-    # would otherwise merge without cutting a tag. RELEASE_CONTENT_PATHS is this
-    # repo's guarded prefixes; generated repos render it from release_content_paths.
-    # Needs PR_TITLE (+ PR_BODY) and CHANGED_FILES or BASE_SHA/HEAD_SHA in the env.
-    desc: "Guard: a PR touching release-worthy paths needs a fix:/feat: title"
-    vars:
-      RELEASE_CONTENT_PATHS: template
-    cmds:
-      - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
-
   release:init:
     desc: Create initial v0.1.0 tag
     cmds:
