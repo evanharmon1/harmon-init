@@ -101,6 +101,7 @@ full)
         --data devcontainer=true
         --data ci_runner=self-hosted
         --data github_org=test-org
+        --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
         --data project_management=github
         --data snyk_scan_schedule=weekly
         --data release_content_paths="src docs"
@@ -464,7 +465,50 @@ meta) # project_management=linear
     ;;
 esac
 
-# ── 9c. Issue forms: default assignee always renders; the org issue `type:` key
+# ── 9c. Conditional prose and generated workflow layout ────────────
+# Inline block tags at the end of Markdown lines can consume the following
+# newline. Keep conditional checklist items structurally separate when the
+# feature is disabled.
+if grep -Fq 'alerts.- [ ]' docs/CHECKLIST.md; then
+    err "docs/CHECKLIST.md joined adjacent checklist items"
+fi
+case "$profile" in
+minimal)
+    ! grep -q '\*\*Bot PAT\*\*' docs/CHECKLIST.md || err "Bot PAT checklist item rendered with devcontainer=false"
+    ;;
+*)
+    grep -q '\*\*Bot PAT\*\*' docs/CHECKLIST.md || err "Bot PAT checklist item missing with devcontainer=true"
+    ;;
+esac
+
+# The dependency-audit parenthetical should name only tools that exist for the
+# rendered stack. The full profile deliberately enables both ecosystems.
+sca_row="$(grep '^| \*\*SCA\*\*' docs/architecture/security.md || true)"
+case "$profile" in
+iac)
+    printf '%s\n' "$sca_row" | grep -q 'pip-audit' || err "Python SCA row is missing pip-audit"
+    ! printf '%s\n' "$sca_row" | grep -q 'pnpm audit' || err "Python-only SCA row mentions pnpm audit"
+    ;;
+web | webapp | meta)
+    printf '%s\n' "$sca_row" | grep -q 'pnpm audit' || err "Node SCA row is missing pnpm audit"
+    ! printf '%s\n' "$sca_row" | grep -q 'pip-audit' || err "Node-only SCA row mentions pip-audit"
+    ;;
+full)
+    printf '%s\n' "$sca_row" | grep -q 'pnpm audit' || err "combined SCA row is missing pnpm audit"
+    printf '%s\n' "$sca_row" | grep -q 'pip-audit' || err "combined SCA row is missing pip-audit"
+    ;;
+minimal)
+    ! printf '%s\n' "$sca_row" | grep -Eq 'pnpm audit|pip-audit' || err "tool-free SCA row names an ecosystem audit"
+    ;;
+esac
+
+# Each authorized sender gets its own continuation line; otherwise a larger
+# allowlist silently creates an overlong generated YAML expression.
+if grep -Eq 'sender\.login.*sender\.login' .github/workflows/claude-review.yml; then
+    err "claude-review sender expression contains multiple senders on one line"
+fi
+
+# ── 9d. Issue forms: default assignee always renders; the org issue `type:` key
 #       is present only on org repos (issue types are org-level) ──
 if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
     grep -q '^assignees:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml is missing the default assignee"
@@ -478,7 +522,7 @@ if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
     esac
 fi
 
-# ── 9d. skills-sync renders per use_skills_sync (default on) ────────
+# ── 9e. skills-sync renders per use_skills_sync (default on) ────────
 # minimal renders with use_skills_sync=false (OFF branch); every other profile
 # uses the default (on). Assert the conditionally-named files + gated tasks
 # appear/disappear together so a broken gate can't ship silently.

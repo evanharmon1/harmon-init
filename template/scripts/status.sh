@@ -474,7 +474,8 @@ if [[ "${SECTION}" == "setup" ]]; then
         has_codeql_wf=0
         find .github/workflows -maxdepth 1 \( -name 'codeql.yml' -o -name 'codeql.yaml' \) 2>/dev/null | grep -q . && has_codeql_wf=1
         has_semgrep_ci=0
-        grep -rq 'task security:sast' .github/workflows >/dev/null 2>&1 && has_semgrep_ci=1
+        grep -rEq 'task[[:space:]]+security:sast([[:space:]]|$)' .github/workflows \
+            >/dev/null 2>&1 && has_semgrep_ci=1
         uses_full_scan=0
         grep -rq 'FULL_SECURITY_SCAN' .github/workflows >/dev/null 2>&1 && uses_full_scan=1
 
