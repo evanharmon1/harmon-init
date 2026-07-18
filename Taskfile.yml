@@ -176,9 +176,7 @@ tasks:
   format:
     desc: Auto-format code
     cmds:
-      - |
-        files=$(git ls-files '*.sh' '*.bash')
-        [ -n "$files" ] && shfmt -w $files || true
+      - ./scripts/format-shell.sh
       # Best-effort markdown auto-fix (bin-vs-npx dispatch + default globs in the
       # helper; template/ excluded — jinja markdown); must NOT abort `format` on
       # un-auto-fixable rule violations — `lint:markdown` (check-only) is the gate.
