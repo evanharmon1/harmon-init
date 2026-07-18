@@ -131,6 +131,12 @@ use_release_please:
   help: "RELEASE-PLEASE: Manage releases with release-please? (opens a rolling release PR you merge intentionally; CHANGELOG auto-generated from conventional commits)"
   default: yes
 
+release_content_paths:
+  type: str
+  help: "RELEASE GUARD: Space-separated folders whose changes MUST ship in a release, e.g. 'src' or 'ai/skills templates' (a folder matches everything beneath it). Because squash-merge uses the PR title and release-please only tags feat/fix, a PR touching these must use a fix:/feat: title — a CI check (release-content-guard.yml) enforces it so tag-pinned consumers actually receive the change. Empty = no guard."
+  default: ""
+  when: "[[ use_release_please ]]"
+
 use_skills_sync:
   type: bool
   help: "SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned, drift-checked)?"

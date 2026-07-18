@@ -114,6 +114,18 @@ it points here.
   Fixes** (patch), `feat!` / `BREAKING CHANGE:` → major. The rest (`build`,
   `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`) don't cut
   a release on their own — they ride along in the next one.
+- **On a squash-merge repo the PR title _is_ the release type.** GitHub sets the
+  squash commit subject from the PR title for a multi-commit PR, and release-please
+  reads only that subject — the individual `fix:`/`feat:` commits inside the PR are
+  invisible in the squashed body. So a PR whose title is `chore:`/`docs:` merges
+  with **no release**, even when it carries releasable content. The
+  **release-content guard** (`release-content-guard.yml` →
+  `scripts/require-release-title.sh`, unit-tested by `task test:release-title`)
+  fails a PR that changes release-worthy paths under a non-releasing title. For
+  harmon-init that path is `template/` (all consumers get it via `copier update`
+  to a tag); generated repos configure their own via the `release_content_paths`
+  copier answer (empty = no guard). Automated dependency PRs (Renovate/Dependabot)
+  are skipped — retitle by hand if a dep bump to guarded content must ship.
 - Issue types map many-to-one onto these commit types — see
   [project-management.md](project-management.md).
 - **Milestones are named after release versions** (`v1.1.0` = the git tag): the
