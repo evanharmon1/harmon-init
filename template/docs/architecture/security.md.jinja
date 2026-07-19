@@ -30,7 +30,7 @@ repositories and for profiles without a CodeQL workflow.
 
 | Axis | Catches | Default tool | Where it runs |
 |---|---|---|---|
-[% if use_node or use_python %]
+[% if use_codeql %]
 | **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** for public repos; **Semgrep CE** for free private repos | CodeQL runs automatically in public CI. Private CI uses Semgrep unless paid GitHub Code Security + `FULL_SECURITY_SCAN=true` opts into CodeQL |
 [% else %]
 | **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **Semgrep CE** | CI and `task security:sast`; this profile has no generated CodeQL workflow |
@@ -54,7 +54,7 @@ The repository-class policy is:
   (Semgrep CE) + `security:secrets` (gitleaks) + `security:audit` (the
   package-manager audit). It does **not** run Snyk.
 - **CI routes SAST by visibility** instead of running duplicate engines:
-[% if use_node or use_python %]
+[% if use_codeql %]
   public → CodeQL; free private → Semgrep CE; private with GitHub Code Security +
   `FULL_SECURITY_SCAN=true` → CodeQL.
 [% else %]
@@ -63,7 +63,7 @@ The repository-class policy is:
 [% endif %]
 - **`task setup:github`** turns on the GitHub-native layers: Dependabot alerts,
   and Private Vulnerability Reporting when the repository is public; the branch
-  ruleset makes `verify` + `security`[% if use_node or use_python %] + `codeql-verify`[% endif %] required checks. See
+  ruleset makes `verify` + `security`[% if use_codeql %] + `codeql-verify`[% endif %] required checks. See
   [../CHECKLIST.md](../CHECKLIST.md).
 - Which tools apply depends on the stack: SAST/SCA need code + a manifest (web/app,
   or Python for iac); IaC scanning is Terraform-only.
@@ -73,10 +73,11 @@ not CodeQL-equivalent: its community analysis is principally intraprocedural
 and normally has shallower data-flow coverage than CodeQL or commercial engines.
 It is the private-repository floor, not a claim of full vulnerability coverage.
 
-[% if use_node or use_python %]
+[% if use_codeql %]
 ### Enable CodeQL when the repository is eligible
 
-The template includes `codeql.yml` for Node and Python profiles. It runs
+The template includes `codeql.yml` when `use_codeql=true` and analyzes exactly
+the first-party languages recorded in `codeql_languages`. It runs
 automatically on every **public** repository: GitHub code scanning and standard
 GitHub-hosted Actions runners are free there. CodeQL is preferred over Semgrep CE
 for these stacks because its queries include deeper interprocedural and data-flow
@@ -96,9 +97,10 @@ CodeQL.
 [% else %]
 ### Semgrep is the SAST baseline
 
-This profile does not generate `codeql.yml`, so the build workflow runs Semgrep
+CodeQL is deliberately omitted for this profile. The build workflow runs Semgrep
 CE for public and private repositories. If the repository later gains a
-CodeQL-supported application stack, add a CodeQL workflow for public coverage or
+CodeQL-supported application stack, set `use_codeql=true`, select its
+first-party `codeql_languages`, and re-apply the template for public coverage or
 for paid private GitHub Code Security coverage.
 [% endif %]
 

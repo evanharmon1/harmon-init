@@ -119,6 +119,7 @@ meta)
         --data obsidian_project_add=true
         --data project_management=linear
         --data snyk_scan_schedule=daily
+        --data use_codeql=false
     )
     copier_flags+=(--skip-tasks)
     ;;
@@ -209,12 +210,55 @@ fi
 grep -q 'task security:sast' .github/workflows/build.yml || err "build workflow is missing the Semgrep SAST route"
 jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
     err "Renovate vulnerability-alert remediation must be enabled"
+grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
+grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
+[ -x scripts/verify-required-results.sh ] || err "fail-closed required-results helper missing or not executable"
+[ -x scripts/test-ci-results.sh ] || err "CI result truth-table regression missing or not executable"
+./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper truth tables failed"
+if [ "$profile" = "web" ]; then
+    [ -x scripts/validate-web.sh ] || err "fresh web scaffold validator guard missing or not executable"
+    task verify >/dev/null || err "fresh web scaffold does not pass task verify before app setup"
+fi
+for aggregate_workflow in .github/workflows/build.yml .github/workflows/devcontainer-build.yml; do
+    [ -f "$aggregate_workflow" ] || continue
+    grep -q 'IS_FORK:.*head.repo.full_name != github.repository' "$aggregate_workflow" ||
+        err "$aggregate_workflow is missing the explicit untrusted-fork decision"
+    grep -q 'untrusted-fork boundary' "$aggregate_workflow" ||
+        err "$aggregate_workflow is missing an inline untrusted-fork boundary"
+    grep -q 'run: ./scripts/verify-required-results.sh' "$aggregate_workflow" ||
+        err "$aggregate_workflow does not use the tested trusted-event result helper"
+    ! grep -q '"success".*"skipped".*||' "$aggregate_workflow" ||
+        err "$aggregate_workflow still generically allows both success and skipped"
+done
 if [ -f .github/workflows/codeql.yml ]; then
+    grep -Eq '^use_codeql:[[:space:]]+(true|yes)$' .copier-answers.yml ||
+        err "CodeQL workflow rendered without use_codeql=true"
+    [ -x scripts/verify-codeql-result.sh ] || err "CodeQL result helper missing or not executable"
     grep -q 'github.event.repository.private == false' .github/workflows/codeql.yml ||
         err "CodeQL must run automatically on public repositories"
+    grep -q 'run: ./scripts/verify-codeql-result.sh' .github/workflows/codeql.yml ||
+        err "CodeQL aggregate does not use the tested trusted-event helper"
+    grep -q 'name: Check deliberate fork skip' .github/workflows/codeql.yml ||
+        err "CodeQL aggregate is missing its checkout-free fork diagnostic"
+    answer_languages="$(sed -n '/^codeql_languages:/,/^[^[:space:]-]/p' .copier-answers.yml)"
+    for language in javascript-typescript python; do
+        answer_has=false
+        workflow_has=false
+        printf '%s\n' "$answer_languages" | grep -q -- "- ${language}" && answer_has=true
+        grep -q -- "- ${language}" .github/workflows/codeql.yml && workflow_has=true
+        [ "$answer_has" = "$workflow_has" ] ||
+            err "CodeQL workflow matrix does not match recorded language '${language}'"
+    done
     grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "supported-stack ruleset must require codeql-verify"
 else
+    grep -Eq '^use_codeql:[[:space:]]+(false|no)$' .copier-answers.yml ||
+        err "CodeQL workflow omitted without use_codeql=false"
+    [ ! -f scripts/verify-codeql-result.sh ] || err "CodeQL-only result helper rendered while use_codeql=false"
+    ! grep -q 'actions/workflows/codeql.yml' README.md ||
+        err "README advertises CodeQL while use_codeql=false"
+    grep -q 'CodeQL is deliberately omitted' docs/architecture/security.md ||
+        err "security docs do not record the deliberate CodeQL omission"
     ! grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "ruleset requires codeql-verify but this profile has no CodeQL workflow"
 fi

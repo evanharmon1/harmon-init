@@ -14,7 +14,7 @@ Common issues in [[ project_name ]] and how to fix them.
 
 ## CI
 
-- **Required check missing on a PR** — ensure Build & Validate[% if use_node or use_python %] and CodeQL[% endif %] ran;
-  required checks are `verify`, `security`[% if use_node or use_python %], and `codeql-verify`[% endif %].
+- **Required check missing on a PR** — ensure Build & Validate[% if use_codeql %] and CodeQL[% endif %] ran;
+  required checks are `verify`, `security`[% if use_codeql %], and `codeql-verify`[% endif %].
 
 TODO: add project-specific issues as they come up.

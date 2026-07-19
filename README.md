@@ -44,7 +44,8 @@ copier copy harmon-init new-project --trust
 
 Key questions: `project_type` (general | web-astro | web-app | iac | docs),
 `github_org`, `ci_runner` (ubuntu-latest | self-hosted), `devcontainer`,
-`include_terraform` / `include_ansible`, `license`. Hidden defaults (author
+`include_terraform` / `include_ansible`, `use_codeql` / `codeql_languages`,
+`license`. Hidden defaults (author
 identity, org info, directories) live in `copier.yml` under `when: false` —
 customize those once before first use.
 

@@ -58,6 +58,7 @@ tasks:
     cmds:
       - task: check
       - task: test:tasks
+      - task: test:ci-results
       - task: test:release-title
       - task: foreman:test
       - task: test:hooks
@@ -74,6 +75,7 @@ tasks:
     cmds:
       - task: check
       - task: test:tasks
+      - task: test:ci-results
       - task: test:release-title
       - task: test:dogfood-parity
       - task: foreman:test
@@ -296,6 +298,11 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
+
+  test:ci-results:
+    desc: Unit-test fail-closed CI aggregate result helpers
+    cmds:
+      - ./scripts/test-ci-results.sh
 
   test:release-title:
     desc: Unit-test the release-content title guard (require-release-title.sh)

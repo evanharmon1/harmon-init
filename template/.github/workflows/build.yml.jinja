@@ -41,6 +41,7 @@ jobs:
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
       - run: task test:tasks
+      - run: task test:ci-results
 [% if use_release_please %]
       - run: task test:release-title
 [% endif %]
@@ -106,7 +107,7 @@ jobs:
       - name: Dependency audit
         run: task security:audit
       - name: SAST (Semgrep Community Edition)
-[% if use_node or use_python %]
+[% if use_codeql %]
         if: github.event.repository.private && vars.FULL_SECURITY_SCAN != 'true'
 [% endif %]
         run: task security:sast
@@ -244,23 +245,58 @@ jobs:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    env:
+      IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     steps:
-      - name: Check job results
-        run: |
-          fail=0
-          check() {
-            [ "$2" = "success" ] || [ "$2" = "skipped" ] || { echo "Job $1 result: $2"; fail=1; }
-          }
-          check lint "${{ needs.lint.result }}"
-          check security "${{ needs.security.result }}"
+      # Never check out or run fork-controlled repository code on this path.
+      - name: Verify deliberate skips at the untrusted-fork boundary
+        if: env.IS_FORK == 'true'
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
 [% if use_node %]
-          check build-test "${{ needs.build-test.result }}"
+          BUILD_TEST_RESULT: ${{ needs.build-test.result }}
 [% endif %]
 [% if project_type == 'web-astro' %]
-          check lighthouse "${{ needs.lighthouse.result }}"
+          LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
+[% endif %]
+        run: |
+          fail=0
+          check_skipped() {
+            if [ "$2" != "skipped" ]; then
+              echo "Job $1 result: $2 (expected skipped for an untrusted fork)"
+              fail=1
+            fi
+          }
+          check_skipped lint "$LINT_RESULT"
+          check_skipped security "$SECURITY_RESULT"
+[% if use_node %]
+          check_skipped build-test "$BUILD_TEST_RESULT"
+[% endif %]
+[% if project_type == 'web-astro' %]
+          check_skipped lighthouse "$LIGHTHOUSE_RESULT"
 [% endif %]
           if [ "$fail" -ne 0 ]; then
-            echo "One or more required jobs failed."
             exit 1
           fi
-          echo "All required jobs passed."
+          echo "Untrusted fork trust boundary enforced: all repository-controlled jobs were deliberately skipped."
+      - if: env.IS_FORK != 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Verify required jobs succeeded
+        if: env.IS_FORK != 'true'
+        env:
+          EXPECTED_RESULT: success
+          LINT_RESULT: ${{ needs.lint.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+[% if use_node %]
+          BUILD_TEST_RESULT: ${{ needs.build-test.result }}
+[% endif %]
+[% if project_type == 'web-astro' %]
+          LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
+[% endif %]
+        run: ./scripts/verify-required-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
+
+# Keep a literal final line after the inline Jinja conditionals above; with
+# trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.

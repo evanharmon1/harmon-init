@@ -106,6 +106,63 @@ markers="$(grep -rl '^<<<<<<<' "$gen" 2>/dev/null | grep -v '/\.git/' || true)"
 rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"
 [ -z "$rejs" ] || err "copier .rej files left: $rejs"
 
+# 7. Migrate real v4.1.1 answer files through the newly explicit CodeQL
+# questions. `--defaults` must preserve the old workflow route and language
+# matrix instead of silently adding/removing scans. Standardize-repo still
+# reviews and passes these answers explicitly for a real repository update.
+migrate_v411_profile() {
+    case_name="$1"
+    project_type="$2"
+    case_dir="$work/migration-${case_name}"
+
+    copier copy "$repo_root" "$case_dir" --vcs-ref=v4.1.1 --trust --defaults --skip-tasks \
+        --data project_name="Migration ${case_name}" --data project_slug="migration-${case_name}" \
+        --data project_type="$project_type" --data git_init=false \
+        --data github_remote_create=false --data github_release_init=false \
+        --data run_task_install=false --data bunch_add=false \
+        --data obsidian_project_add=false --data use_release_please=false \
+        --data use_skills_sync=false --data use_foreman=false \
+        --data devcontainer=false >/dev/null 2>&1 || {
+        err "v4.1.1 ${case_name} migration fixture failed to render"
+        return
+    }
+    git -C "$case_dir" init -q
+    gitq "$case_dir" add -A
+    gitq "$case_dir" commit -qm "v4.1.1 fixture"
+    (cd "$case_dir" && copier update --vcs-ref=HEAD --trust --defaults --skip-tasks) \
+        >/dev/null 2>&1 || {
+        err "v4.1.1 ${case_name} fixture failed to update to HEAD"
+        return
+    }
+}
+
+migrate_v411_profile general general
+migrate_v411_profile web web-astro
+migrate_v411_profile iac iac
+
+general_migration="$work/migration-general"
+web_migration="$work/migration-web"
+iac_migration="$work/migration-iac"
+
+grep -Eq '^use_codeql:[[:space:]]+false$' "$general_migration/.copier-answers.yml" ||
+    err "v4.1.1 general migration did not persist use_codeql=false"
+[ ! -f "$general_migration/.github/workflows/codeql.yml" ] ||
+    err "v4.1.1 general migration unexpectedly added CodeQL"
+
+grep -Eq '^use_codeql:[[:space:]]+true$' "$web_migration/.copier-answers.yml" ||
+    err "v4.1.1 web migration did not preserve use_codeql=true"
+grep -q -- '- javascript-typescript' "$web_migration/.github/workflows/codeql.yml" ||
+    err "v4.1.1 web migration lost the JavaScript/TypeScript CodeQL language"
+! grep -q -- '- python' "$web_migration/.github/workflows/codeql.yml" ||
+    err "v4.1.1 web migration unexpectedly expanded the old CodeQL matrix"
+
+grep -Eq '^use_codeql:[[:space:]]+true$' "$iac_migration/.copier-answers.yml" ||
+    err "v4.1.1 IaC migration did not preserve use_codeql=true"
+grep -q -- '- python' "$iac_migration/.github/workflows/codeql.yml" ||
+    err "v4.1.1 IaC migration lost the Python CodeQL language"
+! grep -q -- '- javascript-typescript' "$iac_migration/.github/workflows/codeql.yml" ||
+    err "v4.1.1 IaC migration unexpectedly expanded the old CodeQL matrix"
+
 if [ "$fail" -ne 0 ]; then
     echo "test-template-update: FAILED" >&2
     exit 1
