@@ -217,7 +217,7 @@ grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not p
 ./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper truth tables failed"
 if [ "$profile" = "web" ]; then
     [ -x scripts/validate-web.sh ] || err "fresh web scaffold validator guard missing or not executable"
-    task verify >/dev/null || err "fresh web scaffold does not pass task verify before app setup"
+    task validate >/dev/null || err "fresh web scaffold validation does not skip cleanly before app setup"
 fi
 for aggregate_workflow in .github/workflows/build.yml .github/workflows/devcontainer-build.yml; do
     [ -f "$aggregate_workflow" ] || continue
