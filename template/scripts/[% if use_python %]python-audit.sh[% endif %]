@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Audit the exact locked Python dependency graph, including development tools.
+#
+# Replaces `uvx pip-audit --requirement <(uv pip compile pyproject.toml)`, which
+# was fail-open in three ways: process substitution discards the compile step's
+# exit status, so a failed resolve produced an EMPTY requirements file that
+# pip-audit happily reported as "no known vulnerabilities" with exit 0; it
+# re-resolved instead of auditing the committed lock; and it never included the
+# dev group, which is where this project's real dependencies live.
+set -euo pipefail
+
+requirements="$(mktemp)"
+trap 'rm -f "$requirements"' EXIT
+
+if [ -f uv.lock ]; then
+    # --locked fails rather than silently rewriting a stale lock in CI, so the
+    # audit always describes the dependency graph that was actually reviewed.
+    uv export \
+        --locked \
+        --all-extras \
+        --all-groups \
+        --no-emit-project \
+        --no-hashes \
+        --quiet \
+        --output-file "$requirements"
+else
+    # Fresh scaffolds have no uv.lock yet; resolve to a temp file without
+    # mutating the repository.
+    uv pip compile pyproject.toml \
+        --all-extras \
+        --group dev \
+        --quiet \
+        --output-file "$requirements"
+fi
+
+# The `# renovate:` line must sit IMMEDIATELY above the assignment (the manager
+# joins them with \s+, so any comment between breaks the match), and the value
+# must be unquoted (currentValue is captured with \S+, so quotes land inside it
+# and pep440 rejects them). scripts/test-renovate-pins.sh enforces both.
+# renovate: datasource=pypi depName=pip-audit
+PIP_AUDIT_VERSION=2.10.1
+uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+    --desc \
+    --requirement "$requirements"

@@ -59,6 +59,7 @@ tasks:
       - task: check
       - task: test:tasks
       - task: test:ci-results
+      - task: test:renovate-pins
       - task: test:release-title
       - task: foreman:test
       - task: test:hooks
@@ -76,6 +77,7 @@ tasks:
       - task: check
       - task: test:tasks
       - task: test:ci-results
+      - task: test:renovate-pins
       - task: test:release-title
       - task: test:dogfood-parity
       - task: foreman:test
@@ -301,6 +303,11 @@ tasks:
     desc: Unit-test the fail-closed CI aggregate result helper
     cmds:
       - ./scripts/test-ci-results.sh
+
+  test:renovate-pins:
+    desc: Check every annotated shell version pin is extractable by Renovate
+    cmds:
+      - ./scripts/test-renovate-pins.sh
 
   test:release-title:
     desc: Unit-test the release-content title guard (require-release-title.sh)
