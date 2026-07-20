@@ -130,6 +130,13 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 - Side-effectful copier answers (`bunch_add`, `github_remote_create`,
   `github_release_init`, `run_task_install`) must default to **no** so
   `copier copy --defaults` is CI-safe.
+- **Optimize for regular rolling updates, not every historical migration path.**
+  Repositories standardized by harmon-init are expected to stay near the current
+  release. Give new answers sensible defaults and let the standardization PR apply
+  repository-aware judgment. Do not add permanent migrations or version-pair
+  fixtures for arbitrary old/new combinations; handle unusual version gaps and
+  customizations in the downstream PR unless a demonstrated fleet-wide,
+  deterministic transformation cannot be handled safely there.
 - After changing `copier.yml` or anything in `template/`, `task test:template:all`
   must pass.
 

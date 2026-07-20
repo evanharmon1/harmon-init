@@ -119,6 +119,7 @@ meta)
         --data obsidian_project_add=true
         --data project_management=linear
         --data snyk_scan_schedule=daily
+        --data use_codeql=false
     )
     copier_flags+=(--skip-tasks)
     ;;
@@ -209,12 +210,54 @@ fi
 grep -q 'task security:sast' .github/workflows/build.yml || err "build workflow is missing the Semgrep SAST route"
 jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
     err "Renovate vulnerability-alert remediation must be enabled"
+grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
+grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
+! grep -q 'task test:ci-results' .github/workflows/build.yml ||
+    err "rendered build workflow references the root-only CI result tests"
+[ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
+EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
+    err "rendered CI result helper rejected successful trusted jobs"
+if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >/dev/null 2>&1; then
+    err "rendered CI result helper accepted an unexpectedly skipped trusted job"
+fi
+for aggregate_workflow in .github/workflows/build.yml .github/workflows/devcontainer-build.yml; do
+    [ -f "$aggregate_workflow" ] || continue
+    grep -q 'IS_FORK:.*head.repo.full_name != github.repository' "$aggregate_workflow" ||
+        err "$aggregate_workflow is missing the explicit untrusted-fork decision"
+    grep -q 'untrusted-fork boundary' "$aggregate_workflow" ||
+        err "$aggregate_workflow is missing an inline untrusted-fork boundary"
+    grep -q 'run: ./scripts/verify-ci-results.sh' "$aggregate_workflow" ||
+        err "$aggregate_workflow does not use the tested trusted-event result helper"
+    ! grep -q '"success".*"skipped".*||' "$aggregate_workflow" ||
+        err "$aggregate_workflow still generically allows both success and skipped"
+done
 if [ -f .github/workflows/codeql.yml ]; then
+    grep -Eq '^use_codeql:[[:space:]]+(true|yes)$' .copier-answers.yml ||
+        err "CodeQL workflow rendered without use_codeql=true"
     grep -q 'github.event.repository.private == false' .github/workflows/codeql.yml ||
         err "CodeQL must run automatically on public repositories"
+    grep -q 'run: ./scripts/verify-ci-results.sh' .github/workflows/codeql.yml ||
+        err "CodeQL aggregate does not use the shared trusted-event helper"
+    grep -q 'name: Check deliberate fork skip' .github/workflows/codeql.yml ||
+        err "CodeQL aggregate is missing its checkout-free fork diagnostic"
+    answer_languages="$(sed -n '/^codeql_languages:/,/^[^[:space:]-]/p' .copier-answers.yml)"
+    for language in javascript-typescript python; do
+        answer_has=false
+        workflow_has=false
+        printf '%s\n' "$answer_languages" | grep -q -- "- ${language}" && answer_has=true
+        grep -q -- "- ${language}" .github/workflows/codeql.yml && workflow_has=true
+        [ "$answer_has" = "$workflow_has" ] ||
+            err "CodeQL workflow matrix does not match recorded language '${language}'"
+    done
     grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "supported-stack ruleset must require codeql-verify"
 else
+    grep -Eq '^use_codeql:[[:space:]]+(false|no)$' .copier-answers.yml ||
+        err "CodeQL workflow omitted without use_codeql=false"
+    ! grep -q 'actions/workflows/codeql.yml' README.md ||
+        err "README advertises CodeQL while use_codeql=false"
+    grep -q 'CodeQL is deliberately omitted' docs/architecture/security.md ||
+        err "security docs do not record the deliberate CodeQL omission"
     ! grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "ruleset requires codeql-verify but this profile has no CodeQL workflow"
 fi

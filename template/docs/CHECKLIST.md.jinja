@@ -45,7 +45,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
       resource owner, so a **new owner needs a new PAT**. Both layers are required —
       the collaborator grant above sets the ceiling, the PAT's repo list reaches it.
       Procedure: [guides/bot-account.md](guides/bot-account.md).[% endif %]
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_node or use_python %] and `codeql.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_node or use_python %]/`codeql-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %] and `codeql.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 
 - [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
 - [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
@@ -53,9 +53,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
       key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
-[% if use_node or use_python %]
+[% if use_codeql %]
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
-      free; confirm a successful upload in the Security tab. Free private repos
+      free for the selected `codeql_languages`; confirm a successful upload in
+      the Security tab. Free private repos
       run Semgrep CE in `build.yml`. Only set `FULL_SECURITY_SCAN=true` on a
       private/internal repository after enabling paid GitHub Code Security; the
       variable is a run switch, not an entitlement. It cannot disable public
@@ -63,8 +64,9 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% else %]
 - [ ] **SAST coverage** — this profile has no CodeQL workflow, so Semgrep CE runs
       in `build.yml` for public and private repositories. Add CodeQL later if the
-      repo gains a supported application stack and is public (free) or has paid
-      GitHub Code Security (private/internal).
+      repo gains supported first-party source: set `use_codeql=true`, select its
+      `codeql_languages`, and ensure it is public (free) or has paid GitHub Code
+      Security (private/internal).
 [% endif %]
 - [ ] **Choose the Snyk posture** — the default is manual/local only via
       `task security:sast:snyk` and `task security:sca:snyk`; it is not part of

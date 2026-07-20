@@ -3,7 +3,7 @@
 [[ project_description ]]
 
 [![Build & Validate]([[ repo_url ]]/actions/workflows/build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/build.yml)
-[% if use_node or use_python %]
+[% if use_codeql %]
 [![CodeQL]([[ repo_url ]]/actions/workflows/codeql.yml/badge.svg)]([[ repo_url ]]/actions/workflows/codeql.yml)
 [% endif %]
 [% if devcontainer %]
@@ -132,7 +132,7 @@ same `task` targets as local hooks.
 | Workflow | Purpose |
 |---|---|
 | `build.yml` | lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security → aggregate `verify` gate |
-[% if use_node or use_python %]
+[% if use_codeql %]
 | `codeql.yml` | CodeQL SAST: automatic and free for public repos; private/internal repos require GitHub Code Security + `FULL_SECURITY_SCAN=true` |
 [% endif %]
 [% if snyk_scan_schedule != 'off' %]
@@ -147,7 +147,7 @@ same `task` targets as local hooks.
 [% endif %]
 
 Branch protection: `main` requires a PR with code-owner approval and the
-`verify` + `security`[% if use_node or use_python %] + `codeql-verify`[% endif %] checks (importable ruleset in `.github/`; see
+`verify` + `security`[% if use_codeql %] + `codeql-verify`[% endif %] checks (importable ruleset in `.github/`; see
 [docs/architecture/branch-protection.md](docs/architecture/branch-protection.md)).
 [% if use_release_please %]
 **Releases are intentional** — release-please keeps a rolling release PR from
