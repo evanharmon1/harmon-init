@@ -23,7 +23,9 @@ jobs:
        github.event_name == 'pull_request_review_comment' ||
        github.event_name == 'pull_request_review' ||
        github.event_name == 'pull_request') &&
-      ([% for s in _review_senders %]github.event.sender.login == '[[ s ]]'[% if not loop.last %] || [% endif %][% endfor %]) &&
+[% for s in _review_senders %]
+      [[ '(' if loop.first else ' ' ]]github.event.sender.login == '[[ s ]]'[[ ' ||' if not loop.last else ') &&' ]]
+[% endfor %]
       (contains(github.event.comment.body, '@claude review') ||
        contains(github.event.review.body, '@claude review') ||
        (github.event.action == 'labeled' &&
