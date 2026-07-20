@@ -64,7 +64,11 @@ github_org:
 code_owner:
   type: str
   help: "CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
-  default: "[[ github_org ]]"
+  # Defaults to the human author, NOT github_org: GitHub rejects a bare org as a
+  # CODEOWNERS principal ("Unknown owner"), which silently makes
+  # require-code-owner-review match nobody. An org/team (`@org/team`) is a valid
+  # answer, but must be chosen deliberately.
+  default: "[[ author_git_provider_username ]]"
 
 claude_authorized_members:
   type: str

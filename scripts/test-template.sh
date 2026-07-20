@@ -2,7 +2,7 @@
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
 # Usage: ./scripts/test-template.sh <profile>
-# Profiles: minimal | web | iac | full | meta
+# Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
 # unless some profile makes the condition true (copier skips files whose
@@ -282,6 +282,50 @@ if [ -f .github/workflows/snyk-scheduled.yml ]; then
     grep -q 'SNYK_TOKEN' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow is missing token wiring"
     grep -q 'remote-repo-url' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow must identify public repository context"
     grep -q 'matrix.scan' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow must run SAST and SCA"
+fi
+
+# ── 1c. CODEOWNERS names a principal GitHub will actually accept ────
+# `code_owner` defaults to the human author, NOT github_org: GitHub rejects a
+# bare org ("Unknown owner"), which silently makes require-code-owner-review
+# match nobody. The `full` profile renders with github_org=test-org, so this
+# also proves the default does not follow the org.
+if [ -f .github/CODEOWNERS ]; then
+    grep -Fxq '* @evanharmon1' .github/CODEOWNERS ||
+        err "CODEOWNERS does not name the author as owner: $(cat .github/CODEOWNERS)"
+fi
+
+# ── 1d. Python audit is fail-closed and audits the locked graph ─────
+# The previous form piped `uv pip compile` through process substitution, so a
+# failed resolve produced an empty requirements file and a green audit.
+# Keyed on pyproject.toml, NOT a use_python answer: `when: false` questions are
+# computed, and copier does not persist them to .copier-answers.yml.
+if [ -f pyproject.toml ]; then
+    [ -x scripts/python-audit.sh ] || err "python-audit.sh missing or not executable"
+    grep -q './scripts/python-audit.sh' Taskfile.yml ||
+        err "security:audit does not call the fail-closed python audit helper"
+    ! grep -q 'pip-audit .*--requirement <(' Taskfile.yml ||
+        err "security:audit still resolves requirements through process substitution"
+    grep -q 'uv export' scripts/python-audit.sh ||
+        err "python-audit.sh must audit the locked graph, not a fresh resolve"
+    grep -q -- '--all-groups\|--group dev' scripts/python-audit.sh ||
+        err "python-audit.sh must include development dependencies"
+    grep -q 'pip-audit==' scripts/python-audit.sh ||
+        err "python-audit.sh must pin pip-audit"
+fi
+
+# ── 1e. Renovate can see the pins the template actually ships ───────
+# foreman's taskfiles/foreman.yml carries `# renovate:`-annotated ruff/black
+# pins in `FOO_VERSION: x.y.z` form; without a Taskfile manager they rot
+# invisibly in every generated repo.
+if grep -q '^use_foreman:[[:space:]]*\(true\|yes\)$' .copier-answers.yml; then
+    # Anchor on the managerFilePatterns entry, not on "Taskfile" or the
+    # `FOO_VERSION: ` matchString: both also appear in this manager's own
+    # description (and "Taskfile" in other managers' patterns), so grepping for
+    # those silently passes even when the manager is gutted.
+    grep -q 'taskfiles\\\\/' renovate.json ||
+        err "renovate.json has no Taskfile manager for the shipped FOO_VERSION pins"
+    grep -q 'brew "python"' Brewfile ||
+        err "Brewfile lacks python; foreman needs >= 3.11 and macOS ships 3.9"
 fi
 
 # ── 2. No unrendered Copier variables leaked into output ────────────
