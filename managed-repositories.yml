@@ -1,0 +1,17 @@
+# Production repositories intentionally kept current with harmon-init.
+# Keep this as a simple fleet inventory; version state belongs in each repo's
+# .copier-answers.yml and exceptions are handled in the update PR.
+repositories:
+  - evanharmon1/evanharmon-site
+  - evanharmon1/harmon-devkit
+  - evanharmon1/harmon-dotfiles
+  - evanharmon1/harmon-ops
+  - harmonops/harmon-infra
+  - ponderousdev/foreman
+  - ponderousdev/lawnomator-site
+  - ponderousdev/omator
+  - ponderousdev/ponderous-infra
+  - ponderousdev/ponderous-site
+  - sommerlawn/sommerlawn-infra
+  - sommerlawn/sommerlawn-site
+  - sommerlawn/sommerlawn-zoho

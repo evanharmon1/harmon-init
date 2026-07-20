@@ -16,7 +16,7 @@ How testing works in [[ project_name ]].
 [% else %]
 | Tests | TODO: pick a test runner | `task test` |
 [% endif %]
-| Application security | Semgrep CE locally[% if use_node or use_python %]; CodeQL in eligible CI[% endif %] | `task security:sast` |
+| Application security | Semgrep CE locally[% if use_codeql %]; CodeQL in eligible CI[% endif %] | `task security:sast` |
 | Optional second opinion | Snyk Code + Open Source, manual[% if snyk_scan_schedule != 'off' %] or [[ snyk_scan_schedule ]] scheduled[% endif %] | `task security:sast:snyk` / `task security:sca:snyk` |
 | Secrets | gitleaks | `task security:secrets` |
 | Dependencies | package-manager audit | `task security:audit` |

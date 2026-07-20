@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.1.2](https://github.com/evanharmon1/harmon-init/compare/v4.1.1...v4.1.2) (2026-07-19)
+
+
+### Bug Fixes
+
+* **template:** align design handoff bundle wording with the renamed skill ([#321](https://github.com/evanharmon1/harmon-init/issues/321)) ([0ae369c](https://github.com/evanharmon1/harmon-init/commit/0ae369c513a2c64cd7cc13fade48dc84403eae04))
+
 ## [4.1.1](https://github.com/evanharmon1/harmon-init/compare/v4.1.0...v4.1.1) (2026-07-18)
 
 

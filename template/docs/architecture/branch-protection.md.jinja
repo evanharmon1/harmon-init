@@ -9,7 +9,7 @@ This document explains the branch protection ruleset applied to `main` and how i
 An importable copy of the ruleset ships in this repo at
 `.github/Branch Protection Ruleset - Protect Main.json`. Apply it through the
 GitHub **UI import** (do this once `build.yml` is on `main`, so the required
-`verify`/`security`[% if use_node or use_python %]/`codeql-verify`[% endif %] checks resolve):
+`verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %] checks resolve):
 
 > Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select
 > `.github/Branch Protection Ruleset - Protect Main.json`.
@@ -288,25 +288,26 @@ This is the core rule that prevents the AI agent from pushing directly to `main`
 
 All specified CI checks must pass before the PR can merge. The `strict_required_status_checks_policy: true` setting means the PR branch must be up-to-date with `main` before merging — if `main` advances after the checks ran, the checks must re-run. The `do_not_enforce_on_create: true` setting skips enforcement when the branch is first created (before any CI has had a chance to run).
 
-The required checks are the build gates[% if use_node or use_python %] plus CodeQL's stable aggregate[% endif %] (see
+The required checks are the build gates[% if use_codeql %] plus CodeQL's stable aggregate[% endif %] (see
 [ci-cd.md](ci-cd.md)):
 
 | Check      | Purpose                                                                                          |
 | ---------- | ----------------------------------------------------------------------------------------------- |
 | `verify`   | Aggregate gate — rolls up `lint`[% if use_node %], `build-test`[% endif %][% if project_type == 'web-astro' %], `lighthouse`[% endif %], and `security` so one check reports overall pass/fail |
 | `security` | gitleaks + dependency audit; Semgrep CE when this job owns the visibility/profile SAST route |
-[% if use_node or use_python %]
+[% if use_codeql %]
 | `codeql-verify` | Requires CodeQL success on public and paid-private routes; reports not-applicable on free private repos and fork PRs |
 [% endif %]
 
 Requiring the aggregate `verify` (rather than each leaf job) keeps the required-check
 list stable as jobs are added inside `build.yml`.
 
-[% if use_node or use_python %]
+[% if use_codeql %]
 `codeql-verify` is stable across visibility: public and paid-private CodeQL must
-succeed; free private repositories and fork PRs get a successful not-applicable
-result while the required `security` job carries the Semgrep fallback. It runs
-on `merge_group`, so it is safe for the merge queue.
+succeed for the selected `codeql_languages`; free private repositories and fork
+PRs get a successful not-applicable result while the required `security` job
+carries the Semgrep fallback. It runs on `merge_group`, so it is safe for the
+merge queue.
 [% endif %]
 Snyk PR/App checks are absent by default.[% if snyk_scan_schedule != 'off' %] The generated
 scheduled Snyk workflow is advisory and never a required check; it has no PR or
