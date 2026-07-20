@@ -167,6 +167,29 @@ use_foreman:
   help: "FOREMAN: Include foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:*; Python 3.11+ at runtime)?"
   default: yes
 
+use_codeql:
+  type: bool
+  help: >-
+    CODEQL: Include GitHub CodeQL SAST for selected first-party source languages?
+    Public repositories receive CodeQL for free. Private/internal repositories
+    require GitHub Code Security (billed by active committer) plus an explicit
+    FULL_SECURITY_SCAN=true repository variable; otherwise leave this off and
+    use the generated Semgrep CE baseline.
+  default: "[[ project_type in ['web-astro', 'web-app'] ]]"
+
+codeql_languages:
+  type: str
+  help: "CODEQL LANGUAGES: Record first-party source languages CodeQL should analyze when enabled (do not select a language only because tooling uses it)"
+  multiselect: true
+  choices:
+    JavaScript / TypeScript: javascript-typescript
+    Python: python
+  default: >-
+    [[ ((['javascript-typescript'] if project_type in ['web-astro', 'web-app'] else [])
+    + (['python'] if (include_ansible or project_type == 'iac'
+    or use_foreman) else [])) if use_codeql else [] ]]
+  validator: "[% if use_codeql and not codeql_languages %]Select at least one first-party CodeQL language.[% endif %]"
+
 devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"

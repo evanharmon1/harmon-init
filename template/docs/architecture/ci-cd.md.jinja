@@ -13,9 +13,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_node or use_python %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
+- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
-[% if use_node or use_python %]
+[% if use_codeql %]
 - `codeql.yml` — CodeQL SAST runs automatically and for free on public
   repositories. Private/internal repositories require paid GitHub Code Security
   plus `FULL_SECURITY_SCAN=true`; otherwise `build.yml` supplies Semgrep CE.

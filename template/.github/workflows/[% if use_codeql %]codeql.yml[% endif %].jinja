@@ -35,10 +35,10 @@ jobs:
       fail-fast: false
       matrix:
         language:
-[% if use_node %]
+[% if 'javascript-typescript' in codeql_languages %]
           - javascript-typescript
 [% endif %]
-[% if use_python %]
+[% if 'python' in codeql_languages %]
           - python
 [% endif %]
     steps:
@@ -64,25 +64,34 @@ jobs:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          persist-credentials: false
       - name: Check analyze result
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          EXPECTED_RESULT: ${{ (github.event.repository.private == false || vars.FULL_SECURITY_SCAN == 'true') && 'success' || 'skipped' }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
+        run: ./scripts/verify-ci-results.sh "analyze=${ANALYZE_RESULT}"
+      # Never check out or execute fork-controlled repository code on the
+      # aggregate runner. The workflow-defined fork diagnostic stays inline.
+      - name: Check deliberate fork skip
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
         run: |
-          result="${{ needs.analyze.result }}"
-          required=true
-          if [ "${{ github.event.repository.private }}" = "true" ] && \
-             [ "${{ vars.FULL_SECURITY_SCAN }}" != "true" ]; then
-            required=false
-          fi
-          if [ "${{ github.event_name }}" = "pull_request" ] && \
-             [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            required=false
-          fi
-          if [ "$required" = "true" ] && [ "$result" != "success" ]; then
-            echo "CodeQL analysis is required but result was: $result"
+          if [ "$ANALYZE_RESULT" != "skipped" ]; then
+            echo "CodeQL analyze result on fork: $ANALYZE_RESULT (expected skipped)"
             exit 1
           fi
-          if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
-            echo "CodeQL analyze result: $result"
-            exit 1
-          fi
-          echo "CodeQL analyze: $result (required: $required)"
+          echo "CodeQL analyze deliberately skipped for an untrusted fork."
