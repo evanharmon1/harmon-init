@@ -23,6 +23,13 @@ ones. harmon-init is NOT an application — it is used via
 [Copier](https://copier.readthedocs.io/en/stable/), so the heavy lifting is
 `copier copy` / `copier update`, not hand-copying files.
 
+## Credential boundary
+
+Keep secret and credential-store writes human-only. Use read-only checks to confirm
+that a credential is configured without revealing its value. If CI is blocked by a
+missing credential, report the exact maintainer action; never create, rotate, delete,
+or widen access to credentials, or weaken a workflow merely to make CI green.
+
 ## Preconditions
 
 Verify these before doing anything; stop and tell the user if one is unmet.
@@ -80,12 +87,18 @@ These are load-bearing. Full rationale and edge cases in `references/copier-gotc
 
 - **Validate after every apply.** Re-running `copier` or changing answers can churn
   files — confirm the result with the verification step below before committing.
+- **Optimize for regular rolling updates, not every historical migration path.**
+  harmon-init-managed repositories are expected to stay near the current release.
+  Review new answers against the target repository and pass the decisions
+  explicitly. Do not add or expect permanent version-pair migrations for unusual
+  gaps or customizations; reconcile those case by case in the downstream PR.
 
 The asked questions live in `~/git/harmon-init/copier.yml` (e.g. `project_name`,
 `project_slug`, `project_description`, `github_org`, `project_type`
 [general / web-astro / web-app / iac / docs], `snyk_scan_schedule`
 [off / weekly / daily], `include_terraform`, `include_ansible`, `ci_runner`,
-`license`, `use_release_please`, `devcontainer`, `git_init`). Read that file to
+`license`, `use_codeql`, `codeql_languages`, `use_release_please`, `devcontainer`,
+`git_init`). Read that file to
 confirm names/choices/defaults before scaffolding — do not invent answers.
 
 ## Standards catalog
@@ -98,6 +111,15 @@ catalog) as the source of truth, not memory.
 
 ## Verification
 
+After a template apply or update, if `.skills-sync.yaml` exists, refresh and verify
+the managed skills before running the repository gate:
+
+```bash
+task sync:skills
+task verify:skills
+task verify:skills:offline
+```
+
 After applying any mode, run the bundled check:
 
 ```bash
@@ -109,3 +131,7 @@ It confirms the expected files/tooling landed and then runs the repo's own gate
 `task install:hooks` to wire lefthook). Report what passed and surface any gaps
 against `references/standards-catalog.md`. Never bypass hooks (`--no-verify` is
 prohibited); commit on a feature branch and open a PR — no direct commits to `main`.
+When the work includes a PR, watch every required check to a terminal green result
+and inspect every review thread after each push. Apply feedback you agree with and
+reply with a concrete repository-specific rationale when you disagree. Never merge;
+report the reviewed, green PR for human handoff.
