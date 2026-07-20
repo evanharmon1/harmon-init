@@ -583,7 +583,7 @@ tasks:
       - pnpm audit --audit-level=high
 [% endif %]
 [% if use_python %]
-      - uvx pip-audit --desc --requirement <(uv pip compile pyproject.toml 2>/dev/null)
+      - ./scripts/python-audit.sh
 [% endif %]
 [% if not use_node and not use_python %]
       - echo "No package manifests to audit yet."
