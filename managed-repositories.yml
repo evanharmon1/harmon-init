@@ -7,6 +7,11 @@ repositories:
   - evanharmon1/harmon-dotfiles
   - evanharmon1/harmon-ops
   - harmonops/harmon-infra
+  - ponderousdev/foreman
+  - ponderousdev/lawnomator-site
+  - ponderousdev/omator
+  - ponderousdev/ponderous-infra
+  - ponderousdev/ponderous-site
   - sommerlawn/sommerlawn-infra
   - sommerlawn/sommerlawn-site
   - sommerlawn/sommerlawn-zoho
