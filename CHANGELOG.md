@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.2.2](https://github.com/evanharmon1/harmon-init/compare/v4.2.1...v4.2.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **devcontainer:** harden the devcontainer scripts against wedged Docker and unpinned CLI ([#333](https://github.com/evanharmon1/harmon-init/issues/333)) ([d836e10](https://github.com/evanharmon1/harmon-init/commit/d836e10b989f79503032466c125c1003d98b5ceb))
+* **devcontainer:** probe tailscale through a shell in container asserts ([#330](https://github.com/evanharmon1/harmon-init/issues/330)) ([be32b00](https://github.com/evanharmon1/harmon-init/commit/be32b00b0b66ae43e6fb222d9ec363e3de83ca46))
+* **template:** correct verified defects in generated repo tooling and defaults ([#332](https://github.com/evanharmon1/harmon-init/issues/332)) ([32ce6f2](https://github.com/evanharmon1/harmon-init/commit/32ce6f2eb56985d3a5f412c296c2a31fe2ca75a7))
+
 ## [4.2.1](https://github.com/evanharmon1/harmon-init/compare/v4.2.0...v4.2.1) (2026-07-20)
 
 
