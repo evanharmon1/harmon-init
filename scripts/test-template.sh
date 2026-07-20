@@ -212,6 +212,8 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
     err "Renovate vulnerability-alert remediation must be enabled"
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
+! grep -q 'task test:ci-results' .github/workflows/build.yml ||
+    err "rendered build workflow references the root-only CI result tests"
 [ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
 EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
     err "rendered CI result helper rejected successful trusted jobs"
