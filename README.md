@@ -34,6 +34,10 @@ This repo is part of **harmon-platform** — my custom development platform with
 | [harmon-ops](https://github.com/evanharmon1/harmon-ops) | Personal machine bootstrapping, package management & dev-environment setup across macOS/Windows/Linux. |
 | [harmon-infra](https://github.com/harmonops/harmon-infra) | Homelab infrastructure as code — Terraform, Ansible, and Docker Compose services. |
 
+The production repositories intentionally kept current with this template are
+listed in [`managed-repositories.yml`](./managed-repositories.yml). The inventory
+tracks fleet membership only; each repository records its own template version.
+
 ## Usage
 
 ### New project
