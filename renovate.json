@@ -36,8 +36,8 @@
     },
     {
       "customType": "regex",
-      "description": "Workflow/composite-action and script tool pins, `FOO_VERSION=x.y.z` shell-variable style",
-      "managerFilePatterns": ["/(\\.github/(actions|workflows)/.*\\.ya?ml(\\.jinja)?|scripts/.*\\.sh)$/"],
+      "description": "Workflow/composite-action and script tool pins, `FOO_VERSION=x.y.z` shell-variable style. Template scripts carry jinja in the FILENAME (`…foo.sh[% endif %]`), so the .sh alternative tolerates that suffix — without it every pin under template/scripts/ is invisible here.",
+      "managerFilePatterns": ["/(\\.github/(actions|workflows)/.*\\.ya?ml(\\.jinja)?|scripts/.*\\.sh(\\[% endif %\\])?)$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]

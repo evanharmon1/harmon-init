@@ -34,7 +34,9 @@ else
 fi
 
 # renovate: datasource=pypi depName=pip-audit
-PIP_AUDIT_VERSION="2.10.1"
+# Unquoted on purpose: the shell-variable manager captures currentValue with
+# \S+, so quotes end up inside it and pep440 rejects the version.
+PIP_AUDIT_VERSION=2.10.1
 uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
     --desc \
     --requirement "$requirements"
