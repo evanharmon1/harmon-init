@@ -160,4 +160,4 @@ jobs:
           EXPECTED_RESULT: success
           LINT_RESULT: ${{ needs.lint.result }}
           TEMPLATE_TEST_RESULT: ${{ needs.template-test.result }}
-        run: ./scripts/verify-required-results.sh "lint=${LINT_RESULT}" "template-test=${TEMPLATE_TEST_RESULT}"
+        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "template-test=${TEMPLATE_TEST_RESULT}"

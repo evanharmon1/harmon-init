@@ -212,12 +212,11 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
     err "Renovate vulnerability-alert remediation must be enabled"
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
-[ -x scripts/verify-required-results.sh ] || err "fail-closed required-results helper missing or not executable"
-[ -x scripts/test-ci-results.sh ] || err "CI result truth-table regression missing or not executable"
-./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper truth tables failed"
-if [ "$profile" = "web" ]; then
-    [ -x scripts/validate-web.sh ] || err "fresh web scaffold validator guard missing or not executable"
-    task validate >/dev/null || err "fresh web scaffold validation does not skip cleanly before app setup"
+[ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
+EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
+    err "rendered CI result helper rejected successful trusted jobs"
+if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >/dev/null 2>&1; then
+    err "rendered CI result helper accepted an unexpectedly skipped trusted job"
 fi
 for aggregate_workflow in .github/workflows/build.yml .github/workflows/devcontainer-build.yml; do
     [ -f "$aggregate_workflow" ] || continue
@@ -225,7 +224,7 @@ for aggregate_workflow in .github/workflows/build.yml .github/workflows/devconta
         err "$aggregate_workflow is missing the explicit untrusted-fork decision"
     grep -q 'untrusted-fork boundary' "$aggregate_workflow" ||
         err "$aggregate_workflow is missing an inline untrusted-fork boundary"
-    grep -q 'run: ./scripts/verify-required-results.sh' "$aggregate_workflow" ||
+    grep -q 'run: ./scripts/verify-ci-results.sh' "$aggregate_workflow" ||
         err "$aggregate_workflow does not use the tested trusted-event result helper"
     ! grep -q '"success".*"skipped".*||' "$aggregate_workflow" ||
         err "$aggregate_workflow still generically allows both success and skipped"
@@ -233,11 +232,10 @@ done
 if [ -f .github/workflows/codeql.yml ]; then
     grep -Eq '^use_codeql:[[:space:]]+(true|yes)$' .copier-answers.yml ||
         err "CodeQL workflow rendered without use_codeql=true"
-    [ -x scripts/verify-codeql-result.sh ] || err "CodeQL result helper missing or not executable"
     grep -q 'github.event.repository.private == false' .github/workflows/codeql.yml ||
         err "CodeQL must run automatically on public repositories"
-    grep -q 'run: ./scripts/verify-codeql-result.sh' .github/workflows/codeql.yml ||
-        err "CodeQL aggregate does not use the tested trusted-event helper"
+    grep -q 'run: ./scripts/verify-ci-results.sh' .github/workflows/codeql.yml ||
+        err "CodeQL aggregate does not use the shared trusted-event helper"
     grep -q 'name: Check deliberate fork skip' .github/workflows/codeql.yml ||
         err "CodeQL aggregate is missing its checkout-free fork diagnostic"
     answer_languages="$(sed -n '/^codeql_languages:/,/^[^[:space:]-]/p' .copier-answers.yml)"
@@ -254,7 +252,6 @@ if [ -f .github/workflows/codeql.yml ]; then
 else
     grep -Eq '^use_codeql:[[:space:]]+(false|no)$' .copier-answers.yml ||
         err "CodeQL workflow omitted without use_codeql=false"
-    [ ! -f scripts/verify-codeql-result.sh ] || err "CodeQL-only result helper rendered while use_codeql=false"
     ! grep -q 'actions/workflows/codeql.yml' README.md ||
         err "README advertises CodeQL while use_codeql=false"
     grep -q 'CodeQL is deliberately omitted' docs/architecture/security.md ||

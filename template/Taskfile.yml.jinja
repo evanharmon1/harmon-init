@@ -77,7 +77,6 @@ tasks:
 [% endif %]
       - task: validate
       - task: test:tasks
-      - task: test:ci-results
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
@@ -287,7 +286,10 @@ tasks:
     desc: Validate project config/artifacts
     cmds:
 [% if project_type == 'web-astro' %]
-      - task: validate:web
+      - task: validate:jsonld
+      - task: validate:og
+      - task: validate:responsive
+      - task: validate:links
 [% endif %]
 [% if include_terraform %]
       - task: lint:terraform:validate
@@ -299,11 +301,6 @@ tasks:
       - 'echo "No validate steps for this project type yet — see docs/CHECKLIST.md."'
 [% endif %]
 [% if project_type == 'web-astro' %]
-
-  validate:web:
-    desc: Validate built web artifacts when the application has been scaffolded
-    cmds:
-      - ./scripts/validate-web.sh
 
   validate:jsonld:
     desc: Validate JSON-LD structured data in the built site (dist/)
@@ -485,11 +482,6 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
-
-  test:ci-results:
-    desc: Unit-test fail-closed CI aggregate result helpers
-    cmds:
-      - ./scripts/test-ci-results.sh
 [% if use_release_please %]
 
   test:release-title:

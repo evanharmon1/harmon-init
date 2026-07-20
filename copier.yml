@@ -174,8 +174,7 @@ use_codeql:
     Public repositories receive CodeQL for free. Private/internal repositories
     require GitHub Code Security (billed by active committer) plus an explicit
     FULL_SECURITY_SCAN=true repository variable; otherwise leave this off and
-    use the generated Semgrep CE baseline. A pre-update migration preserves the
-    intent and language matrix of an existing legacy CodeQL workflow.
+    use the generated Semgrep CE baseline.
   default: "[[ project_type in ['web-astro', 'web-app'] ]]"
 
 codeql_languages:
@@ -364,15 +363,6 @@ _tasks:
 _min_copier_version: "9.4.0"
 
 _subdirectory: template
-
-# Before the first update that introduces explicit CodeQL answers, preserve the
-# legacy repository's actual workflow choice and matrix. Copier reloads the
-# answers file after before-stage migrations, so the new questions receive
-# these values instead of their fresh-scaffold defaults. The script no-ops on
-# subsequent updates once both answers are present.
-_migrations:
-  - command: '"[[ _copier_conf.src_path ]]/scripts/migrate-codeql-answers.sh" "[[ _copier_conf.answers_file ]]"'
-    when: "[[ _stage == 'before' ]]"
 
 # Files copier must NEVER merge into on `copier update` — kept deliberately
 # minimal. Everything else (README, AGENTS.md, DESIGN.md, docs, …) is left OUT so

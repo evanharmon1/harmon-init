@@ -300,7 +300,7 @@ tasks:
       - ./scripts/test-tasks.sh
 
   test:ci-results:
-    desc: Unit-test fail-closed CI aggregate result helpers
+    desc: Unit-test the fail-closed CI aggregate result helper
     cmds:
       - ./scripts/test-ci-results.sh
 
