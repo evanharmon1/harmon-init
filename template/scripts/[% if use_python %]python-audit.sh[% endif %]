@@ -33,9 +33,11 @@ else
         --output-file "$requirements"
 fi
 
+# The `# renovate:` line must sit IMMEDIATELY above the assignment (the manager
+# joins them with \s+, so any comment between breaks the match), and the value
+# must be unquoted (currentValue is captured with \S+, so quotes land inside it
+# and pep440 rejects them). scripts/test-renovate-pins.sh enforces both.
 # renovate: datasource=pypi depName=pip-audit
-# Unquoted on purpose: the shell-variable manager captures currentValue with
-# \S+, so quotes end up inside it and pep440 rejects the version.
 PIP_AUDIT_VERSION=2.10.1
 uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
     --desc \
