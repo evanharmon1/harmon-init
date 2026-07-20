@@ -52,6 +52,38 @@ if grep -Fxq . "$semgrep_args"; then
     fail "Semgrep wrapper appended a repository-wide target"
 fi
 
+echo "==> shell formatter preserves tracked paths and failures"
+format_repo="${test_tmp}/format-repo"
+format_path="${format_repo}/template/[% if sample %]/script with spaces.sh"
+mkdir -p "$(dirname "$format_path")"
+git -C "$format_repo" init -q
+printf '%s\n' '#!/usr/bin/env bash' 'if true;then' 'echo ok' 'fi' >"$format_path"
+git -C "$format_repo" add -- "${format_path#"$format_repo"/}"
+(
+    cd "$format_repo"
+    "$repo/scripts/format-shell.sh"
+)
+if ! shfmt -d "$format_path" >/dev/null; then
+    fail "shell formatter did not safely format a tracked path containing spaces"
+fi
+
+format_fail_bin="${test_tmp}/format-fail-bin"
+mkdir -p "$format_fail_bin"
+cat >"${format_fail_bin}/shfmt" <<'EOF'
+#!/usr/bin/env bash
+exit 42
+EOF
+chmod +x "${format_fail_bin}/shfmt"
+if (
+    cd "$format_repo"
+    PATH="${format_fail_bin}:${PATH}" "$repo/scripts/format-shell.sh"
+); then
+    fail "shell formatter masked a shfmt failure"
+fi
+if ! grep -qF './scripts/format-shell.sh' Taskfile.yml; then
+    fail "Taskfile.yml does not delegate shell formatting to the path-safe helper"
+fi
+
 echo "==> secret helper tasks reject missing destination metadata"
 # Assert the stable missing-destination diagnostic, not just a nonzero exit:
 # a bare `if ! task ...` would also be satisfied by an unrelated failure
@@ -116,4 +148,4 @@ for category in SSH_KEY SSHKEY; do
     fi
 done
 
-echo "==> task targets OK (compile + bootstrap idempotency)"
+echo "==> task targets OK (compile + bootstrap idempotency + path-safe formatting)"

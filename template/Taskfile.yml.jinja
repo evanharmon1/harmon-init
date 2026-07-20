@@ -393,9 +393,7 @@ tasks:
 [% if include_terraform %]
       - terraform fmt -recursive terraform/
 [% endif %]
-      - |
-        files=$(git ls-files '*.sh' '*.bash')
-        [ -n "$files" ] && shfmt -w $files || true
+      - ./scripts/format-shell.sh
       # Best-effort markdown auto-fix (bin-vs-npx dispatch in the helper); must
       # NOT abort `format` on un-auto-fixable rule violations — `lint:markdown`
       # (check-only) is the gate.
