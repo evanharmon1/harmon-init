@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.2.0](https://github.com/evanharmon1/harmon-init/compare/v4.1.2...v4.2.0) (2026-07-20)
+
+
+### Features
+
+* make CodeQL intent explicit and CI aggregates fail closed ([#320](https://github.com/evanharmon1/harmon-init/issues/320)) ([93537d3](https://github.com/evanharmon1/harmon-init/commit/93537d3faa2378cf508fcb8867b6338e52eaec3c))
+
+
+### Bug Fixes
+
+* correct generated template rendering ([#318](https://github.com/evanharmon1/harmon-init/issues/318)) ([991f328](https://github.com/evanharmon1/harmon-init/commit/991f328e232bc4d9bb0d2dd44ffd5976be2481cc))
+* make shell formatting path-safe ([#319](https://github.com/evanharmon1/harmon-init/issues/319)) ([88698eb](https://github.com/evanharmon1/harmon-init/commit/88698eb0144c127258ac1247bfa1e2faf3be924c))
+
 ## [4.1.2](https://github.com/evanharmon1/harmon-init/compare/v4.1.1...v4.1.2) (2026-07-19)
 
 
