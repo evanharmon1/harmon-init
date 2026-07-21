@@ -376,6 +376,24 @@ if [ -d .github/workflows ]; then
             err "$workflow does not normalize GitHub login case before sender authorization"
         fi
     done
+
+    # Every checkout must set `persist-credentials: false`. Without it,
+    # actions/checkout leaves the job's GITHUB_TOKEN in .git/config, where any
+    # later step — including anything reachable from test code or a transitive
+    # dependency — can read and reuse it. The template satisfies this today
+    # across every workflow; this keeps a new workflow, or a new checkout in an
+    # existing one, from regressing it silently.
+    #
+    # Counted rather than eyeballed: an audit by hand missed most of the
+    # workflows because the template's jinja filenames contain spaces.
+    while IFS= read -r -d '' workflow; do
+        checkouts=$(grep -c 'actions/checkout@' "$workflow" || true)
+        [ "${checkouts:-0}" -gt 0 ] || continue
+        guarded=$(grep -c 'persist-credentials: false' "$workflow" || true)
+        if [ "${guarded:-0}" -lt "$checkouts" ]; then
+            err "$(basename "$workflow"): $checkouts checkout step(s) but ${guarded:-0} with persist-credentials:false"
+        fi
+    done < <(find .github/workflows -maxdepth 1 -name '*.yml' -print0 2>/dev/null)
 fi
 
 # ── 3b. Rendered JS/TS/JSON is Prettier-clean (node projects) ────────
