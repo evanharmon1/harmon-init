@@ -92,13 +92,13 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
         scope="Review the changes introduced by commit $2."
-        manifest="$(git diff-tree --no-commit-id --name-status -r "$2" 2>/dev/null | cap_manifest || true)"
+        manifest="$(git diff-tree --no-commit-id --name-status -r --root -m "$2" 2>/dev/null | cap_manifest || true)"
         shift 2
         ;;
     --uncommitted)
         require_single_target
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
-        manifest="$(git status --porcelain | cap_manifest || true)"
+        manifest="$(git status --porcelain --untracked-files=all | cap_manifest || true)"
         shift
         ;;
     *)
@@ -111,7 +111,7 @@ done
 if [ -z "$scope" ]; then
     if [ -n "$(git status --porcelain)" ]; then
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
-        manifest="$(git status --porcelain | cap_manifest || true)"
+        manifest="$(git status --porcelain --untracked-files=all | cap_manifest || true)"
         echo "==> Reviewing uncommitted work (dirty tree; pass --base <ref> to review the branch instead)"
     else
         # origin/HEAD (the remote's actual default branch) outranks local

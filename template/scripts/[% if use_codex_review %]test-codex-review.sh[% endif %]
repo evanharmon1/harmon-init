@@ -78,12 +78,15 @@ echo "$out" | grep -q "base branch 'origin/develop'" || fail "--base not honored
 echo "$out" | grep -q "VERIFICATION-CHECKPOINT" || fail "review mode instructions missing: $out"
 echo "$out" | grep -q "watch the hooks" || fail "focus text missing from prompt: $out"
 
-echo "==> dirty tree auto-selects uncommitted scope"
+echo "==> dirty tree auto-selects uncommitted scope and enumerates untracked dirs"
 echo x >dirty.txt
+mkdir newdir
+echo y >newdir/inner.txt
 out="$(run review)" || fail "dirty-tree review exited non-zero: $out"
 echo "$out" | grep -q "uncommitted work" || fail "dirty tree did not select uncommitted scope: $out"
 echo "$out" | grep -q "dirty.txt" || fail "untracked file missing from uncommitted manifest: $out"
-rm -f dirty.txt
+echo "$out" | grep -q "newdir/inner.txt" || fail "file inside untracked dir missing from manifest (collapsed to dir entry): $out"
+rm -rf dirty.txt newdir
 
 echo "==> a >200-entry dirty tree still reviews (no SIGPIPE abort) and marks truncation"
 # Top-level files: git status collapses an untracked directory into a single
@@ -127,6 +130,22 @@ fi
 echo "$out" | grep -q "mutually exclusive" || fail "missing conflicting-flags message: $out"
 echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite conflicting flags: $out"
 
+echo "==> --commit manifests cover root and merge commits"
+root_sha="$(git rev-list --max-parents=0 HEAD | tail -1)"
+out="$(run review --commit "$root_sha")" || fail "root-commit review exited non-zero: $out"
+echo "$out" | grep -q "codex-review.sh" || fail "root commit manifest empty (missing --root): $out"
+git checkout -q -b mergetest feature
+git branch -q sidebr "$root_sha"
+git checkout -q sidebr
+echo s >side.txt
+git add side.txt
+git_t commit -q -m side
+git checkout -q mergetest
+git_t merge -q --no-ff -m merge sidebr >/dev/null 2>&1 || fail "fixture merge failed"
+merge_sha="$(git rev-parse HEAD)"
+out="$(run review --commit "$merge_sha")" || fail "merge-commit review exited non-zero: $out"
+echo "$out" | grep -q "side.txt" || fail "merge commit manifest empty (missing -m): $out"
+
 echo "==> gate: another repo's project-scoped plugin install is not accepted"
 fake_claude="${test_tmp}/claude-config"
 mkdir -p "${fake_claude}/plugins"
@@ -150,4 +169,35 @@ if out="$(CLAUDE_CONFIG_DIR="$fake_claude" "${repo}/scripts/codex-gate.sh" enabl
 fi
 echo "$out" | grep -q "not installed" || fail "missing not-installed message for foreign-scoped install: $out"
 
-echo "codex-review + codex-gate guards OK (11 cases)"
+echo "==> gate: refuses to arm when the companion reports not ready"
+fake_plugin="${test_tmp}/fake-plugin"
+mkdir -p "${fake_plugin}/scripts" "${fake_claude}2/plugins"
+cat >"${fake_plugin}/scripts/codex-companion.mjs" <<'MJS'
+const args = process.argv.slice(2);
+if (args.includes("--json")) {
+  console.log(JSON.stringify({ ready: process.env.FAKE_READY === "true" }));
+} else {
+  console.log(`companion invoked: ${args.join(" ")}`);
+}
+MJS
+cat >"${fake_claude}2/plugins/installed_plugins.json" <<JSON
+{
+  "version": 2,
+  "plugins": {
+    "codex@openai-codex": [
+      { "scope": "user", "installPath": "${fake_plugin}", "version": "1.0.6" }
+    ]
+  }
+}
+JSON
+if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=false "${repo}/scripts/codex-gate.sh" enable 2>&1)"; then
+    fail "gate armed despite companion ready:false: $out"
+fi
+echo "$out" | grep -q "not ready" || fail "missing not-ready refusal message: $out"
+
+echo "==> gate: arms when the companion reports ready"
+out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true "${repo}/scripts/codex-gate.sh" enable 2>&1)" ||
+    fail "gate enable failed with companion ready:true: $out"
+echo "$out" | grep -q "companion invoked: setup --enable-review-gate" || fail "companion toggle not invoked after readiness pass: $out"
+
+echo "codex-review + codex-gate guards OK (14 cases)"

@@ -76,8 +76,17 @@ EOF
     exit 1
 fi
 
+# Write the SAME per-workspace state the Claude Code hook reads: outside
+# Claude Code the companion falls back to a temp dir, so pin CLAUDE_PLUGIN_DATA
+# to the plugin's real data dir (~/.claude/plugins/data/<plugin>-<marketplace>).
+export CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${claude_dir}/plugins/data/codex-openai-codex}"
+
 # Arming the gate while codex cannot actually review would trap Claude in
-# stop-blocks (see header) — refuse unless codex is present AND authenticated.
+# stop-blocks (see header) — refuse unless codex is present, authenticated,
+# AND the plugin's own companion reports ready. Auth alone is not enough:
+# `setup --json` can exit 0 with ready:false (e.g. the app-server cannot
+# initialize its state runtime), and an armed gate would then BLOCK every
+# turn while `codex login status` still passes.
 if [ "$ACTION" = "enable" ]; then
     if ! command -v codex >/dev/null 2>&1 || ! codex login status >/dev/null 2>&1; then
         echo "Refusing to enable the stop gate: codex is missing or not authenticated." >&2
@@ -86,12 +95,15 @@ if [ "$ACTION" = "enable" ]; then
         echo "Run 'codex login' first. (codex-gate.sh disable/status work without auth.)" >&2
         exit 1
     fi
+    ready="$(node "${plugin_root}/scripts/codex-companion.mjs" setup --json 2>/dev/null |
+        node -e 'let s="";process.stdin.on("data",(d)=>{s+=d;}).on("end",()=>{let r=false;try{r=JSON.parse(s).ready===true;}catch{}process.stdout.write(r?"true":"false");});' || echo false)"
+    if [ "$ready" != "true" ]; then
+        echo "Refusing to enable the stop gate: the codex plugin companion reports it is" >&2
+        echo "not ready (run 'task codex:gate:status' for details). An armed gate with an" >&2
+        echo "unusable runtime would BLOCK every Claude turn instead of reviewing." >&2
+        exit 1
+    fi
 fi
-
-# Write the SAME per-workspace state the Claude Code hook reads: outside
-# Claude Code the companion falls back to a temp dir, so pin CLAUDE_PLUGIN_DATA
-# to the plugin's real data dir (~/.claude/plugins/data/<plugin>-<marketplace>).
-export CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${claude_dir}/plugins/data/codex-openai-codex}"
 
 case "$ACTION" in
 enable) exec node "${plugin_root}/scripts/codex-companion.mjs" setup --enable-review-gate ;;
