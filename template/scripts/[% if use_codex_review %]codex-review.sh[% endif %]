@@ -60,6 +60,12 @@ while [ $# -gt 0 ]; do
             echo "$1 requires a value" >&2
             exit 2
         fi
+        # Fail fast on a typo/stale/unfetched ref: without this, an expensive
+        # Codex run would launch with a nonsense scope and no manifest.
+        if ! git rev-parse --verify --quiet "$2^{commit}" >/dev/null; then
+            echo "--base '$2' does not resolve to a commit (typo, or fetch the ref first)." >&2
+            exit 2
+        fi
         scope="Review the changes on the current branch relative to base branch '$2' (the merge-base diff $2...HEAD)."
         manifest="$(git diff --name-status "$2...HEAD" 2>/dev/null | cap_manifest || true)"
         shift 2
@@ -67,6 +73,10 @@ while [ $# -gt 0 ]; do
     --commit)
         if [ $# -lt 2 ]; then
             echo "$1 requires a value" >&2
+            exit 2
+        fi
+        if ! git rev-parse --verify --quiet "$2^{commit}" >/dev/null; then
+            echo "--commit '$2' does not resolve to a commit." >&2
             exit 2
         fi
         scope="Review the changes introduced by commit $2."

@@ -95,4 +95,15 @@ if out="$(run bogus 2>&1)"; then
     fail "bogus mode accepted: $out"
 fi
 
-echo "codex-review target selection OK (6 cases)"
+echo "==> invalid explicit targets fail fast without invoking codex"
+if out="$(run review --base no-such-ref 2>&1)"; then
+    fail "--base with an unresolvable ref was accepted: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite bad --base ref: $out"
+echo "$out" | grep -q "does not resolve" || fail "missing fail-fast message for bad --base: $out"
+if out="$(run challenge --commit 0000000000000000000000000000000000000000 2>&1)"; then
+    fail "--commit with an unresolvable sha was accepted: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite bad --commit sha: $out"
+
+echo "codex-review target selection OK (7 cases)"
