@@ -85,8 +85,9 @@ release plumbing), disable it for routine development.
 ```text
 task check      # fast inner loop while editing
 task verify     # definition-of-done gate
-task challenge  # adversarial second model — adjudicate findings, ≤3 loops
-task review     # verification checkpoint — adjudicate findings, ≤3 loops
+task challenge  # adversarial second model — adjudicate, fix, re-challenge
+                # until a CLEAN pass (no material findings), ≤3 rounds
+task review     # verification checkpoint — same clean-pass exit, ≤3 rounds
 task ci         # full CI mirror
 # → open the PR, then shepherd it: watch CI + reviews, adjudicate → fix →
 #   push, ≤3 rounds (independent of the loops above)

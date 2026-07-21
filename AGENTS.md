@@ -139,10 +139,13 @@ something to ask permission for.
 - **`task verify`** — when the change feels done, loop edit → verify until
   green; verify is the definition-of-done gate (includes the render matrix).
 - **`task challenge`** — adversarial second-model review. Adjudicate per
-  "Second-Model Review" below, fix confirmed findings, re-run `task verify`.
-  Max **3** challenge → fix → re-challenge rounds.
-- **`task review`** — verification-checkpoint review; same adjudication, its
-  own max **3** rounds.
+  "Second-Model Review" below, fix confirmed findings, re-run `task verify`,
+  then **re-run `task challenge`**. The stage passes only when a re-run comes
+  back with **no material findings** — fixing the findings is not the exit
+  condition, a clean pass is. Max **3** challenge → fix → re-challenge
+  rounds; if findings persist, stop and escalate to Evan.
+- **`task review`** — verification-checkpoint review; same adjudication and
+  same clean-pass exit condition, with its own max **3** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
@@ -242,9 +245,11 @@ the cloud run failed.
 6. Finish with a concise adjudication table: finding → classification →
    evidence → action taken.
 
-**Loop cap:** at most **3** iterations per loop (challenge → fix →
-re-challenge, and likewise for review). If material disagreement persists
-after 3, stop and surface it to Evan instead of iterating further.
+**Loop cap and exit:** a stage exits only on a **clean re-run** (no material
+findings) — never on "findings fixed" alone — with at most **3** iterations
+per loop (challenge → fix → re-challenge, and likewise for review). If
+material disagreement persists after 3, stop and surface it to Evan instead
+of iterating further.
 
 ## Code Style
 

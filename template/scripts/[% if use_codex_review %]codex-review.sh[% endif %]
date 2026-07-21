@@ -139,10 +139,9 @@ behavior; race conditions, ordering and idempotency gaps; hidden coupling and
 assumptions that stop holding under stress; operational failure modes (empty
 state, timeouts, retries, partial failure, degraded dependencies); and
 unnecessarily complex design choices where a simpler alternative would do.
-Report only material, defensible findings tied to concrete files and lines —
-no style nits, no speculation you cannot support from the code. Prefer one
-strong finding over several weak ones; if the change looks safe, say so
-directly."
+Report EVERY materially defensible finding tied to concrete files and lines —
+do not stop at the first strong one. No style nits, no speculation you cannot
+support from the code. If the change looks safe, say so directly."
 else
     instructions="${scope}
 
