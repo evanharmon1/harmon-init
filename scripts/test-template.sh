@@ -388,23 +388,35 @@ if [ -d .github/workflows ]; then
     # guarded. Any comment or unrelated `with:` block could mask a real gap the
     # same way.
     #
-    # The one legitimate exception is modelled by its structure rather than an
-    # allowlist: a checkout may omit the guard only when it supplies its own
-    # `token:`, i.e. it deliberately authenticates (claude-implement pushes
-    # Claude's branch with a short-lived least-privilege App token). A plain
-    # checkout silently inheriting GITHUB_TOKEN is what must never appear.
+    # The one legitimate exception is named, and must still prove its shape.
+    # An earlier version allowed any checkout that set `token:` — too loose:
+    # `token: ${{ github.token }}` is the DEFAULT token spelled out, and
+    # actions/checkout persists it just the same, so that rule would have waved
+    # through exactly what it exists to catch. Only claude-implement.yml may
+    # omit the guard, and only for a checkout using the minted App token, which
+    # it must persist so Claude's `git push` can authenticate.
     if have yq; then
         while IFS= read -r -d '' workflow; do
             unguarded=$(yq -r '
                 [ .jobs[]?.steps[]?
                   | select((.uses // "") | test("actions/checkout@"))
-                  | select((.with."persist-credentials" != false) and (.with.token == null))
+                  | select(.with."persist-credentials" != false)
                 ] | length
             ' "$workflow" 2>/dev/null || echo 0)
-            if [ "${unguarded:-0}" -gt 0 ]; then
-                err "$(basename "$workflow"): ${unguarded} checkout step(s) neither set persist-credentials:false nor supply an explicit token"
+            allowed=0
+            if [ "$(basename "$workflow")" = "claude-implement.yml" ]; then
+                allowed=$(yq -r '
+                    [ .jobs[]?.steps[]?
+                      | select((.uses // "") | test("actions/checkout@"))
+                      | select(.with."persist-credentials" != false)
+                      | select((.with.token // "") | test("app-token"))
+                    ] | length
+                ' "$workflow" 2>/dev/null || echo 0)
             fi
-        done < <(find .github/workflows -maxdepth 1 -name '*.yml' -print0 2>/dev/null)
+            if [ "${unguarded:-0}" -gt "${allowed:-0}" ]; then
+                err "$(basename "$workflow"): $((unguarded - allowed)) checkout step(s) persist credentials without setting persist-credentials:false"
+            fi
+        done < <(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -print0 2>/dev/null)
     else
         required yq "checkout persist-credentials audit" || fail=1
     fi
