@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.2.3](https://github.com/evanharmon1/harmon-init/compare/v4.2.2...v4.2.3) (2026-07-21)
+
+
+### Bug Fixes
+
+* harden bootstrap tests, downloads, and agent/runner boundaries ([#335](https://github.com/evanharmon1/harmon-init/issues/335)) ([d3f57c2](https://github.com/evanharmon1/harmon-init/commit/d3f57c26d82a8187d5c578bf2e9944a619e4c01d))
+* harden shell tooling, pins, and CI guards across both layers ([#334](https://github.com/evanharmon1/harmon-init/issues/334)) ([20d29f2](https://github.com/evanharmon1/harmon-init/commit/20d29f2ddbd6d4df7fea7f70a280c14c0e689e73))
+
 ## [4.2.2](https://github.com/evanharmon1/harmon-init/compare/v4.2.1...v4.2.2) (2026-07-20)
 
 
