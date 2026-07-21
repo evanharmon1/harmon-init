@@ -88,15 +88,28 @@ Mounts keyed on `${devcontainerId}` hash the container image, so **every
 Dockerfile edit mints new empty volumes** — losing Claude auth, shell history,
 and agent-deck config together.
 
-Shipped fix: key the volumes on `${localWorkspaceFolderBasename}`, which is
-stable across rebuilds — in **both** the bot and dev profiles. Each Coder
-workspace has its own Docker-in-Docker, so name collisions are not a concern
-there; locally, two clones of the same repo name in different parent
-directories would share volumes, which is the accepted trade for not losing
-state on every image change.
+Shipped fix: key the volumes on the rendered `<github_org>-<project_slug>`,
+plus a `-dev` suffix on the human profile. That name has to satisfy three
+constraints at once, and missing any one of them has bitten this repo:
 
-Switching a profile to this scheme costs one final state loss, because the new
-volume names start empty. After that, rebuilds preserve state.
+- **Stable across image changes**, or every Dockerfile edit discards state —
+  the failure above.
+- **Distinct per profile.** The bot profile deliberately omits `TS_AUTHKEY` and
+  has no 1Password feature; if both profiles shared `.claude`, a bot container
+  could read credentials a human authenticated in the dev profile.
+- **Distinct per repository.** Local Docker volumes are global to the daemon,
+  not scoped to a checkout. Keying on the directory basename alone means two
+  clones sharing a name — `~/git/harmon-init` and
+  `~/git/orgs/other-org/harmon-init`, say — share credential volumes. That is
+  not hypothetical; it is the normal shape of an org-scoped checkout layout.
+
+`${devcontainerId}` satisfies the last two but fails the first. The basename
+satisfies the first but fails the last. `<github_org>-<project_slug>` plus a
+profile suffix satisfies all three, and Coder's per-workspace
+Docker-in-Docker makes it a non-issue there regardless.
+
+Changing the scheme costs one final state loss, since the new volume names
+start empty. After that, rebuilds preserve state.
 
 If several kinds of persisted state vanish at once, suspect the volume identity,
 not the individual tools.
