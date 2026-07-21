@@ -17,4 +17,12 @@ Common issues in [[ project_name ]] and how to fix them.
 - **Required check missing on a PR** — ensure Build & Validate[% if use_codeql %] and CodeQL[% endif %] ran;
   required checks are `verify`, `security`[% if use_codeql %], and `codeql-verify`[% endif %].
 
-TODO: add project-specific issues as they come up.
+[% if devcontainer %]## Deeper devcontainer failures
+
+The above are the everyday cases. For failures already hit and diagnosed in
+this devcontainer — a `postCreateCommand` abort silently cancelling every
+later lifecycle command, Claude Code re-prompting for login after each
+rebuild, a recreated Coder workspace reusing stale volumes — see
+[devcontainer-incidents.md](devcontainer-incidents.md).
+
+[% endif %]TODO: add project-specific issues as they come up.
