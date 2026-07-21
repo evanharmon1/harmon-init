@@ -396,37 +396,65 @@ if [ -d .github/workflows ]; then
     # omit the guard, and only for a checkout using the minted App token, which
     # it must persist so Claude's `git push` can authenticate.
     if have yq; then
-        while IFS= read -r -d '' workflow; do
-            unguarded=$(yq -r '
-                [ .jobs[]?.steps[]?
-                  | select((.uses // "") | test("actions/checkout@"))
-                  | select(.with."persist-credentials" != false)
-                ] | length
-            ' "$workflow" 2>/dev/null || echo 0)
-            allowed=0
-            if [ "$(basename "$workflow")" = "claude-implement.yml" ]; then
-                # Exactly ONE checkout may claim this exemption. Matching the
-                # token expression exactly matters: this workflow mints two App
-                # tokens (`app-token` and `app-token-projects`), so a substring
-                # test would exempt a checkout using either. Counting matches
-                # without a cap is equally wrong — N exempt checkouts would make
-                # unguarded and allowed rise together and the audit would pass.
-                exempt=$(yq -r '
+        # This is a security audit, so it must fail CLOSED. An earlier version
+        # ended each query with `|| echo 0`, which turned any evaluator error
+        # into "zero unguarded checkouts" — a clean pass having scanned nothing.
+        # Also assert the implementation: `yq` is two different programs, and
+        # the Python one (kislyuk) does not understand these expressions, so it
+        # would error on every workflow and, before this, pass everything.
+        if ! yq --version 2>&1 | grep -q 'github.com/mikefarah/yq'; then
+            err "yq on PATH is not mikefarah/yq — the checkout audit cannot evaluate: $(yq --version 2>&1 | head -1)"
+        else
+            yq_count() { # FILE EXPR -> count, or non-zero with the error on stderr
+                _yqc_out=$(yq -r "$2" "$1" 2>&1) || {
+                    printf '%s\n' "$_yqc_out" >&2
+                    return 1
+                }
+                case "$_yqc_out" in
+                '' | *[!0-9]*)
+                    printf 'non-numeric result: %s\n' "$_yqc_out" >&2
+                    return 1
+                    ;;
+                esac
+                printf '%s' "$_yqc_out"
+            }
+
+            while IFS= read -r -d '' workflow; do
+                if ! unguarded=$(yq_count "$workflow" '
                     [ .jobs[]?.steps[]?
                       | select((.uses // "") | test("actions/checkout@"))
                       | select(.with."persist-credentials" != false)
-                      | select((.with.token // "") == "${{ steps.app-token.outputs.token }}")
                     ] | length
-                ' "$workflow" 2>/dev/null || echo 0)
-                if [ "${exempt:-0}" -gt 1 ]; then
-                    err "claude-implement.yml: ${exempt} checkouts claim the single documented persisted-credentials exception"
+                '); then
+                    err "$(basename "$workflow"): checkout audit could not evaluate the workflow (see above)"
+                    continue
                 fi
-                [ "${exempt:-0}" -ge 1 ] && allowed=1
-            fi
-            if [ "${unguarded:-0}" -gt "${allowed:-0}" ]; then
-                err "$(basename "$workflow"): $((unguarded - allowed)) checkout step(s) persist credentials without setting persist-credentials:false"
-            fi
-        done < <(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -print0 2>/dev/null)
+                allowed=0
+                if [ "$(basename "$workflow")" = "claude-implement.yml" ]; then
+                    # Exactly ONE checkout may claim this exemption. Match the
+                    # token expression exactly: this workflow mints two App
+                    # tokens (`app-token` and `app-token-projects`), so a
+                    # substring test would exempt either.
+                    if ! exempt=$(yq_count "$workflow" '
+                        [ .jobs[]?.steps[]?
+                          | select((.uses // "") | test("actions/checkout@"))
+                          | select(.with."persist-credentials" != false)
+                          | select((.with.token // "") == "${{ steps.app-token.outputs.token }}")
+                        ] | length
+                    '); then
+                        err "claude-implement.yml: could not evaluate the exemption query (see above)"
+                        continue
+                    fi
+                    if [ "$exempt" -gt 1 ]; then
+                        err "claude-implement.yml: ${exempt} checkouts claim the single documented persisted-credentials exception"
+                    fi
+                    [ "$exempt" -ge 1 ] && allowed=1
+                fi
+                if [ "$unguarded" -gt "$allowed" ]; then
+                    err "$(basename "$workflow"): $((unguarded - allowed)) checkout step(s) persist credentials without setting persist-credentials:false"
+                fi
+            done < <(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -print0 2>/dev/null)
+        fi
     else
         required yq "checkout persist-credentials audit" || fail=1
     fi
