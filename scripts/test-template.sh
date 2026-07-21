@@ -241,6 +241,17 @@ if [ -f .github/workflows/codeql.yml ]; then
         err "CodeQL aggregate does not use the shared trusted-event helper"
     grep -q 'name: Check deliberate fork skip' .github/workflows/codeql.yml ||
         err "CodeQL aggregate is missing its checkout-free fork diagnostic"
+    # A `continue-on-error: true` on the analyze job or step makes
+    # needs.analyze.result report `success`, which satisfies EXPECTED_RESULT and
+    # turns `codeql-verify` — a REQUIRED check — green with no SAST having run.
+    # Deliberately blunt: no step in this workflow has a legitimate reason to
+    # continue on error, so adding one should require changing this assertion.
+    ! grep -q 'continue-on-error' .github/workflows/codeql.yml ||
+        err "codeql.yml uses continue-on-error; the analyze result can then pass without SAST running"
+    # Without merge_group, a required codeql-verify never reports at head-of-queue
+    # and merge-queue entries hang until the check timeout expires.
+    grep -q 'merge_group:' .github/workflows/codeql.yml ||
+        err "codeql.yml has no merge_group trigger but codeql-verify is a required check"
     answer_languages="$(sed -n '/^codeql_languages:/,/^[^[:space:]-]/p' .copier-answers.yml)"
     for language in javascript-typescript python; do
         answer_has=false
