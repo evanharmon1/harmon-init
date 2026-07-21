@@ -89,8 +89,14 @@ Dockerfile edit mints new empty volumes** — losing Claude auth, shell history,
 and agent-deck config together.
 
 Shipped fix: key the volumes on `${localWorkspaceFolderBasename}`, which is
-stable across rebuilds (see `.devcontainer/devcontainer.json`). Each Coder
-workspace has its own Docker-in-Docker, so name collisions are not a concern.
+stable across rebuilds — in **both** the bot and dev profiles. Each Coder
+workspace has its own Docker-in-Docker, so name collisions are not a concern
+there; locally, two clones of the same repo name in different parent
+directories would share volumes, which is the accepted trade for not losing
+state on every image change.
+
+Switching a profile to this scheme costs one final state loss, because the new
+volume names start empty. After that, rebuilds preserve state.
 
 If several kinds of persisted state vanish at once, suspect the volume identity,
 not the individual tools.
