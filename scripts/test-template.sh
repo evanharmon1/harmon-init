@@ -380,20 +380,34 @@ if [ -d .github/workflows ]; then
     # Every checkout must set `persist-credentials: false`. Without it,
     # actions/checkout leaves the job's GITHUB_TOKEN in .git/config, where any
     # later step — including anything reachable from test code or a transitive
-    # dependency — can read and reuse it. The template satisfies this today
-    # across every workflow; this keeps a new workflow, or a new checkout in an
-    # existing one, from regressing it silently.
+    # dependency — can read and reuse it.
     #
-    # Counted rather than eyeballed: an audit by hand missed most of the
-    # workflows because the template's jinja filenames contain spaces.
-    while IFS= read -r -d '' workflow; do
-        checkouts=$(grep -c 'actions/checkout@' "$workflow" || true)
-        [ "${checkouts:-0}" -gt 0 ] || continue
-        guarded=$(grep -c 'persist-credentials: false' "$workflow" || true)
-        if [ "${guarded:-0}" -lt "$checkouts" ]; then
-            err "$(basename "$workflow"): $checkouts checkout step(s) but ${guarded:-0} with persist-credentials:false"
-        fi
-    done < <(find .github/workflows -maxdepth 1 -name '*.yml' -print0 2>/dev/null)
+    # PARSED, not grepped. Counting `persist-credentials: false` occurrences is
+    # a false pass: claude-implement.yml documents its exception in a comment
+    # containing that exact string, so a checkout with no guard at all scored as
+    # guarded. Any comment or unrelated `with:` block could mask a real gap the
+    # same way.
+    #
+    # The one legitimate exception is modelled by its structure rather than an
+    # allowlist: a checkout may omit the guard only when it supplies its own
+    # `token:`, i.e. it deliberately authenticates (claude-implement pushes
+    # Claude's branch with a short-lived least-privilege App token). A plain
+    # checkout silently inheriting GITHUB_TOKEN is what must never appear.
+    if have yq; then
+        while IFS= read -r -d '' workflow; do
+            unguarded=$(yq -r '
+                [ .jobs[]?.steps[]?
+                  | select((.uses // "") | test("actions/checkout@"))
+                  | select((.with."persist-credentials" != false) and (.with.token == null))
+                ] | length
+            ' "$workflow" 2>/dev/null || echo 0)
+            if [ "${unguarded:-0}" -gt 0 ]; then
+                err "$(basename "$workflow"): ${unguarded} checkout step(s) neither set persist-credentials:false nor supply an explicit token"
+            fi
+        done < <(find .github/workflows -maxdepth 1 -name '*.yml' -print0 2>/dev/null)
+    else
+        required yq "checkout persist-credentials audit" || fail=1
+    fi
 fi
 
 # ── 3b. Rendered JS/TS/JSON is Prettier-clean (node projects) ────────
