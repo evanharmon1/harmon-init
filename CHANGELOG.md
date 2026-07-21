@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.2.5](https://github.com/evanharmon1/harmon-init/compare/v4.2.4...v4.2.5) (2026-07-21)
+
+
+### Bug Fixes
+
+* **template:** tell generated repos to index their runbooks ([#340](https://github.com/evanharmon1/harmon-init/issues/340)) ([e48bd7c](https://github.com/evanharmon1/harmon-init/commit/e48bd7c53f5f2cbcbf4e900e72d76eff0f2a921c))
+
 ## [4.2.4](https://github.com/evanharmon1/harmon-init/compare/v4.2.3...v4.2.4) (2026-07-21)
 
 
