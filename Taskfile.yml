@@ -106,16 +106,8 @@ tasks:
 
   lint:shell:
     desc: shellcheck + shfmt (template/ excluded — jinja-named paths contain spaces; rendered scripts are checked by test:template)
-    vars:
-      SHELL_FILES:
-        sh: git ls-files '*.sh' '*.bash' ':(exclude)template/*' 2>/dev/null | tr '\n' ' '
     cmds:
-      - |
-        files="{{.CLI_ARGS}}"
-        [ -z "$files" ] && files="{{.SHELL_FILES}}"
-        [ -z "$files" ] && exit 0
-        shellcheck --severity=error $files
-        shfmt -d $files
+      - ./scripts/lint-shell.sh {{.CLI_ARGS}}
 
   lint:markdown:
     # Check-only (no --fix) so this is a read-only gate like lint:prettier /
