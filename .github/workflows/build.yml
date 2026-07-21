@@ -114,6 +114,18 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf /tmp/gitleaks.tgz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          # yq parses rendered workflows in the checkout persist-credentials audit.
+          # GitHub-hosted images ship it, but a self-hosted CI_RUNS_ON runner may
+          # not — and test-template.sh's `required` is fatal under GITHUB_ACTIONS,
+          # so a missing yq would fail every template-test profile, not just the
+          # audit. Install it explicitly rather than inheriting it.
+          # Must be mikefarah/yq: `pip install yq` is a different tool (a jq
+          # wrapper) whose expression syntax this audit does not use.
+          # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
+          YQ_VERSION=4.53.3
+          curl -fsSL --retry 3 -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
       - name: Configure git identity (copier renders run git init)
         run: |
           git config --global user.name "ci"
