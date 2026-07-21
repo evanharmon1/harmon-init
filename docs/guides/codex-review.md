@@ -60,6 +60,13 @@ task codex:gate:disable   # turn off
 task codex:gate:status    # inspect
 ```
 
+The toggles sit in `permissions.ask` in `.claude/settings.json`, so an agent
+cannot flip the gate without a human approving the command — in particular, a
+gated agent must never disable the gate to get past a BLOCK. `enable` also
+refuses when the plugin is explicitly disabled in Claude Code settings
+(`enabledPlugins`): an installed-but-disabled plugin registers no Stop hook,
+so the armed flag would report protection that does not exist.
+
 Mechanics: the codex plugin registers a Claude Code **Stop hook**. While the
 gate is enabled for a workspace, every time Claude finishes a turn the hook
 runs a fresh, read-only Codex task over the repo and Claude's last message;

@@ -88,6 +88,27 @@ export CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${claude_dir}/plugins/data/code
 # initialize its state runtime), and an armed gate would then BLOCK every
 # turn while `codex login status` still passes.
 if [ "$ACTION" = "enable" ]; then
+    # Best-effort effective-enablement check (settings.local.json > project
+    # settings.json > user settings.json; managed/enterprise layers are not
+    # consulted). An installed-but-disabled plugin registers NO Stop hook, so
+    # arming the flag would report protection that does not exist.
+    enabled="$(node -e '
+const fs = require("fs");
+const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
+for (const p of process.argv.slice(1)) {
+  const v = read(p)?.enabledPlugins?.["codex@openai-codex"];
+  if (v === true) { process.stdout.write("true"); process.exit(0); }
+  if (v === false) { process.stdout.write("false"); process.exit(0); }
+}
+process.stdout.write("unknown");
+' "$(pwd)/.claude/settings.local.json" "$(pwd)/.claude/settings.json" "${claude_dir}/settings.json" 2>/dev/null || echo unknown)"
+    if [ "$enabled" = "false" ]; then
+        echo "Refusing to enable the stop gate: the codex plugin is explicitly disabled in" >&2
+        echo "your Claude Code settings (enabledPlugins), so its Stop hook is not active —" >&2
+        echo "the armed flag would report protection that does not exist. Re-enable the" >&2
+        echo "plugin first (/plugin, or enabledPlugins in .claude/settings*.json)." >&2
+        exit 1
+    fi
     if ! command -v codex >/dev/null 2>&1 || ! codex login status >/dev/null 2>&1; then
         echo "Refusing to enable the stop gate: codex is missing or not authenticated." >&2
         echo "The plugin fails open only when the codex BINARY is missing; an installed" >&2

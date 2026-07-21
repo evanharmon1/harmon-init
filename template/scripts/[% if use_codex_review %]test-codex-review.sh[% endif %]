@@ -200,4 +200,14 @@ out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugi
     fail "gate enable failed with companion ready:true: $out"
 echo "$out" | grep -q "companion invoked: setup --enable-review-gate" || fail "companion toggle not invoked after readiness pass: $out"
 
-echo "codex-review + codex-gate guards OK (14 cases)"
+echo "==> gate: refuses when the plugin is explicitly disabled in settings"
+ws="${test_tmp}/ws"
+mkdir -p "${ws}/scripts" "${ws}/.claude"
+cp "${repo}/scripts/codex-gate.sh" "${ws}/scripts/"
+printf '%s\n' '{ "enabledPlugins": { "codex@openai-codex": false } }' >"${ws}/.claude/settings.local.json"
+if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true "${ws}/scripts/codex-gate.sh" enable 2>&1)"; then
+    fail "gate armed despite plugin disabled in settings: $out"
+fi
+echo "$out" | grep -q "explicitly disabled" || fail "missing disabled-plugin refusal message: $out"
+
+echo "codex-review + codex-gate guards OK (15 cases)"
