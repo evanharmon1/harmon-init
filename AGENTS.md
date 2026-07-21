@@ -125,6 +125,38 @@ supervisor for milestone-driven agent dispatch: explicit arming via
 write contract, and **never a merge** — see `docs/architecture/foreman.md`
 and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 
+## Dev Loop
+
+Bias toward shipping: drive every change to an open PR instead of stopping at
+a green local diff. Work in small, PR-sized units, and move to the next stage
+on your own — an open PR with green checks is the default deliverable, not
+something to ask permission for.
+
+- **Branch** — feature branch off `main`; never commit directly to `main`.
+- **Edit + `task check`** — the fast inner loop; run it constantly and fix
+  lint immediately. (Remember dogfood parity: template twins in the same
+  change.)
+- **`task verify`** — when the change feels done, loop edit → verify until
+  green; verify is the definition-of-done gate (includes the render matrix).
+- **`task challenge`** — adversarial second-model review. Adjudicate per
+  "Second-Model Review" below, fix confirmed findings, re-run `task verify`.
+  Max **3** challenge → fix → re-challenge rounds.
+- **`task review`** — verification-checkpoint review; same adjudication, its
+  own max **3** rounds.
+- **`task ci`** — the full CI mirror; fix anything it catches.
+- **Open the PR** — conventional commit, push the branch, `gh pr create` with
+  a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
+  title rule below).
+- **Shepherd the PR (max 3 rounds).** Opening the PR is not the end. Watch CI
+  (`gh pr checks <n> --watch`) and incoming bot/human reviews. When a check
+  fails or a review lands findings, treat the findings as hypotheses: verify
+  them against the code, fix only what's confirmed, explain rejections in a
+  PR comment, push the fix commit, and watch again. This cap is independent
+  of the other loop caps. If checks still fail or material findings remain
+  after 3 rounds, stop and summarize what's unresolved on the PR for Evan.
+- **Stop at green.** Report that checks pass, then stop — merging is always a
+  human decision.
+
 ## Critical Copier Gotchas
 
 - **`--vcs-ref=HEAD` is load-bearing.** Without it, `copier copy` from a local path
@@ -192,8 +224,11 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
   per-machine state; defaults off. Inside Claude Code the equivalents are
   `/codex:review`, `/codex:adversarial-review`, and `/codex:setup`.
 
-The intended flow once a change feels done:
-`task check` → `task verify` → `task challenge` → `task review` → `task ci` → PR.
+These tasks slot into the **Dev Loop** above: after `task verify` goes green,
+before `task ci`. Codex cloud review is also connected to this repo's PRs —
+it posts inline comments only for high-priority findings; a bare 👍 reaction
+from the Codex bot is its clean pass, and a lone 👀 that never resolves means
+the cloud run failed.
 
 **Treat Codex findings as hypotheses, not authority.** For every finding:
 

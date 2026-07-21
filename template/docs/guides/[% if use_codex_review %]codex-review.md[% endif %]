@@ -88,8 +88,15 @@ task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate findings, ≤3 loops
 task review     # verification checkpoint — adjudicate findings, ≤3 loops
 task ci         # full CI mirror
-# → open the PR (merging stays a human decision)
+# → open the PR, then shepherd it: watch CI + reviews, adjudicate → fix →
+#   push, ≤3 rounds (independent of the loops above)
+# → merging stays a human decision
 ```
+
+The full staged loop — including the PR-shepherding rounds — is defined in
+AGENTS.md ("Dev Loop"). If Codex cloud review is connected to the repo, PRs
+get a cloud pass too: inline comments only for high-priority findings, a
+bare 👍 reaction as the clean pass.
 
 ## Troubleshooting
 
