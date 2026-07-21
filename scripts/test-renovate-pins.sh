@@ -77,6 +77,19 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
     configs.append(("renovate.json", root_mgr, str(p)))
 
     n_annot = len(ANNOT.findall(text))
+
+    # Quoting is a property of the FILE, not of any one config, so check it once
+    # — otherwise a template file (checked against both configs) reports twice.
+    for cfg_name, m, _ in configs:
+        if m:
+            for mo in re.finditer(js_to_py(m["matchStrings"][0]), text):
+                val = mo.group("currentValue")
+                if val.startswith('"') or val.startswith("'"):
+                    errors.append(
+                        f"{p}: pin value {val} is quoted; quotes end up inside currentValue"
+                    )
+            break
+
     for cfg_name, m, path_for_match in configs:
         if not m:
             continue
@@ -87,11 +100,6 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
                 f"{cfg_name} — check adjacency (no comment between annotation and "
                 f"assignment) and that the value is unquoted"
             )
-        for mo in re.finditer(js_to_py(m["matchStrings"][0]), text):
-            val = mo.group("currentValue")
-            if val.startswith('"') or val.startswith("'"):
-                errors.append(f"{p}: pin value {val} is quoted; quotes end up inside currentValue")
-
         pats = [re.compile(x.strip("/")) for x in m.get("managerFilePatterns", [])]
         if pats and not any(rx.search(path_for_match) for rx in pats):
             errors.append(

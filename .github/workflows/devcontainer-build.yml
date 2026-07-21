@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [ "ubuntu-latest" ]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -99,7 +99,7 @@ jobs:
   devcontainer-verify:
     if: always()
     needs: [build]
-    runs-on: [ "ubuntu-latest" ]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     env:
       IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     steps:
