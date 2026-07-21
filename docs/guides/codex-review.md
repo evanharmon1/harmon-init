@@ -70,9 +70,14 @@ protocol) before it can finish. Non-editing turns are allowed through.
 The tasks flip the same per-workspace `stopReviewGate` flag as
 `/codex:setup --enable-review-gate` (plugin data dir keyed by workspace path
 — note a git worktree is a different workspace with its own flag; the state
-is per-user and per-machine, never committed). If Codex itself is missing or
-unauthenticated the gate fails **open**: the hook logs guidance and lets
-Claude stop.
+is per-user and per-machine, never committed). Fail-open is **narrower than
+it looks**: only a missing codex binary makes the hook log guidance and let
+Claude stop. An installed-but-unauthenticated codex makes the review task
+fail, which the hook converts into a **block on every turn** — so
+`task codex:gate:enable` refuses to arm the gate unless `codex login status`
+succeeds, and if auth expires while the gate is on, recover with
+`codex login` or `task codex:gate:disable` (disable/status never require
+auth).
 
 Loop safety: Claude Code caps consecutive stop-hook continuations, and repo
 policy caps adversarial/review loops at 3 iterations each (AGENTS.md). The

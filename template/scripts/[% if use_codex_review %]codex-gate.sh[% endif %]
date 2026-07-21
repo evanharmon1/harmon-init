@@ -17,8 +17,12 @@
 # Notes:
 #   - The flag is per-user, per-machine, per-workspace path — never committed.
 #     A git worktree is a different workspace path with its own flag.
-#   - Upstream is fail-open by design: with the gate on but Codex missing or
-#     unauthenticated, the hook logs guidance and lets Claude stop.
+#   - Upstream fails open ONLY when the codex binary/runtime is missing: the
+#     hook then logs guidance and lets Claude stop. An installed-but-
+#     unauthenticated codex instead makes the spawned review task fail, which
+#     the hook converts into a BLOCK on every turn — so `enable` refuses to
+#     arm the gate unless `codex login status` succeeds (disable/status stay
+#     unguarded as the escape hatch if auth expires later).
 #   - Claude Code caps consecutive stop-hook continuations, so an enabled gate
 #     cannot loop forever; the AGENTS.md 3-iteration policy still applies.
 set -euo pipefail
@@ -41,14 +45,21 @@ fi
 claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 manifest="${claude_dir}/plugins/installed_plugins.json"
 
+# Only accept an install that is actually active for THIS workspace: a
+# user-scoped entry, or a project-scoped entry whose projectPath is this
+# repo — entries[0] blindly could be another repo's project-scoped install
+# (wrong version, and its Stop hook is not even active here).
 plugin_root=""
 if [ -f "$manifest" ]; then
     plugin_root="$(node -e '
 const fs = require("fs");
 const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const entries = (manifest.plugins || {})["codex@openai-codex"] || [];
-if (entries.length > 0 && entries[0].installPath) process.stdout.write(entries[0].installPath);
-' "$manifest" 2>/dev/null || true)"
+const root = process.argv[2];
+const pick = entries.find((e) => e.scope === "project" && e.projectPath === root)
+  || entries.find((e) => e.scope === "user");
+if (pick && pick.installPath) process.stdout.write(pick.installPath);
+' "$manifest" "$(pwd)" 2>/dev/null || true)"
 fi
 if [ -z "$plugin_root" ] || [ ! -f "${plugin_root}/scripts/codex-companion.mjs" ]; then
     # Fallback: newest cached copy (lexical sort — fine for a fallback).
@@ -68,6 +79,18 @@ Install it inside Claude Code:
 trust the folder in Claude Code.) See docs/guides/codex-review.md.
 EOF
     exit 1
+fi
+
+# Arming the gate while codex cannot actually review would trap Claude in
+# stop-blocks (see header) — refuse unless codex is present AND authenticated.
+if [ "$ACTION" = "enable" ]; then
+    if ! command -v codex >/dev/null 2>&1 || ! codex login status >/dev/null 2>&1; then
+        echo "Refusing to enable the stop gate: codex is missing or not authenticated." >&2
+        echo "The plugin fails open only when the codex BINARY is missing; an installed" >&2
+        echo "but unauthenticated codex makes the Stop hook BLOCK every Claude turn." >&2
+        echo "Run 'codex login' first. (codex-gate.sh disable/status work without auth.)" >&2
+        exit 1
+    fi
 fi
 
 # Write the SAME per-workspace state the Claude Code hook reads: outside

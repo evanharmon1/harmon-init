@@ -106,4 +106,11 @@ if out="$(run challenge --commit 0000000000000000000000000000000000000000 2>&1)"
 fi
 echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite bad --commit sha: $out"
 
-echo "codex-review target selection OK (7 cases)"
+echo "==> conflicting target flags are rejected"
+if out="$(run review --base origin/develop --uncommitted 2>&1)"; then
+    fail "conflicting target flags accepted (last-wins regression): $out"
+fi
+echo "$out" | grep -q "mutually exclusive" || fail "missing conflicting-flags message: $out"
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite conflicting flags: $out"
+
+echo "codex-review target selection OK (8 cases)"

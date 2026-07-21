@@ -53,6 +53,12 @@ cap_manifest() {
 scope=""
 manifest=""
 focus=""
+require_single_target() {
+    if [ -n "$scope" ]; then
+        echo "conflicting target flags: --base, --uncommitted, and --commit are mutually exclusive." >&2
+        exit 2
+    fi
+}
 while [ $# -gt 0 ]; do
     case "$1" in
     --base)
@@ -60,6 +66,7 @@ while [ $# -gt 0 ]; do
             echo "$1 requires a value" >&2
             exit 2
         fi
+        require_single_target
         # Fail fast on a typo/stale/unfetched ref: without this, an expensive
         # Codex run would launch with a nonsense scope and no manifest.
         if ! git rev-parse --verify --quiet "$2^{commit}" >/dev/null; then
@@ -75,6 +82,7 @@ while [ $# -gt 0 ]; do
             echo "$1 requires a value" >&2
             exit 2
         fi
+        require_single_target
         if ! git rev-parse --verify --quiet "$2^{commit}" >/dev/null; then
             echo "--commit '$2' does not resolve to a commit." >&2
             exit 2
@@ -84,6 +92,7 @@ while [ $# -gt 0 ]; do
         shift 2
         ;;
     --uncommitted)
+        require_single_target
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
         manifest="$(git status --porcelain | cap_manifest || true)"
         shift
