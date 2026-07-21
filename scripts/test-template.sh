@@ -391,7 +391,12 @@ fi
 # runs `--fix` (it would mutate the render and mask issues). The rendered
 # .markdownlint(.json/.jsonc) config is auto-discovered.
 if have npx; then
-    if ! md_out=$(npx --yes markdownlint-cli2 '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
+    # Take the version from the RENDERED scripts/markdownlint.sh rather than
+    # repeating it, so this check and the shipped script can never disagree
+    # about which markdownlint the project is linted with.
+    md_version="$(sed -n 's/^MARKDOWNLINT_VERSION=//p' scripts/markdownlint.sh)"
+    [ -n "$md_version" ] || err "rendered scripts/markdownlint.sh has no MARKDOWNLINT_VERSION pin"
+    if ! md_out=$(npx --yes "markdownlint-cli2@${md_version}" '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
         printf '%s\n' "$md_out" >&2
         err "rendered Markdown fails markdownlint"
     fi
