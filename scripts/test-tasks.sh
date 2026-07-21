@@ -27,12 +27,39 @@ if ! task --list-all >/dev/null 2>&1; then
 fi
 
 echo "==> bootstrap is a no-op when Homebrew is already installed"
-if command -v brew >/dev/null 2>&1; then
-    if ! task bootstrap >/dev/null 2>&1; then
-        fail "task bootstrap failed even though brew is already installed"
-    fi
-else
-    echo "    (skipped: brew not on PATH)"
+# Run against STUBS, never the real toolchain. `test:tasks` is part of `verify`,
+# and in a generated use_node repo `bootstrap` runs `brew install node` plus
+# `npm install -g pnpm` — so invoking it for real made running the tests mutate
+# the developer's machine, and CI too (GitHub's ubuntu images carry linuxbrew on
+# PATH). A test must not install a global toolchain as a side effect.
+#
+# Stubbing also removes the old `command -v brew` skip, so the assertion now
+# runs everywhere instead of silently doing nothing on most CI runners.
+bootstrap_bin="${test_tmp}/bootstrap-bin"
+installer_marker="${test_tmp}/homebrew-installer-fetched"
+mkdir -p "$bootstrap_bin"
+for stub in brew npm node pnpm; do
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bootstrap_bin}/${stub}"
+    chmod +x "${bootstrap_bin}/${stub}"
+done
+# Fake curl records any attempt to fetch the Homebrew installer, so we can prove
+# the `command -v brew` guard short-circuited instead of re-running setup.
+cat >"${bootstrap_bin}/curl" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+    case "\$arg" in
+    *Homebrew/install*) : >"${installer_marker}" ;;
+    esac
+done
+exit 0
+EOF
+chmod +x "${bootstrap_bin}/curl"
+
+if ! PATH="${bootstrap_bin}:${PATH}" task bootstrap >/dev/null 2>&1; then
+    fail "task bootstrap failed with brew already on PATH"
+fi
+if [ -f "$installer_marker" ]; then
+    fail "task bootstrap fetched the Homebrew installer despite brew being on PATH"
 fi
 
 echo "==> Semgrep wrapper preserves explicit scan targets"
