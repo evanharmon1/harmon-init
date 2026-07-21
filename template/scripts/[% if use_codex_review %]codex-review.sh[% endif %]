@@ -73,6 +73,10 @@ while [ $# -gt 0 ]; do
             echo "--base '$2' does not resolve to a commit (typo, or fetch the ref first)." >&2
             exit 2
         fi
+        if ! git merge-base "$2" HEAD >/dev/null 2>&1; then
+            echo "--base '$2' shares no merge base with HEAD (unrelated history) — the diff would be meaningless." >&2
+            exit 2
+        fi
         scope="Review the changes on the current branch relative to base branch '$2' (the merge-base diff $2...HEAD)."
         manifest="$(git diff --name-status "$2...HEAD" 2>/dev/null | cap_manifest || true)"
         shift 2
@@ -110,21 +114,26 @@ if [ -z "$scope" ]; then
         manifest="$(git status --porcelain | cap_manifest || true)"
         echo "==> Reviewing uncommitted work (dirty tree; pass --base <ref> to review the branch instead)"
     else
-        base=""
-        for candidate in main master; do
-            if git rev-parse --verify --quiet "$candidate" >/dev/null; then
-                base="$candidate"
-                break
-            fi
-        done
+        # origin/HEAD (the remote's actual default branch) outranks local
+        # branch-name guesses: a stray local `main` in a develop-default repo
+        # must not silently become the comparison base. The remote-qualified
+        # ref is kept as-is — stripping origin/ could name a branch that does
+        # not exist locally. Name guesses only apply to remoteless repos.
+        base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
         if [ -z "$base" ]; then
-            # Keep the remote-qualified ref (origin/<branch>): stripping it
-            # would name a local branch that may not exist, and the rev-list
-            # fallback below would then silently report nothing to review.
-            base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+            for candidate in main master; do
+                if git rev-parse --verify --quiet "$candidate" >/dev/null; then
+                    base="$candidate"
+                    break
+                fi
+            done
         fi
         if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base" >/dev/null; then
             echo "Could not detect a base branch; pass --base <ref> or --uncommitted." >&2
+            exit 2
+        fi
+        if ! git merge-base "$base" HEAD >/dev/null 2>&1; then
+            echo "Auto-detected base '${base}' shares no merge base with HEAD; pass --base <ref> or --uncommitted." >&2
             exit 2
         fi
         if [ "$(git rev-list --count "${base}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then

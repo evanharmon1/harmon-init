@@ -61,18 +61,13 @@ const pick = entries.find((e) => e.scope === "project" && e.projectPath === root
 if (pick && pick.installPath) process.stdout.write(pick.installPath);
 ' "$manifest" "$(pwd)" 2>/dev/null || true)"
 fi
-if [ -z "$plugin_root" ] || [ ! -f "${plugin_root}/scripts/codex-companion.mjs" ]; then
-    # Fallback: newest cached copy (lexical sort — fine for a fallback).
-    for d in "${claude_dir}"/plugins/cache/openai-codex/codex/*/; do
-        if [ -f "${d}scripts/codex-companion.mjs" ]; then
-            plugin_root="${d%/}"
-        fi
-    done
-fi
+# No cache-directory fallback on purpose: a cached runtime is NOT an active
+# plugin — flipping state through another repo's project-scoped install would
+# report the gate "enabled" while no Stop hook runs in this workspace.
 if [ -z "$plugin_root" ] || [ ! -f "${plugin_root}/scripts/codex-companion.mjs" ]; then
     cat >&2 <<'EOF'
-The codex Claude Code plugin is not installed for this user.
-Install it inside Claude Code:
+The codex Claude Code plugin is not installed for this user (or not active
+for this workspace). Install it inside Claude Code:
   /plugin marketplace add openai/codex-plugin-cc
   /plugin install codex@openai-codex
 (This repo's .claude/settings.json also offers it automatically when you

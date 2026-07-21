@@ -58,6 +58,20 @@ echo "$out" | grep -q "base branch 'origin/develop'" || fail "remote-qualified f
 echo "$out" | grep -q "ADVERSARIAL" || fail "challenge mode instructions missing: $out"
 echo "$out" | grep -q "feature.txt" || fail "changed-file manifest missing from branch-scope prompt: $out"
 
+echo "==> origin/HEAD outranks a stray local main"
+git branch -q main "$(git rev-list --max-parents=0 HEAD)"
+out="$(run challenge)" || fail "challenge with stray local main exited non-zero: $out"
+echo "$out" | grep -q "base branch 'origin/develop'" || fail "stray local main hijacked base detection: $out"
+git branch -q -D main
+
+echo "==> --base with no merge base fails fast"
+unrelated="$(git commit-tree "$(git mktree </dev/null)" -m orphan)"
+if out="$(run review --base "$unrelated" 2>&1)"; then
+    fail "--base with unrelated history accepted: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite no merge base: $out"
+echo "$out" | grep -q "no merge base" || fail "missing no-merge-base message: $out"
+
 echo "==> explicit --base and focus text reach the prompt"
 out="$(run review --base origin/develop watch the hooks)" || fail "review --base exited non-zero: $out"
 echo "$out" | grep -q "base branch 'origin/develop'" || fail "--base not honored: $out"
@@ -113,4 +127,27 @@ fi
 echo "$out" | grep -q "mutually exclusive" || fail "missing conflicting-flags message: $out"
 echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite conflicting flags: $out"
 
-echo "codex-review target selection OK (8 cases)"
+echo "==> gate: another repo's project-scoped plugin install is not accepted"
+fake_claude="${test_tmp}/claude-config"
+mkdir -p "${fake_claude}/plugins"
+cat >"${fake_claude}/plugins/installed_plugins.json" <<'JSON'
+{
+  "version": 2,
+  "plugins": {
+    "codex@openai-codex": [
+      {
+        "scope": "project",
+        "projectPath": "/some/other/repo",
+        "installPath": "/nonexistent/plugin/root",
+        "version": "1.0.6"
+      }
+    ]
+  }
+}
+JSON
+if out="$(CLAUDE_CONFIG_DIR="$fake_claude" "${repo}/scripts/codex-gate.sh" enable 2>&1)"; then
+    fail "gate enable accepted an install scoped to another repo: $out"
+fi
+echo "$out" | grep -q "not installed" || fail "missing not-installed message for foreign-scoped install: $out"
+
+echo "codex-review + codex-gate guards OK (11 cases)"
