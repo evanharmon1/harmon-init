@@ -61,7 +61,12 @@ copier copy "$tmpl" "$gen" --vcs-ref=v0.0.1 --trust --defaults \
     --data github_org="someorg" --data project_type="iac" \
     --data git_init=false --data github_remote_create=false \
     --data github_release_init=false --data run_task_install=false \
-    --data bunch_add=false --data obsidian_project_add=false >/dev/null 2>&1
+    --data bunch_add=false --data obsidian_project_add=false >"$work/copy.log" 2>&1 ||
+    {
+        echo "FAIL: copier copy failed — output follows" >&2
+        cat "$work/copy.log" >&2
+        exit 1
+    }
 git -C "$gen" init -q
 gitq "$gen" add -A
 gitq "$gen" commit -qm "initial scaffold"
@@ -91,7 +96,13 @@ gitq "$tmpl" commit -qm v0.0.2
 git -C "$tmpl" tag v0.0.2
 
 # 5. Update the generated repo.
-(cd "$gen" && copier update --trust --defaults) >/dev/null 2>&1 || err "copier update failed"
+# Keep copier's own output: when this fails in CI, "copier update failed" alone
+# is not enough to diagnose it, and the failure is not always reproducible
+# locally (copier version, git config, and checkout differences all matter).
+if ! (cd "$gen" && copier update --trust --defaults) >"$work/update.log" 2>&1; then
+    err "copier update failed — output follows"
+    sed 's/^/    /' "$work/update.log" >&2
+fi
 
 # 6. Assertions.
 after="$(git -C "$gen" rev-list --count HEAD)"
