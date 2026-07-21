@@ -1,4 +1,17 @@
 {
+[% if use_codex_review %]
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
+  },
+[% endif %]
   "permissions": {
     "allow": [
       "Bash(task:*)",

@@ -61,6 +61,12 @@ brew "bat"
 brew "tokei"
 brew "gum"          # status dashboard rendering (scripts/status.sh)
 brew "television"   # interactive task menu (`task` / task menu-tv → tv)
+[% if use_codex_review %]
+
+# Second-model review (task challenge / task review drive the Codex CLI).
+# Cask = macOS; on Linux/devcontainers install with `npm install -g @openai/codex`.
+cask "codex"
+[% endif %]
 [% if bunch_add %]
 
 # macOS apps

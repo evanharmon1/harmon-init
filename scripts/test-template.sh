@@ -105,6 +105,7 @@ full)
         --data project_management=github
         --data snyk_scan_schedule=weekly
         --data release_content_paths="src docs"
+        --data use_codex_review=true
     )
     ;;
 meta)
@@ -707,6 +708,31 @@ else
     [ -f .claude/agents/foreman-implementer.md ] || err "foreman agent definitions missing"
     grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman Taskfile include missing"
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
+fi
+
+# ── 9d3. codex review renders per use_codex_review (default off) ────
+# Only `full` opts in; every other profile uses the default (off). The
+# tasks, helper scripts, project Codex config, Claude plugin enablement,
+# and guide are all conditional — assert they appear/disappear together so
+# a broken gate can't ship dead weight into opted-out repos or drop the
+# wiring from opted-in ones.
+if [ "$profile" = "full" ]; then
+    [ -x scripts/codex-review.sh ] || err "scripts/codex-review.sh missing or not executable (use_codex_review=true)"
+    [ -x scripts/codex-gate.sh ] || err "scripts/codex-gate.sh missing or not executable (use_codex_review=true)"
+    [ -x scripts/test-codex-review.sh ] || err "scripts/test-codex-review.sh missing or not executable (use_codex_review=true)"
+    grep -q 'test:codex-review:' Taskfile.yml || err "test:codex-review task missing (use_codex_review=true)"
+    [ -f .codex/config.toml ] || err ".codex/config.toml missing (use_codex_review=true)"
+    [ -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md missing (use_codex_review=true)"
+    grep -q 'challenge:codex:' Taskfile.yml || err "challenge:codex task missing (use_codex_review=true)"
+    grep -q 'codex:gate:enable:' Taskfile.yml || err "codex:gate:enable task missing (use_codex_review=true)"
+    grep -q '"codex@openai-codex": true' .claude/settings.json || err ".claude/settings.json missing codex plugin enablement (use_codex_review=true)"
+else
+    [ ! -f scripts/codex-review.sh ] || err "scripts/codex-review.sh rendered but use_codex_review is off"
+    [ ! -f scripts/codex-gate.sh ] || err "scripts/codex-gate.sh rendered but use_codex_review is off"
+    [ ! -d .codex ] || err ".codex/ rendered but use_codex_review is off"
+    [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
+    ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
+    ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
 fi
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──

@@ -105,6 +105,11 @@ task test:template
 # Free security baseline (Semgrep CE + gitleaks + dependency audit)
 task security
 
+# Optional Codex second-model review — advisory, never part of verify/ci
+task challenge       # adversarial review (task challenge:codex under the hood)
+task review          # verification checkpoint (task review:codex)
+task codex:gate:enable   # auto Claude → Codex stop-gate (also :disable / :status)
+
 # Foreman: dispatch ready issues to headless agents, shepherd their PRs
 task foreman:plan -- --milestone <n|title>   # dry-run the graph/waves
 task foreman:dispatch -- --issue <n>         # worktree → agent → verify → PR
@@ -166,6 +171,45 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
   changes (docs, this repo's own tooling) keep their normal type. Pre-flight it
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
+
+## Second-Model Review (Codex)
+
+A second AI model (the OpenAI Codex CLI) reviews changes on demand — opt-in
+for generated repos via the `use_codex_review` answer; this repo dogfoods it.
+Local and advisory only: nothing runs in CI, and no `verify`/`ci` step depends
+on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
+
+- `task challenge` (→ `challenge:codex`) — adversarial review: challenges the
+  architecture and approach; hunts authorization bypasses, data-loss paths,
+  unsafe rollback, races, hidden coupling, operational failure modes, and
+  needless complexity. Steer it with e.g.
+  `task challenge -- --base main focus on the update/migration path`.
+- `task review` (→ `review:codex`) — verification checkpoint: double-checks
+  the implementation, consistency, and test coverage before `task ci`.
+- `task codex:gate:enable` / `:disable` / `:status` — the automatic
+  Claude Code → Codex stop-gate (the codex plugin's Stop hook reviews each
+  editing turn and blocks completion on material findings). Per-repo,
+  per-machine state; defaults off. Inside Claude Code the equivalents are
+  `/codex:review`, `/codex:adversarial-review`, and `/codex:setup`.
+
+The intended flow once a change feels done:
+`task check` → `task verify` → `task challenge` → `task review` → `task ci` → PR.
+
+**Treat Codex findings as hypotheses, not authority.** For every finding:
+
+1. Verify it against the actual implementation, surrounding code,
+   requirements, and tests.
+2. Classify it: confirmed, plausible but unproven, or false positive.
+3. Fix only confirmed findings; add or improve regression tests where
+   appropriate.
+4. Explain why any rejected finding is incorrect or irrelevant.
+5. Re-run `task verify` (and the other relevant gates) after fixes.
+6. Finish with a concise adjudication table: finding → classification →
+   evidence → action taken.
+
+**Loop cap:** at most **3** iterations per loop (challenge → fix →
+re-challenge, and likewise for review). If material disagreement persists
+after 3, stop and surface it to Evan instead of iterating further.
 
 ## Code Style
 

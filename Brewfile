@@ -55,3 +55,6 @@ brew "act"
 # macOS apps
 cask "visual-studio-code"
 cask "bunch"
+# Second-model review (task challenge / task review drive the Codex CLI).
+# Cask = macOS; on Linux/devcontainers install with `npm install -g @openai/codex`.
+cask "codex"

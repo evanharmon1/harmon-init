@@ -41,6 +41,10 @@ task ci          # FULL CI mirror — run before/instead of opening a PR
 task fix         # auto-format then lint
 task test        # tests
 task security    # Semgrep CE + gitleaks + dependency audit
+[% if use_codex_review %]
+task challenge   # adversarial Codex second-model review — advisory, not in verify/ci
+task review      # Codex verification checkpoint before task ci
+[% endif %]
 [% if use_foreman %]
 task foreman:plan -- --milestone <n>  # foreman: dry-run the dispatch graph
 [% endif %]
@@ -90,6 +94,46 @@ run locally on demand instead of waiting on a PR.
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
 [% endif %]
 
+[% if use_codex_review %]
+## Second-Model Review (Codex)
+
+A second AI model (the OpenAI Codex CLI) reviews changes on demand. Local and
+advisory only: nothing runs in CI, and no `verify`/`ci` step depends on Codex.
+Setup and mechanics: [docs/guides/codex-review.md](docs/guides/codex-review.md).
+
+- `task challenge` (→ `challenge:codex`) — adversarial review: challenges the
+  architecture and approach; hunts authorization bypasses, data-loss paths,
+  unsafe rollback, races, hidden coupling, operational failure modes, and
+  needless complexity. Steer it with e.g.
+  `task challenge -- --base main focus on the migration path`.
+- `task review` (→ `review:codex`) — verification checkpoint: double-checks
+  the implementation, consistency, and test coverage before `task ci`.
+- `task codex:gate:enable` / `:disable` / `:status` — the automatic
+  Claude Code → Codex stop-gate (the codex plugin's Stop hook reviews each
+  editing turn and blocks completion on material findings). Per-repo,
+  per-machine state; defaults off. Inside Claude Code the equivalents are
+  `/codex:review`, `/codex:adversarial-review`, and `/codex:setup`.
+
+The intended flow once a change feels done:
+`task check` → `task verify` → `task challenge` → `task review` → `task ci` → PR.
+
+**Treat Codex findings as hypotheses, not authority.** For every finding:
+
+1. Verify it against the actual implementation, surrounding code,
+   requirements, and tests.
+2. Classify it: confirmed, plausible but unproven, or false positive.
+3. Fix only confirmed findings; add or improve regression tests where
+   appropriate.
+4. Explain why any rejected finding is incorrect or irrelevant.
+5. Re-run `task verify` (and the other relevant gates) after fixes.
+6. Finish with a concise adjudication table: finding → classification →
+   evidence → action taken.
+
+**Loop cap:** at most **3** iterations per loop (challenge → fix →
+re-challenge, and likewise for review). If material disagreement persists
+after 3, stop and surface it to the maintainer instead of iterating further.
+
+[% endif %]
 ## Conventions
 
 Full reference: [docs/conventions.md](docs/conventions.md). Highlights:

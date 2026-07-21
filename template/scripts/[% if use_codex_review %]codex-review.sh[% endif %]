@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# codex-review.sh — second-model review of the current change via the OpenAI
+# Codex CLI (`codex exec review`). Two modes:
+#
+#   review    — verification checkpoint: double-check the implementation,
+#               consistency with repo conventions, and test coverage.
+#   challenge — adversarial review: actively try to break the change
+#               (architecture, authz, data loss, rollback, races, hidden
+#               coupling, operational failure modes, overdesign).
+#
+# Usage: codex-review.sh <review|challenge> [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
+#
+# Target selection when no explicit flag is given (mirrors the Codex Claude
+# Code plugin's auto scope): a dirty working tree reviews staged + unstaged +
+# untracked work; a clean tree reviews the branch against the default base.
+# The CLI's --base/--uncommitted/--commit flags are mutually exclusive with
+# custom instructions ("custom review instructions" is its own review mode),
+# so the resolved scope is written INTO the instructions instead.
+# Codex reviews read-only; findings are advisory hypotheses for the primary
+# agent/human to adjudicate (AGENTS.md "Second-Model Review") — this is never
+# part of `verify`/`ci`. Requires an authenticated Codex CLI (`codex login`);
+# see docs/guides/codex-review.md.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+usage() {
+    echo "usage: $0 <review|challenge> [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
+}
+
+MODE="${1:-}"
+case "$MODE" in
+review | challenge) shift ;;
+*)
+    usage
+    exit 2
+    ;;
+esac
+
+if ! command -v codex >/dev/null 2>&1; then
+    echo "codex CLI not found. Install it (brew install --cask codex, or npm install -g @openai/codex)," >&2
+    echo "authenticate with 'codex login', then re-run. See docs/guides/codex-review.md." >&2
+    exit 1
+fi
+
+scope=""
+focus=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --base)
+        if [ $# -lt 2 ]; then
+            echo "$1 requires a value" >&2
+            exit 2
+        fi
+        scope="Review the changes on the current branch relative to base branch '$2' (the merge-base diff $2...HEAD)."
+        shift 2
+        ;;
+    --commit)
+        if [ $# -lt 2 ]; then
+            echo "$1 requires a value" >&2
+            exit 2
+        fi
+        scope="Review the changes introduced by commit $2."
+        shift 2
+        ;;
+    --uncommitted)
+        scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
+        shift
+        ;;
+    *)
+        focus="${focus:+${focus} }$1"
+        shift
+        ;;
+    esac
+done
+
+if [ -z "$scope" ]; then
+    if [ -n "$(git status --porcelain)" ]; then
+        scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
+        echo "==> Reviewing uncommitted work (dirty tree; pass --base <ref> to review the branch instead)"
+    else
+        base=""
+        for candidate in main master; do
+            if git rev-parse --verify --quiet "$candidate" >/dev/null; then
+                base="$candidate"
+                break
+            fi
+        done
+        if [ -z "$base" ]; then
+            # Keep the remote-qualified ref (origin/<branch>): stripping it
+            # would name a local branch that may not exist, and the rev-list
+            # fallback below would then silently report nothing to review.
+            base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+        fi
+        if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base" >/dev/null; then
+            echo "Could not detect a base branch; pass --base <ref> or --uncommitted." >&2
+            exit 2
+        fi
+        if [ "$(git rev-list --count "${base}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then
+            echo "Nothing to review: the working tree is clean and HEAD has no commits beyond ${base}."
+            exit 0
+        fi
+        scope="Review the changes on the current branch relative to base branch '${base}' (the merge-base diff ${base}...HEAD)."
+        echo "==> Reviewing branch changes against ${base}"
+    fi
+fi
+
+if [ "$MODE" = "challenge" ]; then
+    instructions="${scope}
+
+Run an ADVERSARIAL review: your job is to break confidence in this change,
+not to validate it. Challenge the architecture and the chosen approach, not
+just the diff hunks. Actively hunt for: authorization bypasses and trust
+boundary gaps; data-loss or corruption paths; unsafe rollback and migration
+behavior; race conditions, ordering and idempotency gaps; hidden coupling and
+assumptions that stop holding under stress; operational failure modes (empty
+state, timeouts, retries, partial failure, degraded dependencies); and
+unnecessarily complex design choices where a simpler alternative would do.
+Report only material, defensible findings tied to concrete files and lines —
+no style nits, no speculation you cannot support from the code. Prefer one
+strong finding over several weak ones; if the change looks safe, say so
+directly."
+else
+    instructions="${scope}
+
+Run a VERIFICATION-CHECKPOINT review of this change: double-check that the
+implementation actually does what it claims, is internally consistent and
+consistent with this repository's existing conventions and docs, handles
+errors and edge cases, and has adequate test coverage (including regression
+tests for anything it fixes). Flag docs the change should have updated.
+Report only material, defensible findings tied to concrete files and lines —
+no style nits. If the change holds up, say so directly."
+fi
+
+if [ -n "$focus" ]; then
+    instructions="${instructions}
+
+Additional focus from the invoker (weight it heavily): ${focus}"
+fi
+
+exec codex exec review "$instructions"
