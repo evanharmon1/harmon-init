@@ -43,6 +43,7 @@ if ! command -v codex >/dev/null 2>&1; then
 fi
 
 scope=""
+manifest=""
 focus=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -52,6 +53,7 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
         scope="Review the changes on the current branch relative to base branch '$2' (the merge-base diff $2...HEAD)."
+        manifest="$(git diff --name-status "$2...HEAD" 2>/dev/null | head -200 || true)"
         shift 2
         ;;
     --commit)
@@ -60,10 +62,12 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
         scope="Review the changes introduced by commit $2."
+        manifest="$(git diff-tree --no-commit-id --name-status -r "$2" 2>/dev/null | head -200 || true)"
         shift 2
         ;;
     --uncommitted)
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
+        manifest="$(git status --porcelain | head -200)"
         shift
         ;;
     *)
@@ -76,6 +80,7 @@ done
 if [ -z "$scope" ]; then
     if [ -n "$(git status --porcelain)" ]; then
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
+        manifest="$(git status --porcelain | head -200)"
         echo "==> Reviewing uncommitted work (dirty tree; pass --base <ref> to review the branch instead)"
     else
         base=""
@@ -100,6 +105,7 @@ if [ -z "$scope" ]; then
             exit 0
         fi
         scope="Review the changes on the current branch relative to base branch '${base}' (the merge-base diff ${base}...HEAD)."
+        manifest="$(git diff --name-status "${base}...HEAD" | head -200)"
         echo "==> Reviewing branch changes against ${base}"
     fi
 fi
@@ -135,6 +141,20 @@ if [ -n "$focus" ]; then
     instructions="${instructions}
 
 Additional focus from the invoker (weight it heavily): ${focus}"
+fi
+
+# Custom review instructions bypass the CLI's native diff-target modes (the
+# two are mutually exclusive), leaving diff collection to the model. Anchor it
+# with an authoritative, git-generated file manifest so nothing in scope —
+# untracked files included — can be silently skipped.
+if [ -n "$manifest" ]; then
+    instructions="${instructions}
+
+Authoritative changed-file manifest from git for this scope (status + path;
+cover EVERY entry, including untracked files, collecting the diffs yourself
+with git):
+
+${manifest}"
 fi
 
 exec codex exec review "$instructions"

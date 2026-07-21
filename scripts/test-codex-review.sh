@@ -42,7 +42,9 @@ git init -q -b develop "${test_tmp}/upstream"
 git clone -q "${test_tmp}/upstream" "${test_tmp}/clone"
 cd "${test_tmp}/clone"
 git checkout -q -b feature
-git_t commit -q --allow-empty -m work
+echo change >feature.txt
+git add feature.txt
+git_t commit -q -m work
 git branch -q -D develop
 
 run() {
@@ -54,6 +56,7 @@ out="$(run challenge)" || fail "challenge exited non-zero: $out"
 echo "$out" | grep -q "STUB-ARGS:exec review" || fail "codex exec review not invoked: $out"
 echo "$out" | grep -q "base branch 'origin/develop'" || fail "remote-qualified fallback base missing: $out"
 echo "$out" | grep -q "ADVERSARIAL" || fail "challenge mode instructions missing: $out"
+echo "$out" | grep -q "feature.txt" || fail "changed-file manifest missing from branch-scope prompt: $out"
 
 echo "==> explicit --base and focus text reach the prompt"
 out="$(run review --base origin/develop watch the hooks)" || fail "review --base exited non-zero: $out"
@@ -65,6 +68,7 @@ echo "==> dirty tree auto-selects uncommitted scope"
 echo x >dirty.txt
 out="$(run review)" || fail "dirty-tree review exited non-zero: $out"
 echo "$out" | grep -q "uncommitted work" || fail "dirty tree did not select uncommitted scope: $out"
+echo "$out" | grep -q "dirty.txt" || fail "untracked file missing from uncommitted manifest: $out"
 rm -f dirty.txt
 
 echo "==> clean tree at the base tip reports nothing to review"
