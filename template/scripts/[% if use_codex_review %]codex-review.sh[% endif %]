@@ -42,6 +42,14 @@ if ! command -v codex >/dev/null 2>&1; then
     exit 1
 fi
 
+# Cap the manifest at 200 entries WITHOUT `head`: head exits early, the git
+# producer takes SIGPIPE, and under `set -o pipefail` a >200-entry tree would
+# abort the review before Codex ever runs. awk reads to EOF (no SIGPIPE) and
+# marks the truncation so the reviewer knows to re-enumerate with git.
+cap_manifest() {
+    awk 'NR <= 200 { print } NR == 201 { print "... (manifest truncated at 200 entries; re-enumerate with git for the full set)" }'
+}
+
 scope=""
 manifest=""
 focus=""
@@ -53,7 +61,7 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
         scope="Review the changes on the current branch relative to base branch '$2' (the merge-base diff $2...HEAD)."
-        manifest="$(git diff --name-status "$2...HEAD" 2>/dev/null | head -200 || true)"
+        manifest="$(git diff --name-status "$2...HEAD" 2>/dev/null | cap_manifest || true)"
         shift 2
         ;;
     --commit)
@@ -62,12 +70,12 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
         scope="Review the changes introduced by commit $2."
-        manifest="$(git diff-tree --no-commit-id --name-status -r "$2" 2>/dev/null | head -200 || true)"
+        manifest="$(git diff-tree --no-commit-id --name-status -r "$2" 2>/dev/null | cap_manifest || true)"
         shift 2
         ;;
     --uncommitted)
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
-        manifest="$(git status --porcelain | head -200)"
+        manifest="$(git status --porcelain | cap_manifest || true)"
         shift
         ;;
     *)
@@ -80,7 +88,7 @@ done
 if [ -z "$scope" ]; then
     if [ -n "$(git status --porcelain)" ]; then
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
-        manifest="$(git status --porcelain | head -200)"
+        manifest="$(git status --porcelain | cap_manifest || true)"
         echo "==> Reviewing uncommitted work (dirty tree; pass --base <ref> to review the branch instead)"
     else
         base=""
@@ -105,7 +113,7 @@ if [ -z "$scope" ]; then
             exit 0
         fi
         scope="Review the changes on the current branch relative to base branch '${base}' (the merge-base diff ${base}...HEAD)."
-        manifest="$(git diff --name-status "${base}...HEAD" | head -200)"
+        manifest="$(git diff --name-status "${base}...HEAD" | cap_manifest || true)"
         echo "==> Reviewing branch changes against ${base}"
     fi
 fi

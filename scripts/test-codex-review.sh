@@ -71,6 +71,19 @@ echo "$out" | grep -q "uncommitted work" || fail "dirty tree did not select unco
 echo "$out" | grep -q "dirty.txt" || fail "untracked file missing from uncommitted manifest: $out"
 rm -f dirty.txt
 
+echo "==> a >200-entry dirty tree still reviews (no SIGPIPE abort) and marks truncation"
+# Top-level files: git status collapses an untracked directory into a single
+# "?? dir/" entry, which would defeat the >200-entry premise.
+i=1
+while [ "$i" -le 250 ]; do
+    : >"bulk_f${i}.txt"
+    i=$((i + 1))
+done
+out="$(run review)" || fail "large dirty tree aborted the review (pipefail/SIGPIPE regression): $out"
+echo "$out" | grep -q "STUB-ARGS:exec review" || fail "codex not invoked on large dirty tree: $out"
+echo "$out" | grep -q "manifest truncated at 200 entries" || fail "truncation marker missing on >200-entry manifest: $out"
+rm -f bulk_f*.txt
+
 echo "==> clean tree at the base tip reports nothing to review"
 git checkout -q -b tipcheck origin/develop
 out="$(run review)" || fail "nothing-to-review case exited non-zero: $out"
@@ -82,4 +95,4 @@ if out="$(run bogus 2>&1)"; then
     fail "bogus mode accepted: $out"
 fi
 
-echo "codex-review target selection OK (5 cases)"
+echo "codex-review target selection OK (6 cases)"
