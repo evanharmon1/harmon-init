@@ -127,8 +127,13 @@ This one is **infrastructure, not this repo**: the fix is removing
 ## Diagnostics
 
 ```bash
+# The lifecycle scripts name the conductor after the CHECKOUT DIRECTORY
+# (post-start-common.sh: REPO_NAME="$(basename "$PWD")"), which is not
+# necessarily the project slug — derive it the same way rather than guessing.
+REPO_NAME="$(basename "$PWD")"
+
 # conductor, bridge, notifier
-agent-deck conductor status [[ project_slug ]]
+agent-deck conductor status "$REPO_NAME"
 
 # devcontainer start log — read this FIRST for anything start-related
 cat /tmp/devcontainer-post-start.log
@@ -143,5 +148,5 @@ claude auth status
 cat /proc/self/mountinfo | grep claude
 
 # attach to the conductor session to watch prompts (Ctrl+B d detaches)
-agent-deck session attach conductor-[[ project_slug ]]
+agent-deck session attach "conductor-$REPO_NAME"
 ```
