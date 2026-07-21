@@ -405,13 +405,23 @@ if [ -d .github/workflows ]; then
             ' "$workflow" 2>/dev/null || echo 0)
             allowed=0
             if [ "$(basename "$workflow")" = "claude-implement.yml" ]; then
-                allowed=$(yq -r '
+                # Exactly ONE checkout may claim this exemption. Matching the
+                # token expression exactly matters: this workflow mints two App
+                # tokens (`app-token` and `app-token-projects`), so a substring
+                # test would exempt a checkout using either. Counting matches
+                # without a cap is equally wrong — N exempt checkouts would make
+                # unguarded and allowed rise together and the audit would pass.
+                exempt=$(yq -r '
                     [ .jobs[]?.steps[]?
                       | select((.uses // "") | test("actions/checkout@"))
                       | select(.with."persist-credentials" != false)
-                      | select((.with.token // "") | test("app-token"))
+                      | select((.with.token // "") == "${{ steps.app-token.outputs.token }}")
                     ] | length
                 ' "$workflow" 2>/dev/null || echo 0)
+                if [ "${exempt:-0}" -gt 1 ]; then
+                    err "claude-implement.yml: ${exempt} checkouts claim the single documented persisted-credentials exception"
+                fi
+                [ "${exempt:-0}" -ge 1 ] && allowed=1
             fi
             if [ "${unguarded:-0}" -gt "${allowed:-0}" ]; then
                 err "$(basename "$workflow"): $((unguarded - allowed)) checkout step(s) persist credentials without setting persist-credentials:false"
