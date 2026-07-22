@@ -106,11 +106,12 @@ export CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${claude_dir}/plugins/data/code
 # `setup --json` can exit 0 with ready:false (e.g. the app-server cannot
 # initialize its state runtime), and an armed gate would then BLOCK every
 # turn while `codex login status` still passes.
-if [ "$ACTION" = "enable" ]; then
+if [ "$ACTION" = "enable" ] || [ "$ACTION" = "status" ]; then
     # Best-effort effective-enablement check (settings.local.json > project
     # settings.json > user settings.json; managed/enterprise layers are not
     # consulted). An installed-but-disabled plugin registers NO Stop hook, so
-    # arming the flag would report protection that does not exist.
+    # an armed flag would report protection that does not exist — refuse to
+    # arm, and mark status output as inert.
     enabled="$(node -e '
 const fs = require("fs");
 const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
@@ -121,13 +122,24 @@ for (const p of process.argv.slice(1)) {
 }
 process.stdout.write("unknown");
 ' "$(pwd)/.claude/settings.local.json" "$(pwd)/.claude/settings.json" "${claude_dir}/settings.json" 2>/dev/null || echo unknown)"
-    if [ "$enabled" = "false" ]; then
+    if [ "$enabled" = "false" ] && [ "$ACTION" = "enable" ]; then
         echo "Refusing to enable the stop gate: the codex plugin is explicitly disabled in" >&2
         echo "your Claude Code settings (enabledPlugins), so its Stop hook is not active —" >&2
         echo "the armed flag would report protection that does not exist. Re-enable the" >&2
         echo "plugin first (/plugin, or enabledPlugins in .claude/settings*.json)." >&2
         exit 1
     fi
+    if [ "$enabled" = "false" ] && [ "$ACTION" = "status" ]; then
+        echo "WARNING: the codex plugin is explicitly disabled in Claude Code settings" >&2
+        echo "(enabledPlugins) — no Stop hook is active, so any enabled gate flag" >&2
+        echo "reported below is INERT until the plugin is re-enabled." >&2
+    fi
+fi
+
+# Auth + companion-readiness preflights gate ONLY `enable` — status and
+# disable must stay usable as the inspection/escape hatch when auth or the
+# runtime has gone bad after arming.
+if [ "$ACTION" = "enable" ]; then
     if ! command -v codex >/dev/null 2>&1 || ! codex login status >/dev/null 2>&1; then
         echo "Refusing to enable the stop gate: codex is missing or not authenticated." >&2
         echo "The plugin fails open only when the codex BINARY is missing; an installed" >&2

@@ -199,4 +199,7 @@ with git):
 ${manifest}"
 fi
 
-exec codex exec review "$instructions"
+# Feed the prompt through stdin (`review -`): a single argv element is
+# capped (~128 KiB per arg on Linux), and cap_manifest bounds entry count,
+# not bytes — 200 deep paths plus instructions can exceed the argv limit.
+printf '%s\n' "$instructions" | codex exec review -

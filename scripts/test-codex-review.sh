@@ -20,7 +20,7 @@ trap 'rm -rf "$test_tmp"' EXIT
 
 # Stub codex: print the invocation so assertions can grep it.
 mkdir -p "${test_tmp}/bin"
-printf '%s\n' '#!/usr/bin/env bash' 'printf "STUB-ARGS:%s %s\n" "$1" "$2"' 'printf "STUB-PROMPT:%s\n" "$3"' >"${test_tmp}/bin/codex"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "STUB-ARGS:%s %s %s\n" "$1" "$2" "${3:-}"' 'if [ "${3:-}" = "-" ]; then printf "STUB-PROMPT:%s\n" "$(cat)"; fi' >"${test_tmp}/bin/codex"
 chmod +x "${test_tmp}/bin/codex"
 PATH="${test_tmp}/bin:${PATH}"
 export PATH
@@ -36,7 +36,9 @@ run_tty() {
     if [ "$(uname)" = "Darwin" ]; then
         script -q /dev/null "$@" </dev/null
     else
-        script -qec "$*" /dev/null </dev/null
+        # printf %q keeps argv intact through script -c's shell reparse
+        # (paths with spaces/metacharacters would split under a bare $*).
+        script -qec "$(printf '%q ' "$@")" /dev/null </dev/null
     fi
 }
 
@@ -234,6 +236,15 @@ if out="$( (
 fi
 echo "$out" | grep -q "explicitly disabled" || fail "missing disabled-plugin refusal message: $out"
 
+echo "==> gate: status warns that an armed flag is inert when the plugin is disabled"
+out="$(
+    (
+        export CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data"
+        "${ws}/scripts/codex-gate.sh" status
+    ) 2>&1
+)" || fail "status exited non-zero in disabled-plugin workspace: $out"
+echo "$out" | grep -q "INERT" || fail "status did not flag the inert gate flag: $out"
+
 echo "==> gate: enable refuses in a non-interactive shell"
 if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true "${repo}/scripts/codex-gate.sh" enable </dev/null 2>&1)"; then
     fail "non-interactive enable was accepted (silent arming bypass): $out"
@@ -246,4 +257,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (17 cases)"
+echo "codex-review + codex-gate guards OK (18 cases)"
