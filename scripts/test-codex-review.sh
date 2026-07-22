@@ -144,7 +144,8 @@ git checkout -q mergetest
 git_t merge -q --no-ff -m merge sidebr >/dev/null 2>&1 || fail "fixture merge failed"
 merge_sha="$(git rev-parse HEAD)"
 out="$(run review --commit "$merge_sha")" || fail "merge-commit review exited non-zero: $out"
-echo "$out" | grep -q "side.txt" || fail "merge commit manifest empty (missing -m): $out"
+echo "$out" | grep -q "side.txt" || fail "merge commit manifest missing first-parent change: $out"
+echo "$out" | grep -q "feature.txt" && fail "merge manifest includes pre-merge mainline files (diff-tree -m regression): $out"
 
 echo "==> gate: another repo's project-scoped plugin install is not accepted"
 fake_claude="${test_tmp}/claude-config"
@@ -210,4 +211,10 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "explicitly disabled" || fail "missing disabled-plugin refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (15 cases)"
+echo "==> gate: disable refuses in a non-interactive shell"
+if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" "${repo}/scripts/codex-gate.sh" disable </dev/null 2>&1)"; then
+    fail "non-interactive disable was accepted (agent could disarm its own gate): $out"
+fi
+echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
+
+echo "codex-review + codex-gate guards OK (16 cases)"

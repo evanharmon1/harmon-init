@@ -92,7 +92,14 @@ while [ $# -gt 0 ]; do
             exit 2
         fi
         scope="Review the changes introduced by commit $2."
-        manifest="$(git diff-tree --no-commit-id --name-status -r --root -m "$2" 2>/dev/null | cap_manifest || true)"
+        # First-parent diff for commits with a parent: diff-tree -m would also
+        # emit each merge parent's diff, pulling pre-merge mainline files into
+        # the "authoritative" manifest. --root covers parentless root commits.
+        if git rev-parse --verify --quiet "$2^" >/dev/null; then
+            manifest="$(git diff --name-status "$2^" "$2" 2>/dev/null | cap_manifest || true)"
+        else
+            manifest="$(git diff-tree --no-commit-id --name-status -r --root "$2" 2>/dev/null | cap_manifest || true)"
+        fi
         shift 2
         ;;
     --uncommitted)

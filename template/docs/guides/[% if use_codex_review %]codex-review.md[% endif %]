@@ -60,12 +60,18 @@ task codex:gate:disable   # turn off
 task codex:gate:status    # inspect
 ```
 
-The toggles sit in `permissions.ask` in `.claude/settings.json`, so an agent
-cannot flip the gate without a human approving the command — in particular, a
-gated agent must never disable the gate to get past a BLOCK. `enable` also
-refuses when the plugin is explicitly disabled in Claude Code settings
-(`enabledPlugins`): an installed-but-disabled plugin registers no Stop hook,
-so the armed flag would report protection that does not exist.
+Disarming the gate is a human-only action, enforced in layers: the toggles
+sit in `permissions.ask` in `.claude/settings.json`, and `disable`
+additionally refuses to run without an interactive terminal — permission
+prefix rules alone can be sidestepped with flag placement (e.g.
+`task --silent codex:gate:disable`), but agent shells never have a TTY. A
+gated agent must never disable the gate to get past a BLOCK — adjudicate or
+escalate instead. (This is friction against silent disarmament, not an
+absolute boundary: the plugin's own `/codex:setup --disable-review-gate` is
+outside this repo's control, which is why the AGENTS.md prohibition exists.)
+`enable` also refuses when the plugin is explicitly disabled in Claude Code
+settings (`enabledPlugins`): an installed-but-disabled plugin registers no
+Stop hook, so the armed flag would report protection that does not exist.
 
 Mechanics: the codex plugin registers a Claude Code **Stop hook**. While the
 gate is enabled for a workspace, every time Claude finishes a turn the hook
@@ -84,7 +90,7 @@ fail, which the hook converts into a **block on every turn** — so
 `task codex:gate:enable` refuses to arm the gate unless `codex login status`
 succeeds, and if auth expires while the gate is on, recover with
 `codex login` or `task codex:gate:disable` (disable/status never require
-auth).
+auth; disable does require an interactive terminal).
 
 Loop safety: Claude Code caps consecutive stop-hook continuations, and repo
 policy caps adversarial/review loops at 3 iterations each (AGENTS.md). The

@@ -229,9 +229,9 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
   editing turn and blocks completion on material findings). Per-repo,
   per-machine state; defaults off. Inside Claude Code the equivalents are
   `/codex:review`, `/codex:adversarial-review`, and `/codex:setup`. The
-  toggles are approval-gated (`permissions.ask`), and agents must **never
-  disable the gate to get past a BLOCK** — adjudicate the finding or
-  escalate to Evan instead.
+  toggles are approval-gated (`permissions.ask`), `disable` refuses
+  non-interactive shells, and agents must **never disable the gate to get
+  past a BLOCK** — adjudicate the finding or escalate to Evan instead.
 
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
 before `task ci`. Codex cloud review is also connected to this repo's PRs —

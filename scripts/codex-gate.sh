@@ -42,6 +42,23 @@ if ! command -v node >/dev/null 2>&1; then
     exit 1
 fi
 
+# Disarming the gate is a human-only action. Permission prefix rules cannot
+# hold this line — `task --silent codex:gate:disable` slips past exact-prefix
+# ask rules while matching the broad Bash(task:*) allow — so enforce it here:
+# agent/CI shells have no TTY on stdin, an interactive human terminal does.
+# (The permissions.ask entries remain as a second layer. This is friction
+# against silent disarmament, not a cryptographic boundary: a policy-violating
+# agent with file-write access could still edit scripts or state — which is
+# why AGENTS.md forbids it and adjudication is the sanctioned way past a
+# BLOCK.)
+if [ "$ACTION" = "disable" ] && [ ! -t 0 ]; then
+    echo "Refusing to disable the stop gate from a non-interactive shell: disarming the" >&2
+    echo "gate is a human decision (agents must adjudicate or escalate a BLOCK, never" >&2
+    echo "disarm). Run 'task codex:gate:disable' yourself in a terminal, or use" >&2
+    echo "/codex:setup --disable-review-gate inside Claude Code." >&2
+    exit 1
+fi
+
 claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 manifest="${claude_dir}/plugins/installed_plugins.json"
 
