@@ -77,6 +77,7 @@ tasks:
 [% endif %]
       - task: validate
       - task: test:tasks
+      - task: test:ci-results
 [% if use_codex_review %]
       - task: test:codex-review
 [% endif %]
@@ -475,6 +476,11 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
+
+  test:ci-results:
+    desc: Unit-test the fail-closed CI aggregate result helper
+    cmds:
+      - ./scripts/test-ci-results.sh
 [% if use_codex_review %]
 
   test:codex-review:
