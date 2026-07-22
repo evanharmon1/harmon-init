@@ -685,13 +685,15 @@ tasks:
       # even when there is nothing to install, so guard on `brew` existing.
       - command -v brew >/dev/null 2>&1 || NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 [% if use_node %]
-      - brew install node
-      - npm install -g pnpm
+      - ./scripts/bootstrap-pnpm.sh
 [% endif %]
 
   install:
     desc: Install all project dependencies and tools
     cmds:
+[% if use_node %]
+      - ./scripts/bootstrap-pnpm.sh
+[% endif %]
       # Use THIS repo's Brewfile by absolute path (never a user/global one), and
       # don't cascade-upgrade unrelated already-installed brew dependents.
       - HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew bundle --file={{.ROOT_DIR}}/Brewfile
