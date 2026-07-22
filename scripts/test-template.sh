@@ -191,6 +191,33 @@ fi
 [ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"
 ! grep -qi 'snyk' Brewfile || err "Brewfile must not install optional Snyk"
+if grep -q 'brew "pnpm"' Brewfile; then
+    sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml |
+        grep -q -- '- ./scripts/bootstrap-pnpm.sh' ||
+        err "Node install must invoke pnpm ownership migration"
+    [ -x scripts/bootstrap-pnpm.sh ] ||
+        err "Node bootstrap pnpm migration helper is missing or not executable"
+    grep -q 'brew install node' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must install npm before migrating pnpm ownership"
+    grep -q 'HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must suppress cascading dependent upgrades"
+    grep -q 'brew install pnpm' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must install pnpm with Homebrew"
+    grep -q 'npm uninstall --global --prefix "$brew_prefix" pnpm' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must retire only Homebrew-prefix npm ownership"
+    grep -q 'brew unlink pnpm' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must clear stale Homebrew link metadata"
+    grep -q 'brew link --overwrite pnpm' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must link the pnpm formula"
+    ! grep -q -- '- npm install -g pnpm' Taskfile.yml ||
+        err "Node bootstrap must not install pnpm globally with npm"
+    if have task; then
+        HARMON_TEST_PNPM_BOOTSTRAP_ONLY=1 task test:tasks ||
+            err "rendered Node pnpm bootstrap tests failed"
+    else
+        required task "rendered Node task tests" || fail=1
+    fi
+fi
 grep -q '^  security:sast:snyk:' Taskfile.yml || err "explicit optional Snyk SAST target missing"
 grep -q '^  security:sca:snyk:' Taskfile.yml || err "explicit optional Snyk SCA target missing"
 grep -q 'snyk test --all-projects' Taskfile.yml || err "Snyk SCA must scan every detected manifest"
