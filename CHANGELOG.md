@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.3.1](https://github.com/evanharmon1/harmon-init/compare/v4.3.0...v4.3.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* keep shipped scripts clear of literal copier markers (standardize-repo scan) ([#350](https://github.com/evanharmon1/harmon-init/issues/350)) ([95ece24](https://github.com/evanharmon1/harmon-init/commit/95ece2404682e2ff646f9fcdbf15e4af00416ed8)), closes [#348](https://github.com/evanharmon1/harmon-init/issues/348)
+
 ## [4.3.0](https://github.com/evanharmon1/harmon-init/compare/v4.2.5...v4.3.0) (2026-07-22)
 
 
