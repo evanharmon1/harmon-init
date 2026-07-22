@@ -32,8 +32,21 @@ fi
 brew unlink pnpm >/dev/null 2>&1 || true
 brew link --overwrite pnpm
 
-pnpm_prefix=$(realpath "$(brew --prefix pnpm)")
-pnpm_executable=$(realpath "${brew_prefix}/bin/pnpm")
+resolve_path() {
+    path=$1
+    while [ -L "$path" ]; do
+        target=$(readlink "$path")
+        case "$target" in
+        /*) path=$target ;;
+        *) path="$(dirname "$path")/$target" ;;
+        esac
+    done
+    directory=$(cd -P "$(dirname "$path")" && pwd)
+    printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+pnpm_prefix=$(resolve_path "$(brew --prefix pnpm)")
+pnpm_executable=$(resolve_path "${brew_prefix}/bin/pnpm")
 case "$pnpm_executable" in
 "${pnpm_prefix}"/*) ;;
 *)

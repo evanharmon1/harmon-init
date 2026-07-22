@@ -125,10 +125,12 @@ EOF
         printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${pnpm_test_bin}/${stub}"
         chmod +x "${pnpm_test_bin}/${stub}"
     done
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 127' >"${pnpm_test_bin}/realpath"
+    chmod +x "${pnpm_test_bin}/realpath"
     PATH="${pnpm_test_bin}:${PATH}" ./scripts/bootstrap-pnpm.sh >/dev/null
     [ -f "$pnpm_uninstall_marker" ] ||
         fail "pnpm bootstrap did not retire the Homebrew-prefix npm package"
-    [ "$(realpath "${pnpm_brew_prefix}/bin/pnpm")" = "$(realpath "${pnpm_cellar}/bin/pnpm")" ] ||
+    [ "$(readlink "${pnpm_brew_prefix}/bin/pnpm")" = "${pnpm_cellar}/bin/pnpm" ] ||
         fail "pnpm bootstrap did not transfer executable ownership to Homebrew"
     if [ "$(grep -c -- './scripts/bootstrap-pnpm.sh' Taskfile.yml)" -ge 2 ]; then
         unlink "$pnpm_install_entry_marker"
