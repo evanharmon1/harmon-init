@@ -81,7 +81,14 @@ fi
 
 echo "==> shell formatter preserves tracked paths and failures"
 format_repo="${test_tmp}/format-repo"
-format_path="${format_repo}/template/[% if sample %]/script with spaces.sh"
+# Assemble the jinja-style segment so this file never contains a literal
+# copier marker: the standardize-repo skill's unrendered-marker scan
+# (verify-applied.sh) would otherwise flag scripts/test-tasks.sh in every
+# generated repo. The RUNTIME path still opens a real block marker ("[%"
+# followed by " if ... %]") plus whitespace — the case format-shell.sh
+# must survive.
+jinja_open='[%'
+format_path="${format_repo}/template/${jinja_open} if sample %]/script with spaces.sh"
 mkdir -p "$(dirname "$format_path")"
 git -C "$format_repo" init -q
 printf '%s\n' '#!/usr/bin/env bash' 'if true;then' 'echo ok' 'fi' >"$format_path"
