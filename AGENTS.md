@@ -193,6 +193,14 @@ something to ask permission for.
   the ruleset would allow it. Open the PR, report that checks pass, then stop;
   merging is always a human decision. (`.claude/settings.json` backstops this
   with `permissions.ask` rules on merge commands.)
+- **Reply to every inline PR review comment in its own thread** — bot
+  reviewers (Codex, CodeRabbit, …) and humans alike. Treat findings as
+  hypotheses: verify each against the code, fix what's confirmed, and post the
+  rejection reasoning with evidence otherwise. Post replies with
+  `gh api repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies -f body=…`
+  (comment IDs from `gh api …/pulls/<n>/comments`). A rollup summary comment
+  on the PR is optional in addition, never a substitute for per-thread
+  replies.
 - Git hooks are managed by **lefthook** (`task install:hooks`); every hook delegates
   to a Taskfile target so local hooks, CI, and manual runs execute identical
   commands. Never bypass hooks with `--no-verify`.
