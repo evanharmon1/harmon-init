@@ -40,6 +40,7 @@ jobs:
       - name: Lint
         run: task check
       - run: task test:tasks
+      - run: task test:codex-review
       - run: task test:ci-results
       - run: task test:release-title
       - run: task foreman:test

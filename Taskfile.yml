@@ -63,6 +63,7 @@ tasks:
       - task: test:release-title
       - task: foreman:test
       - task: test:hooks
+      - task: test:codex-review
       - task: test:devcontainer:permissions
       - task: test
       - task: security
@@ -82,6 +83,7 @@ tasks:
       - task: test:dogfood-parity
       - task: foreman:test
       - task: test:hooks
+      - task: test:codex-review
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -311,6 +313,11 @@ tasks:
     cmds:
       - ./scripts/test-dogfood-parity.sh
 
+  test:codex-review:
+    desc: Unit-test codex-review.sh target selection (offline, stubbed codex)
+    cmds:
+      - ./scripts/test-codex-review.sh
+
   # ── Skills sync ────────────────────────────────────────────────
   # Vendor shared agent skills from harmon-devkit, pinned in .skills-sync.yaml.
   # The verify:skills* drift checks skip cleanly until the first `task sync:skills`,
@@ -329,6 +336,48 @@ tasks:
     desc: "Fast offline check that the vendored ref matches the manifest (no network)"
     cmds:
       - ./scripts/sync-skills.sh verify-offline
+
+  # ── Second-model review (Codex) ───────────────────────────────
+  # Optional second AI model (the OpenAI Codex CLI) reviewing the current
+  # change — local and advisory only, never part of verify/ci. Findings are
+  # hypotheses for the primary agent to adjudicate (AGENTS.md "Second-Model
+  # Review"). The codex:gate:* tasks toggle the Claude Code codex plugin's
+  # automatic stop-time review for this repo + machine. See
+  # docs/guides/codex-review.md for setup, mechanics, and the loop caps.
+  review:
+    desc: Second-model verification review of the current change (Codex)
+    cmds:
+      - task: review:codex
+
+  challenge:
+    desc: Second-model adversarial review of the current change (Codex)
+    cmds:
+      - task: challenge:codex
+
+  review:codex:
+    desc: "Codex verification review (usage: task review:codex -- [--base <ref>|--uncommitted] [focus text])"
+    cmds:
+      - ./scripts/codex-review.sh review {{.CLI_ARGS}}
+
+  challenge:codex:
+    desc: "Codex adversarial review (usage: task challenge:codex -- [--base <ref>|--uncommitted] [focus text])"
+    cmds:
+      - ./scripts/codex-review.sh challenge {{.CLI_ARGS}}
+
+  codex:gate:enable:
+    desc: Enable the automatic Claude → Codex stop-gate review (this repo, this machine)
+    cmds:
+      - ./scripts/codex-gate.sh enable
+
+  codex:gate:disable:
+    desc: Disable the automatic Claude → Codex stop-gate review
+    cmds:
+      - ./scripts/codex-gate.sh disable
+
+  codex:gate:status:
+    desc: Show whether the Claude → Codex stop-gate review is enabled
+    cmds:
+      - ./scripts/codex-gate.sh status
 
   # ── Security ──────────────────────────────────────────────────
   security:
