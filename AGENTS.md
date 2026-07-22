@@ -142,15 +142,15 @@ something to ask permission for.
   "Second-Model Review" below, fix confirmed findings, re-run `task verify`,
   then **re-run `task challenge`**. The stage passes only when a re-run comes
   back with **no material findings** — fixing the findings is not the exit
-  condition, a clean pass is. Max **3** challenge → fix → re-challenge
+  condition, a clean pass is. Max **5** challenge → fix → re-challenge
   rounds; if findings persist, stop and escalate to Evan.
 - **`task review`** — verification-checkpoint review; same adjudication and
-  same clean-pass exit condition, with its own max **3** rounds.
+  same clean-pass exit condition, with its own max **4** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
   title rule below).
-- **Shepherd the PR (max 3 rounds).** Opening the PR is not the end. Watch CI
+- **Shepherd the PR (max 4 rounds).** Opening the PR is not the end. Watch CI
   (`gh pr checks <n> --watch`) and incoming bot/human reviews. When a check
   fails or a review lands findings, treat the findings as hypotheses: verify
   them against the code, fix only what's confirmed, explain rejections in a
@@ -158,7 +158,7 @@ something to ask permission for.
   must pass `task verify` before each push; the local challenge/review loops
   are not re-entered — the post-push cloud/bot review is the second-model
   check at this stage. This cap is independent of the other loop caps. If
-  checks still fail or material findings remain after 3 rounds, stop and
+  checks still fail or material findings remain after 4 rounds, stop and
   summarize what's unresolved on the PR for Evan.
 - **Stop at green.** Report that checks pass, then stop — merging is always a
   human decision.
@@ -252,9 +252,10 @@ the cloud run failed.
    evidence → action taken.
 
 **Loop cap and exit:** a stage exits only on a **clean re-run** (no material
-findings) — never on "findings fixed" alone — with at most **3** iterations
-per loop (challenge → fix → re-challenge, and likewise for review). If
-material disagreement persists after 3, stop and surface it to Evan instead
+findings) — never on "findings fixed" alone — with at most **5** challenge
+iterations and **4** review iterations (challenge → fix → re-challenge, and
+likewise for review). If material disagreement persists at the cap, stop and
+surface it to Evan instead
 of iterating further.
 
 ## Code Style

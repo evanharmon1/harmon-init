@@ -5,7 +5,7 @@ A second AI model — the [OpenAI Codex CLI](https://developers.openai.com/codex
 automatic Claude Code → Codex stop-gate. Everything is local and advisory:
 nothing runs in CI, no PR check depends on Codex, and `verify`/`ci` never
 invoke it. Findings are hypotheses for the primary agent to adjudicate — the
-protocol and the 3-iteration loop cap live in AGENTS.md ("Second-Model
+protocol and the loop caps live in AGENTS.md ("Second-Model
 Review").
 
 ## Setup
@@ -93,7 +93,7 @@ succeeds, and if auth expires while the gate is on, recover with
 auth; disable does require an interactive terminal).
 
 Loop safety: Claude Code caps consecutive stop-hook continuations, and repo
-policy caps adversarial/review loops at 3 iterations each (AGENTS.md). The
+policy caps the adversarial/review loops (AGENTS.md "Dev Loop"). The
 gate reviews after **every** turn while enabled and each run costs Codex
 usage — enable it for high-consequence work (migrations, auth, concurrency,
 release plumbing), disable it for routine development.
@@ -104,11 +104,11 @@ release plumbing), disable it for routine development.
 task check      # fast inner loop while editing
 task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate, fix, re-challenge
-                # until a CLEAN pass (no material findings), ≤3 rounds
-task review     # verification checkpoint — same clean-pass exit, ≤3 rounds
+                # until a CLEAN pass (no material findings), ≤5 rounds
+task review     # verification checkpoint — same clean-pass exit, ≤4 rounds
 task ci         # full CI mirror
 # → open the PR, then shepherd it: watch CI + reviews, adjudicate → fix →
-#   push, ≤3 rounds (independent of the loops above)
+#   push, ≤4 rounds (independent of the loops above)
 # → merging stays a human decision
 ```
 

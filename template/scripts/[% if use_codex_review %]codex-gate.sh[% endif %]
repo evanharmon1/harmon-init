@@ -24,7 +24,7 @@
 #     arm the gate unless `codex login status` succeeds (disable/status stay
 #     unguarded as the escape hatch if auth expires later).
 #   - Claude Code caps consecutive stop-hook continuations, so an enabled gate
-#     cannot loop forever; the AGENTS.md 3-iteration policy still applies.
+#     cannot loop forever; the AGENTS.md loop-cap policy still applies.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -42,20 +42,22 @@ if ! command -v node >/dev/null 2>&1; then
     exit 1
 fi
 
-# Disarming the gate is a human-only action. Permission prefix rules cannot
-# hold this line — `task --silent codex:gate:disable` slips past exact-prefix
-# ask rules while matching the broad Bash(task:*) allow — so enforce it here:
-# agent/CI shells have no TTY on stdin, an interactive human terminal does.
-# (The permissions.ask entries remain as a second layer. This is friction
-# against silent disarmament, not a cryptographic boundary: a policy-violating
-# agent with file-write access could still edit scripts or state — which is
-# why AGENTS.md forbids it and adjudication is the sanctioned way past a
-# BLOCK.)
-if [ "$ACTION" = "disable" ] && [ ! -t 0 ]; then
-    echo "Refusing to disable the stop gate from a non-interactive shell: disarming the" >&2
+# Toggling the gate is a human-only action in BOTH directions: disable lets a
+# blocked agent disarm its reviewer; enable silently commits the human to
+# billed every-turn reviews. Permission prefix rules cannot hold this line —
+# `task --silent codex:gate:<action>` slips past exact-prefix ask rules while
+# matching the broad Bash(task:*) allow — so enforce it here: agent/CI shells
+# have no TTY on stdin, an interactive human terminal does. (The
+# permissions.ask entries remain as a second layer. This is friction against
+# silent toggling, not a cryptographic boundary: a policy-violating agent
+# with file-write access could still edit scripts or state — which is why
+# AGENTS.md forbids it and adjudication is the sanctioned way past a BLOCK.)
+if [ "$ACTION" != "status" ] && [ ! -t 0 ]; then
+    echo "Refusing to ${ACTION} the stop gate from a non-interactive shell: toggling the" >&2
     echo "gate is a human decision (agents must adjudicate or escalate a BLOCK, never" >&2
-    echo "disarm). Run 'task codex:gate:disable' yourself in a terminal, or use" >&2
-    echo "/codex:setup --disable-review-gate inside Claude Code." >&2
+    echo "disarm — and arming commits the human to per-turn review costs). Run" >&2
+    echo "'task codex:gate:${ACTION}' yourself in a terminal, or use /codex:setup inside" >&2
+    echo "Claude Code." >&2
     exit 1
 fi
 

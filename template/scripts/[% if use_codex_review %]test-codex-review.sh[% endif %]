@@ -29,6 +29,17 @@ git_t() {
     git -c user.email=test@test -c user.name=test "$@"
 }
 
+run_tty() {
+    # Gate toggles demand a TTY on stdin; allocate a pty so fixtures can get
+    # past the interactivity guard and exercise the logic behind it (macOS
+    # and util-linux `script` have incompatible CLIs).
+    if [ "$(uname)" = "Darwin" ]; then
+        script -q /dev/null "$@" </dev/null
+    else
+        script -qec "$*" /dev/null </dev/null
+    fi
+}
+
 # Fixture: an upstream whose default branch is `develop` (not main/master),
 # and a clone with only origin/develop plus a feature branch.
 git init -q -b develop "${test_tmp}/upstream"
@@ -65,7 +76,7 @@ echo "$out" | grep -q "base branch 'origin/develop'" || fail "stray local main h
 git branch -q -D main
 
 echo "==> --base with no merge base fails fast"
-unrelated="$(git commit-tree "$(git mktree </dev/null)" -m orphan)"
+unrelated="$(git_t commit-tree "$(git mktree </dev/null)" -m orphan)"
 if out="$(run review --base "$unrelated" 2>&1)"; then
     fail "--base with unrelated history accepted: $out"
 fi
@@ -165,7 +176,10 @@ cat >"${fake_claude}/plugins/installed_plugins.json" <<'JSON'
   }
 }
 JSON
-if out="$(CLAUDE_CONFIG_DIR="$fake_claude" "${repo}/scripts/codex-gate.sh" enable 2>&1)"; then
+if out="$( (
+    export CLAUDE_CONFIG_DIR="$fake_claude"
+    run_tty "${repo}/scripts/codex-gate.sh" enable
+) 2>&1)"; then
     fail "gate enable accepted an install scoped to another repo: $out"
 fi
 echo "$out" | grep -q "not installed" || fail "missing not-installed message for foreign-scoped install: $out"
@@ -191,13 +205,19 @@ cat >"${fake_claude}2/plugins/installed_plugins.json" <<JSON
   }
 }
 JSON
-if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=false "${repo}/scripts/codex-gate.sh" enable 2>&1)"; then
+if out="$( (
+    export CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=false
+    run_tty "${repo}/scripts/codex-gate.sh" enable
+) 2>&1)"; then
     fail "gate armed despite companion ready:false: $out"
 fi
 echo "$out" | grep -q "not ready" || fail "missing not-ready refusal message: $out"
 
 echo "==> gate: arms when the companion reports ready"
-out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true "${repo}/scripts/codex-gate.sh" enable 2>&1)" ||
+out="$( (
+    export CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true
+    run_tty "${repo}/scripts/codex-gate.sh" enable
+) 2>&1)" ||
     fail "gate enable failed with companion ready:true: $out"
 echo "$out" | grep -q "companion invoked: setup --enable-review-gate" || fail "companion toggle not invoked after readiness pass: $out"
 
@@ -206,10 +226,19 @@ ws="${test_tmp}/ws"
 mkdir -p "${ws}/scripts" "${ws}/.claude"
 cp "${repo}/scripts/codex-gate.sh" "${ws}/scripts/"
 printf '%s\n' '{ "enabledPlugins": { "codex@openai-codex": false } }' >"${ws}/.claude/settings.local.json"
-if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true "${ws}/scripts/codex-gate.sh" enable 2>&1)"; then
+if out="$( (
+    export CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true
+    run_tty "${ws}/scripts/codex-gate.sh" enable
+) 2>&1)"; then
     fail "gate armed despite plugin disabled in settings: $out"
 fi
 echo "$out" | grep -q "explicitly disabled" || fail "missing disabled-plugin refusal message: $out"
+
+echo "==> gate: enable refuses in a non-interactive shell"
+if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" FAKE_READY=true "${repo}/scripts/codex-gate.sh" enable </dev/null 2>&1)"; then
+    fail "non-interactive enable was accepted (silent arming bypass): $out"
+fi
+echo "$out" | grep -q "non-interactive" || fail "missing non-interactive enable refusal message: $out"
 
 echo "==> gate: disable refuses in a non-interactive shell"
 if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/plugin-data" "${repo}/scripts/codex-gate.sh" disable </dev/null 2>&1)"; then
@@ -217,4 +246,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (16 cases)"
+echo "codex-review + codex-gate guards OK (17 cases)"
