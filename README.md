@@ -177,6 +177,8 @@ and canonical AGENTS.md. Projects generated from v2 should be re-templated
 | `task security` | Free local baseline: Semgrep CE + gitleaks + dependency audit |
 | `task security:sast` / `security:sca` | Semgrep CE / package-manager dependency audit |
 | `task security:sast:snyk` / `security:sca:snyk` | Optional Snyk second-opinion scans (manual or explicitly scheduled) |
+| `task challenge` / `task review` | Optional Codex second-model reviews: adversarial / verification checkpoint (advisory, local-only) |
+| `task codex:gate:enable` | Automatic Claude → Codex stop-gate for this repo + machine (also `:disable` / `:status`) |
 | `task install` | Brewfile deps + lefthook hooks |
 | `task release:patch` | Tag + GitHub release (also `:minor`/`:major`) |
 | `task status` | Project dashboard (also `status:git`/`:gh`/`:code`/`:env`) |

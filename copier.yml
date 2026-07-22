@@ -194,6 +194,19 @@ codeql_languages:
     or use_foreman) else [])) if use_codeql else [] ]]
   validator: "[% if use_codeql and not codeql_languages %]Select at least one first-party CodeQL language.[% endif %]"
 
+use_codex_review:
+  type: bool
+  help: >-
+    CODEX REVIEW: Add second-model review tasks (task review / task challenge →
+    OpenAI Codex CLI) plus a toggle for the automatic Claude Code → Codex
+    stop-gate review? Requires each developer to install and authenticate the
+    Codex CLI themselves (ChatGPT account — free tier has tight usage limits —
+    or a billed OpenAI API key); the Claude Code codex plugin (for the gate) is
+    offered automatically on folder trust via .claude/settings.json. Local and
+    advisory only: nothing runs in CI, no PR check depends on it, and the gate
+    defaults off.
+  default: no
+
 devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
