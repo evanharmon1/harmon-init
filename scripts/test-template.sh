@@ -212,7 +212,8 @@ if grep -q 'brew "pnpm"' Brewfile; then
     ! grep -q -- '- npm install -g pnpm' Taskfile.yml ||
         err "Node bootstrap must not install pnpm globally with npm"
     if have task; then
-        task test:tasks || err "rendered Node task tests failed"
+        HARMON_TEST_PNPM_BOOTSTRAP_ONLY=1 task test:tasks ||
+            err "rendered Node pnpm bootstrap tests failed"
     else
         required task "rendered Node task tests" || fail=1
     fi

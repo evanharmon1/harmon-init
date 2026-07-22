@@ -141,6 +141,10 @@ EOF
     fi
 fi
 
+if [ -n "${HARMON_TEST_PNPM_BOOTSTRAP_ONLY:-}" ]; then
+    exit 0
+fi
+
 echo "==> Semgrep wrapper preserves explicit scan targets"
 semgrep_bin="${test_tmp}/semgrep-bin"
 semgrep_args="${test_tmp}/semgrep-args"
