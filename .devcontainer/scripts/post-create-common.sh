@@ -158,6 +158,12 @@ fi
 
 if [ -f pyproject.toml ]; then
     echo "==> Setting up Python virtualenv and dependencies..."
+    # .venv is a named volume (see devcontainer.json mounts), which docker
+    # creates root-owned on first use — hand it to the container user before
+    # uv sync writes into it.
+    if [ -d .venv ] && [ ! -w .venv ]; then
+        sudo chown "$(id -un):$(id -gn)" .venv
+    fi
     uv sync
 else
     echo "==> No pyproject.toml found; skipping Python setup."
