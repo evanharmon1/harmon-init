@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.4.0](https://github.com/evanharmon1/harmon-init/compare/v4.3.1...v4.4.0) (2026-07-22)
+
+
+### Features
+
+* ship the CI result helper regression (test:ci-results) to generated repos ([#354](https://github.com/evanharmon1/harmon-init/issues/354)) ([fbd3ce6](https://github.com/evanharmon1/harmon-init/commit/fbd3ce6ae93c8734fd47bd6e30b076280d174de2))
+
+
+### Bug Fixes
+
+* bump harmon-devkit skills pin to v0.8.4 ([#361](https://github.com/evanharmon1/harmon-init/issues/361)) ([0c4d560](https://github.com/evanharmon1/harmon-init/commit/0c4d560833f40d0962e9c5d5382b08993fc6640d))
+* install pnpm with Homebrew in generated repos ([#358](https://github.com/evanharmon1/harmon-init/issues/358)) ([641aa0e](https://github.com/evanharmon1/harmon-init/commit/641aa0ee19ae48a196eb7ca1a4cd62fc57fc6ff0))
+* require per-thread replies to PR review comments in AGENTS.md ([#355](https://github.com/evanharmon1/harmon-init/issues/355)) ([2e9ac6d](https://github.com/evanharmon1/harmon-init/commit/2e9ac6d8fd929a29132d13039fd891e2307479df))
+
 ## [4.3.1](https://github.com/evanharmon1/harmon-init/compare/v4.3.0...v4.3.1) (2026-07-22)
 
 
