@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.3.0](https://github.com/evanharmon1/harmon-init/compare/v4.2.5...v4.3.0) (2026-07-22)
+
+
+### Features
+
+* add Codex second-model review (challenge/review tasks, stop-gate toggle) ([#345](https://github.com/evanharmon1/harmon-init/issues/345)) ([324651a](https://github.com/evanharmon1/harmon-init/commit/324651a2be69d145a5933779ffaa83893bb07beb))
+
+
+### Bug Fixes
+
+* **devcontainer:** mask the workspace .venv with a container-private volume ([#346](https://github.com/evanharmon1/harmon-init/issues/346)) ([f6ed86a](https://github.com/evanharmon1/harmon-init/commit/f6ed86a60aee76c932e4c83bbdb73f063d630ff1))
+
 ## [4.2.5](https://github.com/evanharmon1/harmon-init/compare/v4.2.4...v4.2.5) (2026-07-21)
 
 
