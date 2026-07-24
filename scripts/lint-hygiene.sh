@@ -120,7 +120,7 @@ for f in "${files[@]}"; do
     # so they're excluded by these patterns (inert in repos without ansible/).
     case "$f" in
     ansible/*.yml | ansible/*.yaml | */ansible/*.yml | */ansible/*.yaml)
-        if grep -En '\{\{[[:space:]]*ansible_managed' "$f" >/dev/null 2>&1; then
+        if grep -En '\{\{-?[[:space:]]*ansible_managed' "$f" >/dev/null 2>&1; then
             warn "$f: 'ansible_managed' used outside a .j2 template — undefined at runtime in copy: content etc.; use the template module or a static comment"
         fi
         ;;
