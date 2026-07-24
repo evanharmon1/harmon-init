@@ -463,17 +463,11 @@ tasks:
       # own devcontainer bakes its toolchain into the image and ships no brew).
       - ./scripts/install-brewfile.sh
       # copier (the template engine) is maintenance-only tooling for harmon-init
-      # itself. Install it via uv — not brew — so `task install` provisions it
-      # with or without Homebrew, notably inside the brew-less devcontainer where
-      # the template-render tests need it. Deliberately root-only: it is absent
-      # from template/Taskfile.yml.jinja because generated repos consume
-      # harmon-init, they don't render templates.
-      - uv tool install copier
-      # uv installs tool shims to ~/.local/bin, which a clean macOS does not put
-      # on PATH — leaving copier uninvocable in new shells (and `task verify`'s
-      # template-render tests unable to find it). Ensure the dir is on PATH; this
-      # is a no-op where it already is (e.g. this devcontainer).
-      - uv tool update-shell
+      # itself — install it via uv, not brew, so it works with or without
+      # Homebrew (notably in the brew-less devcontainer). Root-only: absent from
+      # template/Taskfile.yml.jinja because generated repos don't render
+      # templates. The script handles PATH placement and rerun idempotency.
+      - ./scripts/install-copier.sh
       - task: install:hooks
 
   install:hooks:
