@@ -1,8 +1,9 @@
 # Brewfile for harmon-init (template maintenance tooling)
 # Install with: task install  (brew bundle --file=Brewfile)
 
-# Template engine
-brew "copier"
+# Template engine (copier) is intentionally NOT brew-managed — `task install`
+# installs it via `uv tool install copier` (see Taskfile `install`) so it works
+# with or without Homebrew, including this repo's brew-less devcontainer.
 
 # Task runner + git hooks
 brew "go-task"
