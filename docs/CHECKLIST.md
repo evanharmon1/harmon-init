@@ -39,8 +39,18 @@ config, toolchain, devcontainer, and dev environment — against the items below
       reaches it. Procedure: [guides/bot-account.md](guides/bot-account.md).
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `codeql.yml` are on `main` so the required `verify`/`security`/`codeql-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 
-- [ ] Install the [Renovate app](https://github.com/apps/renovate) on the repo
-- [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured)
+- [ ] **Install and activate Renovate** — install the
+      [Renovate app](https://github.com/apps/renovate) for **Only select
+      repositories** and select this repo. In the Mend Developer Portal choose
+      the **Renovate** product and **Scan and Alert** mode. Do not choose **Scan
+      Only**: it puts Renovate in silent mode, which scans without creating
+      checks, issues (including the Dependency Dashboard), or update/remediation
+      PRs. This repo already has `renovate.json`; keep that configuration rather
+      than replacing it with a generic onboarding config.
+- [ ] **[human-only] Remove CodeRabbit access** — remove this repository from
+      the CodeRabbit GitHub App installation and confirm the App no longer has
+      access. Deleting `.coderabbit.yaml` and bot trust does not revoke an
+      existing installation.
 - [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows)
 - [ ] **Free SAST coverage** — Harmon Init's public `codeql.yml` runs CodeQL
       automatically and uploads results to the Security tab. Confirm a successful

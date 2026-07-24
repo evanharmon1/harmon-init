@@ -220,7 +220,7 @@ branch_prefix = "foreman"
 expected_login = "your-bot"   # identity assertion; "" skips
 billing = "subscription"      # subscription | api
 sandboxed = false             # FOREMAN_SANDBOXED=1 env inside the bot container
-review_sender_trust = ["coderabbitai", "Copilot"]
+review_sender_trust = ["Copilot"] # add "coderabbitai" when use_coderabbit=true
 
 [budgets]
 dispatch_usd = 20.0           # binds in api billing mode

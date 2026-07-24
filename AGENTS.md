@@ -194,7 +194,7 @@ something to ask permission for.
   merging is always a human decision. (`.claude/settings.json` backstops this
   with `permissions.ask` rules on merge commands.)
 - **Reply to every inline PR review comment in its own thread** — bot
-  reviewers (Codex, CodeRabbit, …) and humans alike. Treat findings as
+  reviewers and humans alike. Treat findings as
   hypotheses: verify each against the code, fix what's confirmed, and post the
   rejection reasoning with evidence otherwise. Post replies with
   `gh api repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies -f body=…`
@@ -300,8 +300,8 @@ of iterating further.
   Actions. They (and `release.yml`) authenticate as the CI **GitHub App**
   (`CI_APP_CLIENT_ID` variable + `CI_APP_PRIVATE_KEY` secret) and need the
   `CLAUDE_CODE_OAUTH_TOKEN` secret. See `docs/architecture/security.md`.
-- Dependency updates via Renovate (`renovate.json`); reviews assisted by CodeRabbit
-  (`.coderabbit.yaml`).
+- Dependency updates via Renovate (`renovate.json`); second-model reviews use
+  Codex.
 - `release.yml` runs release-please: releases stay intentional (merge the rolling
   release PR to cut a tag); `task release:*` remains a manual override.
 - `release-content-guard.yml` fails a PR that changes `template/` under a

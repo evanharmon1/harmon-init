@@ -72,7 +72,11 @@ code_owner:
 
 claude_authorized_members:
   type: str
-  help: "CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger @claude plan/implement/review. An explicit allowlist (not org membership); the review workflow additionally allows the renovate/coderabbit/dependabot bots. Add more with `user-a,user-b`."
+  help: >-
+    CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger @claude
+    plan/implement/review. This is an explicit allowlist (not org membership);
+    the review workflow additionally allows Renovate and Dependabot, plus
+    CodeRabbit when opted in. Add more with `user-a,user-b`.
   default: "[[ author_git_provider_username ]]"
 
 project_type:
@@ -205,6 +209,21 @@ use_codex_review:
     offered automatically on folder trust via .claude/settings.json. Local and
     advisory only: nothing runs in CI, no PR check depends on it, and the gate
     defaults off.
+  default: no
+
+use_coderabbit:
+  type: bool
+  help: >-
+    CODERABBIT: Add the CodeRabbit configuration and GitHub App setup
+    instructions? Defaults off; Codex is the preferred second-model review
+    path. CodeRabbit requires an account and App installation. Public
+    open-source repositories can receive hosted PR reviews without a paid
+    subscription (rate limits apply); the private-repository Free plan provides
+    PR summaries only, and hosted code reviews require a paid plan after the
+    14-day trial. Choosing no—including accepting the default when updating a
+    repo created before this question existed—removes the template-managed
+    CodeRabbit config and bot trust; remove the repo from the GitHub App
+    installation separately.
   default: no
 
 devcontainer:
