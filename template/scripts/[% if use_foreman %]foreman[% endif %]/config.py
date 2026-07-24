@@ -32,9 +32,7 @@ class Config:
     comment_trust: list[str] = field(
         default_factory=lambda: ["OWNER", "MEMBER", "COLLABORATOR"]
     )
-    review_sender_trust: list[str] = field(
-        default_factory=lambda: ["coderabbitai", "Copilot"]
-    )
+    review_sender_trust: list[str] = field(default_factory=lambda: ["Copilot"])
     branch_prefix: str = "foreman"
     worktrees_dir: str = ".worktrees/foreman"
     runtime_dir: str = ".foreman"

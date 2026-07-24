@@ -40,15 +40,17 @@ tmpl="$work/template"
 gen="$work/gen"
 gitq() { git -C "$1" -c user.email=t@t.co -c user.name=t -c commit.gpgsign=false "${@:2}"; }
 
-# 1. Tagged template source from the working tree (excluding heavy/vcs dirs).
+# 1. Tagged old template source from the last release before use_coderabbit.
+#    Keep this fixed migration fixture: a moving merge base would stop
+#    representing legacy answers as soon as this change lands on main.
 mkdir -p "$tmpl"
-# devcontainer.env is the local-only secrets file (gitignored, often
-# permission-restricted); __pycache__/.foreman are foreman runtime artifacts.
-# None belong in the tagged template source.
-rsync -a \
-    --exclude=.git --exclude=.task --exclude=.venv --exclude=node_modules \
-    --exclude=.worktrees --exclude=dist --exclude=__pycache__ \
-    --exclude=.foreman --exclude=devcontainer.env "$repo_root/" "$tmpl/"
+legacy_ref=v4.4.0
+if ! git -C "$repo_root" rev-parse --verify --quiet "$legacy_ref^{commit}" >/dev/null; then
+    echo "FAIL: legacy migration fixture $legacy_ref is unavailable" >&2
+    exit 1
+fi
+git -C "$repo_root" archive --format=tar --output="$work/main.tar" "$legacy_ref"
+tar -xf "$work/main.tar" -C "$tmpl"
 git -C "$tmpl" init -q
 gitq "$tmpl" add -A
 gitq "$tmpl" commit -qm base
@@ -67,6 +69,14 @@ copier copy "$tmpl" "$gen" --vcs-ref=v0.0.1 --trust --defaults \
         cat "$work/copy.log" >&2
         exit 1
     }
+[ -f "$gen/.coderabbit.yaml" ] || {
+    echo "FAIL: use_coderabbit=true did not render .coderabbit.yaml" >&2
+    exit 1
+}
+! grep -q '^use_coderabbit:' "$gen/.copier-answers.yml" || {
+    echo "FAIL: legacy answers unexpectedly contain use_coderabbit" >&2
+    exit 1
+}
 git -C "$gen" init -q
 gitq "$gen" add -A
 gitq "$gen" commit -qm "initial scaffold"
@@ -85,9 +95,15 @@ gitq "$gen" add -A
 gitq "$gen" commit -qm customize
 before="$(git -C "$gen" rev-list --count HEAD)"
 
-# 4. Ship template changes as v0.0.2: improve a template-owned file, ADD a README
-#    section (should flow in via three-way merge — README is NOT skip_if_exists),
-#    and change CHANGELOG (must NOT flow — it is _skip_if_exists).
+# 4. Replace the source with the current working tree and ship it as v0.0.2.
+#    devcontainer.env is local-only; __pycache__/.foreman are runtime artifacts.
+#    Then improve a template-owned file, ADD a README section (should flow in
+#    via three-way merge — README is NOT skip_if_exists), and change CHANGELOG
+#    (must NOT flow — it is _skip_if_exists).
+rsync -a --delete \
+    --exclude=.git --exclude=.task --exclude=.venv --exclude=node_modules \
+    --exclude=.worktrees --exclude=dist --exclude=__pycache__ \
+    --exclude=.foreman --exclude=devcontainer.env "$repo_root/" "$tmpl/"
 printf '\n# update-test marker\n' >>"$tmpl/template/scripts/lint-hygiene.sh"
 printf '\n## Template Added Section\n\nnew template content\n' >>"$tmpl/template/README.md.jinja"
 printf '\ntemplate-changed-changelog\n' >>"$tmpl/template/CHANGELOG.md.jinja"
@@ -112,6 +128,13 @@ grep -q 'project-specific task added in the repo' "$gen/Taskfile.yml" || err "re
 grep -q 'Template Added Section' "$gen/README.md" || err "new template README section did not merge into the repo"
 grep -q 'repo-owned changelog entry' "$gen/CHANGELOG.md" || err "CHANGELOG.md lost the repo's content"
 grep -q 'template-changed-changelog' "$gen/CHANGELOG.md" && err "CHANGELOG.md received a template change despite _skip_if_exists"
+[ ! -f "$gen/.coderabbit.yaml" ] || err ".coderabbit.yaml remained after use_coderabbit=false update"
+! grep -Fq 'Install the [CodeRabbit app]' "$gen/docs/CHECKLIST.md" ||
+    err "CHECKLIST retained CodeRabbit setup after use_coderabbit=false update"
+grep -Fq 'Confirm CodeRabbit has no access' "$gen/docs/CHECKLIST.md" ||
+    err "CHECKLIST omitted CodeRabbit App-access confirmation after opt-out"
+! grep -Fq 'coderabbitai[bot]' "$gen/.github/workflows/claude-review.yml" ||
+    err "Claude review retained CodeRabbit trust after use_coderabbit=false update"
 markers="$(grep -rl '^<<<<<<<' "$gen" 2>/dev/null | grep -v '/\.git/' || true)"
 [ -z "$markers" ] || err "conflict markers left in: $markers"
 rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"
