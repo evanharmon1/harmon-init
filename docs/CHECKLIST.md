@@ -1,5 +1,15 @@
 # Post-Generation Checklist — Harmon Init
 
+<!--
+AI AGENTS: This checklist is a human-maintained record for humans to check off.
+Do not check, uncheck, rewrite, remove, reorder, normalize, reconcile, or
+otherwise update its items based on repository state. Do not try to keep it
+consistent with code, configuration, tags, releases, or external services.
+Read-only inspection and reporting are allowed when requested, but never mutate
+checklist state based on the findings. Only edit a checklist item when the human
+user clearly and explicitly asks for that specific checklist update.
+-->
+
 Work through this after generating the repo from harmon-init. Delete items
 that don't apply, then keep this file as a record of what was configured.
 
