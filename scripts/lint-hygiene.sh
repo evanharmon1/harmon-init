@@ -123,7 +123,7 @@ for f in "${files[@]}"; do
     case "$f" in
     */templates/*) : ;; # Ansible template source — ansible_managed is valid here
     ansible/*.yml | ansible/*.yaml | */ansible/*.yml | */ansible/*.yaml)
-        if grep -En '\{\{-?[[:space:]]*ansible_managed' "$f" >/dev/null 2>&1; then
+        if grep -En '\{\{[-+]?[[:space:]]*ansible_managed' "$f" >/dev/null 2>&1; then
             warn "$f: 'ansible_managed' used outside a template source — undefined at runtime in copy: content etc.; use the template module or a static comment"
         fi
         ;;
