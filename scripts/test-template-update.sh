@@ -45,11 +45,16 @@ gitq() { git -C "$1" -c user.email=t@t.co -c user.name=t -c commit.gpgsign=false
 #    representing legacy answers as soon as this change lands on main.
 mkdir -p "$tmpl"
 legacy_ref=v4.4.0
-if ! git -C "$repo_root" rev-parse --verify --quiet "$legacy_ref^{commit}" >/dev/null; then
-    echo "FAIL: legacy migration fixture $legacy_ref is unavailable" >&2
+legacy_commit=617a309bdf1743cb3e258eaf75deae234178a52d
+if git -C "$repo_root" rev-parse --verify --quiet "$legacy_ref^{commit}" >/dev/null; then
+    legacy_source="$legacy_ref"
+elif git -C "$repo_root" rev-parse --verify --quiet "$legacy_commit^{commit}" >/dev/null; then
+    legacy_source="$legacy_commit"
+else
+    echo "FAIL: legacy migration fixture $legacy_ref ($legacy_commit) is unavailable" >&2
     exit 1
 fi
-git -C "$repo_root" archive --format=tar --output="$work/main.tar" "$legacy_ref"
+git -C "$repo_root" archive --format=tar --output="$work/main.tar" "$legacy_source"
 tar -xf "$work/main.tar" -C "$tmpl"
 git -C "$tmpl" init -q
 gitq "$tmpl" add -A
