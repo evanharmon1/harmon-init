@@ -112,16 +112,19 @@ for f in "${files[@]}"; do
         warn "$f: CRLF line endings detected (use LF)"
     fi
 
-    # --- ansible_managed outside a .j2 template ---
+    # --- ansible_managed outside a template source ---
     # `ansible_managed` is injected by the template module only. In a .yaml/.yml
     # task or playbook (e.g. an ansible.builtin.copy `content:` block) it is
     # UNDEFINED at runtime and aborts the play — a class of bug that lint/render
-    # checks miss because they never execute the play. .j2 templates end in .j2,
-    # so they're excluded by these patterns (inert in repos without ansible/).
+    # checks miss because they never execute the play. Template SOURCES (where it
+    # IS valid) are exempt: .j2 by extension, and anything under a templates/ dir
+    # — the template module processes any file as Jinja2 regardless of extension
+    # (e.g. templates/prometheus.yml). Inert in repos without an ansible/ tree.
     case "$f" in
+    */templates/*) : ;; # Ansible template source — ansible_managed is valid here
     ansible/*.yml | ansible/*.yaml | */ansible/*.yml | */ansible/*.yaml)
         if grep -En '\{\{-?[[:space:]]*ansible_managed' "$f" >/dev/null 2>&1; then
-            warn "$f: 'ansible_managed' used outside a .j2 template — undefined at runtime in copy: content etc.; use the template module or a static comment"
+            warn "$f: 'ansible_managed' used outside a template source — undefined at runtime in copy: content etc.; use the template module or a static comment"
         fi
         ;;
     esac
