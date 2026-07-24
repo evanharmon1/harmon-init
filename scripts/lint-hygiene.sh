@@ -123,7 +123,13 @@ for f in "${files[@]}"; do
     case "$f" in
     */templates/*) : ;; # Ansible template source — ansible_managed is valid here
     ansible/*.yml | ansible/*.yaml | */ansible/*.yml | */ansible/*.yaml)
-        if grep -En '\{\{[-+]?[[:space:]]*ansible_managed' "$f" >/dev/null 2>&1; then
+        # Match a Jinja opener ({{ or {%, with optional -/+ trim marker) followed
+        # by the ansible_managed token anywhere in the expression — covers
+        # first-token, mid-expression banners ({{ '# ' ~ ansible_managed }}), and
+        # {% set %} statements. The trailing boundary avoids matching a different
+        # variable like ansible_managed_by. Multiline expressions aren't caught —
+        # the --check dry-run is the authoritative gate for those.
+        if grep -En '\{[{%][-+]?.*ansible_managed([^[:alnum:]_]|$)' "$f" >/dev/null 2>&1; then
             warn "$f: 'ansible_managed' used outside a template source — undefined at runtime in copy: content etc.; use the template module or a static comment"
         fi
         ;;
