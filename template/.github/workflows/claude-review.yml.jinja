@@ -17,7 +17,8 @@ jobs:
     # Authorized senders — the explicit claude_authorized_members allowlist plus
     # the automation bots whose PRs review runs on. Used by both the `if:` gate
     # (so unauthorized events never provision a runner) and the Verify step.
-[% set _review_senders = (claude_authorized_members.split(',') | map('trim') | select | list) + ['renovate[bot]', 'coderabbitai[bot]', 'dependabot[bot]'] %]
+[% set _review_bots = ['renovate[bot]', 'dependabot[bot]'] + (['coderabbitai[bot]'] if use_coderabbit else []) %]
+[% set _review_senders = (claude_authorized_members.split(',') | map('trim') | select | list) + _review_bots %]
     if: >-
       (github.event.issue.pull_request != null ||
        github.event_name == 'pull_request_review_comment' ||
@@ -76,7 +77,7 @@ jobs:
           label_trigger: "claude-review"
           track_progress: true
           use_sticky_comment: true
-          allowed_bots: "renovate[bot],coderabbitai[bot],dependabot[bot]"
+          allowed_bots: "[[ _review_bots | join(',') ]]"
           base_branch: main
           branch_prefix: claude/
           # --max-budget-usd caps API-key spend; likely a no-op under

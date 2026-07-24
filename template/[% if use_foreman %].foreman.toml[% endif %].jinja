@@ -16,7 +16,7 @@ expected_login = "[[ author_git_provider_username ]]-bot"
 
 # Only these GitHub logins, trusted author associations, and Foreman's own
 # account may contribute unresolved review-thread content to agent prompts.
-review_sender_trust = ["coderabbitai", "Copilot"]
+review_sender_trust = [[ '["coderabbitai", "Copilot"]' if use_coderabbit else '["Copilot"]' ]]
 
 # subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD
 # budgets are inert (guardrails bind on timeout/turns). api: adapters export

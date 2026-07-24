@@ -69,15 +69,13 @@ class TrustedReviewThreads(unittest.TestCase):
 
         threads = [
             thread("owner", "OWNER"),
-            thread("CodeRabbitAI", "NONE"),
+            thread("Copilot", "NONE"),
             thread("bot", "NONE"),
             thread("rando", "NONE"),
             {"id": "empty", "comments": {"nodes": []}},
         ]
         kept, excluded = trusted_review_threads(gh, cfg, threads)
-        self.assertEqual(
-            [item["id"] for item in kept], ["owner", "CodeRabbitAI", "bot"]
-        )
+        self.assertEqual([item["id"] for item in kept], ["owner", "Copilot", "bot"])
         self.assertEqual(excluded, 2)
 
     def test_any_untrusted_reply_excludes_the_thread(self):
@@ -88,7 +86,7 @@ class TrustedReviewThreads(unittest.TestCase):
             "comments": {
                 "nodes": [
                     {
-                        "author": {"login": "coderabbitai"},
+                        "author": {"login": "Copilot"},
                         "authorAssociation": "NONE",
                     },
                     {

@@ -106,6 +106,7 @@ full)
         --data snyk_scan_schedule=weekly
         --data release_content_paths="src docs"
         --data use_codex_review=true
+        --data use_coderabbit=true
     )
     ;;
 meta)
@@ -762,6 +763,34 @@ else
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
+fi
+
+# ── 9d4. CodeRabbit renders only when explicitly enabled ───────────
+# Only `full` opts in; every other profile exercises the default-off path.
+# Keep the config, setup docs, and bot trust wiring aligned with the answer.
+if [ "$profile" = "full" ]; then
+    [ -f .coderabbit.yaml ] || err ".coderabbit.yaml missing (use_coderabbit=true)"
+    grep -Fq 'Install the [CodeRabbit app]' docs/CHECKLIST.md ||
+        err "CHECKLIST missing CodeRabbit setup (use_coderabbit=true)"
+    ! grep -Fq 'Confirm CodeRabbit has no access' docs/CHECKLIST.md ||
+        err "CHECKLIST rendered the CodeRabbit removal step for an opt-in"
+    grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
+        err "Claude review workflow does not trust CodeRabbit (use_coderabbit=true)"
+    grep -q 'coderabbitai' .foreman.toml ||
+        err "Foreman does not trust CodeRabbit reviews (use_coderabbit=true)"
+else
+    [ ! -f .coderabbit.yaml ] ||
+        err ".coderabbit.yaml rendered but use_coderabbit is off"
+    ! grep -Fq 'Install the [CodeRabbit app]' docs/CHECKLIST.md ||
+        err "CHECKLIST mentions CodeRabbit setup but use_coderabbit is off"
+    grep -Fq 'Confirm CodeRabbit has no access' docs/CHECKLIST.md ||
+        err "CHECKLIST omits CodeRabbit App-access confirmation when off"
+    ! grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
+        err "Claude review workflow trusts CodeRabbit but use_coderabbit is off"
+    if [ -f .foreman.toml ]; then
+        ! grep -q 'coderabbitai' .foreman.toml ||
+            err "Foreman trusts CodeRabbit reviews but use_coderabbit is off"
+    fi
 fi
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
