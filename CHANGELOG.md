@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.4.1](https://github.com/evanharmon1/harmon-init/compare/v4.4.0...v4.4.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **lint:** guard against ansible_managed outside .j2 templates ([#368](https://github.com/evanharmon1/harmon-init/issues/368)) ([586813a](https://github.com/evanharmon1/harmon-init/commit/586813a37146c9257199efd322d9c63034a300de))
+* make CodeRabbit an opt-in integration ([#367](https://github.com/evanharmon1/harmon-init/issues/367)) ([fb84d87](https://github.com/evanharmon1/harmon-init/commit/fb84d873ffbaf45c6d8131bb6b1f7ada1e644e14))
+* mark generated checklists as human maintained ([#366](https://github.com/evanharmon1/harmon-init/issues/366)) ([96472b8](https://github.com/evanharmon1/harmon-init/commit/96472b84becf204350399e01161ed8203828fa96))
+
 ## [4.4.0](https://github.com/evanharmon1/harmon-init/compare/v4.3.1...v4.4.0) (2026-07-22)
 
 
