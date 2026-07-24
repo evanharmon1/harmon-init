@@ -112,6 +112,29 @@ for f in "${files[@]}"; do
         warn "$f: CRLF line endings detected (use LF)"
     fi
 
+    # --- ansible_managed outside a template source ---
+    # `ansible_managed` is injected by the template module only. In a .yaml/.yml
+    # task or playbook (e.g. an ansible.builtin.copy `content:` block) it is
+    # UNDEFINED at runtime and aborts the play — a class of bug that lint/render
+    # checks miss because they never execute the play. Template SOURCES (where it
+    # IS valid) are exempt: .j2 by extension, and anything under a templates/ dir
+    # — the template module processes any file as Jinja2 regardless of extension
+    # (e.g. templates/prometheus.yml). Inert in repos without an ansible/ tree.
+    case "$f" in
+    */templates/*) : ;; # Ansible template source — ansible_managed is valid here
+    ansible/*.yml | ansible/*.yaml | */ansible/*.yml | */ansible/*.yaml)
+        # Match a Jinja opener ({{ or {%, with optional -/+ trim marker) followed
+        # by the ansible_managed token anywhere in the expression — covers
+        # first-token, mid-expression banners ({{ '# ' ~ ansible_managed }}), and
+        # {% set %} statements. Word boundaries on both sides avoid matching a
+        # different variable (my_ansible_managed, ansible_managed_by). Multiline
+        # expressions aren't caught — the --check dry-run is the gate for those.
+        if grep -En '\{[{%][-+]?([^}]*[^[:alnum:]_])?ansible_managed([^[:alnum:]_]|$)' "$f" >/dev/null 2>&1; then
+            warn "$f: 'ansible_managed' used outside a template source — undefined at runtime in copy: content etc.; use the template module or a static comment"
+        fi
+        ;;
+    esac
+
     # --- JSON syntax check ---
     case "$f" in
     *.json)
