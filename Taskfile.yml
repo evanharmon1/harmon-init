@@ -469,6 +469,11 @@ tasks:
       # from template/Taskfile.yml.jinja because generated repos consume
       # harmon-init, they don't render templates.
       - uv tool install copier
+      # uv installs tool shims to ~/.local/bin, which a clean macOS does not put
+      # on PATH — leaving copier uninvocable in new shells (and `task verify`'s
+      # template-render tests unable to find it). Ensure the dir is on PATH; this
+      # is a no-op where it already is (e.g. this devcontainer).
+      - uv tool update-shell
       - task: install:hooks
 
   install:hooks:
