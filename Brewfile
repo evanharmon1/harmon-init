@@ -1,7 +1,10 @@
 # Brewfile for harmon-init (template maintenance tooling)
 # Install with: task install  (brew bundle --file=Brewfile)
 
-# Template engine
+# Template engine. On a Homebrew host this is copier's source (installed on PATH
+# by brew); the brew-less devcontainer installs it via uv instead (see
+# scripts/install-copier.sh) — the same platform split as `cask "codex" if
+# OS.mac?` below.
 brew "copier"
 
 # Task runner + git hooks

@@ -459,9 +459,15 @@ tasks:
   install:
     desc: Install all project dependencies and tools
     cmds:
-      # Use THIS repo's Brewfile by absolute path (never a user/global one), and
-      # don't cascade-upgrade unrelated already-installed brew dependents.
-      - HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew bundle --file={{.ROOT_DIR}}/Brewfile
+      # Brewfile deps, but a graceful no-op when Homebrew is absent (this repo's
+      # own devcontainer bakes its toolchain into the image and ships no brew).
+      - ./scripts/install-brewfile.sh
+      # copier (the template engine) is maintenance-only tooling for harmon-init
+      # itself. On a Homebrew host it comes from the Brewfile above; this script
+      # covers the brew-less devcontainer by installing it via uv. Root-only:
+      # generated repos don't render templates, so copier is absent from
+      # template/Taskfile.yml.jinja and template/Brewfile.jinja.
+      - ./scripts/install-copier.sh
       - task: install:hooks
 
   install:hooks:
