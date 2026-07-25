@@ -463,10 +463,10 @@ tasks:
       # own devcontainer bakes its toolchain into the image and ships no brew).
       - ./scripts/install-brewfile.sh
       # copier (the template engine) is maintenance-only tooling for harmon-init
-      # itself — install it via uv, not brew, so it works with or without
-      # Homebrew (notably in the brew-less devcontainer). Root-only: absent from
-      # template/Taskfile.yml.jinja because generated repos don't render
-      # templates. The script handles PATH placement and rerun idempotency.
+      # itself. On a Homebrew host it comes from the Brewfile above; this script
+      # covers the brew-less devcontainer by installing it via uv. Root-only:
+      # generated repos don't render templates, so copier is absent from
+      # template/Taskfile.yml.jinja and template/Brewfile.jinja.
       - ./scripts/install-copier.sh
       - task: install:hooks
 
