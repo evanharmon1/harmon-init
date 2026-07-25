@@ -23,6 +23,8 @@ jobs:
       (github.event.repository.private == false || vars.FULL_SECURITY_SCAN == 'true') &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 30
     permissions:
@@ -47,9 +49,15 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
 
+  # Stable aggregate status (the matrixed analyze jobs have dynamic names).
+  # Named codeql-verify so it does not collide with the build workflow's
+  # required `verify` check. It always reports: public/paid scans must succeed;
+  # free private and fork-PR scans report a successful not-applicable gate.
   codeql-verify:
     if: always()
     needs: [analyze]
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     permissions:
       contents: read

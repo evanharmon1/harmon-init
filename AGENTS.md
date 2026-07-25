@@ -12,6 +12,11 @@ runners — and can also be applied to existing repos to standardize them. This 
 an application; it is a template repository used via the
 [Copier](https://copier.readthedocs.io/en/stable/) templating tool.
 
+Repo: https://github.com/evanharmon1/harmon-init — see
+[docs/README.md](docs/README.md) for the documentation map,
+[docs/architecture/README.md](docs/architecture/README.md) for the architecture,
+and [DESIGN.md](DESIGN.md) for design/UX intent.
+
 ## Hard Rules
 
 Non-negotiable, regardless of any autonomy granted elsewhere in this file:
@@ -96,10 +101,14 @@ task verify
 # Full CI mirror on demand (verify's checks + devcontainer assert + security)
 task ci
 
-# Lint only
+# Lint only (fast gate — safe for editors, hooks, and agents on every change)
 task check
 
+# Auto-format then lint
+task fix
+
 # Render the template into a temp dir and validate the output
+task test          # = task test:template (all profiles)
 task test:template
 
 # Free security baseline (Semgrep CE + gitleaks + dependency audit)
@@ -118,6 +127,15 @@ task foreman:watch -- --milestone <n>        # unattended loop (humans merge)
 # Releases are INTENTIONAL — never automated on merge to main
 task release:patch   # or release:minor / release:major
 ```
+
+`check` is deliberately kept fast (lint only) so editors, git hooks, and AI
+agents can run it on every change without getting bogged down. `verify` is the
+definition-of-done gate — check + the quick Taskfile/hook/parity guards + this
+repo's test tier, which renders the whole template via `test:template` and is
+therefore inherently heavier than a generated repo's (the Foreman v2 vocabulary:
+verify = check + build + test). `ci` is the full pipeline — everything CI runs
+(`verify` + the devcontainer permission assert + `security`) — so you can
+reproduce a CI run locally on demand instead of waiting on a PR.
 
 **Foreman** (`scripts/foreman/`, `taskfiles/foreman.yml`) is the deterministic
 supervisor for milestone-driven agent dispatch: explicit arming via
@@ -265,6 +283,29 @@ iterations and **4** review iterations (challenge → fix → re-challenge, and
 likewise for review). If material disagreement persists at the cap, stop and
 surface it to Evan instead
 of iterating further.
+
+## Conventions
+
+Full reference: [docs/conventions.md](docs/conventions.md). Highlights beyond
+the workflow rules above:
+
+- `group:action` Taskfile naming (e.g. `lint:shell`, not `shell:lint`); pin
+  actions by SHA + `# vX.Y.Z`.
+- Git hooks are managed by lefthook (`lefthook.yml`) and delegate to Taskfile
+  targets — don't duplicate logic in hooks or workflows.
+- Secrets never go in git; local env via 1Password (`op run` / `op inject`).
+- When generating or rotating secrets, keep secret values on stdin and use the
+  destination-only helpers:
+  `task secret:set:1p VAULT=... ITEM=... FIELD=... [SECTION=...]` for existing
+  1Password fields and `task secret:set:gh NAME=... REPO=owner/repo` for GitHub
+  repo secrets. Never pass secret values as command arguments, `--body` values,
+  exported env vars, or Taskfile vars. The hard rule above still applies:
+  agents must not run `secret:set:1p` or otherwise write to a password manager
+  without explicit user confirmation for that exact write.
+- The skills sync manages ONLY the directories listed on the `# managed:` line
+  of `.claude/skills/.SKILLS_PROVENANCE`. Anything else under `.claude/skills/`
+  is a local skill this repo owns; never hand-edit a vendored one — change it in
+  harmon-devkit and bump the pin.
 
 ## Code Style
 

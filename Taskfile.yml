@@ -52,20 +52,14 @@ tasks:
   ci:
     # Full local mirror of this repo's CI — run on demand to catch everything CI
     # would (the lint job's guards, the template render matrix, security) without
-    # waiting on a PR. The devcontainer permission assertion is a unit check and
-    # does not build or start a container.
-    desc: Full CI mirror (check → guards → test → security)
+    # waiting on a PR. Builds ON `verify` rather than re-listing its steps, so a
+    # guard added to verify can never go missing here. The devcontainer
+    # permission assertion is a unit check and does not build or start a
+    # container.
+    desc: Full CI mirror (verify → test:devcontainer:permissions → security)
     cmds:
-      - task: check
-      - task: test:tasks
-      - task: test:ci-results
-      - task: test:renovate-pins
-      - task: test:release-title
-      - task: foreman:test
-      - task: test:hooks
-      - task: test:codex-review
+      - task: verify
       - task: test:devcontainer:permissions
-      - task: test
       - task: security
 
   verify:

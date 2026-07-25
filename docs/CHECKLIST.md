@@ -21,6 +21,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] `task install` — Brewfile deps, and lefthook git hooks
 - [ ] `task verify` passes locally
+- [ ] **Vendored agent skills stay pinned**: `.skills-sync.yaml` pins which
+      harmon-devkit skill categories this repo vendors into `.claude/skills/`.
+      **Pin bumps are a two-step:** edit `ref` in `.skills-sync.yaml`, then run
+      `task sync:skills` and commit the refreshed `.claude/skills/` in the same
+      PR. Renovate surfaces a new
+      [harmon-devkit release](https://github.com/evanharmon1/harmon-devkit/releases)
+      in the Dependency Dashboard; approve it there to open the pin PR, then run
+      the sync and push its output as a separate commit (do not amend Renovate's
+      commit). Renovate cannot do the re-sync, so a ref-only commit fails the
+      `verify:skills` drift check in CI and pre-push.
 - [ ] Verify `harmon-init.code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
 - [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
 - [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
@@ -51,7 +61,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       the CodeRabbit GitHub App installation and confirm the App no longer has
       access. Deleting `.coderabbit.yaml` and bot trust does not revoke an
       existing installation.
-- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows)
+- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
+      with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
+      token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
+      key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
 - [ ] **Free SAST coverage** — Harmon Init's public `codeql.yml` runs CodeQL
       automatically and uploads results to the Security tab. Confirm a successful
       run. Generated supported public stacks do the same; free private repos use
@@ -71,17 +84,32 @@ config, toolchain, devcontainer, and dev environment — against the items below
       not debit private-test usage; if it does, run `snyk monitor` once and set
       the Project's Git remote URL in Snyk. Prefer weekly for any deliberately
       budgeted private repo and check Organization Usage before enabling it.
-- [ ] CI GitHub App `evanharmon1-ci`: create it by hand for this org (one App
-      per org; **Settings → Developer settings → GitHub Apps**), or reuse the
-      org's existing one;
-      install it on this repo, then set `CI_APP_CLIENT_ID` (Actions
-      **variable**) + `CI_APP_PRIVATE_KEY` (Actions **secret**) — org-level for
-      an org, per-repo for a personal account. Set the private key by piping the
-      `.pem` in (`gh secret set CI_APP_PRIVATE_KEY … < key.pem`), not by pasting —
-      flattened newlines make the key undecodable. For an org, scope it
-      (`--visibility selected --repos …`) and then finalize/audit repo access in
-      the UI. Drives release-please, the
-      claude-* workflows, and project-automation. See docs/architecture/security.md.
+- [ ] **Create** the CI GitHub App `evanharmon1-ci` by hand (one App per org;
+      **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.
+- [ ] **Install** the App on this repo — **Install App → Only select repositories**
+      (the harmon-init repos that run release-please / claude-* / project-automation),
+      **not "All"**. **Creating the App is not enough:** an App whose credentials are
+      set but which is *not installed* on the repo makes
+      `actions/create-github-app-token` fail at runtime with a **404**
+      (`Not Found` — "not installed on this repository"). This is the single
+      easiest step to miss.
+- [ ] Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+      **secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
+      the key), and **scope both to those same repos** (least privilege — the key can
+      act as the App: commits, PRs, releases, workflow edits):
+
+      ```bash
+      gh secret set CI_APP_PRIVATE_KEY --org evanharmon1 \
+        --visibility selected --repos <repo-a>,<repo-b> < evanharmon1-ci.private-key.pem
+      gh variable set CI_APP_CLIENT_ID --org evanharmon1 \
+        --visibility selected --repos <repo-a>,<repo-b> --body "<client-id>"  # Iv…-style, not the numeric App ID
+      ```
+
+      Personal account: use `--repo evanharmon1/harmon-init` instead of
+      `--org`/`--visibility`/`--repos`. Re-running `--repos` **replaces** the list —
+      re-run with the full list to add a repo. Drives release-please, the claude-*
+      workflows, and project-automation; blast-radius + rotation in
+      [architecture/security.md](architecture/security.md).
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
 - [ ] GitHub Project: run `task setup:github-project` (needs
