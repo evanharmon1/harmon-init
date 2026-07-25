@@ -13,13 +13,16 @@ Thumbs.db
 *~
 # VS Code: commit the curated shared project config, ignore everything else
 # (extensions auto-write machine-specific files into .vscode/). The broad ignore
-# MUST come before the `!` whitelist — later rules win in .gitignore. `!.vscode/`
+# MUST come before the `!` whitelist — later rules win in .gitignore. `!/.vscode/`
 # re-includes the DIRECTORY first: a global excludesFile with a bare `.vscode/`
 # is common, and git never descends into an ignored directory, so without it the
 # file-level whitelist below silently does nothing for those users (the same
-# global-gitignore hazard called out for `.meta` below).
+# global-gitignore hazard called out for `.meta` below). Anchored with a leading
+# slash so it only re-includes the ROOT .vscode/ — an unanchored `!.vscode/`
+# would also un-ignore nested ones (e.g. packages/foo/.vscode/) whose
+# machine-specific files the root-anchored `.vscode/*` above does not cover.
 .vscode/*
-!.vscode/
+!/.vscode/
 !.vscode/settings.json
 !.vscode/extensions.json
 !.vscode/tasks.json
