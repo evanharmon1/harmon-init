@@ -301,9 +301,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
       activate automatically once `ansible/site.yml` exists
 [% if include_terraform %]
-- [ ] `terraform/variables.tf` ships its example variable **commented out** on
-      purpose — TFLint fails a declared-but-unused variable, so uncomment it (or
-      add your own) only once something references it
+- [ ] `terraform/variables.tf` carries a `# tflint-ignore:
+      terraform_unused_declarations` on its example variable, because TFLint
+      fails a declared-but-unused one — drop that line once something
+      references `var.environment`
 - [ ] Enabling a cloud TFLint ruleset (aws/google/azurerm) in `.tflint.hcl`
       means adding `tflint --init` to `lint:terraform:tflint` **and** to the CI
       composite action — the bundled `terraform` ruleset needs neither
