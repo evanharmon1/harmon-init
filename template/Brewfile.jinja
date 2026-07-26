@@ -41,8 +41,9 @@ brew "python"
 [% endif %]
 [% if include_terraform %]
 
-# Terraform
+# Terraform (tflint backs `task lint:terraform:tflint`; Checkov runs via uvx)
 brew "terraform"
+brew "tflint"
 [% endif %]
 [% if devcontainer %]
 

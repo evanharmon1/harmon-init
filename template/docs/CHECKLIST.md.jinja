@@ -300,6 +300,14 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
       activate automatically once `ansible/site.yml` exists
+[% if include_terraform %]
+- [ ] `terraform/variables.tf` ships its example variable **commented out** on
+      purpose — TFLint fails a declared-but-unused variable, so uncomment it (or
+      add your own) only once something references it
+- [ ] Enabling a cloud TFLint ruleset (aws/google/azurerm) in `.tflint.hcl`
+      means adding `tflint --init` to `lint:terraform:tflint` **and** to the CI
+      composite action — the bundled `terraform` ruleset needs neither
+[% endif %]
 [% elif project_type == 'docs' %]
 - [ ] Decide the docs toolchain (plain markdown / Obsidian vault / static site generator)
 [% else %]

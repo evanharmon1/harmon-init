@@ -28,10 +28,11 @@
     },
     {
       "customType": "regex",
-      "description": "Workflow tool pins (both root and template workflows), `version:` style",
-      "managerFilePatterns": ["/workflows/.*\\.ya?ml(\\.jinja)?$/"],
+      "description": "Workflow and composite-action tool pins (both layers), `version:`/`<tool>_version:` style. Composite actions are included because template/.github/actions/setup/action.yml.jinja pins setup-task and setup-tflint this way, and a `workflows/`-only pattern leaves them invisible here — the same silent rot the SHA manager below was added for.",
+      "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\.jinja)?$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*(?<currentValue>\\S+)"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*(?<currentValue>\\S+)",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?"
       ]
     },
     {
@@ -44,8 +45,8 @@
     },
     {
       "customType": "regex",
-      "description": "GitHub Action SHA pins (`uses: owner/repo@sha # vX.Y.Z`) in the template's .jinja workflows — the native github-actions manager can't parse the .jinja extension, so these pins rotted silently until the omator retro caught them",
-      "managerFilePatterns": ["/workflows/.*\\.ya?ml\\.jinja$/"],
+      "description": "GitHub Action SHA pins (`uses: owner/repo@sha # vX.Y.Z`) in the template's .jinja workflows AND composite actions — the native github-actions manager can't parse the .jinja extension, so these pins rotted silently until the omator retro caught them. `actions/` is covered too: template/.github/actions/setup/action.yml.jinja pins setup-node, setup-python, setup-uv, setup-terraform and setup-tflint by SHA.",
+      "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml\\.jinja$/"],
       "matchStrings": [
         "uses: (?<depName>[^\\s@]+)@(?<currentDigest>[0-9a-f]{40}) # (?<currentValue>v[0-9][0-9.]*)"
       ],
@@ -80,9 +81,9 @@
       "groupName": "GitHub Actions"
     },
     {
-      "description": "Batch regex-managed workflow updates into one PR",
+      "description": "Batch regex-managed workflow and composite-action updates into one PR — the composite action provisions the same CI toolchain the workflows do, so its pins belong in the same batch",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": [".github/workflows/**"],
+      "matchFileNames": [".github/workflows/**", ".github/actions/**"],
       "groupName": "GitHub Actions"
     },
     {
@@ -96,9 +97,9 @@
       "groupName": "Devcontainer"
     },
     {
-      "description": "Template workflow action pins belong with the GitHub Actions batch, not the Devcontainer batch — must come after the Devcontainer rule so this override wins",
+      "description": "Template workflow AND composite-action pins belong with the GitHub Actions batch, not the Devcontainer batch — must come after the Devcontainer rule (which claims all of template/**) so this override wins. Composite actions are listed explicitly: template/.github/actions/setup/action.yml.jinja pins setup-node/-python/-uv/-terraform/-task/-tflint, and without this line they would all be filed as Devcontainer updates",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": ["template/.github/workflows/**"],
+      "matchFileNames": ["template/.github/workflows/**", "template/.github/actions/**"],
       "groupName": "GitHub Actions"
     },
     {

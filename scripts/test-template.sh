@@ -847,6 +847,88 @@ else # use_release_please default on, release_content_paths="" (guard present, u
     ! grep -q 'guard:release-title' Taskfile.yml || err "guard:release-title task rendered but release_content_paths empty"
 fi
 
+# ── 9h. Terraform lint contract renders per include_terraform ───────
+# `task check` must actually REACH fmt + TFLint + Checkov — a defined-but-
+# unreachable leaf task is not lint coverage, and a task calling a binary the
+# gate job never provisions is a red CI run waiting to happen. Asserted with
+# `task --dry` (the same reachability probe harmon-devkit's verify-applied.sh
+# runs against a standardized repo) so the two cannot disagree.
+# Gated on the ANSWER, not the profile name: `full` sets include_terraform
+# explicitly, but `iac` inherits it from project_type's default, and a future
+# profile could do either.
+if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+    [ -f .tflint.hcl ] || err ".tflint.hcl missing (include_terraform=true)"
+    grep -q 'plugin "terraform"' .tflint.hcl || err ".tflint.hcl does not enable the bundled terraform ruleset"
+    grep -q '^  lint:terraform:tflint:' Taskfile.yml || err "lint:terraform:tflint task missing (include_terraform=true)"
+    grep -q '^  lint:terraform:security:' Taskfile.yml || err "lint:terraform:security task missing (include_terraform=true)"
+    grep -q 'terraform-linters/setup-tflint@' .github/actions/setup/action.yml ||
+        err "composite setup action does not provision TFLint — the gate job would fail on 'tflint: command not found'"
+    grep -q '^brew "tflint"' Brewfile || err "Brewfile is missing tflint (local half of the lint contract)"
+    if have task; then
+        for tf_task in lint:terraform check; do
+            tf_dry="$(task --color=false --dry "$tf_task" 2>&1 || true)"
+            for tf_contract in 'terraform fmt -check' 'tflint --recursive' 'checkov==' 'checkov -d'; do
+                grep -qF -- "$tf_contract" <<<"$tf_dry" ||
+                    err "task ${tf_task} does not reach the Terraform contract '${tf_contract}'"
+            done
+        done
+    else
+        required task "Terraform lint reachability" || fail=1
+    fi
+    # The TFLint pin SPECIFICALLY. "Some manager matched something in this file"
+    # proves nothing: the shell-variable manager already extracts
+    # SHELLCHECK_VERSION= from this same action, so a first-match check passes
+    # even with the composite-action manager deleted.
+    python3 - <<'PY' || err "the tflint_version pin is not extractable by any customManager in the rendered renovate.json"
+import json, re, sys, pathlib
+want = "terraform-linters/tflint"
+cfg = json.loads(pathlib.Path("renovate.json").read_text())
+action = pathlib.Path(".github/actions/setup/action.yml").read_text()
+for m in cfg.get("customManagers", []):
+    pats = [re.compile(p.strip("/")) for p in m.get("managerFilePatterns", [])]
+    if not any(p.search(".github/actions/setup/action.yml") for p in pats):
+        continue
+    for s in m.get("matchStrings", []):
+        for found in re.finditer(s.replace("(?<", "(?P<"), action):
+            if found.group("depName") != want:
+                continue
+            # Match the SHAPE, not the pinned value — asserting the literal
+            # version would turn every Renovate bump PR into a red CI run.
+            if re.fullmatch(r"v?\d+\.\d+\.\d+", found.group("currentValue")):
+                sys.exit(0)
+sys.exit(1)
+PY
+else
+    [ ! -f .tflint.hcl ] || err ".tflint.hcl rendered but include_terraform=false"
+    ! grep -q 'setup-tflint' .github/actions/setup/action.yml || err "setup-tflint provisioned but include_terraform=false"
+    ! grep -q 'tflint' Brewfile || err "Brewfile installs tflint but include_terraform=false"
+fi
+
+# Every `# renovate:` annotation in the rendered composite action must be
+# extractable by one of the rendered repo's own customManagers — an annotation
+# no manager matches (or one missing depName=) looks fine in review and produces
+# NO error from Renovate; the pin just silently never updates. This is the
+# generated-repo half of scripts/test-renovate-pins.sh, and it runs for every
+# profile because the pins it protects (node-version, tflint_version) are not
+# all conditional.
+python3 - <<'PY' || err "the rendered composite action has a '# renovate:' pin no customManager can extract (see stderr) — it would never update"
+import json, re, sys, pathlib
+rel = ".github/actions/setup/action.yml"
+text = pathlib.Path(rel).read_text()
+cfg = json.loads(pathlib.Path("renovate.json").read_text())
+lines = lambda rx: {text[: m.start()].count("\n") + 1 for m in rx.finditer(text)}
+seen = set()
+for m in cfg.get("customManagers", []):
+    if not any(re.search(p.strip("/"), rel) for p in m.get("managerFilePatterns", [])):
+        continue
+    for s in m.get("matchStrings", []):
+        seen |= lines(re.compile(s.replace("(?<", "(?P<")))
+missing = sorted(lines(re.compile(r"^\s*#\s*renovate:\s*datasource=", re.M)) - seen)
+for line in missing:
+    print(f"  {rel}:{line}: {text.splitlines()[line - 1].strip()}", file=sys.stderr)
+sys.exit(1 if missing else 0)
+PY
+
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"

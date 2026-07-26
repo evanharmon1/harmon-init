@@ -247,10 +247,42 @@ tasks:
 [% endif %]
 [% if include_terraform %]
 
+  # Aggregate reached by `check` (and the pre-commit hook), so the local gate and
+  # CI can never enforce different Terraform rules. `lint:terraform:validate`
+  # deliberately stays OUT of it: validate needs `terraform init`, which wants
+  # network + provider downloads, so it runs in `validate` (pre-push + CI).
   lint:terraform:
+    desc: Terraform lint (fmt + TFLint + Checkov)
+    cmds:
+      - task: lint:terraform:fmt
+      - task: lint:terraform:tflint
+      - task: lint:terraform:security
+
+  lint:terraform:fmt:
     desc: Terraform format check
     cmds:
       - terraform fmt -check -recursive terraform/
+
+  lint:terraform:tflint:
+    # In --recursive mode TFLint resolves .tflint.hcl relative to EACH directory
+    # it visits, so the repo-root config has to be passed as an absolute path.
+    # Only the bundled `terraform` ruleset is enabled, so no `tflint --init` is
+    # required; adding a cloud ruleset (aws/google/azurerm) means adding an init
+    # step here AND in CI, not just a plugin block in .tflint.hcl.
+    desc: TFLint (recursive)
+    dir: terraform
+    cmds:
+      - tflint --recursive --config "{{.ROOT_DIR}}/.tflint.hcl"
+
+  lint:terraform:security:
+    # Checkov via uvx on its PyPI distribution, explicitly pinned so local and CI
+    # scan with identical rules (same rationale as scripts/run-semgrep.sh).
+    desc: Checkov IaC security scan
+    vars:
+      # renovate: datasource=pypi depName=checkov
+      CHECKOV_VERSION: 3.3.8
+    cmds:
+      - uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov -d terraform --quiet --compact
 
   lint:terraform:validate:
     desc: Terraform validate
