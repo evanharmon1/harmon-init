@@ -445,7 +445,7 @@ provider accounts, and machines. The standard:
   <org>` holding `Account ID`) so identifiers have one home too.
 - **SSH keys use the 1Password SSH key type** (fields: `public key`,
   `fingerprint`, `private key`, `passphrase`).
-- Repos consume credentials only through references[% if use_python %]
+- Repos consume credentials only through references[% if use_python +%]
   (`.envrc.tpl` → `op inject`, see
   [../guides/local-secrets.md](../guides/local-secrets.md))[% endif %] or CI
   secrets fed from these items (`op read "…" | gh secret set …`) — never by
