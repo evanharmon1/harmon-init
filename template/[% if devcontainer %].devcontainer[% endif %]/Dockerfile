@@ -392,8 +392,13 @@ RUN install -d -m 0755 /home/vscode/.config/zellij \
 # Hook scripts referenced from managed-settings.json are installed alongside
 # at /etc/claude-code/hooks/ so they share the same image-baked, volume-proof
 # location. Source of truth: .devcontainer/config/claude-hooks/ (checked into git).
+#
+# statusline.sh lands here for the same reason: ~/.claude is a volume mount at
+# runtime, so a status line script shipped inside it would vanish on a volume
+# wipe. The `statusLine` key in claude-user-defaults.json points at this path.
 RUN install -d -m 0755 /etc/claude-code /etc/claude-code/hooks \
     && install -m 0644 /usr/local/share/devcontainer-config/claude-settings.json /etc/claude-code/managed-settings.json \
+    && install -m 0755 /usr/local/share/devcontainer-config/claude-statusline.sh /etc/claude-code/statusline.sh \
     && install -m 0755 /usr/local/share/devcontainer-config/claude-hooks/post-edit-format.sh             /etc/claude-code/hooks/post-edit-format.sh \
     && install -m 0755 /usr/local/share/devcontainer-config/claude-hooks/protect-files.sh               /etc/claude-code/hooks/protect-files.sh \
     && install -m 0755 /usr/local/share/devcontainer-config/claude-hooks/block-no-verify.sh             /etc/claude-code/hooks/block-no-verify.sh \

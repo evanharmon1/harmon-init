@@ -30,6 +30,33 @@ Prebuilt images are pulled from GHCR as a build cache
 (`ghcr.io/evanharmon1/harmon-init-devcontainer` / `ghcr.io/evanharmon1/harmon-init-devcontainer-dev`), so a warm rebuild
 is fast. A cache miss is non-fatal — it just rebuilds from the `Dockerfile`.
 
+## Claude Code settings in the container
+
+Two layers, both owned by the container — never the `~/.claude` volume, which a
+rebuild or volume wipe can empty:
+
+| Layer | Baked at | Source | Overridable |
+|---|---|---|---|
+| Managed settings | `/etc/claude-code/managed-settings.json` | `config/claude-settings.json` | no (policy) |
+| Hook scripts | `/etc/claude-code/hooks/` | `config/claude-hooks/` | no |
+| Status line | `/etc/claude-code/statusline.sh` | `config/claude-statusline.sh` | yes |
+| User defaults | `~/.claude/settings.json` | `config/claude-user-defaults.json` | yes |
+
+User defaults are **seed-merged** into `~/.claude/settings.json` by
+`post-create-common.sh` — existing values win, so `/model` and other in-app
+changes survive a rebuild, and a fresh volume gets the defaults back.
+
+`config/claude-statusline.sh` renders the same two-line status line as a host
+session, so a container session reads identically:
+
+```text
+📁 ~/git/harmon-init  🌿 main  🤖 Opus 5  📟 v2.1.220  🎨 default
+🧠 Context Remaining: 60% [======----]
+```
+
+To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
+at it — the seed merge will not overwrite it.
+
 ## Secrets — 1Password Environments (the standard)
 
 Don't hand-write or copy `devcontainer.env`. The standard is **1Password
