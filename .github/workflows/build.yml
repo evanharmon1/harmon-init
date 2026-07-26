@@ -46,6 +46,16 @@ jobs:
       - run: task test:release-title
       - name: Dogfood parity (verbatim template files match their root twins)
         run: task test:dogfood-parity
+      # The structure check renders template/, so it needs copier. Installed
+      # explicitly rather than via scripts/install-copier.sh: that script no-ops
+      # when brew is present, and GitHub's ubuntu images ship linuxbrew — it
+      # would leave copier missing here. uv comes from the composite action.
+      - name: Install copier (dogfood structure check renders the template)
+        run: |
+          uv tool install copier
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Dogfood structure (template sections/tasks exist in the root layer)
+        run: task test:dogfood-structure
       - run: task foreman:test
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
