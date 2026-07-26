@@ -32,7 +32,14 @@ it points here.
   `install:hooks`, `status:git`. **Never action-first** (`typescript:lint`,
   `yaml:lint`).
 - Pipeline order is **`check → build → validate → test → security`**, with
-  `verify` (local gate) and `ci` (full) as the aggregates.
+  `verify` and `ci` as the aggregates. `check` is the fast inner-loop/hook gate
+  (lint only). `verify` is the definition-of-done gate — `check` + the
+  Taskfile/hook/dogfood guards + this repo's test tier, which renders the whole
+  template via `test:template` and is therefore heavier than a generated repo's.
+  `ci` is the full CI mirror — `verify` + the network skills-drift check
+  (`verify:skills`) + the devcontainer permission assert + `security`. A check
+  the build workflow **gates on** and that can run locally belongs in `ci` too,
+  or the mirror quietly stops being one.
 - **`lint:*` and `check` are read-only gates** — they report and fail, never
   modify files. All auto-fixing lives in **`task format`**, **`task format:file
   -- <path>`**, and **`task fix`** (= format then lint). Pre-commit hooks run the
