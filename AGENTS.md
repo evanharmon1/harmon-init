@@ -73,12 +73,33 @@ itself, not against the root copy). The root form is the template rendered with
 harmon-init's own answers (e.g. `[[ ci_runner_labels ]]` → `[ "ubuntu-latest" ]`),
 and template-only logic (`[% if … %]`, `${VERSION}` arg substitution) collapses to
 its concrete value. When you touch a templated file, grep for the sibling and edit
-both. For **verbatim** twins — template files *without* a `.jinja` suffix, copied
-byte-for-byte into generated repos — `task test:dogfood-parity` (part of `task
-verify`) enforces byte-equality with the root copy, so a fix applied to only one
-side fails the gate instead of silently shipping stale content downstream
-(intentional root-only divergences are allowlisted in
-`scripts/test-dogfood-parity.sh`).
+both.
+
+**The answers the root layer is a render of are checked in** at
+`.dogfood-answers.yml`. It is NOT a `.copier-answers.yml` — harmon-init is the
+template, so it has no copier operation of its own and `copier update` can never
+target it. When the root adopts (or drops) a template option, change that file in
+the same PR, or the drift tooling below reports noise instead of drift.
+
+Three checks cover the two layers, in increasing looseness:
+
+| Check | Scope | Gate? |
+|---|---|---|
+| `task test:dogfood-parity` | **verbatim** twins (no `.jinja`) — byte-equality | yes (`verify` + CI) |
+| `task test:dogfood-structure` | **jinja** twins — every rendered heading/task exists in the root copy | yes (`verify` + CI) |
+| `task audit:dogfood` | **jinja** twins — full text diff | no, a report |
+
+Verbatim twins are copied into generated repos byte-for-byte, so a fix applied to
+only one side fails the parity gate instead of silently shipping stale content
+downstream. Jinja twins can't be byte-compared — the root copy is a render and
+legitimately diverges in prose — so the gate is narrowed to *structure*: if the
+template grows a section or a task, the root should have gained one too. That
+catches the direction drift actually travels (you edit `template/` to ship a fix
+to consumers, and nothing fails when the root copy is forgotten); it does **not**
+catch changes inside a task body or paragraph. For those, run `task
+audit:dogfood` — before a release, or whenever a change spans both layers — and
+read the diff. Intentional divergences are allowlisted, **with reasons**, in each
+script.
 
 The **standardize-repo skill** is vendored at `.claude/skills/standardize-repo`
 (so the devcontainer and cloud claude-* workflows can use it); the canonical copy
@@ -111,6 +132,10 @@ task fix
 # Render the template into a temp dir and validate the output
 task test          # = task test:template (all profiles)
 task test:template
+
+# Report root<->template drift for jinja twins (a report, not a gate)
+task audit:dogfood              # full diffs
+task audit:dogfood -- --summary # filenames + diff sizes only
 
 # Free security baseline (Semgrep CE + gitleaks + dependency audit)
 task security
