@@ -149,10 +149,7 @@ jobs:
           # a runner without `file` would abort every profile before validation.
           # This job does not use .github/actions/setup, so installing it there
           # does not cover this path. Same self-hosted reasoning as yq above.
-          command -v file >/dev/null 2>&1 || {
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends file
-          }
+          ./scripts/ensure-file.sh
       - name: Configure git identity (copier renders run git init)
         run: |
           git config --global user.name "ci"

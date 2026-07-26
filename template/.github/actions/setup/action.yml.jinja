@@ -69,11 +69,9 @@ runs:
       run: |
         # `file` backs lint-hygiene.sh's binary detection, which fails closed
         # rather than silently scanning binaries as text. GitHub-hosted images
-        # ship it, but a self-hosted CI_RUNS_ON runner may not.
-        command -v file >/dev/null 2>&1 || {
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends file
-        }
+        # ship it, but a self-hosted CI_RUNS_ON runner may not. The helper
+        # probes for a package manager rather than assuming apt-get.
+        ./scripts/ensure-file.sh
         # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
         SHELLCHECK_VERSION=0.10.0
         curl -fsSL --retry 3 -o /tmp/shellcheck.tar.xz \

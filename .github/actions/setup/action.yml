@@ -46,10 +46,9 @@ runs:
         # rather than silently scanning binaries as text. GitHub-hosted images
         # ship it, but a self-hosted CI_RUNS_ON runner may not — the same
         # reasoning as the explicit yq install in build.yml's template-test.
-        command -v file >/dev/null 2>&1 || {
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends file
-        }
+        # The helper probes for a package manager: `self-hosted` implies only
+        # the `linux` label, so apt-get cannot be assumed.
+        ./scripts/ensure-file.sh
         # renovate: datasource=github-releases depName=koalaman/shellcheck extractVersion=^v(?<version>.+)$
         SHELLCHECK_VERSION=0.10.0
         curl -fsSL --retry 3 -o /tmp/shellcheck.tar.xz \
