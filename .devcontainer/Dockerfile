@@ -95,6 +95,7 @@ RUN apt-get update \
         eza \
         fd-find \
         ffmpeg \
+        file \
         fzf \
         git-crypt \
         git-delta \
