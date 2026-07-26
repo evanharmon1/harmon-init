@@ -16,6 +16,18 @@
 # general lint escape hatch.
 set -euo pipefail
 
+# Binary detection below shells out to `file`. Without it that test silently
+# never matches, so every tracked binary is scanned as text and reports bogus
+# trailing-whitespace/EOF-newline failures — hundreds of them in a repo with
+# committed assets, with nothing pointing at the real cause. Fail loudly here
+# instead of degrading into noise.
+if ! command -v file >/dev/null 2>&1; then
+    echo "lint-hygiene: required tool 'file' not found on PATH" >&2
+    echo "  needed to tell binary files from text before hygiene checks" >&2
+    echo "  install it (Debian/Ubuntu: apt-get install file) and re-run" >&2
+    exit 1
+fi
+
 errors=0
 warn() {
     echo "FAIL: $*" >&2

@@ -1,5 +1,12 @@
 # Brewfile for harmon-init (template maintenance tooling)
 # Install with: task install  (brew bundle --file=Brewfile)
+#
+# Base-OS prerequisite, deliberately not a brew entry: `file(1)`, which
+# scripts/lint-hygiene.sh requires. macOS ships /usr/bin/file and every
+# mainstream Linux distro installs it in the base system, so a brew formula
+# would shadow the system binary to no benefit. CI provisions it explicitly via
+# scripts/ensure-file.sh; if it is somehow absent locally, lint-hygiene.sh says
+# so by name and exits rather than misreporting binaries as text.
 
 # Template engine. On a Homebrew host this is copier's source (installed on PATH
 # by brew); the brew-less devcontainer installs it via uv instead (see
