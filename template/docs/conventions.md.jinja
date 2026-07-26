@@ -70,10 +70,18 @@ it points here.
 [% if include_terraform %]
 - **Terraform:** `task lint:terraform` aggregates `terraform fmt -check`, TFLint
   (`.tflint.hcl`, bundled ruleset — a cloud ruleset needs `tflint --init` in the
-  task and in CI), and Checkov (pinned, via uvx); `terraform validate` runs
-  separately in `task validate` because it needs `terraform init`. Provider
-  tokens are sensitive variables; use `lifecycle.ignore_changes` for mutable
-  fields.
+  task and in CI), Checkov (pinned, via uvx), and the provider-lock check;
+  `terraform validate` runs separately in `task validate` because it needs
+  `terraform init`. Provider tokens are sensitive variables; use
+  `lifecycle.ignore_changes` for mutable fields.
+- **Commit `.terraform.lock.hcl`, and only ever regenerate it with `task
+  terraform:providers:lock`.** A lock written by a plain `terraform init` covers
+  the platform you ran it on, looks complete in review, and then fails CI with
+  "provider … does not have a package available for your platform". The task
+  regenerates for `darwin_arm64` **and** `linux_amd64`; `lint:terraform:locks`
+  re-derives the lock in a scratch copy and diffs it, so one-platform drift
+  fails locally instead of on a runner. It is also the only path that passes
+  `-upgrade`, which keeps a provider bump a deliberate, reviewable lock diff.
 [% endif %]
 [% if include_ansible %]
 - **Ansible:** ansible-lint; idempotency required; roles under `ansible/roles/`,

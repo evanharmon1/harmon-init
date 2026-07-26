@@ -864,6 +864,23 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
     grep -q 'terraform-linters/setup-tflint@' .github/actions/setup/action.yml ||
         err "composite setup action does not provision TFLint — the gate job would fail on 'tflint: command not found'"
     grep -q '^brew "tflint"' Brewfile || err "Brewfile is missing tflint (local half of the lint contract)"
+    [ -x scripts/terraform-provider-locks.sh ] ||
+        err "scripts/terraform-provider-locks.sh missing or not executable (include_terraform=true)"
+    [ -x scripts/test-terraform-provider-locks.sh ] ||
+        err "scripts/test-terraform-provider-locks.sh missing or not executable (include_terraform=true)"
+    # The helper's own source must establish two-platform coverage. verify-applied.sh
+    # greps the COMMENT-STRIPPED program for these, so a reassuring comment does
+    # not count — only a real invocation does.
+    lock_program="$(sed -E 's/[[:space:]]*#.*$//' scripts/terraform-provider-locks.sh)"
+    for lock_contract in 'providers lock' '-platform=darwin_arm64' '-platform=linux_amd64'; do
+        grep -qF -- "$lock_contract" <<<"$lock_program" ||
+            err "scripts/terraform-provider-locks.sh does not establish '${lock_contract}'"
+    done
+    # Run the shipped regression here too: it is hermetic (fake terraform, no
+    # network), so a generated repo whose lock helper is broken fails the render
+    # test rather than a consumer's first real provider bump.
+    ./scripts/test-terraform-provider-locks.sh >/dev/null 2>&1 ||
+        err "the rendered scripts/test-terraform-provider-locks.sh fails its own hermetic checks"
     if have task; then
         for tf_task in lint:terraform check; do
             tf_dry="$(task --color=false --dry "$tf_task" 2>&1 || true)"
@@ -871,10 +888,24 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
                 grep -qF -- "$tf_contract" <<<"$tf_dry" ||
                     err "task ${tf_task} does not reach the Terraform contract '${tf_contract}'"
             done
+            grep -qE 'terraform-provider-locks\.sh[[:space:]]+check[[:space:]]+[^[:space:]]' <<<"$tf_dry" ||
+                err "task ${tf_task} does not reach the provider-lock check helper"
         done
+        lock_dry="$(task --color=false --dry terraform:providers:lock 2>&1 || true)"
+        grep -qE 'terraform-provider-locks\.sh[[:space:]]+update[[:space:]]+[^[:space:]]' <<<"$lock_dry" ||
+            err "task terraform:providers:lock does not reach the explicit lock update helper"
+        # The regression must stay REACHABLE from the task tests, not merely present.
+        grep -qF 'test-terraform-provider-locks.sh' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach the provider-lock regression"
     else
         required task "Terraform lint reachability" || fail=1
     fi
+    # ...and CI must run it too. build.yml enumerates `task check` plus selected
+    # test:* targets and never calls `task verify`, so a target that lives only
+    # in verify is absent from the gate a consumer's PRs actually pass through.
+    grep -q 'task test:terraform-locks' .github/workflows/build.yml ||
+        err "build.yml does not run task test:terraform-locks — the lock regression would not gate PRs"
     # The TFLint pin SPECIFICALLY. "Some manager matched something in this file"
     # proves nothing: the shell-variable manager already extracts
     # SHELLCHECK_VERSION= from this same action, so a first-match check passes
@@ -902,6 +933,8 @@ else
     [ ! -f .tflint.hcl ] || err ".tflint.hcl rendered but include_terraform=false"
     ! grep -q 'setup-tflint' .github/actions/setup/action.yml || err "setup-tflint provisioned but include_terraform=false"
     ! grep -q 'tflint' Brewfile || err "Brewfile installs tflint but include_terraform=false"
+    [ ! -e scripts/terraform-provider-locks.sh ] || err "terraform-provider-locks.sh rendered but include_terraform=false"
+    [ ! -e scripts/test-terraform-provider-locks.sh ] || err "test-terraform-provider-locks.sh rendered but include_terraform=false"
 fi
 
 # Every `# renovate:` annotation in the rendered composite action must be

@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# terraform-provider-locks.sh — keep .terraform.lock.hcl covering every platform
+# this project is developed and built on.
+#
+# A lock file's mere presence proves nothing about PLATFORM coverage. `terraform
+# init` on an Apple Silicon laptop records darwin_arm64 hashes only, the lock
+# looks complete in review, and CI on linux_amd64 then fails with "provider ...
+# does not have a package available for your platform". Nothing warns you in
+# between, so this regenerates the lock for BOTH platforms and compares.
+#
+# usage: terraform-provider-locks.sh <check|update> [dir]
+#
+#   check   regenerate in a scratch copy and diff against the committed lock.
+#           The checkout is never modified — this is the mode `task check` and
+#           the pre-commit hook run.
+#   update  regenerate and write the result back into <dir>. This is the only
+#           mode that may move provider selections (see -upgrade below).
+#
+# env:
+#   TERRAFORM_BIN       terraform binary to use (default: terraform)
+#   TF_PLUGIN_CACHE_DIR provider download cache; defaulted below so repeated
+#                       check runs do not re-download every provider
+
+set -euo pipefail
+
+usage() {
+    sed -n '3,20p' "$0" >&2
+    exit 2
+}
+
+mode="${1:-}"
+dir="${2:-terraform}"
+
+case "$mode" in
+check | update) ;;
+*) usage ;;
+esac
+
+terraform_bin="${TERRAFORM_BIN:-terraform}"
+lock_name=".terraform.lock.hcl"
+committed="$dir/$lock_name"
+
+# Terraform configuration is .tf AND .tf.json; .terraform/ holds downloaded
+# module sources and is never first-party input.
+find_config_files() {
+    find "$1" \
+        \( -name '.git' -o -name '.terraform' -o -name 'node_modules' -o -name '.venv' \) -prune -o \
+        \( -name '*.tf' -o -name '*.tf.json' \) -type f -print 2>/dev/null
+}
+
+if [ ! -d "$dir" ]; then
+    echo "terraform-provider-locks: no $dir/ directory — nothing to lock"
+    exit 0
+fi
+
+dir_abs="$(cd "$dir" && pwd)"
+repo_root=""
+if command -v git >/dev/null 2>&1; then
+    repo_root="$(cd "$dir_abs" && git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+
+# What the commit will contain is decided by the INDEX, not the working tree.
+# Both directions of that gap are false passes: a lock generated but never
+# `git add`ed looks present locally and is absent from the commit, and a lock
+# deleted without staging the deletion looks gone locally and is still in the
+# commit. Either way CI sees something the local check never did.
+lock_tracked() {
+    [ -n "$repo_root" ] || return 1
+    (cd "$repo_root" && git ls-files --error-unmatch -- "${dir_abs#"$repo_root"/}/$lock_name" \
+        >/dev/null 2>&1)
+}
+
+# Should terraform be invoked at all? A fresh scaffold has no providers and must
+# not fail its first `task check` — terraform may not even be installed yet — so
+# that case skips. Everything else hands over to terraform, because a wrong skip
+# is a silent pass on exactly the drift this exists to catch.
+#
+# So the bar for skipping is "this configuration provably cannot need a
+# provider", not "it has no required_providers":
+#   - a `module` block can carry the requirements in the child module
+#   - `provider`/`resource`/`data` blocks make terraform INFER a provider from
+#     the block's type prefix, with no explicit requirement anywhere
+#   - .tf.json is configuration too
+# What is left to skip is an empty scaffold, or a config with only
+# terraform/variable/output/locals blocks.
+#
+# Two exclusions are load-bearing rather than tidiness. Comments are stripped
+# because the shipped terraform/main.tf carries a commented-out
+# `required_providers` example — a plain grep sees a provider block in an empty
+# scaffold. And .terraform/ is pruned because it holds downloaded MODULE
+# sources, whose own requirements would otherwise make the answer depend on
+# whether someone had run `terraform init` locally.
+needs_lock=false
+while IFS= read -r cfg_file; do
+    [ -n "$cfg_file" ] || continue
+    case "$cfg_file" in
+    *.tf.json)
+        # JSON has no comments to strip, and its keys are not anchored to the
+        # start of a line — generators emit compact {"resource":{…}} all on one.
+        if grep -q '"required_providers"' "$cfg_file" ||
+            grep -qE '"(module|provider|resource|data)"[[:space:]]*:' "$cfg_file"; then
+            needs_lock=true
+        fi
+        ;;
+    *)
+        # HCL: strip comments, then anchor to a block header (`resource "x" {`)
+        # so the same words inside a string or an attribute name cannot match.
+        cfg_body="$(sed -E 's@[[:space:]]*(#|//).*$@@' "$cfg_file")"
+        if grep -q "required_providers" <<<"$cfg_body" ||
+            grep -qE '^[[:space:]]*(module|provider|resource|data)[[:space:]]*"' <<<"$cfg_body"; then
+            needs_lock=true
+        fi
+        ;;
+    esac
+    [ "$needs_lock" = false ] || break
+done < <(find_config_files "$dir")
+
+if [ "$needs_lock" = false ]; then
+    # Nothing here can need a provider — but a lock is still committed, so it
+    # outlived whatever required it. Say so rather than exiting 0 on the way
+    # past the stale-lock check further down.
+    if [ -f "$committed" ] || lock_tracked; then
+        echo "terraform-provider-locks: $committed is still in the repository, but nothing" >&2
+        echo "  in $dir/ can require a provider any more — the lock is stale." >&2
+        if [ ! -f "$committed" ]; then
+            echo "  It is deleted here but git still tracks it, so the commit would keep it." >&2
+            echo "  Run: git rm --cached $committed" >&2
+        else
+            echo "  Delete it, or restore the configuration it belongs to." >&2
+        fi
+        exit 1
+    fi
+    echo "terraform-provider-locks: no provider requirements in $dir/ — nothing to lock"
+    exit 0
+fi
+
+# Provider downloads are the slow part; a shared cache makes repeat runs cheap.
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-${HOME}/.terraform.d/plugin-cache}"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/tf-provider-locks.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
+
+# Work on a copy so check mode cannot touch the checkout — not even to leave a
+# .terraform/ cache behind.
+#
+# The copy MIRRORS the repo's directory layout rather than lifting $dir out on
+# its own, because module sources are resolved relative to the config that
+# declares them: a perfectly valid `source = "../modules/vpc"` would resolve to
+# a path outside a lifted copy and fail `terraform init` even though the real
+# checkout is fine. Configuration files are enough — `init` + `providers lock`
+# parse config and never evaluate templatefile() assets — so this stays cheap.
+# Using git's file list also excludes ignored caches (.terraform/, node_modules)
+# for free.
+copy_into_scratch() { # copy_into_scratch <mirror_root> <file>
+    _rel="${2#"$1"/}"
+    mkdir -p "$scratch/$(dirname "$_rel")"
+    cp "$2" "$scratch/$_rel"
+}
+
+if [ -n "$repo_root" ]; then
+    mirror_root="$repo_root"
+    while IFS= read -r -d '' repo_file; do
+        # --cached still lists a file deleted in the working tree but not yet
+        # staged, which is an ordinary mid-edit state. Copying it blindly would
+        # abort `task check` with `cp: cannot stat` before the lock check runs.
+        [ -f "$mirror_root/$repo_file" ] || continue
+        copy_into_scratch "$mirror_root" "$mirror_root/$repo_file"
+    done < <(cd "$repo_root" && git ls-files -z --cached --others --exclude-standard \
+        -- '*.tf' '*.tf.json' '*.terraform.lock.hcl' 2>/dev/null)
+else
+    # No git (a source archive, or a scaffold before `git init`). Mirror from the
+    # PARENT directory rather than lifting $dir out on its own, so the ordinary
+    # `source = "../modules/vpc"` layout still resolves here too. Deeper
+    # references (`../../`) need the git path.
+    mirror_root="$(cd "$dir_abs/.." && pwd)"
+    while IFS= read -r cfg_file; do
+        [ -n "$cfg_file" ] || continue
+        copy_into_scratch "$mirror_root" "$cfg_file"
+    done < <(find_config_files "$mirror_root")
+    while IFS= read -r lock_file; do
+        [ -n "$lock_file" ] || continue
+        copy_into_scratch "$mirror_root" "$lock_file"
+    done < <(find "$mirror_root" -name '.terraform' -prune -o -name "$lock_name" -type f -print 2>/dev/null)
+fi
+
+if [ "$dir_abs" = "$mirror_root" ]; then
+    work_dir="$scratch"
+else
+    work_dir="$scratch/${dir_abs#"$mirror_root"/}"
+fi
+mkdir -p "$work_dir"
+
+# -upgrade belongs to update mode ONLY. In update mode it lets an intentional
+# constraint bump move past the selection recorded in the committed lock; in
+# check mode it would silently "fix" the very drift this is meant to report.
+if [ "$mode" = update ]; then
+    "$terraform_bin" -chdir="$work_dir" init -backend=false -input=false -no-color -upgrade >/dev/null
+else
+    "$terraform_bin" -chdir="$work_dir" init -backend=false -input=false -no-color >/dev/null
+fi
+
+"$terraform_bin" -chdir="$work_dir" providers lock \
+    -platform=darwin_arm64 \
+    -platform=linux_amd64 >/dev/null
+
+generated="$work_dir/$lock_name"
+if [ ! -f "$generated" ]; then
+    # Reaching terraform and getting no lock is legitimate: a config that only
+    # calls modules may end up requiring no providers at all. It is only wrong
+    # if a lock is committed anyway, which makes that lock stale.
+    if [ ! -f "$committed" ]; then
+        echo "terraform-provider-locks: terraform resolved no provider requirements — nothing to lock"
+        exit 0
+    fi
+    echo "terraform-provider-locks: $committed is committed, but terraform now resolves" >&2
+    echo "  no provider requirements at all — the lock is stale." >&2
+    echo "  Delete it, or restore the provider requirement it belongs to." >&2
+    exit 1
+fi
+
+if [ "$mode" = update ]; then
+    cp "$generated" "$committed"
+    echo "terraform-provider-locks: wrote $committed (darwin_arm64 + linux_amd64)"
+    exit 0
+fi
+
+if [ ! -f "$committed" ]; then
+    echo "terraform-provider-locks: $dir/ declares providers but $committed is missing." >&2
+    echo "  Run: task terraform:providers:lock   (then commit $committed)" >&2
+    exit 1
+fi
+
+# The other direction of the index-vs-worktree gap: generated but never
+# `git add`ed (or gitignored) passes locally while the commit has no lock at all.
+if [ -n "$repo_root" ] && ! lock_tracked; then
+    echo "terraform-provider-locks: $committed exists locally but git is not tracking it," >&2
+    echo "  so the commit CI checks out would have no lock at all." >&2
+    echo "  Run: git add $committed   (check .gitignore if that does not stick)" >&2
+    exit 1
+fi
+
+if ! diff -u "$committed" "$generated"; then
+    echo >&2
+    echo "terraform-provider-locks: $committed does not match a fresh two-platform lock." >&2
+    echo "  Usually this means it was written on one platform only, so CI cannot" >&2
+    echo "  install the providers it needs." >&2
+    echo "  Run: task terraform:providers:lock   (then commit $committed)" >&2
+    exit 1
+fi
+
+echo "terraform-provider-locks: $committed covers darwin_arm64 + linux_amd64"

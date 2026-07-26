@@ -45,6 +45,9 @@ jobs:
       - run: task test:codex-review
 [% endif %]
       - run: task test:ci-results
+[% if include_terraform %]
+      - run: task test:terraform-locks
+[% endif %]
 [% if use_release_please %]
       - run: task test:release-title
 [% endif %]

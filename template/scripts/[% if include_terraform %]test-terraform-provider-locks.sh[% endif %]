@@ -1,0 +1,443 @@
+#!/usr/bin/env bash
+# test-terraform-provider-locks.sh — hermetic regression for the provider-lock
+# helper. No network, no real terraform: a fake binary stands in via
+# TERRAFORM_BIN, so this runs identically on a laptop and on a CI runner.
+#
+# What it pins down (each one is a way the lock silently stops protecting you):
+#   1. a fresh scaffold with no providers skips cleanly instead of failing
+#   2. update writes a lock covering BOTH platforms
+#   3. check passes when the committed lock matches a fresh two-platform lock
+#   4. check FAILS on a one-platform / stale / tampered lock
+#   5. check FAILS when providers are declared but no lock is committed
+#   6. -upgrade is passed in update mode ONLY (check must report drift, not fix it)
+#   7. check never modifies the checkout
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+helper="$repo_root/scripts/terraform-provider-locks.sh"
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/test-tf-locks.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+failures=0
+fail() {
+    echo "FAIL: $*" >&2
+    failures=$((failures + 1))
+}
+
+# ── fake terraform ──────────────────────────────────────────────────
+# Mirrors the argument shape the helper must use: `-chdir=<dir>` first, then the
+# subcommand. Anything else exits 2, so a helper that shells out differently
+# fails loudly here instead of silently working only on the author's machine.
+fake="$work/terraform"
+cat >"$fake" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+-chdir=*) chdir="${1#-chdir=}" ;;
+*) exit 2 ;;
+esac
+shift
+
+case "${1:-}" in
+init)
+    shift
+    upgrade=false
+    for arg in "$@"; do
+        # if/fi, not `[ ... ] && upgrade=true`: as the last command in a loop
+        # body under `set -e`, a false test makes the loop itself return 1.
+        if [ "$arg" = -upgrade ]; then
+            upgrade=true
+        fi
+    done
+    # The whole point of the mode split: check must not pass -upgrade.
+    case "${EXPECT_INIT_UPGRADE:-}:$upgrade" in
+    false:false | true:true) ;;
+    *) exit 90 ;;
+    esac
+    # Simulate module resolution. Real `terraform init` resolves a relative
+    # module source from the directory that declares it, so a scratch copy that
+    # loses the surrounding tree must fail HERE exactly as terraform would —
+    # otherwise the sibling-module case below would pass without proving much.
+    for tf in "$chdir"/*.tf; do
+        [ -f "$tf" ] || continue
+        while IFS= read -r src; do
+            [ -n "$src" ] || continue
+            [ -d "$chdir/$src" ] || exit 91
+        done < <(sed -n -E 's@.*source[[:space:]]*=[[:space:]]*"(\.[^"]*)".*@\1@p' "$tf")
+    done
+    ;;
+providers)
+    shift
+    [ "${1:-}" = lock ] || exit 2
+    shift
+    platforms=""
+    for arg in "$@"; do
+        case "$arg" in
+        -platform=*) platforms="$platforms ${arg#-platform=}" ;;
+        esac
+    done
+    # Deterministic, and it records the platforms so the test can assert both
+    # were requested rather than trusting the helper's own output.
+    {
+        echo "# fake lock generated for:$platforms"
+        echo 'provider "registry.terraform.io/hashicorp/null" {'
+        echo '  version = "3.2.4"'
+        echo '}'
+    } >"$chdir/.terraform.lock.hcl"
+    ;;
+*) exit 2 ;;
+esac
+FAKE
+chmod +x "$fake"
+
+# ── fixtures ────────────────────────────────────────────────────────
+new_project() { # new_project <name> <with_providers>
+    root="$work/$1"
+    mkdir -p "$root/terraform"
+    if [ "$2" = with_providers ]; then
+        cat >"$root/terraform/main.tf" <<'TF'
+terraform {
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
+  }
+}
+TF
+    else
+        printf '%s\n' 'terraform {}' >"$root/terraform/main.tf"
+    fi
+}
+
+run_helper() { # run_helper <expect_upgrade> <mode> <dir>
+    EXPECT_INIT_UPGRADE="$1" TERRAFORM_BIN="$fake" "$helper" "$2" "$3"
+}
+
+# ── 1. no providers declared -> clean skip ──────────────────────────
+new_project bare no_providers
+if ! run_helper false check "$work/bare/terraform" >/dev/null 2>&1; then
+    fail "check must skip cleanly when no required_providers are declared"
+fi
+if [ -f "$work/bare/terraform/.terraform.lock.hcl" ]; then
+    fail "no lock file should be created for a project with no providers"
+fi
+
+# ── 1b. THIS repo's actual terraform/ skips too ─────────────────────
+# The scaffold ships a commented-out `required_providers` example, so a naive
+# grep sees providers in an empty project and drives it into `terraform init` —
+# a fresh repo then fails its very first `task check`, before terraform is even
+# installed. Run the check against the real directory, not a hand-made fixture,
+# so the shipped content itself is what gets tested.
+if [ -d "$repo_root/terraform" ]; then
+    mkdir -p "$work/shipped/terraform"
+    # A plain glob, not `find`: only the top-level scaffold matters, and the
+    # failure mode to avoid is this case quietly copying nothing and then
+    # "passing" against an empty directory. Copy .tf sources only — a real
+    # project's committed lock would change the expected outcome.
+    copied=0
+    for tf in "$repo_root"/terraform/*.tf; do
+        [ -f "$tf" ] || continue
+        cp "$tf" "$work/shipped/terraform/"
+        copied=$((copied + 1))
+    done
+    if [ "$copied" -eq 0 ]; then
+        fail "no .tf sources copied from $repo_root/terraform — this case would pass vacuously"
+    elif sed -E 's@[[:space:]]*(#|//).*$@@' "$work/shipped/terraform"/*.tf |
+        grep -q "required_providers"; then
+        : # Real providers declared (a live project, not the empty scaffold) —
+        : # skipping is not the expected behaviour here, so this case does not apply.
+    elif ! run_helper false check "$work/shipped/terraform" >/dev/null 2>&1; then
+        fail "the shipped terraform/ scaffold must skip cleanly (it declares no real providers)"
+    fi
+fi
+
+# ── 1c. a stale .terraform/ cache must not change the answer ────────
+# `.terraform/modules/` holds downloaded module sources, which carry their own
+# required_providers. If detection sees those, the same commit skips on a clean
+# CI runner and fails on a laptop that once ran `terraform init`.
+new_project cached no_providers
+mkdir -p "$work/cached/terraform/.terraform/modules/vendored"
+cat >"$work/cached/terraform/.terraform/modules/vendored/main.tf" <<'TF'
+terraform {
+  required_providers {
+    null = {
+      source = "hashicorp/null"
+    }
+  }
+}
+TF
+if ! run_helper false check "$work/cached/terraform" >/dev/null 2>&1; then
+    fail "a stale .terraform/ module cache must not make provider detection fire"
+fi
+
+# ── 1d. providers declared only by a CHILD MODULE ───────────────────
+# `terraform/` calls ../modules/vpc and that module declares the providers. A
+# detector that only reads $dir sees nothing and skips — silently passing a repo
+# whose lock is missing, which is the exact failure this helper exists to catch.
+child="$work/childmod"
+mkdir -p "$child/terraform" "$child/modules/vpc"
+cat >"$child/modules/vpc/main.tf" <<'TF'
+terraform {
+  required_providers {
+    null = {
+      source = "hashicorp/null"
+    }
+  }
+}
+TF
+cat >"$child/terraform/main.tf" <<'TF'
+module "vpc" {
+  source = "../modules/vpc"
+}
+TF
+run_helper true update "$child/terraform" >/dev/null 2>&1 || true
+if [ ! -f "$child/terraform/.terraform.lock.hcl" ]; then
+    fail "providers declared by a child module must not be skipped (no lock was produced)"
+fi
+
+# ── 1e. provider requirements in .tf.json ───────────────────────────
+# Terraform accepts JSON syntax. The scratch copy already preserves .tf.json, so
+# a detector that reads only *.tf skips a valid JSON-only root.
+jsonp="$work/jsonproj"
+mkdir -p "$jsonp/terraform"
+cat >"$jsonp/terraform/main.tf.json" <<'JSON'
+{
+  "terraform": {
+    "required_providers": {
+      "null": {
+        "source": "hashicorp/null"
+      }
+    }
+  }
+}
+JSON
+run_helper true update "$jsonp/terraform" >/dev/null 2>&1 || true
+if [ ! -f "$jsonp/terraform/.terraform.lock.hcl" ]; then
+    fail "provider requirements in .tf.json must not be skipped (no lock was produced)"
+fi
+
+# ── 1f. providers INFERRED from resource/data blocks ────────────────
+# `required_providers` is optional: terraform infers the provider from a
+# resource type's prefix. Such a config resolves providers and needs a
+# cross-platform lock exactly like an explicit one.
+inferred="$work/inferred"
+mkdir -p "$inferred/terraform"
+cat >"$inferred/terraform/main.tf" <<'TF'
+resource "null_resource" "example" {}
+TF
+run_helper true update "$inferred/terraform" >/dev/null 2>&1 || true
+if [ ! -f "$inferred/terraform/.terraform.lock.hcl" ]; then
+    fail "providers inferred from a resource block must not be skipped (no lock was produced)"
+fi
+
+# ── 1g. a lock left behind after the providers are gone ─────────────
+# The skip path must not become a way to keep a stale lock: exiting 0 here would
+# walk straight past the stale-lock check further down.
+stale="$work/stale"
+mkdir -p "$stale/terraform"
+printf '%s\n' 'terraform {}' >"$stale/terraform/main.tf"
+printf '%s\n' '# left over from a provider that no longer exists' >"$stale/terraform/.terraform.lock.hcl"
+if run_helper false check "$stale/terraform" >/dev/null 2>&1; then
+    fail "a committed lock with nothing left to require providers must be reported as stale"
+fi
+
+# ── 1h. compact (generated) .tf.json ────────────────────────────────
+# Machine-generated Terraform JSON is not pretty-printed: the whole document can
+# be one line, so a line-anchored key match misses it entirely.
+compact="$work/compact"
+mkdir -p "$compact/terraform"
+printf '%s' '{"resource":{"null_resource":{"example":{}}}}' >"$compact/terraform/main.tf.json"
+run_helper true update "$compact/terraform" >/dev/null 2>&1 || true
+if [ ! -f "$compact/terraform/.terraform.lock.hcl" ]; then
+    fail "compact .tf.json must not be skipped (no lock was produced)"
+fi
+
+# ── 1i. a lock deleted locally but still tracked ────────────────────
+# Mirror of case 2e: the worktree says the stale lock is gone, the index says
+# the commit still carries it. The index is what CI checks out.
+if command -v git >/dev/null 2>&1; then
+    delock="$work/deletedlock"
+    mkdir -p "$delock/terraform"
+    printf '%s\n' 'terraform {}' >"$delock/terraform/main.tf"
+    printf '%s\n' '# stale lock' >"$delock/terraform/.terraform.lock.hcl"
+    (
+        cd "$delock" &&
+            git init -q . >/dev/null 2>&1 &&
+            git add -A >/dev/null 2>&1
+    ) || true
+    rm -f "$delock/terraform/.terraform.lock.hcl" # deletion not staged
+    if run_helper false check "$delock/terraform" >/dev/null 2>&1; then
+        fail "a stale lock still tracked by git must be reported even when deleted locally"
+    fi
+fi
+
+# ── 2. update writes a two-platform lock ────────────────────────────
+new_project proj with_providers
+if ! run_helper true update "$work/proj/terraform" >/dev/null 2>&1; then
+    fail "update must succeed for a project declaring providers"
+fi
+lock="$work/proj/terraform/.terraform.lock.hcl"
+if [ ! -f "$lock" ]; then
+    fail "update must write $lock"
+else
+    grep -q "darwin_arm64" "$lock" || fail "lock does not cover darwin_arm64"
+    grep -q "linux_amd64" "$lock" || fail "lock does not cover linux_amd64"
+fi
+# init/plan caches belong in the scratch copy, never in the checkout.
+if [ -e "$work/proj/terraform/.terraform" ]; then
+    fail "update leaked a .terraform/ cache into the checkout"
+fi
+
+# ── 2b. a module OUTSIDE the terraform root still resolves ──────────
+# `source = "../modules/vpc"` is an ordinary layout. Lifting terraform/ into a
+# scratch directory on its own silently breaks it: the relative source then
+# points outside the copy and init fails on a repo that is perfectly valid.
+if command -v git >/dev/null 2>&1; then
+    sib="$work/sibling"
+    mkdir -p "$sib/terraform" "$sib/modules/vpc"
+    cat >"$sib/modules/vpc/main.tf" <<'TF'
+variable "name" {
+  type = string
+}
+TF
+    cat >"$sib/terraform/main.tf" <<'TF'
+terraform {
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
+  }
+}
+
+module "vpc" {
+  source = "../modules/vpc"
+  name   = "example"
+}
+TF
+    git init -q "$sib" >/dev/null 2>&1 || true
+    if ! run_helper true update "$sib/terraform" >/dev/null 2>&1; then
+        fail "a module outside the terraform root (source = \"../modules/vpc\") must still resolve"
+    fi
+fi
+
+# ── 2c. ...and the same layout with NO git checkout ─────────────────
+# Source archives and scaffolds created before `git init` have no file list to
+# mirror from, but the relative module source is just as valid there.
+nogit="$work/nogit"
+mkdir -p "$nogit/terraform" "$nogit/modules/vpc"
+cat >"$nogit/modules/vpc/main.tf" <<'TF'
+variable "name" {
+  type = string
+}
+TF
+cat >"$nogit/terraform/main.tf" <<'TF'
+terraform {
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
+  }
+}
+
+module "vpc" {
+  source = "../modules/vpc"
+  name   = "example"
+}
+TF
+if ! run_helper true update "$nogit/terraform" >/dev/null 2>&1; then
+    fail "a sibling module must resolve outside a git checkout too"
+fi
+
+# ── 2d. a tracked .tf deleted but not yet staged ────────────────────
+# `git ls-files --cached` still lists it. That is an ordinary mid-edit state —
+# the documented loop is edit then `task check`, not stage-then-check — so the
+# mirror must skip it instead of aborting on `cp: cannot stat`.
+if command -v git >/dev/null 2>&1; then
+    del="$work/deleted"
+    mkdir -p "$del/terraform"
+    cat >"$del/terraform/main.tf" <<'TF'
+resource "null_resource" "example" {}
+TF
+    printf '%s\n' 'resource "null_resource" "old" {}' >"$del/terraform/old.tf"
+    (
+        cd "$del" &&
+            git init -q . >/dev/null 2>&1 &&
+            git add -A >/dev/null 2>&1
+    ) || true
+    rm -f "$del/terraform/old.tf" # deleted in the tree, still in the index
+    if ! run_helper true update "$del/terraform" >/dev/null 2>&1; then
+        fail "a tracked .tf deleted but not staged must not break the mirror"
+    fi
+fi
+
+# ── 2e. a lock git is not tracking must not count ───────────────────
+# Generated, never `git add`ed: every local check sees the file, but the commit
+# CI checks out has no lock. Passing here would defeat the whole handoff.
+if command -v git >/dev/null 2>&1; then
+    untracked="$work/untracked"
+    mkdir -p "$untracked/terraform"
+    cat >"$untracked/terraform/main.tf" <<'TF'
+resource "null_resource" "example" {}
+TF
+    (
+        cd "$untracked" &&
+            git init -q . >/dev/null 2>&1 &&
+            git add terraform/main.tf >/dev/null 2>&1
+    ) || true
+    run_helper true update "$untracked/terraform" >/dev/null 2>&1 || true
+    if [ ! -f "$untracked/terraform/.terraform.lock.hcl" ]; then
+        fail "update should have produced a lock for the untracked-lock case"
+    elif run_helper false check "$untracked/terraform" >/dev/null 2>&1; then
+        fail "a lock git is not tracking must not be reported as covered"
+    fi
+fi
+
+# ── 3. check passes against a matching lock ─────────────────────────
+if ! run_helper false check "$work/proj/terraform" >/dev/null 2>&1; then
+    fail "check must pass when the committed lock matches a fresh two-platform lock"
+fi
+
+# ── 7. ...and left the checkout untouched ───────────────────────────
+before="$(cd "$work/proj/terraform" && ls -a | sort && cat .terraform.lock.hcl)"
+run_helper false check "$work/proj/terraform" >/dev/null 2>&1 || true
+after="$(cd "$work/proj/terraform" && ls -a | sort && cat .terraform.lock.hcl)"
+if [ "$before" != "$after" ]; then
+    fail "check modified the checkout"
+fi
+
+# ── 4. check fails on a tampered / one-platform lock ────────────────
+printf '%s\n' '# fake lock generated for: darwin_arm64' >"$lock"
+if run_helper false check "$work/proj/terraform" >/dev/null 2>&1; then
+    fail "check must fail when the committed lock covers only one platform"
+fi
+
+# ── 5. check fails when the lock is missing entirely ────────────────
+rm -f "$lock"
+if run_helper false check "$work/proj/terraform" >/dev/null 2>&1; then
+    fail "check must fail when providers are declared but no lock is committed"
+fi
+
+# ── 6. -upgrade discipline (the fake exits 90 on a mismatch) ────────
+new_project modes with_providers
+if EXPECT_INIT_UPGRADE=false TERRAFORM_BIN="$fake" \
+    "$helper" update "$work/modes/terraform" >/dev/null 2>&1; then
+    fail "update must pass -upgrade to terraform init"
+fi
+new_project modes2 with_providers
+run_helper true update "$work/modes2/terraform" >/dev/null 2>&1 || true
+if EXPECT_INIT_UPGRADE=true TERRAFORM_BIN="$fake" \
+    "$helper" check "$work/modes2/terraform" >/dev/null 2>&1; then
+    fail "check must NOT pass -upgrade to terraform init"
+fi
+
+if [ "$failures" -ne 0 ]; then
+    echo "test-terraform-provider-locks: $failures failure(s)" >&2
+    exit 1
+fi
+echo "terraform provider locks: skip/update/check, two-platform coverage, and -upgrade discipline all hold"
