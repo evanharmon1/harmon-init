@@ -59,10 +59,15 @@ docs/guides/bot-account.md
 #       The template ships a placeholder echo. harmon-init's real validation is
 #       the test:template render matrix, so a stub claiming "no validate steps"
 #       would be actively wrong. See PR #378.
+#   todo.md|<absent>
+#       Per-project scratch file. The root gitignores it (`/todo.md`), so the
+#       root layer having no copy is correct. `<absent>` is the sentinel for
+#       "this rendered file is allowed to have no root twin at all".
 ALLOW="
 AGENTS.md|## Commands
 AGENTS.md|## Definition of Done
 Taskfile.yml|validate
+todo.md|<absent>
 "
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -104,15 +109,29 @@ checked=0
 
 # ── markdown headings ────────────────────────────────────────────────
 while IFS= read -r rel; do
-    [ -e "$rel" ] || continue
     # CLAUDE.md / GEMINI.md / copilot-instructions.md are symlinks to AGENTS.md;
-    # checking them just reports every AGENTS.md finding four times.
+    # checking them just reports every AGENTS.md finding four times. Tested
+    # before the existence check below, since a symlink whose target is present
+    # is not a missing file.
     [ -L "$rel" ] && continue
     case "
 $SKIP_FILES
 " in *"
 $rel
 "*) continue ;; esac
+
+    # A rendered doc with NO root copy is the WORST case, not a skippable one:
+    # the template gained a whole dogfooded file and the root never got it. An
+    # early `continue` here would report green over exactly the drift this gate
+    # exists to catch.
+    if [ ! -e "$rel" ]; then
+        checked=$((checked + 1))
+        if ! allowed "$rel" "<absent>"; then
+            echo "FAIL: ${rel} is rendered by the template but does not exist in the root layer" >&2
+            fail=1
+        fi
+        continue
+    fi
 
     while IFS= read -r heading; do
         [ -n "$heading" ] || continue
