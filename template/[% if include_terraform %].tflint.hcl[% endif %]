@@ -1,0 +1,19 @@
+# TFLint configuration — run via `task lint:terraform:tflint` (reached by
+# `task check` and the pre-commit hook).
+#
+# The `terraform` ruleset is BUNDLED with the tflint binary, so this config
+# needs no `tflint --init`. Enabling a cloud ruleset below (aws, google,
+# azurerm, …) downloads a plugin and therefore requires `tflint --init` to run
+# before the lint task — locally AND on the CI runner — or the lint fails with
+# "plugin not found". Wire that into the task and the composite action together.
+#
+# plugin "aws" {
+#   enabled = true
+#   version = "0.44.0"
+#   source  = "github.com/terraform-linters/tflint-ruleset-aws"
+# }
+
+plugin "terraform" {
+  enabled = true
+  preset  = "recommended"
+}

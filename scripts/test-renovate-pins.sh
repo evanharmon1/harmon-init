@@ -107,10 +107,56 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
                 f"(tested as {path_for_match!r}) — the pin is invisible to Renovate"
             )
 
+# ── Composite actions: `<tool>_version:` inputs and `uses:` SHA pins ────────
+# Same silent-rot failure mode, different syntax — and the template's
+# action.yml.jinja is the worst case: the NATIVE github-actions manager cannot
+# parse the .jinja extension, so a pin no customManager matches is frozen
+# forever with nothing reporting it. Checked against the ROOT config, which is
+# the one Renovate runs here; the rendered side is asserted by
+# scripts/test-template.sh.
+try:
+    root_cfg = json.loads(pathlib.Path("renovate.json").read_text())
+except json.JSONDecodeError as exc:
+    root_cfg = {"customManagers": []}
+    errors.append(f"renovate.json does not parse: {exc}")
+
+USES_SHA = re.compile(r"uses: \S+@[0-9a-f]{40} # v[0-9]")
+
+def lines_of(rx, text):
+    return {text[: mo.start()].count("\n") + 1 for mo in rx.finditer(text)}
+
+for p in sorted(pathlib.Path(".").glob(".github/actions/*/action.y*ml")) + sorted(
+    pathlib.Path(".").glob("template/.github/actions/*/action.y*ml*")
+):
+    text = p.read_text(errors="replace")
+    rel = str(p)
+    seen = set()
+    for m in root_cfg.get("customManagers", []):
+        pats = [re.compile(x.strip("/")) for x in m.get("managerFilePatterns", [])]
+        if not any(rx.search(rel) for rx in pats):
+            continue
+        for s in m.get("matchStrings", []):
+            seen |= lines_of(re.compile(js_to_py(s)), text)
+
+    for line in sorted(lines_of(ANNOT, text) - seen):
+        errors.append(
+            f"{p}:{line}: '# renovate:' pin is not extractable by any customManager "
+            f"in renovate.json — it will never be updated"
+        )
+    # Only .jinja files need a customManager for `uses:` SHAs; Renovate's native
+    # github-actions manager already reads plain action.yml.
+    if rel.endswith(".jinja"):
+        for line in sorted(lines_of(USES_SHA, text) - seen):
+            errors.append(
+                f"{p}:{line}: SHA-pinned `uses:` is invisible to renovate.json — the "
+                f"native github-actions manager cannot read .jinja, so nothing updates it"
+            )
+
 if errors:
     for e in errors:
         print(f"FAIL: {e}", file=sys.stderr)
     print(f"test-renovate-pins: {len(errors)} issue(s) found", file=sys.stderr)
     sys.exit(1)
 print("renovate pins: every annotated shell pin is extractable and in scope")
+print("renovate pins: every composite-action pin (both layers) is extractable and in scope")
 PY
