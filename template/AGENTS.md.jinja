@@ -62,8 +62,10 @@ AI agents can run it on every change without getting bogged down. `verify` is
 the definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test plus the quick
 Taskfile/hook guards (the Foreman v2 vocabulary: verify = check + build +
 test). `ci` is the full pipeline — everything CI runs (`verify` +
-`security`[% if devcontainer %] + the devcontainer permission assert[% endif %]) — so you can reproduce a CI
-run locally on demand instead of waiting on a PR.
+`security`[% if use_skills_sync %] + the network skills-drift check[% endif %][% if devcontainer %] + the devcontainer permission assert[% endif %]) — so you can reproduce a CI
+run locally on demand instead of waiting on a PR. Anything the build workflow
+runs outside `verify` belongs in `ci` too, or the "mirror" quietly stops being
+one.
 
 ## Dev Loop
 

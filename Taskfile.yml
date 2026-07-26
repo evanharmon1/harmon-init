@@ -53,12 +53,16 @@ tasks:
     # Full local mirror of this repo's CI — run on demand to catch everything CI
     # would (the lint job's guards, the template render matrix, security) without
     # waiting on a PR. Builds ON `verify` rather than re-listing its steps, so a
-    # guard added to verify can never go missing here. The devcontainer
-    # permission assertion is a unit check and does not build or start a
-    # container.
-    desc: Full CI mirror (verify → test:devcontainer:permissions → security)
+    # guard added to verify can never go missing here, then adds every other
+    # check the build workflow runs. verify:skills is the NETWORK drift check
+    # (the CI job runs the same one); it is deliberately not in `verify`, which
+    # stays offline — pre-push uses verify:skills:offline for that reason. The
+    # devcontainer permission assertion is a unit check and does not build or
+    # start a container.
+    desc: Full CI mirror (verify → verify:skills → test:devcontainer:permissions → security)
     cmds:
       - task: verify
+      - task: verify:skills
       - task: test:devcontainer:permissions
       - task: security
 

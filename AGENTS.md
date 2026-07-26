@@ -98,7 +98,8 @@ copier copy harmon-init new-project --trust
 # Local verification gate (lint + fast guards + template generation tests)
 task verify
 
-# Full CI mirror on demand (verify's checks + devcontainer assert + security)
+# Full CI mirror on demand (verify's checks + skills drift + devcontainer
+# assert + security)
 task ci
 
 # Lint only (fast gate — safe for editors, hooks, and agents on every change)
@@ -134,8 +135,10 @@ definition-of-done gate — check + the quick Taskfile/hook/parity guards + this
 repo's test tier, which renders the whole template via `test:template` and is
 therefore inherently heavier than a generated repo's (the Foreman v2 vocabulary:
 verify = check + build + test). `ci` is the full pipeline — everything CI runs
-(`verify` + the devcontainer permission assert + `security`) — so you can
-reproduce a CI run locally on demand instead of waiting on a PR.
+(`verify` + the network skills-drift check + the devcontainer permission assert
+- `security`) — so you can reproduce a CI run locally on demand instead of
+waiting on a PR. Anything the build workflow runs outside `verify` belongs in
+`ci` too, or the "mirror" quietly stops being one.
 
 **Foreman** (`scripts/foreman/`, `taskfiles/foreman.yml`) is the deterministic
 supervisor for milestone-driven agent dispatch: explicit arming via
