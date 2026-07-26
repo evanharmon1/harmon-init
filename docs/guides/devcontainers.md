@@ -32,19 +32,22 @@ is fast. A cache miss is non-fatal — it just rebuilds from the `Dockerfile`.
 
 ## Claude Code settings in the container
 
-Two layers, both owned by the container — never the `~/.claude` volume, which a
-rebuild or volume wipe can empty:
+Everything is sourced from `.devcontainer/config/` and baked into the **image**,
+so a volume wipe can never leave the container without its policy, hooks, or
+status line:
 
-| Layer | Baked at | Source | Overridable |
+| What | Lives at | Source | Overridable |
 |---|---|---|---|
-| Managed settings | `/etc/claude-code/managed-settings.json` | `config/claude-settings.json` | no (policy) |
-| Hook scripts | `/etc/claude-code/hooks/` | `config/claude-hooks/` | no |
-| Status line | `/etc/claude-code/statusline.sh` | `config/claude-statusline.sh` | yes |
-| User defaults | `~/.claude/settings.json` | `config/claude-user-defaults.json` | yes |
+| Managed settings | `/etc/claude-code/managed-settings.json` (image) | `config/claude-settings.json` | no (policy) |
+| Hook scripts | `/etc/claude-code/hooks/` (image) | `config/claude-hooks/` | no |
+| Status line | `/etc/claude-code/statusline.sh` (image) | `config/claude-statusline.sh` | yes |
+| User defaults | `~/.claude/settings.json` (**volume**) | `config/claude-user-defaults.json` | yes |
 
-User defaults are **seed-merged** into `~/.claude/settings.json` by
-`post-create-common.sh` — existing values win, so `/model` and other in-app
-changes survive a rebuild, and a fresh volume gets the defaults back.
+The last row is the one exception, and deliberately so: `~/.claude/settings.json`
+is volume-backed because Claude Code writes your in-app changes there. Every
+`post-create` **seed-merges** the image copy into it — existing values win, so
+`/model` and friends stick, and a wiped volume gets the defaults back. What the
+volume never holds is the code those settings point at.
 
 `config/claude-statusline.sh` renders the same two-line status line as a host
 session, so a container session reads identically:
