@@ -149,7 +149,12 @@ if [ -f "$dest/Taskfile.yml" ] && [ -f Taskfile.yml ]; then
     while IFS= read -r task; do
         [ -n "$task" ] || continue
         checked=$((checked + 1))
-        if ! grep -qE "^  ${task}:" Taskfile.yml; then
+        # Whole-line fixed-string match. An unanchored regex ("^  ${task}:")
+        # prefix-matches namespaced siblings — a missing `security:` would be
+        # satisfied by `  security:audit:` — so a dropped group-name task would
+        # pass silently. -x anchors both ends; -F avoids treating the name as a
+        # pattern.
+        if ! grep -qxF "  ${task}:" Taskfile.yml; then
             allowed "Taskfile.yml" "$task" && continue
             echo "FAIL: Taskfile.yml is missing a task the rendered template has: '${task}'" >&2
             fail=1
