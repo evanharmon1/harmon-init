@@ -872,9 +872,37 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
                     err "task ${tf_task} does not reach the Terraform contract '${tf_contract}'"
             done
         done
+        # The provider-lock check must be reachable from `check`, not just
+        # `validate`: an iac repo has no `build-test` job, so nothing in CI runs
+        # `task validate` and a lock check there would never gate a PR.
+        for lock_entry in lint:terraform check; do
+            lock_dry="$(task --color=false --dry "$lock_entry" 2>&1 || true)"
+            grep -qE 'terraform-provider-locks\.sh[[:space:]]+check[[:space:]]+[^[:space:]]' \
+                <<<"$lock_dry" ||
+                err "task ${lock_entry} does not reach the Terraform provider-lock check helper"
+        done
+        lock_update_dry="$(task --color=false --dry terraform:providers:lock 2>&1 || true)"
+        grep -qE 'terraform-provider-locks\.sh[[:space:]]+update[[:space:]]+[^[:space:]]' \
+            <<<"$lock_update_dry" ||
+            err "task terraform:providers:lock does not reach the explicit lock update helper"
     else
         required task "Terraform lint reachability" || fail=1
     fi
+    # The lock helper and its hermetic regression must ship, be executable, and
+    # actually establish both platforms — a committed lock file proves nothing
+    # about which platforms it covers.
+    for lock_script in scripts/terraform-provider-locks.sh scripts/test-terraform-provider-locks.sh; do
+        [ -f "$lock_script" ] || err "$lock_script missing (include_terraform=true)"
+        [ -x "$lock_script" ] || err "$lock_script is not executable"
+    done
+    for lock_contract in 'providers lock' '-platform=darwin_arm64' '-platform=linux_amd64'; do
+        grep -qF -- "$lock_contract" scripts/terraform-provider-locks.sh ||
+            err "scripts/terraform-provider-locks.sh does not establish '$lock_contract'"
+    done
+    ./scripts/test-terraform-provider-locks.sh >/dev/null 2>&1 ||
+        err "scripts/test-terraform-provider-locks.sh fails its hermetic lock-process checks"
+    grep -q 'test-terraform-provider-locks.sh' scripts/test-tasks.sh ||
+        err "test-tasks.sh does not run the provider-lock regression"
     # The TFLint pin SPECIFICALLY. "Some manager matched something in this file"
     # proves nothing: the shell-variable manager already extracts
     # SHELLCHECK_VERSION= from this same action, so a first-match check passes
