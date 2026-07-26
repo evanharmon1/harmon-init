@@ -13,6 +13,8 @@ permissions:
 jobs:
   close-milestone:
     name: Close matching milestone
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:

@@ -79,6 +79,7 @@ tasks:
       - task: test:renovate-pins
       - task: test:release-title
       - task: test:dogfood-parity
+      - task: test:dogfood-structure
       - task: foreman:test
       - task: test:hooks
       - task: test:codex-review
@@ -306,10 +307,24 @@ tasks:
     cmds:
       - ./scripts/test-release-title.sh
 
+  # ── Dogfood drift (root layer vs template/) ───────────────────
+  # Three checks, in increasing looseness. The root layer is template/ rendered
+  # with .dogfood-answers.yml, maintained by hand — `copier update` can never
+  # target it, because harmon-init IS the template.
   test:dogfood-parity:
     desc: Verbatim (non-jinja) template files must byte-match their root twins
     cmds:
       - ./scripts/test-dogfood-parity.sh
+
+  test:dogfood-structure:
+    desc: Every section/task the rendered template ships must exist in the root layer
+    cmds:
+      - ./scripts/test-dogfood-structure.sh
+
+  audit:dogfood:
+    desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"
+    cmds:
+      - ./scripts/audit-dogfood.sh {{.CLI_ARGS}}
 
   test:codex-review:
     desc: Unit-test codex-review.sh target selection (offline, stubbed codex)

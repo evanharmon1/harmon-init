@@ -1,0 +1,60 @@
+# .dogfood-answers.yml — the copier answers harmon-init's ROOT layer is the
+# render of. Consumed by `task audit:dogfood` and `task test:dogfood-structure`
+# (scripts/audit-dogfood.sh, scripts/test-dogfood-structure.sh).
+#
+# This is NOT a .copier-answers.yml: harmon-init IS the template, so it has no
+# copier operation of its own and `copier update` can never target it. The root
+# layer is a HAND-MAINTAINED render of template/, and these are the answers it
+# is maintained against. Recording them turns "render the template the way the
+# root is supposed to look" from tribal knowledge into one command.
+#
+# Keep in sync with reality: when the root layer adopts a new template option
+# (or drops one), change the answer here in the same PR, or the drift tooling
+# reports noise instead of drift. Answers that only fire side effects
+# (github_remote_create, run_task_install, ...) are forced off by the scripts,
+# not recorded here.
+project_name: Harmon Init
+project_slug: harmon-init
+project_description: >-
+  Copier project template that scaffolds repos with pre-configured DevOps
+  tooling, CI/CD, linting, security checks, git hooks, and task runners
+project_type: general
+
+github_org: evanharmon1
+code_owner: evanharmon1
+claude_authorized_members: evanharmon1
+
+license: mit
+ci_runner: ubuntu-latest
+
+# Releases are intentional via release-please; `template/` is the release-worthy
+# path, so a PR touching it must carry a fix:/feat: title (release-content-guard).
+use_release_please: true
+release_content_paths: template
+
+# Vendors the `repo` category (the standardize-repo skill) from harmon-devkit.
+use_skills_sync: true
+skill_categories:
+  - repo
+
+use_foreman: true
+
+# Public repo -> CodeQL is free. foreman is the first-party Python.
+use_codeql: true
+codeql_languages:
+  - python
+
+# This repo dogfoods the Codex second-model review; CodeRabbit stays off.
+use_codex_review: true
+use_coderabbit: false
+
+devcontainer: true
+
+# Root ships docs/project-management.md plus setup:github-project / -labels.
+project_management: github
+
+# Snyk stays manual/local (public-repo posture: CodeQL + Dependabot + gitleaks).
+snyk_scan_schedule: "off"
+
+include_terraform: false
+include_ansible: false
