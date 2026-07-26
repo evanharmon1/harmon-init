@@ -17,7 +17,7 @@ it points here.
   major bump.
 - **Feature branches only.** Direct commits to `main` are blocked by the
   `guard:no-commit-to-main` pre-commit hook and the branch ruleset. Land changes
-  via a PR; code-owner review and the `verify` + `security`[% if use_codeql %] + `codeql-verify`[% endif %]
+  via a PR; code-owner review and the `verify` + `security`[% if use_codeql %] + `codeql-verify`[% endif +%]
   checks are required.
 - **Never bypass hooks** (`--no-verify` is forbidden) — fix the underlying issue.
 [% if devcontainer %]
