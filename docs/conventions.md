@@ -95,6 +95,12 @@ it points here.
 - **`AGENTS.md` is the single source of truth** for AI guidance; `CLAUDE.md`,
   `GEMINI.md`, and `.github/copilot-instructions.md` are **symlinks** to it —
   edit only `AGENTS.md`.
+- **Vendored vs local skills:** the skills sync manages ONLY the directories
+  listed on the `# managed:` line of `.claude/skills/.SKILLS_PROVENANCE`. Any
+  other directory under `.claude/skills/` is a **local skill owned by this
+  repo** — create, edit, and delete it freely; `task sync:skills` and the
+  `verify:skills*` drift checks never touch or report it. Never hand-edit the
+  managed (vendored) skills — change them in harmon-devkit and bump the pin.
 - **Doc filenames are kebab-case** (`branch-protection.md`, `ci-cd.md`). The
   conventional uppercase project files keep their names: `README.md`,
   `AGENTS.md`, `DESIGN.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,

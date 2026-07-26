@@ -61,9 +61,22 @@ See `docs/architecture/foreman.md`.
 AI agents can run it on every change without getting bogged down. `verify` is
 the definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test plus the quick
 Taskfile/hook guards (the Foreman v2 vocabulary: verify = check + build +
-test). `ci` is the full pipeline — everything CI runs (`verify` +
-`security`[% if devcontainer %] + the devcontainer permission assert[% endif %]) — so you can reproduce a CI
-run locally on demand instead of waiting on a PR.
+test). `ci` mirrors the CI pipeline locally (`verify`, `security`[% if use_skills_sync %], the
+network skills-drift check[% endif %][% if devcontainer %], the devcontainer permission assert[% endif %]) — so you can
+reproduce a CI run on demand instead of waiting on a PR. Keep it that way: a
+check the build workflow **gates on** and that can run locally belongs in `ci`
+too, or the "mirror" quietly stops being one.
+[% if project_type == 'web-astro' %]
+
+Two build-workflow jobs are deliberately **not** in `ci`: `lighthouse` (gating,
+but it needs a built site plus headless Chrome — run `task build`, then
+`npx @lhci/cli autorun` by hand when a change could move the budgets) and
+`a11y` (not gating yet — see docs/architecture/branch-protection.md).
+[% elif project_type == 'web-app' %]
+
+The `a11y` job is deliberately **not** in `ci` — it does not gate merges yet
+(see docs/architecture/branch-protection.md).
+[% endif %]
 
 ## Dev Loop
 

@@ -1,7 +1,7 @@
 name: Setup toolchain
 description: >-
-  Install the shared toolchain (Node, Task) and — behind inputs — the lint +
-  security CLIs. Single source of truth for the CI jobs and the Claude
+  Install the shared toolchain (Node, Python/uv, Task) and — behind inputs — the
+  lint + security CLIs. Single source of truth for the CI jobs and the Claude
   automation workflows so local, CI, and agent runs all execute the same
   Taskfile targets. Callers must run actions/checkout first.
 
@@ -25,6 +25,12 @@ runs:
       with:
         # renovate: datasource=node-version
         node-version: "24"
+    # foreman runs as a bare `python3 -m foreman` and needs >= 3.11 (tomllib);
+    # pin the interpreter rather than inheriting whatever the runner image ships
+    # (a self-hosted CI_RUNS_ON runner may have no python3 at all).
+    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        python-version: "3.13"
     # uv provides uvx for pinned Semgrep CE and foreman:lint's ruff/black.
     - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
     - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0

@@ -49,16 +49,19 @@ tasks:
   ci:
     # Full local mirror of the CI pipeline — run before (or instead of) opening
     # a PR to catch everything CI would, on demand, without waiting on a PR run.
-[% if devcontainer %]
-    # Builds on `verify` and adds the devcontainer permission assertion plus the
-    # heavier security checks.
-    desc: Full CI mirror (verify → test:devcontainer:permissions → security)
-[% else %]
-    # Builds on `verify` and adds the heavier security checks.
-    desc: Full CI mirror (verify → security)
+    # Builds on `verify` and adds every OTHER check the build workflow runs, so
+    # the two cannot drift apart.
+[% if use_skills_sync %]
+    # verify:skills is the NETWORK drift check (the CI job runs the same one).
+    # It is deliberately not in `verify`, which stays offline — the pre-push hook
+    # uses verify:skills:offline for that reason.
 [% endif %]
+    desc: Full CI mirror (verify[% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
     cmds:
       - task: verify
+[% if use_skills_sync %]
+      - task: verify:skills
+[% endif %]
 [% if devcontainer %]
       - task: test:devcontainer:permissions
 [% endif %]
