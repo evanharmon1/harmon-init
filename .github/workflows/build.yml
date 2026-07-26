@@ -130,6 +130,15 @@ jobs:
           curl -fsSL --retry 3 -o /tmp/yq \
             "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          # `file` backs the rendered lint-hygiene.sh's binary detection, which
+          # fails closed. test-template.sh runs that rendered script directly, so
+          # a runner without `file` would abort every profile before validation.
+          # This job does not use .github/actions/setup, so installing it there
+          # does not cover this path. Same self-hosted reasoning as yq above.
+          command -v file >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends file
+          }
       - name: Configure git identity (copier renders run git init)
         run: |
           git config --global user.name "ci"

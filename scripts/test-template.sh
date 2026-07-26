@@ -156,8 +156,9 @@ fi
 # of its merge gate. Running it here catches defects the other validators miss
 # because they live in the SOURCE files, not the rendered structure — e.g. a
 # `.jinja` whose whitespace-control strips the trailing newline (the LICENSE
-# bug) or a shell script committed without its EOF newline. Pure bash + git, so
-# no `task install` is needed; runs against the freshly-rendered tree.
+# bug) or a shell script committed without its EOF newline. Needs only bash, git
+# and `file` (which the job installs explicitly), so no `task install` is
+# needed; runs against the freshly-rendered tree.
 if [ -x scripts/lint-hygiene.sh ]; then
     ./scripts/lint-hygiene.sh || err "rendered output fails its own lint:hygiene gate"
 fi
