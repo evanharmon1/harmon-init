@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# terraform-provider-locks.sh — update or verify reproducible provider locks for
+# the developer (darwin_arm64) and CI (linux_amd64) platforms.
+set -euo pipefail
+
+usage() {
+    echo "Usage: $0 <check|update> <terraform-root> [terraform-root ...]" >&2
+    exit 2
+}
+
+[ "$#" -ge 2 ] || usage
+mode="$1"
+shift
+case "$mode" in
+check | update) ;;
+*) usage ;;
+esac
+
+terraform_bin="${TERRAFORM_BIN:-terraform}"
+if ! command -v "$terraform_bin" >/dev/null 2>&1; then
+    echo "Terraform executable not found: $terraform_bin" >&2
+    exit 1
+fi
+
+scratch=""
+cleanup() {
+    if [ -n "$scratch" ]; then
+        rm -rf "$scratch"
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+
+for root in "$@"; do
+    if [ ! -d "$root" ]; then
+        echo "Terraform root does not exist: $root" >&2
+        exit 1
+    fi
+
+    root_abs="$(cd "$root" && pwd -P)"
+    scratch="$(mktemp -d -t terraform-provider-locks-XXXXXX)"
+    mkdir "$scratch/repo"
+
+    # Copy the whole Git checkout (tracked + relevant untracked files), not just
+    # the selected root. This preserves relative local-module sources such as
+    # ../../modules/dns while excluding ignored caches and .terraform trees.
+    if repo_top="$(git -C "$root_abs" rev-parse --show-toplevel 2>/dev/null)"; then
+        repo_top="$(cd "$repo_top" && pwd -P)"
+        case "$root_abs" in
+        "$repo_top") root_rel=. ;;
+        "$repo_top"/*) root_rel="${root_abs#"$repo_top"/}" ;;
+        *)
+            echo "Terraform root is outside its Git checkout: $root" >&2
+            exit 1
+            ;;
+        esac
+        file_list="$scratch/repo-files"
+        # Filter to paths that still exist: `--cached` keeps listing a tracked
+        # file whose deletion is not staged yet, and `tar` aborts on the first
+        # missing entry — so one unrelated unstaged deletion anywhere in the
+        # repo would break `task validate` before Terraform even runs.
+        git -C "$repo_top" ls-files --cached --others --exclude-standard |
+            while IFS= read -r repo_file; do
+                if [ -e "$repo_top/$repo_file" ] || [ -L "$repo_top/$repo_file" ]; then
+                    printf '%s\n' "$repo_file"
+                fi
+            done >"$file_list"
+        (cd "$repo_top" && tar -cf - -T "$file_list") |
+            (cd "$scratch/repo" && tar -xf -)
+        scratch_root="$scratch/repo/$root_rel"
+    else
+        # Also support a standalone root before its first git init.
+        mkdir "$scratch/repo/root"
+        cp -R "$root_abs/." "$scratch/repo/root/"
+        scratch_root="$scratch/repo/root"
+    fi
+
+    # Prove clean-checkout behavior even when the caller has initialized this
+    # root locally. All module/provider discovery happens in the scratch copy.
+    rm -rf "$scratch_root/.terraform"
+    init_args=(-backend=false -input=false)
+    if [ "$mode" = update ]; then
+        # Permit intentional provider constraint/version changes. Check mode
+        # must keep selecting from the committed lock and remain read-only.
+        init_args+=(-upgrade)
+    fi
+    if ! "$terraform_bin" "-chdir=$scratch_root" init "${init_args[@]}" >/dev/null; then
+        echo "Could not initialize Terraform modules/providers in $root" >&2
+        exit 1
+    fi
+
+    lock_file="$root/.terraform.lock.hcl"
+    if ! "$terraform_bin" "-chdir=$scratch_root" providers lock \
+        -platform=darwin_arm64 \
+        -platform=linux_amd64 >/dev/null; then
+        echo "Could not verify Terraform provider locks in $root" >&2
+        exit 1
+    fi
+    scratch_lock="$scratch_root/.terraform.lock.hcl"
+
+    # `terraform providers` demands backend initialization for configurations
+    # with remote backends, even after `init -backend=false`. The lock command
+    # does not, and a provider-free fresh root simply produces no lockfile.
+    if [ ! -f "$scratch_lock" ]; then
+        echo "Terraform provider locks: no providers in $root; skipping"
+        cleanup
+        scratch=""
+        continue
+    fi
+
+    if [ "$mode" = update ]; then
+        cp "$scratch_lock" "$lock_file"
+        cleanup
+        scratch=""
+        echo "Terraform provider locks updated: $lock_file"
+        continue
+    fi
+
+    if [ ! -f "$lock_file" ]; then
+        echo "Terraform provider lock missing: $lock_file" >&2
+        echo "Run: task terraform:providers:lock" >&2
+        exit 1
+    fi
+
+    if ! cmp -s "$lock_file" "$scratch_lock"; then
+        echo "Terraform provider lock is not current for the configuration and required platforms: $lock_file" >&2
+        echo "Run: task terraform:providers:lock" >&2
+        exit 1
+    fi
+
+    cleanup
+    scratch=""
+    echo "Terraform provider locks complete: $lock_file"
+done
