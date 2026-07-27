@@ -1176,6 +1176,75 @@ else
     [ ! -e .github/workflows/terraform.yml ] || err "terraform.yml rendered but include_terraform=false"
 fi
 
+# ── 9i. The task tier boundary: port-free vs. port-binding ──────────
+# `check`/`build`/`test`/`verify` must never bind a port — that is what lets N
+# agents in N worktrees run the definition-of-done gate concurrently. `test:e2e`
+# serves the app, so it belongs in `ci` and the blocking `e2e` CI job ONLY.
+# Reachability is probed with `task --dry` (not grep): a task can be defined and
+# unreachable, or reached transitively through an aggregate, and only the dry
+# run tells the two apart.
+if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
+    [ -x scripts/e2e-run.sh ] || err "scripts/e2e-run.sh missing or not executable (use_node profile)"
+    # The skip is ONLY for a missing Playwright config. Widening it to swallow
+    # the unconfigured env guard would turn a fail-closed security control into
+    # a silent pass in `task ci` and the blocking `e2e` check.
+    grep -q 'playwright.config' scripts/e2e-run.sh ||
+        err "e2e-run.sh does not gate its skip on a missing playwright.config.*"
+    grep -q './scripts/e2e-env-guard.sh' scripts/e2e-run.sh ||
+        err "e2e-run.sh does not run the fail-closed e2e env guard"
+    ./scripts/e2e-run.sh >/dev/null 2>&1 ||
+        err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
+    # A config with the guard still unconfigured must FAIL, not skip.
+    touch playwright.config.ts
+    if ./scripts/e2e-run.sh >/dev/null 2>&1; then
+        err "e2e-run.sh passed with an unconfigured e2e-env-guard.sh — the guard must fail closed"
+    fi
+    rm -f playwright.config.ts
+    if have task; then
+        # e2e is reachable from `ci` and NOT from verify/check/test.
+        grep -qF -- 'scripts/e2e-run.sh' <<<"$(task --color=false --dry ci 2>&1 || true)" ||
+            err "task ci does not reach test:e2e — the port-binding tier would gate nothing"
+        for portfree in verify check test; do
+            ! grep -qF -- 'scripts/e2e-run.sh' \
+                <<<"$(task --color=false --dry "$portfree" 2>&1 || true)" ||
+                err "task ${portfree} reaches test:e2e — the port-free tier must not serve the app"
+        done
+    else
+        required task "task tier reachability" || fail=1
+    fi
+    # The blocking e2e CI job must exist AND be rolled up by the `verify`
+    # aggregate — a job absent from needs/verify-ci-results.sh reports but gates
+    # nothing, which is the dead-end state this replaced.
+    grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has no e2e job (use_node profile)"
+    grep -qE '^    needs: \[.*\be2e\b.*\]' .github/workflows/build.yml ||
+        err "build.yml's verify aggregate does not need the e2e job — it would not gate merges"
+    grep -q '"e2e=\${E2E_RESULT}"' .github/workflows/build.yml ||
+        err "build.yml's verify aggregate does not assert the e2e job result"
+else
+    [ ! -e scripts/e2e-run.sh ] || err "e2e-run.sh rendered for a non-node profile"
+    ! grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has an e2e job on a non-node profile"
+fi
+
+# ── 9j. codegen is a web-app-only `check` prerequisite ──────────────
+# Generated Convex types must be current before tsc reads them; a stale
+# convex/_generated/ fails typecheck with errors that point nowhere near the
+# schema edit that caused them. Must also stay PORT-FREE — it is inside `check`.
+if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
+    [ -x scripts/codegen.sh ] || err "scripts/codegen.sh missing or not executable (project_type=web-app)"
+    ./scripts/codegen.sh >/dev/null 2>&1 ||
+        err "codegen.sh does not skip cleanly on a fresh render (no app/deps yet)"
+    grep -q 'convex codegen' scripts/codegen.sh || err "codegen.sh does not run Convex codegen"
+    if have task; then
+        grep -qF -- 'scripts/codegen.sh' <<<"$(task --color=false --dry check 2>&1 || true)" ||
+            err "task check does not reach codegen — typecheck could read stale generated types"
+    else
+        required task "codegen reachability" || fail=1
+    fi
+else
+    [ ! -e scripts/codegen.sh ] || err "codegen.sh rendered outside project_type=web-app"
+    ! grep -qE '^  codegen:' Taskfile.yml || err "codegen task rendered outside project_type=web-app"
+fi
+
 # Every `# renovate:` annotation in the rendered composite action must be
 # extractable by one of the rendered repo's own customManagers — an annotation
 # no manager matches (or one missing depName=) looks fine in review and produces

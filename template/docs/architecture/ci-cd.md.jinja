@@ -13,7 +13,15 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
+- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
+[% if use_node %]
+  The **`e2e`** job is separate from `build-test` on purpose: Playwright serves
+  the app, and everything an agent runs locally (`check`/`build`/`test`/
+  `verify`) is kept port-free so parallel worktrees don't collide. It builds
+  first, then runs `task test:e2e`, and it gates via `verify` — but it skips
+  cleanly until the app ships a `playwright.config.*`. See
+  [tests.md](tests.md).
+[% endif %]
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
 [% if use_codeql %]
 - `codeql.yml` — CodeQL SAST runs automatically and for free on public

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# codegen.sh — run this project's code generators for `task codegen`.
+#
+# Runs BEFORE type-checking (it is a dep of `task lint:typescript`, hence of
+# `task check`): editing a Convex schema changes convex/_generated/, and tsc
+# reading the stale copy fails in a way that looks nothing like the real cause.
+#
+# CONTRACT for anything added here:
+#   * PORT-FREE — generate from local sources; never start a server or attach to
+#     a running deployment. `check`/`build`/`test`/`verify` are the port-free
+#     tier so parallel agents and worktrees can run them concurrently.
+#   * SKIP CLEANLY when the generator isn't set up yet, so a fresh scaffold
+#     stays green (same rule as `task build` / `task lint:eslint`).
+#   * COMMIT the output. Generated files are committed but tool-owned (excluded
+#     from Prettier and ESLint) — a codegen diff is expected output.
+#
+# Add further generators (GraphQL, OpenAPI, ORM clients) as their own block.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ ! -f package.json ] || [ ! -d node_modules ]; then
+    echo "codegen: app/deps not set up yet -- skipping (scaffold the app + pnpm install)"
+    exit 0
+fi
+
+ran=0
+
+# ── Convex: convex/_generated/ from convex/schema.ts + function files ─
+if [ -d convex ] && [ -x node_modules/.bin/convex ]; then
+    node_modules/.bin/convex codegen
+    ran=1
+fi
+
+if [ "$ran" -eq 0 ]; then
+    echo "codegen: no generators configured yet -- skipping (Convex: add convex/ and the convex package)"
+fi

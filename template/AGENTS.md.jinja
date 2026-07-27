@@ -61,17 +61,35 @@ See `docs/architecture/foreman.md`.
 AI agents can run it on every change without getting bogged down. `verify` is
 the definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test plus the quick
 Taskfile/hook guards (the Foreman v2 vocabulary: verify = check + build +
-test). `ci` mirrors the CI pipeline locally (`verify`, `security`[% if use_skills_sync %], the
+test). `ci` mirrors the CI pipeline locally ([% if use_node %]`verify`, `test:e2e`, `security`[% else %]`verify`, `security`[% endif %][% if use_skills_sync %], the
 network skills-drift check[% endif %][% if devcontainer %], the devcontainer permission assert[% endif %]) — so you can
 reproduce a CI run on demand instead of waiting on a PR. Keep it that way: a
 check the build workflow **gates on** and that can run locally belongs in `ci`
-too, or the "mirror" quietly stops being one.
+too, or the "mirror" quietly stops being one. The one carve-out: a check that
+needs **CI-only infrastructure** (a browser install, a service container,
+credentials that only exist on a runner) stays out of `ci` and is documented as
+an exception here rather than being faked locally.
+[% if use_node %]
+
+**Port-free vs. port-binding — the tier boundary.** `check`, `build`, `test`,
+and therefore `verify` never bind a port ([% if project_type == 'web-app' %]`codegen` and [% endif %]`build` write files, they
+don't serve). That is what lets several agents or worktrees run the
+definition-of-done gate at the same time. `task test:e2e` **does** serve the
+app, so it runs only in `task ci` (on demand) and in the build workflow's
+blocking `e2e` job (runner-isolated). Never move e2e into `check`/`test`/
+`verify`, and never add a port-binding step to them. `test:e2e` skips cleanly
+until the app has a `playwright.config.*`; once it has one,
+`scripts/e2e-env-guard.sh` must be configured or the check fails — that failure
+is deliberate, don't gut the guard to get green. See
+docs/architecture/tests.md.
+[% endif %]
 [% if project_type == 'web-astro' %]
 
 Two build-workflow jobs are deliberately **not** in `ci`: `lighthouse` (gating,
-but it needs a built site plus headless Chrome — run `task build`, then
-`npx @lhci/cli autorun` by hand when a change could move the budgets) and
-`a11y` (not gating yet — see docs/architecture/branch-protection.md).
+but it needs a built site plus headless Chrome — the CI-only-infrastructure
+carve-out above; run `task build`, then `npx @lhci/cli autorun` by hand when a
+change could move the budgets) and `a11y` (not gating yet — see
+docs/architecture/branch-protection.md).
 [% elif project_type == 'web-app' %]
 
 The `a11y` job is deliberately **not** in `ci` — it does not gate merges yet

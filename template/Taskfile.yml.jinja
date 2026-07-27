@@ -51,14 +51,24 @@ tasks:
     # a PR to catch everything CI would, on demand, without waiting on a PR run.
     # Builds on `verify` and adds every OTHER check the build workflow runs, so
     # the two cannot drift apart.
+[% if use_node %]
+    # This is the FIRST tier that may bind a port: test:e2e serves the app.
+    # `check`/`build`/`test`/`verify` stay port-free so parallel agents and
+    # worktrees can run them concurrently; `ci` is on-demand (and CI runners are
+    # isolated), so a port is fine here. Order matters: verify's `build` has
+    # already produced dist/ by the time test:e2e's webServer previews it.
+[% endif %]
 [% if use_skills_sync %]
     # verify:skills is the NETWORK drift check (the CI job runs the same one).
     # It is deliberately not in `verify`, which stays offline — the pre-push hook
     # uses verify:skills:offline for that reason.
 [% endif %]
-    desc: Full CI mirror (verify[% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
+    desc: Full CI mirror (verify[% if use_node %] → test:e2e[% endif %][% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
     cmds:
       - task: verify
+[% if use_node %]
+      - task: test:e2e
+[% endif %]
 [% if use_skills_sync %]
       - task: verify:skills
 [% endif %]
@@ -71,7 +81,13 @@ tasks:
     # The definition-of-done gate — everything that must pass before a change
     # is done. Foreman v2 calls this the "check + build + test" tier; the desc
     # below lists this repo's exact steps. For the fast inner loop use `check`;
-    # heavier security checks[% if devcontainer %] and the devcontainer permission assertion[% endif %] stay in `ci`.
+    # heavier security checks[% if devcontainer %], the devcontainer permission assertion[% endif %][% if use_node %], and the
+    # port-binding e2e tier[% endif %] stay in `ci`.
+[% if use_node %]
+    # Every step here is PORT-FREE — `build` writes dist/, it does not serve —
+    # so this is safe to run concurrently across worktrees and parallel agents.
+    # Keep it that way: anything that starts a server belongs in `ci`.
+[% endif %]
     desc: Definition-of-done gate (check[% if use_node %] → build[% endif %] → validate → guards → test)
     cmds:
       - task: check
@@ -99,6 +115,11 @@ tasks:
   check:
     # Fast local gate (target: well under a minute) — safe for editors, git
     # hooks, and AI agents to run on every change without getting bogged down.
+[% if use_node %]
+    # Static analysis only, and PORT-FREE: nothing here starts a server, so
+    # parallel agents/worktrees never collide. Anything that binds a port
+    # (test:e2e) belongs in `ci`.
+[% endif %]
     desc: Fast local gate — all linters[% if use_node %] + typecheck[% endif %] (parallel)
     deps:
       - lint
@@ -225,6 +246,11 @@ tasks:
         fi
 [% else %]
     desc: TypeScript type checking
+    # Generated types must exist and be current BEFORE tsc reads them, or an
+    # agent that just edited a Convex schema fails typecheck against stale
+    # convex/_generated/. codegen is port-free, so `check` stays port-free.
+    deps:
+      - codegen
     cmds:
       - |
         if [ ! -f package.json ] || [ ! -x node_modules/.bin/tsc ]; then
@@ -483,6 +509,30 @@ tasks:
     cmds:
       - task: format
       - task: lint
+[% if project_type == 'web-app' %]
+
+  # ── Codegen ────────────────────────────────────────────────────
+  codegen:
+    # Generated sources that TYPE-CHECKING depends on — a prerequisite of
+    # lint:typescript (and therefore `check`), not part of `build`. Without it,
+    # an agent that edits a Convex schema fails typecheck against a stale
+    # convex/_generated/ and has no obvious way to know why.
+    #
+    # Port-free by contract: generators write files, they never start a server
+    # or connect to a running deployment. Keep it that way — `check` inherits
+    # this task's behavior, and the whole check/build/test/verify tier is
+    # port-free so parallel agents and worktrees can run it concurrently.
+    #
+    # Generated output is COMMITTED but tool-owned (see .prettierignore and the
+    # eslint config's `ignores`): commit the regenerated files as part of your
+    # change — a codegen diff is expected output, not an anomaly to revert.
+    # Skips cleanly before the app/deps/generators exist, like build and
+    # lint:eslint. Add further generators (GraphQL, OpenAPI, ORM clients) in
+    # scripts/codegen.sh.
+    desc: Run code generators (Convex types)
+    cmds:
+      - ./scripts/codegen.sh
+[% endif %]
 [% if use_node %]
 
   # ── Build ──────────────────────────────────────────────────────
@@ -491,6 +541,11 @@ tasks:
     # and typecheck, so `task verify` (and CI's build step) stay green until the
     # framework is scaffolded — see docs/CHECKLIST.md. Once package.json +
     # node_modules exist this runs the real build unchanged.
+    #
+    # PORT-FREE: this writes dist/, it does not serve. That is what lets it sit
+    # in `verify` (the agent inner loop) while test:e2e — which does serve —
+    # stays out. It is also what makes dist/ available to test:e2e later in
+    # `task ci`; see that task and docs/architecture/tests.md.
     desc: Production build
     cmds:
       - |
@@ -576,17 +631,32 @@ tasks:
 [% if use_node %]
 
   test:e2e:
-    desc: Run Playwright end-to-end tests
+    # The PORT-BINDING test tier: Playwright serves the app. Deliberately NOT in
+    # `check` / `test` / `verify` — those stay port-free so parallel agents and
+    # worktrees never fight over a port. It runs in `task ci` and in the build
+    # workflow's `e2e` job, both of which are on-demand or runner-isolated.
+    #
+    # BUILD CONTRACT — this task never builds:
+    #   * `task ci` runs verify (which runs `build`) first, so dist/ is already
+    #     there when Playwright's webServer previews it.
+    #   * A direct `task test:e2e` relies on the app's playwright.config.ts
+    #     `webServer` to own serving (e.g. `vite preview` with
+    #     `reuseExistingServer`). Point it at whatever the app needs.
+    # Deliberately no `deps: [build]` and no sources:/generates: fingerprinting
+    # — see docs/architecture/tests.md for why.
+    #
+    # Skips cleanly until the app ships a playwright.config.* (like `build`), so
+    # `task ci` and the CI job stay green on a fresh scaffold. That skip covers
+    # ONLY "no config": once a config exists, the fail-closed
+    # scripts/e2e-env-guard.sh runs and FAILS until it is configured for this
+    # app's providers. Never widen the skip to swallow an unconfigured guard.
+    desc: Run Playwright end-to-end tests (serves the app — binds a port)
     # Local dev secrets (if any) come from .env.local; CI passes env via the
     # workflow instead. A missing file is ignored.
     dotenv:
       - .env.local
     cmds:
-      # Fail closed: refuse to run e2e with production-capable credentials or
-      # targets in the environment. The guard fails until configured for this
-      # app's providers — see scripts/e2e-env-guard.sh.
-      - ./scripts/e2e-env-guard.sh
-      - npx playwright test {{.CLI_ARGS}}
+      - ./scripts/e2e-run.sh {{.CLI_ARGS}}
 
   test:e2e:screenshot:
     desc: "Playwright screenshot (usage: task test:e2e:screenshot -- <url> <output.png>)"

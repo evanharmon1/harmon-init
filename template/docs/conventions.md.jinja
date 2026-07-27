@@ -35,8 +35,25 @@ it points here.
   `yaml:lint`).
 - Pipeline order is **`check → build → validate → test → security`**, with
   `verify` (the definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test) and
-  `ci` (full — verify + security) as the aggregates. `check` is the fast
-  inner-loop/hook gate.
+  `ci` (full — verify[% if use_node %] + test:e2e[% endif %] + security) as the aggregates. `check` is the
+  fast inner-loop/hook gate.
+[% if use_node %]
+- **The tier boundary is port-free vs. port-binding**, not the namespace.
+  `check`, `build`, `test`, and `verify` never bind a port, so parallel agents
+  and worktrees can run them concurrently. `test:e2e` serves the app, so it runs
+  only in `task ci` and in the build workflow's blocking `e2e` job — never in
+  `check`/`test`/`verify`. Don't add a port-binding step to the port-free tier.
+  See [architecture/tests.md](architecture/tests.md).
+[% endif %]
+[% if project_type == 'web-app' %]
+- **Generated code is a `check` prerequisite, not a build step.** `codegen`
+  (Convex types) is a dep of `lint:typescript`, so typechecking never reads
+  stale generated files. Generators must be port-free and skip cleanly.
+[% endif %]
+- **`task ci` mirrors CI** — every check the build workflow _gates on_ that can
+  run locally belongs there. The one exception is a check that needs **CI-only
+  infrastructure**: document it in `AGENTS.md` as an exception instead of faking
+  it locally[% if project_type == 'web-astro' %] (Lighthouse is this repo's — it needs headless Chrome + lhci)[% endif %].
 - **`lint:*` and `check` are read-only gates** — they report and fail, never
   modify files. All auto-fixing lives in **`task format`**, **`task format:file
   -- <path>`**, and **`task fix`** (= format then lint). Pre-commit hooks run the

@@ -20,11 +20,80 @@ How testing works in [[ project_name ]].
 | Optional second opinion | Snyk Code + Open Source, manual[% if snyk_scan_schedule != 'off' %] or [[ snyk_scan_schedule ]] scheduled[% endif %] | `task security:sast:snyk` / `task security:sca:snyk` |
 | Secrets | gitleaks | `task security:secrets` |
 | Dependencies | package-manager audit | `task security:audit` |
+[% if use_node %]
+
+## The tier boundary: port-free vs. port-binding
+
+The split that matters most for agents and parallel worktrees is **whether a
+tier binds a port**, not what it is named:
+
+| Tier | Binds a port? | Where it runs |
+|---|---|---|
+| `task check` (lint, format check, typecheck[% if project_type == 'web-app' %], `codegen`[% endif %]) | no | inner loop, editors, git hooks |
+| `task build` | no — writes `dist/`, does not serve | `verify`, CI `build-test` |
+| `task test` (vitest) | no | `verify`, CI `build-test` |
+| `task verify` (= check + build + test) | **no** | the agent's definition-of-done gate |
+| `task test:e2e` (Playwright) | **yes** — serves the app | `task ci`, CI `e2e` job |
+[% if project_type == 'web-astro' %]
+| Lighthouse | **yes** — serves + headless Chrome | CI `lighthouse` job only |
+[% endif %]
+
+Everything an agent runs on every change is port-free, so N agents in N
+worktrees can run `task verify` concurrently without fighting over a port.
+`task test:e2e` is the first tier that serves the app, which is why it lives in
+`task ci` (on demand, one at a time) and in its own CI job (runner-isolated) —
+never in `check`, `test`, or `verify`.
+
+**Do not "fix" a slow inner loop by moving e2e into `verify`, and do not add a
+port-binding step to `check`/`build`/`test`.** That is the invariant this split
+exists to protect.
+
+## Build ↔ e2e contract
+
+`task test:e2e` **never builds**. Ownership is split instead:
+
+- **In `task ci`** — ordering provides `dist/`: `ci` runs `verify` (which runs
+  `build`) before `test:e2e`. Same in CI, where the `e2e` job runs `task build`
+  itself.
+- **Running it directly** — the app's `playwright.config.ts` `webServer` owns
+  serving (e.g. `vite preview` with `reuseExistingServer: true`, or a dev
+  server). Configure it to build or serve whatever that app needs.
+
+There is deliberately **no `deps: [build]` and no `sources:`/`generates:`
+fingerprinting** on these tasks. Task's file-based caching has been a recurring
+source of stale-output bugs here; the explicit ordering above is cheaper to
+reason about, and duplicate builds are the acceptable cost.
+
+`task test:e2e` skips cleanly until the app ships a `playwright.config.*`, so a
+fresh scaffold keeps `task ci` and the `e2e` check green. That skip covers
+**only** the missing-config case — once a config exists,
+`scripts/e2e-env-guard.sh` runs and **fails until it is configured** for this
+app's providers and production domains (fail-closed by design; see
+`docs/CHECKLIST.md`). Never widen the skip to swallow an unconfigured guard.
+[% endif %]
+[% if project_type == 'web-app' %]
+
+## Codegen
+
+`task codegen` (→ `scripts/codegen.sh`) runs the generators that type-checking
+depends on — Convex's `convex/_generated/` first — and is a **dependency of
+`task lint:typescript`**, hence of `task check`. Editing `convex/schema.ts`
+without regenerating makes `tsc` fail against the stale types, in a way whose
+error messages point nowhere near the actual cause.
+
+- Generated files are **committed but tool-owned** — excluded from Prettier
+  (`.prettierignore`) and ESLint (`ignores`). A codegen diff in your change is
+  expected output: **commit it**, don't revert it as noise.
+- Generators must stay **port-free** and must **skip cleanly** when not set up,
+  the same contract as `task build`. Add new ones (GraphQL, OpenAPI, ORM
+  clients) as their own block in `scripts/codegen.sh`.
+[% endif %]
 
 ## Conventions
 
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
-- `task verify` is the local merge gate; CI runs the same task targets.
+- `task verify` is the local definition-of-done gate[% if use_node %]; `task ci` adds the
+  port-binding e2e tier and security[% endif %]. CI runs the same task targets.
 [% if project_type in ['web-astro', 'web-app'] %]
 - Playwright runs desktop Chromium/Firefox/WebKit **and mobile device
   projects** (e.g. Pixel + iPhone). The scaffold ships the mobile projects

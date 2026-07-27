@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# e2e-run.sh — run the Playwright end-to-end suite for `task test:e2e`.
+#
+# Two responsibilities, in order:
+#   1. Skip cleanly when the app has no playwright.config.* yet, so a freshly
+#      scaffolded repo keeps `task ci` (and the blocking `e2e` CI job) green.
+#   2. Once a config exists, run the FAIL-CLOSED environment guard before
+#      Playwright. The guard ships unconfigured and fails on purpose — that is
+#      a real failure, never a skip. See scripts/e2e-env-guard.sh.
+#
+# This is the port-binding test tier (Playwright serves the app), which is why
+# it is kept out of `check`/`test`/`verify`. It does NOT build: `task ci` runs
+# `build` earlier, and a direct run relies on the app's playwright.config.ts
+# `webServer`. See docs/architecture/tests.md.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if ! find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+    echo "test:e2e: no Playwright config yet -- skipping (add playwright.config.ts after scaffolding the app)"
+    exit 0
+fi
+
+./scripts/e2e-env-guard.sh
+
+exec npx playwright test "$@"

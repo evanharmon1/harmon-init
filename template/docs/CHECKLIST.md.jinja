@@ -228,6 +228,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
       iPhone) — the Playwright scaffold ships them commented out, and
       mobile-first is the convention
+- [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
+      site's credentials and production domains — `task test:e2e` runs it first
+      and it **fails until configured** (fail closed; see the script header).
+      Adding a `playwright.config.*` also activates the blocking **`e2e` CI
+      job** and the `test:e2e` step of `task ci` (both skip until then), so the
+      guard must be configured for those to go green. Don't gut it to get green.
+- [ ] Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
+      or serves on its own. In `task ci` and the `e2e` CI job a build has
+      already run, so `astro preview` with `reuseExistingServer: true` is the
+      usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc`/`astro check` fail until they're installed (pair the spec with the
@@ -281,11 +291,23 @@ config, toolchain, devcontainer, and dev environment — against the items below
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail
       closed; see the script header). Document required env vars in
-      `.env.example` (names only, never values). **Updating a repo that already
+      `.env.example` (names only, never values). Adding a
+      `playwright.config.*` also activates the blocking **`e2e` CI job** and
+      the `test:e2e` step of `task ci` (both skip until then), so the guard
+      must be configured for those to go green. **Updating a repo that already
       has an e2e suite:** the guard lands unconfigured and blocks
-      `task test:e2e` — either configure it in the same update PR, or
-      consciously defer (keep running Playwright directly) and file a follow-up;
-      don't gut the guard to get green.
+      `task test:e2e`, `task ci`, and the `e2e` check — either configure it in
+      the same update PR, or consciously defer (keep running Playwright
+      directly) and file a follow-up; don't gut the guard to get green.
+- [ ] Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
+      or serves on its own. In `task ci` and the `e2e` CI job a build has
+      already run, so `vite preview` with `reuseExistingServer: true` is the
+      usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
+- [ ] `task codegen` runs Convex codegen before typechecking (it's a dep of
+      `task lint:typescript`). Once `convex/` and the `convex` package exist it
+      activates automatically — commit the regenerated `convex/_generated/`
+      files with your change. Add any other generators (GraphQL, OpenAPI, ORM
+      clients) to `scripts/codegen.sh`; keep them port-free and skip-cleanly.
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc` fails until they're installed (pair the spec with the dep install).
