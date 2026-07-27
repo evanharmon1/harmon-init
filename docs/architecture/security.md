@@ -231,7 +231,7 @@ variable, not forever.
 ## CI automation identity (GitHub App)
 
 CI workflows that act on the repo as a bot — release-please, the
-`claude-*` workflows — authenticate as a
+`claude-*` workflows, `sync-harmon-devkit.yml` — authenticate as a
 **GitHub App dedicated to this owner**, not a personal access token. **Each
 GitHub org (and personal account) gets its own App**, named **`<owner>-ci`** —
 for this repo, **`evanharmon1-ci`**. One App per org keeps a leaked key
@@ -341,6 +341,16 @@ even the in-org radius small:
   it from workflows that untrusted code can influence (fork `pull_request`,
   `pull_request_target`, `workflow_run`) — the provided workflows gate on
   sender / same-repo checks.
+- **Never put `workflow_dispatch` on a workflow that mints an App token.** For
+  that trigger GitHub runs the workflow definition from whichever ref the
+  operator selects, so any branch — reviewed or not — could rewrite the
+  token-minting step and use the credential. Pinning the *checkout* to `main`
+  does not help: the token already exists. Every App-token workflow here is
+  reachable only through triggers that pin the definition to the default
+  branch — `push` (release), the issue/PR events (`claude-*`), and
+  `repository_dispatch` (`sync-harmon-devkit`). Use `repository_dispatch` when
+  a manual trigger is needed; it takes the same repository write access and
+  always runs the default branch's definition.
 - **Rotate the key** periodically; GitHub Apps allow multiple keys for
   zero-downtime rotation.
 
@@ -350,7 +360,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 
 | Secret / variable | Used by | Stored in | Rotation |
 |---|---|---|---|
-| `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-* | repo or org Actions variable + secret | rotate App key per policy |
+| `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-*, sync-harmon-devkit | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
 | `SNYK_TOKEN` | optional Snyk CLI scans; also `snyk-scheduled.yml` when explicitly generated | local env / 1Password by default; Actions secret only for scheduled/paid CI | manual |
 | `GH_TOKEN` (the bot's PAT) | the devcontainer agent's `gh`/git operations | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |

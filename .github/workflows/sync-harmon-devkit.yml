@@ -1,0 +1,134 @@
+name: Sync harmon-devkit skills
+run-name: sync-harmon-devkit reconciling the vendored skills pin
+
+# harmon-init vendors harmon-devkit's shared agent skills at a released tag.
+# Publishing a stable harmon-devkit release should produce a complete, verified
+# harmon-init pin-and-sync PR without anyone editing a pin by hand — while the
+# two release-PR merges at either end stay intentional human gates.
+#
+# ROOT-ONLY. This is harmon-platform integration glue (the harmon-init <->
+# harmon-devkit edge) and is deliberately NOT rendered into generated repos:
+# there is no template/ twin, and none should be added. See
+# docs/architecture/ci-cd.md.
+#
+# All the logic lives in scripts/sync-devkit-release.sh so it is shellcheck'd
+# and unit-tested (`task test:sync-devkit-release`) instead of hiding in an
+# inline workflow block. It never merges anything.
+
+on:
+  # Emitted by harmon-devkit's release workflow once a stable tag exists, and
+  # the manual recovery path too:
+  #
+  #   gh api repos/evanharmon1/harmon-init/dispatches \
+  #     -f event_type=harmon-devkit-released \
+  #     -f 'client_payload[tag]=v0.9.0'
+  #
+  # DELIBERATELY not workflow_dispatch. This workflow mints a CI App token, and
+  # for workflow_dispatch GitHub runs the workflow definition from whichever ref
+  # the operator picks — so an unreviewed branch could rewrite this file and use
+  # the credential, and pinning the CHECKOUT to main would not help because the
+  # token was already minted by then. repository_dispatch always runs the
+  # default branch's definition. Every other App-token workflow here
+  # (claude-*, release) is likewise reachable only through triggers that pin the
+  # definition to the default branch; see docs/architecture/security.md.
+  #
+  # The payload is untrusted: the helper validates the tag's shape and confirms
+  # the release upstream before using it.
+  repository_dispatch:
+    types: [harmon-devkit-released]
+  # Reconciliation: a dropped dispatch must not leave the pin stale forever.
+  # Off the hour to avoid GitHub's scheduling pile-up.
+  schedule:
+    - cron: "37 6 * * *"
+
+# Serialize dispatched and scheduled runs: they all rewrite the same bot branch
+# and maintain the same rolling PR.
+concurrency:
+  group: sync-harmon-devkit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    # Generous: the pre-push gate runs `task verify`, which renders the whole
+    # copier template matrix.
+    timeout-minutes: 60
+    steps:
+      # CI GitHub App token, not GITHUB_TOKEN: a PR opened by GITHUB_TOKEN never
+      # triggers CI, and branch protection requires those checks before the sync
+      # PR can merge. Least-privilege — push the bot branch (contents) and
+      # maintain one PR (pull-requests); no issues, no workflows.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Pinned to the default branch, not github.ref. Dispatch and schedule
+          # already run from main, but workflow_dispatch lets the operator pick
+          # any branch — and that branch's Taskfile/helper would then execute
+          # with a contents:write App token in the environment. Branch
+          # protection reviews what reaches main; nothing reviews an arbitrary
+          # branch, so the privileged path only ever runs main's code.
+          ref: main
+          # Full history: release-title pre-flight and the template render
+          # matrix both diff against the base.
+          fetch-depth: 0
+          # Keeps the repo-wide hardening intact even though this job pushes.
+          # The helper authenticates each origin operation with a process-scoped
+          # credential helper reading GH_TOKEN from the environment, and runs
+          # the sync and every verification target with GH_TOKEN scrubbed — so
+          # the write token reaches neither .git/config nor the copier/npx/uvx
+          # subprocesses `task verify` spawns.
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          lint-tools: "true"
+          gitleaks: "true"
+      # `task verify` renders the copier template, so this job needs the same
+      # extras build.yml's template-test job installs on top of the composite.
+      # `gh` is assumed from the runner image (as in close-milestone-on-release);
+      # a CI_RUNS_ON runner without it fails fast on "gh is required".
+      - name: Install the template-render toolchain
+        run: |
+          # --force overwrites a foreign same-named entry point instead of
+          # aborting, keeping reruns idempotent on a self-hosted CI_RUNS_ON
+          # runner (same reasoning as build.yml's lint job).
+          uv tool install --force copier
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install --global @devcontainers/cli lefthook pnpm
+      # Same three settings build.yml's template-test job needs, for the same
+      # reason: copier runs `git init` + an initial commit inside each rendered
+      # project, and a GitHub-hosted runner has no global identity. This is
+      # GLOBAL config, so it does not affect the sync commit — the helper sets
+      # the bot identity repo-locally, which takes precedence.
+      - name: Configure git identity (copier renders run git init)
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global init.defaultBranch main
+      - name: Pin, vendor, verify, and open or update the sync PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          # The untrusted dispatch payload reaches the helper only through the
+          # environment — never interpolated into a run script. Empty on the
+          # scheduled path, which resolves the latest release.
+          SYNC_DEVKIT_TAG: ${{ github.event.client_payload.tag || '' }}
+          # A late or out-of-order dispatch must not roll the pin backwards, so
+          # a downgrade has to be asked for explicitly — the recovery path off a
+          # bad harmon-devkit release. Sending a repository_dispatch already
+          # requires repository write access; harmon-devkit's emitter never sets
+          # this. Accepts a JSON boolean or the string `gh api -f` sends.
+          SYNC_DEVKIT_ALLOW_DOWNGRADE: >-
+            ${{ github.event.client_payload.allow_downgrade == true ||
+                github.event.client_payload.allow_downgrade == 'true' }}
+        run: task sync:devkit-release

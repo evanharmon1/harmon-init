@@ -26,6 +26,91 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 - `release.yml` — release-please maintains the rolling release PR.
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
+- `sync-harmon-devkit.yml` — **root-only**: turns a published harmon-devkit
+  release into a verified pin-and-sync PR (see below).
+
+## Root-only vs template-shipped workflows
+
+Most root workflows are the rendered form of a `template/` twin and must be
+edited in lockstep (AGENTS.md, "Dogfood parity"). A few are **root-only**: they
+exist because harmon-init sits inside harmon-platform, and a generated repo has
+no such edge. `close-milestone-on-release.yml` and `sync-harmon-devkit.yml` are
+root-only; they have no `template/` counterpart, and the dogfood checks are
+twin-driven (they walk `template/`), so root-only files are correctly invisible
+to them. Do not add a twin to make them "consistent".
+
+## harmon-devkit skills propagation
+
+harmon-init vendors harmon-devkit's shared agent skills at a released tag
+(`.skills-sync.yaml` and its template twin). `sync-harmon-devkit.yml` automates
+everything between the two intentional release gates:
+
+```text
+human merges harmon-devkit's release PR  ->  stable tag
+        | repository_dispatch (harmon-devkit-released)
+harmon-init validates the tag, pins it, vendors, verifies, opens/updates ONE PR
+        |
+human merges the sync PR, then harmon-init's release PR
+```
+
+- **Triggers:** the dispatch and a daily reconciliation `schedule`, so a dropped
+  dispatch cannot leave the pin stale. One `concurrency` group serializes them.
+  There is deliberately **no `workflow_dispatch`** — see "Token scope" below.
+- **Trust:** the payload tag is untrusted. `scripts/sync-devkit-release.sh`
+  checks its shape in pure shell (no regex a newline can split), then confirms
+  the release exists upstream and is neither a draft nor a prerelease, before
+  anything is written. It reaches the helper only through the environment.
+- **Token scope:** the checkout keeps `persist-credentials: false`; the App
+  token authenticates only the individual `git` calls that talk to origin, via
+  a process-scoped credential helper, and the sync and verification targets run
+  with `GH_TOKEN` scrubbed. A contents:write credential is therefore never
+  visible to the copier renders, `npx`, and `uvx` that `task verify` spawns.
+  The workflow is not `workflow_dispatch`-able for the same reason: GitHub
+  would run the *selected ref's* workflow definition, so an unreviewed branch
+  could rewrite the token-minting step itself — a checkout pinned to `main`
+  cannot help, because the token exists by then.
+- **Base integrity:** the checkout is pinned to `main`, and the run refuses to
+  start unless `HEAD` is `main` and `main` matches `origin/main` — so a
+  force-push can never publish unrelated local commits under a bot title. An
+  origin that cannot be reached aborts rather than being read as "no sync PR is
+  in flight".
+- **Fail-closed:** the run aborts before any push if the two pins already
+  disagree, if the tag would move the pin *backwards* — measured against the
+  newest tag in flight, so a delayed dispatch cannot drag an open sync PR back
+  either; only a manual run may downgrade, as the recovery path off a bad
+  release — if `task sync:skills` writes a path outside the manifests,
+  provenance, and managed skills, or if `task verify:skills:offline`,
+  `task security:secrets`, `task verify:skills`, or `task verify` fails.
+  gitleaks runs *before* the push, not just on the PR: this step vendors files
+  from another repository, and a pushed secret needs rotating whether or not
+  the PR ever merges.
+- **One rolling PR:** a deterministic `bot/sync-harmon-devkit` branch, rebuilt
+  from `main` every run, so a newer release supersedes an open sync PR instead
+  of opening a second one. Replaying an event after the PR merged is a no-op;
+  replaying it while the PR is open compares trees and leaves the branch alone,
+  so the daily schedule never force-pushes an identical commit or re-triggers
+  the PR's checks.
+- **Recovery:** send the dispatch by hand (it always runs the default branch's
+  definition, unlike `workflow_dispatch`) —
+
+  ```bash
+  gh api repos/evanharmon1/harmon-init/dispatches \
+    -f event_type=harmon-devkit-released \
+    -f 'client_payload[tag]=v0.9.0' \
+    -f 'client_payload[allow_downgrade]=true'   # only to roll back a bad release
+  ```
+
+  — or run it locally with `task sync:devkit-release -- vX.Y.Z`. A sync PR
+  closed by hand is re-opened from the pushed branch on the next run.
+- **Never merges.** Not the sync PR, not either repository's release PR.
+
+Renovate keeps its approval-gated harmon-devkit rule as a passive stale-pin
+signal and manual fallback; it cannot vendor the skills itself, and its
+Dependency Dashboard approval means it never races this workflow into a
+duplicate branch.
+
+The harmon-devkit side of the edge (emitting the dispatch on release) lives in
+that repository's `release.yml`.
 
 ## Authentication
 
