@@ -148,6 +148,7 @@ pr)
 ${STUB_PR_LIST:-}
 EOF
         ;;
+    view) printf '%s\n' "${STUB_PR_TITLE:-}" ;;
     create | edit) printf 'https://example.invalid/pr\n' ;;
     *)
         echo "stub gh: unhandled pr subcommand ${2:-}" >&2
@@ -228,6 +229,7 @@ run_helper() {
             STUB_LATEST="${STUB_LATEST:-}" \
             STUB_RELEASES="${STUB_RELEASES:-}" \
             STUB_PR_LIST="${STUB_PR_LIST:-}" \
+            STUB_PR_TITLE="${STUB_PR_TITLE:-}" \
             STUB_BOT_UID="${STUB_BOT_UID:-12345}" \
             STUB_FAIL_TASKS="${STUB_FAIL_TASKS:-}" \
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
@@ -253,6 +255,7 @@ v0.9.1 false false
 v0.9.2-rc.1 false true
 v1.0.0 true false"
     STUB_PR_LIST=""
+    STUB_PR_TITLE=""
     STUB_FAIL_TASKS=""
     STUB_SYNC_TOUCH_UNRELATED=""
     STUB_SYNC_DELETE_LOCAL=""
@@ -317,6 +320,7 @@ pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
 # commit. It must not force-push it again.
 git -C "$fix" checkout --quiet main
 STUB_PR_LIST="42 false"
+STUB_PR_TITLE="fix(template): sync harmon-devkit skills to v0.9.0"
 : >"$STUB_LOG"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "reconciliation run exited $rc: $(cat "$LAST_OUT")"
@@ -325,6 +329,27 @@ grep -q "already carries this exact sync" "$LAST_OUT" || fail "reconciliation di
     fail "reconciliation force-pushed an identical tree"
 ! logged "gh pr edit" || fail "reconciliation churned the open PR"
 ! logged "task verify" || fail "reconciliation re-ran the expensive verification"
+
+start "a pushed branch whose PR metadata went stale is repaired, not skipped"
+fix="$(new_fixture stale_meta)"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "first run exited $rc: $(cat "$LAST_OUT")"
+pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
+git -C "$fix" checkout --quiet main
+# Models a run whose push landed but whose `gh pr edit` failed: the branch is
+# correct, the PR still advertises the previous tag. The title is what
+# squash-merge feeds release-please, so leaving it stale would tag the wrong
+# release — it must self-heal on the next run.
+STUB_PR_LIST="42 false"
+STUB_PR_TITLE="fix(template): sync harmon-devkit skills to v0.8.7"
+: >"$STUB_LOG"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "metadata-repair run exited $rc: $(cat "$LAST_OUT")"
+logged "gh pr edit 42" || fail "stale PR metadata was not repaired"
+logged "fix(template): sync harmon-devkit skills to v0.9.0" || fail "the repaired title is wrong"
+[ "$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")" = "$pushed_before" ] ||
+    fail "the metadata repair also force-pushed an identical tree"
+! logged "task verify" || fail "the metadata repair re-ran the expensive verification"
 
 start "a re-run with no open PR re-opens one from the pushed branch"
 fix="$(new_fixture reopen)"

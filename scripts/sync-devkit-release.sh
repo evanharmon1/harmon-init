@@ -390,6 +390,13 @@ open_pr_number() {
     printf '%s\n' "$_pn"
 }
 
+# pr_title N — the current title of PR N. Empty rather than fatal when the PR
+# cannot be read: the caller only uses it to decide whether metadata needs
+# repairing, and "unknown" should mean "repair", not "abort".
+pr_title() {
+    gh pr view "$1" --json title --jq '.title // empty' 2>/dev/null || true
+}
+
 open_or_update_pr() {
     _pr_title="$1" _pr_existing="$2"
     if [ -n "$_pr_existing" ]; then
@@ -563,7 +570,20 @@ cmd_run() {
     # is skipped too — this exact tree already passed it on the open PR.
     _run_open_pr="$(open_pr_number)"
     if [ -n "$_run_open_pr" ] && [ "$(remote_sync_tree)" = "$(git rev-parse 'HEAD^{tree}')" ]; then
-        note "PR #$_run_open_pr already carries this exact sync at $_run_target — leaving it untouched"
+        # The branch is right, but the PR's metadata may not be: a previous run
+        # can push successfully and then fail at `gh pr edit`, and the title is
+        # load-bearing (squash-merge feeds it to release-please, so a stale one
+        # would name the wrong tag or fail the release-content guard). Repair it
+        # here rather than leaving it wrong until someone notices. Either way
+        # the push and the verification are skipped — this exact tree already
+        # passed them on the open PR.
+        if [ "$(pr_title "$_run_open_pr")" = "$_run_title" ]; then
+            note "PR #$_run_open_pr already carries this exact sync at $_run_target — leaving it untouched"
+            return 0
+        fi
+        note "PR #$_run_open_pr has the right branch but stale metadata — repairing it"
+        write_pr_body "$_run_current" "$_run_target" "$_run_prov"
+        open_or_update_pr "$_run_title" "$_run_open_pr"
         return 0
     fi
 
