@@ -27,6 +27,16 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   PR checks, and is not part of branch protection. See
   [security.md](security.md) for quota guidance.
 [% endif %]
+[% if include_terraform %]
+- `terraform.yml` — on push/PR/merge-queue/dispatch: an internal `changes` job
+  scopes the work (the workflow itself carries **no `paths:` filter**, so its
+  aggregate always reports and can safely be required), `terraform-validate`
+  runs `task terraform:validate`, and `terraform-plan-apply` plans on PRs and
+  applies the reviewed plan on `main` before re-planning to prove the state
+  converged. That job stays dormant until the `TERRAFORM_CI_ENABLED` repo
+  variable is `true` — see [../CHECKLIST.md](../CHECKLIST.md). The aggregate is
+  **`terraform-verify`**; it is not in the ruleset's required checks yet.
+[% endif %]
 [% if devcontainer %]
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 [% endif %]

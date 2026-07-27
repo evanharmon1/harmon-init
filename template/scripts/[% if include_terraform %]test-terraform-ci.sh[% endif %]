@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# Hermetic regression for the Terraform CI path: scripts/terraform-ci.sh is
+# exercised against a fake `terraform` (no network, no cloud, no state), and
+# .github/workflows/terraform.yml is checked for the contract that makes
+# terraform-verify safe to require — always-emitting triggers, work scoped by
+# the internal change detector, private run-scoped plan artifacts, and exact
+# result expectations rather than a fail-open success-or-skipped allowlist.
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+
+workflow=".github/workflows/terraform.yml"
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fake_bin="${tmp}/bin"
+runner_temp="${tmp}/runner-temp"
+run_key="terraform-123-456-1"
+artifact_dir="${runner_temp}/${run_key}"
+apply_marker="${tmp}/apply-called"
+init_log="${tmp}/terraform-init.log"
+locked_root="${tmp}/locked-root"
+fresh_root="${tmp}/fresh-root"
+lock_snapshot="${tmp}/committed-lock.snapshot"
+mkdir -p "$fake_bin" "$runner_temp" "$locked_root" "$fresh_root"
+printf '%s\n' "committed provider lock" >"${locked_root}/.terraform.lock.hcl"
+cp "${locked_root}/.terraform.lock.hcl" "$lock_snapshot"
+
+cat >"${fake_bin}/terraform" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode=""
+root=""
+lockfile_readonly=0
+for arg in "$@"; do
+    case "$arg" in
+    -chdir=*) root="${arg#-chdir=}" ;;
+    -lockfile=readonly) lockfile_readonly=1 ;;
+    init | validate | plan | apply)
+        mode="$arg"
+        ;;
+    esac
+done
+
+case "$mode" in
+init)
+    [ -n "$root" ] || exit 95
+    if [ -f "${root}/.terraform.lock.hcl" ]; then
+        if [ "$lockfile_readonly" -eq 1 ]; then
+            printf 'readonly %s\n' "$root" >>"${TF_INIT_LOG:?}"
+        else
+            printf '%s\n' "rewritten provider lock" >"${root}/.terraform.lock.hcl"
+            printf 'writable-existing %s\n' "$root" >>"${TF_INIT_LOG:?}"
+        fi
+    else
+        [ "$lockfile_readonly" -eq 0 ] || exit 96
+        printf '%s\n' "generated provider lock" >"${root}/.terraform.lock.hcl"
+        printf 'writable-new %s\n' "$root" >>"${TF_INIT_LOG:?}"
+    fi
+    ;;
+validate) ;;
+plan)
+    plan_path=""
+    for arg in "$@"; do
+        case "$arg" in
+        -out=*) plan_path="${arg#-out=}" ;;
+        esac
+    done
+    if [ -n "$plan_path" ]; then
+        printf '%s\n' "saved plan" >"$plan_path"
+        printf '%s\n' "plan summary"
+    fi
+    ;;
+apply)
+    plan_path=""
+    for arg in "$@"; do
+        plan_path="$arg"
+    done
+    [ -f "$plan_path" ] || exit 97
+    : >"${TF_APPLY_MARKER:?}"
+    ;;
+*)
+    exit 98
+    ;;
+esac
+EOF
+chmod +x "${fake_bin}/terraform"
+
+run_ci() {
+    PATH="${fake_bin}:${PATH}" \
+        RUNNER_TEMP="$runner_temp" \
+        TF_CI_RUN_KEY="$run_key" \
+        TF_APPLY_MARKER="$apply_marker" \
+        TF_INIT_LOG="$init_log" \
+        GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" \
+        ./scripts/terraform-ci.sh "$@"
+}
+
+file_mode() {
+    case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    *) stat -c '%a' "$1" ;;
+    esac
+}
+
+# Extract one top-level job block from the workflow.
+job_block() {
+    awk -v job="  $1:" '
+        $0 == job { in_job = 1; next }
+        in_job && /^  [[:alnum:]_-]+:/ { exit }
+        in_job { print }
+    ' "$workflow"
+}
+
+run_ci validate "$locked_root" "$fresh_root" >/dev/null
+cmp -s "$lock_snapshot" "${locked_root}/.terraform.lock.hcl" ||
+    fail "backend-free validate rewrote a committed provider lock"
+[ -f "${fresh_root}/.terraform.lock.hcl" ] ||
+    fail "fresh scaffold init did not preserve the provider-lock creation path"
+grep -Fxq "readonly ${locked_root}" "$init_log" ||
+    fail "backend-free validate did not make the tracked lock readonly"
+grep -Fxq "writable-new ${fresh_root}" "$init_log" ||
+    fail "fresh scaffold init unexpectedly required a pre-existing lock"
+
+run_ci plan "$locked_root" >/dev/null
+cmp -s "$lock_snapshot" "${locked_root}/.terraform.lock.hcl" ||
+    fail "credentialed plan init rewrote a committed provider lock"
+readonly_count=$(grep -Fxc "readonly ${locked_root}" "$init_log" || true)
+[ "$readonly_count" -eq 2 ] ||
+    fail "tracked locks must be readonly for both validate and plan init"
+[ -f "${artifact_dir}/tfplan" ] || fail "plan was not saved under the run-scoped directory"
+[ -f "${artifact_dir}/tfplan.txt" ] || fail "plan summary was not saved under the run-scoped directory"
+[ "$(file_mode "$artifact_dir")" = "700" ] || fail "artifact directory is not private"
+[ "$(file_mode "${artifact_dir}/tfplan")" = "600" ] || fail "saved plan is not private"
+[ "$(file_mode "${artifact_dir}/tfplan.txt")" = "600" ] || fail "plan summary is not private"
+
+if GITHUB_ACTIONS=false run_ci apply "$locked_root" >/dev/null 2>&1; then
+    fail "local execution bypassed the GitHub Actions apply guard"
+fi
+[ ! -e "$apply_marker" ] ||
+    fail "local execution reached terraform apply before it was refused"
+
+GITHUB_ACTIONS=true run_ci apply "$locked_root" >/dev/null
+[ -e "$apply_marker" ] || fail "apply did not consume the saved run-scoped plan"
+[ -f "${artifact_dir}/tfplan" ] || fail "apply removed the plan before converge"
+
+run_ci converge "$locked_root" >/dev/null
+[ ! -e "$artifact_dir" ] || fail "converge did not clean Terraform CI artifacts"
+
+# An operator override must never adopt (and re-permission, and delete files
+# out of) a directory this script did not create.
+shared_dir="${tmp}/shared"
+mkdir -p "$shared_dir"
+chmod 755 "$shared_dir"
+printf '%s\n' 'unrelated' >"${shared_dir}/tfplan"
+if TF_CI_ARTIFACT_DIR="$shared_dir" run_ci plan "$locked_root" >/dev/null 2>&1; then
+    fail "a non-private pre-existing artifact directory was adopted instead of refused"
+fi
+[ "$(file_mode "$shared_dir")" = "755" ] ||
+    fail "a pre-existing artifact directory was re-permissioned by the override path"
+# Private but not ours: mode alone must not authorize adoption or deletion.
+private_dir="${tmp}/private-not-ours"
+mkdir -p "$private_dir"
+chmod 700 "$private_dir"
+printf '%s\n' 'unrelated' >"${private_dir}/tfplan"
+if TF_CI_ARTIFACT_DIR="$private_dir" run_ci plan "$locked_root" >/dev/null 2>&1; then
+    fail "a private directory this helper did not create was adopted"
+fi
+if TF_CI_ARTIFACT_DIR="$private_dir" run_ci cleanup >/dev/null 2>&1; then
+    fail "cleanup ran in a directory this helper did not create"
+fi
+[ -f "${private_dir}/tfplan" ] ||
+    fail "cleanup deleted a plan-shaped file out of a directory it does not own"
+for unsafe_dir in "/" "$repo" "${tmp}/." "relative/artifacts"; do
+    if TF_CI_ARTIFACT_DIR="$unsafe_dir" run_ci plan "$locked_root" >/dev/null 2>&1; then
+        fail "unsafe artifact directory was accepted: $unsafe_dir"
+    fi
+done
+
+# State-lock waits must be bounded, never disabled: skipping the lock lets a
+# concurrent apply race a plan against state it no longer describes. Comments
+# are stripped first so prose explaining the rule cannot trip it.
+terraform_ci_code="$(grep -v '^[[:space:]]*#' scripts/terraform-ci.sh)"
+grep -q -- '-lock-timeout=' <<<"$terraform_ci_code" ||
+    fail "Terraform CI plan/converge do not bound the state-lock wait"
+if grep -q -- '-lock=false' <<<"$terraform_ci_code"; then
+    fail "Terraform CI disables state locking instead of bounding the wait"
+fi
+
+# Main is never scoped. GitHub keeps only ONE pending run per concurrency
+# group, so while an apply is in flight a later unrelated push replaces the
+# pending Terraform push; an incremental before..after comparison would then
+# skip past the replaced commit and leave a merged Terraform change unapplied
+# behind a green aggregate. Pull requests ARE scoped — they compare base..head,
+# so a superseded run's commits stay inside the next run's range.
+head_sha="$(git rev-parse HEAD)"
+# PUSH_BEFORE_SHA is deliberately a VALID, empty-diff range here: an
+# implementation that scopes pushes by before..after answers "changed=false"
+# for it, so this assertion fails on exactly the regression it guards. Passing
+# an empty/unset value instead would pass either way via the fail-open path.
+for reconciling_event in push workflow_dispatch; do
+    decision="$(GITHUB_EVENT_NAME="$reconciling_event" GITHUB_SHA="$head_sha" \
+        PUSH_BEFORE_SHA="$head_sha" ./scripts/terraform-changed.sh)"
+    [ "$decision" = "changed=true" ] ||
+        fail "${reconciling_event} must reconcile unconditionally, got: ${decision}"
+done
+pr_decision="$(GITHUB_EVENT_NAME=pull_request PR_BASE_SHA="$head_sha" \
+    PR_HEAD_SHA="$head_sha" GITHUB_SHA="$head_sha" ./scripts/terraform-changed.sh)"
+[ "$pr_decision" = "changed=false" ] ||
+    fail "an empty pull-request range must scope Terraform work out, got: ${pr_decision}"
+new_branch_decision="$(GITHUB_EVENT_NAME=pull_request PR_BASE_SHA="" \
+    PR_HEAD_SHA="$head_sha" GITHUB_SHA="$head_sha" ./scripts/terraform-changed.sh)"
+[ "$new_branch_decision" = "changed=true" ] ||
+    fail "an unestablishable range must fail open into validation, got: ${new_branch_decision}"
+
+# A PR branch that is merely BEHIND a target which gained Terraform commits
+# must still scope out: comparing endpoints instead of the merge base blames a
+# branch for its target's changes and drags unrelated PRs through the whole
+# Terraform path. Built as a throwaway history so the assertion is exact.
+branch_repo="${tmp}/branch-repo"
+mkdir -p "${branch_repo}/scripts" "${branch_repo}/terraform"
+cp scripts/terraform-changed.sh "${branch_repo}/scripts/terraform-changed.sh"
+git -C "$branch_repo" init -q
+git -C "$branch_repo" config user.email test@example.com
+git -C "$branch_repo" config user.name test
+printf '%s\n' 'terraform {}' >"${branch_repo}/terraform/main.tf"
+printf '%s\n' 'base' >"${branch_repo}/README.md"
+git -C "$branch_repo" add -A
+git -C "$branch_repo" commit -qm base
+fork_point="$(git -C "$branch_repo" rev-parse HEAD)"
+printf '%s\n' 'unrelated branch work' >>"${branch_repo}/README.md"
+git -C "$branch_repo" commit -qam branch-work
+branch_head="$(git -C "$branch_repo" rev-parse HEAD)"
+git -C "$branch_repo" checkout -q "$fork_point"
+printf '%s\n' 'variable "added_on_target" {}' >>"${branch_repo}/terraform/main.tf"
+git -C "$branch_repo" commit -qam target-terraform-work
+target_head="$(git -C "$branch_repo" rev-parse HEAD)"
+stale_branch_decision="$(
+    cd "$branch_repo" &&
+        GITHUB_EVENT_NAME=pull_request PR_BASE_SHA="$target_head" \
+            PR_HEAD_SHA="$branch_head" GITHUB_SHA="$branch_head" \
+            ./scripts/terraform-changed.sh
+)"
+[ "$stale_branch_decision" = "changed=false" ] ||
+    fail "a branch behind a Terraform-changing target must not inherit those changes, got: ${stale_branch_decision}"
+
+grep -Fxq '.terraform-ci/' .gitignore || fail "local Terraform CI artifact fallback is not ignored"
+if grep -Eq '/tmp/tf(plan|converge)' scripts/terraform-ci.sh "$workflow"; then
+    fail "fixed global Terraform plan paths remain"
+fi
+grep -Fq 'TF_CI_RUN_KEY: terraform-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}' \
+    "$workflow" || fail "workflow run key is not repository/run scoped"
+grep -Fq './scripts/terraform-ci.sh cleanup' "$workflow" ||
+    fail "workflow does not clean Terraform CI artifacts on completion"
+for ci_operation in plan apply converge; do
+    grep -Fq "task terraform:ci:${ci_operation}" "$workflow" ||
+        fail "workflow does not use the namespaced Terraform CI ${ci_operation} target"
+done
+
+# terraform-verify is meant to be requirable by branch protection, so the
+# workflow must start on every protected-event run. A `paths:` filter would stop
+# it from starting at all on an out-of-scope change — and a required check that
+# posts no status wedges that merge forever. The scoping lives in the `changes`
+# job instead.
+trigger_block="$(
+    awk '
+        /^on:/ { in_on = 1; next }
+        in_on && /^[[:alnum:]_-]+:/ { exit }
+        in_on { print }
+    ' "$workflow"
+)"
+for trigger in push pull_request merge_group workflow_dispatch; do
+    grep -Eq "^  ${trigger}:" <<<"$trigger_block" ||
+        fail "terraform.yml does not emit on ${trigger} — a required terraform-verify would not always report"
+done
+if grep -Eq '^ +paths(-ignore)?:' <<<"$trigger_block"; then
+    fail "terraform.yml filters its triggers by path — scope the work in the changes job, not the trigger"
+fi
+grep -Fq './scripts/terraform-changed.sh' "$workflow" ||
+    fail "workflow does not scope Terraform work with the internal change detector"
+
+terraform_validate_block="$(job_block terraform-validate)"
+case "$terraform_validate_block" in
+*"github.event_name != 'pull_request'"*"github.event.pull_request.head.repo.full_name == github.repository"*) ;;
+*) fail "terraform-validate can run fork code on a configurable self-hosted runner" ;;
+esac
+
+terraform_plan_block="$(job_block terraform-plan-apply)"
+case "$terraform_plan_block" in
+*"needs: [changes, terraform-validate]"*) ;;
+*) fail "terraform-plan-apply can run before terraform-validate succeeds" ;;
+esac
+# A merge group can carry a fork PR's code, and this job holds the backend and
+# provider secrets — it must not run there.
+case "$terraform_plan_block" in
+*"github.event_name != 'merge_group'"*) ;;
+*) fail "terraform-plan-apply runs credentialed on merge_group, where a fork PR's code can be in the merge ref" ;;
+esac
+
+terraform_verify_block="$(job_block terraform-verify)"
+case "$terraform_verify_block" in
+*"if: always()"*) ;;
+*) fail "terraform-verify is not if: always() — a skipped required check counts as successful" ;;
+esac
+for verify_contract in \
+    "IS_FORK:" \
+    "TERRAFORM_CHANGED:" \
+    "expected skipped for an untrusted fork" \
+    "EXPECTED_RESULT: success" \
+    "EXPECTED_RESULT: skipped" \
+    "verify-ci-results.sh"; do
+    case "$terraform_verify_block" in
+    *"$verify_contract"*) ;;
+    *) fail "terraform-verify does not derive exact expected results from workflow intent (missing: ${verify_contract})" ;;
+    esac
+done
+case "$terraform_verify_block" in
+*'[ "$2" = "success" ] || [ "$2" = "skipped" ]'*)
+    fail "terraform-verify still accepts unexpected skips and terminal states"
+    ;;
+*) ;;
+esac
+# The fork diagnostic must not check out repository code: on an untrusted fork
+# PR the aggregate is the one job that still runs, so anything it executes from
+# the checkout is fork-controlled.
+awk '
+    /uses: actions\/checkout/ {
+        if (prev !~ /IS_FORK != .true./) exit 1
+    }
+    /[^[:space:]]/ { prev = $0 }
+' <<<"$terraform_verify_block" ||
+    fail "terraform-verify checks out repository code without excluding the untrusted-fork path"
+
+echo "==> Terraform CI artifacts, triggers, and result gating OK"

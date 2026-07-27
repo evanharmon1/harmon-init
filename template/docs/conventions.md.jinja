@@ -71,9 +71,13 @@ it points here.
 - **Terraform:** `task lint:terraform` aggregates `terraform fmt -check`, TFLint
   (`.tflint.hcl`, bundled ruleset — a cloud ruleset needs `tflint --init` in the
   task and in CI), and Checkov (pinned, via uvx); `terraform validate` runs
-  separately in `task validate` because it needs `terraform init`. Provider
-  tokens are sensitive variables; use `lifecycle.ignore_changes` for mutable
-  fields.
+  separately in `task validate` because it needs `terraform init`. That
+  validation, and the whole CI plan/apply path, go through
+  `scripts/terraform-ci.sh` (`task terraform:validate`, `terraform:ci:plan` /
+  `:apply` / `:converge`) so local runs and `terraform.yml` execute identical
+  commands — saved plans stay in a private, run-scoped directory and apply
+  refuses to re-plan. Provider tokens are sensitive variables; use
+  `lifecycle.ignore_changes` for mutable fields.
 [% endif %]
 [% if include_ansible %]
 - **Ansible:** ansible-lint; idempotency required; roles under `ansible/roles/`,

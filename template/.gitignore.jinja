@@ -134,6 +134,8 @@ __pycache__/
 # Terraform
 .terraform/
 *.tfplan
+# Local fallback for scripts/terraform-ci.sh artifacts (CI uses runner temp).
+.terraform-ci/
 override.tf
 crash.log
 # State and tfvars can hold secrets — never commit them (only *.tfvars.example).

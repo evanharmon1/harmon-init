@@ -328,6 +328,29 @@ config, toolchain, devcontainer, and dev environment — against the items below
       *Release Please* → *Run workflow* (main) — the first `wrangler deploy`
       creates it; PR preview uploads work from that point.
 [% endif %]
+[% if include_terraform %]
+
+- [ ] Terraform CI is dormant until state and credentials exist. Configure an
+      S3-compatible backend with native locking (`use_lockfile`, Terraform >=
+      1.10 — Cloudflare R2 works), add the `R2_ACCESS_KEY_ID` /
+      `R2_SECRET_ACCESS_KEY` secrets plus your provider `TF_VAR_*` secrets, then
+      set the `TERRAFORM_CI_ENABLED` repo variable to `true`. Until then
+      `terraform.yml` validates only, and `terraform-plan-apply` is a verified
+      skip
+- [ ] Run the credentialed plan/apply job on an **ephemeral** runner (the
+      default GitHub-hosted one, or one-shot/container-per-job self-hosted). A
+      saved plan can contain secrets; its directory is private and cleaned up,
+      but file modes do not isolate it from another job running as the same
+      Unix user on a persistent runner. `CI_RUNS_ON` sets the runner
+- [ ] Once plan/apply is enabled and has run green, promote the aggregate to a
+      required check: add `terraform-verify` to the ruleset's
+      `required_status_checks` (Settings → Rules → Rulesets). It already emits
+      on every protected event, so requiring it cannot wedge an unrelated merge
+- [ ] If you ever turn `include_terraform` back off, **remove
+      `terraform-verify` from the ruleset first**. `copier update` deletes the
+      workflow, and a required check no workflow reports leaves every later PR
+      pending forever
+[% endif %]
 
 - [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
       `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only

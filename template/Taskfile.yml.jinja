@@ -308,7 +308,36 @@ tasks:
   lint:terraform:validate:
     desc: Terraform validate
     cmds:
-      - terraform -chdir=terraform validate -no-color
+      - task: terraform:validate
+
+  terraform:validate:
+    # Routed through the shared CI helper so `task validate`, the pre-push hook,
+    # and the terraform-validate CI job run byte-identical commands. The helper
+    # inits with -backend=false into a throwaway TF_DATA_DIR first: `terraform
+    # validate` on its own fails on an uninitialized root, and a plain init
+    # would rewrite the committed provider lock.
+    desc: Initialize without a backend and validate the Terraform root
+    cmds:
+      - ./scripts/terraform-ci.sh validate terraform
+
+  # The terraform:ci:* targets are the credentialed CI path, invoked by
+  # .github/workflows/terraform.yml. plan saves a private, run-scoped plan;
+  # apply consumes that exact plan and refuses to re-plan without it; converge
+  # re-plans afterwards to prove the applied state has no residual diff.
+  terraform:ci:plan:
+    desc: Create the credentialed Terraform plan used by CI
+    cmds:
+      - ./scripts/terraform-ci.sh plan terraform
+
+  terraform:ci:apply:
+    desc: Apply the exact saved plan generated from reviewed trusted-main configuration
+    cmds:
+      - ./scripts/terraform-ci.sh apply terraform
+
+  terraform:ci:converge:
+    desc: Assert the applied Terraform state has no residual diff
+    cmds:
+      - ./scripts/terraform-ci.sh converge terraform
 [% endif %]
 [% if include_ansible %]
 

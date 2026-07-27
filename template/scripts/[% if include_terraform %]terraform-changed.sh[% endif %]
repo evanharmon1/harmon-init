@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Emit a GitHub Actions output indicating whether Terraform-owned paths changed.
+#
+# terraform.yml carries NO workflow-level `paths:` filter, so the workflow starts
+# on every protected-event run and its terraform-verify aggregate always posts a
+# status — a required check whose workflow never starts wedges that merge
+# forever. Scoping happens here instead: on an unrelated change the Terraform
+# jobs become a deliberate, verified skip and the aggregate still reports.
+set -euo pipefail
+
+event="${GITHUB_EVENT_NAME:-}"
+base=""
+head="${GITHUB_SHA:-HEAD}"
+
+case "$event" in
+push | workflow_dispatch)
+    # Main reconciles UNCONDITIONALLY — it is never scoped.
+    #
+    # A push is the only event whose natural range is incremental
+    # (before..after), and GitHub keeps just one pending run per concurrency
+    # group: while an apply is in flight, a later unrelated push replaces the
+    # pending Terraform push. Scoping by before..after would then compare past
+    # the replaced commit, report "unchanged", and leave a merged Terraform
+    # change permanently unapplied behind a green aggregate. Reconciling every
+    # push costs a plan on unrelated merges and removes that hole entirely;
+    # workflow_dispatch reconciles for the same reason, on purpose.
+    #
+    # Pull requests are not exposed to this: they are compared base..head (the
+    # whole PR), so a superseded run's commits stay inside the next run's range.
+    echo "changed=true"
+    exit 0
+    ;;
+pull_request)
+    base="${PR_BASE_SHA:-}"
+    head="${PR_HEAD_SHA:-$head}"
+    ;;
+merge_group)
+    base="${MERGE_BASE_SHA:-}"
+    head="${MERGE_HEAD_SHA:-$head}"
+    ;;
+*)
+    echo "changed=true"
+    exit 0
+    ;;
+esac
+
+# An establishable comparison range is the precondition for skipping anything,
+# so when there is none the answer is "changed" — never skip a Terraform check
+# whose range could not be computed. On the scoped events this reaches
+# validation and (for a same-repo PR) a plan, never an apply. A genuine
+# `git diff` error is NOT this path: it aborts under `set -e` and fails closed.
+case "$base" in
+"" | 0000000000000000000000000000000000000000)
+    echo "changed=true"
+    exit 0
+    ;;
+esac
+
+# A force-push (or a shallower fetch than the range needs) can leave an endpoint
+# missing from this checkout. `git diff` would abort under `set -e` and fail the
+# gate for a reason that has nothing to do with Terraform, so fail open here too.
+for rev in "$base" "$head"; do
+    if ! git cat-file -e "${rev}^{commit}" 2>/dev/null; then
+        echo "changed=true"
+        exit 0
+    fi
+done
+
+# Everything the Terraform jobs actually execute, including the composite setup
+# action that provisions their toolchain: a change there (a Terraform version
+# bump, a broken installer) has to re-run them, or the required aggregate goes
+# green on a run that never exercised the thing that changed.
+# Three-dot: compare against the MERGE BASE, not the base branch tip. With a
+# two-dot range a branch that is merely behind its target reports the target's
+# own Terraform commits as its own, and an unrelated PR then runs the whole
+# Terraform path — including a credentialed plan it may have no secrets for.
+if git diff --quiet "${base}...${head}" -- \
+    terraform/ \
+    .github/workflows/terraform.yml \
+    .github/actions/setup/action.yml \
+    Taskfile.yml \
+    scripts/terraform-ci.sh \
+    scripts/terraform-changed.sh; then
+    echo "changed=false"
+else
+    echo "changed=true"
+fi

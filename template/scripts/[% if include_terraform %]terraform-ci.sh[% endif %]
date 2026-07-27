@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Shared Terraform CI operations. Workflows delegate here through Taskfile
+# targets so local verification and CI execute the same commands.
+# Saved plans can contain sensitive values, so artifacts live in a per-run
+# directory created private (or the ignored, repo-scoped local fallback) and
+# cleaned up afterwards — never a shared fixed /tmp path a concurrent or later
+# job could collide with, replace, or leave behind. Note the limit: mode bits
+# stop other Unix users, not another job running as the same user, so a
+# credentialed Terraform job belongs on an ephemeral runner.
+set -euo pipefail
+umask 077
+
+mode="${1:-}"
+shift || true
+
+usage() {
+    echo "Usage: $0 <validate ROOT...|plan ROOT|apply ROOT|converge ROOT|cleanup>" >&2
+    exit 2
+}
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+artifact_dir="${TF_CI_ARTIFACT_DIR:-}"
+if [ -z "$artifact_dir" ]; then
+    if [ -n "${RUNNER_TEMP:-}" ]; then
+        run_key="${TF_CI_RUN_KEY:-terraform-${GITHUB_REPOSITORY_ID:-local}-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}"
+        case "$run_key" in
+        "" | "." | ".." | */*)
+            echo "Invalid Terraform CI run key: ${run_key:-<empty>}" >&2
+            exit 1
+            ;;
+        esac
+        artifact_dir="${RUNNER_TEMP}/${run_key}"
+    else
+        artifact_dir="${repo_root}/.terraform-ci"
+    fi
+fi
+plan_file="${artifact_dir}/tfplan"
+plan_text_file="${artifact_dir}/tfplan.txt"
+converge_text_file="${artifact_dir}/tfconverge.txt"
+# Written when this helper creates the directory. Everything that re-permissions
+# or deletes requires it, so an operator override aimed at a populated directory
+# is refused instead of quietly adopting and pruning it.
+owner_marker="${artifact_dir}/.terraform-ci-owned"
+
+dir_mode() {
+    case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    *) stat -c '%a' "$1" ;;
+    esac
+}
+
+validate_artifact_dir() {
+    # Absolute only: `terraform -chdir=<root> plan -out=<relative>` resolves the
+    # plan path against the ROOT, while this script would create the directory
+    # relative to the caller's cwd — the plan then fails on a path that looks
+    # right in both places.
+    case "$artifact_dir" in
+    /*) ;;
+    *)
+        echo "Terraform CI artifact directory must be an absolute path: ${artifact_dir:-<empty>}" >&2
+        exit 1
+        ;;
+    esac
+    case "$artifact_dir" in
+    "" | "/" | "$repo_root" | */. | */..)
+        echo "Refusing unsafe Terraform CI artifact directory: ${artifact_dir:-<empty>}" >&2
+        exit 1
+        ;;
+    esac
+    if [ -L "$artifact_dir" ]; then
+        echo "Refusing symlinked Terraform CI artifact directory: ${artifact_dir}" >&2
+        exit 1
+    fi
+}
+
+prepare_artifact_dir() {
+    validate_artifact_dir
+    if [ -d "$artifact_dir" ]; then
+        # Reused across plan -> apply -> converge within one run, so an existing
+        # directory is normal — but only OUR directory. TF_CI_ARTIFACT_DIR is an
+        # operator escape hatch, and aiming it at a populated directory must
+        # fail loudly rather than silently re-permission it and delete
+        # plan-shaped files out of it later.
+        if [ ! -f "$owner_marker" ]; then
+            echo "Refusing a Terraform CI artifact directory this helper did not create: ${artifact_dir}" >&2
+            echo "Point TF_CI_ARTIFACT_DIR at a dedicated path, or remove it and let this script create one." >&2
+            exit 1
+        fi
+        existing_mode="$(dir_mode "$artifact_dir")"
+        if [ "$existing_mode" != "700" ]; then
+            echo "Refusing a Terraform CI artifact directory that is not private (mode ${existing_mode}): ${artifact_dir}" >&2
+            exit 1
+        fi
+        return
+    fi
+    # umask 077 already yields 0700; the explicit chmod keeps that true if a
+    # caller relaxed the umask.
+    mkdir -p "$artifact_dir"
+    chmod 700 "$artifact_dir"
+    : >"$owner_marker"
+}
+
+cleanup_artifacts() {
+    validate_artifact_dir
+    # Nothing to do if plan never got far enough to create it. This runs from a
+    # workflow step under `if: always()`, so a missing directory is a normal
+    # outcome, not an error.
+    [ -d "$artifact_dir" ] || return 0
+    if [ ! -f "$owner_marker" ]; then
+        echo "Refusing to clean a Terraform CI artifact directory this helper did not create: ${artifact_dir}" >&2
+        exit 1
+    fi
+    rm -f -- "$plan_file" "$plan_text_file" "$converge_text_file" "$owner_marker"
+    rmdir "$artifact_dir" 2>/dev/null || true
+}
+
+terraform_init() {
+    root="$1"
+    shift
+    if [ -f "${root}/.terraform.lock.hcl" ]; then
+        terraform -chdir="$root" init -lockfile=readonly "$@"
+    else
+        # Fresh scaffolds intentionally have no lock yet. Let init create one
+        # so a developer can review and commit it.
+        terraform -chdir="$root" init "$@"
+    fi
+}
+
+case "$mode" in
+validate)
+    [ "$#" -gt 0 ] || usage
+    data_root="$(mktemp -d)"
+    trap 'rm -rf "$data_root"' EXIT
+    index=0
+    for root in "$@"; do
+        index=$((index + 1))
+        data_dir="${data_root}/${index}"
+        echo "==> terraform validate: ${root}"
+        TF_DATA_DIR="$data_dir" terraform_init "$root" -backend=false -input=false
+        TF_DATA_DIR="$data_dir" terraform -chdir="$root" validate -no-color
+    done
+    ;;
+plan)
+    [ "$#" -eq 1 ] || usage
+    root="$1"
+    prepare_artifact_dir
+    rm -f -- "$plan_file" "$plan_text_file" "$converge_text_file"
+    terraform_init "$root" -input=false
+    # A bounded state-lock wait, never -lock=false: skipping the lock lets a
+    # concurrent apply race this plan against state it no longer describes.
+    terraform -chdir="$root" plan -no-color -input=false -lock-timeout=5m -out="$plan_file" |
+        tee "$plan_text_file"
+    ;;
+apply)
+    [ "$#" -eq 1 ] || usage
+    if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+        echo "Saved-plan apply is restricted to the trusted GitHub Actions workflow." >&2
+        exit 1
+    fi
+    prepare_artifact_dir
+    [ -f "$plan_file" ] || {
+        echo "Saved plan $plan_file is missing; refusing to re-plan during apply." >&2
+        exit 1
+    }
+    terraform -chdir="$1" apply -input=false -no-color "$plan_file"
+    ;;
+converge)
+    [ "$#" -eq 1 ] || usage
+    root="$1"
+    prepare_artifact_dir
+    rm -f -- "$converge_text_file"
+    trap cleanup_artifacts EXIT
+    if ! terraform -chdir="$root" plan -detailed-exitcode -no-color -input=false -lock-timeout=5m >"$converge_text_file" 2>&1; then
+        echo "Post-apply plan is not clean — state did not converge:"
+        tail -n 60 "$converge_text_file"
+        exit 1
+    fi
+    echo "Converged: post-apply plan reports no changes."
+    ;;
+cleanup)
+    [ "$#" -eq 0 ] || usage
+    cleanup_artifacts
+    ;;
+*)
+    usage
+    ;;
+esac

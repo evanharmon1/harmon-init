@@ -272,4 +272,9 @@ if [ -x ./scripts/test-terraform-provider-locks.sh ]; then
     ./scripts/test-terraform-provider-locks.sh
 fi
 
+if [ -x ./scripts/test-terraform-ci.sh ]; then
+    echo "==> Terraform CI keeps plans private and its aggregate result-gated"
+    ./scripts/test-terraform-ci.sh
+fi
+
 echo "==> task targets OK (compile + bootstrap idempotency + path-safe formatting)"

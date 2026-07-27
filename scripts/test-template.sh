@@ -932,6 +932,89 @@ else
     ! grep -q 'tflint' Brewfile || err "Brewfile installs tflint but include_terraform=false"
 fi
 
+# ── 9i. Terraform CI aggregate renders per include_terraform ────────
+# terraform-verify is the context branch protection is meant to require, so the
+# workflow behind it must START on every protected-event run (no `paths:`
+# filter — a filtered-out run posts no status and wedges that merge forever)
+# and the aggregate must reject every result it did not explicitly predict.
+# Asserted the way harmon-devkit's verify-applied.sh asserts it, so the two
+# cannot disagree. Gated on the ANSWER, not the profile name.
+if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+    tf_workflow=".github/workflows/terraform.yml"
+    [ -f "$tf_workflow" ] || err "$tf_workflow missing (include_terraform=true)"
+    for ci_script in scripts/terraform-ci.sh scripts/terraform-changed.sh scripts/test-terraform-ci.sh; do
+        [ -f "$ci_script" ] || err "$ci_script missing (include_terraform=true)"
+        [ -x "$ci_script" ] || err "$ci_script is not executable"
+    done
+    if have task; then
+        # The CI operations must be reachable by NAME: terraform.yml invokes
+        # `task terraform:ci:*`, so a renamed or missing target is a red CI run
+        # that nothing else in the repo would catch.
+        tf_validate_dry="$(task --color=false --dry terraform:validate 2>&1 || true)"
+        grep -qE 'terraform-ci\.sh[[:space:]]+validate[[:space:]]+[^[:space:]]' <<<"$tf_validate_dry" ||
+            err "task terraform:validate does not reach the shared Terraform CI helper"
+        # `validate` (pre-push + the CI validate job) must route through the same
+        # helper — a bare `terraform validate` fails on an uninitialized root.
+        tf_validate_tier_dry="$(task --color=false --dry validate 2>&1 || true)"
+        grep -qE 'terraform-ci\.sh[[:space:]]+validate[[:space:]]+[^[:space:]]' <<<"$tf_validate_tier_dry" ||
+            err "task validate does not route Terraform validation through the shared CI helper"
+        for ci_operation in plan apply converge; do
+            ci_dry="$(task --color=false --dry "terraform:ci:${ci_operation}" 2>&1 || true)"
+            grep -qE "terraform-ci\.sh[[:space:]]+${ci_operation}[[:space:]]+[^[:space:]]" <<<"$ci_dry" ||
+                err "task terraform:ci:${ci_operation} does not reach the shared Terraform CI helper"
+        done
+    else
+        required task "Terraform CI reachability" || fail=1
+    fi
+    if [ -f "$tf_workflow" ]; then
+        # Triggers: all four protected/manual events, and no trigger filter.
+        tf_on_block="$(
+            awk '
+                /^on:/ { in_on = 1; next }
+                in_on && /^[[:alnum:]_-]+:/ { exit }
+                in_on { print }
+            ' "$tf_workflow"
+        )"
+        for tf_trigger in push pull_request merge_group workflow_dispatch; do
+            grep -Eq "^  ${tf_trigger}:" <<<"$tf_on_block" ||
+                err "terraform.yml does not emit on ${tf_trigger} — a required terraform-verify would not always report"
+        done
+        ! grep -Eq '^ +paths(-ignore)?:' <<<"$tf_on_block" ||
+            err "terraform.yml filters its triggers by path — a required check whose workflow never starts wedges the merge"
+        grep -q 'terraform-changed.sh' "$tf_workflow" ||
+            err "terraform.yml does not scope Terraform work with the internal change detector"
+        # The aggregate: always() + needs + exact result expectations.
+        tf_verify_block="$(
+            awk '
+                $0 == "  terraform-verify:" { in_job = 1; next }
+                in_job && /^  [[:alnum:]_-]+:/ { exit }
+                in_job { print }
+            ' "$tf_workflow"
+        )"
+        [ -n "$tf_verify_block" ] || err "terraform.yml defines no terraform-verify aggregate job"
+        for tf_gate in 'if: always()' 'needs:' 'verify-ci-results.sh' 'expected skipped for an untrusted fork'; do
+            grep -qF -- "$tf_gate" <<<"$tf_verify_block" ||
+                err "terraform-verify is not result-gated (missing '${tf_gate}') — GitHub counts a skipped required check as successful"
+        done
+        # The exact fail-open shape harmon-devkit's catalog rejects by name.
+        ! grep -qF -- '[ "$2" = "success" ] || [ "$2" = "skipped" ]' <<<"$tf_verify_block" ||
+            err "terraform-verify accepts a generic success-or-skipped allowlist — that launders a failing leaf into a green gate"
+    fi
+    # The hermetic regression must ship AND pass: it is what proves saved plans
+    # stay private and run-scoped without touching a cloud or the network.
+    ./scripts/test-terraform-ci.sh >/dev/null 2>&1 ||
+        err "scripts/test-terraform-ci.sh fails its hermetic Terraform CI checks"
+    grep -q 'test-terraform-ci.sh' scripts/test-tasks.sh ||
+        err "test-tasks.sh does not run the Terraform CI regression"
+    grep -Fxq '.terraform-ci/' .gitignore ||
+        err ".gitignore does not ignore the local Terraform CI artifact fallback"
+else
+    for ci_script in scripts/terraform-ci.sh scripts/terraform-changed.sh scripts/test-terraform-ci.sh; do
+        [ ! -f "$ci_script" ] || err "$ci_script rendered but include_terraform=false"
+    done
+    [ ! -f .github/workflows/terraform.yml ] || err "terraform.yml rendered but include_terraform=false"
+fi
+
 # Every `# renovate:` annotation in the rendered composite action must be
 # extractable by one of the rendered repo's own customManagers — an annotation
 # no manager matches (or one missing depName=) looks fine in review and produces
