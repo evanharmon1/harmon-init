@@ -360,7 +360,7 @@ accepts fork pull requests.
 **On a fork pull request, `terraform-verify` reports success with nothing having
 run.** Every repository-controlled job is skipped at the fork trust boundary and
 the aggregate verifies exactly that. This is the same shape as the required
-`verify` and `security` checks, which skip `lint`, `security`[% if use_node %], `build-test`[% endif %] the same
+`verify` and `security` checks, which skip `lint`, `security`[% if use_node %], `build-test`, `e2e`[% endif %] the same
 way — a green aggregate on a fork PR means "the trust boundary held", not
 "validation passed".
 [% if github_org != author_git_provider_username %]
