@@ -96,4 +96,8 @@ jobs:
           # through the environment — never interpolated into a run script.
           # Empty on the scheduled path, which resolves the latest release.
           SYNC_DEVKIT_TAG: ${{ github.event.client_payload.tag || inputs.tag || '' }}
+          # A late or out-of-order dispatch must not roll the pin backwards.
+          # Running the workflow by hand is a deliberate act, so it may — that
+          # is the recovery path off a bad harmon-devkit release.
+          SYNC_DEVKIT_ALLOW_DOWNGRADE: ${{ github.event_name == 'workflow_dispatch' }}
         run: task sync:devkit-release

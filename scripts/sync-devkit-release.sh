@@ -29,6 +29,8 @@
 #
 # TAG defaults to $SYNC_DEVKIT_TAG, then to the latest stable upstream release.
 # Env: GH_APP_SLUG — when set, the bot commit identity is derived from the App.
+#      SYNC_DEVKIT_ALLOW_DOWNGRADE=true — permit pinning an older release than
+#      the current one (manual recovery only; the event path refuses it).
 # Depends on: git, gh, task. Unit-tested by scripts/test-sync-devkit-release.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -173,6 +175,30 @@ prov_ref() {
     awk 'index($0, "# ref:") == 1 {
         sub(/^# ref:[[:space:]]*/, ""); sub(/[[:space:]]*\(.*/, ""); print; exit
     }' "$1"
+}
+
+# version_key TAG — a fixed-width, lexicographically comparable key. String
+# comparison, never arithmetic: a zero-padded key would be read as octal by
+# `[ -lt ]`. printf's %d parses each component as base 10, so a tag written
+# v1.08.0 still keys correctly.
+version_key() {
+    _vk_rest="${1#v}"
+    _vk_tail="${_vk_rest#*.}"
+    printf '%05d%05d%05d\n' "${_vk_rest%%.*}" "${_vk_tail%%.*}" "${_vk_tail#*.}"
+}
+
+# assert_not_a_downgrade TARGET CURRENT — a dispatch can be delivered late or
+# out of order, and `concurrency` serializes runs without ordering them, so an
+# older tag can arrive after the pin has already advanced. Rolling the pin
+# backwards would open a bogus rollback PR that the next scheduled run (which
+# resolves the LATEST release) immediately flips back. Manual dispatch is a
+# deliberate act, so it may still downgrade — that is the recovery path off a
+# bad release.
+assert_not_a_downgrade() {
+    [ "${SYNC_DEVKIT_ALLOW_DOWNGRADE:-}" != "true" ] || return 0
+    if [[ "$(version_key "$1")" < "$(version_key "$2")" ]]; then
+        die "refusing to move the pin backwards ($2 -> $1) — replay a current release, or re-run the workflow manually with that tag to downgrade deliberately"
+    fi
 }
 
 assert_safe_dest() {
@@ -326,12 +352,18 @@ second PR.
 EOF
 }
 
-# open_pr_number — the number of the open sync PR, or empty. `// empty`
-# matters: without it jq prints the string "null" and the caller would go on to
-# edit PR "null".
+# open_pr_number — the number of the open sync PR, or empty.
+#
+# `--head` filters by branch NAME only — gh cannot qualify it with an owner —
+# so a fork PR whose head branch happens to be called $SYNC_BRANCH is returned
+# too. Editing that would rewrite an unrelated contributor's PR with a
+# trusted-looking `fix(template): …` title and leave the real sync PR unopened,
+# so cross-repository heads are dropped. `// empty` matters as well: without it
+# jq prints the string "null" and the caller would go on to edit PR "null".
 open_pr_number() {
-    _pn="$(gh pr list --head "$SYNC_BRANCH" --base "$BASE_BRANCH" \
-        --state open --json number --jq '.[0].number // empty')" ||
+    _pn="$(gh pr list --head "$SYNC_BRANCH" --base "$BASE_BRANCH" --state open \
+        --json number,isCrossRepository \
+        --jq 'map(select(.isCrossRepository == false)) | .[0].number // empty')" ||
         die "could not list open PRs for $SYNC_BRANCH"
     case "$_pn" in
     *[!0-9]*) die "unexpected PR number '$_pn' for $SYNC_BRANCH" ;;
@@ -415,6 +447,7 @@ cmd_run() {
         note "already pinned and vendored at $_run_target — nothing to do"
         return 0
     fi
+    assert_not_a_downgrade "$_run_target" "$_run_current"
     note "syncing $_run_current -> $_run_target"
 
     configure_identity

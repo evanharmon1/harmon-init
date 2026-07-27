@@ -130,7 +130,24 @@ EOF
     ;;
 pr)
     case "${2:-}" in
-    list) printf '%s' "${STUB_OPEN_PR:-}" ;;
+    list)
+        # Emulate `--json number,isCrossRepository --jq …` without depending on
+        # a jq binary: STUB_PR_LIST lines are "<number> <isCrossRepository>".
+        # The same-repo filter is applied only when the caller actually asked
+        # for that field, so dropping the guard from the helper fails the test.
+        want_same_repo=0
+        case "$*" in *isCrossRepository*) want_same_repo=1 ;; esac
+        while read -r num cross; do
+            [ -n "$num" ] || continue
+            if [ "$want_same_repo" = 1 ] && [ "$cross" = "true" ]; then
+                continue
+            fi
+            printf '%s' "$num"
+            exit 0
+        done <<EOF
+${STUB_PR_LIST:-}
+EOF
+        ;;
     create | edit) printf 'https://example.invalid/pr\n' ;;
     *)
         echo "stub gh: unhandled pr subcommand ${2:-}" >&2
@@ -210,7 +227,7 @@ run_helper() {
             STUB_LOG="$STUB_LOG" \
             STUB_LATEST="${STUB_LATEST:-}" \
             STUB_RELEASES="${STUB_RELEASES:-}" \
-            STUB_OPEN_PR="${STUB_OPEN_PR:-}" \
+            STUB_PR_LIST="${STUB_PR_LIST:-}" \
             STUB_BOT_UID="${STUB_BOT_UID:-12345}" \
             STUB_FAIL_TASKS="${STUB_FAIL_TASKS:-}" \
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
@@ -219,6 +236,7 @@ run_helper() {
             STUB_SYNC_DROP_SKILL="${STUB_SYNC_DROP_SKILL:-}" \
             GH_APP_SLUG="${GH_APP_SLUG:-}" \
             SYNC_DEVKIT_TAG="${SYNC_DEVKIT_TAG:-}" \
+            SYNC_DEVKIT_ALLOW_DOWNGRADE="${SYNC_DEVKIT_ALLOW_DOWNGRADE:-}" \
             ./scripts/sync-devkit-release.sh "$@"
     ) >"$LAST_OUT" 2>&1 || _rh_rc=$?
     echo "$_rh_rc"
@@ -233,7 +251,7 @@ v0.9.0 false false
 v0.9.1 false false
 v0.9.2-rc.1 false true
 v1.0.0 true false"
-    STUB_OPEN_PR=""
+    STUB_PR_LIST=""
     STUB_FAIL_TASKS=""
     STUB_SYNC_TOUCH_UNRELATED=""
     STUB_SYNC_DELETE_LOCAL=""
@@ -241,6 +259,7 @@ v1.0.0 true false"
     STUB_SYNC_DROP_SKILL=""
     GH_APP_SLUG=""
     SYNC_DEVKIT_TAG=""
+    SYNC_DEVKIT_ALLOW_DOWNGRADE=""
 }
 
 # start NAME — begin a case; echoes a fresh fixture path.
@@ -295,7 +314,7 @@ pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
 # stale until the PR merges, so the daily reconciliation rebuilds this same
 # commit. It must not force-push it again.
 git -C "$fix" checkout --quiet main
-STUB_OPEN_PR="42"
+STUB_PR_LIST="42 false"
 : >"$STUB_LOG"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "reconciliation run exited $rc: $(cat "$LAST_OUT")"
@@ -310,7 +329,7 @@ fix="$(new_fixture reopen)"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "first run exited $rc: $(cat "$LAST_OUT")"
 git -C "$fix" checkout --quiet main
-STUB_OPEN_PR=""
+STUB_PR_LIST=""
 : >"$STUB_LOG"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "re-open run exited $rc: $(cat "$LAST_OUT")"
@@ -324,18 +343,41 @@ logged "gh pr create" || fail "stale provenance did not produce a PR"
 
 start "an open sync PR is updated, never duplicated"
 fix="$(new_fixture existing_pr)"
-STUB_OPEN_PR="42"
+STUB_PR_LIST="42 false"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "existing-PR run exited $rc: $(cat "$LAST_OUT")"
 logged "gh pr edit 42" || fail "the open PR was not updated"
 ! logged "gh pr create" || fail "a duplicate PR was created"
+
+start "a fork PR sharing the bot branch name is never mistaken for the sync PR"
+fix="$(new_fixture fork_pr)"
+# gh's --head filters by branch NAME only, so an untrusted fork PR whose head
+# branch is called bot/sync-harmon-devkit shows up in the same listing.
+STUB_PR_LIST="9001 true"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "fork-PR run exited $rc: $(cat "$LAST_OUT")"
+! logged "gh pr edit 9001" || fail "the automation rewrote an unrelated fork PR"
+logged "gh pr create" || fail "the real sync PR was not opened"
+
+start "a stale or out-of-order release event cannot roll the pin backwards"
+fix="$(new_fixture downgrade v0.9.1)"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "a downgrade was accepted on the event path"
+grep -q "backwards" "$LAST_OUT" || fail "downgrade rejection was not reported: $(cat "$LAST_OUT")"
+[ "$(pin_of "$fix/.skills-sync.yaml")" = v0.9.1 ] || fail "a refused downgrade still moved the pin"
+! pushed "$fix" || fail "a refused downgrade still pushed"
+# Manual dispatch is deliberate, so it may downgrade — the recovery path.
+SYNC_DEVKIT_ALLOW_DOWNGRADE="true"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "a deliberate manual downgrade was refused: $(cat "$LAST_OUT")"
+[ "$(pin_of "$fix/.skills-sync.yaml")" = v0.9.0 ] || fail "the manual downgrade did not move the pin"
 
 start "a newer release supersedes an open sync PR from one commit off main"
 fix="$(new_fixture supersede)"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "first sync exited $rc: $(cat "$LAST_OUT")"
 git -C "$fix" checkout --quiet main
-STUB_OPEN_PR="7"
+STUB_PR_LIST="7 false"
 : >"$STUB_LOG"
 rc="$(run_helper "$fix" run v0.9.1)"
 [ "$rc" = 0 ] || fail "superseding sync exited $rc: $(cat "$LAST_OUT")"

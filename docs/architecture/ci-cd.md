@@ -61,7 +61,9 @@ human merges the sync PR, then harmon-init's release PR
   the release exists upstream and is neither a draft nor a prerelease, before
   anything is written. It reaches the helper only through the environment.
 - **Fail-closed:** the run aborts before any push if the two pins already
-  disagree, if `task sync:skills` writes a path outside the manifests,
+  disagree, if the tag would move the pin *backwards* (a late or out-of-order
+  dispatch — only a manual run may downgrade, as the recovery path off a bad
+  release), if `task sync:skills` writes a path outside the manifests,
   provenance, and managed skills, or if `task verify:skills:offline`,
   `task verify:skills`, or `task verify` fails.
 - **One rolling PR:** a deterministic `bot/sync-harmon-devkit` branch, rebuilt
