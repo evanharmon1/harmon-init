@@ -152,6 +152,10 @@ ansible/*.retry
 
 # Devcontainer env files (injected locally via 1Password, never committed)
 .devcontainer/**/devcontainer.env
+
+# Devcontainer feature lockfile — regenerated on each container build (pins
+# resolved feature digests); a local build artifact, never committed.
+.devcontainer/**/devcontainer-lock.json
 [% endif %]
 
 #             .env
