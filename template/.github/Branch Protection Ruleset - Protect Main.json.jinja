@@ -54,6 +54,12 @@
             "context": "codeql-verify",
             "integration_id": 15368
 [% endif %]
+[% if include_terraform %]
+          },
+          {
+            "context": "terraform-verify",
+            "integration_id": 15368
+[% endif %]
           }
         ]
       }

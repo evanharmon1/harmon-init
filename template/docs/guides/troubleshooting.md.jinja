@@ -15,7 +15,7 @@ Common issues in [[ project_name ]] and how to fix them.
 ## CI
 
 - **Required check missing on a PR** — ensure Build & Validate[% if use_codeql %] and CodeQL[% endif %] ran;
-  required checks are `verify`, `security`[% if use_codeql %], and `codeql-verify`[% endif %].
+  required checks are `verify`, `security`[% if use_codeql %], `codeql-verify`[% endif %][% if include_terraform %], and `terraform-verify`[% endif %].
 
 [% if devcontainer %]## Deeper devcontainer failures
 

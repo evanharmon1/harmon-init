@@ -856,6 +856,46 @@ fi
 # Gated on the ANSWER, not the profile name: `full` sets include_terraform
 # explicitly, but `iac` inherits it from project_type's default, and a future
 # profile could do either.
+# branch-protection.md embeds a copy of the ruleset and tells the reader to
+# "keep the two in sync" — prose that had already drifted (the copy was missing
+# codeql-verify). Consumers audit and hand-replicate from that block, so a stale
+# copy silently tells them to leave a required gate off. Compare the two sets.
+python3 - <<'PY' || err "docs/architecture/branch-protection.md's mirrored ruleset disagrees with the real one (see stderr)"
+import json, pathlib, re, sys
+
+real = json.loads(
+    pathlib.Path(".github/Branch Protection Ruleset - Protect Main.json").read_text()
+)
+doc = pathlib.Path("docs/architecture/branch-protection.md").read_text()
+block = re.search(r"```json\n(.*?)```", doc, re.S)
+if not block:
+    print("  no json block in branch-protection.md", file=sys.stderr)
+    sys.exit(1)
+try:
+    mirrored = json.loads(block.group(1))
+except json.JSONDecodeError as exc:
+    print(f"  the mirrored ruleset is not valid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+
+def contexts(spec):
+    return {
+        c["context"]
+        for r in spec.get("rules", [])
+        if r["type"] == "required_status_checks"
+        for c in r["parameters"]["required_status_checks"]
+    }
+
+
+missing = contexts(real) - contexts(mirrored)
+extra = contexts(mirrored) - contexts(real)
+for name in sorted(missing):
+    print(f"  the doc's copy is missing required check: {name}", file=sys.stderr)
+for name in sorted(extra):
+    print(f"  the doc's copy requires a check the ruleset does not: {name}", file=sys.stderr)
+sys.exit(1 if (missing or extra) else 0)
+PY
+
 if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; then
     [ -f .tflint.hcl ] || err ".tflint.hcl missing (include_terraform=true)"
     grep -q 'plugin "terraform"' .tflint.hcl || err ".tflint.hcl does not enable the bundled terraform ruleset"
@@ -933,6 +973,52 @@ sys.exit(1 if problems else 0)
 PY
     grep -qE '^  terraform-verify:' "$tf_workflow" ||
         err "$tf_workflow has no terraform-verify aggregate job"
+    # A required context with no job to emit it never reports, and a check that
+    # never reports blocks the merge forever. Assert the ruleset and the
+    # workflow agree, in BOTH directions.
+    grep -q '"context": "terraform-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
+        err "ruleset does not require terraform-verify (include_terraform=true)"
+    # Every doc that tells a consumer WHEN to import the ruleset must name
+    # terraform.yml as a prerequisite. Importing a required check before its
+    # workflow is on main wedges the repo, and the instruction is the only thing
+    # standing between a consumer and that state.
+    # Anchored to the import INSTRUCTION, not the file: both docs mention
+    # terraform.yml elsewhere (a table row, a workflow list), so a
+    # whole-file grep passes even with the prerequisite removed.
+    # NOTE the `|| err` on THIS line: a heredoc body begins at the next newline,
+    # so an `err` continued onto the following line is swallowed into the script
+    # as its first line — python then dies on a syntax error and the check
+    # silently stops testing anything.
+    python3 - docs/architecture/branch-protection.md docs/CHECKLIST.md <<'PY' || err "a ruleset-import doc does not name terraform.yml as a prerequisite — importing a required check before its workflow exists wedges every PR (see stderr)"
+import sys, pathlib, re
+
+problems = []
+for path in sys.argv[1:]:
+    text = pathlib.Path(path).read_text()
+    if "terraform-verify" not in text:
+        problems.append(f"{path}: never mentions the required terraform-verify check")
+        continue
+    # Paragraph-scoped, NOT sentence-scoped: splitting prose on "." cuts
+    # `build.yml` into `build.` + `yml`, which silently truncates the very
+    # sentence being checked. Paragraphs are delimited by blank lines, which
+    # filenames cannot break.
+    paragraphs = [re.sub(r"\s+", " ", p) for p in re.split(r"\n\s*\n", text)]
+    instructions = [
+        p for p in paragraphs
+        if re.search(r"\bimport\b", p, re.I) and re.search(r"\bon\b\s*`?main`?", p)
+    ]
+    if not instructions:
+        problems.append(f"{path}: no ruleset-import prerequisite paragraph found")
+        continue
+    if not any("terraform.yml" in p for p in instructions):
+        problems.append(
+            f"{path}: the import prerequisite does not name terraform.yml -> "
+            + instructions[0].strip()[:150]
+        )
+for problem in problems:
+    print(f"  {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
     grep -q 'terraform-changed.sh' "$tf_workflow" ||
         err "$tf_workflow does not run the change detector — it would do real work on every unrelated PR"
     for changed_script in scripts/terraform-changed.sh scripts/test-terraform-changed.sh; do
@@ -1024,6 +1110,12 @@ else
     [ ! -f .tflint.hcl ] || err ".tflint.hcl rendered but include_terraform=false"
     ! grep -q 'setup-tflint' .github/actions/setup/action.yml || err "setup-tflint provisioned but include_terraform=false"
     ! grep -q 'tflint' Brewfile || err "Brewfile installs tflint but include_terraform=false"
+    # The reverse direction, and the more dangerous one: a required check whose
+    # workflow was never rendered can never report, and a required check that
+    # never reports wedges every PR in the repo.
+    ! grep -q '"context": "terraform-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
+        err "ruleset requires terraform-verify but this profile has no Terraform workflow — every PR would wedge"
+    [ ! -e .github/workflows/terraform.yml ] || err "terraform.yml rendered but include_terraform=false"
 fi
 
 # Every `# renovate:` annotation in the rendered composite action must be
