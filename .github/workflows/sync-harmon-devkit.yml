@@ -105,8 +105,16 @@ jobs:
           uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           npm install --global @devcontainers/cli lefthook pnpm
-      - name: Configure git for copier renders
-        run: git config --global init.defaultBranch main
+      # Same three settings build.yml's template-test job needs, for the same
+      # reason: copier runs `git init` + an initial commit inside each rendered
+      # project, and a GitHub-hosted runner has no global identity. This is
+      # GLOBAL config, so it does not affect the sync commit — the helper sets
+      # the bot identity repo-locally, which takes precedence.
+      - name: Configure git identity (copier renders run git init)
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global init.defaultBranch main
       - name: Pin, vendor, verify, and open or update the sync PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
