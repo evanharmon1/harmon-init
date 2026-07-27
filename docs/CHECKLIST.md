@@ -39,9 +39,16 @@ this comment. -->
       [architecture/ci-cd.md](architecture/ci-cd.md#harmon-devkit-skills-propagation).
       To bump by hand — or to recover a missed dispatch — run
       `task sync:devkit-release -- vX.Y.Z`, which does the same work locally.
-      **The fully manual fallback is still a two-step:** edit `ref` in
-      `.skills-sync.yaml`, then run `task sync:skills` and commit the refreshed
-      `.claude/skills/` in the same PR — a ref-only commit fails the
+      **The fully manual fallback is a two-step, and this repo has TWO
+      manifests:** edit `ref` in both `.skills-sync.yaml` **and**
+      `template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja`,
+      then run `task sync:skills` and commit the refreshed `.claude/skills/` in
+      the same PR. `task sync:skills` reads only the root manifest, so editing
+      just that one leaves the template shipping the old pin to generated repos
+      — and the next automated run aborts with `pin disagreement` until someone
+      reconciles them by hand. Only this fully manual route has that trap: the
+      workflow and `task sync:devkit-release` both write both manifests. A
+      ref-only commit (either manifest, without the re-sync) fails the
       `verify:skills` drift check in CI and pre-push. Renovate's harmon-devkit
       rule is kept only as a passive stale-pin signal: it is Dependency
       Dashboard-gated, so it never opens a pin PR unattended. **Leave it
