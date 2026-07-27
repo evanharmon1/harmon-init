@@ -27,6 +27,14 @@ TARGET=/abs/path/to/target-repo      # the repo being audited
 TEMPLATE=~/git/harmon-init           # source of truth
 ```
 
+Audit mode **does** require this local checkout. `$TEMPLATE` is read directly by
+the catalog comparison below (step 2, and drift classes C and H in §3), and for a
+never-templated repo it is the only source of truth available. The single
+checkout-free step is the guarded drift helper in §3 drift class K
+([`assets/diff-template.sh`](../assets/diff-template.sh)), which snapshots the
+canonical remote itself — and it refuses to run at all on a repo with no
+`.copier-answers.yml`.
+
 1. **Establish provenance.** Check whether the repo was generated from the
    template: look for `.copier-answers.yml` at the target root.
    - Present → it can be reconciled with `copier update --trust` (it records
@@ -73,6 +81,12 @@ TEMPLATE=~/git/harmon-init           # source of truth
 
    # Required checks and account-appropriate merge_queue policy (drift class D)
    find "$TARGET/.github" -iname '*ruleset*'
+
+   # Triggers behind each required context (drift class D2): a path-filtered
+   # pull_request/merge_group means the check never reports on an out-of-scope
+   # change and wedges that merge
+   grep -nE '^on:|^  (push|pull_request|merge_group):|^    paths(-ignore)?:' \
+       "$TARGET/.github/workflows/"*.y*ml
    ```
 
 3. **If `task` is available in the target**, run the standard gates as a live
@@ -196,6 +210,32 @@ ruleset for the repo's account type. REST supports `merge_queue`, but a blind
 discover exactly one matching live ruleset and `PUT` that ruleset's id. Rename
 the devcontainer job and align CI job names to the rendered required-check set.
 Severity: **blocker** (wrong contexts mean the gate is unenforced or unsatisfiable).
+
+**D2. A required context that cannot report.** Every context in the ruleset must
+be reachable on every protected-event run, or that merge wedges forever waiting
+on a status nobody posts. Three shapes, all blockers: (a) no workflow defines a
+job with that key or `name:`; (b) the defining workflow lacks a `pull_request` /
+`merge_group` trigger (dispatch- or schedule-only); (c) a trigger filter keeps
+the workflow from starting on a protected ref. `verify-applied.sh` rejects all
+three, taking the protected refs from the ruleset's own `ref_name.include`.
+Filters are allowlisted, not blocklisted: under those events only `branches:`
+(must cover the protected branch), `branches-ignore:` (must not name it), and
+`types:` (must keep GitHub's full default set — `opened`/`synchronize`/`reopened`
+for `pull_request`, `checks_requested` for `merge_group`) are accepted, and any
+other key — or a shape the auditor cannot read per key, such as an inline flow
+mapping — is rejected on sight. Scope the *work*, not the
+trigger: an internal change-detection job, never a workflow-level path filter.
+`branches: [main]` is the standard's shape and fine, and path filters stay
+correct on workflows that are not required checks. **Audit by hand:** wildcard
+ruleset ref selectors (`refs/heads/releases/**`) select a branch set the verifier
+warns about instead of deciding — a wildcard `include` gets no branch-coverage
+check, and a wildcard `exclude` is left unapplied so the branches it might remove
+stay audited. Do not confuse this class
+with an event-dependent job-level `if:` on the reporting job: a skipped job still
+posts a status and GitHub counts a skipped required check as *successful*, so
+that one is fail-**open** (the gate is bypassed, not wedged) and belongs to the
+`if: always()` + result-gating requirement in drift class D.
+Severity: **blocker** (an unsatisfiable required check blocks every merge).
 
 **E. YAML file extensions — NOT drift; do not flag.** `.yml` vs `.yaml` is left
 to each tool's own convention (`Taskfile.yml`, `.yamllint.yml`; GitHub Actions
@@ -411,7 +451,11 @@ A repo-specific test is a gate only when all three links exist: the root
 that runtime in CI, and the workflow invokes `task test` (or the specific target)
 rather than a narrower `test:tasks`. Check this manually for every added test;
 this audit found both Copier-backed skill tests and a chezmoi render test that
-passed locally but were initially unreachable or unprovisioned in CI.
+passed locally but were initially unreachable or unprovisioned in CI. Read the
+middle link per **job**, not per workflow: a runtime is provisioned for a gate
+only by that job's own steps or by a composite action that job uses. Setup steps
+in a sibling job, an unused `./.github/actions/*`, or a dead workflow put nothing
+on the gate job's runner.
 
 Target names are also insufficient to prove workflow semantics. Compare the
 `on` events/inputs and each job's `if`, `needs`, permissions, and side effects
@@ -471,7 +515,8 @@ absent. Confirm the summary displays that same plan, state-lock waits are bounde
 
 A required `terraform-verify` must always emit on `push`, `pull_request`,
 `merge_group`, and `workflow_dispatch`, including unrelated-path no-ops; use an
-internal change detector, not workflow-level path filters. Derive every accepted
+internal change detector, not workflow-level path filters (drift class **D2**
+generalizes this to every required context). Derive every accepted
 `skipped` result from explicit fork/change/enabled predicates and reject all
 other states. Agents must also retain the exact-operation approval rule for
 Terraform mutation; only the reviewed trusted-main exact-plan CI path is exempt.
