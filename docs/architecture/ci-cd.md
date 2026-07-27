@@ -53,9 +53,9 @@ harmon-init validates the tag, pins it, vendors, verifies, opens/updates ONE PR
 human merges the sync PR, then harmon-init's release PR
 ```
 
-- **Triggers:** the dispatch, `workflow_dispatch` (optional tag, for recovery),
-  and a daily reconciliation `schedule` so a dropped dispatch cannot leave the
-  pin stale. One `concurrency` group serializes all three.
+- **Triggers:** the dispatch and a daily reconciliation `schedule`, so a dropped
+  dispatch cannot leave the pin stale. One `concurrency` group serializes them.
+  There is deliberately **no `workflow_dispatch`** — see "Token scope" below.
 - **Trust:** the payload tag is untrusted. `scripts/sync-devkit-release.sh`
   checks its shape in pure shell (no regex a newline can split), then confirms
   the release exists upstream and is neither a draft nor a prerelease, before
@@ -65,12 +65,15 @@ human merges the sync PR, then harmon-init's release PR
   a process-scoped credential helper, and the sync and verification targets run
   with `GH_TOKEN` scrubbed. A contents:write credential is therefore never
   visible to the copier renders, `npx`, and `uvx` that `task verify` spawns.
-- **Base integrity:** the checkout is pinned to `main` (`workflow_dispatch`
-  otherwise lets an operator run an unreviewed branch's helper with a write
-  token), and the run refuses to start unless `HEAD` is `main` and `main`
-  matches `origin/main` — so a force-push can never publish unrelated local
-  commits under a bot title. An origin that cannot be reached aborts rather
-  than being read as "no sync PR is in flight".
+  The workflow is not `workflow_dispatch`-able for the same reason: GitHub
+  would run the *selected ref's* workflow definition, so an unreviewed branch
+  could rewrite the token-minting step itself — a checkout pinned to `main`
+  cannot help, because the token exists by then.
+- **Base integrity:** the checkout is pinned to `main`, and the run refuses to
+  start unless `HEAD` is `main` and `main` matches `origin/main` — so a
+  force-push can never publish unrelated local commits under a bot title. An
+  origin that cannot be reached aborts rather than being read as "no sync PR is
+  in flight".
 - **Fail-closed:** the run aborts before any push if the two pins already
   disagree, if the tag would move the pin *backwards* — measured against the
   newest tag in flight, so a delayed dispatch cannot drag an open sync PR back
@@ -87,9 +90,18 @@ human merges the sync PR, then harmon-init's release PR
   replaying it while the PR is open compares trees and leaves the branch alone,
   so the daily schedule never force-pushes an identical commit or re-triggers
   the PR's checks.
-- **Recovery:** `workflow_dispatch` with an explicit tag, or locally
-  `task sync:devkit-release -- vX.Y.Z`. A sync PR that was closed by hand is
-  re-opened from the pushed branch on the next run.
+- **Recovery:** send the dispatch by hand (it always runs the default branch's
+  definition, unlike `workflow_dispatch`) —
+
+  ```bash
+  gh api repos/evanharmon1/harmon-init/dispatches \
+    -f event_type=harmon-devkit-released \
+    -f 'client_payload[tag]=v0.9.0' \
+    -f 'client_payload[allow_downgrade]=true'   # only to roll back a bad release
+  ```
+
+  — or run it locally with `task sync:devkit-release -- vX.Y.Z`. A sync PR
+  closed by hand is re-opened from the pushed branch on the next run.
 - **Never merges.** Not the sync PR, not either repository's release PR.
 
 Renovate keeps its approval-gated harmon-devkit rule as a passive stale-pin

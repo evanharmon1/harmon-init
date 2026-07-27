@@ -16,24 +16,33 @@ run-name: sync-harmon-devkit reconciling the vendored skills pin
 # inline workflow block. It never merges anything.
 
 on:
-  # Emitted by harmon-devkit's release workflow once a stable tag exists. The
-  # payload tag is untrusted: the helper validates its shape and confirms the
-  # release upstream before using it.
+  # Emitted by harmon-devkit's release workflow once a stable tag exists, and
+  # the manual recovery path too:
+  #
+  #   gh api repos/evanharmon1/harmon-init/dispatches \
+  #     -f event_type=harmon-devkit-released \
+  #     -f 'client_payload[tag]=v0.9.0'
+  #
+  # DELIBERATELY not workflow_dispatch. This workflow mints a CI App token, and
+  # for workflow_dispatch GitHub runs the workflow definition from whichever ref
+  # the operator picks — so an unreviewed branch could rewrite this file and use
+  # the credential, and pinning the CHECKOUT to main would not help because the
+  # token was already minted by then. repository_dispatch always runs the
+  # default branch's definition. Every other App-token workflow here
+  # (claude-*, release) is likewise reachable only through triggers that pin the
+  # definition to the default branch; see docs/architecture/security.md.
+  #
+  # The payload is untrusted: the helper validates the tag's shape and confirms
+  # the release upstream before using it.
   repository_dispatch:
     types: [harmon-devkit-released]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "harmon-devkit tag to sync (default: latest stable release)"
-        required: false
-        type: string
   # Reconciliation: a dropped dispatch must not leave the pin stale forever.
   # Off the hour to avoid GitHub's scheduling pile-up.
   schedule:
     - cron: "37 6 * * *"
 
-# Serialize dispatch, manual, and scheduled runs: they all rewrite the same bot
-# branch and maintain the same rolling PR.
+# Serialize dispatched and scheduled runs: they all rewrite the same bot branch
+# and maintain the same rolling PR.
 concurrency:
   group: sync-harmon-devkit
   cancel-in-progress: false
@@ -102,12 +111,16 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          # Untrusted dispatch payload and manual input reach the helper only
-          # through the environment — never interpolated into a run script.
-          # Empty on the scheduled path, which resolves the latest release.
-          SYNC_DEVKIT_TAG: ${{ github.event.client_payload.tag || inputs.tag || '' }}
-          # A late or out-of-order dispatch must not roll the pin backwards.
-          # Running the workflow by hand is a deliberate act, so it may — that
-          # is the recovery path off a bad harmon-devkit release.
-          SYNC_DEVKIT_ALLOW_DOWNGRADE: ${{ github.event_name == 'workflow_dispatch' }}
+          # The untrusted dispatch payload reaches the helper only through the
+          # environment — never interpolated into a run script. Empty on the
+          # scheduled path, which resolves the latest release.
+          SYNC_DEVKIT_TAG: ${{ github.event.client_payload.tag || '' }}
+          # A late or out-of-order dispatch must not roll the pin backwards, so
+          # a downgrade has to be asked for explicitly — the recovery path off a
+          # bad harmon-devkit release. Sending a repository_dispatch already
+          # requires repository write access; harmon-devkit's emitter never sets
+          # this. Accepts a JSON boolean or the string `gh api -f` sends.
+          SYNC_DEVKIT_ALLOW_DOWNGRADE: >-
+            ${{ github.event.client_payload.allow_downgrade == true ||
+                github.event.client_payload.allow_downgrade == 'true' }}
         run: task sync:devkit-release

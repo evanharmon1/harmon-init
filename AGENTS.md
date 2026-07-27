@@ -114,9 +114,10 @@ Bumping that pin after a harmon-devkit release is **automated**: the root-only
 `scripts/sync-devkit-release.sh`) validates the released tag, rewrites both
 pins, re-vendors, verifies, and opens or updates ONE rolling
 `bot/sync-harmon-devkit` PR. It never merges anything — both repositories keep
-their intentional release gates. To do it by hand (or recover), run
-`task sync:devkit-release -- vX.Y.Z`, or bump the `ref` pin, run
-`task sync:skills`, and commit the refresh. See
+their intentional release gates. To trigger or recover by hand, send the
+dispatch (`gh api repos/evanharmon1/harmon-init/dispatches -f
+event_type=harmon-devkit-released -f 'client_payload[tag]=vX.Y.Z'`) or run
+`task sync:devkit-release -- vX.Y.Z` locally. See
 [docs/architecture/ci-cd.md](docs/architecture/ci-cd.md).
 
 ## Common Commands
