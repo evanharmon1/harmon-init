@@ -43,9 +43,12 @@ this comment. -->
       `.skills-sync.yaml`, then run `task sync:skills` and commit the refreshed
       `.claude/skills/` in the same PR — a ref-only commit fails the
       `verify:skills` drift check in CI and pre-push. Renovate's harmon-devkit
-      rule is kept only as a passive stale-pin signal; it needs Dependency
-      Dashboard approval, so it never races the workflow, and it cannot do the
-      re-sync itself.
+      rule is kept only as a passive stale-pin signal: it is Dependency
+      Dashboard-gated, so it never opens a pin PR unattended. **Leave it
+      unapproved while the sync workflow is healthy** — approving it opens a
+      second, ref-only PR for a bump the automation is already handling, and
+      Renovate cannot do the re-sync, so that PR fails `verify:skills` until
+      someone finishes it by hand.
 - [ ] Verify `harmon-init.code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
 - [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
 - [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
