@@ -1216,7 +1216,11 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     # aggregate — a job absent from needs/verify-ci-results.sh reports but gates
     # nothing, which is the dead-end state this replaced.
     grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has no e2e job (use_node profile)"
-    grep -qE '^    needs: \[.*\be2e\b.*\]' .github/workflows/build.yml ||
+    # Comma-delimited match, NOT `\be2e\b`: `\b` is a GNU extension, and in a
+    # POSIX ERE (macOS/BSD grep) it degrades to a literal `b`, so the assertion
+    # would fail on a correct workflow on every Mac — and test:template is a
+    # documented local gate there.
+    grep -qE '^    needs: \[([^]]*, )?e2e[],]' .github/workflows/build.yml ||
         err "build.yml's verify aggregate does not need the e2e job — it would not gate merges"
     grep -q '"e2e=\${E2E_RESULT}"' .github/workflows/build.yml ||
         err "build.yml's verify aggregate does not assert the e2e job result"

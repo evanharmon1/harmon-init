@@ -103,9 +103,11 @@ jobs:
     # serve the app. BLOCKING: listed in verify.needs below.
     #
     # Self-activates once the app ships a playwright.config.* — before then
-    # `task test:e2e` skips cleanly. `task build` runs first so the Playwright
+    # `task test:e2e` skips cleanly. Step order is deliberate: detect the config,
+    # run the fail-closed env guard BEFORE anything else touches the e2e
+    # environment, then install browsers and build (so the Playwright
     # `webServer` has a dist/ to preview, mirroring the ordering `task ci` gets
-    # from verify. Once a config exists, scripts/e2e-env-guard.sh must be
+    # from verify). Once a config exists, scripts/e2e-env-guard.sh must be
     # configured or this check fails (fail-closed by design).
     #
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
@@ -119,7 +121,6 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
       - name: Detect Playwright config
         id: pw
         run: |
@@ -128,6 +129,20 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
+      # FIRST, before dependency install / browsers / build. `task test:e2e`
+      # runs this same guard again, but by then `pnpm install` has executed
+      # lifecycle scripts and the build has run — with whatever e2e env this job
+      # was given in scope. A fail-closed guard that fires after the things it
+      # protects against is not fail-closed, and running it here also fails an
+      # unconfigured guard in seconds instead of after a browser install.
+      #
+      # Invoked directly rather than through `task`: `task` itself is installed
+      # by the setup step below. It is the same script the Taskfile calls, so
+      # there is no second copy of the logic.
+      - name: e2e environment guard (fail closed)
+        if: steps.pw.outputs.present == 'true'
+        run: ./scripts/e2e-env-guard.sh
+      - uses: ./.github/actions/setup
       # Every browser, not just chromium: this job runs the WHOLE suite, and the
       # convention is multi-browser + mobile projects (see
       # docs/architecture/tests.md). Installing one browser would fail this

@@ -51,11 +51,13 @@ if [ ! -f package.json ] || [ ! -d node_modules ]; then
 fi
 
 generated_paths=()
+source_paths=()
 
 # ── Convex: convex/_generated/ from convex/schema.ts + function files ─
 if [ -d convex ] && [ -x node_modules/.bin/convex ]; then
     node_modules/.bin/convex codegen
     generated_paths+=(convex/_generated)
+    source_paths+=(convex ':(exclude)convex/_generated')
 fi
 
 if [ "${#generated_paths[@]}" -eq 0 ]; then
@@ -84,5 +86,32 @@ if [ "$stale" -eq 1 ]; then
     git status --short -- "${generated_paths[@]}" >&2
     echo "codegen: review and commit them, then re-run. CI type-checks what you" >&2
     echo "codegen: committed, so an uncommitted regeneration fails there too." >&2
+    exit 1
+fi
+
+# The one arrangement the comparison above cannot see: output STAGED while the
+# sources that produced it are left UNSTAGED. The generators read the worktree,
+# so the staged output matches worktree sources and looks current — but the
+# commit would pair new output with old input, and CI regenerates from what you
+# committed and fails. Scoped this narrowly on purpose: plain work-in-progress
+# (unstaged sources, unstaged output) is caught by the staleness check above,
+# and must not trip this one.
+sources_uncommitted=0
+if [ "${#source_paths[@]}" -gt 0 ]; then
+    git diff --quiet -- "${source_paths[@]}" || sources_uncommitted=1
+    # Untracked too, symmetrically with the staleness check: a brand-new
+    # function file the generated output already accounts for never shows up in
+    # `git diff`, and CI would regenerate without it.
+    [ -z "$(git ls-files --others --exclude-standard -- "${source_paths[@]}")" ] ||
+        sources_uncommitted=1
+fi
+
+if [ "$sources_uncommitted" -eq 1 ] &&
+    ! git diff --cached --quiet -- "${generated_paths[@]}"; then
+    echo "codegen: generated output is staged, but its sources are not:" >&2
+    git status --short -- "${source_paths[@]}" >&2
+    echo "codegen: committing this would pair new generated files with old" >&2
+    echo "codegen: sources, and CI would regenerate from the old ones and fail." >&2
+    echo "codegen: stage the sources too, then re-run." >&2
     exit 1
 fi
