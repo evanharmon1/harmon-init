@@ -55,13 +55,26 @@ jobs:
       - name: Detect Terraform changes
         id: detect
         env:
-          # workflow_dispatch has no range — a human asked for this run, so it
-          # always counts as changed (that is how drift is reconciled without
-          # an empty commit).
+          # Two events deliberately pass NO range, so the detector reconciles:
+          #
+          #   workflow_dispatch — has no range at all; a human asked for this
+          #   run, which is how drift is reconciled without an empty commit.
+          #
+          #   push — its only natural range is INCREMENTAL (before..after), and
+          #   that is not safe here. GitHub keeps a single *pending* run per
+          #   concurrency group, so while an apply is in flight a later
+          #   unrelated push REPLACES the pending Terraform push. Comparing
+          #   before..after would then step straight over the replaced commit,
+          #   answer "unchanged", skip every leaf — and terraform-verify would
+          #   go green over a merged Terraform change that was never applied.
+          #   Main reconciles instead; the cost is a plan on unrelated merges.
+          #
+          # pull_request and merge_group are compared endpoint-to-endpoint, so a
+          # superseded run's commits stay inside the next run's range. They keep
+          # their scoping, which is where it pays off anyway.
           BASE_SHA: >-
             ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha
             || github.event_name == 'merge_group' && github.event.merge_group.base_sha
-            || github.event_name == 'push' && github.event.before
             || '' }}
           HEAD_SHA: >-
             ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha
@@ -110,7 +123,14 @@ jobs:
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
-    timeout-minutes: 15
+    # Generous on purpose, and NOT the 15 minutes the other jobs use: this one
+    # budget covers init + plan + apply + the post-apply converge re-plan, and
+    # each of those three Terraform commands may first spend its full
+    # TF_LOCK_TIMEOUT waiting on state. A timeout that fires mid-apply kills the
+    # mutation and strands half-created resources — the exact failure
+    # `cancel-in-progress: false` above exists to prevent. Raise it further if
+    # real applies get close.
+    timeout-minutes: 60
     env:
       # The S3-compatible backend (Cloudflare R2) reads AWS-style env vars.
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

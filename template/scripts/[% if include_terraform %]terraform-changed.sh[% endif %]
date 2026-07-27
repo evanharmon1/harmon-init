@@ -44,10 +44,14 @@ emit() {
     exit 0
 }
 
-# All-zero sha = branch creation / no previous commit; empty = caller had none.
+# No base to compare against. Three ways to get here, all answering `true`:
+# branch creation (all-zero sha), an event with no range (workflow_dispatch),
+# and an event that reconciles BY DESIGN — a push to the deploy branch, where an
+# incremental before..after range can be stepped over by concurrency
+# replacement (see the BASE_SHA comment in .github/workflows/terraform.yml).
 case "$base" in
 "" | 0000000000000000000000000000000000000000)
-    echo "terraform-changed: no usable base ($base) — assuming changed" >&2
+    echo "terraform-changed: no comparison range (base='${base}') — reconciling" >&2
     emit true
     ;;
 esac
