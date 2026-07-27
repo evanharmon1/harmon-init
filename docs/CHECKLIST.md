@@ -21,16 +21,31 @@ config, toolchain, devcontainer, and dev environment — against the items below
 
 - [ ] `task install` — Brewfile deps, and lefthook git hooks
 - [ ] `task verify` passes locally
+<!-- Diverges from template/docs/CHECKLIST.md.jinja ON PURPOSE — do not
+"reconcile" it. sync-harmon-devkit.yml is root-only harmon-platform glue with no
+template twin, so a generated repo really does the manual two-step the template
+describes, while harmon-init's bump is automated. Note that NOTHING will tell you
+this: the parity gate skips jinja twins, the structure gate checks headings and
+tasks rather than prose, and this file is on audit-dogfood.sh's SKIP list. Hence
+this comment. -->
 - [ ] **Vendored agent skills stay pinned**: `.skills-sync.yaml` pins which
       harmon-devkit skill categories this repo vendors into `.claude/skills/`.
-      **Pin bumps are a two-step:** edit `ref` in `.skills-sync.yaml`, then run
-      `task sync:skills` and commit the refreshed `.claude/skills/` in the same
-      PR. Renovate surfaces a new
+      **In this repo the bump is automated** — publishing a stable
       [harmon-devkit release](https://github.com/evanharmon1/harmon-devkit/releases)
-      in the Dependency Dashboard; approve it there to open the pin PR, then run
-      the sync and push its output as a separate commit (do not amend Renovate's
-      commit). Renovate cannot do the re-sync, so a ref-only commit fails the
-      `verify:skills` drift check in CI and pre-push.
+      opens or updates one rolling `bot/sync-harmon-devkit` PR with both
+      manifests, the provenance, and the vendored skills already moved in
+      lockstep and verified. Review and merge it like any other PR; nothing
+      auto-merges. See
+      [architecture/ci-cd.md](architecture/ci-cd.md#harmon-devkit-skills-propagation).
+      To bump by hand — or to recover a missed dispatch — run
+      `task sync:devkit-release -- vX.Y.Z`, which does the same work locally.
+      **The fully manual fallback is still a two-step:** edit `ref` in
+      `.skills-sync.yaml`, then run `task sync:skills` and commit the refreshed
+      `.claude/skills/` in the same PR — a ref-only commit fails the
+      `verify:skills` drift check in CI and pre-push. Renovate's harmon-devkit
+      rule is kept only as a passive stale-pin signal; it needs Dependency
+      Dashboard approval, so it never races the workflow, and it cannot do the
+      re-sync itself.
 - [ ] Verify `harmon-init.code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
 - [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
 - [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
