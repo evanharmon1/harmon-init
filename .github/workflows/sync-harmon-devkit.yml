@@ -1,0 +1,99 @@
+name: Sync harmon-devkit skills
+run-name: sync-harmon-devkit reconciling the vendored skills pin
+
+# harmon-init vendors harmon-devkit's shared agent skills at a released tag.
+# Publishing a stable harmon-devkit release should produce a complete, verified
+# harmon-init pin-and-sync PR without anyone editing a pin by hand — while the
+# two release-PR merges at either end stay intentional human gates.
+#
+# ROOT-ONLY. This is harmon-platform integration glue (the harmon-init <->
+# harmon-devkit edge) and is deliberately NOT rendered into generated repos:
+# there is no template/ twin, and none should be added. See
+# docs/architecture/ci-cd.md.
+#
+# All the logic lives in scripts/sync-devkit-release.sh so it is shellcheck'd
+# and unit-tested (`task test:sync-devkit-release`) instead of hiding in an
+# inline workflow block. It never merges anything.
+
+on:
+  # Emitted by harmon-devkit's release workflow once a stable tag exists. The
+  # payload tag is untrusted: the helper validates its shape and confirms the
+  # release upstream before using it.
+  repository_dispatch:
+    types: [harmon-devkit-released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "harmon-devkit tag to sync (default: latest stable release)"
+        required: false
+        type: string
+  # Reconciliation: a dropped dispatch must not leave the pin stale forever.
+  # Off the hour to avoid GitHub's scheduling pile-up.
+  schedule:
+    - cron: "37 6 * * *"
+
+# Serialize dispatch, manual, and scheduled runs: they all rewrite the same bot
+# branch and maintain the same rolling PR.
+concurrency:
+  group: sync-harmon-devkit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    # Generous: the pre-push gate runs `task verify`, which renders the whole
+    # copier template matrix.
+    timeout-minutes: 60
+    steps:
+      # CI GitHub App token, not GITHUB_TOKEN: a PR opened by GITHUB_TOKEN never
+      # triggers CI, and branch protection requires those checks before the sync
+      # PR can merge. Least-privilege — push the bot branch (contents) and
+      # maintain one PR (pull-requests); no issues, no workflows.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Full history: release-title pre-flight and the template render
+          # matrix both diff against the base.
+          fetch-depth: 0
+          # Keeps the repo-wide hardening intact even though this job pushes.
+          # The helper authenticates the one `git push` with a process-scoped
+          # credential helper reading GH_TOKEN from the environment, so the
+          # token never lands in .git/config where `task verify`'s copier/npx/uvx
+          # runs could reach it.
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          lint-tools: "true"
+          gitleaks: "true"
+      # `task verify` renders the copier template, so this job needs the same
+      # extras build.yml's template-test job installs on top of the composite.
+      - name: Install the template-render toolchain
+        run: |
+          # --force overwrites a foreign same-named entry point instead of
+          # aborting, keeping reruns idempotent on a self-hosted CI_RUNS_ON
+          # runner (same reasoning as build.yml's lint job).
+          uv tool install --force copier
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install --global @devcontainers/cli lefthook pnpm
+      - name: Configure git for copier renders
+        run: git config --global init.defaultBranch main
+      - name: Pin, vendor, verify, and open or update the sync PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          # Untrusted dispatch payload and manual input reach the helper only
+          # through the environment — never interpolated into a run script.
+          # Empty on the scheduled path, which resolves the latest release.
+          SYNC_DEVKIT_TAG: ${{ github.event.client_payload.tag || inputs.tag || '' }}
+        run: task sync:devkit-release

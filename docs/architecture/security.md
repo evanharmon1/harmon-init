@@ -231,7 +231,7 @@ variable, not forever.
 ## CI automation identity (GitHub App)
 
 CI workflows that act on the repo as a bot — release-please, the
-`claude-*` workflows — authenticate as a
+`claude-*` workflows, `sync-harmon-devkit.yml` — authenticate as a
 **GitHub App dedicated to this owner**, not a personal access token. **Each
 GitHub org (and personal account) gets its own App**, named **`<owner>-ci`** —
 for this repo, **`evanharmon1-ci`**. One App per org keeps a leaked key
@@ -350,7 +350,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 
 | Secret / variable | Used by | Stored in | Rotation |
 |---|---|---|---|
-| `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-* | repo or org Actions variable + secret | rotate App key per policy |
+| `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-*, sync-harmon-devkit | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
 | `SNYK_TOKEN` | optional Snyk CLI scans; also `snyk-scheduled.yml` when explicitly generated | local env / 1Password by default; Actions secret only for scheduled/paid CI | manual |
 | `GH_TOKEN` (the bot's PAT) | the devcontainer agent's `gh`/git operations | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |

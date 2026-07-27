@@ -107,8 +107,17 @@ lives in harmon-devkit (`ai/skills/repo/standardize-repo`). The root repo
 dogfoods the same pinned skills sync the template ships: `.skills-sync.yaml`
 pins a released harmon-devkit tag, `task sync:skills` vendors the `repo`
 category into `.claude/skills`, and CI/pre-push run `task verify:skills` /
-`verify:skills:offline` as drift checks. After a harmon-devkit release, bump
-the `ref` pin, run `task sync:skills`, and commit the refresh.
+`verify:skills:offline` as drift checks.
+
+Bumping that pin after a harmon-devkit release is **automated**: the root-only
+`.github/workflows/sync-harmon-devkit.yml` (→ `task sync:devkit-release` →
+`scripts/sync-devkit-release.sh`) validates the released tag, rewrites both
+pins, re-vendors, verifies, and opens or updates ONE rolling
+`bot/sync-harmon-devkit` PR. It never merges anything — both repositories keep
+their intentional release gates. To do it by hand (or recover), run
+`task sync:devkit-release -- vX.Y.Z`, or bump the `ref` pin, run
+`task sync:skills`, and commit the refresh. See
+[docs/architecture/ci-cd.md](docs/architecture/ci-cd.md).
 
 ## Common Commands
 
