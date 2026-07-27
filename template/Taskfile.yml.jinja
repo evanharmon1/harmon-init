@@ -88,8 +88,14 @@ tasks:
     # so this is safe to run concurrently across worktrees and parallel agents.
     # Keep it that way: anything that starts a server belongs in `ci`.
 [% endif %]
-    desc: Definition-of-done gate (check[% if use_node %] → build[% endif %] → validate → guards → test)
+    desc: Definition-of-done gate ([% if project_type == 'web-app' %]codegen → [% endif %]check[% if use_node %] → build[% endif %] → validate → guards → test)
     cmds:
+[% if project_type == 'web-app' %]
+      # Sequential and FIRST: refresh generated types so the typecheck below sees
+      # them, then leave the diff for you to commit. This is the one writing step
+      # in the gate — `check` and the pre-commit hooks stay read-only.
+      - task: codegen
+[% endif %]
       - task: check
 [% if use_node %]
       - task: build
@@ -119,6 +125,10 @@ tasks:
     # Static analysis only, and PORT-FREE: nothing here starts a server, so
     # parallel agents/worktrees never collide. Anything that binds a port
     # (test:e2e) belongs in `ci`.
+[% endif %]
+[% if project_type == 'web-app' %]
+    # Read-only, too — the pre-commit hooks run these targets directly, so
+    # nothing here may write. `codegen` therefore sits in `verify`, not here.
 [% endif %]
     desc: Fast local gate — all linters[% if use_node %] + typecheck[% endif %] (parallel)
     deps:
@@ -246,11 +256,11 @@ tasks:
         fi
 [% else %]
     desc: TypeScript type checking
-    # Generated types must exist and be current BEFORE tsc reads them, or an
-    # agent that just edited a Convex schema fails typecheck against stale
-    # convex/_generated/. codegen is port-free, so `check` stays port-free.
-    deps:
-      - codegen
+    # Deliberately does NOT depend on `codegen`: this is a read-only gate (the
+    # pre-commit hook runs it directly), and regenerating here would rewrite the
+    # tree mid-commit AND let CI green-light a stale committed convex/_generated/
+    # by silently refreshing it. `verify` runs codegen before this; CI type-checks
+    # the files exactly as committed. See docs/architecture/tests.md.
     cmds:
       - |
         if [ ! -f package.json ] || [ ! -x node_modules/.bin/tsc ]; then
@@ -513,15 +523,22 @@ tasks:
 
   # ── Codegen ────────────────────────────────────────────────────
   codegen:
-    # Generated sources that TYPE-CHECKING depends on — a prerequisite of
-    # lint:typescript (and therefore `check`), not part of `build`. Without it,
-    # an agent that edits a Convex schema fails typecheck against a stale
-    # convex/_generated/ and has no obvious way to know why.
+    # Generated sources that TYPE-CHECKING depends on. Editing a Convex schema
+    # without regenerating makes tsc fail against a stale convex/_generated/,
+    # with errors that point nowhere near the cause — so `verify` runs this
+    # FIRST, before `check`.
     #
-    # Port-free by contract: generators write files, they never start a server
-    # or connect to a running deployment. Keep it that way — `check` inherits
-    # this task's behavior, and the whole check/build/test/verify tier is
-    # port-free so parallel agents and worktrees can run it concurrently.
+    # This task WRITES. That is why it is reached from `verify` and never from
+    # `check` / `lint:typescript`: those are read-only gates the pre-commit hooks
+    # run directly, and a generator firing there would rewrite the tree after the
+    # index was built. It also keeps CI honest — CI runs `check`, so it
+    # type-checks the generated files exactly as committed instead of silently
+    # refreshing a stale one into passing.
+    #
+    # Port-free by contract: generators write files, they never start a server or
+    # attach to a running deployment. Keep it that way — the whole
+    # codegen/check/build/test/verify tier is port-free so parallel agents and
+    # worktrees can run it concurrently.
     #
     # Generated output is COMMITTED but tool-owned (see .prettierignore and the
     # eslint config's `ignores`): commit the regenerated files as part of your
@@ -529,7 +546,7 @@ tasks:
     # Skips cleanly before the app/deps/generators exist, like build and
     # lint:eslint. Add further generators (GraphQL, OpenAPI, ORM clients) in
     # scripts/codegen.sh.
-    desc: Run code generators (Convex types)
+    desc: Run code generators (Convex types) — writes; run before committing
     cmds:
       - ./scripts/codegen.sh
 [% endif %]

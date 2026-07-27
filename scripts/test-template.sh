@@ -1220,23 +1220,46 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         err "build.yml's verify aggregate does not need the e2e job — it would not gate merges"
     grep -q '"e2e=\${E2E_RESULT}"' .github/workflows/build.yml ||
         err "build.yml's verify aggregate does not assert the e2e job result"
+    # The job runs the WHOLE suite, and the documented convention is
+    # multi-browser + mobile projects — installing only chromium would fail this
+    # BLOCKING check on any config declaring firefox/webkit projects. Scoped to
+    # the e2e job's own block: the non-blocking a11y job legitimately installs
+    # just chromium, so a whole-file grep would report the wrong job.
+    e2e_job="$(awk '/^  e2e:$/{f=1} f&&/^  [a-z][a-z0-9-]*:$/&&!/^  e2e:$/{f=0} f' \
+        .github/workflows/build.yml)"
+    [ -n "$e2e_job" ] || err "could not isolate the e2e job block in build.yml"
+    grep -q 'playwright install' <<<"$e2e_job" ||
+        err "the e2e job never installs Playwright browsers"
+    ! grep -qE 'playwright install .*(chromium|firefox|webkit)' <<<"$e2e_job" ||
+        err "the e2e job installs a single Playwright browser but runs the full suite"
 else
     [ ! -e scripts/e2e-run.sh ] || err "e2e-run.sh rendered for a non-node profile"
     ! grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has an e2e job on a non-node profile"
 fi
 
-# ── 9j. codegen is a web-app-only `check` prerequisite ──────────────
+# ── 9j. codegen refreshes types in `verify`, never in `check` ───────
 # Generated Convex types must be current before tsc reads them; a stale
 # convex/_generated/ fails typecheck with errors that point nowhere near the
-# schema edit that caused them. Must also stay PORT-FREE — it is inside `check`.
+# schema edit that caused them — so `verify` regenerates first.
+#
+# But codegen WRITES, and `check`/`lint:typescript` are read-only gates the
+# pre-commit hooks invoke directly. Reaching codegen from there would rewrite the
+# tree after the index was built, and would let CI (which runs `check`) refresh a
+# stale committed convex/_generated/ into passing instead of failing on it. Both
+# directions are asserted.
 if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     [ -x scripts/codegen.sh ] || err "scripts/codegen.sh missing or not executable (project_type=web-app)"
     ./scripts/codegen.sh >/dev/null 2>&1 ||
         err "codegen.sh does not skip cleanly on a fresh render (no app/deps yet)"
     grep -q 'convex codegen' scripts/codegen.sh || err "codegen.sh does not run Convex codegen"
     if have task; then
-        grep -qF -- 'scripts/codegen.sh' <<<"$(task --color=false --dry check 2>&1 || true)" ||
-            err "task check does not reach codegen — typecheck could read stale generated types"
+        grep -qF -- 'scripts/codegen.sh' <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach codegen — typecheck could read stale generated types"
+        for readonly_gate in check lint:typescript; do
+            ! grep -qF -- 'scripts/codegen.sh' \
+                <<<"$(task --color=false --dry "$readonly_gate" 2>&1 || true)" ||
+                err "task ${readonly_gate} reaches codegen — a read-only gate (and the pre-commit hook) must never write, and CI must typecheck what was committed"
+        done
     else
         required task "codegen reachability" || fail=1
     fi

@@ -29,7 +29,10 @@ tier binds a port**, not what it is named:
 
 | Tier | Binds a port? | Where it runs |
 |---|---|---|
-| `task check` (lint, format check, typecheck[% if project_type == 'web-app' %], `codegen`[% endif %]) | no | inner loop, editors, git hooks |
+| `task check` (lint, format check, typecheck) | no | inner loop, editors, git hooks |
+[% if project_type == 'web-app' %]
+| `task codegen` | no — writes files, doesn't serve | `verify` (before `check`) |
+[% endif %]
 | `task build` | no — writes `dist/`, does not serve | `verify`, CI `build-test` |
 | `task test` (vitest) | no | `verify`, CI `build-test` |
 | `task verify` (= check + build + test) | **no** | the agent's definition-of-done gate |
@@ -76,10 +79,23 @@ app's providers and production domains (fail-closed by design; see
 ## Codegen
 
 `task codegen` (→ `scripts/codegen.sh`) runs the generators that type-checking
-depends on — Convex's `convex/_generated/` first — and is a **dependency of
-`task lint:typescript`**, hence of `task check`. Editing `convex/schema.ts`
+depends on — Convex's `convex/_generated/` first. Editing `convex/schema.ts`
 without regenerating makes `tsc` fail against the stale types, in a way whose
-error messages point nowhere near the actual cause.
+error messages point nowhere near the actual cause, so **`task verify` runs
+`codegen` first**, before `check`.
+
+It is deliberately **not** reachable from `task check` or `task lint:typescript`,
+for two reasons:
+
+- Those are **read-only gates** and the pre-commit hooks run them directly (see
+  [../conventions.md](../conventions.md)). A generator firing there would
+  rewrite the tree after the index was built, so the commit would carry the old
+  generated files while your working tree had the new ones.
+- CI runs `check`, so it type-checks the generated files **exactly as
+  committed**. A `check` that regenerated first would quietly refresh a stale
+  `convex/_generated/` into passing and prove nothing.
+
+Other rules:
 
 - Generated files are **committed but tool-owned** — excluded from Prettier
   (`.prettierignore`) and ESLint (`ignores`). A codegen diff in your change is

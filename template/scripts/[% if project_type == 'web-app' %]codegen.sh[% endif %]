@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # codegen.sh — run this project's code generators for `task codegen`.
 #
-# Runs BEFORE type-checking (it is a dep of `task lint:typescript`, hence of
-# `task check`): editing a Convex schema changes convex/_generated/, and tsc
-# reading the stale copy fails in a way that looks nothing like the real cause.
+# `task verify` runs this FIRST, before `check`: editing a Convex schema changes
+# convex/_generated/, and tsc reading the stale copy fails in a way that looks
+# nothing like the real cause.
+#
+# It is deliberately NOT reachable from `task check` / `task lint:typescript`.
+# Those are read-only gates that the pre-commit hooks run directly, and this
+# script writes. Keeping it out also keeps CI honest: CI runs `check`, so it
+# type-checks the generated files as committed rather than regenerating a stale
+# one into passing.
 #
 # CONTRACT for anything added here:
 #   * PORT-FREE — generate from local sources; never start a server or attach to

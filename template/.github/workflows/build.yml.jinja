@@ -122,7 +122,11 @@ jobs:
           fi
       - name: Install Playwright browsers
         if: steps.pw.outputs.present == 'true'
-        run: pnpm exec playwright install --with-deps chromium
+        # Every browser, not just chromium: this job runs the WHOLE suite, and
+        # the convention is multi-browser + mobile projects (see
+        # docs/architecture/tests.md). Installing one browser would fail the
+        # blocking check on any config that declares firefox/webkit projects.
+        run: pnpm exec playwright install --with-deps
       - name: Build
         if: steps.pw.outputs.present == 'true'
         run: task build
