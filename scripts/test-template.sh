@@ -973,11 +973,69 @@ sys.exit(1 if problems else 0)
 PY
     grep -qE '^  terraform-verify:' "$tf_workflow" ||
         err "$tf_workflow has no terraform-verify aggregate job"
+    # A push to main must NOT be scoped by an incremental before..after range.
+    # GitHub keeps one pending run per concurrency group, so while an apply is
+    # in flight a later unrelated push replaces the pending Terraform push; a
+    # before..after comparison then steps over the replaced commit, reports
+    # "unchanged", and leaves a merged Terraform change unapplied behind a green
+    # required check. Pull requests and merge groups compare endpoints and keep
+    # their scoping — this asserts only that `push` reconciles.
+    ! grep -q "github.event_name == 'push' && github.event.before" "$tf_workflow" ||
+        err "$tf_workflow scopes pushes by github.event.before — concurrency replacement can then drop a merged Terraform change with terraform-verify still green"
+    if have python3; then
+        python3 - "$tf_workflow" <<'PY' || err "the Terraform change detector does not reconcile unconditionally on push (see stderr)"
+import sys, pathlib, re
+
+text = pathlib.Path(sys.argv[1]).read_text()
+match = re.search(r"^\s+BASE_SHA:.*?(?=^\s+HEAD_SHA:)", text, re.M | re.S)
+if not match:
+    print("  no BASE_SHA expression found in the change-detection job", file=sys.stderr)
+    sys.exit(1)
+if "push" in match.group(0):
+    print(
+        "  BASE_SHA derives a range for `push`; main must reconcile instead "
+        "(an incremental range can be stepped over by concurrency replacement)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+    fi
     # A required context with no job to emit it never reports, and a check that
     # never reports blocks the merge forever. Assert the ruleset and the
     # workflow agree, in BOTH directions.
     grep -q '"context": "terraform-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "ruleset does not require terraform-verify (include_terraform=true)"
+    # The job that runs `terraform apply` needs a budget that covers init + plan
+    # + apply + converge, each able to spend its full lock timeout first. A
+    # timeout firing mid-apply strands half-created resources, which is the
+    # failure `cancel-in-progress: false` exists to prevent — so the apply job
+    # must not sit on the same short budget as the validate-only jobs.
+    if have python3; then
+        python3 - "$tf_workflow" <<'PY' || err "the Terraform apply job's timeout is too short to be safe (see stderr)"
+import sys, pathlib, re
+
+text = pathlib.Path(sys.argv[1]).read_text()
+jobs = re.split(r"^(?=  [A-Za-z0-9_-]+:$)", text, flags=re.M)
+for job in jobs:
+    if "terraform apply" not in job and "terraform:ci:apply" not in job:
+        continue
+    found = re.search(r"^\s+timeout-minutes:\s*(\d+)", job, re.M)
+    if not found:
+        print("  the apply job has no timeout-minutes at all", file=sys.stderr)
+        sys.exit(1)
+    minutes = int(found.group(1))
+    if minutes < 30:
+        print(
+            f"  the apply job's timeout-minutes is {minutes}; a timeout during "
+            "`terraform apply` strands half-created resources",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    sys.exit(0)
+print("  no job running `terraform apply` was found", file=sys.stderr)
+sys.exit(1)
+PY
+    fi
     # Every doc that tells a consumer WHEN to import the ruleset must name
     # terraform.yml as a prerequisite. Importing a required check before its
     # workflow is on main wedges the repo, and the instruction is the only thing
