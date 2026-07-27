@@ -60,6 +60,14 @@ human merges the sync PR, then harmon-init's release PR
   checks its shape in pure shell (no regex a newline can split), then confirms
   the release exists upstream and is neither a draft nor a prerelease, before
   anything is written. It reaches the helper only through the environment.
+- **Token scope:** the checkout keeps `persist-credentials: false`; the App
+  token authenticates only the individual `git` calls that talk to origin, via
+  a process-scoped credential helper, and the sync and verification targets run
+  with `GH_TOKEN` scrubbed. A contents:write credential is therefore never
+  visible to the copier renders, `npx`, and `uvx` that `task verify` spawns.
+- **Base integrity:** the run refuses to start unless `HEAD` is `main` and
+  `main` matches `origin/main`, so a force-push can never publish unrelated
+  local commits under a bot title.
 - **Fail-closed:** the run aborts before any push if the two pins already
   disagree, if the tag would move the pin *backwards* — measured against the
   newest tag in flight, so a delayed dispatch cannot drag an open sync PR back

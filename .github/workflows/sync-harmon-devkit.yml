@@ -67,10 +67,11 @@ jobs:
           # matrix both diff against the base.
           fetch-depth: 0
           # Keeps the repo-wide hardening intact even though this job pushes.
-          # The helper authenticates the one `git push` with a process-scoped
-          # credential helper reading GH_TOKEN from the environment, so the
-          # token never lands in .git/config where `task verify`'s copier/npx/uvx
-          # runs could reach it.
+          # The helper authenticates each origin operation with a process-scoped
+          # credential helper reading GH_TOKEN from the environment, and runs
+          # the sync and every verification target with GH_TOKEN scrubbed — so
+          # the write token reaches neither .git/config nor the copier/npx/uvx
+          # subprocesses `task verify` spawns.
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:

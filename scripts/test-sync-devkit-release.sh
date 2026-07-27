@@ -98,7 +98,7 @@ make_stubs() {
     cat >"$_ms_bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -eu
-printf 'gh %s\n' "$*" >>"$STUB_LOG"
+printf 'gh %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" >>"$STUB_LOG"
 case "${1:-}" in
 api)
     path="${2:-}"
@@ -165,7 +165,7 @@ STUB
     cat >"$_ms_bin/task" <<'STUB'
 #!/usr/bin/env bash
 set -eu
-printf 'task %s\n' "$*" >>"$STUB_LOG"
+printf 'task %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" >>"$STUB_LOG"
 target="${1:-}"
 case ",${STUB_FAIL_TASKS:-}," in
 *",$target,"*)
@@ -235,6 +235,7 @@ run_helper() {
             STUB_SYNC_ADD_SKILL="${STUB_SYNC_ADD_SKILL:-}" \
             STUB_SYNC_DROP_SKILL="${STUB_SYNC_DROP_SKILL:-}" \
             GH_APP_SLUG="${GH_APP_SLUG:-}" \
+            GH_TOKEN="${GH_TOKEN:-}" \
             SYNC_DEVKIT_TAG="${SYNC_DEVKIT_TAG:-}" \
             SYNC_DEVKIT_ALLOW_DOWNGRADE="${SYNC_DEVKIT_ALLOW_DOWNGRADE:-}" \
             ./scripts/sync-devkit-release.sh "$@"
@@ -258,6 +259,7 @@ v1.0.0 true false"
     STUB_SYNC_ADD_SKILL=""
     STUB_SYNC_DROP_SKILL=""
     GH_APP_SLUG=""
+    GH_TOKEN=""
     SYNC_DEVKIT_TAG=""
     SYNC_DEVKIT_ALLOW_DOWNGRADE=""
 }
@@ -504,6 +506,38 @@ for failing in verify:skills:offline security:secrets verify:skills verify; do
     [ "$(git -C "$fix" rev-parse main)" = "$(git -C "$fix.origin.git" rev-parse main)" ] ||
         fail "main diverged from origin after a failed '$failing'"
 done
+
+start "the write token never reaches the sync or verification subprocesses"
+fix="$(new_fixture token_scope)"
+GH_TOKEN="s3cret-app-token"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "token-scope run exited $rc: $(cat "$LAST_OUT")"
+# The stubs record whether GH_TOKEN was visible to them. `gh` legitimately
+# needs it; `task` (sync:skills, the guard, every verification target) must not
+# see a contents:write credential it could hand to copier/npx/uvx.
+! grep -q '^task .*GH_TOKEN=set' "$STUB_LOG" ||
+    fail "a task subprocess inherited the repo-write token: $(grep -m1 '^task .*GH_TOKEN=set' "$STUB_LOG")"
+grep -q '^task .*GH_TOKEN=unset' "$STUB_LOG" || fail "no task invocation recorded its token visibility"
+grep -q '^gh .*GH_TOKEN=set' "$STUB_LOG" || fail "gh lost the token it needs"
+
+start "a base branch that diverges from origin is refused"
+fix="$(new_fixture diverged)"
+# A local commit that was never pushed: force-pushing a bot branch built on it
+# would publish it under a bot title.
+echo "unpushed local work" >"$fix/LOCAL.md"
+git -C "$fix" add LOCAL.md
+git -C "$fix" commit --quiet -m "local only"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "a diverged base branch was accepted"
+grep -q "not at origin/main" "$LAST_OUT" || fail "divergence was not reported: $(cat "$LAST_OUT")"
+! pushed "$fix" || fail "a diverged base still pushed"
+
+start "running from a branch that is not the base is refused"
+fix="$(new_fixture off_base)"
+git -C "$fix" checkout --quiet -b some-feature
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "running off the base branch was accepted"
+grep -q "not 'main'" "$LAST_OUT" || fail "off-base rejection was not reported: $(cat "$LAST_OUT")"
 
 start "a dirty working tree is refused"
 fix="$(new_fixture dirty)"

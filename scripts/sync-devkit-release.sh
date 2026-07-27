@@ -279,6 +279,19 @@ assert_expected_scope() {
 }
 
 # ── Verification ──────────────────────────────────────────────────────
+# run_untrusted CMD… — run a subprocess WITHOUT the repo-write App token.
+#
+# The sync clones another repository and the verification gate renders the
+# copier template, running npx, uvx and rendered scripts. Those inherit this
+# process's environment, so leaving GH_TOKEN in it would hand a
+# contents:write + pull-requests:write credential to every one of them — the
+# exact exposure the non-persisted push credential exists to avoid. Everything
+# they reach is public (harmon-devkit, the npm and PyPI registries), so nothing
+# here needs the token; only `gh` and the single `git push` do.
+run_untrusted() {
+    env -u GH_TOKEN -u GITHUB_TOKEN "$@"
+}
+
 # Cheapest first. `verify` is the repo's definition-of-done gate and already
 # contains test:dogfood-parity, test:dogfood-structure and the whole
 # test:template render matrix; verify:skills is the NETWORK drift check that
@@ -291,7 +304,7 @@ assert_expected_scope() {
 run_verification() {
     for _rv_target in verify:skills:offline security:secrets verify:skills verify; do
         note "verifying: task $_rv_target"
-        task "$_rv_target" ||
+        run_untrusted task "$_rv_target" ||
             die "verification failed at 'task $_rv_target' — nothing pushed, no PR touched"
     done
 }
@@ -301,7 +314,7 @@ run_verification() {
 # the new skills. Run the same guard CI runs, before the branch is pushed.
 preflight_title() {
     PR_TITLE="$1" PR_BODY="" CHANGED_FILES="$(changed_paths_nl)" \
-        task guard:release-title ||
+        run_untrusted task guard:release-title ||
         die "PR title '$1' would not cut a release for a template/ change"
 }
 
@@ -401,7 +414,7 @@ fetch_sync_branch() {
     [ "$SYNC_BRANCH_FETCHED" -eq 0 ] || return 0
     SYNC_BRANCH_FETCHED=1
     git update-ref -d "refs/remotes/origin/$SYNC_BRANCH" 2>/dev/null || true
-    git fetch --quiet origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
+    git_remote fetch --quiet origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
         2>/dev/null || true
     return 0
 }
@@ -430,37 +443,47 @@ $_sbp_yaml
 EOF
 }
 
-# push_sync_branch — push the rolling bot branch, and ONLY that branch.
+# git_remote ARGS… — a git command that talks to origin, authenticated when a
+# token is available.
 #
 # The token is deliberately not persisted into .git/config (the repo-wide
-# `persist-credentials: false` hardening — see docs/architecture/security.md):
-# this job runs `task verify`, which executes copier renders, npx and uvx, so a
-# credential sitting in a file for the whole job is reachable by third-party
-# code. `-c` config is scoped to this one git process and the helper reads the
-# token from the environment, so it lands in neither argv nor any file. The
-# empty first helper clears any inherited helper list so ours answers.
-push_sync_branch() {
+# `persist-credentials: false` hardening — see docs/architecture/security.md).
+# `-c` config is scoped to this one git process and the helper reads the token
+# from the environment, so it lands in neither argv nor any file, and no other
+# process inherits it — the sync and verification subprocesses run with
+# GH_TOKEN scrubbed (see run_untrusted). The empty first helper clears any
+# inherited helper list so ours answers.
+git_remote() {
     if [ -n "${GH_TOKEN:-}" ]; then
         # shellcheck disable=SC2016 # $GH_TOKEN must expand inside git's helper, not here
         git -c credential.helper= \
             -c credential.helper='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' \
-            push --force origin "HEAD:refs/heads/$SYNC_BRANCH"
+            "$@"
     else
         # Local/manual run: rely on whatever credentials the operator's git has.
-        git push --force origin "HEAD:refs/heads/$SYNC_BRANCH"
+        git "$@"
     fi
 }
 
-# base_ref — the local base branch when the checkout created one, else its
-# remote-tracking ref (a detached checkout still has origin/main).
-base_ref() {
-    if git rev-parse --verify --quiet "refs/heads/$BASE_BRANCH" >/dev/null; then
-        printf '%s\n' "$BASE_BRANCH"
-    elif git rev-parse --verify --quiet "refs/remotes/origin/$BASE_BRANCH" >/dev/null; then
-        printf '%s\n' "origin/$BASE_BRANCH"
-    else
-        die "neither $BASE_BRANCH nor origin/$BASE_BRANCH exists — cannot start a sync branch"
-    fi
+push_sync_branch() {
+    git_remote push --force origin "HEAD:refs/heads/$SYNC_BRANCH"
+}
+
+# assert_on_base — everything below reads the WORKING TREE, and the force-push
+# publishes whatever the sync branch inherits from its start point, so the
+# checkout must actually be the base branch and must match what origin holds.
+# `actions/checkout` guarantees both in CI; locally this refuses to build the
+# bot branch on a stale or ahead `main`, which would otherwise publish
+# unrelated local commits under a bot title. The scope check cannot catch that:
+# it inspects the working tree against HEAD, not HEAD against origin.
+assert_on_base() {
+    _aob_head="$(git rev-parse --abbrev-ref HEAD)"
+    [ "$_aob_head" = "$BASE_BRANCH" ] ||
+        die "HEAD is '$_aob_head', not '$BASE_BRANCH' — run the sync from the base branch"
+    git_remote fetch --quiet origin "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH" ||
+        die "could not fetch origin/$BASE_BRANCH — cannot confirm the sync would start from the real base"
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse "refs/remotes/origin/$BASE_BRANCH")" ] ||
+        die "local $BASE_BRANCH is not at origin/$BASE_BRANCH — fetch and reset first (a force-push would publish the difference)"
 }
 
 cmd_run() {
@@ -471,6 +494,7 @@ cmd_run() {
     need_manifests
     [ -z "$(git status --porcelain)" ] ||
         die "working tree is not clean — refusing to build a sync commit on top of local changes"
+    assert_on_base
 
     _run_target="$(cmd_resolve "$_run_tag")"
     _run_current="$(cmd_pinned)"
@@ -497,11 +521,12 @@ cmd_run() {
     # Always branch from the base, never from whatever the branch held last
     # run: that is what makes a newer release deterministically supersede an
     # older open sync PR instead of stacking on top of it.
-    git checkout -B "$SYNC_BRANCH" "$(base_ref)" >/dev/null
+    git checkout -B "$SYNC_BRANCH" "$BASE_BRANCH" >/dev/null
 
     set_pin "$ROOT_MANIFEST" "$_run_target"
     set_pin "$TEMPLATE_MANIFEST" "$_run_target"
-    task sync:skills || die "'task sync:skills' failed at $_run_target — nothing pushed"
+    run_untrusted task sync:skills ||
+        die "'task sync:skills' failed at $_run_target — nothing pushed"
     assert_expected_scope "$_run_dest"
 
     _run_title="fix(template): sync harmon-devkit skills to $_run_target"
