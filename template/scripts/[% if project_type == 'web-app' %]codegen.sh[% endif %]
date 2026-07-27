@@ -3,8 +3,10 @@
 #
 #   ./scripts/codegen.sh            (task codegen)       regenerate, that's all
 #   ./scripts/codegen.sh --guard    (task guard:codegen)  regenerate, then FAIL
-#                                                         if the result differs
+#                                                         if the output differs
 #                                                         from what is staged
+#                                                         (and warn on a
+#                                                         half-staged tree)
 #
 # Why a guard rather than a plain prerequisite: editing a Convex schema changes
 # convex/_generated/, and tsc reading the stale copy fails in a way that looks
@@ -89,13 +91,21 @@ if [ "$stale" -eq 1 ]; then
     exit 1
 fi
 
-# The one arrangement the comparison above cannot see: output STAGED while the
+# One arrangement the comparison above cannot see: output STAGED while the
 # sources that produced it are left UNSTAGED. The generators read the worktree,
 # so the staged output matches worktree sources and looks current — but the
 # commit would pair new output with old input, and CI regenerates from what you
-# committed and fails. Scoped this narrowly on purpose: plain work-in-progress
-# (unstaged sources, unstaged output) is caught by the staleness check above,
-# and must not trip this one.
+# committed and fails.
+#
+# WARNS rather than fails, deliberately. Deciding this for real means
+# regenerating from the INDEX and comparing that, which needs the index
+# materialized into a temp tree with node_modules grafted in — fragile, and
+# heavy for a gate run on every change. The available approximation ("output
+# staged AND anything under the source paths uncommitted") also fires on a
+# perfectly consistent staged change that merely sits next to unrelated
+# work-in-progress, which is common. Blocking `verify` on that would trade a
+# rare, CI-caught problem for a frequent, wrong one — so: surface it, don't
+# gate. CI runs this same guard, and a half-staged commit fails there.
 sources_uncommitted=0
 if [ "${#source_paths[@]}" -gt 0 ]; then
     git diff --quiet -- "${source_paths[@]}" || sources_uncommitted=1
@@ -108,10 +118,10 @@ fi
 
 if [ "$sources_uncommitted" -eq 1 ] &&
     ! git diff --cached --quiet -- "${generated_paths[@]}"; then
-    echo "codegen: generated output is staged, but its sources are not:" >&2
+    echo "codegen: WARNING — generated output is staged while these sources have" >&2
+    echo "codegen: uncommitted changes:" >&2
     git status --short -- "${source_paths[@]}" >&2
-    echo "codegen: committing this would pair new generated files with old" >&2
-    echo "codegen: sources, and CI would regenerate from the old ones and fail." >&2
-    echo "codegen: stage the sources too, then re-run." >&2
-    exit 1
+    echo "codegen: if any of them affect codegen, the commit would pair new" >&2
+    echo "codegen: generated files with old sources and CI would fail. If they are" >&2
+    echo "codegen: unrelated work-in-progress, ignore this." >&2
 fi
