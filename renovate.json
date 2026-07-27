@@ -110,7 +110,8 @@
       "dependencyDashboardApproval": true,
       "dependencyDashboardCategory": "Agent skills",
       "prBodyNotes": [
-        "After approving this update, run `task sync:skills` and push the refreshed `.claude/skills/` as a separate commit; do not amend Renovate's commit."
+        "Normally unnecessary: `.github/workflows/sync-harmon-devkit.yml` already opens a complete pin-and-sync PR on every stable harmon-devkit release. This rule stays as a passive stale-pin signal and manual fallback — it needs Dependency Dashboard approval, so it never races that workflow.",
+        "If you do approve this update, run `task sync:skills` and push the refreshed `.claude/skills/` as a separate commit; do not amend Renovate's commit. A ref-only bump fails the skills drift check by design."
       ]
     },
     {

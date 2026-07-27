@@ -8,6 +8,28 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.5.0](https://github.com/evanharmon1/harmon-init/compare/v4.4.1...v4.5.0) (2026-07-27)
+
+
+### Features
+
+* give the dev container the host Claude Code status line ([#390](https://github.com/evanharmon1/harmon-init/issues/390)) ([b871463](https://github.com/evanharmon1/harmon-init/commit/b871463a098ea51b5a14bce7ae14994125c4a5c9))
+* lint Terraform with TFLint and pinned Checkov ([#391](https://github.com/evanharmon1/harmon-init/issues/391)) ([a97264f](https://github.com/evanharmon1/harmon-init/commit/a97264f1c2310242755e5f1e5c60e45a81c7929f))
+* make terraform-verify reportable on every event ([#397](https://github.com/evanharmon1/harmon-init/issues/397)) ([6cd3377](https://github.com/evanharmon1/harmon-init/commit/6cd3377377bc0f9f8d496fdfd12d4adbfd1e833a)), closes [#385](https://github.com/evanharmon1/harmon-init/issues/385)
+* require terraform-verify for Terraform repos ([#399](https://github.com/evanharmon1/harmon-init/issues/399)) ([25342f1](https://github.com/evanharmon1/harmon-init/commit/25342f17215d54c4d0281cbcd4f828d3c640ff80))
+* **template:** ship Terraform provider-lock discipline ([#395](https://github.com/evanharmon1/harmon-init/issues/395)) ([23aadae](https://github.com/evanharmon1/harmon-init/commit/23aadae39001a67435a63090690cb0b03ef5f89a))
+
+
+### Bug Fixes
+
+* install file in the devcontainer and fail loudly without it ([#381](https://github.com/evanharmon1/harmon-init/issues/381)) ([bcef852](https://github.com/evanharmon1/harmon-init/commit/bcef852e080b630ace55de7144c5fec8f953478d))
+* require the Terraform provider lock to reach the commit ([#396](https://github.com/evanharmon1/harmon-init/issues/396)) ([41026c4](https://github.com/evanharmon1/harmon-init/commit/41026c43a6e6ece3860c4046216c2cf13622ef49)), closes [#385](https://github.com/evanharmon1/harmon-init/issues/385)
+* sync harmon-devkit skills to v0.8.7 ([#373](https://github.com/evanharmon1/harmon-init/issues/373)) ([13630e6](https://github.com/evanharmon1/harmon-init/commit/13630e67c3b294662ce43d0112820da7c3ec8d34))
+* sync root dogfood with the template and repair the .vscode whitelist ([#378](https://github.com/evanharmon1/harmon-init/issues/378)) ([98e1967](https://github.com/evanharmon1/harmon-init/commit/98e196746e5a07f664ef7b04960fbd0f0e553a51))
+* **template:** stop a merged Terraform change from going unapplied ([#401](https://github.com/evanharmon1/harmon-init/issues/401)) ([3a9b890](https://github.com/evanharmon1/harmon-init/commit/3a9b890ab47ecff22fc51d5d8ef1ac64d93650b5))
+* **template:** stop trailing block tags from joining the next rendered line ([#383](https://github.com/evanharmon1/harmon-init/issues/383)) ([7fec834](https://github.com/evanharmon1/harmon-init/commit/7fec8346e9b7a220060a56399503df8403db40be))
+* **template:** sync harmon-devkit skills to v0.9.0 ([#409](https://github.com/evanharmon1/harmon-init/issues/409)) ([0456ad1](https://github.com/evanharmon1/harmon-init/commit/0456ad1a883590c481f7deee3a53db487d4c1a36))
+
 ## [4.4.1](https://github.com/evanharmon1/harmon-init/compare/v4.4.0...v4.4.1) (2026-07-24)
 
 

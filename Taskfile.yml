@@ -78,6 +78,7 @@ tasks:
       - task: test:ci-results
       - task: test:renovate-pins
       - task: test:release-title
+      - task: test:sync-devkit-release
       - task: test:dogfood-parity
       - task: test:dogfood-structure
       - task: foreman:test
@@ -307,6 +308,11 @@ tasks:
     cmds:
       - ./scripts/test-release-title.sh
 
+  test:sync-devkit-release:
+    desc: Unit-test the harmon-devkit release→sync-PR automation (offline, stubbed gh/task)
+    cmds:
+      - ./scripts/test-sync-devkit-release.sh
+
   # ── Dogfood drift (root layer vs template/) ───────────────────
   # Three checks, in increasing looseness. The root layer is template/ rendered
   # with .dogfood-answers.yml, maintained by hand — `copier update` can never
@@ -349,6 +355,15 @@ tasks:
     desc: "Fast offline check that the vendored ref matches the manifest (no network)"
     cmds:
       - ./scripts/sync-skills.sh verify-offline
+
+  # ROOT-ONLY (no template twin): the harmon-init <-> harmon-devkit release edge.
+  # Driven by .github/workflows/sync-harmon-devkit.yml on a harmon-devkit release
+  # dispatch, a manual dispatch, or the daily reconciliation schedule — see
+  # docs/architecture/ci-cd.md. Opens/updates ONE PR and never merges anything.
+  sync:devkit-release:
+    desc: "Pin the latest harmon-devkit release, vendor it, verify, and open/update the sync PR"
+    cmds:
+      - ./scripts/sync-devkit-release.sh run {{.CLI_ARGS}}
 
   # ── Second-model review (Codex) ───────────────────────────────
   # Optional second AI model (the OpenAI Codex CLI) reviewing the current
