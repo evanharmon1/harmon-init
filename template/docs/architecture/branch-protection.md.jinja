@@ -356,6 +356,23 @@ If a repository has no external contributors and prefers batch planning over
 that protection, allow `merge_group` in `terraform-plan-apply`'s `if:` — but
 treat that as a deliberate, documented exception, and never on a repository that
 accepts fork pull requests.
+
+**On a fork pull request, `terraform-verify` reports success with nothing having
+run.** Every repository-controlled job is skipped at the fork trust boundary and
+the aggregate verifies exactly that. This is the same shape as the required
+`verify` and `security` checks, which skip `lint`, `security`[% if use_node %], `build-test`[% endif %] the same
+way — a green aggregate on a fork PR means "the trust boundary held", not
+"validation passed".
+[% if github_org != author_git_provider_username %]
+This repository has the merge queue enabled, which closes the gap: a queued
+entry raises a `merge_group` event, which is not a fork event, so `fmt` and
+`validate` run against the trusted merged result before it reaches `main`.
+[% else %]
+This repository has **no merge queue** (it is owned by a personal account), so
+there is no trusted pre-merge run. If you begin accepting fork pull requests,
+validate them before merging — push the branch to this repository and let it run
+as a same-repo PR, or review the push-to-`main` run and be ready to revert.
+[% endif %]
 [% endif %]
 
 [% if use_codeql %]
