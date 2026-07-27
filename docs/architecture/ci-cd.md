@@ -74,6 +74,12 @@ human merges the sync PR, then harmon-init's release PR
   force-push can never publish unrelated local commits under a bot title. An
   origin that cannot be reached aborts rather than being read as "no sync PR is
   in flight".
+- **Pin parity:** `task test:skills-pin-parity` (in `verify` and CI) fails when
+  the root and template manifests pin different tags. The `verify:skills*` drift
+  checks cannot see this — both read only the root manifest — so a pin edited in
+  the template twin alone would otherwise ship a stale pin to generated repos
+  and surface only when the next sync run aborts. Root-only: a generated repo
+  has one manifest and nothing to compare.
 - **Fail-closed:** the run aborts before any push if the two pins already
   disagree, if the tag would move the pin *backwards* — measured against the
   newest tag in flight, so a delayed dispatch cannot drag an open sync PR back

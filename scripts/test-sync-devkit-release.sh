@@ -611,4 +611,16 @@ rc="$(run_helper "$fix" pinned)"
 rc="$(run_helper "$fix" bogus)"
 [ "$rc" = 2 ] || fail "an unknown subcommand should be a usage error (got $rc)"
 
+start "pinned fails on drift — the contract task:skills-pin-parity gates on"
+# `task test:skills-pin-parity` is exactly `sync-devkit-release.sh pinned`, so
+# the guard is only as good as this subcommand's exit code. Both manifests
+# agreeing must exit 0; disagreeing must exit non-zero. Asserted directly rather
+# than only through `run`, because that is how the gate invokes it.
+fix="$(new_fixture pin_parity_ok)"
+[ "$(run_helper "$fix" pinned)" = 0 ] || fail "matching pins did not pass the parity guard"
+fix="$(new_fixture pin_parity_drift v0.9.0 v0.8.7)"
+rc="$(run_helper "$fix" pinned)"
+[ "$rc" != 0 ] || fail "the parity guard passed a template twin pinned to an older tag"
+grep -q "pin disagreement" "$LAST_OUT" || fail "drift was not reported: $(cat "$LAST_OUT")"
+
 echo "sync-devkit-release: all ${cases} cases passed"
