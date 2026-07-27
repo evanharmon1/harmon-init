@@ -7,6 +7,8 @@
 #   2. Once a config exists, run the FAIL-CLOSED environment guard before
 #      Playwright. The guard ships unconfigured and fails on purpose — that is
 #      a real failure, never a skip. See scripts/e2e-env-guard.sh.
+#   3. Ensure the browsers the config declares are installed, matching what the
+#      CI e2e job does — otherwise local `task ci` fails where CI passes.
 #
 # This is the port-binding test tier (Playwright serves the app), which is why
 # it is kept out of `check`/`test`/`verify`. It does NOT build: `task ci` runs
@@ -22,5 +24,15 @@ if ! find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; the
 fi
 
 ./scripts/e2e-env-guard.sh
+
+# Mirror the CI job's browser install, so `task ci` actually runs the suite on a
+# clean checkout or a fresh devcontainer instead of dying on "Executable doesn't
+# exist". Idempotent and offline once the browsers are present, so the cost on a
+# warm machine is negligible.
+#
+# WITHOUT --with-deps: that shells out to apt via sudo, and OS packages are not
+# something a local task may assume it can install. CI's hosted-runner step
+# passes --with-deps; its self-hosted branch does not, for the same reason.
+npx playwright install
 
 exec npx playwright test "$@"

@@ -1192,6 +1192,12 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         err "e2e-run.sh does not gate its skip on a missing playwright.config.*"
     grep -q './scripts/e2e-env-guard.sh' scripts/e2e-run.sh ||
         err "e2e-run.sh does not run the fail-closed e2e env guard"
+    # Local `task ci` must be able to actually run the suite on a clean checkout,
+    # like the CI job does — but never by installing OS packages via sudo.
+    grep -q 'playwright install' scripts/e2e-run.sh ||
+        err "e2e-run.sh does not install Playwright browsers — local ci would fail where CI passes"
+    ! grep -q 'playwright install .*--with-deps' scripts/e2e-run.sh ||
+        err "e2e-run.sh installs OS deps (--with-deps needs sudo); that is CI's hosted-runner step, not a local task's"
     ./scripts/e2e-run.sh >/dev/null 2>&1 ||
         err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
     # A config with the guard still unconfigured must FAIL, not skip.
