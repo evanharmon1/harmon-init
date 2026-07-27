@@ -73,6 +73,18 @@ fresh scaffold keeps `task ci` and the `e2e` check green. That skip covers
 `scripts/e2e-env-guard.sh` runs and **fails until it is configured** for this
 app's providers and production domains (fail-closed by design; see
 `docs/CHECKLIST.md`). Never widen the skip to swallow an unconfigured guard.
+
+Two more things `task test:e2e` does, both to stay honest about the tiers:
+
+- It runs with `--grep-invert @a11y`. The `@a11y` specs are their own
+  **non-blocking** tier (`task test:a11y`, and a CI job deliberately kept out of
+  `verify.needs`). Running them unfiltered inside the blocking `e2e` check would
+  promote accessibility to a required gate through the back door — which is a
+  decision to make on purpose, by promoting the `a11y` job.
+- It installs browsers (like the CI job) **unless** `PLAYWRIGHT_BROWSERS_PATH`
+  points at a read-only, image-owned cache.[% if devcontainer %] The devcontainer bakes chromium into
+  a root-owned `/ms-playwright`, so installing from inside a task would fail
+  with `EACCES`; add browsers there by rebuilding the image.[% endif %]
 [% endif %]
 [% if project_type == 'web-app' %]
 

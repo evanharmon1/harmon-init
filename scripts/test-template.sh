@@ -1198,6 +1198,19 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         err "e2e-run.sh does not install Playwright browsers — local ci would fail where CI passes"
     ! grep -q 'playwright install .*--with-deps' scripts/e2e-run.sh ||
         err "e2e-run.sh installs OS deps (--with-deps needs sudo); that is CI's hosted-runner step, not a local task's"
+    # The devcontainer bakes chromium into a root-owned PLAYWRIGHT_BROWSERS_PATH
+    # (o+rx, not writable), so an unconditional install EACCESes there before a
+    # single test runs — in the environment agents actually use.
+    grep -q 'PLAYWRIGHT_BROWSERS_PATH' scripts/e2e-run.sh ||
+        err "e2e-run.sh installs browsers unconditionally — it would fail on the devcontainer's read-only, image-owned browser cache"
+    # a11y is a SEPARATE non-blocking tier. An unfiltered `playwright test` here
+    # sweeps the shipped tests/a11y.spec.ts (@a11y) into the BLOCKING e2e check,
+    # promoting a11y to a required gate that the workflow and docs both say it
+    # is not.
+    if [ -f tests/a11y.spec.ts ]; then
+        grep -q -- '--grep-invert @a11y' scripts/e2e-run.sh ||
+            err "e2e-run.sh does not exclude @a11y — the blocking e2e check would gate on the non-blocking a11y specs"
+    fi
     ./scripts/e2e-run.sh >/dev/null 2>&1 ||
         err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
     # A config with the guard still unconfigured must FAIL, not skip.
