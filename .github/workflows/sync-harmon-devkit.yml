@@ -63,6 +63,13 @@ jobs:
           permission-pull-requests: write
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # Pinned to the default branch, not github.ref. Dispatch and schedule
+          # already run from main, but workflow_dispatch lets the operator pick
+          # any branch — and that branch's Taskfile/helper would then execute
+          # with a contents:write App token in the environment. Branch
+          # protection reviews what reaches main; nothing reviews an arbitrary
+          # branch, so the privileged path only ever runs main's code.
+          ref: main
           # Full history: release-title pre-flight and the template render
           # matrix both diff against the base.
           fetch-depth: 0
@@ -79,6 +86,8 @@ jobs:
           gitleaks: "true"
       # `task verify` renders the copier template, so this job needs the same
       # extras build.yml's template-test job installs on top of the composite.
+      # `gh` is assumed from the runner image (as in close-milestone-on-release);
+      # a CI_RUNS_ON runner without it fails fast on "gh is required".
       - name: Install the template-render toolchain
         run: |
           # --force overwrites a foreign same-named entry point instead of

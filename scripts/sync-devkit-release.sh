@@ -414,8 +414,20 @@ fetch_sync_branch() {
     [ "$SYNC_BRANCH_FETCHED" -eq 0 ] || return 0
     SYNC_BRANCH_FETCHED=1
     git update-ref -d "refs/remotes/origin/$SYNC_BRANCH" 2>/dev/null || true
-    git_remote fetch --quiet origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
-        2>/dev/null || true
+    # "the branch is not there" and "origin was unreachable" must not look the
+    # same: both would leave the ref absent, and the second silently disarms
+    # the guards that read it — the older-tag floor and the no-churn check —
+    # so a transient blip could regress an open sync PR. ls-remote --exit-code
+    # separates them: 0 = present, 2 = genuinely absent, anything else = error.
+    _fsb_rc=0
+    git_remote ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1 || _fsb_rc=$?
+    case "$_fsb_rc" in
+    0) ;;
+    2) return 0 ;;
+    *) die "could not reach origin to look for $SYNC_BRANCH (git exit $_fsb_rc) — refusing to proceed as if no sync PR were in flight" ;;
+    esac
+    git_remote fetch --quiet origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" ||
+        die "could not fetch $SYNC_BRANCH from origin"
     return 0
 }
 
@@ -506,6 +518,10 @@ cmd_run() {
         note "already pinned and vendored at $_run_target — nothing to do"
         return 0
     fi
+    # Called as a bare statement so a failure aborts here: inside the command
+    # substitutions below, `set -e` would not see it and the run would continue
+    # with the guards silently disarmed.
+    fetch_sync_branch
     # The floor is the newest tag already in flight: the base pin, or the open
     # sync branch's pin when it is ahead (the PR has not merged yet).
     _run_floor="$_run_current"

@@ -65,9 +65,12 @@ human merges the sync PR, then harmon-init's release PR
   a process-scoped credential helper, and the sync and verification targets run
   with `GH_TOKEN` scrubbed. A contents:write credential is therefore never
   visible to the copier renders, `npx`, and `uvx` that `task verify` spawns.
-- **Base integrity:** the run refuses to start unless `HEAD` is `main` and
-  `main` matches `origin/main`, so a force-push can never publish unrelated
-  local commits under a bot title.
+- **Base integrity:** the checkout is pinned to `main` (`workflow_dispatch`
+  otherwise lets an operator run an unreviewed branch's helper with a write
+  token), and the run refuses to start unless `HEAD` is `main` and `main`
+  matches `origin/main` — so a force-push can never publish unrelated local
+  commits under a bot title. An origin that cannot be reached aborts rather
+  than being read as "no sync PR is in flight".
 - **Fail-closed:** the run aborts before any push if the two pins already
   disagree, if the tag would move the pin *backwards* — measured against the
   newest tag in flight, so a delayed dispatch cannot drag an open sync PR back

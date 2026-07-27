@@ -539,6 +539,18 @@ rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" != 0 ] || fail "running off the base branch was accepted"
 grep -q "not 'main'" "$LAST_OUT" || fail "off-base rejection was not reported: $(cat "$LAST_OUT")"
 
+start "an unreachable origin aborts instead of assuming nothing is in flight"
+fix="$(new_fixture unreachable)"
+rc="$(run_helper "$fix" run v0.9.1)"
+[ "$rc" = 0 ] || fail "first sync exited $rc: $(cat "$LAST_OUT")"
+pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
+git -C "$fix" checkout --quiet main
+git -C "$fix" remote set-url origin "$TMPROOT/does-not-exist.git"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "an unreachable origin was treated as 'no sync branch'"
+[ "$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")" = "$pushed_before" ] ||
+    fail "the sync branch changed despite an unreachable origin"
+
 start "a dirty working tree is refused"
 fix="$(new_fixture dirty)"
 echo "local edit" >>"$fix/.skills-sync.yaml"
