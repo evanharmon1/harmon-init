@@ -372,6 +372,21 @@ rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "a deliberate manual downgrade was refused: $(cat "$LAST_OUT")"
 [ "$(pin_of "$fix/.skills-sync.yaml")" = v0.9.0 ] || fail "the manual downgrade did not move the pin"
 
+start "an out-of-order event cannot drag an open sync PR back to an older tag"
+fix="$(new_fixture out_of_order)"
+rc="$(run_helper "$fix" run v0.9.1)"
+[ "$rc" = 0 ] || fail "first sync exited $rc: $(cat "$LAST_OUT")"
+pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
+# The base pin is still v0.8.7 until the PR merges, so the older tag would look
+# like a move forward if only the base branch were consulted.
+git -C "$fix" checkout --quiet main
+STUB_PR_LIST="7 false"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "a delayed older event regressed the open sync PR"
+grep -q "backwards" "$LAST_OUT" || fail "regression was not reported: $(cat "$LAST_OUT")"
+[ "$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")" = "$pushed_before" ] ||
+    fail "the open sync branch was rewritten with the older tag"
+
 start "a newer release supersedes an open sync PR from one commit off main"
 fix="$(new_fixture supersede)"
 rc="$(run_helper "$fix" run v0.9.0)"
@@ -476,7 +491,7 @@ rc="$(run_helper "$fix" run v0.9.0)"
 ! logged "gh pr" || fail "a failing sync still touched a PR"
 
 start "a failing verification never pushes or opens a PR"
-for failing in verify:skills:offline verify:skills verify; do
+for failing in verify:skills:offline security:secrets verify:skills verify; do
     fix="$(new_fixture "verify_fail_${failing//:/_}")"
     STUB_FAIL_TASKS="$failing"
     rc="$(run_helper "$fix" run v0.9.0)"

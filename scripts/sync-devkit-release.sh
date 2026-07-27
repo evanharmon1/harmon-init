@@ -76,27 +76,28 @@ need_manifests() {
 # it is used anywhere and for EXISTENCE against the upstream API before it is
 # believed. Deliberately pure shell: no pipe into grep, so there is no way for
 # an embedded newline to satisfy a per-line anchored regex and slip through.
-assert_tag_shape() {
-    _ats_tag="$1"
-    [ -n "$_ats_tag" ] || die "empty harmon-devkit tag"
-    case "$_ats_tag" in
+looks_like_tag() {
+    case "${1:-}" in
     v*) ;;
-    *) die "refusing tag '$_ats_tag' — a harmon-devkit release tag starts with 'v'" ;;
+    *) return 1 ;;
     esac
-    _ats_rest="${_ats_tag#v}"
-    # Only digits and dots may follow the 'v'. This also rejects newlines,
-    # whitespace, and every shell metacharacter in one gate.
-    case "$_ats_rest" in
-    "" | *[!0-9.]*) die "refusing tag '$_ats_tag' — only digits and dots may follow 'v'" ;;
+    _llt_rest="${1#v}"
+    # Only digits and dots may follow the 'v'. This one gate also rejects
+    # newlines, whitespace, and every shell metacharacter.
+    case "$_llt_rest" in
+    "" | *[!0-9.]* | .* | *.) return 1 ;;
     esac
-    _ats_dots="${_ats_rest//[!.]/}"
-    [ "${#_ats_dots}" -eq 2 ] ||
-        die "refusing tag '$_ats_tag' — expected a stable v<major>.<minor>.<patch> tag"
-    _ats_tail="${_ats_rest#*.}"
-    for _ats_part in "${_ats_rest%%.*}" "${_ats_tail%%.*}" "${_ats_tail#*.}"; do
-        [ -n "$_ats_part" ] ||
-            die "refusing tag '$_ats_tag' — empty version component"
-    done
+    case "$_llt_rest" in
+    *..*) return 1 ;;
+    esac
+    _llt_dots="${_llt_rest//[!.]/}"
+    [ "${#_llt_dots}" -eq 2 ]
+}
+
+assert_tag_shape() {
+    [ -n "${1:-}" ] || die "empty harmon-devkit tag"
+    looks_like_tag "$1" ||
+        die "refusing tag '$1' — expected a stable v<major>.<minor>.<patch> harmon-devkit tag"
 }
 
 # cmd_resolve [TAG] — echo the harmon-devkit tag to sync to, and NOTHING else
@@ -282,8 +283,13 @@ assert_expected_scope() {
 # contains test:dogfood-parity, test:dogfood-structure and the whole
 # test:template render matrix; verify:skills is the NETWORK drift check that
 # `verify` deliberately leaves out (see the Taskfile's `ci` comment).
+#
+# security:secrets is here rather than left to the PR's own CI because this
+# step vendors files from another repository and the next step PUBLISHES them:
+# a credential that reached a harmon-devkit release would be in harmon-init's
+# remote history — and need rotating — before any PR check could object.
 run_verification() {
-    for _rv_target in verify:skills:offline verify:skills verify; do
+    for _rv_target in verify:skills:offline security:secrets verify:skills verify; do
         note "verifying: task $_rv_target"
         task "$_rv_target" ||
             die "verification failed at 'task $_rv_target' — nothing pushed, no PR touched"
@@ -339,9 +345,9 @@ Nothing else — the run aborts if the sync writes a path it does not own.
 
 ## Verification
 
-\`task verify:skills:offline\`, \`task verify:skills\` and \`task verify\` all
-passed on this commit before the branch was pushed, and the releasing PR title
-was pre-flighted through \`task guard:release-title\`.
+\`task verify:skills:offline\`, \`task security:secrets\`, \`task verify:skills\`
+and \`task verify\` all passed on this commit before the branch was pushed, and
+the releasing PR title was pre-flighted through \`task guard:release-title\`.
 
 ## Merging
 
@@ -385,14 +391,43 @@ open_or_update_pr() {
     fi
 }
 
+# fetch_sync_branch — refresh refs/remotes/origin/$SYNC_BRANCH exactly once.
+# The ref is dropped first so that after this it exists if and only if the
+# branch exists upstream: `actions/checkout --fetch-depth 0` populates
+# remote-tracking refs, and a branch deleted since then would otherwise be read
+# as still present.
+SYNC_BRANCH_FETCHED=0
+fetch_sync_branch() {
+    [ "$SYNC_BRANCH_FETCHED" -eq 0 ] || return 0
+    SYNC_BRANCH_FETCHED=1
+    git update-ref -d "refs/remotes/origin/$SYNC_BRANCH" 2>/dev/null || true
+    git fetch --quiet origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
+        2>/dev/null || true
+    return 0
+}
+
 # remote_sync_tree — the tree the pushed sync branch already holds, or empty
 # when the branch does not exist upstream. Trees, not commit SHAs: a rebuilt
 # commit differs only by committer timestamp, so comparing SHAs would report a
 # change on every run.
 remote_sync_tree() {
-    git fetch --quiet origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" \
-        2>/dev/null || return 0
+    fetch_sync_branch
     git rev-parse --quiet --verify "refs/remotes/origin/$SYNC_BRANCH^{tree}" 2>/dev/null || return 0
+}
+
+# sync_branch_pin — the tag an already-pushed sync branch carries, or empty.
+# The base branch alone is not enough to detect an out-of-order event: while a
+# sync PR is open, the base pin stays stale, so a delayed older dispatch would
+# look like a legitimate move forward and force the open PR backwards.
+sync_branch_pin() {
+    fetch_sync_branch
+    _sbp_yaml="$(git show "refs/remotes/origin/$SYNC_BRANCH:$ROOT_MANIFEST" 2>/dev/null)" ||
+        return 0
+    awk '/^[[:space:]]*ref:/ {
+        sub(/^[[:space:]]*ref:[[:space:]]*/, ""); sub(/[[:space:]#].*/, ""); print; exit
+    }' <<EOF
+$_sbp_yaml
+EOF
 }
 
 # push_sync_branch — push the rolling bot branch, and ONLY that branch.
@@ -447,7 +482,15 @@ cmd_run() {
         note "already pinned and vendored at $_run_target — nothing to do"
         return 0
     fi
-    assert_not_a_downgrade "$_run_target" "$_run_current"
+    # The floor is the newest tag already in flight: the base pin, or the open
+    # sync branch's pin when it is ahead (the PR has not merged yet).
+    _run_floor="$_run_current"
+    _run_branch_pin="$(sync_branch_pin)"
+    if looks_like_tag "$_run_branch_pin" &&
+        [[ "$(version_key "$_run_floor")" < "$(version_key "$_run_branch_pin")" ]]; then
+        _run_floor="$_run_branch_pin"
+    fi
+    assert_not_a_downgrade "$_run_target" "$_run_floor"
     note "syncing $_run_current -> $_run_target"
 
     configure_identity
