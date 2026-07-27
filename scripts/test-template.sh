@@ -1210,6 +1210,12 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     if [ -f tests/a11y.spec.ts ]; then
         grep -q -- '--grep-invert @a11y' scripts/e2e-run.sh ||
             err "e2e-run.sh does not exclude @a11y — the blocking e2e check would gate on the non-blocking a11y specs"
+        # docs/CHECKLIST.md tells consumers to add a playwright.config.* just to
+        # enable the a11y job. At that point a11y.spec.ts is the ONLY spec, the
+        # filter above removes it, and a bare `playwright test` errors on "no
+        # tests found" — wedging the blocking e2e check for following the docs.
+        grep -q -- '--pass-with-no-tests' scripts/e2e-run.sh ||
+            err "e2e-run.sh filters out @a11y without --pass-with-no-tests — an a11y-only repo would fail the blocking e2e check"
     fi
     ./scripts/e2e-run.sh >/dev/null 2>&1 ||
         err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
