@@ -101,13 +101,15 @@ audit:dogfood` — before a release, or whenever a change spans both layers — 
 read the diff. Intentional divergences are allowlisted, **with reasons**, in each
 script.
 
-The **standardize-repo skill** is vendored at `.claude/skills/standardize-repo`
-(so the devcontainer and cloud claude-* workflows can use it); the canonical copy
-lives in harmon-devkit (`ai/skills/repo/standardize-repo`). The root repo
-dogfoods the same pinned skills sync the template ships: `.skills-sync.yaml`
-pins a released harmon-devkit tag, `task sync:skills` vendors the `repo`
-category into `.claude/skills`, and CI/pre-push run `task verify:skills` /
-`verify:skills:offline` as drift checks.
+The **shared skills** are vendored into `.claude/skills` (so the devcontainer and
+cloud claude-* workflows can use them); the canonical copies live in harmon-devkit
+under `ai/skills/`. The root repo dogfoods the same pinned skills sync the
+template ships: `.skills-sync.yaml` pins a released harmon-devkit tag,
+`task sync:skills` vendors the `universal` and `repo` categories — the
+dev-workflow session skills plus `standardize-repo` — into `.claude/skills`, and
+CI/pre-push run `task verify:skills` / `verify:skills:offline` as drift checks.
+Keep the category list in step with `skill_categories` in `.dogfood-answers.yml`,
+or `task audit:dogfood` reports a permanent root/template difference.
 
 Bumping that pin after a harmon-devkit release is **automated**: the root-only
 `.github/workflows/sync-harmon-devkit.yml` (→ `task sync:devkit-release` →

@@ -36,6 +36,7 @@ release_content_paths: template
 use_skills_sync: true
 skill_categories:
   - repo
+  - universal
 
 use_foreman: true
 
