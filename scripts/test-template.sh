@@ -903,6 +903,100 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
         err "scripts/test-terraform-provider-locks.sh fails its hermetic lock-process checks"
     grep -q 'test-terraform-provider-locks.sh' scripts/test-tasks.sh ||
         err "test-tasks.sh does not run the provider-lock regression"
+
+    # ── The terraform-verify wedge guard ────────────────────────────
+    # terraform-verify is (or is about to become) a REQUIRED status check. A
+    # required check that does not report blocks the merge forever, so the
+    # workflow must NOT filter itself out by path — it has to run on every
+    # event and decide internally. These two assertions are the ones that keep
+    # a future edit from silently re-wedging every PR in a consumer repo.
+    tf_workflow=".github/workflows/terraform.yml"
+    [ -f "$tf_workflow" ] || err "$tf_workflow missing (include_terraform=true)"
+    python3 - "$tf_workflow" <<'PY' || err "the Terraform workflow would wedge a required terraform-verify check (see stderr)"
+import sys, pathlib, re
+
+text = pathlib.Path(sys.argv[1]).read_text()
+# The `on:` block only — a `paths:` key inside a job step is unrelated.
+head = text.split("\njobs:", 1)[0]
+problems = []
+if re.search(r"^\s+paths(-ignore)?:", head, re.M):
+    problems.append(
+        "the `on:` block has a paths filter — the workflow would not report on "
+        "unrelated PRs, and a required check that never reports blocks the merge"
+    )
+for trigger in ("push:", "pull_request:", "merge_group:", "workflow_dispatch:"):
+    if not re.search(r"^\s+%s" % re.escape(trigger), head, re.M):
+        problems.append(f"the `on:` block is missing the {trigger[:-1]} trigger")
+for problem in problems:
+    print(f"  {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
+    grep -qE '^  terraform-verify:' "$tf_workflow" ||
+        err "$tf_workflow has no terraform-verify aggregate job"
+    grep -q 'terraform-changed.sh' "$tf_workflow" ||
+        err "$tf_workflow does not run the change detector — it would do real work on every unrelated PR"
+    for changed_script in scripts/terraform-changed.sh scripts/test-terraform-changed.sh; do
+        [ -f "$changed_script" ] || err "$changed_script missing (include_terraform=true)"
+        [ -x "$changed_script" ] || err "$changed_script is not executable"
+    done
+    ./scripts/test-terraform-changed.sh >/dev/null 2>&1 ||
+        err "scripts/test-terraform-changed.sh fails its own change-detection checks"
+    grep -q 'test-terraform-changed.sh' scripts/test-tasks.sh ||
+        err "test-tasks.sh does not run the change-detection regression"
+    # Applying a re-plan instead of the reviewed one, or disabling state
+    # locking, are the two ways this workflow could damage infrastructure
+    # quietly. Checked with comments stripped and across line continuations —
+    # a naive grep matches the prose warning ABOUT -lock=false, and misses an
+    # apply command wrapped over several lines.
+    python3 - "$tf_workflow" <<'PY' || err "the Terraform workflow's apply path is unsafe (see stderr)"
+import sys, pathlib, re
+
+raw = pathlib.Path(sys.argv[1]).read_text()
+code = "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in raw.splitlines())
+# Join backslash continuations so a wrapped command reads as one line.
+code = re.sub(r"\\\n\s*", " ", code)
+
+problems = []
+# The credentialed job must stay out of merge_group. A maintainer queuing a
+# FORK pr fires merge_group, where the `pull_request` fork guard does not
+# apply — dropping this predicate hands R2/provider secrets to fork-authored
+# configuration, and the first sign would be a merge-queue run that already had
+# them. Cheap to assert, catastrophic to lose silently.
+plan_apply = re.search(
+    r"^  terraform-plan-apply:\n(.*?)(?=^  \w|\Z)", code, re.M | re.S
+)
+if not plan_apply:
+    problems.append("has no terraform-plan-apply job")
+elif "github.event_name != 'merge_group'" not in plan_apply.group(1):
+    problems.append(
+        "terraform-plan-apply no longer excludes merge_group — a queued fork PR "
+        "would run credentialed Terraform outside the fork trust boundary"
+    )
+if "-lock=false" in code:
+    problems.append("uses -lock=false — a concurrent state write corrupts state")
+if "-lock-timeout" not in code:
+    problems.append("does not bound state-lock waits with -lock-timeout")
+# A real CLI invocation: the word `terraform`, then flags, then the `apply`
+# subcommand. `\bterraform\b.*\bapply\b` would also match job names such as
+# `terraform-plan-apply`, since a hyphen is a word boundary.
+invocation = re.compile(r"(?:^|\s)terraform\s+(?:-\S+\s+)*apply(?:\s|$)")
+# A `name:` key is a human label ("- name: terraform apply"), not a command.
+label = re.compile(r"^\s*-?\s*name:")
+applies = [
+    ln for ln in code.splitlines() if invocation.search(ln) and not label.match(ln)
+]
+if not applies:
+    problems.append("has no terraform apply command at all")
+for ln in applies:
+    if "$TF_PLAN_DIR/tfplan" not in ln:
+        problems.append(
+            f"applies without the saved plan file, so it would apply an "
+            f"unreviewed re-plan: {ln.strip()}"
+        )
+for problem in problems:
+    print(f"  {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
     # The TFLint pin SPECIFICALLY. "Some manager matched something in this file"
     # proves nothing: the shell-variable manager already extracts
     # SHELLCHECK_VERSION= from this same action, so a first-match check passes

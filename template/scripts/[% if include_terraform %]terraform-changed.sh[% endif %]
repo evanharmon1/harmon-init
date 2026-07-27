@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# terraform-changed.sh — decide whether a range of commits touches Terraform.
+#
+# The Terraform workflow deliberately carries NO top-level `paths:` filter,
+# because `terraform-verify` is a required status check: a filtered workflow
+# never reports on unrelated PRs, and a required check that never reports blocks
+# the merge forever. So the workflow always runs and decides internally, and
+# this is that decision.
+#
+# usage: terraform-changed.sh <base_sha> <head_sha>
+#   prints `true` or `false` (also written to $GITHUB_OUTPUT as changed=...)
+#
+# Fails SAFE: anything it cannot determine — a missing/unknown sha, a shallow
+# clone, the very first push — answers `true`. A wrong `true` costs one CI run;
+# a wrong `false` waves an unvalidated infrastructure change straight through.
+set -euo pipefail
+
+base="${1:-}"
+head="${2:-HEAD}"
+
+# Paths whose change means Terraform must be re-validated:
+#
+#   terraform/**            the root itself, including non-.tf assets
+#   **/*.tf, **/*.tf.json   configuration ANYWHERE — a root may reference a
+#                           local module outside its own directory
+#                           (`source = "../modules/dns"`), and a change there
+#                           changes the plan just as much
+#   **/*.tfvars(.json)      variable values feed the plan
+#   **/.terraform.lock.hcl  provider selection
+#   the workflow itself     it decides how, and whether, infra gets applied
+#
+# Known limit: an asset that is not Terraform syntax and lives OUTSIDE
+# terraform/ — say a modules/dns/zone.tpl pulled in via templatefile() — is not
+# matched. Keep such files under terraform/, or add their path here.
+matches_terraform() {
+    grep -qE '(^terraform/|^\.github/workflows/terraform\.yml$|\.tf$|\.tf\.json$|\.tfvars$|\.tfvars\.json$|(^|/)\.terraform\.lock\.hcl$)'
+}
+
+emit() {
+    echo "$1"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        echo "changed=$1" >>"$GITHUB_OUTPUT"
+    fi
+    exit 0
+}
+
+# All-zero sha = branch creation / no previous commit; empty = caller had none.
+case "$base" in
+"" | 0000000000000000000000000000000000000000)
+    echo "terraform-changed: no usable base ($base) — assuming changed" >&2
+    emit true
+    ;;
+esac
+
+if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+    echo "terraform-changed: base $base is not in this clone — assuming changed" >&2
+    emit true
+fi
+if ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
+    echo "terraform-changed: head $head is not in this clone — assuming changed" >&2
+    emit true
+fi
+
+# `git diff` (two dots) rather than a merge-base range: the question is which
+# files differ between what is deployed and what is proposed, not which commits
+# are unique to the branch.
+#
+# --no-renames is load-bearing. With rename detection on (the default), moving
+# terraform/main.tf to docs/main.tf reports ONLY the destination path, so
+# deleting the entire Terraform configuration by moving it out would look like
+# "no Terraform change" and skip validation. --no-renames reports both sides.
+if ! changed_files="$(git diff --name-only --no-renames "$base" "$head" 2>/dev/null)"; then
+    echo "terraform-changed: could not diff $base..$head — assuming changed" >&2
+    emit true
+fi
+
+if printf '%s\n' "$changed_files" | matches_terraform; then
+    emit true
+fi
+
+emit false

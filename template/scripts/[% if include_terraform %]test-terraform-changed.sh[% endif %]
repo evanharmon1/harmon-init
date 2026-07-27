@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# test-terraform-changed.sh — regression for the Terraform change detector.
+#
+# Every case here is a way the required `terraform-verify` check could go wrong:
+# a false `false` skips validation on a real infrastructure change, and a
+# detector that errors out wedges the check entirely.
+set -euo pipefail
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+helper="$repo_root/scripts/terraform-changed.sh"
+
+tmp="$(mktemp -d -t test-terraform-changed-XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+
+repo="$tmp/repo"
+mkdir -p "$repo/terraform" "$repo/src" "$repo/.github/workflows"
+cd "$repo"
+git init -q .
+git config user.email test@example.com
+git config user.name Test
+
+printf '%s\n' 'terraform {}' >terraform/main.tf
+printf '%s\n' 'x' >src/app.js
+printf '%s\n' 'name: Terraform' >.github/workflows/terraform.yml
+git add -A
+git commit -qm base
+base="$(git rev-parse HEAD)"
+
+# ── an unrelated change is a no-op ──────────────────────────────────
+printf '%s\n' 'y' >src/app.js
+git commit -qam "unrelated"
+[ "$("$helper" "$base" HEAD)" = false ] ||
+    fail "a change touching only src/ was reported as a Terraform change"
+
+# ── a terraform/ change counts ──────────────────────────────────────
+prev="$(git rev-parse HEAD)"
+printf '%s\n' 'terraform { backend "s3" {} }' >terraform/main.tf
+git commit -qam "terraform"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "a change under terraform/ was not detected"
+
+# ── a nested terraform/ change counts ───────────────────────────────
+prev="$(git rev-parse HEAD)"
+mkdir -p terraform/modules/vpc
+printf '%s\n' 'variable "n" {}' >terraform/modules/vpc/main.tf
+git add -A
+git commit -qm "nested"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "a change under terraform/modules/ was not detected"
+
+# ── editing the workflow counts: it decides how infra is applied ────
+prev="$(git rev-parse HEAD)"
+printf '%s\n' '# edited' >>.github/workflows/terraform.yml
+git commit -qam "workflow"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "a change to the Terraform workflow itself was not detected"
+
+# ── a local module OUTSIDE terraform/ counts ────────────────────────
+# `module "dns" { source = "../modules/dns" }` is a supported layout (the
+# provider-lock helper mirrors the whole checkout for exactly this reason), so a
+# change under modules/ changes the plan even though terraform/ is untouched.
+prev="$(git rev-parse HEAD)"
+mkdir -p modules/dns
+printf '%s\n' 'variable "zone" {}' >modules/dns/main.tf
+git add -A
+git commit -qm "sibling module"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "a change to a local module outside terraform/ was not detected"
+
+# ── tfvars and lock files count wherever they live ──────────────────
+prev="$(git rev-parse HEAD)"
+printf '%s\n' 'zone = "example.com"' >modules/dns/dev.tfvars
+git add -A
+git commit -qm "tfvars"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "a .tfvars change was not detected"
+
+prev="$(git rev-parse HEAD)"
+printf '%s\n' '# lock' >modules/dns/.terraform.lock.hcl
+git add -A
+git commit -qm "lock"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "a .terraform.lock.hcl change was not detected"
+
+# ── a path that merely starts with the same letters does NOT ────────
+# `terraform-docs.md` must not match the `terraform/` prefix.
+prev="$(git rev-parse HEAD)"
+printf '%s\n' 'docs' >terraform-notes.md
+git add -A
+git commit -qm "lookalike"
+[ "$("$helper" "$prev" HEAD)" = false ] ||
+    fail "a path merely prefixed 'terraform' was treated as a Terraform change"
+
+# ── moving a file OUT of terraform/ counts ──────────────────────────
+# Rename detection reports only the DESTINATION path, so moving a file out of
+# terraform/ can hide the fact that terraform/ lost it. Only `--no-renames`
+# makes the source side visible.
+#
+# The moved file is deliberately NOT a .tf: a .tf destination is matched by the
+# "Terraform syntax anywhere" rule wherever it lands, so this case would pass
+# with --no-renames reverted and prove nothing. A .tpl matches only via its
+# old terraform/ path.
+prev="$(git rev-parse HEAD)"
+mkdir -p docs
+printf '%s\n' 'zone content' >terraform/zone.tpl
+git add -A
+git commit -qm "add template asset"
+prev="$(git rev-parse HEAD)"
+git mv terraform/zone.tpl docs/zone.tpl
+git commit -qm "move out"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "moving a file OUT of terraform/ was not detected (rename hid the source path)"
+git mv docs/zone.tpl terraform/zone.tpl
+git commit -qm "move back"
+
+# ── deletions count as changes ──────────────────────────────────────
+prev="$(git rev-parse HEAD)"
+git rm -q terraform/modules/vpc/main.tf
+git commit -qm "delete"
+[ "$("$helper" "$prev" HEAD)" = true ] ||
+    fail "deleting a Terraform file was not detected"
+
+# ── fail-safe: unusable input must answer true, never false ─────────
+[ "$("$helper" "" HEAD 2>/dev/null)" = true ] ||
+    fail "an empty base must fail safe to changed=true"
+[ "$("$helper" 0000000000000000000000000000000000000000 HEAD 2>/dev/null)" = true ] ||
+    fail "an all-zero base (branch creation) must fail safe to changed=true"
+[ "$("$helper" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef HEAD 2>/dev/null)" = true ] ||
+    fail "a base missing from the clone must fail safe to changed=true"
+[ "$("$helper" "$base" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2>/dev/null)" = true ] ||
+    fail "a head missing from the clone must fail safe to changed=true"
+
+# ── the workflow reads this from $GITHUB_OUTPUT, not stdout ─────────
+out="$tmp/gh-output"
+: >"$out"
+GITHUB_OUTPUT="$out" "$helper" "$base" HEAD >/dev/null
+grep -q '^changed=true$' "$out" ||
+    fail "changed= was not written to \$GITHUB_OUTPUT"
+
+echo "Terraform change-detection regression: PASS"
