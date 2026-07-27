@@ -8,14 +8,31 @@ This document explains the branch protection ruleset applied to `main` and how i
 
 An importable copy of the ruleset ships in this repo at
 `.github/Branch Protection Ruleset - Protect Main.json`. Apply it through the
-GitHub **UI import** (do this once `build.yml` is on `main`, so the required
-`verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %] checks resolve):
+GitHub **UI import** — do this only once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %] are on
+`main`, so the required
+`verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %] checks can actually report.
+Importing first wedges the repository: a required check with no workflow to emit
+it stays pending forever and blocks every pull request.
 
 > Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select
 > `.github/Branch Protection Ruleset - Protect Main.json`.
 
 To change the ruleset later, **edit the existing one in the UI** (Settings →
 Rules → Rulesets → Protect Main) — don't re-import.
+
+**When a template update adds a required check** (this file is an import
+template, not live configuration — a `copier update` changes the JSON here and
+nothing on GitHub), apply it by hand in that order:
+
+1. **Merge the workflow first.** The job that emits the check must already be on
+   `main`.
+2. **Then** add the context under Settings → Rules → Rulesets → Protect Main →
+   Require status checks to pass.
+
+Doing it the other way round wedges the repository: a required check that has
+never reported blocks every pull request, including the one that would add the
+workflow. If that happens, remove the context from the ruleset, land the
+workflow, and add it back.
 
 **Why the UI, not `gh api … rulesets`:** the REST `POST` is **not idempotent**
 (every run creates another "Protect Main" ruleset — silent duplicates), the
@@ -181,6 +198,18 @@ This mirrors the importable
           {
             "context": "security",
             "integration_id": 15368
+[% if use_codeql %]
+          },
+          {
+            "context": "codeql-verify",
+            "integration_id": 15368
+[% endif %]
+[% if include_terraform %]
+          },
+          {
+            "context": "terraform-verify",
+            "integration_id": 15368
+[% endif %]
           }
         ]
       }
@@ -298,9 +327,53 @@ The required checks are the build gates[% if use_codeql %] plus CodeQL's stable 
 [% if use_codeql %]
 | `codeql-verify` | Requires CodeQL success on public and paid-private routes; reports not-applicable on free private repos and fork PRs |
 [% endif %]
+[% if include_terraform %]
+| `terraform-verify` | Aggregate for `terraform.yml`. Runs on every event with **no `paths:` filter** — a filtered workflow never reports, and a required check that never reports blocks the merge forever. Its `terraform-changes` job decides internally, so an unrelated PR is a deliberate, reported no-op |
+[% endif %]
 
 Requiring the aggregate `verify` (rather than each leaf job) keeps the required-check
 list stable as jobs are added inside `build.yml`.
+[% if include_terraform %]
+
+### What `terraform-verify` does and does not prove in the merge queue
+
+On a `merge_group` event, `terraform-verify` requires `terraform fmt` and
+`terraform validate` to pass for the queued batch — but **not** `terraform plan`.
+The credentialed `terraform-plan-apply` job deliberately stands down there: a
+maintainer queuing a **fork** pull request produces a `merge_group` event, where
+`github.event_name != 'pull_request'` is true and the ordinary fork guard does
+not apply, so running it would hand cloud credentials to fork-authored
+configuration. GitHub does not expose the queued PR's origin on that event, so
+the job cannot distinguish the safe case.
+
+The practical consequence: a plan is produced and reviewed on the pull request
+itself, and again on the push to `main`, where the post-apply converge check
+runs. What is not planned is the _combined_ batch, so a conflict that only
+appears when two queued changes merge together surfaces at apply time on `main`
+rather than in the queue.
+
+If a repository has no external contributors and prefers batch planning over
+that protection, allow `merge_group` in `terraform-plan-apply`'s `if:` — but
+treat that as a deliberate, documented exception, and never on a repository that
+accepts fork pull requests.
+
+**On a fork pull request, `terraform-verify` reports success with nothing having
+run.** Every repository-controlled job is skipped at the fork trust boundary and
+the aggregate verifies exactly that. This is the same shape as the required
+`verify` and `security` checks, which skip `lint`, `security`[% if use_node %], `build-test`[% endif %] the same
+way — a green aggregate on a fork PR means "the trust boundary held", not
+"validation passed".
+[% if github_org != author_git_provider_username %]
+This repository has the merge queue enabled, which closes the gap: a queued
+entry raises a `merge_group` event, which is not a fork event, so `fmt` and
+`validate` run against the trusted merged result before it reaches `main`.
+[% else %]
+This repository has **no merge queue** (it is owned by a personal account), so
+there is no trusted pre-merge run. If you begin accepting fork pull requests,
+validate them before merging — push the branch to this repository and let it run
+as a same-repo PR, or review the push-to-`main` run and be ready to revert.
+[% endif %]
+[% endif %]
 
 [% if use_codeql %]
 `codeql-verify` is stable across visibility: public and paid-private CodeQL must

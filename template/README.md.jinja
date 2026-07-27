@@ -151,7 +151,7 @@ same `task` targets as local hooks.
 [% endif %]
 
 Branch protection: `main` requires a PR with code-owner approval and the
-`verify` + `security`[% if use_codeql %] + `codeql-verify`[% endif %] checks (importable ruleset in `.github/`; see
+`verify` + `security`[% if use_codeql %] + `codeql-verify`[% endif %][% if include_terraform %] + `terraform-verify`[% endif %] checks (importable ruleset in `.github/`; see
 [docs/architecture/branch-protection.md](docs/architecture/branch-protection.md)).
 [% if use_release_please %]
 **Releases are intentional** — release-please keeps a rolling release PR from

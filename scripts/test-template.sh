@@ -856,6 +856,46 @@ fi
 # Gated on the ANSWER, not the profile name: `full` sets include_terraform
 # explicitly, but `iac` inherits it from project_type's default, and a future
 # profile could do either.
+# branch-protection.md embeds a copy of the ruleset and tells the reader to
+# "keep the two in sync" — prose that had already drifted (the copy was missing
+# codeql-verify). Consumers audit and hand-replicate from that block, so a stale
+# copy silently tells them to leave a required gate off. Compare the two sets.
+python3 - <<'PY' || err "docs/architecture/branch-protection.md's mirrored ruleset disagrees with the real one (see stderr)"
+import json, pathlib, re, sys
+
+real = json.loads(
+    pathlib.Path(".github/Branch Protection Ruleset - Protect Main.json").read_text()
+)
+doc = pathlib.Path("docs/architecture/branch-protection.md").read_text()
+block = re.search(r"```json\n(.*?)```", doc, re.S)
+if not block:
+    print("  no json block in branch-protection.md", file=sys.stderr)
+    sys.exit(1)
+try:
+    mirrored = json.loads(block.group(1))
+except json.JSONDecodeError as exc:
+    print(f"  the mirrored ruleset is not valid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+
+def contexts(spec):
+    return {
+        c["context"]
+        for r in spec.get("rules", [])
+        if r["type"] == "required_status_checks"
+        for c in r["parameters"]["required_status_checks"]
+    }
+
+
+missing = contexts(real) - contexts(mirrored)
+extra = contexts(mirrored) - contexts(real)
+for name in sorted(missing):
+    print(f"  the doc's copy is missing required check: {name}", file=sys.stderr)
+for name in sorted(extra):
+    print(f"  the doc's copy requires a check the ruleset does not: {name}", file=sys.stderr)
+sys.exit(1 if (missing or extra) else 0)
+PY
+
 if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; then
     [ -f .tflint.hcl ] || err ".tflint.hcl missing (include_terraform=true)"
     grep -q 'plugin "terraform"' .tflint.hcl || err ".tflint.hcl does not enable the bundled terraform ruleset"
@@ -903,6 +943,204 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
         err "scripts/test-terraform-provider-locks.sh fails its hermetic lock-process checks"
     grep -q 'test-terraform-provider-locks.sh' scripts/test-tasks.sh ||
         err "test-tasks.sh does not run the provider-lock regression"
+
+    # ── The terraform-verify wedge guard ────────────────────────────
+    # terraform-verify is (or is about to become) a REQUIRED status check. A
+    # required check that does not report blocks the merge forever, so the
+    # workflow must NOT filter itself out by path — it has to run on every
+    # event and decide internally. These two assertions are the ones that keep
+    # a future edit from silently re-wedging every PR in a consumer repo.
+    tf_workflow=".github/workflows/terraform.yml"
+    [ -f "$tf_workflow" ] || err "$tf_workflow missing (include_terraform=true)"
+    python3 - "$tf_workflow" <<'PY' || err "the Terraform workflow would wedge a required terraform-verify check (see stderr)"
+import sys, pathlib, re
+
+text = pathlib.Path(sys.argv[1]).read_text()
+# The `on:` block only — a `paths:` key inside a job step is unrelated.
+head = text.split("\njobs:", 1)[0]
+problems = []
+if re.search(r"^\s+paths(-ignore)?:", head, re.M):
+    problems.append(
+        "the `on:` block has a paths filter — the workflow would not report on "
+        "unrelated PRs, and a required check that never reports blocks the merge"
+    )
+for trigger in ("push:", "pull_request:", "merge_group:", "workflow_dispatch:"):
+    if not re.search(r"^\s+%s" % re.escape(trigger), head, re.M):
+        problems.append(f"the `on:` block is missing the {trigger[:-1]} trigger")
+for problem in problems:
+    print(f"  {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
+    grep -qE '^  terraform-verify:' "$tf_workflow" ||
+        err "$tf_workflow has no terraform-verify aggregate job"
+    # A push to main must NOT be scoped by an incremental before..after range.
+    # GitHub keeps one pending run per concurrency group, so while an apply is
+    # in flight a later unrelated push replaces the pending Terraform push; a
+    # before..after comparison then steps over the replaced commit, reports
+    # "unchanged", and leaves a merged Terraform change unapplied behind a green
+    # required check. Pull requests and merge groups compare endpoints and keep
+    # their scoping — this asserts only that `push` reconciles.
+    ! grep -q "github.event_name == 'push' && github.event.before" "$tf_workflow" ||
+        err "$tf_workflow scopes pushes by github.event.before — concurrency replacement can then drop a merged Terraform change with terraform-verify still green"
+    if have python3; then
+        python3 - "$tf_workflow" <<'PY' || err "the Terraform change detector does not reconcile unconditionally on push (see stderr)"
+import sys, pathlib, re
+
+text = pathlib.Path(sys.argv[1]).read_text()
+match = re.search(r"^\s+BASE_SHA:.*?(?=^\s+HEAD_SHA:)", text, re.M | re.S)
+if not match:
+    print("  no BASE_SHA expression found in the change-detection job", file=sys.stderr)
+    sys.exit(1)
+if "push" in match.group(0):
+    print(
+        "  BASE_SHA derives a range for `push`; main must reconcile instead "
+        "(an incremental range can be stepped over by concurrency replacement)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+    fi
+    # A required context with no job to emit it never reports, and a check that
+    # never reports blocks the merge forever. Assert the ruleset and the
+    # workflow agree, in BOTH directions.
+    grep -q '"context": "terraform-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
+        err "ruleset does not require terraform-verify (include_terraform=true)"
+    # The job that runs `terraform apply` needs a budget that covers init + plan
+    # + apply + converge, each able to spend its full lock timeout first. A
+    # timeout firing mid-apply strands half-created resources, which is the
+    # failure `cancel-in-progress: false` exists to prevent — so the apply job
+    # must not sit on the same short budget as the validate-only jobs.
+    if have python3; then
+        python3 - "$tf_workflow" <<'PY' || err "the Terraform apply job's timeout is too short to be safe (see stderr)"
+import sys, pathlib, re
+
+text = pathlib.Path(sys.argv[1]).read_text()
+jobs = re.split(r"^(?=  [A-Za-z0-9_-]+:$)", text, flags=re.M)
+for job in jobs:
+    if "terraform apply" not in job and "terraform:ci:apply" not in job:
+        continue
+    found = re.search(r"^\s+timeout-minutes:\s*(\d+)", job, re.M)
+    if not found:
+        print("  the apply job has no timeout-minutes at all", file=sys.stderr)
+        sys.exit(1)
+    minutes = int(found.group(1))
+    if minutes < 30:
+        print(
+            f"  the apply job's timeout-minutes is {minutes}; a timeout during "
+            "`terraform apply` strands half-created resources",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    sys.exit(0)
+print("  no job running `terraform apply` was found", file=sys.stderr)
+sys.exit(1)
+PY
+    fi
+    # Every doc that tells a consumer WHEN to import the ruleset must name
+    # terraform.yml as a prerequisite. Importing a required check before its
+    # workflow is on main wedges the repo, and the instruction is the only thing
+    # standing between a consumer and that state.
+    # Anchored to the import INSTRUCTION, not the file: both docs mention
+    # terraform.yml elsewhere (a table row, a workflow list), so a
+    # whole-file grep passes even with the prerequisite removed.
+    # NOTE the `|| err` on THIS line: a heredoc body begins at the next newline,
+    # so an `err` continued onto the following line is swallowed into the script
+    # as its first line — python then dies on a syntax error and the check
+    # silently stops testing anything.
+    python3 - docs/architecture/branch-protection.md docs/CHECKLIST.md <<'PY' || err "a ruleset-import doc does not name terraform.yml as a prerequisite — importing a required check before its workflow exists wedges every PR (see stderr)"
+import sys, pathlib, re
+
+problems = []
+for path in sys.argv[1:]:
+    text = pathlib.Path(path).read_text()
+    if "terraform-verify" not in text:
+        problems.append(f"{path}: never mentions the required terraform-verify check")
+        continue
+    # Paragraph-scoped, NOT sentence-scoped: splitting prose on "." cuts
+    # `build.yml` into `build.` + `yml`, which silently truncates the very
+    # sentence being checked. Paragraphs are delimited by blank lines, which
+    # filenames cannot break.
+    paragraphs = [re.sub(r"\s+", " ", p) for p in re.split(r"\n\s*\n", text)]
+    instructions = [
+        p for p in paragraphs
+        if re.search(r"\bimport\b", p, re.I) and re.search(r"\bon\b\s*`?main`?", p)
+    ]
+    if not instructions:
+        problems.append(f"{path}: no ruleset-import prerequisite paragraph found")
+        continue
+    if not any("terraform.yml" in p for p in instructions):
+        problems.append(
+            f"{path}: the import prerequisite does not name terraform.yml -> "
+            + instructions[0].strip()[:150]
+        )
+for problem in problems:
+    print(f"  {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
+    grep -q 'terraform-changed.sh' "$tf_workflow" ||
+        err "$tf_workflow does not run the change detector — it would do real work on every unrelated PR"
+    for changed_script in scripts/terraform-changed.sh scripts/test-terraform-changed.sh; do
+        [ -f "$changed_script" ] || err "$changed_script missing (include_terraform=true)"
+        [ -x "$changed_script" ] || err "$changed_script is not executable"
+    done
+    ./scripts/test-terraform-changed.sh >/dev/null 2>&1 ||
+        err "scripts/test-terraform-changed.sh fails its own change-detection checks"
+    grep -q 'test-terraform-changed.sh' scripts/test-tasks.sh ||
+        err "test-tasks.sh does not run the change-detection regression"
+    # Applying a re-plan instead of the reviewed one, or disabling state
+    # locking, are the two ways this workflow could damage infrastructure
+    # quietly. Checked with comments stripped and across line continuations —
+    # a naive grep matches the prose warning ABOUT -lock=false, and misses an
+    # apply command wrapped over several lines.
+    python3 - "$tf_workflow" <<'PY' || err "the Terraform workflow's apply path is unsafe (see stderr)"
+import sys, pathlib, re
+
+raw = pathlib.Path(sys.argv[1]).read_text()
+code = "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in raw.splitlines())
+# Join backslash continuations so a wrapped command reads as one line.
+code = re.sub(r"\\\n\s*", " ", code)
+
+problems = []
+# The credentialed job must stay out of merge_group. A maintainer queuing a
+# FORK pr fires merge_group, where the `pull_request` fork guard does not
+# apply — dropping this predicate hands R2/provider secrets to fork-authored
+# configuration, and the first sign would be a merge-queue run that already had
+# them. Cheap to assert, catastrophic to lose silently.
+plan_apply = re.search(
+    r"^  terraform-plan-apply:\n(.*?)(?=^  \w|\Z)", code, re.M | re.S
+)
+if not plan_apply:
+    problems.append("has no terraform-plan-apply job")
+elif "github.event_name != 'merge_group'" not in plan_apply.group(1):
+    problems.append(
+        "terraform-plan-apply no longer excludes merge_group — a queued fork PR "
+        "would run credentialed Terraform outside the fork trust boundary"
+    )
+if "-lock=false" in code:
+    problems.append("uses -lock=false — a concurrent state write corrupts state")
+if "-lock-timeout" not in code:
+    problems.append("does not bound state-lock waits with -lock-timeout")
+# A real CLI invocation: the word `terraform`, then flags, then the `apply`
+# subcommand. `\bterraform\b.*\bapply\b` would also match job names such as
+# `terraform-plan-apply`, since a hyphen is a word boundary.
+invocation = re.compile(r"(?:^|\s)terraform\s+(?:-\S+\s+)*apply(?:\s|$)")
+# A `name:` key is a human label ("- name: terraform apply"), not a command.
+label = re.compile(r"^\s*-?\s*name:")
+applies = [
+    ln for ln in code.splitlines() if invocation.search(ln) and not label.match(ln)
+]
+if not applies:
+    problems.append("has no terraform apply command at all")
+for ln in applies:
+    if "$TF_PLAN_DIR/tfplan" not in ln:
+        problems.append(
+            f"applies without the saved plan file, so it would apply an "
+            f"unreviewed re-plan: {ln.strip()}"
+        )
+for problem in problems:
+    print(f"  {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
     # The TFLint pin SPECIFICALLY. "Some manager matched something in this file"
     # proves nothing: the shell-variable manager already extracts
     # SHELLCHECK_VERSION= from this same action, so a first-match check passes
@@ -930,6 +1168,12 @@ else
     [ ! -f .tflint.hcl ] || err ".tflint.hcl rendered but include_terraform=false"
     ! grep -q 'setup-tflint' .github/actions/setup/action.yml || err "setup-tflint provisioned but include_terraform=false"
     ! grep -q 'tflint' Brewfile || err "Brewfile installs tflint but include_terraform=false"
+    # The reverse direction, and the more dangerous one: a required check whose
+    # workflow was never rendered can never report, and a required check that
+    # never reports wedges every PR in the repo.
+    ! grep -q '"context": "terraform-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
+        err "ruleset requires terraform-verify but this profile has no Terraform workflow — every PR would wedge"
+    [ ! -e .github/workflows/terraform.yml ] || err "terraform.yml rendered but include_terraform=false"
 fi
 
 # Every `# renovate:` annotation in the rendered composite action must be
