@@ -88,13 +88,14 @@ tasks:
     # so this is safe to run concurrently across worktrees and parallel agents.
     # Keep it that way: anything that starts a server belongs in `ci`.
 [% endif %]
-    desc: Definition-of-done gate ([% if project_type == 'web-app' %]codegen → [% endif %]check[% if use_node %] → build[% endif %] → validate → guards → test)
+    desc: Definition-of-done gate ([% if project_type == 'web-app' %]guard:codegen → [% endif %]check[% if use_node %] → build[% endif %] → validate → guards → test)
     cmds:
 [% if project_type == 'web-app' %]
-      # Sequential and FIRST: refresh generated types so the typecheck below sees
-      # them, then leave the diff for you to commit. This is the one writing step
-      # in the gate — `check` and the pre-commit hooks stay read-only.
-      - task: codegen
+      # Sequential and FIRST, so the typecheck below sees current generated
+      # types. It FAILS on stale output rather than silently refreshing it —
+      # CI's lint job runs the same guard, so a green `task ci` here means a
+      # green CI there. `check` and the pre-commit hooks stay read-only.
+      - task: guard:codegen
 [% endif %]
       - task: check
 [% if use_node %]
@@ -528,12 +529,13 @@ tasks:
     # with errors that point nowhere near the cause — so `verify` runs this
     # FIRST, before `check`.
     #
-    # This task WRITES. That is why it is reached from `verify` and never from
-    # `check` / `lint:typescript`: those are read-only gates the pre-commit hooks
-    # run directly, and a generator firing there would rewrite the tree after the
+    # This task WRITES, which is why nothing reaches it from `check` /
+    # `lint:typescript`: those are read-only gates the pre-commit hooks run
+    # directly, and a generator firing there would rewrite the tree after the
     # index was built. It also keeps CI honest — CI runs `check`, so it
     # type-checks the generated files exactly as committed instead of silently
-    # refreshing a stale one into passing.
+    # refreshing a stale one into passing. `verify` and CI's lint job use
+    # `guard:codegen` below, which fails on stale output instead of healing it.
     #
     # Port-free by contract: generators write files, they never start a server or
     # attach to a running deployment. Keep it that way — the whole
@@ -549,6 +551,18 @@ tasks:
     desc: Run code generators (Convex types) — writes; run before committing
     cmds:
       - ./scripts/codegen.sh
+
+  guard:codegen:
+    # The gating half of `codegen`: regenerate, then FAIL if the result differs
+    # from what is staged, listing the files to commit. Run by `verify` and by
+    # CI's lint job, so local `task ci` and CI fail on exactly the same
+    # condition — a `verify` that silently regenerated would let a green local
+    # `ci` precede a red CI run, and `ci` would stop being a mirror.
+    # It also catches what tsc cannot: an additive schema change whose stale
+    # generated files still type-check.
+    desc: Fail if generated code is stale (regenerates, then diffs the output)
+    cmds:
+      - ./scripts/codegen.sh --guard
 [% endif %]
 [% if use_node %]
 

@@ -303,13 +303,15 @@ config, toolchain, devcontainer, and dev environment — against the items below
       or serves on its own. In `task ci` and the `e2e` CI job a build has
       already run, so `vite preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
-- [ ] `task codegen` runs Convex codegen; `task verify` runs it before `check`
-      so typechecking never reads stale types. It activates automatically once
-      `convex/` and the `convex` package exist — **commit the regenerated
-      `convex/_generated/` files** with your change, since `task check` and CI
-      deliberately don't regenerate (they must type-check what you committed).
-      Add any other generators (GraphQL, OpenAPI, ORM clients) to
-      `scripts/codegen.sh`; keep them port-free and skip-cleanly.
+- [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
+      `task verify`, and a step in CI's lint job) regenerates and **fails** if
+      the output isn't what you staged. Both activate automatically once
+      `convex/` and the `convex` package exist — so **commit the regenerated
+      `convex/_generated/` files** with your change. `task check` deliberately
+      never regenerates; it type-checks what you committed. Add any other
+      generators (GraphQL, OpenAPI, ORM clients) to `scripts/codegen.sh` —
+      port-free, skip-cleanly, and listed in `generated_paths` so the guard can
+      see them.
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc` fails until they're installed (pair the spec with the dep install).

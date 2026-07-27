@@ -40,6 +40,14 @@ jobs:
           lint-tools: "true"
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
+[% if project_type == 'web-app' %]
+      # AFTER `check`, so the typecheck above still runs against the committed
+      # tree. This guard regenerates and fails if the output differs from what
+      # was committed — the same target `task verify` runs locally, which is
+      # what keeps `task ci` an honest mirror of this job.
+      - name: Generated code is current
+        run: task guard:codegen
+[% endif %]
       - run: task test:tasks
 [% if use_codex_review %]
       - run: task test:codex-review
@@ -120,13 +128,22 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Install Playwright browsers
-        if: steps.pw.outputs.present == 'true'
-        # Every browser, not just chromium: this job runs the WHOLE suite, and
-        # the convention is multi-browser + mobile projects (see
-        # docs/architecture/tests.md). Installing one browser would fail the
-        # blocking check on any config that declares firefox/webkit projects.
+      # Every browser, not just chromium: this job runs the WHOLE suite, and the
+      # convention is multi-browser + mobile projects (see
+      # docs/architecture/tests.md). Installing one browser would fail this
+      # blocking check on any config that declares firefox/webkit projects.
+      #
+      # Split by runner environment for the same reason the lighthouse job's
+      # Chrome install is: `--with-deps` shells out to apt via sudo. Hosted
+      # runners need that; persistent self-hosted machines already have the
+      # shared libs and may not have passwordless sudo, and wedging a REQUIRED
+      # check on sudo is not acceptable.
+      - name: Install Playwright browsers (hosted runner — apt via sudo)
+        if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
         run: pnpm exec playwright install --with-deps
+      - name: Install Playwright browsers (self-hosted — no sudo/apt)
+        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install
       - name: Build
         if: steps.pw.outputs.present == 'true'
         run: task build

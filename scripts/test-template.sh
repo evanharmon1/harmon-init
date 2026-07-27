@@ -1232,6 +1232,13 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         err "the e2e job never installs Playwright browsers"
     ! grep -qE 'playwright install .*(chromium|firefox|webkit)' <<<"$e2e_job" ||
         err "the e2e job installs a single Playwright browser but runs the full suite"
+    # `--with-deps` shells out to apt via sudo. Self-hosted runners may have no
+    # passwordless sudo (same reason the lighthouse job splits its Chrome
+    # install), and wedging a REQUIRED check on sudo is not acceptable.
+    if grep -q -- '--with-deps' <<<"$e2e_job"; then
+        grep -q "runner.environment == 'github-hosted'" <<<"$e2e_job" ||
+            err "the e2e job runs 'playwright install --with-deps' unconditionally — it needs sudo/apt and would wedge a required check on self-hosted runners"
+    fi
 else
     [ ! -e scripts/e2e-run.sh ] || err "e2e-run.sh rendered for a non-node profile"
     ! grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has an e2e job on a non-node profile"
@@ -1251,10 +1258,16 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     [ -x scripts/codegen.sh ] || err "scripts/codegen.sh missing or not executable (project_type=web-app)"
     ./scripts/codegen.sh >/dev/null 2>&1 ||
         err "codegen.sh does not skip cleanly on a fresh render (no app/deps yet)"
+    ./scripts/codegen.sh --guard >/dev/null 2>&1 ||
+        err "codegen.sh --guard does not skip cleanly on a fresh render (no app/deps yet)"
     grep -q 'convex codegen' scripts/codegen.sh || err "codegen.sh does not run Convex codegen"
     if have task; then
-        grep -qF -- 'scripts/codegen.sh' <<<"$(task --color=false --dry verify 2>&1 || true)" ||
-            err "task verify does not reach codegen — typecheck could read stale generated types"
+        # `verify` must GUARD (fail on stale), not silently regenerate: `ci`
+        # delegates to `verify`, so a self-healing verify would green-light a
+        # local `ci` that CI then fails — `ci` would stop being a mirror.
+        grep -qF -- 'scripts/codegen.sh --guard' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach guard:codegen — stale generated types would pass locally and fail in CI"
         for readonly_gate in check lint:typescript; do
             ! grep -qF -- 'scripts/codegen.sh' \
                 <<<"$(task --color=false --dry "$readonly_gate" 2>&1 || true)" ||
@@ -1263,6 +1276,10 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     else
         required task "codegen reachability" || fail=1
     fi
+    # The other half of the mirror: CI must run the same guard, or local `ci`
+    # and the PR disagree in the opposite direction.
+    grep -q 'task guard:codegen' .github/workflows/build.yml ||
+        err "build.yml never runs guard:codegen — CI would not catch stale generated files that local verify does"
 else
     [ ! -e scripts/codegen.sh ] || err "codegen.sh rendered outside project_type=web-app"
     ! grep -qE '^  codegen:' Taskfile.yml || err "codegen task rendered outside project_type=web-app"
