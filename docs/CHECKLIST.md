@@ -47,9 +47,13 @@ this comment. -->
       just that one leaves the template shipping the old pin to generated repos
       — and the next automated run aborts with `pin disagreement` until someone
       reconciles them by hand. Only this fully manual route has that trap: the
-      workflow and `task sync:devkit-release` both write both manifests. A
-      ref-only commit (either manifest, without the re-sync) fails the
-      `verify:skills` drift check in CI and pre-push. Renovate's harmon-devkit
+      workflow and `task sync:devkit-release` both write both manifests.
+      **The two mistakes fail very differently.** Editing the *root* manifest
+      without re-syncing fails `verify:skills` in CI and `verify:skills:offline`
+      pre-push, immediately. Editing *only the template* manifest passes every
+      gate — both drift checks read the root manifest, whose pin still matches
+      the provenance — so it surfaces only when the next automated run aborts.
+      Check that one by eye. Renovate's harmon-devkit
       rule is kept only as a passive stale-pin signal: it is Dependency
       Dashboard-gated, so it never opens a pin PR unattended. **Leave it
       unapproved while the sync workflow is healthy** — approving it opens a
