@@ -45,6 +45,7 @@ jobs:
       - run: task test:renovate-pins
       - run: task test:release-title
       - run: task test:sync-devkit-release
+      - run: task test:skills-pin-parity
       - name: Dogfood parity (verbatim template files match their root twins)
         run: task test:dogfood-parity
       # The structure check renders template/, so it needs copier. Installed

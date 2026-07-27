@@ -110,7 +110,7 @@
       "dependencyDashboardApproval": true,
       "dependencyDashboardCategory": "Agent skills",
       "prBodyNotes": [
-        "Normally unnecessary: `.github/workflows/sync-harmon-devkit.yml` already opens a complete pin-and-sync PR on every stable harmon-devkit release. This rule stays as a passive stale-pin signal and manual fallback — it needs Dependency Dashboard approval, so it never races that workflow.",
+        "Normally unnecessary: `.github/workflows/sync-harmon-devkit.yml` already opens a complete pin-and-sync PR on every stable harmon-devkit release. This rule stays as a passive stale-pin signal and manual fallback: dashboard-gating means it never opens a pin PR unattended, but approving it while the automation is healthy produces a SECOND PR for the same bump. Leave it unapproved unless the workflow is broken and you are deliberately falling back to the manual route.",
         "If you do approve this update, run `task sync:skills` and push the refreshed `.claude/skills/` as a separate commit; do not amend Renovate's commit. A ref-only bump fails the skills drift check by design."
       ]
     },
