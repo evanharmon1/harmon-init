@@ -122,4 +122,35 @@ module_status_after="$(git -C "$module_repo" status --porcelain)"
 [ "$module_status_before" = "$module_status_after" ] ||
     fail "local-module lock check mutated the checkout"
 
+untracked_repo="$tmp/untracked repo"
+untracked_root="$untracked_repo/terraform"
+mkdir -p "$untracked_root"
+git -C "$untracked_repo" init -q
+: >"$untracked_root/required-provider.fixture"
+: >"$untracked_root/forbid-init-upgrade.fixture"
+printf '%s\n' 'terraform {}' >"$untracked_root/main.tf"
+# A complete, current lock — it fails only because Git does not have it, which
+# is what the commit CI checks out would look like.
+printf '%s\n' \
+    '# platform: darwin_arm64' \
+    '# platform: linux_amd64' >"$untracked_root/.terraform.lock.hcl"
+git -C "$untracked_repo" add terraform/main.tf
+if TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null 2>&1; then
+    fail "lock that Git does not track passed the check"
+fi
+# `git add -N` records the path with no content, so the commit still omits the
+# lock even though the index answers "tracked" for it.
+git -C "$untracked_repo" add -N terraform/.terraform.lock.hcl
+if TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null 2>&1; then
+    fail "intent-to-add lock passed the check"
+fi
+git -C "$untracked_repo" add terraform/.terraform.lock.hcl
+TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null ||
+    fail "lock passed to Git still failed the check"
+# `git rm --cached` leaves the file on disk while the next commit deletes it.
+git -C "$untracked_repo" rm --cached -q terraform/.terraform.lock.hcl
+if TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null 2>&1; then
+    fail "lock removed from the index passed the check"
+fi
+
 echo "Terraform provider-lock regression: PASS"

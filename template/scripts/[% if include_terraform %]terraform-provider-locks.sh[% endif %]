@@ -121,6 +121,31 @@ for root in "$@"; do
         exit 1
     fi
 
+    # Present in the working tree is not the same as present in the commit. A
+    # lock that was generated but never `git add`ed — or that .gitignore
+    # swallows — satisfies every local check while the commit CI checks out has
+    # no lock at all, which is the one handoff this whole helper exists to
+    # protect. The scratch copy includes untracked files (so the comparison
+    # above still works), which is exactly why this has to be asked separately.
+    # Asking whether the path is *tracked* is not enough, so this asks the index
+    # what content it would actually commit. That one question covers every way
+    # the lock can be missing from the commit while sitting right there on disk:
+    # never added, `git add -N` (an entry with no content, which `git add -p`
+    # creates for a new file), and `git rm --cached`.
+    #
+    # It deliberately does not compare that content against the regenerated
+    # lock. Doing so would also reject a freshly regenerated lock that simply
+    # is not staged yet, turning `task check` into a staging gate in the middle
+    # of an edit loop; `git commit -a` and `git add -A` carry such a lock along
+    # anyway.
+    if [ -n "$repo_top" ] &&
+        [ -z "$(git -C "$repo_top" show ":$root_rel/.terraform.lock.hcl" 2>/dev/null || true)" ]; then
+        echo "Terraform provider lock will not be part of the commit: $lock_file" >&2
+        echo "It exists here, but the checkout CI makes would have no lock." >&2
+        echo "Run: git add $lock_file" >&2
+        exit 1
+    fi
+
     if ! cmp -s "$lock_file" "$scratch_lock"; then
         echo "Terraform provider lock is not current for the configuration and required platforms: $lock_file" >&2
         echo "Run: task terraform:providers:lock" >&2
