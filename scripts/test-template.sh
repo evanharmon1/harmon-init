@@ -882,6 +882,24 @@ else
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
     grep -q -- '- task: test:devcontainer:permissions' Taskfile.yml || err "ci task is missing the devcontainer permission assertion"
+
+    # `task` must reach the RENDERED repo from a pinned release, never from the
+    # go-task Feature — the Feature resolved "latest" through the anonymous
+    # GitHub API at build time and flaked the required build check
+    # (harmon-init#427). Asserted on the rendered output, not the root layer:
+    # the devcontainer.json twins are jinja, so test:dogfood-parity cannot
+    # byte-compare them, and template/ could reintroduce the Feature while the
+    # root copy stays correct — shipping the flake to every consumer with
+    # nothing here failing.
+    for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        [ -f "$dc_cfg" ] || continue
+        ! grep -q 'features/go-task' "$dc_cfg" ||
+            err "rendered $dc_cfg installs task via a devcontainer Feature (harmon-init#427)"
+    done
+    grep -q '^ARG TASK_VERSION=' .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile has no 'ARG TASK_VERSION=' pin"
+    grep -qF 'go-task/task/releases/download/v${TASK_VERSION}/task_linux_' .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile does not install task from the pinned release URL"
 fi
 
 # ── 9f. .prettierignore: web-app-only entries are gated by project type ──
