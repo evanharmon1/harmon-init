@@ -154,10 +154,16 @@ Both tasks run before `gh pr create`, so write each finding down the moment
 you defer it, in the git directory rather than the worktree:
 
 ```bash
-cat >>"$(git rev-parse --git-path deferred-findings.md)" <<'DEFERRED'
+note="$(git rev-parse --git-path \
+  "deferred-findings-$(git branch --show-current | tr / -).md")"
+cat >>"$note" <<'DEFERRED'
 - [ ] scripts/foo.sh:42 — P2: retry loop has no upper bound
 DEFERRED
 ```
+
+One file **per branch**: an ordinary clone switches branches in place, so a
+single shared sidecar would let branch B's PR absorb branch A's findings — and
+then delete A's only copy when it clears the file.
 
 The **quoted** heredoc delimiter is load-bearing: findings routinely quote
 code with backticks or `$(…)`, and inside a double-quoted string the shell

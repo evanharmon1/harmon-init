@@ -353,8 +353,9 @@ findings, so a P2 that is not written into the PR body is simply lost.
 
 Record each one **the moment you defer it**. Challenge and review both run
 before `gh pr create`, so there is usually no PR body to write to yet: append
-it to the file `git rev-parse --git-path deferred-findings.md` names — but
-only if that finding is not already listed. A stage exits on a *clean re-run*,
+it to the file
+`git rev-parse --git-path "deferred-findings-$(git branch --show-current | tr / -).md"`
+names — but only if that finding is not already listed. A stage exits on a *clean re-run*,
 so an unchanged P2 is reported again by design, in every remaining round and
 again by the next stage; appending blindly would hand the shepherd four copies
 of one finding to settle. Match on location plus substance, not exact
@@ -366,7 +367,9 @@ file). Terminal scrollback is not a record — a context reset between
 That path is not arbitrary. It sits in the **git directory**, so it is
 deterministic (any later session in this checkout finds it the same way, and
 `git rev-parse` resolves it correctly inside a linked worktree) and invisible
-to `git status`. A note in the *worktree* would be worse than none:
+to `git status`. It is keyed by **branch** because an ordinary clone switches
+branches in place: with one shared file, opening branch B's PR would sweep up
+branch A's findings and then delete A's only copy of them. A note in the *worktree* would be worse than none:
 `codex-review.sh` reviews the uncommitted diff whenever the tree is dirty, so
 the note would become the next bare `task challenge`'s entire scope — and the
 change it was supposed to review would get a clean pass it never earned.
