@@ -3,9 +3,18 @@
 # NOT GitHub built-ins: Product, Agent, Domain, and Layer. GitHub already ships
 # Priority, Effort, Start date, and Target date as built-in issue fields, and we
 # never recreate or modify those (leave them at their defaults).
-# Create-if-missing only; it never edits or deletes a field — so the starter
-# Domain/Layer options below are a floor, and per-product options you add later
-# in the org's issue-field settings survive every re-run.
+# Additive only; it never renames or deletes a field or an option — so the
+# starter Domain/Layer options below are a floor, and per-product options you add
+# later in the org's issue-field settings survive every re-run.
+#
+# One exception to "never edits": a single-select field that is MISSING a starter
+# option gains it, via PATCH /orgs/{org}/issue-fields/{id} — the same additive
+# reconciliation setup-github-project.sh does for project fields, so a value added
+# by a later harmon-init release lands on a re-run instead of drifting. Purely
+# additive: existing options are sent back with their ids (see append_options),
+# and nothing is renamed, reordered, or deleted. Because these endpoints are in
+# PUBLIC PREVIEW, a rejected PATCH degrades to a warning naming the missing
+# options rather than failing the run.
 #
 # NB: the numeric, summable estimate is NOT an issue field — it is the Size
 # project NUMBER field (setup-github-project.sh), because only project number
@@ -79,7 +88,7 @@ agent_opts='[
 #
 # Domain is a STARTER set only: real domains come from your product's entities
 # (crm, invoicing, scheduling, …). Add them in the org's issue-field settings —
-# this script never edits an existing field, so they survive.
+# this script only ever appends what is missing, so they survive.
 domain_opts='[
   {"name":"auth","color":"purple","description":"Authentication and authorization","priority":1},
   {"name":"billing","color":"green","description":"Billing and payments","priority":2},
@@ -93,31 +102,125 @@ layer_opts='[
   {"name":"integration","color":"orange","description":"External boundary: webhooks, API clients, credentials","priority":4}
 ]'
 
+# refresh_fields — (re-)read the org's issue fields into existing_json. Returns
+# non-zero when the read or the parse fails, leaving any previous snapshot in
+# place so a caller can refuse to act rather than act on stale data.
+#
+# Normalizing: the list endpoint returns a bare array; tolerate an
+# {"issue_fields":[...]} wrapper too, and `--paginate`'s multiple concatenated
+# documents — `jq -s` slurps every document, so the pages become one array.
+refresh_fields() {
+    _raw=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
+    [ -n "$_raw" ] || return 1
+    _json=$(printf '%s' "$_raw" |
+        jq -s '[ .[] | if type == "object" then (.issue_fields // []) else . end | .[] ]' 2>/dev/null || true)
+    [ -n "$_json" ] || return 1
+    existing_json="$_json"
+}
+
 echo "==> Reading existing issue fields for '$org'"
-existing=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
-if [ -z "$existing" ]; then
-    echo "Could not read issue fields for '$org' — is it an org, do you have 'admin:org', and is the issue-fields preview enabled?" >&2
+if ! refresh_fields; then
+    echo "Could not read issue fields for '$org' — is it an org, do you have 'admin:org', is the" >&2
+    echo "issue-fields preview enabled, and did the response parse?" >&2
     exit 1
 fi
 
-# One `name<TAB>data_type` per line. The list endpoint returns a bare array;
-# tolerate an {"issue_fields":[...]} wrapper too. Reading names line-wise (not as
-# one joined string) also keeps this correct across `--paginate`'s multiple
-# documents.
-existing_fields=$(printf '%s' "$existing" |
-    jq -r 'if type == "object" then (.issue_fields // []) else . end | .[] | "\(.name)\t\(.data_type // "")"' 2>/dev/null || true)
-
-field_present() { printf '%s\n' "$existing_fields" | cut -f1 | grep -Fxq "$1"; }
-field_type() { printf '%s\n' "$existing_fields" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'; }
+# field_json NAME — the whole field object, or empty when there is no such field.
+field_json() { printf '%s' "$existing_json" | jq -c --arg n "$1" '[ .[] | select(.name==$n) ] | first // empty'; }
+field_present() { [ -n "$(field_json "$1")" ]; }
+field_type() { printf '%s' "$existing_json" | jq -r --arg n "$1" '[ .[] | select(.name==$n) ] | first | .data_type // ""'; }
 
 # Names like `Domain` and `Layer` are generic enough that an adopting org may
 # already have one — of the wrong data type. GitHub cannot change an issue
 # field's data type in place, so the intended options are simply unavailable
 # until that field is renamed or deleted. Warn (loudly, and again in the summary)
-# rather than exit non-zero: this script's contract is create-if-missing and
-# never-edit, and a pre-existing field the org owns is not a reason to abort the
-# fields that *can* still be created.
+# rather than exit non-zero: this script only ever creates or appends, and one
+# pre-existing field the org owns is not a reason to abort the fields that *can*
+# still be reconciled.
 incompatible=""
+
+# Existing fields that are missing a starter option, collected for the summary.
+missing_options=""
+
+# append_options NAME OPTIONS_JSON — add any starter option the existing field is
+# missing, via PATCH /orgs/{org}/issue-fields/{id}.
+#
+# Two hazards, both handled in the jq below:
+#  1. `options` REPLACES the whole list, so every existing option must be sent
+#     back or it is deleted. They are read from the field and concatenated first.
+#  2. An existing option must be sent WITH its `id`, or it is destroyed and
+#     recreated — blanking the field on every issue already assigned to it. New
+#     options carry no id (GitHub assigns one).
+# `priority` is renumbered 1..N over the existing order followed by the appended
+# options: it encodes display order only, so this keeps the owner's order intact
+# while guaranteeing the contiguous, unique values the endpoint expects.
+#
+# The endpoint is PUBLIC PREVIEW and may change or vanish, so this fails safe in
+# both directions: an unreadable snapshot is never turned into replacement data
+# (see the `blocked` guard), and a rejected PATCH degrades to a warning rather
+# than aborting the run part-way. Either way the operator learns exactly which
+# options to add by hand.
+append_options() {
+    name="$1"
+    # Re-read immediately before building the replacement. The PATCH replaces the
+    # ENTIRE option list, so an option added between the startup read and this
+    # write — a parallel run, or someone in the org settings UI — would otherwise
+    # be deleted. This narrows the lost-update window to a single round-trip; it
+    # cannot close it, as the endpoint accepts no expected-version token.
+    if ! refresh_fields; then
+        echo "    WARNING: could not re-read issue field '$name' before updating it — leaving it untouched" >&2
+        missing_options="${missing_options}${missing_options:+; }${name}: (could not re-read the field)"
+        return 0
+    fi
+    fjson="$(field_json "$name")"
+    if [ -z "$fjson" ]; then
+        echo "    WARNING: issue field '$name' disappeared while this script was running — skipping" >&2
+        return 0
+    fi
+    merged=$(jq -cn --argjson f "$fjson" --argjson want "$2" '
+        (if ($f.options | type) == "array" then $f.options else [] end
+            | sort_by(.priority // 0)) as $ex
+        | (if ($f | has("options") | not) then "the response carried no options array for it"
+           elif ($f.options | type) != "array" then "its options came back as a \($f.options | type), not an array"
+           elif ([ $ex[] | select(.id == null) ] | length) > 0 then "an existing option came back without an id"
+           else "" end) as $blocked
+        | [ $ex[].name ] as $names
+        | [ $want[] | select( .name as $n | ($names | index($n)) == null ) ] as $new
+        | { blocked: $blocked,
+            new: [ $new[].name ],
+            body: { options: (
+                [ $ex[]  | {id, name, description: (.description // ""), color: (.color // "gray")} ]
+              + [ $new[] | {    name, description: (.description // ""), color: (.color // "gray")} ]
+              | to_entries | map(.value + {priority: (.key + 1)}) ) } }')
+    missing=$(printf '%s' "$merged" | jq -r '.new | join(", ")')
+    if [ -z "$missing" ]; then
+        echo "    Issue field '$name' already exists with every starter option — leaving it as-is"
+        return 0
+    fi
+    # Fail CLOSED on an unreadable snapshot. A preview response that omits
+    # `options` would otherwise look like a field with none, and the PATCH — which
+    # replaces the whole list — would delete every option the org owns. An option
+    # without an id is equally unusable: re-sending it would destroy and recreate
+    # it, blanking that field on every issue assigned to it. In both cases the
+    # promised warning is the correct outcome, not a best-effort write.
+    blocked=$(printf '%s' "$merged" | jq -r '.blocked')
+    if [ -n "$blocked" ]; then
+        echo "    WARNING: issue field '$name' is missing starter option(s) $missing, but $blocked —" >&2
+        echo "             not sending a replacement that could delete existing options." >&2
+        missing_options="${missing_options}${missing_options:+; }${name}: ${missing}"
+        return 0
+    fi
+    fid=$(printf '%s' "$fjson" | jq -r '.id')
+    if err=$(printf '%s' "$merged" | jq -c '.body' |
+        gh api --method PATCH "orgs/$org/issue-fields/$fid" \
+            -H "X-GitHub-Api-Version: $api_version" --input - 2>&1 >/dev/null); then
+        echo "    Issue field '$name' already exists — appended missing option(s): $missing"
+        return 0
+    fi
+    echo "    WARNING: issue field '$name' is missing starter option(s) $missing, and the update was rejected:" >&2
+    echo "             $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-200)" >&2
+    missing_options="${missing_options}${missing_options:+; }${name}: ${missing}"
+}
 
 # create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON]
 create_field() {
@@ -128,8 +231,12 @@ create_field() {
     if field_present "$name"; then
         etype="$(field_type "$name")"
         if [ -n "$etype" ] && [ "$etype" != "$dtype" ]; then
+            # A wrong-typed field cannot hold the intended options at all, so this
+            # takes precedence over the missing-option check below.
             echo "    WARNING: issue field '$name' already exists as '$etype', not '$dtype' — its intended options are NOT available" >&2
             incompatible="${incompatible}${incompatible:+, }${name} (is '$etype', wanted '$dtype')"
+        elif [ -n "$opts" ]; then
+            append_options "$name" "$opts"
         else
             echo "    Issue field '$name' already exists — leaving it as-is"
         fi
@@ -153,10 +260,18 @@ create_field "Agent" "single_select" "Which agent should implement it" "$agent_o
 create_field "Domain" "single_select" "Which part of the product it belongs to" "$domain_opts"
 create_field "Layer" "single_select" "Which slice of the stack it changes" "$layer_opts"
 
-if [ -n "$incompatible" ]; then
-    echo "==> Done, WITH WARNINGS — these fields already exist with a different data type: $incompatible" >&2
-    echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
-    echo "    issue-field settings and re-run this script to get the intended options." >&2
+if [ -n "$incompatible" ] || [ -n "$missing_options" ]; then
+    echo "==> Done, WITH WARNINGS" >&2
+    if [ -n "$incompatible" ]; then
+        echo "    These fields already exist with a different data type: $incompatible" >&2
+        echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
+        echo "    issue-field settings and re-run this script to get the intended options." >&2
+    fi
+    if [ -n "$missing_options" ]; then
+        echo "    These existing fields are still missing a starter option — $missing_options" >&2
+        echo "    The update was rejected (the issue-fields API is in public preview and may have changed)." >&2
+        echo "    Add each one by hand in the org's issue-field settings (Settings -> Planning -> Issue fields)." >&2
+    fi
 else
     echo "==> Done — added issue fields on '$org': Product, Agent, Domain, Layer (Priority/Effort/dates are GitHub built-ins)"
 fi

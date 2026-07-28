@@ -12,7 +12,9 @@
 #
 # Safe to re-run and safe to run from every repo the owner controls: it looks the
 # project up by title, so the first run creates it and later runs just reconcile
-# fields. It never deletes options or fields, so your later customizations survive.
+# fields. Reconciling is purely ADDITIVE — a single-select field that is missing a
+# starter option gains it, and nothing is ever renamed, reordered, or deleted, so
+# your later customizations survive every re-run.
 #
 # Usage:   setup-github-project.sh --owner <org-or-user-login> --title "<Project Title>"
 # Needs:   gh authed with the 'project' scope (gh auth refresh -s project) + jq.
@@ -72,9 +74,18 @@ status_pipeline='[
   {"name":"Accepted","color":"PURPLE","description":"Smoke/QA/manual check passed"}
 ]'
 
-# jq filter: a JSON array of {name,color,description} -> a GraphQL options
+# jq filter: a JSON array of {id?,name,color,description} -> a GraphQL options
 # fragment. Names/descriptions are JSON-escaped; color is emitted as a bare enum.
-opts_to_graphql='[.[] | "{name:" + (.name|@json) + ",color:" + .color + ",description:" + (.description|@json) + "}"] | join(",")'
+#
+# `id` is emitted only when present, and that is load-bearing rather than
+# cosmetic. Per GitHub's own schema doc for ProjectV2SingleSelectFieldOptionInput:
+# "The ID of an existing single select option. Include this to preserve the
+# option's identity during updates, preventing item field values from being
+# cleared." So an update that re-sends an existing option WITHOUT its id destroys
+# that option and blanks the field on every item already assigned to it. Options
+# read back from the project therefore carry their id; brand-new starter options
+# have none (GitHub assigns it), and `if .id then` omits the key for them.
+opts_to_graphql='[.[] | "{" + (if .id then "id:" + (.id|@json) + "," else "" end) + "name:" + (.name|@json) + ",color:" + .color + ",description:" + (.description|@json) + "}"] | join(",")'
 
 # ── Resolve the owner (org or user), then find the project by title ──
 # repositoryOwner + a ProjectV2Owner fragment is one code path for both User and
@@ -141,9 +152,13 @@ else
     echo "==> Owner is a user account — skipping ORG_PROJECT_ID (no user-level variable scope; personal status automation is a separate follow-up)"
 fi
 
-# ── Snapshot current fields (one read; reused for existence checks) ──
-fields_json=$(gh api graphql -f query='query($p:ID!){node(id:$p){... on ProjectV2{fields(first:50){nodes{... on ProjectV2FieldCommon{id name dataType} ... on ProjectV2SingleSelectField{options{name color description}}}}}}}' \
-    -f p="$project_id")
+# ── Snapshot current fields (reused for existence checks; re-read immediately
+#    before any option replacement — see refresh_fields) ──
+refresh_fields() {
+    fields_json=$(gh api graphql -f query='query($p:ID!){node(id:$p){... on ProjectV2{fields(first:50){nodes{... on ProjectV2FieldCommon{id name dataType} ... on ProjectV2SingleSelectField{options{id name color description}}}}}}}' \
+        -f p="$project_id")
+}
+refresh_fields
 
 field_id() {
     printf '%s' "$fields_json" |
@@ -155,33 +170,119 @@ field_type() {
         jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .dataType' | head -n1
 }
 
+# existing_options NAME — the single-select field's CURRENT options, as a JSON
+# array of {id,name,color,description} ready to concatenate. Only meaningful for
+# a field the snapshot reports as SINGLE_SELECT. The id MUST be carried through
+# to the mutation — see opts_to_graphql for why dropping it is destructive.
+existing_options() {
+    printf '%s' "$fields_json" |
+        jq -c --arg n "$1" '[.data.node.fields.nodes[] | select(.name==$n) | .options[] | {id, name, color: (.color // "GRAY" | ascii_upcase), description: (.description // "")}]'
+}
+
+# append_missing EXISTING DESIRED — EXISTING, in order, plus every DESIRED option
+# whose name is not already present. Matching is by name, so an option the owner
+# recoloured or re-described keeps their version.
+append_missing() {
+    jq -cn --argjson ex "$1" --argjson want "$2" \
+        '$ex + [ $want[] | select( .name as $n | ([ $ex[].name ] | index($n)) == null ) ]'
+}
+
+# set_options FIELD_ID OPTIONS_JSON — replace a single-select field's option list.
+# updateProjectV2Field REPLACES the whole singleSelectOptions array, so callers
+# MUST pass the complete desired list: sending only the new options would delete
+# every option the owner added. Always build the argument with append_missing().
+set_options() {
+    frag=$(printf '%s' "$2" | jq -r "$opts_to_graphql")
+    gh api graphql -f f="$1" \
+        -f query="mutation(\$f:ID!){updateProjectV2Field(input:{fieldId:\$f,singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
+        >/dev/null
+}
+
 # A reused project may already carry a field with one of these names — of the
 # wrong data type. GitHub cannot change a project field's data type in place, so
 # its intended options are unavailable until it is renamed or deleted. Warn (and
-# repeat it in the summary) rather than exit non-zero: this script is a
-# create-if-missing reconciler that never edits what the owner already has, and
-# one pre-existing field is no reason to abort the rest.
+# repeat it in the summary) rather than exit non-zero: appending options to a
+# `text` field named `Domain` is impossible, and one pre-existing field is no
+# reason to abort the rest.
 incompatible=""
+
+# Fields that are missing a starter option but have no room left for it.
+at_capacity=""
+
+# GitHub's cap on options in one single-select field.
+max_options=50
+
+# Set by field_exists: 1 when the existing field is of the expected data type (so
+# a single-select caller may append to it), 0 when it is not.
+field_matched=0
 
 # field_exists NAME EXPECTED_DATATYPE — 0 when a field of that name is already
 # there (so the caller skips creation), recording a data-type mismatch on the way.
 field_exists() {
+    field_matched=0
     [ -n "$(field_id "$1")" ] || return 1
     etype="$(field_type "$1")"
     if [ -n "$etype" ] && [ "$etype" != "null" ] && [ "$etype" != "$2" ]; then
         echo "    WARNING: field '$1' already exists as $etype, not $2 — its intended options are NOT available" >&2
         incompatible="${incompatible}${incompatible:+, }$1 (is $etype, wanted $2)"
     else
-        echo "    Field '$1' already exists — leaving it as-is"
+        field_matched=1
     fi
     return 0
 }
 
 report_incompatible() {
-    [ -n "$incompatible" ] || return 0
-    echo "==> WARNING — these project fields already exist with a different data type: $incompatible" >&2
-    echo "    GitHub cannot change a project field's data type in place. Rename or delete each one in the" >&2
-    echo "    Project UI and re-run this script to get the intended options." >&2
+    if [ -n "$incompatible" ]; then
+        echo "==> WARNING — these project fields already exist with a different data type: $incompatible" >&2
+        echo "    GitHub cannot change a project field's data type in place. Rename or delete each one in the" >&2
+        echo "    Project UI and re-run this script to get the intended options." >&2
+    fi
+    if [ -n "$at_capacity" ]; then
+        echo "==> WARNING — these fields are missing a starter option with no room to add it — $at_capacity" >&2
+        echo "    A single-select field holds at most $max_options options. Remove one you do not use in the" >&2
+        echo "    Project UI and re-run, or skip the starter value." >&2
+    fi
+}
+
+# append_options NAME STARTERS — reconcile one existing single-select field: add
+# whatever starter option it lacks, keep everything else exactly as it is, and
+# write nothing when there is nothing to add. Used for Status and the custom
+# fields alike, so all of them get the same capacity guard and no-op behaviour.
+append_options() {
+    name="$1"
+    options_json="$2"
+    # Re-read immediately before building the replacement. set_options replaces
+    # the ENTIRE option list, so an option added between the startup snapshot and
+    # this write — by a parallel run of this script, or someone in the Project UI
+    # — would otherwise be silently deleted. This narrows that lost-update window
+    # to a single round-trip. It does not close it: updateProjectV2Field accepts
+    # no expected-version token, so a write landing inside the window is still
+    # lost. Closing it would need serialization GitHub does not offer here.
+    refresh_fields
+    if [ -z "$(field_id "$name")" ]; then
+        echo "    WARNING: field '$name' disappeared while this script was running — skipping" >&2
+        return 0
+    fi
+    existing=$(existing_options "$name")
+    desired=$(append_missing "$existing" "$options_json")
+    added=$(jq -rn --argjson ex "$existing" --argjson de "$desired" \
+        '[ $de[] | select( .name as $n | ([ $ex[].name ] | index($n)) == null ) | .name ] | join(", ")')
+    if [ -z "$added" ]; then
+        echo "    Field '$name' already exists with every starter option — leaving it as-is"
+        return 0
+    fi
+    # A single-select field holds at most $max_options options. Appending past
+    # that is rejected by the API, and under `set -e` that would abort the whole
+    # run — possibly after earlier fields were already updated, leaving a
+    # half-reconciled project. Warn and skip instead, matching how this script
+    # handles every other "cannot do it, the owner must" case.
+    if [ "$(printf '%s' "$desired" | jq -r 'length')" -gt "$max_options" ]; then
+        echo "    WARNING: field '$name' has $(printf '%s' "$existing" | jq -r 'length') options and cannot fit $added — GitHub caps a single-select at $max_options" >&2
+        at_capacity="${at_capacity}${at_capacity:+; }$name: $added"
+        return 0
+    fi
+    echo "    Field '$name' already exists — appending missing option(s): $added"
+    set_options "$(field_id "$name")" "$desired"
 }
 
 # ── Status field: full pipeline on a new project; preserve + append on an
@@ -193,28 +294,26 @@ if [ -z "$status_field_id" ]; then
     gh api graphql -f p="$project_id" \
         -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:SINGLE_SELECT,name:\"Status\",singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
         >/dev/null
+elif [ "$created" = "1" ]; then
+    # A project GitHub just created for us carries its default Status options and
+    # nothing is assigned to them yet, so replacing the list wholesale is safe.
+    echo "==> Setting Status to the full pipeline (new project)"
+    set_options "$status_field_id" "$(printf '%s' "$status_pipeline" | jq -c .)"
 else
-    if [ "$created" = "1" ]; then
-        echo "==> Setting Status to the full pipeline (new project)"
-        desired="$status_pipeline"
-    else
-        echo "==> Syncing Status (keeping existing options, appending any missing)"
-        existing=$(printf '%s' "$fields_json" |
-            jq -c '[.data.node.fields.nodes[] | select(.name=="Status") | .options[] | {name, color: (.color // "GRAY" | ascii_upcase), description: (.description // "")}]')
-        desired=$(jq -cn --argjson ex "$existing" --argjson pl "$status_pipeline" \
-            '$ex + [ $pl[] | select( .name as $n | ([ $ex[].name ] | index($n)) == null ) ]')
-    fi
-    frag=$(printf '%s' "$desired" | jq -r "$opts_to_graphql")
-    gh api graphql -f f="$status_field_id" \
-        -f query="mutation(\$f:ID!){updateProjectV2Field(input:{fieldId:\$f,singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
-        >/dev/null
+    echo "==> Syncing Status (keeping existing options, appending any missing)"
+    append_options "Status" "$status_pipeline"
 fi
 
-# ── Custom fields: create-if-missing; existing fields are left untouched ──
+# ── Custom fields: create if missing; an existing single-select is reconciled by
+#    append_options above. ──
 create_single_select() {
     name="$1"
     options_json="$2"
     if field_exists "$name" SINGLE_SELECT; then
+        # A data-type mismatch already warned; options cannot be added to it.
+        if [ "$field_matched" = "1" ]; then
+            append_options "$name" "$options_json"
+        fi
         return 0
     fi
     echo "    Creating single-select field '$name'"
@@ -227,6 +326,9 @@ create_single_select() {
 create_text() {
     name="$1"
     if field_exists "$name" TEXT; then
+        if [ "$field_matched" = "1" ]; then
+            echo "    Field '$name' already exists — leaving it as-is"
+        fi
         return 0
     fi
     echo "    Creating text field '$name'"
@@ -238,6 +340,9 @@ create_text() {
 create_number() {
     name="$1"
     if field_exists "$name" NUMBER; then
+        if [ "$field_matched" = "1" ]; then
+            echo "    Field '$name' already exists — leaving it as-is"
+        fi
         return 0
     fi
     echo "    Creating number field '$name'"
@@ -269,7 +374,7 @@ if [ "$owner_type" = "Organization" ]; then
     exit 0
 fi
 
-echo "==> Custom project fields (personal account; starters — re-runs won't clobber them)"
+echo "==> Custom project fields (personal account; starters — re-runs append missing ones, never clobber yours)"
 create_single_select "Priority" '[
   {"name":"Urgent","color":"RED","description":""},
   {"name":"High","color":"ORANGE","description":""},
@@ -290,8 +395,10 @@ create_single_select "Agent" '[
 # Domain (what part of the product) and Layer (which slice of the stack) mirror
 # the `domain:` / `layer:` label families in setup-github-labels.sh — keep the
 # lists in step. Domain is a starter set; real domains come from your product's
-# entities, and create_single_select leaves an existing field alone, so options
-# you add in the Project UI survive every re-run.
+# entities. create_single_select only ever ADDS to an existing field, so options
+# you add in the Project UI survive every re-run — and a starter value added by a
+# later harmon-init release lands on the next one, the same way a new
+# `domain:`/`layer:` label does.
 create_single_select "Domain" '[
   {"name":"auth","color":"PURPLE","description":"Authentication and authorization"},
   {"name":"billing","color":"GREEN","description":"Billing and payments"},

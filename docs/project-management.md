@@ -198,12 +198,17 @@ them in step afterwards. Two things to know before you extend either:
   source of truth** — the fields if you work the board, the labels if you live in
   `gh issue list` — and treat the other as optional. Dual-entering both by hand is
   how they end up contradicting each other.
-- **Adding a starter value is not symmetric.** `task setup:github-labels` creates
-  *or updates*, so a new starter label lands on a re-run; the field scripts only
-  create a field that is **missing** and never touch an existing one's options. So
-  when you (or a later harmon-init release) add a value, add the field option by
-  hand in the org's issue-field settings / the Project UI. That is deliberate —
-  it's what keeps your own customizations safe from a re-run.
+- **A new starter value lands on a re-run.** `task setup:github-labels` creates
+  *or updates*, and both field scripts **append** any starter option an existing
+  single-select is missing — `task setup:github-project` for project fields,
+  `task setup:github-issue-fields` for org issue fields. So a value added by a
+  later harmon-init release reaches every surface the next time you run them.
+  Appending is purely additive: the options you added are kept *with their
+  identity*, so issues and board items already assigned to one keep their value,
+  and nothing is renamed, reordered, or deleted. A re-run against an
+  already-synced project writes nothing at all. One caveat: the issue-fields API
+  is in public preview, so if its update endpoint rejects the change, the script
+  names the missing options to add by hand rather than failing the run.
 
 On a personal account there are no issue fields, so `task setup:github-project`
 creates **Priority, Product, Agent, Domain, Layer, and Size** as project fields.
