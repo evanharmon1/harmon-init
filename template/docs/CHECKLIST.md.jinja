@@ -167,16 +167,26 @@ config, toolchain, devcontainer, and dev environment — against the items below
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
 - [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
-      `admin:org` scope) to add the org's **Product** and **Agent** issue fields.
+      `admin:org` scope) to add the org's **Product**, **Agent**, **Domain**, and
+      **Layer** issue fields.
       Priority/Effort (and the date fields) are GitHub built-in issue fields, left
       at their defaults — tune options in the org's issue-field settings if you
       like. **The numeric estimate is the `Size` project number field** (created
       by `task setup:github-project`; only project number fields sum in view
       group headers). Idempotent and non-destructive.
+- [ ] `Domain` options: the script seeds `auth`/`billing`/`platform` only — add
+      this product's real domains (from your ERD entities) in the org's
+      issue-field settings, and add matching `domain:` labels in
+      `scripts/setup-github-labels.sh`. `Layer` (`ui`/`logic`/`data`/
+      `integration`) is product-independent and normally needs no edits. See
+      [project-management.md](project-management.md).
 [% else %]
-      On a personal account it also creates Priority/Product/Agent/Size as
-      project fields (issue fields are org-only); status automation is a separate
-      follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
+      On a personal account it also creates Priority/Product/Agent/Domain/Layer/
+      Size as project fields (issue fields are org-only); status automation is a
+      separate follow-up — the board is set up, but issue/PR status isn't
+      auto-synced yet. `Domain` is seeded with `auth`/`billing`/`platform` only —
+      add this product's real domains in the Project UI, and matching `domain:`
+      labels in `scripts/setup-github-labels.sh`.
 [% endif %]
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
       families (concerns/source/workflow/layer/domain — see

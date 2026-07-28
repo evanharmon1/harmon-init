@@ -919,10 +919,10 @@ tasks:
 
   setup:github-issue-fields:
     desc: >-
-      Idempotently add the org's Product + Agent issue fields (Priority/Effort
-      are GitHub built-ins, left at defaults; the numeric Size estimate is a
-      project field via setup:github-project). Requires `gh` with the admin:org
-      scope.
+      Idempotently add the org's Product + Agent + Domain + Layer issue fields
+      (Priority/Effort are GitHub built-ins, left at defaults; the numeric Size
+      estimate is a project field via setup:github-project). Creates only what is
+      missing, org-wide. Requires `gh` with the admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]

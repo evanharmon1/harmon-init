@@ -179,9 +179,34 @@ The work-metadata fields:
 - **Product** — which product/area it belongs to (free text)
 - **Agent** — which agent should implement it (Claude Code, Codex, Gemini CLI,
   Qwen Code, DeepSeek, Kimi K2, GLM, GitHub Copilot) and how (effort level, model)
+- **Domain** — which part of the *product* it belongs to. Ships as a starter
+  single-select (`auth`, `billing`, `platform`); the real vocabulary comes from
+  your ERD entities — add options as the product grows
+- **Layer** — which slice of the *stack* it changes: `ui` (components, styling,
+  interaction, tokens, a11y — no data change), `logic` (business rules,
+  handlers, calculation), `data` (schema, indexes, validators, migrations),
+  `integration` (external boundary: webhooks, API clients, credentials)
+
+Domain and Layer are orthogonal to each other and to `Type`/`Status`: an issue
+normally carries one of each — *what part of the product* × *what slice of the
+stack*. They ship with the same option lists as the `domain:` / `layer:` label
+families below, so both surfaces start from one vocabulary — but nothing keeps
+them in step afterwards. Two things to know before you extend either:
+
+- **Nothing syncs an individual issue's label to its field value**, so an issue
+  can carry `domain:auth` and `Domain=billing` at once. **Pick one surface as the
+  source of truth** — the fields if you work the board, the labels if you live in
+  `gh issue list` — and treat the other as optional. Dual-entering both by hand is
+  how they end up contradicting each other.
+- **Adding a starter value is not symmetric.** `task setup:github-labels` creates
+  *or updates*, so a new starter label lands on a re-run; the field scripts only
+  create a field that is **missing** and never touch an existing one's options. So
+  when you (or a later harmon-init release) add a value, add the field option by
+  hand in the org's issue-field settings / the Project UI. That is deliberate —
+  it's what keeps your own customizations safe from a re-run.
 
 On a personal account there are no issue fields, so `task setup:github-project`
-creates **Priority, Product, Agent, and Size** as project fields.
+creates **Priority, Product, Agent, Domain, Layer, and Size** as project fields.
 
 TODO: finalize each field's options/values.
 
@@ -197,15 +222,23 @@ families, color-coded by family; the starter set is created by
 - **Workflow** — `needs-triage`, `needs-requirements`, `blocked`, `waiting`,
   `needs-decision`, `needs-response`, `needs-communication` (transient triage
   states; `blocked` is the non-issue-blocker flag described above)
-- **Layer** — `layer:frontend`, `layer:backend`, `layer:infra`, …
-- **Domain** — start with `domain:auth`, `domain:billing`; grow from your ERD
-  entities
+- **Layer** — `layer:ui`, `layer:logic`, `layer:data`, `layer:integration`
+- **Domain** — start with `domain:auth`, `domain:billing`, `domain:platform`;
+  grow from your ERD entities
+
+The `layer:` and `domain:` families offer the same options as the **Layer** and
+**Domain** fields above — same names, same meanings, but no per-issue sync (see
+Fields). Use the label when you want it on the issue list and in
+`gh issue list --label`, the field when you want to group a board view by it, and
+extend both together so the option sets stay identical.
 
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
 org's **default labels** (org Settings → Repository, UI-only) to seed *new* repos
 (it won't change existing ones). It never deletes labels, so GitHub's defaults
-remain until you prune them.
+remain until you prune them — including a pre-`ui`/`logic`/`data`/`integration`
+repo's `layer:frontend`, `layer:backend`, and `layer:infra`, which you re-map and
+delete by hand.
 
 ## Milestones
 
@@ -427,7 +460,8 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   expect rough edges.
 - **Slice the board** — rather than separate per-product / per-layer / per-agent
   saved views, slice the one board: by **`Product`** when you go multi-product, by
-  **`layer:`** to focus a system layer, by **`Agent`** to see the split. One
+  **`Domain`** to focus a product area, by **`Layer`** to focus a slice of the
+  stack, by **`Agent`** to see the split. One
   board, many lenses — and how multiple products stay legible in one aggregating
   project instead of fragmenting into project-per-product.
 
