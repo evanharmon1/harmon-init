@@ -138,6 +138,44 @@ to the PR-shepherd stage, where they are fixed, declined with reasoning, or
 filed as follow-up issues. That keeps the expensive local loops focused on
 what actually blocks a merge, without losing the smaller findings.
 
+The deferral needs somewhere to land. These tasks run **locally** — their
+output lives in a terminal and nowhere else — and the cloud reviewer reposts
+only high-priority findings, so a deferred P2 that is not written down is
+gone. Write each one into the **PR description** under a
+`## Deferred findings` heading, as an unchecked task-list item:
+
+```markdown
+## Deferred findings
+
+- [ ] scripts/foo.sh:42 — P2: retry loop has no upper bound
+```
+
+Both tasks run before `gh pr create`, so write each finding down the moment
+you defer it, in the git directory rather than the worktree:
+
+```bash
+cat >>"$(git rev-parse --git-path deferred-findings.md)" <<'DEFERRED'
+- [ ] scripts/foo.sh:42 — P2: retry loop has no upper bound
+DEFERRED
+```
+
+The **quoted** heredoc delimiter is load-bearing: findings routinely quote
+code with backticks or `$(…)`, and inside a double-quoted string the shell
+would run it. Quoting disables expansion, not termination — so pick a
+delimiter the finding text cannot contain.
+
+Move the list into the PR description when you open the PR, then delete the
+file. The location is deterministic, so a later session finds it the same
+way, and `git status` never sees it — a note left in the *worktree* would be
+worse than none, because a dirty tree makes the next bare `task challenge`
+review the note instead of the branch.
+
+The shepherd stage settles every entry and ticks it off in the body as it
+goes, so the checkbox — not anyone's memory — is what says whether a finding
+is still open. The PR is not green while an unchecked entry remains.
+AGENTS.md ("Dev Loop") carries that obligation, so it holds even where the
+optional `/shepherd` skill that automates it is not installed.
+
 Note that the automatic stop-gate is not on this scale — the plugin's Stop
 hook uses its own notion of a material finding and may BLOCK on a P2.
 Adjudicate it; never disable the gate to get past a BLOCK.

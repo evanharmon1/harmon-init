@@ -199,8 +199,10 @@ Label EVERY finding with a priority, as the first token of the finding:
 Only P0 and P1 decide whether this review passes. Still report P2s in full —
 they are triaged later, once the pull request is open — but do not let them
 hold the stage open. Do not inflate a P2 to P1 to make it heard, and do not
-withhold or soften a P2 because it is non-gating. If there are no P0 or P1
-findings, say so explicitly and in those terms."
+withhold or soften a P2 because it is non-gating: a P2 reported here is
+carried into the pull request description, so an unreported one is lost
+outright. If there are no P0 or P1 findings, say so explicitly and in those
+terms."
 
 if [ -n "$focus" ]; then
     instructions="${instructions}

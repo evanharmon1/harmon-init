@@ -74,6 +74,9 @@ echo "$out" | grep -q "feature.txt" || fail "changed-file manifest missing from 
 # prompt — Codex's own priority labels are an undocumented convention.
 echo "$out" | grep -q "Only P0 and P1 decide" || fail "challenge prompt missing the P0/P1 gating rule: $out"
 echo "$out" | grep -q "Still report P2s" || fail "challenge prompt missing the report-P2s instruction: $out"
+# An unreported P2 never reaches the PR body, so the handoff clause is what
+# makes "reported but non-gating" different from "ignored".
+echo "$out" | grep -q "carried into the pull request description" || fail "challenge prompt missing the P2 handoff clause: $out"
 
 echo "==> origin/HEAD outranks a stray local main"
 git branch -q main "$(git rev-list --max-parents=0 HEAD)"
@@ -95,6 +98,7 @@ echo "$out" | grep -q "base branch 'origin/develop'" || fail "--base not honored
 echo "$out" | grep -q "VERIFICATION-CHECKPOINT" || fail "review mode instructions missing: $out"
 echo "$out" | grep -q "watch the hooks" || fail "focus text missing from prompt: $out"
 echo "$out" | grep -q "Only P0 and P1 decide" || fail "review prompt missing the P0/P1 gating rule: $out"
+echo "$out" | grep -q "carried into the pull request description" || fail "review prompt missing the P2 handoff clause: $out"
 
 echo "==> dirty tree auto-selects uncommitted scope and enumerates untracked dirs"
 echo x >dirty.txt

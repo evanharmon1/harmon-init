@@ -203,8 +203,9 @@ something to ask permission for.
   "Second-Model Review" below, fix confirmed findings, re-run `task verify`,
   then **re-run `task challenge`**. The stage passes only when a re-run comes
   back with **no confirmed P0 or P1 findings** — fixing the findings is not
-  the exit condition, a clean pass is. **P2s do not gate this stage**: record
-  them and carry them to the PR. Max **6** challenge → fix → re-challenge
+  the exit condition, a clean pass is. **P2s do not gate this stage**: carry
+  them to the PR (see "Deferring P2s" below). Max **6** challenge → fix →
+  re-challenge
   rounds; if P0/P1 findings persist, stop and escalate to Evan.
 - **`task review`** — verification-checkpoint review; same adjudication and
   same P0/P1 clean-pass exit condition, with its own max **6** rounds.
@@ -212,12 +213,15 @@ something to ask permission for.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
   title rule below).
-- **Shepherd the PR (max 5 rounds).** Opening the PR is not the end. Watch CI
+- **Shepherd the PR (max 5 rounds).** Opening the PR is not the end. Start by
+  re-reading the **unchecked** entries under `## Deferred findings` in the PR
+  description — those P2s are open work, not a changelog; tick each one off
+  in the body as you settle it. Then watch CI
   (`gh pr checks <n> --watch`) and incoming bot/human reviews. When a check
   fails or a review lands findings, treat the findings as hypotheses: verify
   them against the code, fix only what's confirmed, explain rejections in a
   PR comment, push the fix commit, and watch again. **This is where P2s are
-  settled** — the ones deferred from challenge/review plus anything the PR
+  settled** — the ones the PR description defers here plus anything the PR
   reviewers raise: fix, decline with reasoning, or file as a follow-up issue,
   but do not leave them unaddressed. Shepherd-round fixes must pass `task
   verify` before each push; the local challenge/review loops are not
@@ -339,6 +343,36 @@ too — never suppress or ignore one — but carry them to the PR-shepherd stage
 rather than spending a local round on them. A P2 you judge worth fixing
 immediately may of course be fixed in place; it just does not hold the stage
 open.
+
+**Deferring P2s.** The handoff is the **PR description**: list every deferred
+P2 under a `## Deferred findings` heading as an unchecked task-list item —
+`- [ ] <file:line> — <finding>` — with enough detail to adjudicate it later.
+This is not bookkeeping: `task challenge` and `task review` run locally and
+their output is ephemeral, and the cloud reviewer reposts only high-priority
+findings, so a P2 that is not written into the PR body is simply lost.
+
+Record each one **the moment you defer it**. Challenge and review both run
+before `gh pr create`, so there is usually no PR body to write to yet: append
+it to the file `git rev-parse --git-path deferred-findings.md` names, and
+move the list into the description when you open the PR (then delete the
+file). Terminal scrollback is not a record — a context reset between
+`task challenge` and `gh pr create` would take the findings with it.
+
+That path is not arbitrary. It sits in the **git directory**, so it is
+deterministic (any later session in this checkout finds it the same way, and
+`git rev-parse` resolves it correctly inside a linked worktree) and invisible
+to `git status`. A note in the *worktree* would be worse than none:
+`codex-review.sh` reviews the uncommitted diff whenever the tree is dirty, so
+the note would become the next bare `task challenge`'s entire scope — and the
+change it was supposed to review would get a clean pass it never earned.
+
+The shepherd stage settles every entry and **edits the PR body to tick it**
+(`- [x] … — fixed in <sha>` / `declined: <reason>` / `filed as #<n>`) in the
+same round. The checkbox is the resolution state: an entry left unchecked is
+open work, so a later round — or a different session — can tell at a glance
+what it still owes without re-adjudicating what is done. That obligation is
+stated here and in the Dev Loop above, and holds whether or not the optional
+`/shepherd` skill is installed to automate it.
 
 **Loop cap and exit:** a stage exits only on a **clean re-run** — no
 confirmed P0 or P1 findings — never on "findings fixed" alone, with at most
