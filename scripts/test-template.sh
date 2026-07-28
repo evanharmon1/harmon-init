@@ -1176,6 +1176,144 @@ else
     [ ! -e .github/workflows/terraform.yml ] || err "terraform.yml rendered but include_terraform=false"
 fi
 
+# ── 9i. The task tier boundary: port-free vs. port-binding ──────────
+# `check`/`build`/`test`/`verify` must never bind a port — that is what lets N
+# agents in N worktrees run the definition-of-done gate concurrently. `test:e2e`
+# serves the app, so it belongs in `ci` and the blocking `e2e` CI job ONLY.
+# Reachability is probed with `task --dry` (not grep): a task can be defined and
+# unreachable, or reached transitively through an aggregate, and only the dry
+# run tells the two apart.
+if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
+    [ -x scripts/e2e-run.sh ] || err "scripts/e2e-run.sh missing or not executable (use_node profile)"
+    # The skip is ONLY for a missing Playwright config. Widening it to swallow
+    # the unconfigured env guard would turn a fail-closed security control into
+    # a silent pass in `task ci` and the blocking `e2e` check.
+    grep -q 'playwright.config' scripts/e2e-run.sh ||
+        err "e2e-run.sh does not gate its skip on a missing playwright.config.*"
+    grep -q './scripts/e2e-env-guard.sh' scripts/e2e-run.sh ||
+        err "e2e-run.sh does not run the fail-closed e2e env guard"
+    # Local `task ci` must be able to actually run the suite on a clean checkout,
+    # like the CI job does — but never by installing OS packages via sudo.
+    grep -q 'playwright install' scripts/e2e-run.sh ||
+        err "e2e-run.sh does not install Playwright browsers — local ci would fail where CI passes"
+    ! grep -q 'playwright install .*--with-deps' scripts/e2e-run.sh ||
+        err "e2e-run.sh installs OS deps (--with-deps needs sudo); that is CI's hosted-runner step, not a local task's"
+    # The devcontainer bakes chromium into a root-owned PLAYWRIGHT_BROWSERS_PATH
+    # (o+rx, not writable), so an unconditional install EACCESes there before a
+    # single test runs — in the environment agents actually use.
+    grep -q 'PLAYWRIGHT_BROWSERS_PATH' scripts/e2e-run.sh ||
+        err "e2e-run.sh installs browsers unconditionally — it would fail on the devcontainer's read-only, image-owned browser cache"
+    # a11y is a SEPARATE non-blocking tier. An unfiltered `playwright test` here
+    # sweeps the shipped tests/a11y.spec.ts (@a11y) into the BLOCKING e2e check,
+    # promoting a11y to a required gate that the workflow and docs both say it
+    # is not.
+    if [ -f tests/a11y.spec.ts ]; then
+        grep -q -- '--grep-invert @a11y' scripts/e2e-run.sh ||
+            err "e2e-run.sh does not exclude @a11y — the blocking e2e check would gate on the non-blocking a11y specs"
+        # docs/CHECKLIST.md tells consumers to add a playwright.config.* just to
+        # enable the a11y job. At that point a11y.spec.ts is the ONLY spec, the
+        # filter above removes it, and a bare `playwright test` errors on "no
+        # tests found" — wedging the blocking e2e check for following the docs.
+        grep -q -- '--pass-with-no-tests' scripts/e2e-run.sh ||
+            err "e2e-run.sh filters out @a11y without --pass-with-no-tests — an a11y-only repo would fail the blocking e2e check"
+    fi
+    ./scripts/e2e-run.sh >/dev/null 2>&1 ||
+        err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
+    # A config with the guard still unconfigured must FAIL, not skip.
+    touch playwright.config.ts
+    if ./scripts/e2e-run.sh >/dev/null 2>&1; then
+        err "e2e-run.sh passed with an unconfigured e2e-env-guard.sh — the guard must fail closed"
+    fi
+    rm -f playwright.config.ts
+    if have task; then
+        # e2e is reachable from `ci` and NOT from verify/check/test.
+        grep -qF -- 'scripts/e2e-run.sh' <<<"$(task --color=false --dry ci 2>&1 || true)" ||
+            err "task ci does not reach test:e2e — the port-binding tier would gate nothing"
+        for portfree in verify check test; do
+            ! grep -qF -- 'scripts/e2e-run.sh' \
+                <<<"$(task --color=false --dry "$portfree" 2>&1 || true)" ||
+                err "task ${portfree} reaches test:e2e — the port-free tier must not serve the app"
+        done
+    else
+        required task "task tier reachability" || fail=1
+    fi
+    # The blocking e2e CI job must exist AND be rolled up by the `verify`
+    # aggregate — a job absent from needs/verify-ci-results.sh reports but gates
+    # nothing, which is the dead-end state this replaced.
+    grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has no e2e job (use_node profile)"
+    # Comma-delimited match, NOT `\be2e\b`: `\b` is a GNU extension, and in a
+    # POSIX ERE (macOS/BSD grep) it degrades to a literal `b`, so the assertion
+    # would fail on a correct workflow on every Mac — and test:template is a
+    # documented local gate there.
+    grep -qE '^    needs: \[([^]]*, )?e2e[],]' .github/workflows/build.yml ||
+        err "build.yml's verify aggregate does not need the e2e job — it would not gate merges"
+    grep -q '"e2e=\${E2E_RESULT}"' .github/workflows/build.yml ||
+        err "build.yml's verify aggregate does not assert the e2e job result"
+    # The job runs the WHOLE suite, and the documented convention is
+    # multi-browser + mobile projects — installing only chromium would fail this
+    # BLOCKING check on any config declaring firefox/webkit projects. Scoped to
+    # the e2e job's own block: the non-blocking a11y job legitimately installs
+    # just chromium, so a whole-file grep would report the wrong job.
+    e2e_job="$(awk '/^  e2e:$/{f=1} f&&/^  [a-z][a-z0-9-]*:$/&&!/^  e2e:$/{f=0} f' \
+        .github/workflows/build.yml)"
+    [ -n "$e2e_job" ] || err "could not isolate the e2e job block in build.yml"
+    grep -q 'playwright install' <<<"$e2e_job" ||
+        err "the e2e job never installs Playwright browsers"
+    ! grep -qE 'playwright install .*(chromium|firefox|webkit)' <<<"$e2e_job" ||
+        err "the e2e job installs a single Playwright browser but runs the full suite"
+    # `--with-deps` shells out to apt via sudo. Self-hosted runners may have no
+    # passwordless sudo (same reason the lighthouse job splits its Chrome
+    # install), and wedging a REQUIRED check on sudo is not acceptable.
+    if grep -q -- '--with-deps' <<<"$e2e_job"; then
+        grep -q "runner.environment == 'github-hosted'" <<<"$e2e_job" ||
+            err "the e2e job runs 'playwright install --with-deps' unconditionally — it needs sudo/apt and would wedge a required check on self-hosted runners"
+    fi
+else
+    [ ! -e scripts/e2e-run.sh ] || err "e2e-run.sh rendered for a non-node profile"
+    ! grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has an e2e job on a non-node profile"
+fi
+
+# ── 9j. codegen refreshes types in `verify`, never in `check` ───────
+# Generated Convex types must be current before tsc reads them; a stale
+# convex/_generated/ fails typecheck with errors that point nowhere near the
+# schema edit that caused them — so `verify` regenerates first.
+#
+# But codegen WRITES, and `check`/`lint:typescript` are read-only gates the
+# pre-commit hooks invoke directly. Reaching codegen from there would rewrite the
+# tree after the index was built, and would let CI (which runs `check`) refresh a
+# stale committed convex/_generated/ into passing instead of failing on it. Both
+# directions are asserted.
+if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
+    [ -x scripts/codegen.sh ] || err "scripts/codegen.sh missing or not executable (project_type=web-app)"
+    ./scripts/codegen.sh >/dev/null 2>&1 ||
+        err "codegen.sh does not skip cleanly on a fresh render (no app/deps yet)"
+    ./scripts/codegen.sh --guard >/dev/null 2>&1 ||
+        err "codegen.sh --guard does not skip cleanly on a fresh render (no app/deps yet)"
+    grep -q 'convex codegen' scripts/codegen.sh || err "codegen.sh does not run Convex codegen"
+    if have task; then
+        # `verify` must GUARD (fail on stale), not silently regenerate: `ci`
+        # delegates to `verify`, so a self-healing verify would green-light a
+        # local `ci` that CI then fails — `ci` would stop being a mirror.
+        grep -qF -- 'scripts/codegen.sh --guard' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach guard:codegen — stale generated types would pass locally and fail in CI"
+        for readonly_gate in check lint:typescript; do
+            ! grep -qF -- 'scripts/codegen.sh' \
+                <<<"$(task --color=false --dry "$readonly_gate" 2>&1 || true)" ||
+                err "task ${readonly_gate} reaches codegen — a read-only gate (and the pre-commit hook) must never write, and CI must typecheck what was committed"
+        done
+    else
+        required task "codegen reachability" || fail=1
+    fi
+    # The other half of the mirror: CI must run the same guard, or local `ci`
+    # and the PR disagree in the opposite direction.
+    grep -q 'task guard:codegen' .github/workflows/build.yml ||
+        err "build.yml never runs guard:codegen — CI would not catch stale generated files that local verify does"
+else
+    [ ! -e scripts/codegen.sh ] || err "codegen.sh rendered outside project_type=web-app"
+    ! grep -qE '^  codegen:' Taskfile.yml || err "codegen task rendered outside project_type=web-app"
+fi
+
 # Every `# renovate:` annotation in the rendered composite action must be
 # extractable by one of the rendered repo's own customManagers — an annotation
 # no manager matches (or one missing depName=) looks fine in review and produces
