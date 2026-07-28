@@ -104,11 +104,11 @@ release plumbing), disable it for routine development.
 task check      # fast inner loop while editing
 task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate, fix, re-challenge
-                # until a CLEAN pass (no material findings), ≤5 rounds
-task review     # verification checkpoint — same clean-pass exit, ≤4 rounds
+                # until a CLEAN pass (no P0/P1 findings), ≤6 rounds
+task review     # verification checkpoint — same clean-pass exit, ≤6 rounds
 task ci         # full CI mirror
-# → open the PR, then shepherd it: watch CI + reviews, adjudicate → fix →
-#   push, ≤4 rounds (independent of the loops above)
+# → open the PR, then shepherd it: watch CI + reviews, settle the deferred
+#   P2s, adjudicate → fix → push, ≤5 rounds (independent of the loops above)
 # → merging stays a human decision
 ```
 
@@ -116,6 +116,31 @@ The full staged loop — including the PR-shepherding rounds — is defined in
 AGENTS.md ("Dev Loop"). If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
 bare 👍 reaction as the clean pass.
+
+## Finding priorities
+
+Both modes ask Codex to label every finding, and the local loops gate on that
+label:
+
+| Priority | Meaning | Gates `challenge`/`review`? |
+| --- | --- | --- |
+| `P0` | Breaks correctness, security, or data integrity in ordinary use, or breaks an existing contract | Yes |
+| `P1` | A real defect or materially wrong design decision with a plausible trigger | Yes |
+| `P2` | Worth knowing, not merge-blocking: hardening, unlikely edge cases, maintainability, non-critical test gaps | No |
+
+The scale lives in the prompt that `scripts/codex-review.sh` builds — not in
+the Codex CLI's own priority labels, which are an undocumented convention
+that can change. Keeping the definition local means the gate still means what
+it says when Codex's output format moves.
+
+P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
+to the PR-shepherd stage, where they are fixed, declined with reasoning, or
+filed as follow-up issues. That keeps the expensive local loops focused on
+what actually blocks a merge, without losing the smaller findings.
+
+Note that the automatic stop-gate is not on this scale — the plugin's Stop
+hook uses its own notion of a material finding and may BLOCK on a P2.
+Adjudicate it; never disable the gate to get past a BLOCK.
 
 ## Troubleshooting
 

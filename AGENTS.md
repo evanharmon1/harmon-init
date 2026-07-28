@@ -202,25 +202,32 @@ something to ask permission for.
 - **`task challenge`** — adversarial second-model review. Adjudicate per
   "Second-Model Review" below, fix confirmed findings, re-run `task verify`,
   then **re-run `task challenge`**. The stage passes only when a re-run comes
-  back with **no material findings** — fixing the findings is not the exit
-  condition, a clean pass is. Max **5** challenge → fix → re-challenge
-  rounds; if findings persist, stop and escalate to Evan.
+  back with **no confirmed P0 or P1 findings** — fixing the findings is not
+  the exit condition, a clean pass is. **P2s do not gate this stage**: record
+  them and carry them to the PR. Max **6** challenge → fix → re-challenge
+  rounds; if P0/P1 findings persist, stop and escalate to Evan.
 - **`task review`** — verification-checkpoint review; same adjudication and
-  same clean-pass exit condition, with its own max **4** rounds.
+  same P0/P1 clean-pass exit condition, with its own max **6** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
   title rule below).
-- **Shepherd the PR (max 4 rounds).** Opening the PR is not the end. Watch CI
+- **Shepherd the PR (max 5 rounds).** Opening the PR is not the end. Watch CI
   (`gh pr checks <n> --watch`) and incoming bot/human reviews. When a check
   fails or a review lands findings, treat the findings as hypotheses: verify
   them against the code, fix only what's confirmed, explain rejections in a
-  PR comment, push the fix commit, and watch again. Shepherd-round fixes
-  must pass `task verify` before each push; the local challenge/review loops
-  are not re-entered — the post-push cloud/bot review is the second-model
-  check at this stage. This cap is independent of the other loop caps. If
-  checks still fail or material findings remain after 4 rounds, stop and
-  summarize what's unresolved on the PR for Evan.
+  PR comment, push the fix commit, and watch again. **This is where P2s are
+  settled** — the ones deferred from challenge/review plus anything the PR
+  reviewers raise: fix, decline with reasoning, or file as a follow-up issue,
+  but do not leave them unaddressed. Shepherd-round fixes must pass `task
+  verify` before each push; the local challenge/review loops are not
+  re-entered — the post-push cloud/bot review is the second-model check at
+  this stage. This cap is independent of the other loop caps. If checks still
+  fail or findings remain after 5 rounds, stop and summarize what's
+  unresolved on the PR for Evan. Where a **vendored** skill (`/shepherd`)
+  states a different cap or exit condition, **this file wins** — the skills
+  are synced from harmon-devkit on its own release cadence and can lag a
+  policy change made here.
 - **Stop at green.** Report that checks pass, then stop — merging is always a
   human decision.
 
@@ -317,15 +324,32 @@ the cloud run failed.
    appropriate.
 4. Explain why any rejected finding is incorrect or irrelevant.
 5. Re-run `task verify` (and the other relevant gates) after fixes.
-6. Finish with a concise adjudication table: finding → classification →
-   evidence → action taken.
+6. Finish with a concise adjudication table: finding → priority →
+   classification → evidence → action taken.
 
-**Loop cap and exit:** a stage exits only on a **clean re-run** (no material
-findings) — never on "findings fixed" alone — with at most **5** challenge
-iterations and **4** review iterations (challenge → fix → re-challenge, and
-likewise for review). If material disagreement persists at the cap, stop and
-surface it to Evan instead
-of iterating further.
+**Severity gating.** Both tasks ask Codex to label every finding `P0`
+(breaks correctness, security, or data integrity in ordinary use, or breaks
+an existing contract), `P1` (a real defect or materially wrong design
+decision with a plausible trigger), or `P2` (worth knowing, not
+merge-blocking: hardening, unlikely edge cases, maintainability, non-critical
+test gaps). The scale is defined in `scripts/codex-review.sh`, not inherited
+from the Codex CLI's own labels, so the gate keeps its meaning if Codex
+changes its output. **Only P0 and P1 gate the local loops.** Adjudicate P2s
+too — never suppress or ignore one — but carry them to the PR-shepherd stage
+rather than spending a local round on them. A P2 you judge worth fixing
+immediately may of course be fixed in place; it just does not hold the stage
+open.
+
+**Loop cap and exit:** a stage exits only on a **clean re-run** — no
+confirmed P0 or P1 findings — never on "findings fixed" alone, with at most
+**6** challenge iterations and **6** review iterations (challenge → fix →
+re-challenge, and likewise for review). If P0/P1 disagreement persists at the
+cap, stop and surface it to Evan instead of iterating further.
+
+One caveat on the automatic stop-gate: the codex plugin's Stop hook applies
+its **own** notion of a material finding and may BLOCK on something you have
+classified P2. Adjudicate it (fix it, or state the reasoning) — **never**
+disable the gate to get past a BLOCK.
 
 ## Conventions
 

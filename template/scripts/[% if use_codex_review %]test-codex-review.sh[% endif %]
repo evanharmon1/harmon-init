@@ -70,6 +70,10 @@ echo "$out" | grep -q "STUB-ARGS:exec review" || fail "codex exec review not inv
 echo "$out" | grep -q "base branch 'origin/develop'" || fail "remote-qualified fallback base missing: $out"
 echo "$out" | grep -q "ADVERSARIAL" || fail "challenge mode instructions missing: $out"
 echo "$out" | grep -q "feature.txt" || fail "changed-file manifest missing from branch-scope prompt: $out"
+# The gate is only meaningful if the scale it gates on is defined in the
+# prompt — Codex's own priority labels are an undocumented convention.
+echo "$out" | grep -q "Only P0 and P1 decide" || fail "challenge prompt missing the P0/P1 gating rule: $out"
+echo "$out" | grep -q "Still report P2s" || fail "challenge prompt missing the report-P2s instruction: $out"
 
 echo "==> origin/HEAD outranks a stray local main"
 git branch -q main "$(git rev-list --max-parents=0 HEAD)"
@@ -90,6 +94,7 @@ out="$(run review --base origin/develop watch the hooks)" || fail "review --base
 echo "$out" | grep -q "base branch 'origin/develop'" || fail "--base not honored: $out"
 echo "$out" | grep -q "VERIFICATION-CHECKPOINT" || fail "review mode instructions missing: $out"
 echo "$out" | grep -q "watch the hooks" || fail "focus text missing from prompt: $out"
+echo "$out" | grep -q "Only P0 and P1 decide" || fail "review prompt missing the P0/P1 gating rule: $out"
 
 echo "==> dirty tree auto-selects uncommitted scope and enumerates untracked dirs"
 echo x >dirty.txt
