@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# codegen.sh — run this project's code generators.
+#
+#   ./scripts/codegen.sh            (task codegen)       regenerate, that's all
+#   ./scripts/codegen.sh --guard    (task guard:codegen)  regenerate, then FAIL
+#                                                         if the output differs
+#                                                         from what is staged
+#                                                         (and warn on a
+#                                                         half-staged tree)
+#
+# Why a guard rather than a plain prerequisite: editing a Convex schema changes
+# convex/_generated/, and tsc reading the stale copy fails in a way that looks
+# nothing like the real cause. But regenerating inside `task check` would be
+# wrong twice over — `check` and `lint:typescript` are read-only gates the
+# pre-commit hooks run directly, and CI runs `check`, so a self-healing check
+# would refresh a stale committed convex/_generated/ into passing instead of
+# failing on it.
+#
+# So: `check` stays read-only, and `verify` (plus CI's lint job) runs the GUARD.
+# Local `task ci` and CI therefore fail on exactly the same condition — a
+# self-healing local run would have made `ci` stop being a CI mirror. The guard
+# leaves the regenerated files in place, so the fix is `git add` + re-run. It
+# also catches the case tsc cannot: an additive schema change whose stale
+# generated files still type-check.
+#
+# CONTRACT for anything added here:
+#   * PORT-FREE — generate from local sources; never start a server or attach to
+#     a running deployment. `check`/`build`/`test`/`verify` are the port-free
+#     tier so parallel agents and worktrees can run them concurrently.
+#   * SKIP CLEANLY when the generator isn't set up yet, so a fresh scaffold
+#     stays green (same rule as `task build` / `task lint:eslint`).
+#   * DECLARE its output paths in generated_paths, or the guard cannot see it.
+#   * COMMIT the output. Generated files are committed but tool-owned (excluded
+#     from Prettier and ESLint) — a codegen diff is expected output.
+set -euo pipefail
+
+guard=0
+if [ "${1:-}" = "--guard" ]; then
+    guard=1
+    shift
+fi
+if [ "$#" -gt 0 ]; then
+    echo "codegen: unexpected argument: $1" >&2
+    echo "usage: codegen.sh [--guard]" >&2
+    exit 2
+fi
+
+cd "$(dirname "$0")/.."
+
+if [ ! -f package.json ] || [ ! -d node_modules ]; then
+    echo "codegen: app/deps not set up yet -- skipping (scaffold the app + pnpm install)"
+    exit 0
+fi
+
+generated_paths=()
+source_paths=()
+
+# ── Convex: convex/_generated/ from convex/schema.ts + function files ─
+if [ -d convex ] && [ -x node_modules/.bin/convex ]; then
+    node_modules/.bin/convex codegen
+    generated_paths+=(convex/_generated)
+    source_paths+=(convex ':(exclude)convex/_generated')
+fi
+
+if [ "${#generated_paths[@]}" -eq 0 ]; then
+    echo "codegen: no generators configured yet -- skipping (Convex: add convex/ and the convex package)"
+    exit 0
+fi
+
+[ "$guard" -eq 1 ] || exit 0
+
+# Only meaningful inside a work tree; a render that has not been `git init`ed
+# yet has nothing to compare against.
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "codegen: not a git work tree -- skipping the staleness guard"
+    exit 0
+fi
+
+# Worktree-vs-INDEX, not vs HEAD: files already `git add`ed will be in the
+# commit CI sees, so they are not stale. Untracked output counts too (a brand
+# new generated file never shows up in `git diff`); gitignored output does not.
+stale=0
+git diff --quiet -- "${generated_paths[@]}" || stale=1
+[ -z "$(git ls-files --others --exclude-standard -- "${generated_paths[@]}")" ] || stale=1
+
+if [ "$stale" -eq 1 ]; then
+    echo "codegen: generated files were STALE — they have been regenerated:" >&2
+    git status --short -- "${generated_paths[@]}" >&2
+    echo "codegen: review and commit them, then re-run. CI type-checks what you" >&2
+    echo "codegen: committed, so an uncommitted regeneration fails there too." >&2
+    exit 1
+fi
+
+# One arrangement the comparison above cannot see: output STAGED while the
+# sources that produced it are left UNSTAGED. The generators read the worktree,
+# so the staged output matches worktree sources and looks current — but the
+# commit would pair new output with old input, and CI regenerates from what you
+# committed and fails.
+#
+# WARNS rather than fails, deliberately. Deciding this for real means
+# regenerating from the INDEX and comparing that, which needs the index
+# materialized into a temp tree with node_modules grafted in — fragile, and
+# heavy for a gate run on every change. The available approximation ("output
+# staged AND anything under the source paths uncommitted") also fires on a
+# perfectly consistent staged change that merely sits next to unrelated
+# work-in-progress, which is common. Blocking `verify` on that would trade a
+# rare, CI-caught problem for a frequent, wrong one — so: surface it, don't
+# gate. CI runs this same guard, and a half-staged commit fails there.
+sources_uncommitted=0
+if [ "${#source_paths[@]}" -gt 0 ]; then
+    git diff --quiet -- "${source_paths[@]}" || sources_uncommitted=1
+    # Untracked too, symmetrically with the staleness check: a brand-new
+    # function file the generated output already accounts for never shows up in
+    # `git diff`, and CI would regenerate without it.
+    [ -z "$(git ls-files --others --exclude-standard -- "${source_paths[@]}")" ] ||
+        sources_uncommitted=1
+fi
+
+if [ "$sources_uncommitted" -eq 1 ] &&
+    ! git diff --cached --quiet -- "${generated_paths[@]}"; then
+    echo "codegen: WARNING — generated output is staged while these sources have" >&2
+    echo "codegen: uncommitted changes:" >&2
+    git status --short -- "${source_paths[@]}" >&2
+    echo "codegen: if any of them affect codegen, the commit would pair new" >&2
+    echo "codegen: generated files with old sources and CI would fail. If they are" >&2
+    echo "codegen: unrelated work-in-progress, ignore this." >&2
+fi

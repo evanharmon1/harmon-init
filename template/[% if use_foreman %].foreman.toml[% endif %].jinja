@@ -9,6 +9,14 @@
 backend = "claude"
 require_approval = true
 inputs = "auto"
+[% if use_node %]
+# `task ci` includes the port-binding `test:e2e` tier, while `task verify` is
+# port-free by design (docs/architecture/tests.md). With max_parallel > 1 that
+# matters only once this app ships a playwright.config.* — before then test:e2e
+# skips, so nothing binds a port. When you add the e2e suite, pick one: point
+# verify_command at ["task", "verify"], drop max_parallel to 1, or give the
+# Playwright config a per-worktree port.
+[% endif %]
 verify_command = ["task", "ci"]
 max_parallel = 3
 branch_prefix = "foreman"

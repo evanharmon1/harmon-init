@@ -175,7 +175,10 @@ verify = check + build + test). `ci` is the full pipeline — everything CI runs
 (`verify`, the network skills-drift check, the devcontainer permission assert,
 `security`) — so you can reproduce a CI run locally on demand instead of waiting
 on a PR. Keep it that way: a check the build workflow **gates on** and that can
-run locally belongs in `ci` too, or the "mirror" quietly stops being one.
+run locally belongs in `ci` too, or the "mirror" quietly stops being one. The
+one carve-out: a check that needs **CI-only infrastructure** (a browser install,
+a service container, credentials that only exist on a runner) stays out of `ci`
+and is documented as an exception rather than being faked locally.
 
 **Foreman** (`scripts/foreman/`, `taskfiles/foreman.yml`) is the deterministic
 supervisor for milestone-driven agent dispatch: explicit arming via
