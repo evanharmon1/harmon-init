@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.7.1](https://github.com/evanharmon1/harmon-init/compare/v4.7.0...v4.7.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* keep Renovate bumps atomic across dogfood twins ([#431](https://github.com/evanharmon1/harmon-init/issues/431)) ([3b488c1](https://github.com/evanharmon1/harmon-init/commit/3b488c1b65c0b3bef4bb0af1401c69ac06b947c1))
+* **template:** sync harmon-devkit skills to v0.11.0 ([#429](https://github.com/evanharmon1/harmon-init/issues/429)) ([aa0d066](https://github.com/evanharmon1/harmon-init/commit/aa0d06619d54ef643fde648c66afcef56c06b78c))
+
 ## [4.7.0](https://github.com/evanharmon1/harmon-init/compare/v4.6.1...v4.7.0) (2026-07-28)
 
 
