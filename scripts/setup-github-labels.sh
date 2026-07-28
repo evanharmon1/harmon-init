@@ -3,11 +3,19 @@
 # set (docs/project-management.md). Colors are grouped by family (concerns=purple,
 # source=pink, workflow=orange, layer=blue, domain=yellow).
 #
+# The `layer:` and `domain:` families deliberately mirror the Layer and Domain
+# single-select fields created by setup-github-issue-fields.sh (org) /
+# setup-github-project.sh (personal account) — same vocabulary, so a label and a
+# field value never disagree. Keep the three lists in step when you extend them.
+#
 # Labels are REPO-level in GitHub — there's no shared org label pool. Run this in
 # each repo; org "default labels" (Settings → Repository, UI-only, no API) only
 # seed NEW repos and don't touch existing ones. Non-destructive: `--force`
 # creates-or-updates and it never deletes labels, so GitHub's defaults stay unless
-# you prune them yourself.
+# you prune them yourself. That cuts both ways: a repo seeded before the layer
+# family became ui/logic/data/integration keeps its old `layer:frontend`,
+# `layer:backend`, and `layer:infra` labels — re-map the issues and delete those
+# three by hand if you want the one vocabulary.
 #
 # Usage: setup-github-labels.sh --repo <owner/repo>
 # Needs: gh authed with repo write.
@@ -57,11 +65,13 @@ waiting|E36209|Waiting on an external party
 needs-decision|E36209|Needs a decision before it can proceed
 needs-response|E36209|Awaiting a response
 needs-communication|E36209|An update needs to be communicated out
-layer:frontend|1D76DB|Frontend
-layer:backend|1D76DB|Backend
-layer:infra|1D76DB|Infrastructure
+layer:ui|1D76DB|Components, styling, interaction, tokens, a11y. No data change
+layer:logic|1D76DB|Business rules, handlers, calculation
+layer:data|1D76DB|Schema, indexes, validators, migrations
+layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 domain:auth|FBCA04|Authentication and authorization
 domain:billing|FBCA04|Billing and payments
+domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
 "
 
 printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do
