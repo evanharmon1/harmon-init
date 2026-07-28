@@ -39,7 +39,9 @@ it points here.
   `ci` is the full CI mirror — `verify` + the network skills-drift check
   (`verify:skills`) + the devcontainer permission assert + `security`. A check
   the build workflow **gates on** and that can run locally belongs in `ci` too,
-  or the mirror quietly stops being one.
+  or the mirror quietly stops being one. The one exception is a check that needs
+  **CI-only infrastructure**: document it in `AGENTS.md` as an exception instead
+  of faking it locally.
 - **`lint:*` and `check` are read-only gates** — they report and fail, never
   modify files. All auto-fixing lives in **`task format`**, **`task format:file
   -- <path>`**, and **`task fix`** (= format then lint). Pre-commit hooks run the

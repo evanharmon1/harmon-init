@@ -25,7 +25,7 @@ ARG WORKMUX_VERSION=0.1.212
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.10.1
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.167
+ARG CLAUDE_CODE_VERSION=2.1.220
 # renovate: datasource=npm depName=@openai/codex
 ARG CODEX_VERSION=0.137.0
 # renovate: datasource=npm depName=@google/gemini-cli

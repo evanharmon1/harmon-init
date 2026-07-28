@@ -18,7 +18,9 @@
 # so the resolved scope is written INTO the instructions instead.
 # Codex reviews read-only; findings are advisory hypotheses for the primary
 # agent/human to adjudicate (AGENTS.md "Second-Model Review") — this is never
-# part of `verify`/`ci`. Requires an authenticated Codex CLI (`codex login`);
+# part of `verify`/`ci`. Both modes ask for P0/P1/P2-labelled findings; only
+# P0/P1 gate the local loop, P2s are reported and deferred to the PR stage.
+# Requires an authenticated Codex CLI (`codex login`);
 # see docs/guides/codex-review.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -178,6 +180,29 @@ tests for anything it fixes). Flag docs the change should have updated.
 Report only material, defensible findings tied to concrete files and lines —
 no style nits. If the change holds up, say so directly."
 fi
+
+# Severity is defined HERE rather than inherited from the Codex CLI's own
+# review output: its priority labels are an undocumented convention that can
+# change under us, and the local dev loop gates on this scale (AGENTS.md
+# "Second-Model Review"). Stating it in the prompt keeps the gate meaningful.
+instructions="${instructions}
+
+Label EVERY finding with a priority, as the first token of the finding:
+
+  P0 — a defect that breaks correctness, security, or data integrity in
+       ordinary use, or that breaks an existing contract. Merge-blocking.
+  P1 — a real defect or materially wrong design decision with a plausible
+       trigger. Merge-blocking unless argued down with evidence.
+  P2 — worth knowing, but not merge-blocking: hardening, edge cases behind
+       unlikely preconditions, maintainability, non-critical test gaps.
+
+Only P0 and P1 decide whether this review passes. Still report P2s in full —
+they are triaged later, once the pull request is open — but do not let them
+hold the stage open. Do not inflate a P2 to P1 to make it heard, and do not
+withhold or soften a P2 because it is non-gating: a P2 reported here is
+carried into the pull request description, so an unreported one is lost
+outright. If there are no P0 or P1 findings, say so explicitly and in those
+terms."
 
 if [ -n "$focus" ]; then
     instructions="${instructions}

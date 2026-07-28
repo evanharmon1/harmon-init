@@ -40,6 +40,14 @@ jobs:
           lint-tools: "true"
       - name: Lint[% if use_node %] + typecheck[% endif +%]
         run: task check
+[% if project_type == 'web-app' %]
+      # AFTER `check`, so the typecheck above still runs against the committed
+      # tree. This guard regenerates and fails if the output differs from what
+      # was committed — the same target `task verify` runs locally, which is
+      # what keeps `task ci` an honest mirror of this job.
+      - name: Generated code is current
+        run: task guard:codegen
+[% endif %]
       - run: task test:tasks
 [% if use_codex_review %]
       - run: task test:codex-review
@@ -87,6 +95,75 @@ jobs:
         run: task validate
       - name: Test
         run: task test
+
+  e2e:
+    # End-to-end (Playwright) — the PORT-BINDING test tier. It gets its own job
+    # rather than joining build-test because `task verify` (and every other
+    # agent-facing tier) is deliberately port-free; only `task ci` and this job
+    # serve the app. BLOCKING: listed in verify.needs below.
+    #
+    # Self-activates once the app ships a playwright.config.* — before then
+    # `task test:e2e` skips cleanly. Step order is deliberate: detect the config,
+    # run the fail-closed env guard BEFORE anything else touches the e2e
+    # environment, then install browsers and build (so the Playwright
+    # `webServer` has a dist/ to preview, mirroring the ordering `task ci` gets
+    # from verify). Once a config exists, scripts/e2e-env-guard.sh must be
+    # configured or this check fails (fail-closed by design).
+    #
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Detect Playwright config
+        id: pw
+        run: |
+          if find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      # FIRST, before dependency install / browsers / build. `task test:e2e`
+      # runs this same guard again, but by then `pnpm install` has executed
+      # lifecycle scripts and the build has run — with whatever e2e env this job
+      # was given in scope. A fail-closed guard that fires after the things it
+      # protects against is not fail-closed, and running it here also fails an
+      # unconfigured guard in seconds instead of after a browser install.
+      #
+      # Invoked directly rather than through `task`: `task` itself is installed
+      # by the setup step below. It is the same script the Taskfile calls, so
+      # there is no second copy of the logic.
+      - name: e2e environment guard (fail closed)
+        if: steps.pw.outputs.present == 'true'
+        run: ./scripts/e2e-env-guard.sh
+      - uses: ./.github/actions/setup
+      # Every browser, not just chromium: this job runs the WHOLE suite, and the
+      # convention is multi-browser + mobile projects (see
+      # docs/architecture/tests.md). Installing one browser would fail this
+      # blocking check on any config that declares firefox/webkit projects.
+      #
+      # Split by runner environment for the same reason the lighthouse job's
+      # Chrome install is: `--with-deps` shells out to apt via sudo. Hosted
+      # runners need that; persistent self-hosted machines already have the
+      # shared libs and may not have passwordless sudo, and wedging a REQUIRED
+      # check on sudo is not acceptable.
+      - name: Install Playwright browsers (hosted runner — apt via sudo)
+        if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
+        run: pnpm exec playwright install --with-deps
+      - name: Install Playwright browsers (self-hosted — no sudo/apt)
+        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install
+      - name: Build
+        if: steps.pw.outputs.present == 'true'
+        run: task build
+      - name: End-to-end tests
+        run: task test:e2e
 [% endif %]
 
   security:
@@ -244,7 +321,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, security[% if use_node %], build-test[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
+    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
@@ -259,6 +336,7 @@ jobs:
           SECURITY_RESULT: ${{ needs.security.result }}
 [% if use_node %]
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
 [% endif %]
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
@@ -275,6 +353,7 @@ jobs:
           check_skipped security "$SECURITY_RESULT"
 [% if use_node %]
           check_skipped build-test "$BUILD_TEST_RESULT"
+          check_skipped e2e "$E2E_RESULT"
 [% endif %]
 [% if project_type == 'web-astro' %]
           check_skipped lighthouse "$LIGHTHOUSE_RESULT"
@@ -295,11 +374,12 @@ jobs:
           SECURITY_RESULT: ${{ needs.security.result }}
 [% if use_node %]
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
 [% endif %]
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
 [% endif %]
-        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
+        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
 
 # Keep a literal final line after the inline Jinja conditionals above; with
 # trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.

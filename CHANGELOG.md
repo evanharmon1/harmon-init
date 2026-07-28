@@ -8,6 +8,36 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.7.0](https://github.com/evanharmon1/harmon-init/compare/v4.6.1...v4.7.0) (2026-07-28)
+
+
+### Features
+
+* default dev containers to Claude Opus 5 ([#420](https://github.com/evanharmon1/harmon-init/issues/420)) ([d9532a9](https://github.com/evanharmon1/harmon-init/commit/d9532a96996184883c9374b68430e028b2e8fd35)), closes [#372](https://github.com/evanharmon1/harmon-init/issues/372)
+* gate challenge/review on P0+P1 only, defer P2s to the PR stage ([#421](https://github.com/evanharmon1/harmon-init/issues/421)) ([ca0a9d4](https://github.com/evanharmon1/harmon-init/commit/ca0a9d4a684a381c6fa986201f9174da4ba0d2ff))
+* seed Domain and Layer across the GitHub issue-field, project-field, and label taxonomy ([#422](https://github.com/evanharmon1/harmon-init/issues/422)) ([bff19bb](https://github.com/evanharmon1/harmon-init/commit/bff19bb22ea087a7ebef67f337a34f87f7ceb180)), closes [#365](https://github.com/evanharmon1/harmon-init/issues/365)
+
+## [4.6.1](https://github.com/evanharmon1/harmon-init/compare/v4.6.0...v4.6.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.10.0 ([#418](https://github.com/evanharmon1/harmon-init/issues/418)) ([71a6f69](https://github.com/evanharmon1/harmon-init/commit/71a6f69371314fda48c13f610fb3b5cd238dbf90))
+
+## [4.6.0](https://github.com/evanharmon1/harmon-init/compare/v4.5.0...v4.6.0) (2026-07-28)
+
+
+### Features
+
+* **template:** gate e2e in task ci and add a codegen guard ([#417](https://github.com/evanharmon1/harmon-init/issues/417)) ([b63da78](https://github.com/evanharmon1/harmon-init/commit/b63da786b08292827d45158f24835513a4a87009))
+* vendor the universal skill category in harmon-init itself ([#416](https://github.com/evanharmon1/harmon-init/issues/416)) ([de27807](https://github.com/evanharmon1/harmon-init/commit/de27807a2c13f88781ef25b469aff22396bcaa32))
+
+
+### Bug Fixes
+
+* guard that both skills-sync manifests pin the same tag ([#415](https://github.com/evanharmon1/harmon-init/issues/415)) ([901df44](https://github.com/evanharmon1/harmon-init/commit/901df44abb6ca38d4e4df83f4c870ec620065c90))
+* stop tracking the devcontainer feature lockfile ([#410](https://github.com/evanharmon1/harmon-init/issues/410)) ([11c8dd8](https://github.com/evanharmon1/harmon-init/commit/11c8dd8f02f65d8f02968c9f8499c590711b85f8)), closes [#375](https://github.com/evanharmon1/harmon-init/issues/375)
+
 ## [4.5.0](https://github.com/evanharmon1/harmon-init/compare/v4.4.1...v4.5.0) (2026-07-27)
 
 

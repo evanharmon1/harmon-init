@@ -74,6 +74,12 @@ human merges the sync PR, then harmon-init's release PR
   force-push can never publish unrelated local commits under a bot title. An
   origin that cannot be reached aborts rather than being read as "no sync PR is
   in flight".
+- **Pin parity:** `task test:skills-pin-parity` (in `verify` and CI) fails when
+  the root and template manifests pin different tags. The `verify:skills*` drift
+  checks cannot see this — both read only the root manifest — so a pin edited in
+  the template twin alone would otherwise ship a stale pin to generated repos
+  and surface only when the next sync run aborts. Root-only: a generated repo
+  has one manifest and nothing to compare.
 - **Fail-closed:** the run aborts before any push if the two pins already
   disagree, if the tag would move the pin *backwards* — measured against the
   newest tag in flight, so a delayed dispatch cannot drag an open sync PR back
@@ -105,9 +111,15 @@ human merges the sync PR, then harmon-init's release PR
 - **Never merges.** Not the sync PR, not either repository's release PR.
 
 Renovate keeps its approval-gated harmon-devkit rule as a passive stale-pin
-signal and manual fallback; it cannot vendor the skills itself, and its
-Dependency Dashboard approval means it never races this workflow into a
-duplicate branch.
+signal and manual fallback. Being Dependency Dashboard-gated, it never opens a
+pin PR unattended — but that is not mutual exclusion, and nothing enforces one:
+the workflow's `concurrency` group serializes only its own runs, and the helper
+looks only for `bot/sync-harmon-devkit`. **Approving the dashboard item while
+the automation is healthy therefore produces two PRs for the same bump.** The
+duplicate is not silently wrong — Renovate cannot vendor the skills, so a
+ref-only pin change fails `verify:skills` until a human finishes it — but the
+operational rule is to leave the item unapproved unless the automation is
+broken and you are deliberately falling back to the manual route.
 
 The harmon-devkit side of the edge (emitting the dispatch on release) lives in
 that repository's `release.yml`.

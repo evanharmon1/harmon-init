@@ -167,16 +167,26 @@ config, toolchain, devcontainer, and dev environment — against the items below
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
 - [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
-      `admin:org` scope) to add the org's **Product** and **Agent** issue fields.
+      `admin:org` scope) to add the org's **Product**, **Agent**, **Domain**, and
+      **Layer** issue fields.
       Priority/Effort (and the date fields) are GitHub built-in issue fields, left
       at their defaults — tune options in the org's issue-field settings if you
       like. **The numeric estimate is the `Size` project number field** (created
       by `task setup:github-project`; only project number fields sum in view
       group headers). Idempotent and non-destructive.
+- [ ] `Domain` options: the script seeds `auth`/`billing`/`platform` only — add
+      this product's real domains (from your ERD entities) in the org's
+      issue-field settings, and add matching `domain:` labels in
+      `scripts/setup-github-labels.sh`. `Layer` (`ui`/`logic`/`data`/
+      `integration`) is product-independent and normally needs no edits. See
+      [project-management.md](project-management.md).
 [% else %]
-      On a personal account it also creates Priority/Product/Agent/Size as
-      project fields (issue fields are org-only); status automation is a separate
-      follow-up — the board is set up, but issue/PR status isn't auto-synced yet.
+      On a personal account it also creates Priority/Product/Agent/Domain/Layer/
+      Size as project fields (issue fields are org-only); status automation is a
+      separate follow-up — the board is set up, but issue/PR status isn't
+      auto-synced yet. `Domain` is seeded with `auth`/`billing`/`platform` only —
+      add this product's real domains in the Project UI, and matching `domain:`
+      labels in `scripts/setup-github-labels.sh`.
 [% endif %]
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
       families (concerns/source/workflow/layer/domain — see
@@ -228,6 +238,24 @@ config, toolchain, devcontainer, and dev environment — against the items below
 - [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
       iPhone) — the Playwright scaffold ships them commented out, and
       mobile-first is the convention
+- [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
+      site's credentials and production domains — `task test:e2e` runs it first
+      and it **fails until configured** (fail closed; see the script header).
+      Adding a `playwright.config.*` also activates the blocking **`e2e` CI
+      job** and the `test:e2e` step of `task ci` (both skip until then), so the
+      guard must be configured for those to go green. Don't gut it to get green.
+- [ ] Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
+      or serves on its own. In `task ci` and the `e2e` CI job a build has
+      already run, so `astro preview` with `reuseExistingServer: true` is the
+      usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
+[% if use_foreman %]
+- [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
+      ships `verify_command = ["task", "ci"]` with `max_parallel = 3` — parallel
+      Foreman worktrees would then race for the Playwright port. Pick one before
+      you dispatch: point `verify_command` at `["task", "verify"]` (port-free,
+      but drops e2e + security from the gate), set `max_parallel = 1`, or derive
+      a per-worktree port in `playwright.config.ts`.
+[% endif %]
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc`/`astro check` fail until they're installed (pair the spec with the
@@ -281,11 +309,35 @@ config, toolchain, devcontainer, and dev environment — against the items below
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail
       closed; see the script header). Document required env vars in
-      `.env.example` (names only, never values). **Updating a repo that already
+      `.env.example` (names only, never values). Adding a
+      `playwright.config.*` also activates the blocking **`e2e` CI job** and
+      the `test:e2e` step of `task ci` (both skip until then), so the guard
+      must be configured for those to go green. **Updating a repo that already
       has an e2e suite:** the guard lands unconfigured and blocks
-      `task test:e2e` — either configure it in the same update PR, or
-      consciously defer (keep running Playwright directly) and file a follow-up;
-      don't gut the guard to get green.
+      `task test:e2e`, `task ci`, and the `e2e` check — either configure it in
+      the same update PR, or consciously defer (keep running Playwright
+      directly) and file a follow-up; don't gut the guard to get green.
+- [ ] Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
+      or serves on its own. In `task ci` and the `e2e` CI job a build has
+      already run, so `vite preview` with `reuseExistingServer: true` is the
+      usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
+[% if use_foreman %]
+- [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
+      ships `verify_command = ["task", "ci"]` with `max_parallel = 3` — parallel
+      Foreman worktrees would then race for the Playwright port. Pick one before
+      you dispatch: point `verify_command` at `["task", "verify"]` (port-free,
+      but drops e2e + security from the gate), set `max_parallel = 1`, or derive
+      a per-worktree port in `playwright.config.ts`.
+[% endif %]
+- [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
+      `task verify`, and a step in CI's lint job) regenerates and **fails** if
+      the output isn't what you staged. Both activate automatically once
+      `convex/` and the `convex` package exist — so **commit the regenerated
+      `convex/_generated/` files** with your change. `task check` deliberately
+      never regenerates; it type-checks what you committed. Add any other
+      generators (GraphQL, OpenAPI, ORM clients) to `scripts/codegen.sh` —
+      port-free, skip-cleanly, and listed in `generated_paths` so the guard can
+      see them.
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc` fails until they're installed (pair the spec with the dep install).
