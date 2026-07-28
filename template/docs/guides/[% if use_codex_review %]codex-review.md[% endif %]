@@ -164,6 +164,10 @@ code with backticks or `$(…)`, and inside a double-quoted string the shell
 would run it. Quoting disables expansion, not termination — so pick a
 delimiter the finding text cannot contain.
 
+Check the file before appending: a stage only exits on a *clean re-run*, so an
+unchanged P2 comes back every remaining round and again in the next stage. Add
+it once, matching on location and substance rather than exact wording.
+
 Move the list into the PR description when you open the PR, then delete the
 file. The location is deterministic, so a later session finds it the same
 way, and `git status` never sees it — a note left in the *worktree* would be

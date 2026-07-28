@@ -245,7 +245,12 @@ findings, so a P2 that is not written into the PR body is simply lost.
 
 Record each one **the moment you defer it**. Challenge and review both run
 before `gh pr create`, so there is usually no PR body to write to yet: append
-it to the file `git rev-parse --git-path deferred-findings.md` names, and
+it to the file `git rev-parse --git-path deferred-findings.md` names — but
+only if that finding is not already listed. A stage exits on a *clean re-run*,
+so an unchanged P2 is reported again by design, in every remaining round and
+again by the next stage; appending blindly would hand the shepherd four copies
+of one finding to settle. Match on location plus substance, not exact
+wording — the same finding rarely comes back phrased identically. Then
 move the list into the description when you open the PR (then delete the
 file). Terminal scrollback is not a record — a context reset between
 `task challenge` and `gh pr create` would take the findings with it.
