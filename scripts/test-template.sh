@@ -45,6 +45,26 @@ err() {
     fail=1
 }
 
+# opt_names FILE START_REGEX — the `"name":"…"` values of one single-select
+# option block, sorted and deduped. The block opens on the line matching
+# START_REGEX and closes on the next line starting with `]`, so options are read
+# from the field they actually belong to rather than from anywhere in the file.
+# Any non-quote name matches: a name this misses would be silently absent from
+# the set comparison below, turning a drift failure into a false pass.
+opt_names() {
+    awk -v start="$2" '
+        $0 ~ start { inblock = 1; next }
+        inblock && /^\]/ { inblock = 0 }
+        inblock {
+            line = $0
+            while (match(line, /"name":"[^"]+"/)) {
+                print substr(line, RSTART + 8, RLENGTH - 9)
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+    ' "$1" | sort -u
+}
+
 # Answers shared by every profile. Side-effectful answers are forced off so
 # this is safe to run anywhere (no gh repo create, no iCloud moves). The meta
 # profile re-enables bunch/obsidian but renders with --skip-tasks.
@@ -622,6 +642,31 @@ full) # project_management=github; github_org=test-org (an org repo)
     # org + github → the org issue-fields + issue-types scripts render too
     [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
     [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
+    # The Layer/Domain taxonomy is seeded in three places — the `layer:`/`domain:`
+    # label families, the org issue fields, and the personal-account project
+    # fields. They are meant to be one vocabulary per family, so compare each
+    # family's option SET across all three, exactly (not just membership
+    # somewhere in the file: `auth` living under Domain must not satisfy a
+    # `layer:auth` label) and in both directions (a field option with no label is
+    # drift too).
+    for pair in layer:Layer domain:Domain; do
+        fam="${pair%%:*}"
+        field="${pair##*:}"
+        # Each source's option set for this family, one name per line, sorted.
+        # Name charset is deliberately permissive: a domain like `oauth2` or
+        # `saas_billing` must land in the compared set, not be silently dropped
+        # (which would make an "exact set" comparison quietly pass on drift).
+        lbl_set="$(sed -n -E "s/^${fam}:([^|]+)\|.*/\1/p" scripts/setup-github-labels.sh | sort -u)"
+        # `<fam>_opts='[ … ]'` in the org script; `create_single_select "<Field>" '[ … ]'`
+        # in the project script. Both blocks end on a line starting with `]`.
+        fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='")"
+        prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '")"
+        [ -n "$lbl_set" ] || err "no ${fam}: labels found in setup-github-labels.sh"
+        [ "$lbl_set" = "$fld_set" ] ||
+            err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != issue-field options [$(echo "$fld_set" | tr '\n' ' ')]"
+        [ "$lbl_set" = "$prj_set" ] ||
+            err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != project-field options [$(echo "$prj_set" | tr '\n' ' ')]"
+    done
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"

@@ -6,9 +6,9 @@
 # because only project number fields sum in view group headers (issue-field
 # columns can group/filter/sort, not sum). The other metadata on an ORGANIZATION
 # are org-level ISSUE fields (Priority/Effort are GitHub built-ins, left at
-# their defaults; setup-github-issue-fields.sh adds Product + Agent); on a
-# personal account (no org issue fields) this script creates
-# Priority/Product/Agent as project fields too.
+# their defaults; setup-github-issue-fields.sh adds Product, Agent, Domain, and
+# Layer); on a personal account (no org issue fields) this script creates
+# Priority/Product/Agent/Domain/Layer as project fields too.
 #
 # Safe to re-run and safe to run from every repo the owner controls: it looks the
 # project up by title, so the first run creates it and later runs just reconcile
@@ -142,12 +142,46 @@ else
 fi
 
 # ── Snapshot current fields (one read; reused for existence checks) ──
-fields_json=$(gh api graphql -f query='query($p:ID!){node(id:$p){... on ProjectV2{fields(first:50){nodes{... on ProjectV2FieldCommon{id name} ... on ProjectV2SingleSelectField{options{name color description}}}}}}}' \
+fields_json=$(gh api graphql -f query='query($p:ID!){node(id:$p){... on ProjectV2{fields(first:50){nodes{... on ProjectV2FieldCommon{id name dataType} ... on ProjectV2SingleSelectField{options{name color description}}}}}}}' \
     -f p="$project_id")
 
 field_id() {
     printf '%s' "$fields_json" |
         jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .id' | head -n1
+}
+
+field_type() {
+    printf '%s' "$fields_json" |
+        jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .dataType' | head -n1
+}
+
+# A reused project may already carry a field with one of these names — of the
+# wrong data type. GitHub cannot change a project field's data type in place, so
+# its intended options are unavailable until it is renamed or deleted. Warn (and
+# repeat it in the summary) rather than exit non-zero: this script is a
+# create-if-missing reconciler that never edits what the owner already has, and
+# one pre-existing field is no reason to abort the rest.
+incompatible=""
+
+# field_exists NAME EXPECTED_DATATYPE — 0 when a field of that name is already
+# there (so the caller skips creation), recording a data-type mismatch on the way.
+field_exists() {
+    [ -n "$(field_id "$1")" ] || return 1
+    etype="$(field_type "$1")"
+    if [ -n "$etype" ] && [ "$etype" != "null" ] && [ "$etype" != "$2" ]; then
+        echo "    WARNING: field '$1' already exists as $etype, not $2 — its intended options are NOT available" >&2
+        incompatible="${incompatible}${incompatible:+, }$1 (is $etype, wanted $2)"
+    else
+        echo "    Field '$1' already exists — leaving it as-is"
+    fi
+    return 0
+}
+
+report_incompatible() {
+    [ -n "$incompatible" ] || return 0
+    echo "==> WARNING — these project fields already exist with a different data type: $incompatible" >&2
+    echo "    GitHub cannot change a project field's data type in place. Rename or delete each one in the" >&2
+    echo "    Project UI and re-run this script to get the intended options." >&2
 }
 
 # ── Status field: full pipeline on a new project; preserve + append on an
@@ -180,8 +214,7 @@ fi
 create_single_select() {
     name="$1"
     options_json="$2"
-    if [ -n "$(field_id "$name")" ]; then
-        echo "    Field '$name' already exists — leaving it as-is"
+    if field_exists "$name" SINGLE_SELECT; then
         return 0
     fi
     echo "    Creating single-select field '$name'"
@@ -193,8 +226,7 @@ create_single_select() {
 
 create_text() {
     name="$1"
-    if [ -n "$(field_id "$name")" ]; then
-        echo "    Field '$name' already exists — leaving it as-is"
+    if field_exists "$name" TEXT; then
         return 0
     fi
     echo "    Creating text field '$name'"
@@ -205,8 +237,7 @@ create_text() {
 
 create_number() {
     name="$1"
-    if [ -n "$(field_id "$name")" ]; then
-        echo "    Field '$name' already exists — leaving it as-is"
+    if field_exists "$name" NUMBER; then
         return 0
     fi
     echo "    Creating number field '$name'"
@@ -228,10 +259,12 @@ create_number "Size"
 # Other metadata: on an ORGANIZATION these are org-level ISSUE fields (durable —
 # the value is on the issue, shared across every project; see
 # docs/project-management.md). Priority is a GitHub built-in;
-# setup-github-issue-fields.sh adds Product + Agent. A personal account has no org
-# issue fields, so fall back to creating them as project fields here.
+# setup-github-issue-fields.sh adds Product, Agent, Domain, and Layer. A personal
+# account has no org issue fields, so fall back to creating them as project
+# fields here.
 if [ "$owner_type" = "Organization" ]; then
-    echo "==> Other metadata are org issue fields (Priority/Effort built-ins, left at their defaults; run setup-github-issue-fields.sh for Product/Agent)"
+    echo "==> Other metadata are org issue fields (Priority/Effort built-ins, left at their defaults; run setup-github-issue-fields.sh for Product/Agent/Domain/Layer)"
+    report_incompatible
     echo "==> Done — project #$project_number: $title"
     exit 0
 fi
@@ -254,5 +287,22 @@ create_single_select "Agent" '[
   {"name":"GLM","color":"PINK","description":""},
   {"name":"GitHub Copilot","color":"GRAY","description":""}
 ]'
+# Domain (what part of the product) and Layer (which slice of the stack) mirror
+# the `domain:` / `layer:` label families in setup-github-labels.sh — keep the
+# lists in step. Domain is a starter set; real domains come from your product's
+# entities, and create_single_select leaves an existing field alone, so options
+# you add in the Project UI survive every re-run.
+create_single_select "Domain" '[
+  {"name":"auth","color":"PURPLE","description":"Authentication and authorization"},
+  {"name":"billing","color":"GREEN","description":"Billing and payments"},
+  {"name":"platform","color":"GRAY","description":"CI, build, test infra, and tooling in this repo"}
+]'
+create_single_select "Layer" '[
+  {"name":"ui","color":"BLUE","description":"Components, styling, interaction, tokens, a11y. No data change"},
+  {"name":"logic","color":"GREEN","description":"Business rules, handlers, calculation"},
+  {"name":"data","color":"YELLOW","description":"Schema, indexes, validators, migrations"},
+  {"name":"integration","color":"ORANGE","description":"External boundary: webhooks, API clients, credentials"}
+]'
 
+report_incompatible
 echo "==> Done — project #$project_number: $title"

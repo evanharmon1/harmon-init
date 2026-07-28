@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # setup-github-issue-fields.sh — idempotently add the org ISSUE FIELDS that are
-# NOT GitHub built-ins: Product and Agent. GitHub already ships Priority, Effort,
-# Start date, and Target date as built-in issue fields, and we never recreate or
-# modify those (leave them at their defaults). Create-if-missing only; it never
-# edits or deletes a field.
+# NOT GitHub built-ins: Product, Agent, Domain, and Layer. GitHub already ships
+# Priority, Effort, Start date, and Target date as built-in issue fields, and we
+# never recreate or modify those (leave them at their defaults).
+# Create-if-missing only; it never edits or deletes a field — so the starter
+# Domain/Layer options below are a floor, and per-product options you add later
+# in the org's issue-field settings survive every re-run.
 #
 # NB: the numeric, summable estimate is NOT an issue field — it is the Size
 # project NUMBER field (setup-github-project.sh), because only project number
@@ -70,6 +72,27 @@ agent_opts='[
   {"name":"GitHub Copilot","color":"gray","description":"","priority":8}
 ]'
 
+# Domain (what part of the product) and Layer (which slice of the stack) are
+# orthogonal to each other and to Type/Status — an issue normally carries one of
+# each. Both mirror the `domain:` / `layer:` label families in
+# setup-github-labels.sh; keep the two lists in step.
+#
+# Domain is a STARTER set only: real domains come from your product's entities
+# (crm, invoicing, scheduling, …). Add them in the org's issue-field settings —
+# this script never edits an existing field, so they survive.
+domain_opts='[
+  {"name":"auth","color":"purple","description":"Authentication and authorization","priority":1},
+  {"name":"billing","color":"green","description":"Billing and payments","priority":2},
+  {"name":"platform","color":"gray","description":"CI, build, test infra, and tooling in this repo","priority":3}
+]'
+
+layer_opts='[
+  {"name":"ui","color":"blue","description":"Components, styling, interaction, tokens, a11y. No data change","priority":1},
+  {"name":"logic","color":"green","description":"Business rules, handlers, calculation","priority":2},
+  {"name":"data","color":"yellow","description":"Schema, indexes, validators, migrations","priority":3},
+  {"name":"integration","color":"orange","description":"External boundary: webhooks, API clients, credentials","priority":4}
+]'
+
 echo "==> Reading existing issue fields for '$org'"
 existing=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
 if [ -z "$existing" ]; then
@@ -77,11 +100,24 @@ if [ -z "$existing" ]; then
     exit 1
 fi
 
-# The list endpoint returns a bare array; tolerate an {"issue_fields":[...]} wrapper too.
-existing_names=$(printf '%s' "$existing" |
-    jq -r 'if type == "object" then (.issue_fields // []) else . end | .[].name' 2>/dev/null || true)
+# One `name<TAB>data_type` per line. The list endpoint returns a bare array;
+# tolerate an {"issue_fields":[...]} wrapper too. Reading names line-wise (not as
+# one joined string) also keeps this correct across `--paginate`'s multiple
+# documents.
+existing_fields=$(printf '%s' "$existing" |
+    jq -r 'if type == "object" then (.issue_fields // []) else . end | .[] | "\(.name)\t\(.data_type // "")"' 2>/dev/null || true)
 
-field_present() { printf '%s\n' "$existing_names" | grep -Fxq "$1"; }
+field_present() { printf '%s\n' "$existing_fields" | cut -f1 | grep -Fxq "$1"; }
+field_type() { printf '%s\n' "$existing_fields" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'; }
+
+# Names like `Domain` and `Layer` are generic enough that an adopting org may
+# already have one — of the wrong data type. GitHub cannot change an issue
+# field's data type in place, so the intended options are simply unavailable
+# until that field is renamed or deleted. Warn (loudly, and again in the summary)
+# rather than exit non-zero: this script's contract is create-if-missing and
+# never-edit, and a pre-existing field the org owns is not a reason to abort the
+# fields that *can* still be created.
+incompatible=""
 
 # create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON]
 create_field() {
@@ -90,7 +126,13 @@ create_field() {
     desc="$3"
     opts="${4:-}"
     if field_present "$name"; then
-        echo "    Issue field '$name' already exists — leaving it as-is"
+        etype="$(field_type "$name")"
+        if [ -n "$etype" ] && [ "$etype" != "$dtype" ]; then
+            echo "    WARNING: issue field '$name' already exists as '$etype', not '$dtype' — its intended options are NOT available" >&2
+            incompatible="${incompatible}${incompatible:+, }${name} (is '$etype', wanted '$dtype')"
+        else
+            echo "    Issue field '$name' already exists — leaving it as-is"
+        fi
         return 0
     fi
     echo "    Creating $dtype issue field '$name'"
@@ -108,5 +150,13 @@ create_field() {
 
 create_field "Product" "text" "Which product/area it belongs to"
 create_field "Agent" "single_select" "Which agent should implement it" "$agent_opts"
+create_field "Domain" "single_select" "Which part of the product it belongs to" "$domain_opts"
+create_field "Layer" "single_select" "Which slice of the stack it changes" "$layer_opts"
 
-echo "==> Done — added issue fields on '$org': Product, Agent (Priority/Effort/dates are GitHub built-ins)"
+if [ -n "$incompatible" ]; then
+    echo "==> Done, WITH WARNINGS — these fields already exist with a different data type: $incompatible" >&2
+    echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
+    echo "    issue-field settings and re-run this script to get the intended options." >&2
+else
+    echo "==> Done — added issue fields on '$org': Product, Agent, Domain, Layer (Priority/Effort/dates are GitHub built-ins)"
+fi
