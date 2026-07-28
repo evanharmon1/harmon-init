@@ -8,6 +8,17 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.7.2](https://github.com/evanharmon1/harmon-init/compare/v4.7.1...v4.7.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* append missing starter options to existing GitHub single-select fields ([#440](https://github.com/evanharmon1/harmon-init/issues/440)) ([e235d43](https://github.com/evanharmon1/harmon-init/commit/e235d430c99d74f7b5170eb5aea79ba2b241c2fa))
+* **deps:** update devcontainer ([#405](https://github.com/evanharmon1/harmon-init/issues/405)) ([78dbea3](https://github.com/evanharmon1/harmon-init/commit/78dbea3e9aaca5893f09d97498311fe38aa105d5))
+* **devcontainer:** install task from a pinned release instead of the go-task Feature ([#438](https://github.com/evanharmon1/harmon-init/issues/438)) ([0421d21](https://github.com/evanharmon1/harmon-init/commit/0421d214fd436e6a4e9574c1bde7295963160eee)), closes [#427](https://github.com/evanharmon1/harmon-init/issues/427)
+* **template:** sync harmon-devkit skills to v0.11.1 ([#441](https://github.com/evanharmon1/harmon-init/issues/441)) ([3ee4938](https://github.com/evanharmon1/harmon-init/commit/3ee4938ed036ba501659e5f0178818414c28a83d))
+* time-box the devcontainer config check so a wedged container runtime cannot stall task verify ([#433](https://github.com/evanharmon1/harmon-init/issues/433)) ([e37288f](https://github.com/evanharmon1/harmon-init/commit/e37288fbaadf2d3d91f8d126aea1a8b19cd17984)), closes [#424](https://github.com/evanharmon1/harmon-init/issues/424)
+
 ## [4.7.1](https://github.com/evanharmon1/harmon-init/compare/v4.7.0...v4.7.1) (2026-07-28)
 
 
