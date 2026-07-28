@@ -354,7 +354,7 @@ findings, so a P2 that is not written into the PR body is simply lost.
 Record each one **the moment you defer it**. Challenge and review both run
 before `gh pr create`, so there is usually no PR body to write to yet: append
 it to the file
-`git rev-parse --git-path "deferred-findings/$(git branch --show-current).md"`
+`git rev-parse --git-path "deferred-findings/$(git branch --show-current)"`
 names (`mkdir -p` its directory first) — but only if that finding is not
 already listed. A stage exits on a *clean re-run*,
 so an unchanged P2 is reported again by design, in every remaining round and
@@ -371,8 +371,11 @@ deterministic (any later session in this checkout finds it the same way, and
 to `git status`. It is keyed by **branch** because an ordinary clone switches
 branches in place: with one shared file, opening branch B's PR would sweep up
 branch A's findings and then delete A's only copy of them. The branch name
-becomes a *path*, not a flattened string — folding `/` to `-` would collide
-`feat/x` with `feat-x` and reintroduce exactly that loss. A note in the *worktree* would be worse than none:
+becomes a *path*, verbatim and without a suffix — folding `/` to `-` would
+collide `feat/x` with `feat-x` and reintroduce exactly that loss, and adding
+an extension would make `foo` (a file) block `foo.md/bar` (needing a
+directory). Used as-is, the mapping is git's own ref namespace, and git
+already forbids one live branch from being a path prefix of another. A note in the *worktree* would be worse than none:
 `codex-review.sh` reviews the uncommitted diff whenever the tree is dirty, so
 the note would become the next bare `task challenge`'s entire scope — and the
 change it was supposed to review would get a clean pass it never earned.
