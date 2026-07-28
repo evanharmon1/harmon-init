@@ -22,7 +22,7 @@ from foreman.github import GitHub
 from foreman.util import ForemanError
 
 DEPENDS_ON_RE = re.compile(
-    r"^depends-on:\s*(?P<refs>#\d+(?:\s*,\s*#\d+)*)\s*$", re.I | re.M
+    r"^depends-on:\s*(?P<refs>#\d+(?:\s*,\s*#\d+)*)\s*$", re.IGNORECASE | re.MULTILINE
 )
 MARKER_RE = re.compile(r"<!--\s*foreman:unit=#(?P<number>\d+)\b[^>]*-->")
 
@@ -225,8 +225,10 @@ def dependency_satisfied(
                 False,
                 "closed, but no foreman PR satisfies the merge chain",
                 warnings=[
-                    f"#{number}: closed managed issue has no foreman-marked PR — "
-                    "resolve manually, mark foreman:satisfied, or mark foreman:external"
+                    (
+                        f"#{number}: closed managed issue has no foreman-marked PR — "
+                        "resolve manually, mark foreman:satisfied, or mark foreman:external"
+                    )
                 ],
             )
         expected_author = cfg.expected_login or gh.viewer()
@@ -253,10 +255,12 @@ def dependency_satisfied(
             False,
             "closed, but no foreman PR satisfies the merge chain",
             warnings=[
-                f"#{number}: closed with foreman-marked PR(s) "
-                f"({', '.join('#' + str(pr['number']) for pr in marked_prs)}) that did not "
-                "merge cleanly into the default branch — resolve manually or mark "
-                "foreman:satisfied"
+                (
+                    f"#{number}: closed with foreman-marked PR(s) "
+                    f"({', '.join('#' + str(pr['number']) for pr in marked_prs)}) that did not "
+                    "merge cleanly into the default branch — resolve manually or mark "
+                    "foreman:satisfied"
+                )
             ],
         )
 
@@ -266,8 +270,10 @@ def dependency_satisfied(
             False,
             "closed as not_planned",
             warnings=[
-                f"#{number}: closed as not planned — remove the dependency edge or mark it "
-                "foreman:satisfied if this is intentional"
+                (
+                    f"#{number}: closed as not planned — remove the dependency edge or mark it "
+                    "foreman:satisfied if this is intentional"
+                )
             ],
         )
     how = (

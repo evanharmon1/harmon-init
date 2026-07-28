@@ -52,7 +52,7 @@ tasks:
     desc: "Ruff + Black (check mode) over scripts/foreman (skips when uv is unavailable)"
     vars:
       # renovate: datasource=pypi depName=ruff
-      RUFF_VERSION: 0.15.21
+      RUFF_VERSION: 0.16.0
       # renovate: datasource=pypi depName=black
       BLACK_VERSION: 26.5.1
     cmds:

@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from foreman import backend as backend_mod
-from foreman import signatures as signatures_mod, spec, verify, worktree
+from foreman import signatures as signatures_mod
+from foreman import spec, verify, worktree
 from foreman.config import Config
 from foreman.dispatch import RETRIGGER_SUBJECT
 from foreman.github import GitHub
@@ -146,7 +147,7 @@ def _ensure_worktree(
         if branch in local:
             try:
                 worktree.add_existing_branch(path, branch)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- fall back to a fresh add
                 worktree.add(path, branch, f"{remote_name}/{branch}")
         else:
             worktree.add(path, branch, f"{remote_name}/{branch}")
@@ -422,7 +423,7 @@ def run_shepherd(gh: GitHub, cfg: Config, root: Path) -> ShepherdReport:
     for pr in prs:
         try:
             work = shepherd_pr(gh, cfg, root, pr, catalog)
-        except Exception as exc:  # keep shepherding the rest
+        except Exception as exc:  # noqa: BLE001 -- keep shepherding the rest
             warn(f"shepherd: PR #{pr['number']} failed: {exc}")
             work = PrWork(
                 number=pr["number"],
