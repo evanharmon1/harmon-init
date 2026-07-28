@@ -257,6 +257,15 @@ move the list into the description when you open the PR (then delete the
 file). Terminal scrollback is not a record — a context reset between
 `task challenge` and `gh pr create` would take the findings with it.
 
+**Sweep for orphans when you open the PR.** List the whole tree —
+`ls -R "$(git rev-parse --git-path deferred-findings)"` — and account for
+every file it holds, not just your branch's. Renaming a branch (`git branch
+-m`) or deleting one strands its notes under the old name, where nothing will
+ever look for them again; a rename mid-change is exactly when that happens.
+Adopt an orphan into this PR if it belongs to this work, otherwise leave it
+and say it is there. Listing costs one command; migration logic would cost a
+mechanism that then needs its own correctness argument.
+
 That path is not arbitrary. It sits in the **git directory**, so it is
 deterministic (any later session in this checkout finds it the same way, and
 `git rev-parse` resolves it correctly inside a linked worktree) and invisible

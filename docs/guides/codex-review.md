@@ -180,7 +180,17 @@ unchanged P2 comes back every remaining round and again in the next stage. Add
 it once, matching on location and substance rather than exact wording.
 
 Move the list into the PR description when you open the PR, then delete the
-file. The location is deterministic, so a later session finds it the same
+file — and sweep the tree for strays while you are there:
+
+```bash
+ls -R "$(git rev-parse --git-path deferred-findings)"
+```
+
+Renaming or deleting a branch strands its notes under the old name, where
+nothing looks for them again. Account for every file the sweep shows: adopt an
+orphan if it belongs to this work, otherwise leave it and mention it. One
+command beats rename-migration logic that would need its own correctness
+argument. The location is deterministic, so a later session finds it the same
 way, and `git status` never sees it — a note left in the *worktree* would be
 worse than none, because a dirty tree makes the next bare `task challenge`
 review the note instead of the branch.
