@@ -98,7 +98,8 @@ def status_comment_body(status: UnitStatus) -> str:
 def update_status_comment(gh: GitHub, status: UnitStatus) -> None:
     try:
         gh.upsert_status_comment(status.unit.number, status_comment_body(status))
-    except Exception as exc:  # display-only: never fail a run over a comment
+    # Display-only: never fail a run over a status comment.
+    except Exception as exc:  # noqa: BLE001
         warn(f"#{status.unit.number}: status comment update failed: {exc}")
 
 
