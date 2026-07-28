@@ -104,11 +104,11 @@ release plumbing), disable it for routine development.
 task check      # fast inner loop while editing
 task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate, fix, re-challenge
-                # until a CLEAN pass (no material findings), ≤5 rounds
-task review     # verification checkpoint — same clean-pass exit, ≤4 rounds
+                # until a CLEAN pass (no P0/P1 findings), ≤6 rounds
+task review     # verification checkpoint — same clean-pass exit, ≤6 rounds
 task ci         # full CI mirror
-# → open the PR, then shepherd it: watch CI + reviews, adjudicate → fix →
-#   push, ≤4 rounds (independent of the loops above)
+# → open the PR, then shepherd it: watch CI + reviews, settle the deferred
+#   P2s, adjudicate → fix → push, ≤5 rounds (independent of the loops above)
 # → merging stays a human decision
 ```
 
@@ -116,6 +116,94 @@ The full staged loop — including the PR-shepherding rounds — is defined in
 AGENTS.md ("Dev Loop"). If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
 bare 👍 reaction as the clean pass.
+
+## Finding priorities
+
+Both modes ask Codex to label every finding, and the local loops gate on that
+label:
+
+| Priority | Meaning | Gates `challenge`/`review`? |
+| --- | --- | --- |
+| `P0` | Breaks correctness, security, or data integrity in ordinary use, or breaks an existing contract | Yes |
+| `P1` | A real defect or materially wrong design decision with a plausible trigger | Yes |
+| `P2` | Worth knowing, not merge-blocking: hardening, unlikely edge cases, maintainability, non-critical test gaps | No |
+
+The scale lives in the prompt that `scripts/codex-review.sh` builds — not in
+the Codex CLI's own priority labels, which are an undocumented convention
+that can change. Keeping the definition local means the gate still means what
+it says when Codex's output format moves.
+
+P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
+to the PR-shepherd stage, where they are fixed, declined with reasoning, or
+filed as follow-up issues. That keeps the expensive local loops focused on
+what actually blocks a merge, without losing the smaller findings.
+
+The deferral needs somewhere to land. These tasks run **locally** — their
+output lives in a terminal and nowhere else — and the cloud reviewer reposts
+only high-priority findings, so a deferred P2 that is not written down is
+gone. Write each one into the **PR description** under a
+`## Deferred findings` heading, as an unchecked task-list item:
+
+```markdown
+## Deferred findings
+
+- [ ] scripts/foo.sh:42 — P2: retry loop has no upper bound
+```
+
+Both tasks run before `gh pr create`, so write each finding down the moment
+you defer it, in the git directory rather than the worktree:
+
+```bash
+note="$(git rev-parse --git-path \
+  "deferred-findings/$(git branch --show-current)")"
+mkdir -p "$(dirname "$note")"
+cat >>"$note" <<'DEFERRED'
+- [ ] scripts/foo.sh:42 — P2: retry loop has no upper bound
+DEFERRED
+```
+
+One file **per branch**: an ordinary clone switches branches in place, so a
+single shared sidecar would let branch B's PR absorb branch A's findings — and
+then delete A's only copy when it clears the file. The branch name is used as
+a path rather than flattened, so `feat/x` and `feat-x` stay distinct — and
+without an extension, so `foo` cannot block `foo.md/bar`. That makes the
+sidecar tree mirror git's ref namespace, which already forbids one live
+branch from being a path prefix of another.
+
+The **quoted** heredoc delimiter is load-bearing: findings routinely quote
+code with backticks or `$(…)`, and inside a double-quoted string the shell
+would run it. Quoting disables expansion, not termination — so pick a
+delimiter the finding text cannot contain.
+
+Check the file before appending: a stage only exits on a *clean re-run*, so an
+unchanged P2 comes back every remaining round and again in the next stage. Add
+it once, matching on location and substance rather than exact wording.
+
+Move the list into the PR description when you open the PR, then delete the
+file — and sweep the tree for strays while you are there:
+
+```bash
+ls -R "$(git rev-parse --git-path deferred-findings)"
+```
+
+Renaming or deleting a branch strands its notes under the old name, where
+nothing looks for them again. Account for every file the sweep shows: adopt an
+orphan if it belongs to this work, otherwise leave it and mention it. One
+command beats rename-migration logic that would need its own correctness
+argument. The location is deterministic, so a later session finds it the same
+way, and `git status` never sees it — a note left in the *worktree* would be
+worse than none, because a dirty tree makes the next bare `task challenge`
+review the note instead of the branch.
+
+The shepherd stage settles every entry and ticks it off in the body as it
+goes, so the checkbox — not anyone's memory — is what says whether a finding
+is still open. The PR is not green while an unchecked entry remains.
+AGENTS.md ("Dev Loop") carries that obligation, so it holds even where the
+optional `/shepherd` skill that automates it is not installed.
+
+Note that the automatic stop-gate is not on this scale — the plugin's Stop
+hook uses its own notion of a material finding and may BLOCK on a P2.
+Adjudicate it; never disable the gate to get past a BLOCK.
 
 ## Troubleshooting
 
