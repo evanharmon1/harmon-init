@@ -155,7 +155,8 @@ you defer it, in the git directory rather than the worktree:
 
 ```bash
 note="$(git rev-parse --git-path \
-  "deferred-findings-$(git branch --show-current | tr / -).md")"
+  "deferred-findings/$(git branch --show-current).md")"
+mkdir -p "$(dirname "$note")"
 cat >>"$note" <<'DEFERRED'
 - [ ] scripts/foo.sh:42 — P2: retry loop has no upper bound
 DEFERRED
@@ -163,7 +164,8 @@ DEFERRED
 
 One file **per branch**: an ordinary clone switches branches in place, so a
 single shared sidecar would let branch B's PR absorb branch A's findings — and
-then delete A's only copy when it clears the file.
+then delete A's only copy when it clears the file. The branch name is used as
+a path rather than flattened, so `feat/x` and `feat-x` stay distinct.
 
 The **quoted** heredoc delimiter is load-bearing: findings routinely quote
 code with backticks or `$(…)`, and inside a double-quoted string the shell
