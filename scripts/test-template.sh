@@ -29,6 +29,19 @@ trap 'rm -rf "$dest"' EXIT
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# GNU timeout, named `gtimeout` when Homebrew's coreutils is installed without
+# the gnubin shim. Same resolver as scripts/devcontainer-smoke.sh, but absence
+# is not fatal here: that script is an opt-in task, whereas this one runs inside
+# `task verify`, so a missing coreutils goes through `required` (skip locally,
+# fail in CI) rather than aborting the gate on every macOS box without it.
+if have timeout; then
+    timeout_bin="timeout"
+elif have gtimeout; then
+    timeout_bin="gtimeout"
+else
+    timeout_bin=""
+fi
+
 # In CI every tool must be present; locally, missing tools downgrade to a skip.
 required() {
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
@@ -608,13 +621,29 @@ done < <(find . -name '*.json' -not -path './.git/*' -not -path './node_modules/
 [ "$json_fail" -eq 0 ] && echo "JSON: all rendered .json files parse"
 
 # ── 8. Devcontainer configs are readable by the devcontainers CLI ───
+# This check only needs the static JSONC, but `read-configuration` 0.87+ shells
+# out to the docker binary anyway (probing for an existing container). Pointing
+# it at a no-op keeps the check daemon-independent, the same trick and reasoning
+# as scripts/devcontainer-assert.sh's unit mode: a stopped or wedged runtime
+# cannot stall it, and — unlike the daemon probe this replaced — it no longer
+# has to skip the check to stay safe. The timeout is a backstop on the CLI
+# itself; `true` cannot hang, so it should never fire.
+#
+# `true` is passed bare rather than as /usr/bin/true (which is what the assert
+# script hardcodes): the CLI resolves the name on PATH, and a distro that keeps
+# coreutils outside /usr/bin — NixOS, say — would otherwise fail every
+# devcontainer-enabled profile here, on a check that used to pass.
 if [ -d .devcontainer ]; then
-    if ! have devcontainer || ! docker info >/dev/null 2>&1; then
-        echo "SKIP: devcontainer CLI or docker daemon unavailable — skipping devcontainer config check"
+    if ! have devcontainer; then
+        required devcontainer "devcontainer config check" || fail=1
+    elif [ -z "$timeout_bin" ]; then
+        required timeout "devcontainer config check" || fail=1
     else
         for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
             [ -f "$cfg" ] || continue
-            devcontainer read-configuration --workspace-folder . --config "$cfg" >/dev/null ||
+            "$timeout_bin" -k 5 60 devcontainer read-configuration \
+                --docker-path true \
+                --workspace-folder . --config "$cfg" >/dev/null ||
                 err "devcontainer read-configuration failed for $cfg"
         done
     fi
@@ -641,6 +670,13 @@ full) # project_management=github; github_org=test-org (an org repo)
     [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
     # org + github → the org issue-fields + issue-types scripts render too
     [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
+    # The org issue-field reconciliation talks to a public-preview REST API, so
+    # its stubbed unit test is the only thing that exercises it. It renders only
+    # in this profile, so run it here rather than from the root Taskfile. It
+    # needs bash and jq only — deliberately NOT gated on `task`, or it would skip
+    # silently on a machine without it and let a destructive regression through.
+    ./scripts/test-setup-github-issue-fields.sh >/dev/null ||
+        err "rendered org issue-field reconciliation tests failed"
     [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
     # The Layer/Domain taxonomy is seeded in three places — the `layer:`/`domain:`
     # label families, the org issue fields, and the personal-account project

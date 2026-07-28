@@ -78,6 +78,7 @@ tasks:
       - task: test:ci-results
       - task: test:renovate-pins
       - task: test:release-title
+      - task: test:setup-github-project
       - task: test:sync-devkit-release
       - task: test:skills-pin-parity
       - task: test:dogfood-parity
@@ -308,6 +309,11 @@ tasks:
     desc: Unit-test the release-content title guard (require-release-title.sh)
     cmds:
       - ./scripts/test-release-title.sh
+
+  test:setup-github-project:
+    desc: Unit-test the GitHub Project field reconciliation (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-github-project.sh
 
   test:sync-devkit-release:
     desc: Unit-test the harmon-devkit release→sync-PR automation (offline, stubbed gh/task)
