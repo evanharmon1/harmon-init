@@ -136,7 +136,7 @@ class ForbiddenOperationsAbsent(unittest.TestCase):
         ]
         for pattern in forbidden:
             self.assertIsNone(
-                re.search(pattern, source, re.I),
+                re.search(pattern, source, re.IGNORECASE),
                 f"forbidden operation pattern {pattern!r} found in github.py",
             )
 

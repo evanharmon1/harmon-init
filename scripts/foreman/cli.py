@@ -14,8 +14,11 @@ from pathlib import Path
 from foreman import backend as backend_mod
 from foreman import dispatch as dispatch_mod
 from foreman import inputs as inputs_mod
-from foreman import report, shepherd as shepherd_mod, spec, watch as watch_mod, worktree
-from foreman.config import Config, load as load_config
+from foreman import report, spec, worktree
+from foreman import shepherd as shepherd_mod
+from foreman import watch as watch_mod
+from foreman.config import Config
+from foreman.config import load as load_config
 from foreman.github import Gh, GitHub
 from foreman.graph import (
     Target,
@@ -493,7 +496,9 @@ def _extract_draft_comments(findings: str) -> dict[int, str]:
     import re as _re
 
     drafted: dict[int, str] = {}
-    parts = _re.split(r"^## DRAFT COMMENT FOR #(\d+)\s*$", findings, flags=_re.M)
+    parts = _re.split(
+        r"^## DRAFT COMMENT FOR #(\d+)\s*$", findings, flags=_re.MULTILINE
+    )
     for index in range(1, len(parts) - 1, 2):
         number = int(parts[index])
         body = parts[index + 1].split("\n## ")[0].strip()

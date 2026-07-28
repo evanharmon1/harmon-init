@@ -24,7 +24,7 @@ class FakeRunner:
         self.calls: list[tuple[list[str], str | None]] = []
         self._stubs: list[tuple[list[str], int, str]] = []
 
-    def when(self, prefix: list[str], stdout: object = "", rc: int = 0) -> "FakeRunner":
+    def when(self, prefix: list[str], stdout: object = "", rc: int = 0) -> FakeRunner:
         text = stdout if isinstance(stdout, str) else json.dumps(stdout)
         self._stubs.append((prefix, rc, text))
         return self

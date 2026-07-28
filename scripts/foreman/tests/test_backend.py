@@ -77,9 +77,11 @@ class BackendEnvironment(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
 
     def test_api_billing_requires_the_foreman_api_key(self):
-        with patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
-            with self.assertRaises(ForemanError):
-                backend.backend_environment(Config(billing="api"))
+        with (
+            patch.dict(os.environ, {"PATH": "/bin"}, clear=True),
+            self.assertRaises(ForemanError),
+        ):
+            backend.backend_environment(Config(billing="api"))
 
 
 if __name__ == "__main__":

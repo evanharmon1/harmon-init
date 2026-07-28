@@ -29,6 +29,19 @@ trap 'rm -rf "$dest"' EXIT
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# GNU timeout, named `gtimeout` when Homebrew's coreutils is installed without
+# the gnubin shim. Same resolver as scripts/devcontainer-smoke.sh, but absence
+# is not fatal here: that script is an opt-in task, whereas this one runs inside
+# `task verify`, so a missing coreutils goes through `required` (skip locally,
+# fail in CI) rather than aborting the gate on every macOS box without it.
+if have timeout; then
+    timeout_bin="timeout"
+elif have gtimeout; then
+    timeout_bin="gtimeout"
+else
+    timeout_bin=""
+fi
+
 # In CI every tool must be present; locally, missing tools downgrade to a skip.
 required() {
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
@@ -608,13 +621,29 @@ done < <(find . -name '*.json' -not -path './.git/*' -not -path './node_modules/
 [ "$json_fail" -eq 0 ] && echo "JSON: all rendered .json files parse"
 
 # ── 8. Devcontainer configs are readable by the devcontainers CLI ───
+# This check only needs the static JSONC, but `read-configuration` 0.87+ shells
+# out to the docker binary anyway (probing for an existing container). Pointing
+# it at a no-op keeps the check daemon-independent, the same trick and reasoning
+# as scripts/devcontainer-assert.sh's unit mode: a stopped or wedged runtime
+# cannot stall it, and — unlike the daemon probe this replaced — it no longer
+# has to skip the check to stay safe. The timeout is a backstop on the CLI
+# itself; `true` cannot hang, so it should never fire.
+#
+# `true` is passed bare rather than as /usr/bin/true (which is what the assert
+# script hardcodes): the CLI resolves the name on PATH, and a distro that keeps
+# coreutils outside /usr/bin — NixOS, say — would otherwise fail every
+# devcontainer-enabled profile here, on a check that used to pass.
 if [ -d .devcontainer ]; then
-    if ! have devcontainer || ! docker info >/dev/null 2>&1; then
-        echo "SKIP: devcontainer CLI or docker daemon unavailable — skipping devcontainer config check"
+    if ! have devcontainer; then
+        required devcontainer "devcontainer config check" || fail=1
+    elif [ -z "$timeout_bin" ]; then
+        required timeout "devcontainer config check" || fail=1
     else
         for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
             [ -f "$cfg" ] || continue
-            devcontainer read-configuration --workspace-folder . --config "$cfg" >/dev/null ||
+            "$timeout_bin" -k 5 60 devcontainer read-configuration \
+                --docker-path true \
+                --workspace-folder . --config "$cfg" >/dev/null ||
                 err "devcontainer read-configuration failed for $cfg"
         done
     fi
@@ -860,6 +889,24 @@ else
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
     grep -q -- '- task: test:devcontainer:permissions' Taskfile.yml || err "ci task is missing the devcontainer permission assertion"
+
+    # `task` must reach the RENDERED repo from a pinned release, never from the
+    # go-task Feature — the Feature resolved "latest" through the anonymous
+    # GitHub API at build time and flaked the required build check
+    # (harmon-init#427). Asserted on the rendered output, not the root layer:
+    # the devcontainer.json twins are jinja, so test:dogfood-parity cannot
+    # byte-compare them, and template/ could reintroduce the Feature while the
+    # root copy stays correct — shipping the flake to every consumer with
+    # nothing here failing.
+    for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        [ -f "$dc_cfg" ] || continue
+        ! grep -q 'features/go-task' "$dc_cfg" ||
+            err "rendered $dc_cfg installs task via a devcontainer Feature (harmon-init#427)"
+    done
+    grep -q '^ARG TASK_VERSION=' .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile has no 'ARG TASK_VERSION=' pin"
+    grep -qF 'go-task/task/releases/download/v${TASK_VERSION}/task_linux_' .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile does not install task from the pinned release URL"
 fi
 
 # ── 9f. .prettierignore: web-app-only entries are gated by project type ──

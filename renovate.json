@@ -29,24 +29,25 @@
     {
       "customType": "regex",
       "description": "Workflow and composite-action tool pins (both layers), `version:`/`<tool>_version:` style. Composite actions are included because template/.github/actions/setup/action.yml.jinja pins setup-task and setup-tflint this way, and a `workflows/`-only pattern leaves them invisible here — the same silent rot the SHA manager below was added for.",
-      "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\.jinja)?$/"],
+      "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*(?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+wranglerVersion:\\s*\"(?<currentValue>[^\"]+)\""
       ]
     },
     {
       "customType": "regex",
       "description": "Workflow/composite-action and script tool pins, `FOO_VERSION=x.y.z` shell-variable style. Template scripts carry jinja in the FILENAME (`…foo.sh[% endif %]`), so the .sh alternative tolerates that suffix — without it every pin under template/scripts/ is invisible here.",
-      "managerFilePatterns": ["/(\\.github/(actions|workflows)/.*\\.ya?ml(\\.jinja)?|scripts/.*\\.sh(\\[% endif %\\])?)$/"],
+      "managerFilePatterns": ["/(\\.github/(actions|workflows)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?|scripts/.*\\.sh(\\[% endif %\\])?)$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]
     },
     {
       "customType": "regex",
-      "description": "GitHub Action SHA pins (`uses: owner/repo@sha # vX.Y.Z`) in the template's .jinja workflows AND composite actions — the native github-actions manager can't parse the .jinja extension, so these pins rotted silently until the omator retro caught them. `actions/` is covered too: template/.github/actions/setup/action.yml.jinja pins setup-node, setup-python, setup-uv, setup-terraform and setup-tflint by SHA.",
-      "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml\\.jinja$/"],
+      "description": "GitHub Action SHA pins (`uses: owner/repo@sha # vX.Y.Z`) in the template's .jinja workflows AND composite actions — the native github-actions manager can't parse the .jinja extension, so these pins rotted silently until the omator retro caught them. `actions/` is covered too: template/.github/actions/setup/action.yml.jinja pins setup-node, setup-python, setup-uv, setup-terraform and setup-tflint by SHA. Conditional workflow filenames (`…yml[% endif %].jinja`) must stay matched or their pins rot the same way.",
+      "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\[% endif %\\])?\\.jinja$/"],
       "matchStrings": [
         "uses: (?<depName>[^\\s@]+)@(?<currentDigest>[0-9a-f]{40}) # (?<currentValue>v[0-9][0-9.]*)"
       ],
@@ -54,10 +55,10 @@
     },
     {
       "customType": "regex",
-      "description": "Taskfile tool pins (root Taskfile + included taskfiles/, both layers), `FOO_VERSION: x.y.z` var style — used by foreman:lint's uvx-pinned ruff/black",
+      "description": "Taskfile tool pins (root Taskfile + included taskfiles/, both layers), `FOO_VERSION: x.y.z` var style — used by foreman:lint's uvx-pinned ruff/black. The taskfiles pattern tolerates a trailing jinja conditional in the directory name (template/[% if use_foreman %]taskfiles[% endif %]/) — without it the template twin's pins are invisible to Renovate and only the root copy gets bumped, which fails test:dogfood-parity",
       "managerFilePatterns": [
         "/(^|\\/)Taskfile\\.ya?ml(\\.jinja)?$/",
-        "/taskfiles\\/[^/]+\\.ya?ml$/"
+        "/taskfiles(\\[% endif %\\])?\\/[^/]+\\.ya?ml$/"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION: \"?(?<currentValue>[^\"\\s]+)\"?"
@@ -92,8 +93,8 @@
       "groupName": "Docker images"
     },
     {
-      "description": "Batch all devcontainer updates (base image + annotated tools) into one PR — must come after the Docker images rule so the base image lands here instead",
-      "matchFileNames": [".devcontainer/**", "template/**"],
+      "description": "Batch all devcontainer updates (base image + annotated tools) into one PR — must come after the Docker images rule so the base image lands here instead. Root scripts/** and taskfiles/** are included because every regex-managed pin under them (@devcontainers/cli, semgrep, markdownlint-cli2, ruff, black) is a dogfood-parity twin of a template/** copy this rule already claims — a dep whose root and template copies resolve to different groups gets split across two PRs, and each fails test:dogfood-parity. In this repo the group is effectively 'devcontainer + template-shipped tool pins'",
+      "matchFileNames": [".devcontainer/**", "template/**", "scripts/**", "taskfiles/**"],
       "groupName": "Devcontainer"
     },
     {
