@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.6.0](https://github.com/evanharmon1/harmon-init/compare/v4.5.0...v4.6.0) (2026-07-28)
+
+
+### Features
+
+* **template:** gate e2e in task ci and add a codegen guard ([#417](https://github.com/evanharmon1/harmon-init/issues/417)) ([b63da78](https://github.com/evanharmon1/harmon-init/commit/b63da786b08292827d45158f24835513a4a87009))
+* vendor the universal skill category in harmon-init itself ([#416](https://github.com/evanharmon1/harmon-init/issues/416)) ([de27807](https://github.com/evanharmon1/harmon-init/commit/de27807a2c13f88781ef25b469aff22396bcaa32))
+
+
+### Bug Fixes
+
+* guard that both skills-sync manifests pin the same tag ([#415](https://github.com/evanharmon1/harmon-init/issues/415)) ([901df44](https://github.com/evanharmon1/harmon-init/commit/901df44abb6ca38d4e4df83f4c870ec620065c90))
+* stop tracking the devcontainer feature lockfile ([#410](https://github.com/evanharmon1/harmon-init/issues/410)) ([11c8dd8](https://github.com/evanharmon1/harmon-init/commit/11c8dd8f02f65d8f02968c9f8499c590711b85f8)), closes [#375](https://github.com/evanharmon1/harmon-init/issues/375)
+
 ## [4.5.0](https://github.com/evanharmon1/harmon-init/compare/v4.4.1...v4.5.0) (2026-07-27)
 
 
