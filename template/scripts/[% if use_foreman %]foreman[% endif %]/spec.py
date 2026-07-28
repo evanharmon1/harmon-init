@@ -24,7 +24,7 @@ from foreman.util import sha256_hex
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
-_HEADING_RE = re.compile(r"^(#{2,6})\s*(?P<title>.+?)\s*$", re.M)
+_HEADING_RE = re.compile(r"^(#{2,6})\s*(?P<title>.+?)\s*$", re.MULTILINE)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+(?P<text>.+)$")
 
 
@@ -148,7 +148,9 @@ def extract_handoff(pr_body: str) -> str | None:
     if section is None:
         return None
     # PR bodies end with a `---` footer; a thematic break ends the section.
-    section = re.split(r"^\s*---\s*$", section, maxsplit=1, flags=re.M)[0].strip()
+    section = re.split(r"^\s*---\s*$", section, maxsplit=1, flags=re.MULTILINE)[
+        0
+    ].strip()
     return section or None
 
 

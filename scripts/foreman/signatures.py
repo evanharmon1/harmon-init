@@ -11,9 +11,10 @@ back in this catalog: the LLM diagnoses once, code recognizes forever.
 from __future__ import annotations
 
 import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+import tomllib
 
 from foreman.util import ForemanError
 
@@ -43,7 +44,7 @@ def load(path: Path | None = None) -> list[Signature]:
         signatures.append(
             Signature(
                 name=entry["name"],
-                pattern=re.compile(entry["pattern"], re.I),
+                pattern=re.compile(entry["pattern"], re.IGNORECASE),
                 action=action,
             )
         )

@@ -20,7 +20,8 @@ one GraphQL-only read.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from foreman.config import Config
 from foreman.util import ForemanError, run
@@ -38,22 +39,9 @@ FOREMAN_LABELS = {
     ),
 }
 
-ISSUE_FIELDS = ",".join(
-    [
-        "number",
-        "title",
-        "body",
-        "state",
-        "stateReason",
-        "labels",
-        "milestone",
-        "url",
-        "issueType",
-        "parent",
-        "subIssues",
-        "blockedBy",
-        "closedByPullRequestsReferences",
-    ]
+ISSUE_FIELDS = (
+    "number,title,body,state,stateReason,labels,milestone,url,issueType,"
+    "parent,subIssues,blockedBy,closedByPullRequestsReferences"
 )
 
 PR_LIST_FIELDS = (

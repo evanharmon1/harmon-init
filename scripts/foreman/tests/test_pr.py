@@ -32,13 +32,13 @@ def unit(subs=None) -> Unit:
 
 
 def contract(**kwargs) -> ResultContract:
-    base = dict(
-        status="completed",
-        summary="Widget added.",
-        handoff="Widget API: w().",
-        proposed_pr_title="feat(widget): add the widget",
-        ac_test_map=[{"criterion": "works [CI]", "tests": ["t::a"]}],
-    )
+    base = {
+        "status": "completed",
+        "summary": "Widget added.",
+        "handoff": "Widget API: w().",
+        "proposed_pr_title": "feat(widget): add the widget",
+        "ac_test_map": [{"criterion": "works [CI]", "tests": ["t::a"]}],
+    }
     base.update(kwargs)
     return ResultContract(**base)
 
