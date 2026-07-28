@@ -173,7 +173,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       at their defaults — tune options in the org's issue-field settings if you
       like. **The numeric estimate is the `Size` project number field** (created
       by `task setup:github-project`; only project number fields sum in view
-      group headers). Idempotent and non-destructive.
+      group headers). Idempotent and additive: it creates fields that are missing
+      and **appends** any starter option an existing single-select lacks, keeping
+      your own options (and the values already assigned to them) intact. The
+      issue-fields API is in public preview, so if that update is rejected the
+      script names the options to add by hand instead of failing — read its
+      output after a harmon-init upgrade.
 - [ ] `Domain` options: the script seeds `auth`/`billing`/`platform` only — add
       this product's real domains (from your ERD entities) in the org's
       issue-field settings, and add matching `domain:` labels in
@@ -186,7 +191,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       separate follow-up — the board is set up, but issue/PR status isn't
       auto-synced yet. `Domain` is seeded with `auth`/`billing`/`platform` only —
       add this product's real domains in the Project UI, and matching `domain:`
-      labels in `scripts/setup-github-labels.sh`.
+      labels in `scripts/setup-github-labels.sh`. Re-runs **append** any starter
+      option a single-select field is missing (so a value added by a later
+      harmon-init release lands on the next run) and never touch, reorder, or
+      delete the options you added.
 [% endif %]
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
       families (concerns/source/workflow/layer/domain — see

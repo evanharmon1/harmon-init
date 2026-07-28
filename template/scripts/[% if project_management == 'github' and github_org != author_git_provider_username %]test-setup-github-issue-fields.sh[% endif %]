@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# test-setup-github-issue-fields.sh — unit-test setup-github-issue-fields.sh's
+# option reconciliation against a stubbed `gh`; no live API calls, so it is safe
+# in CI. Run via `task test:setup-github-issue-fields`.
+#
+# What makes a test worth having here: the PATCH replaces an ORG-WIDE option list,
+# and existing assignments survive only while every existing option goes back with
+# its `id`. This path talks to a public-preview REST API, so nothing else can
+# exercise it — a regression that dropped the ids, or that turned a malformed
+# snapshot into replacement data, would clear field values across every repo in
+# the organization while still passing `verify`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+script="$PWD/scripts/setup-github-issue-fields.sh"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    [ -f "$tmp/out" ] && sed 's/^/    /' "$tmp/out" >&2
+    exit 1
+}
+
+# Fake `gh`: serves $STUB_FIELDS_FILE for reads, records write bodies, and can be
+# told to reject the PATCH so the warn-fallback path is exercised.
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+method=""
+prev=""
+for a in "$@"; do
+    [ "$prev" = "--method" ] && method="$a"
+    prev="$a"
+done
+case "$method" in
+"") cat "$STUB_FIELDS_FILE" ;;
+POST)
+    cat >>"$POSTS"
+    printf '\n' >>"$POSTS"
+    ;;
+PATCH)
+    cat >>"$PATCHES"
+    printf '\n' >>"$PATCHES"
+    if [ -n "${GH_FAIL_PATCH:-}" ]; then
+        echo "gh: HTTP 422: option list rejected" >&2
+        exit 1
+    fi
+    ;;
+*)
+    echo "fake gh: unexpected method $method" >&2
+    exit 1
+    ;;
+esac
+STUB
+chmod +x "$tmp/bin/gh"
+PATH="$tmp/bin:$PATH"
+export PATH
+
+STUB_FIELDS_FILE="$tmp/fields.json"
+POSTS="$tmp/posts"
+PATCHES="$tmp/patches"
+export STUB_FIELDS_FILE POSTS PATCHES
+
+# run_with FIELDS_JSON — run the script against that org snapshot.
+run_with() {
+    printf '%s' "$1" >"$STUB_FIELDS_FILE"
+    : >"$POSTS"
+    : >"$PATCHES"
+    "$script" --org testorg >"$tmp/out" 2>&1 || fail "script exited non-zero"
+}
+
+patches() { grep -c . "$PATCHES" || true; }
+
+agent_full='{"id":9,"name":"Claude Code","color":"orange","description":"","priority":1},
+ {"id":10,"name":"Codex","color":"blue","description":"","priority":2},
+ {"id":11,"name":"Gemini CLI","color":"purple","description":"","priority":3},
+ {"id":12,"name":"Qwen Code","color":"green","description":"","priority":4},
+ {"id":13,"name":"DeepSeek","color":"red","description":"","priority":5},
+ {"id":14,"name":"Kimi K2","color":"yellow","description":"","priority":6},
+ {"id":15,"name":"GLM","color":"pink","description":"","priority":7},
+ {"id":16,"name":"GitHub Copilot","color":"gray","description":"","priority":8}'
+
+# Every field present and complete.
+complete='[
+ {"id":1,"name":"Product","data_type":"text"},
+ {"id":2,"name":"Agent","data_type":"single_select","options":['"$agent_full"']},
+ {"id":3,"name":"Domain","data_type":"single_select","options":[
+   {"id":20,"name":"auth","color":"purple","description":"","priority":1},
+   {"id":21,"name":"billing","color":"green","description":"","priority":2},
+   {"id":22,"name":"platform","color":"gray","description":"","priority":3}]},
+ {"id":4,"name":"Layer","data_type":"single_select","options":[
+   {"id":30,"name":"ui","color":"blue","description":"","priority":1},
+   {"id":31,"name":"logic","color":"green","description":"","priority":2},
+   {"id":32,"name":"data","color":"yellow","description":"","priority":3},
+   {"id":33,"name":"integration","color":"orange","description":"","priority":4}]}
+]'
+
+echo "==> a re-run against an already-synced org writes nothing"
+run_with "$complete"
+[ "$(patches)" = 0 ] || fail "expected no PATCH on an unchanged org, got $(patches)"
+[ ! -s "$POSTS" ] || fail "expected no field creation on an unchanged org"
+
+echo "==> a field missing a starter option is PATCHed with the full merged list"
+# Domain lacks `billing` but carries an owner-added `crm`.
+partial=$(printf '%s' "$complete" | jq -c '
+    map(if .name == "Domain" then
+            .options = [ .options[] | if .name == "billing"
+                then {id: 99, name: "crm", color: "pink", description: "owner added", priority: 2}
+                else . end ]
+        else . end)')
+run_with "$partial"
+[ "$(patches)" = 1 ] || fail "expected exactly 1 PATCH, got $(patches)"
+body=$(cat "$PATCHES")
+[ "$(printf '%s' "$body" | jq -r '.options | length')" = 4 ] ||
+    fail "expected 4 options (3 existing + billing), got $(printf '%s' "$body" | jq -r '.options | length')"
+
+echo "==> every pre-existing option keeps its id (org-wide assignments preserved)"
+for id in 20 99 22; do
+    [ "$(printf '%s' "$body" | jq --argjson i "$id" '[.options[] | select(.id == $i)] | length')" = 1 ] ||
+        fail "existing option id $id was not sent back — its assigned values would be cleared"
+done
+
+echo "==> the appended option is sent WITHOUT an id, and the owner's option survives"
+[ "$(printf '%s' "$body" | jq -r '[.options[] | select(.name == "billing")] | .[0] | has("id")')" = false ] ||
+    fail "the appended option must not carry an id"
+[ "$(printf '%s' "$body" | jq -r '[.options[] | select(.name == "crm")] | length')" = 1 ] ||
+    fail "owner-added option 'crm' was dropped from the replacement list"
+
+echo "==> priorities come back contiguous and in order"
+[ "$(printf '%s' "$body" | jq -c '[.options[].priority]')" = "[1,2,3,4]" ] ||
+    fail "priorities must be renumbered 1..N in order, got $(printf '%s' "$body" | jq -c '[.options[].priority]')"
+
+echo "==> a snapshot with no options array is refused, not turned into a replacement"
+malformed=$(printf '%s' "$complete" | jq -c 'map(if .name == "Domain" then del(.options) else . end)')
+run_with "$malformed"
+[ "$(patches)" = 0 ] || fail "a field with no options array must not be PATCHed"
+grep -q "carried no options array" "$tmp/out" || fail "expected a fail-closed warning for the malformed snapshot"
+
+echo "==> an existing option with no id is refused"
+# The field must also be missing a starter, or there is no write to guard: when
+# nothing needs appending the script returns before validating the snapshot,
+# which is correct — an untouched field cannot lose anything.
+noid=$(printf '%s' "$complete" | jq -c '
+    map(if .name == "Domain"
+        then .options = [ .options[] | select(.name != "billing") | del(.id) ]
+        else . end)')
+run_with "$noid"
+[ "$(patches)" = 0 ] || fail "options without ids must not be PATCHed"
+grep -q "without an id" "$tmp/out" || fail "expected a fail-closed warning for the id-less option"
+
+echo "==> a rejected PATCH degrades to a warning naming the options"
+GH_FAIL_PATCH=1 run_with "$partial"
+grep -q "billing" "$tmp/out" || fail "a rejected PATCH must name the missing options"
+grep -q "still missing a starter option" "$tmp/out" || fail "expected the summary warning after a rejected PATCH"
+
+echo "PASS: setup-github-issue-fields.sh option reconciliation"

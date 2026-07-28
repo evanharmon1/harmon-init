@@ -110,6 +110,12 @@ tasks:
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
+[% if project_management == 'github' %]
+      - task: test:setup-github-project
+[% endif %]
+[% if project_management == 'github' and github_org != author_git_provider_username %]
+      - task: test:setup-github-issue-fields
+[% endif %]
 [% if use_foreman %]
       - task: foreman:test
 [% endif %]
@@ -637,6 +643,20 @@ tasks:
     cmds:
       - ./scripts/test-release-title.sh
 [% endif %]
+[% if project_management == 'github' %]
+
+  test:setup-github-project:
+    desc: Unit-test the GitHub Project field reconciliation (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-github-project.sh
+[% endif %]
+[% if project_management == 'github' and github_org != author_git_provider_username %]
+
+  test:setup-github-issue-fields:
+    desc: Unit-test the org issue-field option reconciliation (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-github-issue-fields.sh
+[% endif %]
 [% if devcontainer %]
 
   test:devcontainer:root:
@@ -921,8 +941,10 @@ tasks:
     desc: >-
       Idempotently add the org's Product + Agent + Domain + Layer issue fields
       (Priority/Effort are GitHub built-ins, left at defaults; the numeric Size
-      estimate is a project field via setup:github-project). Creates only what is
-      missing, org-wide. Requires `gh` with the admin:org scope.
+      estimate is a project field via setup:github-project). Additive, org-wide:
+      creates what is missing and appends starter options an existing
+      single-select lacks, never renaming or deleting. Requires `gh` with the
+      admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]

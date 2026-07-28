@@ -641,6 +641,13 @@ full) # project_management=github; github_org=test-org (an org repo)
     [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
     # org + github → the org issue-fields + issue-types scripts render too
     [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
+    # The org issue-field reconciliation talks to a public-preview REST API, so
+    # its stubbed unit test is the only thing that exercises it. It renders only
+    # in this profile, so run it here rather than from the root Taskfile. It
+    # needs bash and jq only — deliberately NOT gated on `task`, or it would skip
+    # silently on a machine without it and let a destructive regression through.
+    ./scripts/test-setup-github-issue-fields.sh >/dev/null ||
+        err "rendered org issue-field reconciliation tests failed"
     [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
     # The Layer/Domain taxonomy is seeded in three places — the `layer:`/`domain:`
     # label families, the org issue fields, and the personal-account project
