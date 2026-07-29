@@ -7,7 +7,10 @@
 # strip `origin/` into a nonexistent local ref and silently report nothing
 # to review, and the one a real --base run caught: an empty scope reached
 # Codex, whose "that diff is empty" reply exited 0 and read as the clean pass
-# a capped review loop exits on. Run via `task test:codex-review`.
+# a capped review loop exits on. Also guards the scope union: a branch holding
+# commits AND uncommitted work is the ordinary mid-loop state, and reviewing
+# only one half is how a re-run banks a clean pass for a fraction of the
+# change. Run via `task test:codex-review`.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -72,6 +75,9 @@ echo "$out" | grep -q "STUB-ARGS:exec review" || fail "codex exec review not inv
 echo "$out" | grep -q "base branch 'origin/develop'" || fail "remote-qualified fallback base missing: $out"
 echo "$out" | grep -q "ADVERSARIAL" || fail "challenge mode instructions missing: $out"
 echo "$out" | grep -q "feature.txt" || fail "changed-file manifest missing from branch-scope prompt: $out"
+# A clean tree has no second half, so the split manifest must not appear —
+# otherwise the union headers would be noise the reviewer has to interpret.
+echo "$out" | grep -q "Uncommitted changes (git status" && fail "clean tree emitted an uncommitted manifest section: $out"
 # The gate is only meaningful if the scale it gates on is defined in the
 # prompt — Codex's own priority labels are an undocumented convention.
 echo "$out" | grep -q "Only P0 and P1 decide" || fail "challenge prompt missing the P0/P1 gating rule: $out"
@@ -192,14 +198,27 @@ for ref in refs/heads/basestale heads/basestale; do
     echo "$out" | grep -q "lags its upstream 'origin/develop'" || fail "--base '$ref' skipped the stale-base check: $out"
 done
 
-echo "==> dirty tree auto-selects uncommitted scope and enumerates untracked dirs"
+echo "==> commits plus a dirty tree review BOTH halves, in labelled sections"
+# The reported bug: the two scopes are disjoint and the dirty tree used to win
+# outright, so a re-run after an uncommitted fix reviewed that fix alone and
+# banked a clean pass for a fraction of the change. Both halves must be in one
+# manifest, and each must land in its own section — a file listed under the
+# wrong heading tells the reviewer to collect the wrong diff for it.
 echo x >dirty.txt
 mkdir newdir
 echo y >newdir/inner.txt
-out="$(run review)" || fail "dirty-tree review exited non-zero: $out"
-echo "$out" | grep -q "uncommitted work" || fail "dirty tree did not select uncommitted scope: $out"
-echo "$out" | grep -q "dirty.txt" || fail "untracked file missing from uncommitted manifest: $out"
-echo "$out" | grep -q "newdir/inner.txt" || fail "file inside untracked dir missing from manifest (collapsed to dir entry): $out"
+out="$(run review)" || fail "commits-plus-dirty review exited non-zero: $out"
+echo "$out" | grep -q "BOTH parts are in scope" || fail "commits plus a dirty tree did not select the union scope: $out"
+echo "$out" | grep -q "uncommitted work in the working tree" || fail "union scope does not name the worktree half: $out"
+echo "$out" | grep -q "origin/develop...HEAD" || fail "union scope does not name the committed half: $out"
+committed_half="$(printf '%s\n' "$out" | sed -n '/^Committed changes (git diff/,/^Uncommitted changes (git status/p')"
+uncommitted_half="$(printf '%s\n' "$out" | sed -n '/^Uncommitted changes (git status/,$p')"
+[ -n "$committed_half" ] || fail "union manifest missing its committed section: $out"
+[ -n "$uncommitted_half" ] || fail "union manifest missing its uncommitted section: $out"
+echo "$committed_half" | grep -q "feature.txt" || fail "committed half missing the branch's own commit: $out"
+echo "$committed_half" | grep -q "dirty.txt" && fail "worktree file filed under the committed heading: $out"
+echo "$uncommitted_half" | grep -q "dirty.txt" || fail "untracked file missing from the uncommitted half: $out"
+echo "$uncommitted_half" | grep -q "newdir/inner.txt" || fail "file inside untracked dir missing from manifest (collapsed to dir entry): $out"
 rm -rf dirty.txt newdir
 
 echo "==> a >200-entry dirty tree still reviews (no SIGPIPE abort) and marks truncation"
@@ -224,6 +243,17 @@ if out="$(run review)"; then
 fi
 echo "$out" | grep -q "Nothing to review" || fail "expected nothing-to-review message: $out"
 echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite nothing to review: $out"
+
+echo "==> at the base tip, a dirty tree reviews the worktree alone"
+# The other side of the union: with no commits beyond the base there is no
+# second half, so the split manifest and its headings must not appear.
+echo tipwork >tipwork.txt
+out="$(run review)" || fail "dirty tree at the base tip exited non-zero: $out"
+echo "$out" | grep -q "Review the uncommitted work" || fail "base-tip dirty tree did not select the uncommitted scope: $out"
+echo "$out" | grep -q "BOTH parts are in scope" && fail "union scope selected with no commits beyond the base: $out"
+echo "$out" | grep -q "Committed changes (git diff" && fail "empty committed half still emitted a manifest section: $out"
+echo "$out" | grep -q "tipwork.txt" || fail "worktree file missing from manifest: $out"
+rm -f tipwork.txt
 
 echo "==> --base level with its base refuses, non-zero, without invoking codex"
 # The reported bug: an explicit --base built an empty manifest and shipped a
@@ -341,6 +371,71 @@ out="$(run review --base "$submod_base")" || fail "submodule-only diff refused a
 echo "$out" | grep -q "vendored" || fail "submodule gitlink missing from manifest: $out"
 git_t config --unset diff.ignoreSubmodules
 
+echo "==> an unresolvable base refuses, on a dirty tree as much as a clean one"
+# Degrading to the worktree half would be the original bug in a new place: a
+# fraction of the change reviewed, exit 0, and a stage that reads the status
+# rather than the warning banks it as a clean pass. Which commits are missing
+# is precisely what cannot be determined here, so there is no honest partial
+# scope — the refusal names --uncommitted as the deliberate way to ask for one.
+norem="${test_tmp}/norem"
+mkdir -p "${norem}/scripts"
+cp "${repo}/scripts/codex-review.sh" "${norem}/scripts/"
+git init -q -b feature "$norem"
+(
+    cd "$norem"
+    git add -A
+    git_t commit -q -m base
+    if out="$(./scripts/codex-review.sh review 2>&1)"; then
+        fail "clean tree with no detectable base was accepted: $out"
+    fi
+    echo "$out" | grep -q "Could not resolve a base" || fail "missing unresolvable-base message: $out"
+    echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with no resolvable base: $out"
+    echo loose >loose.txt
+    if out="$(./scripts/codex-review.sh review 2>&1)"; then
+        fail "dirty tree with no detectable base reviewed the worktree alone and exited 0: $out"
+    fi
+    echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked on a partial scope: $out"
+    echo "$out" | grep -q -- "--uncommitted" || fail "refusal does not name the deliberate narrow target: $out"
+    # ...and that named escape must actually work, or the refusal is a dead end.
+    out="$(./scripts/codex-review.sh review --uncommitted 2>&1)" || fail "--uncommitted refused with no base: $out"
+    echo "$out" | grep -q "loose.txt" || fail "worktree file missing from --uncommitted manifest: $out"
+)
+
+echo "==> a git failure in either half is refused, not read as an empty half"
+# Neither half may fail into "". A failed `git diff` with a dirty tree would
+# leave the worktree half non-empty, satisfy the non-empty manifest backstop,
+# and ship a one-sided review that exits 0 (a partial clone missing objects is
+# the realistic trigger); a failed `git status` would read as a clean tree and
+# do the same in reverse. The stub fails one subcommand, only when armed, so
+# every other git call in the fixture behaves normally.
+real_git="$(command -v git)"
+cat >"${test_tmp}/bin/git" <<GITSTUB
+#!/usr/bin/env bash
+if [ -n "\${FAIL_GIT_DIFF:-}" ] && [ "\${1:-}" = "diff" ] && [ "\${2:-}" = "--name-status" ]; then
+    echo "fatal: simulated missing object" >&2
+    exit 128
+fi
+if [ -n "\${FAIL_GIT_STATUS:-}" ] && [ "\${1:-}" = "status" ]; then
+    echo "fatal: simulated unreadable index" >&2
+    exit 128
+fi
+exec "${real_git}" "\$@"
+GITSTUB
+chmod +x "${test_tmp}/bin/git"
+git checkout -q feature
+echo halfwork >halfwork.txt
+if out="$(FAIL_GIT_DIFF=1 run review)"; then
+    fail "an unreadable branch diff was reviewed as an empty half and exited 0: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with a committed half that could not be read: $out"
+echo "$out" | grep -q "refusing rather than reading an unreadable" || fail "missing unreadable-diff refusal message: $out"
+if out="$(FAIL_GIT_STATUS=1 run review)"; then
+    fail "an unreadable worktree was reviewed as clean and exited 0: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with a worktree half that could not be read: $out"
+echo "$out" | grep -q "refusing rather than reading an unreadable worktree" || fail "missing unreadable-worktree refusal message: $out"
+rm -f halfwork.txt "${test_tmp}/bin/git"
+
 echo "==> gate: another repo's project-scoped plugin install is not accepted"
 fake_claude="${test_tmp}/claude-config"
 mkdir -p "${fake_claude}/plugins"
@@ -438,4 +533,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (30 cases)"
+echo "codex-review + codex-gate guards OK (33 cases)"

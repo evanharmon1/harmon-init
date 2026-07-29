@@ -120,9 +120,11 @@ something to ask permission for.
   A `task challenge` round is long — 5–15 minutes is ordinary, past most
   agents' tool-call timeouts — so **run it in the background and poll**
   instead of blocking one call on it. Growing output means running, not hung;
-  relaunching a live run only doubles the cost. Commit each round's fixes
-  before re-challenging, or the re-run scopes to the fix alone instead of the
-  whole change. Details:
+  relaunching a live run only doubles the cost. Re-challenge with a bare
+  `task challenge` — it covers the branch's commits *and* the working tree,
+  so an uncommitted fix cannot narrow the re-run to itself; an explicit
+  `--base`/`--uncommitted` reviews one half only. Committing each round's
+  fixes first is still tidier, not load-bearing. Details:
   [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
   backgrounding").
 - **`task review`** — verification-checkpoint review; same adjudication, same
@@ -332,9 +334,10 @@ collide `feat/x` with `feat-x` and reintroduce exactly that loss, and adding
 an extension would make `foo` (a file) block `foo.md/bar` (needing a
 directory). Used as-is, the mapping is git's own ref namespace, and git
 already forbids one live branch from being a path prefix of another. A note in the *worktree* would be worse than none:
-`codex-review.sh` reviews the uncommitted diff whenever the tree is dirty, so
-the note would become the next bare `task challenge`'s entire scope — and the
-change it was supposed to review would get a clean pass it never earned.
+`codex-review.sh` puts uncommitted files in scope whenever the tree is dirty,
+so the note would be handed to the next bare `task challenge` as part of the
+change under review — a file of open findings, presented to the reviewer as
+work to adjudicate.
 
 The shepherd stage settles every entry and **edits the PR body to tick it**
 (`- [x] … — fixed in <sha>` / `declined: <reason>` / `filed as #<n>`) in the

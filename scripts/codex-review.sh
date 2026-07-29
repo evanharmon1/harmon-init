@@ -10,9 +10,11 @@
 #
 # Usage: codex-review.sh <review|challenge> [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
 #
-# Target selection when no explicit flag is given (mirrors the Codex Claude
-# Code plugin's auto scope): a dirty working tree reviews staged + unstaged +
-# untracked work; a clean tree reviews the branch against the default base.
+# Target selection when no explicit flag is given: whatever exists is in
+# scope. Commits beyond the default base AND a dirty working tree are reviewed
+# together as one change; either alone is reviewed on its own. The explicit
+# flags stay narrow on purpose — --base is committed history only, and
+# --uncommitted is the worktree only — so they remain escapes you opt into.
 # The CLI's --base/--uncommitted/--commit flags are mutually exclusive with
 # custom instructions ("custom review instructions" is its own review mode),
 # so the resolved scope is written INTO the instructions instead.
@@ -89,7 +91,9 @@ refuse_empty_scope() {
 warn_if_dirty() {
     [ -n "$(git_status_porcelain)" ] || return 0
     echo "Note: the working tree is dirty, and --base reviews committed history only." >&2
-    echo "      Uncommitted changes are NOT in scope; use --uncommitted for those." >&2
+    echo "      Uncommitted changes are NOT in scope; drop the flag to review the" >&2
+    echo "      commits and the working tree together, or pass --uncommitted for" >&2
+    echo "      the working tree alone." >&2
 }
 
 # An explicit --base gets the same guarantee the auto-detect path already has:
@@ -201,7 +205,7 @@ while [ $# -gt 0 ]; do
         # --commit belongs here too: a branch whose commits net out to no change
         # (an add and its revert) is already committed and has a clean tree, so
         # both of the other two remedies would be dead ends.
-        empty_hint="Pass --uncommitted for working-tree changes, --commit <sha> for a single commit, or commit your work first."
+        empty_hint="Drop --base to review the commits and the working tree together, pass --uncommitted for working-tree changes only, or --commit <sha> for a single commit."
         shift 2
         ;;
     --commit)
@@ -257,59 +261,115 @@ if [ -n "$target_kind" ] && [ -z "$manifest" ]; then
 fi
 
 if [ -z "$scope" ]; then
-    # Same helper as the manifest built from it two lines down, so the tree
-    # cannot test clean here and then yield a non-empty manifest (or vice
-    # versa) because the two calls disagreed about what counts as a change.
-    if [ -n "$(git_status_porcelain)" ]; then
+    # BOTH halves are resolved before either is chosen, because a branch
+    # carrying commits AND uncommitted work is the ordinary state mid-loop —
+    # fixes are not committed until the PR stage — and the two scopes are
+    # disjoint: `git status` sees the worktree, `${base}...HEAD` sees the
+    # commits. Choosing one used to silently drop the other, so a re-run after
+    # an uncommitted fix reviewed that fix alone and reported the clean pass
+    # the challenge/review stage exits on: the pass attested to the fix rather
+    # than to the change. Resolving both and reviewing both is what keeps the
+    # exit condition honest without relying on the operator remembering to
+    # commit between rounds.
+    #
+    # One `git status` call feeds both the choice and the manifest, so a tree
+    # cleaned between two calls cannot make the run pick a scope it then fails
+    # to enumerate.
+    #
+    # No `|| true` on either half here, unlike the explicit target flags above:
+    # those refuse when their one manifest comes back empty, so a failed git
+    # call there still fails closed. This path composes two halves, so a failure
+    # swallowed into "" would leave the OTHER half non-empty, satisfy the guard,
+    # and ship a partial review that exits 0 — the precise shape of the bug this
+    # path exists to close.
+    if ! dirty_manifest="$(git_status_porcelain | cap_manifest)"; then
+        echo "git status failed; refusing rather than reading an unreadable worktree as clean." >&2
+        exit 2
+    fi
+
+    # origin/HEAD (the remote's actual default branch) outranks local
+    # branch-name guesses: a stray local `main` in a develop-default repo must
+    # not silently become the comparison base. The remote-qualified ref is
+    # kept as-is — stripping origin/ could name a branch that does not exist
+    # locally. Name guesses only apply to remoteless repos.
+    base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [ -z "$base" ]; then
+        for candidate in main master; do
+            if git rev-parse --verify --quiet "$candidate" >/dev/null; then
+                base="$candidate"
+                break
+            fi
+        done
+    fi
+    # An unresolvable base is fatal, on a dirty tree as much as a clean one.
+    # Degrading to the worktree half would be the old bug in a new place: the
+    # run would review a fraction of the change and still exit 0, and the
+    # stage's exit condition reads the status, not the stderr warning. Which
+    # commits are missing is exactly what cannot be determined here, so there
+    # is no honest partial scope to fall back to — make the narrowing an
+    # explicit act instead. `--uncommitted` is the one-flag way to say "the
+    # worktree really is all I want reviewed".
+    base_problem=""
+    if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base" >/dev/null; then
+        base_problem="no base branch could be detected (no origin/HEAD, no local main or master)"
+    elif ! git merge-base "$base" HEAD >/dev/null 2>&1; then
+        base_problem="the auto-detected base '${base}' shares no merge base with HEAD"
+    fi
+    if [ -n "$base_problem" ]; then
+        # Not refuse_empty_scope: nothing was resolved to be empty. This is a
+        # repository/argument problem, and it keeps the usage exit code (2)
+        # the explicit target flags use for the same class of failure.
+        echo "Could not resolve a base to review this branch against: ${base_problem}." >&2
+        echo "Refusing rather than reviewing the working tree alone — a partial review that" >&2
+        echo "exits 0 reads as the clean pass a challenge/review stage exits on." >&2
+        echo "Name a target explicitly: --base <ref>, --uncommitted, or --commit <sha>." >&2
+        exit 2
+    fi
+    # Commits beyond the base do not guarantee a non-empty diff (an empty
+    # commit, or one later reverted), and an empty diff is indistinguishable
+    # from no commits at all here — both simply leave this half out.
+    if ! base_manifest="$(git_diff_name_status "${base}...HEAD" | cap_manifest)"; then
+        echo "git diff ${base}...HEAD failed; refusing rather than reading an unreadable" >&2
+        echo "branch diff as an empty half (a partial clone missing objects, for one)." >&2
+        exit 2
+    fi
+
+    if [ -n "$base_manifest" ] && [ -n "$dirty_manifest" ]; then
+        scope="Review the complete current change, which has two parts: (1) the commits on this branch relative to base branch '${base}' — the merge-base diff ${base}...HEAD — and (2) the uncommitted work in the working tree: staged, unstaged, and untracked changes. BOTH parts are in scope and must be reviewed as one change. The uncommitted part is typically a fix to the committed part, so do not treat either part as settled background for the other; a file may legitimately appear in both."
+        # Each half is capped independently: a single 200-entry cap over the
+        # concatenation would let a large committed half swallow the worktree
+        # half whole, which is the exact silent narrowing this path exists to
+        # prevent. The prompt goes over stdin, so the extra entries are cheap.
+        manifest="Committed changes (git diff --name-status ${base}...HEAD):
+${base_manifest}
+
+Uncommitted changes (git status --porcelain):
+${dirty_manifest}"
+        echo "==> Reviewing branch changes against ${base} AND uncommitted work (both halves in scope)"
+    elif [ -n "$dirty_manifest" ]; then
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
-        manifest="$(git_status_porcelain | cap_manifest || true)"
-        echo "==> Reviewing uncommitted work (dirty tree; pass --base <ref> to review the branch instead)"
-    else
-        # origin/HEAD (the remote's actual default branch) outranks local
-        # branch-name guesses: a stray local `main` in a develop-default repo
-        # must not silently become the comparison base. The remote-qualified
-        # ref is kept as-is — stripping origin/ could name a branch that does
-        # not exist locally. Name guesses only apply to remoteless repos.
-        base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-        if [ -z "$base" ]; then
-            for candidate in main master; do
-                if git rev-parse --verify --quiet "$candidate" >/dev/null; then
-                    base="$candidate"
-                    break
-                fi
-            done
-        fi
-        if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base" >/dev/null; then
-            echo "Could not detect a base branch; pass --base <ref> or --uncommitted." >&2
-            exit 2
-        fi
-        if ! git merge-base "$base" HEAD >/dev/null 2>&1; then
-            echo "Auto-detected base '${base}' shares no merge base with HEAD; pass --base <ref> or --uncommitted." >&2
-            exit 2
-        fi
-        if [ "$(git rev-list --count "${base}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then
-            refuse_empty_scope \
-                "the working tree is clean and HEAD has no commits beyond ${base}." \
-                "Pass --base <ref> or --commit <sha> to name a target explicitly."
-        fi
+        manifest="$dirty_manifest"
+        echo "==> Reviewing uncommitted work (HEAD changes no files beyond ${base})"
+    elif [ -n "$base_manifest" ]; then
         scope="Review the changes on the current branch relative to base branch '${base}' (the merge-base diff ${base}...HEAD)."
-        manifest="$(git_diff_name_status "${base}...HEAD" | cap_manifest || true)"
-        # Commits beyond the base do not guarantee a non-empty diff: an empty
-        # commit, or one later reverted, leaves nothing for Codex to read.
-        if [ -z "$manifest" ]; then
-            refuse_empty_scope \
-                "the merge-base diff ${base}...HEAD is empty — the commits beyond ${base} change no files." \
-                "Pass --commit <sha> to review a specific commit, or --uncommitted for working-tree changes."
-        fi
-        echo "==> Reviewing branch changes against ${base}"
+        manifest="$base_manifest"
+        echo "==> Reviewing branch changes against ${base} (clean working tree)"
+    elif [ "$(git rev-list --count "${base}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then
+        refuse_empty_scope \
+            "the working tree is clean and HEAD has no commits beyond ${base}." \
+            "Pass --base <ref> or --commit <sha> to name a target explicitly."
+    else
+        refuse_empty_scope \
+            "the working tree is clean and the merge-base diff ${base}...HEAD is empty — the commits beyond ${base} change no files." \
+            "Pass --commit <sha> to review a specific commit."
     fi
 fi
 
 # Backstop for every path, so the invariant does not depend on each one
-# remembering it. The auto dirty-tree path in particular decides on one
-# `git status` and builds its manifest from a second: a tree cleaned between
-# the two calls — or a call that failed into `|| true` — would otherwise still
-# reach the model with nothing to review.
+# remembering it. The explicit target flags build their manifest through
+# `|| true`, so a git call that failed rather than returning nothing arrives
+# here as an empty one — and a new target path added later inherits the guard
+# for free instead of having to re-derive it.
 if [ -z "$manifest" ]; then
     refuse_empty_scope \
         "the resolved target contains no changed files." \
