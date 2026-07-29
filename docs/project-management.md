@@ -235,11 +235,17 @@ families, color-coded by family; the starter set is created by
   `agent:github-copilot` — which agent is working the issue *right now* (see
   **Claiming** below)
 
-The `layer:`, `domain:`, and `agent:` families offer the same options as the
-**Layer**, **Domain**, and **Agent** fields above — same names, same meanings,
-but no per-issue sync (see Fields). Use the label when you want it on the issue
-list and in `gh issue list --label`, the field when you want to group a board
-view by it, and extend both together so the option sets stay identical.
+The `layer:` and `domain:` families offer the same options as the **Layer** and
+**Domain** fields above — same names, same meanings, but no per-issue sync (see
+Fields). Use the label when you want it on the issue list and in
+`gh issue list --label`, the field when you want to group a board view by it,
+and extend both together so the option sets stay identical.
+
+The `agent:` family shares the **Agent** field's option names and *nothing
+else*. The field is the planned implementer, the label is the active one — see
+**Claiming** below. Extend the two lists together, but never treat one as a
+copy of the other: writing the field to match the label overwrites a planning
+decision.
 
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
@@ -311,8 +317,11 @@ approved, and never `Done`, which belongs to whoever merges.
 > grep -l 'agent:claude-code' .claude/skills/preflight/SKILL.md
 > ```
 >
-> A match means claiming is automated end to end. No match means the labels
-> above are applied by hand, and nothing will move the card.
+> A match means claiming is automated end to end. No match means the `agent:`
+> labels above are applied by hand, and no *skill* will move the card. On an
+> organization `project-automation.yml` still syncs `Status` from PR and CI
+> events, so that is not the same as nothing moving it — check what the
+> workflow already does before setting the field manually.
 
 ## Milestones
 
