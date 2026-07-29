@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.8.0](https://github.com/evanharmon1/harmon-init/compare/v4.7.2...v4.8.0) (2026-07-29)
+
+
+### Features
+
+* **template:** add the agent: label family so a claim is visible off the board ([#445](https://github.com/evanharmon1/harmon-init/issues/445)) ([7125af2](https://github.com/evanharmon1/harmon-init/commit/7125af22b039de50a8787ffb75e01e28dcf8706b))
+
+
+### Bug Fixes
+
+* **codex-review:** warn that challenge/review rounds outrun agent tool timeouts ([#453](https://github.com/evanharmon1/harmon-init/issues/453)) ([2b4dfa2](https://github.com/evanharmon1/harmon-init/commit/2b4dfa287d829ab86a913452bc135c6a34485f4f))
+* **template:** refuse an empty-diff codex review instead of passing it off as clean ([#452](https://github.com/evanharmon1/harmon-init/issues/452)) ([4827b79](https://github.com/evanharmon1/harmon-init/commit/4827b799885804fabdd85f890ad643aa4f042a42)), closes [#448](https://github.com/evanharmon1/harmon-init/issues/448)
+* **template:** route agents into /shepherd and mark checks-green non-terminal ([#449](https://github.com/evanharmon1/harmon-init/issues/449)) ([af39f9b](https://github.com/evanharmon1/harmon-init/commit/af39f9bbff9efbc3fc6ed913de157c0ef366f06a))
+* warn instead of aborting when a reused board's Status field is not a single-select ([#450](https://github.com/evanharmon1/harmon-init/issues/450)) ([3de3afc](https://github.com/evanharmon1/harmon-init/commit/3de3afc3fa2afc7bfb9e0e0d508a390b7f745d2f)), closes [#447](https://github.com/evanharmon1/harmon-init/issues/447)
+
 ## [4.7.2](https://github.com/evanharmon1/harmon-init/compare/v4.7.1...v4.7.2) (2026-07-28)
 
 
