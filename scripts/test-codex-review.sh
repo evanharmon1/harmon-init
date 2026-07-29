@@ -281,11 +281,12 @@ out="$(run review --base "$submod_base")" || fail "submodule-only diff refused a
 echo "$out" | grep -q "vendored" || fail "submodule gitlink missing from manifest: $out"
 git_t config --unset diff.ignoreSubmodules
 
-echo "==> no detectable base: a dirty tree still reviews, a clean one fails fast"
-# Resolving the base is now on the auto path unconditionally, so a repo with
-# no origin/HEAD and no local main/master must not turn a perfectly reviewable
-# dirty tree into a hard failure — it degrades to the worktree half and says
-# so. With nothing else to review it keeps the usage exit code.
+echo "==> an unresolvable base refuses, on a dirty tree as much as a clean one"
+# Degrading to the worktree half would be the original bug in a new place: a
+# fraction of the change reviewed, exit 0, and a stage that reads the status
+# rather than the warning banks it as a clean pass. Which commits are missing
+# is precisely what cannot be determined here, so there is no honest partial
+# scope — the refusal names --uncommitted as the deliberate way to ask for one.
 norem="${test_tmp}/norem"
 mkdir -p "${norem}/scripts"
 cp "${repo}/scripts/codex-review.sh" "${norem}/scripts/"
@@ -297,13 +298,53 @@ git init -q -b feature "$norem"
     if out="$(./scripts/codex-review.sh review 2>&1)"; then
         fail "clean tree with no detectable base was accepted: $out"
     fi
-    echo "$out" | grep -q "Could not resolve a review target" || fail "missing unresolvable-target message: $out"
-    echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with no resolvable target: $out"
+    echo "$out" | grep -q "Could not resolve a base" || fail "missing unresolvable-base message: $out"
+    echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with no resolvable base: $out"
     echo loose >loose.txt
-    out="$(./scripts/codex-review.sh review 2>&1)" || fail "dirty tree with no detectable base was refused: $out"
-    echo "$out" | grep -q "no base branch could be detected" || fail "missing base-degradation note: $out"
-    echo "$out" | grep -q "loose.txt" || fail "worktree file missing from degraded manifest: $out"
+    if out="$(./scripts/codex-review.sh review 2>&1)"; then
+        fail "dirty tree with no detectable base reviewed the worktree alone and exited 0: $out"
+    fi
+    echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked on a partial scope: $out"
+    echo "$out" | grep -q -- "--uncommitted" || fail "refusal does not name the deliberate narrow target: $out"
+    # ...and that named escape must actually work, or the refusal is a dead end.
+    out="$(./scripts/codex-review.sh review --uncommitted 2>&1)" || fail "--uncommitted refused with no base: $out"
+    echo "$out" | grep -q "loose.txt" || fail "worktree file missing from --uncommitted manifest: $out"
 )
+
+echo "==> a git failure in either half is refused, not read as an empty half"
+# Neither half may fail into "". A failed `git diff` with a dirty tree would
+# leave the worktree half non-empty, satisfy the non-empty manifest backstop,
+# and ship a one-sided review that exits 0 (a partial clone missing objects is
+# the realistic trigger); a failed `git status` would read as a clean tree and
+# do the same in reverse. The stub fails one subcommand, only when armed, so
+# every other git call in the fixture behaves normally.
+real_git="$(command -v git)"
+cat >"${test_tmp}/bin/git" <<GITSTUB
+#!/usr/bin/env bash
+if [ -n "\${FAIL_GIT_DIFF:-}" ] && [ "\${1:-}" = "diff" ] && [ "\${2:-}" = "--name-status" ]; then
+    echo "fatal: simulated missing object" >&2
+    exit 128
+fi
+if [ -n "\${FAIL_GIT_STATUS:-}" ] && [ "\${1:-}" = "status" ]; then
+    echo "fatal: simulated unreadable index" >&2
+    exit 128
+fi
+exec "${real_git}" "\$@"
+GITSTUB
+chmod +x "${test_tmp}/bin/git"
+git checkout -q feature
+echo halfwork >halfwork.txt
+if out="$(FAIL_GIT_DIFF=1 run review)"; then
+    fail "an unreadable branch diff was reviewed as an empty half and exited 0: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with a committed half that could not be read: $out"
+echo "$out" | grep -q "refusing rather than reading an unreadable" || fail "missing unreadable-diff refusal message: $out"
+if out="$(FAIL_GIT_STATUS=1 run review)"; then
+    fail "an unreadable worktree was reviewed as clean and exited 0: $out"
+fi
+echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked with a worktree half that could not be read: $out"
+echo "$out" | grep -q "refusing rather than reading an unreadable worktree" || fail "missing unreadable-worktree refusal message: $out"
+rm -f halfwork.txt "${test_tmp}/bin/git"
 
 echo "==> gate: another repo's project-scoped plugin install is not accepted"
 fake_claude="${test_tmp}/claude-config"
@@ -402,4 +443,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (26 cases)"
+echo "codex-review + codex-gate guards OK (27 cases)"

@@ -51,10 +51,12 @@ beyond the auto-detected base (`origin/HEAD`, else a local `main`/`master`)
 *and* the working tree. When both exist the prompt carries one manifest split
 into a `Committed changes` and an `Uncommitted changes` section, so the
 reviewer knows which diff to collect for each path; when only one exists it is
-reviewed on its own. The explicit flags stay narrow deliberately — `--base` is
-committed history only and `--uncommitted` is the worktree only — so they
-remain escapes you opt into rather than a default that quietly drops half the
-change.
+reviewed on its own. If the base cannot be resolved at all, the run refuses
+(exit 2) rather than falling back to the worktree half — a partial review that
+exits 0 is indistinguishable from a clean pass. The explicit flags stay narrow
+deliberately — `--base` is committed history only and `--uncommitted` is the
+worktree only — so they remain escapes you opt into rather than a default that
+quietly drops half the change.
 
 Whichever target you pick, an empty one is refused before Codex is invoked,
 with a non-zero exit. An empty scope has no correct outcome — the model either
@@ -275,8 +277,9 @@ orphan if it belongs to this work, otherwise leave it and mention it. One
 command beats rename-migration logic that would need its own correctness
 argument. The location is deterministic, so a later session finds it the same
 way, and `git status` never sees it — a note left in the *worktree* would be
-worse than none, because a dirty tree makes the next bare `task challenge`
-review the note instead of the branch.
+worse than none, because a dirty tree puts it in the next bare
+`task challenge`'s scope: a file of open findings, handed to the reviewer as
+part of the change to adjudicate.
 
 The shepherd stage settles every entry and ticks it off in the body as it
 goes, so the checkbox — not anyone's memory — is what says whether a finding
@@ -309,9 +312,11 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   means a clean tree with no commits beyond the base. Reaching it from
   `--base <ref>` usually means the work is still uncommitted — drop the flag
   to review both halves, or use `--uncommitted`.
-- **Could not resolve a review target** — no `origin/HEAD` and no local
-  `main`/`master`, or the detected base shares no history with `HEAD`, on a
-  clean tree (exit 2). With a dirty tree the same condition is only a note:
-  the run continues over the working tree alone and says the commits are out
-  of scope. Either name a base with `--base <ref>` or fix the cached ref
-  (`git remote set-head origin --auto`).
+- **Could not resolve a base to review this branch against** — no
+  `origin/HEAD` and no local `main`/`master`, or the detected base shares no
+  history with `HEAD` (exit 2). It refuses on a dirty tree too, rather than
+  quietly reviewing the worktree alone: which commits are missing is exactly
+  what cannot be determined, and a partial review that exits 0 reads as a
+  clean pass. Fix the cached ref (`git remote set-head origin --auto`), name a
+  base with `--base <ref>`, or say the worktree really is the whole target
+  with `--uncommitted`.

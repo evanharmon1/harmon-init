@@ -204,7 +204,17 @@ if [ -z "$scope" ]; then
     # One `git status` call feeds both the choice and the manifest, so a tree
     # cleaned between two calls cannot make the run pick a scope it then fails
     # to enumerate.
-    dirty_manifest="$(git_status_porcelain | cap_manifest || true)"
+    #
+    # No `|| true` on either half here, unlike the explicit target flags above:
+    # those refuse when their one manifest comes back empty, so a failed git
+    # call there still fails closed. This path composes two halves, so a failure
+    # swallowed into "" would leave the OTHER half non-empty, satisfy the guard,
+    # and ship a partial review that exits 0 — the precise shape of the bug this
+    # path exists to close.
+    if ! dirty_manifest="$(git_status_porcelain | cap_manifest)"; then
+        echo "git status failed; refusing rather than reading an unreadable worktree as clean." >&2
+        exit 2
+    fi
 
     # origin/HEAD (the remote's actual default branch) outranks local
     # branch-name guesses: a stray local `main` in a develop-default repo must
@@ -220,20 +230,37 @@ if [ -z "$scope" ]; then
             fi
         done
     fi
-    # An unresolvable base is fatal only when there is nothing else to review.
-    # With a dirty tree the worktree half is still a real scope, so degrade to
-    # it with a warning rather than refusing a run that has something to say.
-    base_manifest=""
+    # An unresolvable base is fatal, on a dirty tree as much as a clean one.
+    # Degrading to the worktree half would be the old bug in a new place: the
+    # run would review a fraction of the change and still exit 0, and the
+    # stage's exit condition reads the status, not the stderr warning. Which
+    # commits are missing is exactly what cannot be determined here, so there
+    # is no honest partial scope to fall back to — make the narrowing an
+    # explicit act instead. `--uncommitted` is the one-flag way to say "the
+    # worktree really is all I want reviewed".
     base_problem=""
     if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base" >/dev/null; then
         base_problem="no base branch could be detected (no origin/HEAD, no local main or master)"
     elif ! git merge-base "$base" HEAD >/dev/null 2>&1; then
         base_problem="the auto-detected base '${base}' shares no merge base with HEAD"
-    else
-        # Commits beyond the base do not guarantee a non-empty diff (an empty
-        # commit, or one later reverted), and an empty diff is indistinguish-
-        # able from no commits at all here — both simply leave this half out.
-        base_manifest="$(git_diff_name_status "${base}...HEAD" | cap_manifest || true)"
+    fi
+    if [ -n "$base_problem" ]; then
+        # Not refuse_empty_scope: nothing was resolved to be empty. This is a
+        # repository/argument problem, and it keeps the usage exit code (2)
+        # the explicit target flags use for the same class of failure.
+        echo "Could not resolve a base to review this branch against: ${base_problem}." >&2
+        echo "Refusing rather than reviewing the working tree alone — a partial review that" >&2
+        echo "exits 0 reads as the clean pass a challenge/review stage exits on." >&2
+        echo "Name a target explicitly: --base <ref>, --uncommitted, or --commit <sha>." >&2
+        exit 2
+    fi
+    # Commits beyond the base do not guarantee a non-empty diff (an empty
+    # commit, or one later reverted), and an empty diff is indistinguishable
+    # from no commits at all here — both simply leave this half out.
+    if ! base_manifest="$(git_diff_name_status "${base}...HEAD" | cap_manifest)"; then
+        echo "git diff ${base}...HEAD failed; refusing rather than reading an unreadable" >&2
+        echo "branch diff as an empty half (a partial clone missing objects, for one)." >&2
+        exit 2
     fi
 
     if [ -n "$base_manifest" ] && [ -n "$dirty_manifest" ]; then
@@ -251,24 +278,11 @@ ${dirty_manifest}"
     elif [ -n "$dirty_manifest" ]; then
         scope="Review the uncommitted work in this repository: staged, unstaged, and untracked changes."
         manifest="$dirty_manifest"
-        if [ -n "$base_problem" ]; then
-            echo "Note: ${base_problem}, so this run covers the working tree only." >&2
-            echo "      Pass --base <ref> to bring this branch's commits into scope." >&2
-            echo "==> Reviewing uncommitted work (no base branch resolved)"
-        else
-            echo "==> Reviewing uncommitted work (HEAD changes no files beyond ${base})"
-        fi
+        echo "==> Reviewing uncommitted work (HEAD changes no files beyond ${base})"
     elif [ -n "$base_manifest" ]; then
         scope="Review the changes on the current branch relative to base branch '${base}' (the merge-base diff ${base}...HEAD)."
         manifest="$base_manifest"
         echo "==> Reviewing branch changes against ${base} (clean working tree)"
-    elif [ -n "$base_problem" ]; then
-        # Not refuse_empty_scope: nothing was resolved to be empty. This is a
-        # repository/argument problem, and it keeps the usage exit code (2)
-        # the explicit target flags use for the same class of failure.
-        echo "Could not resolve a review target: ${base_problem}." >&2
-        echo "Pass --base <ref> or --commit <sha> to name one explicitly." >&2
-        exit 2
     elif [ "$(git rev-list --count "${base}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then
         refuse_empty_scope \
             "the working tree is clean and HEAD has no commits beyond ${base}." \
