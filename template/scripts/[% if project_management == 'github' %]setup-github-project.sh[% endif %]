@@ -142,6 +142,14 @@ fi
 # that project-automation.yml + the claude-* workflows read (preferred over a
 # title lookup). Personal accounts have no org-level variable scope, and their
 # status automation is a separate follow-up, so skip it there.
+#
+# This deliberately runs BEFORE field reconciliation. The variable answers "which
+# board", and by this point the board exists, so pointing at it is correct even
+# if a later step cannot finish. Deferring the write until after reconciliation
+# would not protect anything: a run that died in between would leave no variable
+# at all, and the workflows' title-lookup fallback resolves to that same
+# half-reconciled board. Reconciliation is additive and re-runnable, so the
+# remedy for a partial run is to re-run this script either way.
 if [ "$owner_type" = "Organization" ]; then
     echo "==> Recording project id in the ORG_PROJECT_ID org variable"
     if ! gh variable set ORG_PROJECT_ID --org "$owner" --visibility all --body "$project_id"; then
@@ -286,22 +294,36 @@ append_options() {
 }
 
 # ── Status field: full pipeline on a new project; preserve + append on an
-#    existing one so items already assigned to an option are never orphaned ──
-status_field_id=$(field_id "Status")
-if [ -z "$status_field_id" ]; then
+#    existing one so items already assigned to an option are never orphaned.
+#
+#    Status goes through field_exists — the SAME data-type guard as the custom
+#    fields below — rather than a bare name lookup. A reused board can carry a
+#    field named `Status` that is not a single-select, and handing that to
+#    append_options reaches existing_options, whose jq iterates a null
+#    `.options` and exits 5; under `set -euo pipefail` that aborts the entire
+#    run rather than warning, leaving a half-reconciled project (on an org,
+#    after ORG_PROJECT_ID has already been repointed above). ──
+if field_exists "Status" SINGLE_SELECT; then
+    # A data-type mismatch already warned and is repeated by report_incompatible;
+    # options cannot be added to such a field, so skip it and carry on.
+    if [ "$field_matched" = "1" ]; then
+        if [ "$created" = "1" ]; then
+            # A project GitHub just created for us carries its default Status
+            # options and nothing is assigned to them yet, so replacing the list
+            # wholesale is safe.
+            echo "==> Setting Status to the full pipeline (new project)"
+            set_options "$(field_id "Status")" "$(printf '%s' "$status_pipeline" | jq -c .)"
+        else
+            echo "==> Syncing Status (keeping existing options, appending any missing)"
+            append_options "Status" "$status_pipeline"
+        fi
+    fi
+else
     echo "==> Creating the Status field with the full pipeline"
     frag=$(printf '%s' "$status_pipeline" | jq -r "$opts_to_graphql")
     gh api graphql -f p="$project_id" \
         -f query="mutation(\$p:ID!){createProjectV2Field(input:{projectId:\$p,dataType:SINGLE_SELECT,name:\"Status\",singleSelectOptions:[$frag]}){projectV2Field{... on ProjectV2SingleSelectField{id}}}}" \
         >/dev/null
-elif [ "$created" = "1" ]; then
-    # A project GitHub just created for us carries its default Status options and
-    # nothing is assigned to them yet, so replacing the list wholesale is safe.
-    echo "==> Setting Status to the full pipeline (new project)"
-    set_options "$status_field_id" "$(printf '%s' "$status_pipeline" | jq -c .)"
-else
-    echo "==> Syncing Status (keeping existing options, appending any missing)"
-    append_options "Status" "$status_pipeline"
 fi
 
 # ── Custom fields: create if missing; an existing single-select is reconciled by
@@ -382,6 +404,14 @@ create_single_select "Priority" '[
   {"name":"Low","color":"GRAY","description":""}
 ]'
 create_text "Product"
+# Agent shares its option names with the `agent:` label family in
+# setup-github-labels.sh, so extend both together — but they answer different
+# questions and nothing syncs them. This FIELD is planning metadata: which agent
+# SHOULD implement the issue, set at triage, and what the Agent-queue view
+# filters on. The LABEL is the live claim: which agent IS working it, written by
+# the agent itself. A claim must never write this field, or it overwrites the
+# plan and changes what appears in the queue (docs/project-management.md,
+# "Claiming").
 create_single_select "Agent" '[
   {"name":"Claude Code","color":"ORANGE","description":""},
   {"name":"Codex","color":"BLUE","description":""},

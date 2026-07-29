@@ -207,13 +207,28 @@ something to ask permission for.
   them to the PR (see "Deferring P2s" below). Max **6** challenge → fix →
   re-challenge
   rounds; if P0/P1 findings persist, stop and escalate to Evan.
-- **`task review`** — verification-checkpoint review; same adjudication and
-  same P0/P1 clean-pass exit condition, with its own max **6** rounds.
+  A `task challenge` round is long — 5–15 minutes is ordinary, past most
+  agents' tool-call timeouts — so **run it in the background and poll**
+  instead of blocking one call on it. Growing output means running, not hung;
+  relaunching a live run only doubles the cost. Commit each round's fixes
+  before re-challenging, or the re-run scopes to the fix alone instead of the
+  whole change. Details:
+  [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
+  backgrounding").
+- **`task review`** — verification-checkpoint review; same adjudication, same
+  P0/P1 clean-pass exit condition, and the same background-and-poll handling,
+  with its own max **6** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
   title rule below).
-- **Shepherd the PR (max 5 rounds).** Opening the PR is not the end. Start by
+- **Shepherd the PR (`/shepherd`, max 5 rounds).** `gh pr create` returning is
+  the trigger for this stage, not the end of the work — enter it deliberately
+  instead of judging for yourself when the PR is finished. `/shepherd` is the
+  procedure, and it is **user-invocable only**
+  (`disable-model-invocation: true`): an agent enters the stage by reading
+  `.claude/skills/shepherd/SKILL.md` and following it, not by calling a slash
+  command it cannot call. Start by
   re-reading the **unchecked** entries under `## Deferred findings` in the PR
   description — those P2s are open work, not a changelog; tick each one off
   in the body as you settle it. Then watch CI
@@ -232,8 +247,17 @@ something to ask permission for.
   states a different cap or exit condition, **this file wins** — the skills
   are synced from harmon-devkit on its own release cadence and can lag a
   policy change made here.
-- **Stop at green.** Report that checks pass, then stop — merging is always a
-  human decision.
+- **Checks green is a non-terminal state.** Reporting "all checks pass"
+  without having polled reviews and inline comments is not a handoff — it is
+  the middle of the shepherd stage. Bot and human reviews land *after* checks
+  settle, so `gh pr checks --watch` returns at exactly the moment the review
+  has not run yet: an empty comment list read at that instant means "not
+  reviewed yet", not "nothing to answer". Wait for **both** signals — let
+  every check conclude, then give the reviewer a bounded window (~10–15
+  minutes) on the current head, and proceed on CI alone only if nothing lands
+  in it.
+- **Stop at green.** Once checks pass *and* no review findings are unresolved,
+  report that and stop — merging is always a human decision.
 
 ## Critical Copier Gotchas
 
@@ -262,8 +286,9 @@ something to ask permission for.
   `verify` + `security` + `codeql-verify` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
-  the ruleset would allow it. Open the PR, report that checks pass, then stop;
-  merging is always a human decision. (`.claude/settings.json` backstops this
+  the ruleset would allow it. Open the PR and shepherd it — checks green with
+  reviews unpolled is not the stopping point — then report and stop; merging
+  is always a human decision. (`.claude/settings.json` backstops this
   with `permissions.ask` rules on merge commands.)
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as
