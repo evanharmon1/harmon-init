@@ -8,6 +8,16 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.8.2](https://github.com/evanharmon1/harmon-init/compare/v4.8.1...v4.8.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* **codex-review:** review commits and uncommitted work in one scope ([#462](https://github.com/evanharmon1/harmon-init/issues/462)) ([b0e9404](https://github.com/evanharmon1/harmon-init/commit/b0e94046979dc93a0a19e49ec34fed1238802caf))
+* **codex-review:** warn when --base lags an upstream carried into the branch ([#463](https://github.com/evanharmon1/harmon-init/issues/463)) ([7570022](https://github.com/evanharmon1/harmon-init/commit/7570022330a11449d3c9b8e59514d563afb956c4)), closes [#454](https://github.com/evanharmon1/harmon-init/issues/454)
+* **template:** distinguish self-referential review loops from shepherd ([#471](https://github.com/evanharmon1/harmon-init/issues/471)) ([236a0f4](https://github.com/evanharmon1/harmon-init/commit/236a0f4375a267155a84a27458506e7cd0368dcc))
+* **template:** step back when review rounds start attacking their own fixes ([#459](https://github.com/evanharmon1/harmon-init/issues/459)) ([5e602bb](https://github.com/evanharmon1/harmon-init/commit/5e602bb9c397ddb065b0823e935621cddbf61def))
+
 ## [4.8.1](https://github.com/evanharmon1/harmon-init/compare/v4.8.0...v4.8.1) (2026-07-29)
 
 
