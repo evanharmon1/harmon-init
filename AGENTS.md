@@ -277,8 +277,9 @@ something to ask permission for.
   `verify` + `security` + `codeql-verify` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
-  the ruleset would allow it. Open the PR, report that checks pass, then stop;
-  merging is always a human decision. (`.claude/settings.json` backstops this
+  the ruleset would allow it. Open the PR and shepherd it — checks green with
+  reviews unpolled is not the stopping point — then report and stop; merging
+  is always a human decision. (`.claude/settings.json` backstops this
   with `permissions.ask` rules on merge commands.)
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as
