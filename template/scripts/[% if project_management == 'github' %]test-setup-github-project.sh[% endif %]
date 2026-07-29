@@ -158,6 +158,23 @@ run_with "$wrong"
 [ "$(updates)" = 0 ] || fail "a wrong-typed field must not receive an option update"
 grep -q "already exists as TEXT" "$tmp/out" || fail "expected a data-type warning for Domain"
 
+echo "==> a non-single-select Status warns and is skipped, never aborting the run"
+# Status is reconciled by its own call site rather than create_single_select, so
+# it needs its own coverage: without the field_exists guard there, existing_options
+# runs `.options[]` over a field that has none, jq exits 5, and `set -euo pipefail`
+# kills the whole run — a stack trace instead of the warning this script promises,
+# and on an org it happens after ORG_PROJECT_ID was already repointed. run_with
+# fails the test on any non-zero exit, so the exit-0 half of this is implicit.
+wrong_status=$(printf '%s' "$complete" | jq -c '
+    .data.node.fields.nodes |= map(
+        if .name == "Status" then {id: .id, name: .name, dataType: "TEXT"} else . end)')
+run_with "$wrong_status"
+[ "$(updates)" = 0 ] || fail "a wrong-typed Status must not receive an option update"
+grep -q "field 'Status' already exists as TEXT" "$tmp/out" ||
+    fail "expected a data-type warning naming Status and its actual type"
+grep -q "Status (is TEXT, wanted SINGLE_SELECT)" "$tmp/out" ||
+    fail "expected Status in the end-of-run incompatible summary"
+
 echo "==> a field at the option cap warns instead of attempting an oversized write"
 capped=$(printf '%s' "$complete" | jq -c '
     .data.node.fields.nodes |= map(
