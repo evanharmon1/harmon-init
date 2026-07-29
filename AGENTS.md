@@ -379,6 +379,12 @@ in the adjudication table *and* in the message of the commit that removes the
 code — the table is scrollback, but the commit is why the code is gone, and it
 is the record a later round or a different session can still find.
 
+One endpoint is worth knowing: if the deletion empties the change *entirely*,
+there is no clean pass to reach — `codex-review.sh` refuses an empty scope
+non-zero by design, so the stage cannot pass and re-running will not change
+that. Treat it as the answer rather than a failure to work around: a change
+that has become empty is abandoned, not reviewed clean.
+
 **Severity gating.** Both tasks ask Codex to label every finding `P0`
 (breaks correctness, security, or data integrity in ordinary use, or breaks
 an existing contract), `P1` (a real defect or materially wrong design
