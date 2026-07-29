@@ -283,14 +283,18 @@ follows the pipeline honestly — `In Progress` at claim, `Verifying` while CI
 runs, `In Review` awaiting a human, `Ready to Merge` only once actually
 approved, and never `Done`, which belongs to whoever merges.
 
-> **Not automatic yet.** Writing and releasing these markers is implemented by
-> harmon-devkit's `preflight` / `shepherd` / `close` skills, and only in a
-> release **after `v0.11.1`** — the tag both `.skills-sync.yaml` manifests
-> currently pin. Until that pin is bumped and `task sync:skills` re-vendors,
-> the labels seeded here are applied by hand, and the vendored `preflight`
-> neither sets an `agent:` label nor moves the card. Bump **both** manifests
-> together (the root one and the template's), or generated repos silently keep
-> the older skills.
+> **Whether this is automatic depends on the skills vendored here.** Writing
+> and releasing these markers is implemented by harmon-devkit's `preflight` /
+> `shepherd` / `close` skills; older releases only assign the issue. The pin
+> moves on its own schedule via `sync-harmon-devkit.yml`, so check rather than
+> assume:
+>
+> ```sh
+> grep -l 'agent:claude-code' .claude/skills/preflight/SKILL.md
+> ```
+>
+> A match means claiming is automated end to end. No match means the labels
+> above are applied by hand, and nothing will move the card.
 
 ## Milestones
 

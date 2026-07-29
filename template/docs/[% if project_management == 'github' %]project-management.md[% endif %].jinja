@@ -339,14 +339,18 @@ approved, and never `Done`, which belongs to whoever merges. On org repos
 `project-automation.yml` already syncs `Status` from PR and CI events; anything
 writing the card should defer to it there rather than racing it.
 
-> **Not automatic yet.** Writing and releasing these markers is implemented by
-> harmon-devkit's `preflight` / `shepherd` / `close` skills, and only in a
-> release **after `v0.11.1`** — the tag both `.skills-sync.yaml` manifests
-> currently pin. Until that pin is bumped and `task sync:skills` re-vendors,
-> the labels this repo seeds are yours to apply by hand, and the vendored
-> `preflight` neither sets an `agent:` label nor moves the card. Bump **both**
-> manifests together (the root one and the template's), or generated repos
-> silently keep the older skills.
+> **Whether this is automatic depends on the skills you have vendored.**
+> Writing and releasing these markers is implemented by harmon-devkit's
+> `preflight` / `shepherd` / `close` skills; older releases only assign the
+> issue. Check yours rather than assuming — the pin moves on its own schedule,
+> via the automated devkit-release sync:
+>
+> ```sh
+> grep -l 'agent:claude-code' .claude/skills/preflight/SKILL.md
+> ```
+>
+> A match means claiming is automated end to end. No match means the labels
+> above are yours to apply by hand, and nothing will move the card for you.
 
 ## Milestones
 
