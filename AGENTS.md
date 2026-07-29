@@ -356,6 +356,35 @@ the cloud run failed.
 6. Finish with a concise adjudication table: finding → priority →
    classification → evidence → action taken.
 
+**Between rounds, check what the findings are about.** Those six steps are all
+*per-finding*, so a reviewer can be right every round while the loop as a whole
+diverges: each fix adds surface, the next round attacks that surface, and the
+findings stay individually defensible right up to the cap. Before starting a
+round's fixes, ask where they *live* — in the change you set out to make, or in
+code that exists only because an earlier round asked for it. **A round whose
+findings are all about the previous round's fix is the tell**, and it is
+visible in round 2 — the first round that can show it. Do not wait for the
+pattern to be unmistakable in round 4.
+
+**Deleting the added code is a legitimate way to reach a clean pass.** When a
+round's findings are about scaffolding rather than the change, weigh removing
+that scaffolding against hardening it once more — a remediation can be correct
+in the abstract and wrong for the artifact. A documentation guide that has
+grown a hand-rolled process supervisor earns real, defensible P1s about per-run
+state, process-group supervision, and PID reuse; every one of them becomes moot
+when the recipe is deleted instead of hardened. That is not giving up on the
+findings: the stage exits on a **clean re-run**, and a re-run does not care
+whether a finding was answered or made inapplicable. Name the mooted findings
+in the adjudication table *and* in the message of the commit that removes the
+code — the table is scrollback, but the commit is why the code is gone, and it
+is the record a later round or a different session can still find.
+
+One endpoint is worth knowing: if the deletion empties the change *entirely*,
+there is no clean pass to reach — `codex-review.sh` refuses an empty scope
+non-zero by design, so the stage cannot pass and re-running will not change
+that. Treat it as the answer rather than a failure to work around: a change
+that has become empty is abandoned, not reviewed clean.
+
 **Severity gating.** Both tasks ask Codex to label every finding `P0`
 (breaks correctness, security, or data integrity in ordinary use, or breaks
 an existing contract), `P1` (a real defect or materially wrong design
