@@ -53,8 +53,15 @@ jobs:
       - run: task test:codex-review
 [% endif %]
       - run: task test:ci-results
+      - run: task test:status
 [% if use_release_please %]
       - run: task test:release-title
+[% endif %]
+[% if project_management == 'github' %]
+      - run: task test:setup-github-project
+[% endif %]
+[% if project_management == 'github' and github_org != author_git_provider_username %]
+      - run: task test:setup-github-issue-fields
 [% endif %]
 [% if use_foreman %]
       - run: task foreman:test

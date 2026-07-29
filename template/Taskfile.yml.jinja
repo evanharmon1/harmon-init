@@ -104,6 +104,7 @@ tasks:
       - task: validate
       - task: test:tasks
       - task: test:ci-results
+      - task: test:status
 [% if use_codex_review %]
       - task: test:codex-review
 [% endif %]
@@ -629,6 +630,11 @@ tasks:
     desc: Unit-test the fail-closed CI aggregate result helper
     cmds:
       - ./scripts/test-ci-results.sh
+
+  test:status:
+    desc: Unit-test the status board-writes scope check (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-status.sh
 [% if use_codex_review %]
 
   test:codex-review:

@@ -12,12 +12,17 @@ SECTION="${1:-}"
 TMPDIR_STATUS="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR_STATUS}"' EXIT
 
-NETWORK_TIMEOUT=5
+# Overridable so a test can drive the deadline path without waiting on it.
+NETWORK_TIMEOUT="${NETWORK_TIMEOUT:-5}"
 
 # ── Tool detection ──────────────────────────────────────────────────────────
 
+# NO_COLOR (https://no-color.org/) turns off gum styling as well as ANSI, which
+# makes the board's output plain, stable text — greppable, diffable, and
+# assertable by scripts/test-status.sh without matching around escape sequences
+# or box drawing.
 HAS_GUM=false
-command -v gum &>/dev/null && HAS_GUM=true
+[[ -z "${NO_COLOR:-}" ]] && command -v gum &>/dev/null && HAS_GUM=true
 
 # Network probes below are bounded so a hung `gh` call cannot wedge the board.
 # Stock macOS ships no `timeout` — it comes from coreutils, which also provides
@@ -89,7 +94,7 @@ should_show() {
 # ANSI only — no extra dependency. Detected here at top level because inside the
 # section's `| section_box` pipe, stdout reads as a non-TTY.
 USE_COLOR=false
-{ [ -t 1 ] || $HAS_GUM; } && USE_COLOR=true
+[[ -z "${NO_COLOR:-}" ]] && { [ -t 1 ] || $HAS_GUM; } && USE_COLOR=true
 
 # c SGR TEXT — wrap TEXT in an ANSI SGR sequence when color is enabled.
 c() {
@@ -161,6 +166,18 @@ has_cred() {
     jq -e --arg n "$2" 'any(.[]; .name == $n)' "$1" >/dev/null 2>&1
 }
 
+# has_scope LINE NAME — true if NAME is present as a quoted scope in a
+# `gh auth status` "Token scopes:" line (`… 'gist', 'project', 'repo'`).
+# Matching on the quotes is what keeps `project` from also matching
+# `read:project` (and vice versa) — the two are different grants and the
+# caller decides which ones satisfy it.
+has_scope() {
+    case "$1" in
+    *"'$2'"*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
 # ── Parallel data collection ────────────────────────────────────────────────
 
 PID_PRS=""
@@ -169,7 +186,31 @@ PID_TOKEI=""
 
 CURRENT_BRANCH="$(git branch --show-current 2>/dev/null || echo "detached")"
 
-if should_show "gh" && gh auth status &>/dev/null 2>&1; then
+# Resolve auth once and keep the output: it is both the gate for the GitHub
+# section and the only place the token's scopes are reported, and re-running it
+# per use would spend an extra API call to learn the same thing. Captured with
+# `2>&1` because gh has moved this report between stdout and stderr across
+# versions, and bounded by run_timeout — the bare `gh auth status` calls it
+# replaces were the section's only unbounded network probes.
+GH_AUTH_FILE="${TMPDIR_STATUS}/auth.txt"
+: >"${GH_AUTH_FILE}"
+GH_AUTHED=false
+GH_AUTH_TIMEDOUT=false
+if should_show "gh"; then
+    gh_auth_rc=0
+    run_timeout "${NETWORK_TIMEOUT}" gh auth status >"${GH_AUTH_FILE}" 2>&1 ||
+        gh_auth_rc=$?
+    # 124 is `timeout`'s own "deadline hit" code. Distinguished from a real
+    # failure because bounding this probe made a slow network indistinguishable
+    # from a missing login, and reporting "not authenticated" for a timeout
+    # sends the reader to fix the wrong thing.
+    case "${gh_auth_rc}" in
+    0) GH_AUTHED=true ;;
+    124) GH_AUTH_TIMEDOUT=true ;;
+    esac
+fi
+
+if [[ "${GH_AUTHED}" == true ]]; then
     run_timeout "${NETWORK_TIMEOUT}" gh pr list --limit 10 \
         --json number,title,headRefName \
         >"${TMPDIR_STATUS}/prs.json" 2>/dev/null &
@@ -243,7 +284,9 @@ fi
 if should_show "gh"; then
     section_header "GitHub Status"
 
-    if ! gh auth status &>/dev/null 2>&1; then
+    if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
+        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s -- skipping)" | section_box
+    elif [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- skipping)" | section_box
     else
         {
@@ -271,6 +314,50 @@ if should_show "gh"; then
                     "$checks_file"
             else
                 echo "  Recent CI runs: none"
+            fi
+
+            # ── Board writes ────────────────────────────────────────────────
+            # The claim lifecycle moves an issue's project `Status` (a claim
+            # sets In Progress, the PR stages advance it, the hand-back
+            # restores it), and that write needs a token scope `gh auth login`
+            # does not grant by default. Without it every board write exits 2
+            # ("could not verify") and no card moves — and each step handles
+            # that correctly on its own, so nothing escalates: the agent
+            # reports the issue claimed, the board says nothing was started,
+            # and neither is wrong from where it stands.
+            #
+            # `status:setup` has always checked this. It is repeated here
+            # because this section is what session-start orientation runs, and
+            # a tracking surface that has silently stopped tracking has to
+            # surface BEFORE a claim is made, not after a human notices the
+            # board is stale. The cost is nil: the scopes come from the auth
+            # probe above, not a second call.
+            #
+            # Reported in both directions on purpose. A check that prints only
+            # on failure is indistinguishable from a check that is not running
+            # — which is the very bug this one exists to catch.
+            if [[ -f .claude/skills/track-work/assets/set-issue-status.sh ||
+                -f scripts/setup-github-project.sh ]]; then
+                echo ""
+                # Read the file directly — no pipe. A `grep -q` consumer on a
+                # pipeline can take SIGPIPE, which `pipefail` turns into a
+                # failure of the whole pipeline.
+                gh_scopes="$(grep -i 'token scopes:' "${GH_AUTH_FILE}" 2>/dev/null || true)"
+                if [[ -z "${gh_scopes}" ]]; then
+                    checkline unknown "Project board writes" \
+                        "could not read token scopes from gh auth status"
+                elif has_scope "${gh_scopes}" project; then
+                    checkline ok "Project board writes" "token has 'project'"
+                elif has_scope "${gh_scopes}" read:project; then
+                    # Called out separately because it is the state most easily
+                    # mistaken for working: `--show` reads the card fine, so the
+                    # board looks reachable right up to the write that moves it.
+                    checkline no "Project board writes" \
+                        "'read:project' is read-only — claims cannot move the board; run: gh auth refresh -s project"
+                else
+                    checkline no "Project board writes" \
+                        "token lacks 'project' — claims cannot move the board; run: gh auth refresh -s project"
+                fi
             fi
         } | section_box
     fi
@@ -665,7 +752,8 @@ if [[ "${SECTION}" == "setup" ]]; then
                         checkline no "GitHub Project linked" "link a Project v2 to the repo"
                     fi
                 else
-                    checkline unknown "GitHub Project linked" "needs read:project scope"
+                    checkline unknown "GitHub Project linked" \
+                        "unreadable — run: gh auth refresh -s project"
                 fi
                 if [ -f scripts/setup-github-labels.sh ]; then
                     # The expected set is read out of the setup script's own

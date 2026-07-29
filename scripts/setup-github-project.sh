@@ -55,6 +55,40 @@ for tool in gh jq; do
     fi
 done
 
+# ── Scope preflight ─────────────────────────────────────────────────────────
+# Every mutation below needs the 'project' scope, which `gh auth login` does not
+# grant by default. Without it the run still fails — `gh api graphql` exits
+# non-zero on an INSUFFICIENT_SCOPES error and `set -e` takes the script with it
+# — but it fails at the first projectsV2 query with a raw GraphQL error that
+# says nothing about scopes or how to fix it. Checking here converts that into
+# one actionable line, before any API call. It is deliberately NOT fatal on an
+# unreadable scope list: a token whose scopes cannot be parsed (a GitHub App
+# installation token, a future `gh` output change) may still be perfectly able
+# to do the work, and refusing to run would be a worse failure than the one
+# this guard replaces.
+auth_report="$(gh auth status 2>&1 || true)"
+scopes_line="$(printf '%s\n' "$auth_report" | grep -i 'token scopes:' || true)"
+case "$scopes_line" in
+"")
+    echo "==> Could not read token scopes from 'gh auth status' — continuing; a scope error below means: gh auth refresh -s project" >&2
+    ;;
+*"'project'"*) ;;
+*)
+    cat >&2 <<'SCOPE_ERR'
+This token cannot write GitHub Projects: 'gh auth status' reports no 'project' scope.
+
+Every write below (the board, its Status pipeline, the Size field) would fail on
+the first API call. Fix it, then re-run:
+
+    gh auth refresh -s project
+
+Note that read-only 'read:project' is enough to *see* a board but not to create
+or reconcile one, so this script requires the full 'project' scope.
+SCOPE_ERR
+    exit 1
+    ;;
+esac
+
 # Full Status pipeline (docs/project-management.md), in board order. GitHub's API
 # cannot create the visual groups, so these render as a flat, ordered list.
 status_pipeline='[
