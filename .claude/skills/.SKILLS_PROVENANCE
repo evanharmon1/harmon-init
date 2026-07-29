@@ -1,6 +1,6 @@
 # VENDORED from harmon-devkit — DO NOT EDIT the managed skills here.
 # source: https://github.com/evanharmon1/harmon-devkit.git
-# ref: v0.11.1 (2dd6c2bd3367a562b6fb211b57e7585cf1fe2420)
+# ref: v0.12.0 (abffab9ed5327d06686b8801a2f3249fb61bbce2)
 # path: ai/skills
 # categories: universal, repo
 # managed: close, preflight, reflect, shepherd, standardize-repo, start, track-work
