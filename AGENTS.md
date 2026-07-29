@@ -215,8 +215,11 @@ something to ask permission for.
   title rule below).
 - **Shepherd the PR (`/shepherd`, max 5 rounds).** `gh pr create` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
-  (invoke the `/shepherd` skill wherever it is installed) instead of judging
-  for yourself when the PR is finished. Start by
+  instead of judging for yourself when the PR is finished. `/shepherd` is the
+  procedure, and it is **user-invocable only**
+  (`disable-model-invocation: true`): an agent enters the stage by reading
+  `.claude/skills/shepherd/SKILL.md` and following it, not by calling a slash
+  command it cannot call. Start by
   re-reading the **unchecked** entries under `## Deferred findings` in the PR
   description — those P2s are open work, not a changelog; tick each one off
   in the body as you settle it. Then watch CI
