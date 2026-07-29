@@ -54,6 +54,20 @@ happened. `--base` on a dirty tree also says so on stderr: it reviews
 committed history only, and the uncommitted work it excludes is often the very
 change you meant to review.
 
+`--base` also warns when the ref you named lags its own upstream and your
+branch already carries some of the difference — `--base main` on a checkout
+whose local `main` trails `origin/main` puts those already-merged commits
+inside `main...HEAD`, so the review spends a round on findings against files
+your branch never touched. The warning counts the already-merged commits caught
+in the scope and names the remote-qualified alternative (`--base origin/main`),
+and it is advisory: an intentionally older base still runs. Partly-updated
+branches count too — rebasing onto a mid-point of the gap still leaves those
+commits in scope. It stays quiet when the base has no upstream (a tag, a sha,
+`origin/main` itself), when your branch carries none of the upstream commits,
+when the base has run *ahead* of its upstream rather than behind, and when the
+gap changes no files at all (a change and its revert) — the two scopes are
+byte-identical there, so there is nothing to warn about.
+
 Inside Claude Code the plugin's slash commands are the interactive
 equivalents: `/codex:review` and
 `/codex:adversarial-review --base main --background` (with extra focus text
