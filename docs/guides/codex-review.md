@@ -40,7 +40,7 @@ Review").
 Both accept an explicit target and free-text focus after `--`:
 
 ```bash
-task challenge                                     # auto: dirty tree → uncommitted; clean → --base main
+task challenge                                     # auto: dirty tree → uncommitted; clean → origin/HEAD, else local main/master
 task challenge -- --base main                      # branch vs main explicitly
 task review -- --uncommitted                       # staged + unstaged + untracked only
 task challenge -- --base main focus on the update/migration path
@@ -51,6 +51,60 @@ equivalents: `/codex:review` and
 `/codex:adversarial-review --base main --background` (with extra focus text
 allowed after the flags), plus `/codex:status` / `/codex:result` for
 background runs.
+
+### Duration and backgrounding
+
+A round is **minutes, not seconds** — 5–15 is ordinary and passing ten is not
+unusual. The cost tracks how much the reviewer *reads*, not how large the diff
+is: it re-reads AGENTS.md, this guide, and whatever those point at on every
+round, so a three-line docs change can run as long as a feature branch.
+
+That is longer than a typical agent's tool-call timeout (Claude Code's Bash
+tool caps at 600s), so an agent must **start these tasks in the background and
+poll** rather than blocking one call on them — otherwise an ordinary round
+surfaces as a timeout and reads like a hang. Use the harness's own background
+execution (in Claude Code, the Bash tool's background option): it owns the
+process, reports completion, and can cancel the run and its children. Where a
+harness has no such primitive, run the task in a terminal you can watch —
+do not hand-roll a supervisor around it in the shell, which trades a ten-minute
+wait for orphaned processes, races over shared log files, and a completion
+signal that the reviewed diff can spoof.
+
+Two things not to change when backgrounding:
+
+- **The target.** Bare `task challenge` keeps the auto-selection above — dirty
+  tree → uncommitted, clean tree → `origin/HEAD`. At this point in the loop
+  the tree is normally dirty, so a hardcoded `-- --base main` would review the
+  committed branch and silently skip the very work being challenged (and name
+  the wrong base in a repo that does not use `main`). Add a target flag only
+  when you mean to override. Note `origin/HEAD` is a *cached* ref: if the
+  remote's default branch moved, refresh it with
+  `git remote set-head origin --auto`, or the auto-selected base is silently
+  the old one.
+- **The runner.** Background `task challenge` itself, not
+  `/codex:adversarial-review --background`: the slash command calls Codex
+  directly, so it never receives the P0/P1/P2 scale that
+  `scripts/codex-review.sh` writes into the prompt. Fine for an interactive
+  spot-check; it cannot establish the clean pass this loop gates on.
+
+**Then leave the tree alone until it finishes.** `codex-review.sh` captures the
+file manifest at launch, but Codex collects the diffs itself as it runs — so
+editing, staging, or committing mid-review has it read a repository that no
+longer matches the manifest, and committing an initially dirty tree empties the
+`--uncommitted` scope outright. Backgrounding buys polling, not parallel edits:
+if there is other work to do, do it after the verdict. Should you capture the
+output to a file, keep it under `git rev-parse --git-path` rather than in the
+worktree — for the same reason the deferred-findings sidecar lives there, a
+stray worktree file becomes the next bare `task challenge`'s entire scope.
+
+**Still running is not hung.** `codex exec` streams events as it works, so
+growing output is the liveness signal — poll it instead of inferring. Long
+gaps between events are normal, and relaunching never resumes a run, it starts
+a fresh one, so re-running a live review doubles both the wall clock and the
+Codex usage the first one already spent. Bound the patience rather than the
+run: if the output has been static for **~20 minutes** — well past any normal
+gap — treat it as wedged on a stalled API call rather than thinking, cancel it
+through the harness that started it, and only then start over.
 
 ## The automatic stop-gate
 
