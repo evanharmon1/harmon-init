@@ -46,6 +46,14 @@ task review -- --uncommitted                       # staged + unstaged + untrack
 task challenge -- --base main focus on the update/migration path
 ```
 
+Whichever target you pick, an empty one is refused before Codex is invoked,
+with a non-zero exit. An empty scope has no correct outcome — the model either
+invents one or declines, and a decline reads exactly like a clean pass, so a
+capped challenge/review round would be spent banking a review that never
+happened. `--base` on a dirty tree also says so on stderr: it reviews
+committed history only, and the uncommitted work it excludes is often the very
+change you meant to review.
+
 Inside Claude Code the plugin's slash commands are the interactive
 equivalents: `/codex:review` and
 `/codex:adversarial-review --base main --background` (with extra focus text
@@ -220,6 +228,9 @@ Adjudicate it; never disable the gate to get past a BLOCK.
 - **Gate enabled but nothing happens** — `task codex:gate:status`; remember
   the flag is per workspace path (worktrees toggle separately) and fails open
   when Codex is unavailable.
-- **Nothing to review** — a clean tree with no commits beyond the base exits
-  early; pass `--base <ref>`, `--uncommitted`, or `--commit <sha>` to pick
-  the target explicitly.
+- **Nothing to review** — the resolved target is empty, so the run refuses
+  (exit 1) instead of asking Codex to review nothing; the message names the
+  condition and the way out. Reaching it from `task challenge` with no flags
+  means a clean tree with no commits beyond the base. Reaching it from
+  `--base <ref>` usually means the work is still uncommitted — use
+  `--uncommitted`, or commit first.
