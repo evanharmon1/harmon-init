@@ -295,10 +295,10 @@ ${dirty_manifest}"
 fi
 
 # Backstop for every path, so the invariant does not depend on each one
-# remembering it. Every manifest above is built through `|| true`, so a git
-# call that failed rather than returning nothing would otherwise reach the
-# model with an empty scope — and a new target path added later inherits the
-# guard for free instead of having to re-derive it.
+# remembering it. The explicit target flags build their manifest through
+# `|| true`, so a git call that failed rather than returning nothing arrives
+# here as an empty one — and a new target path added later inherits the guard
+# for free instead of having to re-derive it.
 if [ -z "$manifest" ]; then
     refuse_empty_scope \
         "the resolved target contains no changed files." \
