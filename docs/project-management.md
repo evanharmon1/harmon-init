@@ -230,12 +230,22 @@ families, color-coded by family; the starter set is created by
 - **Layer** — `layer:ui`, `layer:logic`, `layer:data`, `layer:integration`
 - **Domain** — start with `domain:auth`, `domain:billing`, `domain:platform`;
   grow from your ERD entities
+- **Agent** — `agent:claude-code`, `agent:codex`, `agent:gemini-cli`,
+  `agent:qwen-code`, `agent:deepseek`, `agent:kimi-k2`, `agent:glm`,
+  `agent:github-copilot` — which agent is working the issue *right now* (see
+  **Claiming** below)
 
 The `layer:` and `domain:` families offer the same options as the **Layer** and
 **Domain** fields above — same names, same meanings, but no per-issue sync (see
 Fields). Use the label when you want it on the issue list and in
-`gh issue list --label`, the field when you want to group a board view by it, and
-extend both together so the option sets stay identical.
+`gh issue list --label`, the field when you want to group a board view by it,
+and extend both together so the option sets stay identical.
+
+The `agent:` family shares the **Agent** field's option names and *nothing
+else*. The field is the planned implementer, the label is the active one — see
+**Claiming** below. Extend the two lists together, but never treat one as a
+copy of the other: writing the field to match the label overwrites a planning
+decision.
 
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
@@ -244,6 +254,74 @@ org's **default labels** (org Settings → Repository, UI-only) to seed *new* re
 remain until you prune them — including a pre-`ui`/`logic`/`data`/`integration`
 repo's `layer:frontend`, `layer:backend`, and `layer:infra`, which you re-map and
 delete by hand.
+
+## Claiming — making an agent's work visible while it happens
+
+An issue being worked on *right now* is the one fact the tracker holds worst.
+The assignee is buried on the issue page and a claim comment is one entry in a
+thread — neither shows on the board, which is where work is actually watched.
+So two agents, or an agent and a human, start the same issue because nothing
+visible said it was taken.
+
+An agent starting work therefore writes every one of these it *can*, because
+each is blind where the others see:
+
+| Signal | Answers | Shows up in |
+|---|---|---|
+| `Status` = `In Progress` | where it is in delivery | the board |
+| `agent:*` label | which agent is working it **right now** | the issue page, `gh issue list --label` |
+| assignee | that *someone* has it | notifications, `gh issue list --assignee` |
+
+**`Agent` is not on that list, and a claim must not write it.** The two look
+like the same fact and are not:
+
+| | Means | Set by | When |
+|---|---|---|---|
+| **`Agent`** field | which agent *should* implement it | whoever plans/triages | at planning, before the work starts |
+| **`agent:*`** label | which agent *is* implementing it | the agent itself | at claim, released at hand-off |
+
+They share one vocabulary — the same eight option names, which is why the two
+lists are extended together — but they answer different questions. Overwriting
+`Agent` at claim time would destroy the planning assignment the **Agent queue**
+view is built on (that view lists issues *whose `Agent` field is set*), and
+would silently reassign work planned for one agent to whichever agent happened
+to pick it up.
+
+So a claim writes the **label**. If the label and the field disagree, that is
+information, not drift: it means a different agent picked up work planned for
+another one. Worth noticing, not worth auto-correcting.
+
+This also removes an owner-type problem: on an organization `Agent` is an org
+**issue field** that the Projects V2 API cannot write anyway, so a claim that
+depended on it would have been impossible there. The label works identically on
+both owner types.
+
+**A claim is a signal, not a lock.** None of these writes is atomic, and two
+sessions running as the same GitHub user are invisible to each other — the
+assignee converges, the label is idempotent, and the field is last-writer-wins.
+It makes concurrent work discoverable by a human; it does not prevent it.
+
+**A claim must be released.** `In Progress` left on finished or abandoned work
+is worse than no signal, because the next reader believes it. The lifecycle
+follows the pipeline honestly — `In Progress` at claim, `Verifying` while CI
+runs, `In Review` awaiting a human, `Ready to Merge` only once actually
+approved, and never `Done`, which belongs to whoever merges.
+
+> **Whether this is automatic depends on the skills vendored here.** Writing
+> and releasing these markers is implemented by harmon-devkit's `preflight` /
+> `shepherd` / `close` skills; older releases only assign the issue. The pin
+> moves on its own schedule via `sync-harmon-devkit.yml`, so check rather than
+> assume:
+>
+> ```sh
+> grep -l 'agent:claude-code' .claude/skills/preflight/SKILL.md
+> ```
+>
+> A match means claiming is automated end to end. No match means the `agent:`
+> labels above are applied by hand, and no *skill* will move the card. On an
+> organization `project-automation.yml` still syncs `Status` from PR and CI
+> events, so that is not the same as nothing moving it — check what the
+> workflow already does before setting the field manually.
 
 ## Milestones
 
