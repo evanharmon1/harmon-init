@@ -314,12 +314,17 @@ where the others see:
 |---|---|---|
 | `Status` = `In Progress` | where it is in delivery | the board |
 | `Agent` = e.g. `Claude Code` | which agent holds it | the board, grouped views |
-| `agent:*` label | same, mirrored | the issue page, `gh issue list --label`, and repos with no board |
+| `agent:*` label | same, mirrored | the issue page, `gh issue list --label` |
 | assignee | that *someone* has it | notifications, `gh issue list --assignee` |
 
-The `agent:*` label is not redundant with the `Agent` field: on an organization
-`Agent` is an org **issue field** rather than a project field, and nothing syncs
-a label to a field value anyway.
+The `agent:*` label is not redundant with the `Agent` field. On an organization
+`Agent` is an org **issue field**, which the Projects V2 API an agent can reach
+does not write — so the label is the *only* agent-identity signal an agent can
+both set and read there. Nothing syncs a label to a field value either way.
+
+These labels ship with `task setup:github-labels`, which is generated only for
+`project_management: github`. A repo on `none` or `linear` gets no label
+families at all, so a claim there rests on the assignee and the claim comment.
 
 **A claim is a signal, not a lock.** None of these writes is atomic, and two
 sessions running as the same GitHub user are invisible to each other — the

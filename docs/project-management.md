@@ -230,12 +230,16 @@ families, color-coded by family; the starter set is created by
 - **Layer** — `layer:ui`, `layer:logic`, `layer:data`, `layer:integration`
 - **Domain** — start with `domain:auth`, `domain:billing`, `domain:platform`;
   grow from your ERD entities
+- **Agent** — `agent:claude-code`, `agent:codex`, `agent:gemini-cli`,
+  `agent:qwen-code`, `agent:deepseek`, `agent:kimi-k2`, `agent:glm`,
+  `agent:github-copilot` — which agent is working the issue *right now* (see
+  **Claiming** below)
 
-The `layer:` and `domain:` families offer the same options as the **Layer** and
-**Domain** fields above — same names, same meanings, but no per-issue sync (see
-Fields). Use the label when you want it on the issue list and in
-`gh issue list --label`, the field when you want to group a board view by it, and
-extend both together so the option sets stay identical.
+The `layer:`, `domain:`, and `agent:` families offer the same options as the
+**Layer**, **Domain**, and **Agent** fields above — same names, same meanings,
+but no per-issue sync (see Fields). Use the label when you want it on the issue
+list and in `gh issue list --label`, the field when you want to group a board
+view by it, and extend both together so the option sets stay identical.
 
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
@@ -244,6 +248,41 @@ org's **default labels** (org Settings → Repository, UI-only) to seed *new* re
 remain until you prune them — including a pre-`ui`/`logic`/`data`/`integration`
 repo's `layer:frontend`, `layer:backend`, and `layer:infra`, which you re-map and
 delete by hand.
+
+## Claiming — making an agent's work visible while it happens
+
+An issue being worked on *right now* is the one fact the tracker holds worst.
+The assignee is buried on the issue page and a claim comment is one entry in a
+thread — neither shows on the board, which is where work is actually watched.
+So two agents, or an agent and a human, start the same issue because nothing
+visible said it was taken.
+
+An agent starting work therefore writes **all four**, because each is blind
+where the others see:
+
+| Signal | Answers | Shows up in |
+|---|---|---|
+| `Status` = `In Progress` | where it is in delivery | the board |
+| `Agent` = e.g. `Claude Code` | which agent holds it | the board, grouped views |
+| `agent:*` label | same, mirrored | the issue page, `gh issue list --label` |
+| assignee | that *someone* has it | notifications, `gh issue list --assignee` |
+
+The `agent:*` label is not redundant with the `Agent` field. On an organization
+`Agent` is an org **issue field**, which the Projects V2 API an agent can reach
+does not write — so the label is the *only* agent-identity signal an agent can
+both set and read there. Nothing syncs a label to a field value either way.
+
+**A claim is a signal, not a lock.** None of these writes is atomic, and two
+sessions running as the same GitHub user are invisible to each other — the
+assignee converges, the label is idempotent, and the field is last-writer-wins.
+It makes concurrent work discoverable by a human; it does not prevent it.
+
+**A claim must be released.** `In Progress` left on finished or abandoned work
+is worse than no signal, because the next reader believes it. The lifecycle the
+`preflight` / `shepherd` / `close` skills implement follows the pipeline
+honestly — `In Progress` at claim, `Verifying` while CI runs, `In Review`
+awaiting a human, `Ready to Merge` only once actually approved, and never
+`Done`, which belongs to whoever merges.
 
 ## Milestones
 
