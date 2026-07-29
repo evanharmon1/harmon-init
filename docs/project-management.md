@@ -278,11 +278,19 @@ assignee converges, the label is idempotent, and the field is last-writer-wins.
 It makes concurrent work discoverable by a human; it does not prevent it.
 
 **A claim must be released.** `In Progress` left on finished or abandoned work
-is worse than no signal, because the next reader believes it. The lifecycle the
-`preflight` / `shepherd` / `close` skills implement follows the pipeline
-honestly — `In Progress` at claim, `Verifying` while CI runs, `In Review`
-awaiting a human, `Ready to Merge` only once actually approved, and never
-`Done`, which belongs to whoever merges.
+is worse than no signal, because the next reader believes it. The lifecycle
+follows the pipeline honestly — `In Progress` at claim, `Verifying` while CI
+runs, `In Review` awaiting a human, `Ready to Merge` only once actually
+approved, and never `Done`, which belongs to whoever merges.
+
+> **Not automatic yet.** Writing and releasing these markers is implemented by
+> harmon-devkit's `preflight` / `shepherd` / `close` skills, and only in a
+> release **after `v0.11.1`** — the tag both `.skills-sync.yaml` manifests
+> currently pin. Until that pin is bumped and `task sync:skills` re-vendors,
+> the labels seeded here are applied by hand, and the vendored `preflight`
+> neither sets an `agent:` label nor moves the card. Bump **both** manifests
+> together (the root one and the template's), or generated repos silently keep
+> the older skills.
 
 ## Milestones
 
