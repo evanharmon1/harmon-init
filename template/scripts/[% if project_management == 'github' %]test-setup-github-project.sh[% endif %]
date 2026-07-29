@@ -248,6 +248,21 @@ case "$out" in
 *) fail "read:project must be refused for writes, got: $out" ;;
 esac
 
+echo "==> a fine-grained/App token is NOT refused — its access is a permission"
+# It reports no OAuth scopes at all, which is not the same as lacking one: such a
+# token may well be able to write Projects, and `gh auth refresh` cannot change
+# it either way. Refusing here would block a capable credential.
+printf '%s' "$complete" >"$STUB_FIELDS_FILE"
+: >"$STUB_FIELDS_FILE2"
+rm -f "$tmp_seen"
+: >"$MUTATIONS"
+STUB_SCOPES="none" "$script" --owner someuser --title "Test Project" \
+    >"$tmp/out" 2>&1 || fail "a token reporting no OAuth scopes must not be refused"
+grep -q "no OAuth scopes" "$tmp/out" ||
+    fail "expected the fine-grained-token notice, got: $(cat "$tmp/out")"
+grep -q "gh auth refresh" "$tmp/out" &&
+    fail "gh auth refresh cannot fix a fine-grained token"
+
 echo "==> a token WITH the project scope reconciles normally"
 printf '%s' "$complete" >"$STUB_FIELDS_FILE"
 : >"$STUB_FIELDS_FILE2"

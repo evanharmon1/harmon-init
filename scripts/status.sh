@@ -198,8 +198,21 @@ GH_AUTHED=false
 GH_AUTH_TIMEDOUT=false
 if should_show "gh"; then
     gh_auth_rc=0
-    run_timeout "${NETWORK_TIMEOUT}" gh auth status >"${GH_AUTH_FILE}" 2>&1 ||
+    # --active, because `gh auth status` reports EVERY known account and the
+    # scope line read below cannot tell them apart: a second, inactive account
+    # holding `project` would answer for the credential gh actually uses.
+    # (Residual, accepted: with several hosts each having an active account, all
+    # of them are still reported. Narrowing further needs the repo's host, which
+    # this reporter does not resolve.)
+    run_timeout "${NETWORK_TIMEOUT}" gh auth status --active >"${GH_AUTH_FILE}" 2>&1 ||
         gh_auth_rc=$?
+    if grep -qi 'unknown flag' "${GH_AUTH_FILE}" 2>/dev/null; then
+        # gh predates --active (added in 2.40). Fall back to the full report
+        # rather than reading a usage error as a failed login.
+        gh_auth_rc=0
+        run_timeout "${NETWORK_TIMEOUT}" gh auth status >"${GH_AUTH_FILE}" 2>&1 ||
+            gh_auth_rc=$?
+    fi
     # 124 is `timeout`'s own "deadline hit" code. Distinguished from a real
     # failure because bounding this probe made a slow network indistinguishable
     # from a missing login, and reporting "not authenticated" for a timeout
@@ -336,8 +349,15 @@ if should_show "gh"; then
             # Reported in both directions on purpose. A check that prints only
             # on failure is indistinguishable from a check that is not running
             # — which is the very bug this one exists to catch.
-            if [[ -f .claude/skills/track-work/assets/set-issue-status.sh ||
-                -f scripts/setup-github-project.sh ]]; then
+            # Gated on the board tooling itself, NOT on the presence of the
+            # track-work skill: `project_management: none` is the default and
+            # `use_skills_sync` is on, so the universal skill set (track-work
+            # included) is vendored into repos that have no board at all.
+            # Keying on the skill would demand the `project` scope from every
+            # one of them. setup-github-project.sh is generated only for
+            # `project_management: github`, which makes it an exact proxy for
+            # "this repo has a board to write to".
+            if [[ -f scripts/setup-github-project.sh ]]; then
                 echo ""
                 # Read the file directly — no pipe. A `grep -q` consumer on a
                 # pipeline can take SIGPIPE, which `pipefail` turns into a
@@ -346,6 +366,15 @@ if should_show "gh"; then
                 if [[ -z "${gh_scopes}" ]]; then
                     checkline unknown "Project board writes" \
                         "could not read token scopes from gh auth status"
+                elif [[ "${gh_scopes}" != *"'"* ]]; then
+                    # A fine-grained PAT or App token carries permissions, not
+                    # OAuth scopes, and gh reports the line with no scopes in
+                    # it. Such a token may well be able to write Projects — so
+                    # this is genuinely unknown, and `gh auth refresh` is the
+                    # wrong advice: an env-provided GH_TOKEN cannot be refreshed
+                    # at all. The generated bot credential is exactly this case.
+                    checkline unknown "Project board writes" \
+                        "no OAuth scopes reported (fine-grained or App token) — set its Projects permission where it was issued"
                 elif has_scope "${gh_scopes}" project; then
                     checkline ok "Project board writes" "token has 'project'"
                 elif has_scope "${gh_scopes}" read:project; then

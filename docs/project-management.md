@@ -50,6 +50,36 @@ Two adjacent scopes, for completeness: an organization's **issue types** need
 hint at `gh auth refresh -s read:project,project` — equivalent for this purpose,
 since `project` alone already covers it.
 
+### Scopes are only half the story
+
+The table above is about **classic OAuth scopes**, which is what `gh auth login`
+issues and `gh auth refresh` edits. A **fine-grained PAT** or a GitHub App
+installation token has none of them: its Projects access is a *permission*
+granted where the token was issued. `gh auth status` reports no scope list for
+one, so `task status:gh` can only report the check as **unknown**, and
+`gh auth refresh` cannot help — a token supplied through the environment as
+`GH_TOKEN` cannot be refreshed at all. Grant it **Projects: Read and write** at
+the source (organization permissions, for an org-owned board) instead.
+
+That matters here because the bot credential this template documents is exactly
+such a token — and [bot-account.md](guides/bot-account.md) deliberately grants
+it **`Projects: Read-only` — "Grant read; never write."** So an agent running as
+the bot **cannot move a card**, by design, however the scope check reports. Two
+honest ways to live with that, both a decision rather than a default:
+
+- **Leave it read-only** and accept that cards are moved by humans — and, on an
+  organization, by `project-automation.yml` from PR and CI events — not by the
+  claim. The `agent:*` label and the assignee still make the claim visible; see
+  [Claiming](#claiming--making-an-agents-work-visible-while-it-happens), which
+  is exactly why a claim writes all three signals instead of relying on the
+  board alone.
+- **Grant the bot `Projects: Read and write`** if you want claims to move cards,
+  understanding that org permissions are not bounded by the token's repository
+  list — that grant reaches every board the owner has.
+
+Nothing in this repo picks for you, and the status check does not treat a
+read-only bot as broken; it reports what the credential can do.
+
 ## Status pipeline
 
 `Status` is a single-select field with exactly one meaning: **where in the flow

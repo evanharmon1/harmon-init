@@ -66,14 +66,21 @@ done
 # installation token, a future `gh` output change) may still be perfectly able
 # to do the work, and refusing to run would be a worse failure than the one
 # this guard replaces.
-auth_report="$(gh auth status 2>&1 || true)"
+# --active: `gh auth status` reports every known account, and an inactive one
+# holding 'project' must not answer for the credential this run will use. Older
+# gh (pre-2.40) has no such flag — fall back rather than read a usage error as a
+# missing scope.
+auth_report="$(gh auth status --active 2>&1 || true)"
+case "$auth_report" in
+*"unknown flag"*) auth_report="$(gh auth status 2>&1 || true)" ;;
+esac
 scopes_line="$(printf '%s\n' "$auth_report" | grep -i 'token scopes:' || true)"
 case "$scopes_line" in
 "")
     echo "==> Could not read token scopes from 'gh auth status' — continuing; a scope error below means: gh auth refresh -s project" >&2
     ;;
 *"'project'"*) ;;
-*)
+*"'"*)
     cat >&2 <<'SCOPE_ERR'
 This token cannot write GitHub Projects: 'gh auth status' reports no 'project' scope.
 
@@ -86,6 +93,15 @@ Note that read-only 'read:project' is enough to *see* a board but not to create
 or reconcile one, so this script requires the full 'project' scope.
 SCOPE_ERR
     exit 1
+    ;;
+*)
+    # A scopes line with no scopes in it: a fine-grained PAT or an App
+    # installation token, whose Projects access is a permission granted where
+    # the token was issued rather than an OAuth scope. Such a token may be
+    # perfectly able to do this work, and `gh auth refresh` cannot change it
+    # (an env-provided GH_TOKEN cannot be refreshed at all) — so refusing here
+    # would block a capable credential over a naming mismatch.
+    echo "==> Token reports no OAuth scopes (fine-grained or App token) — continuing; if a write below fails, grant it 'Projects: Read and write' where the token was issued" >&2
     ;;
 esac
 

@@ -23,18 +23,24 @@ status="./scripts/status.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
-# Two fixture roots, each holding a copy of the script under test:
-#   with-board — has the board tooling, so the check applies
-#   no-board   — has none of it, so the check must not render at all
-for fixture in with-board no-board; do
+# Three fixture roots, each holding a copy of the script under test:
+#   with-board  — has the board tooling, so the check applies
+#   no-board    — has none of it, so the check must not render at all
+#   skills-only — the DEFAULT generated profile: `project_management: none` with
+#                 `use_skills_sync: true`, so the vendored universal skill set
+#                 (track-work included) is present but there is no board
+for fixture in with-board no-board skills-only; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
 done
-# The marker status.sh feature-detects on. Contents are never read.
+# The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
+mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
+: >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
 WITH_BOARD="${TMP}/with-board/scripts/status.sh"
 NO_BOARD="${TMP}/no-board/scripts/status.sh"
+SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -75,6 +81,35 @@ make_stub() {
         unauthenticated)
             echo '    echo "You are not logged into any GitHub hosts." >&2'
             echo '    exit 1'
+            ;;
+        fine-grained)
+            # A fine-grained PAT or App token: permissions, not OAuth scopes, so
+            # gh reports the line with nothing in it.
+            echo '    echo "  - Token scopes: none"'
+            echo '    exit 0'
+            ;;
+        inactive-has-scope)
+            # Two accounts on one host; only the INACTIVE one holds 'project'.
+            # A stub that ignores --active proves the aggregate-read bug; this
+            # one honours it, so the check must read the active account's line.
+            echo '    if [ "$3" = "--active" ]; then'
+            echo "        echo \"  - Active account: true\""
+            echo "        echo \"  - Token scopes: 'gist', 'repo'\""
+            echo '    else'
+            echo "        echo \"  - Token scopes: 'gist', 'repo'\""
+            echo "        echo \"  - Token scopes: 'gist', 'project', 'repo'\""
+            echo '    fi'
+            echo '    exit 0'
+            ;;
+        no-active-flag)
+            # gh predates --active (pre-2.40): the flag is a usage error, which
+            # must not read as a failed login.
+            echo '    if [ "$3" = "--active" ]; then'
+            echo '        echo "unknown flag: --active" >&2'
+            echo '        exit 1'
+            echo '    fi'
+            echo "    echo \"  - Token scopes: 'gist', 'project', 'repo'\""
+            echo '    exit 0'
             ;;
         hangs)
             # Outlives the probe's deadline. Driven with NETWORK_TIMEOUT=1 so
@@ -151,6 +186,45 @@ echo "==> a repo with no project tooling omits the check entirely"
 out="$(run_gh_section project "${NO_BOARD}")"
 case "$out" in
 *"Project board writes"*) fail "board-writes line rendered in a repo with no board tooling: ${out}" ;;
+esac
+
+echo "==> the vendored track-work skill alone does NOT trigger the check"
+# The default generated profile: `project_management: none` (the default) with
+# `use_skills_sync: true` vendors the universal skill set, so keying the check on
+# track-work's presence would demand the `project` scope from every repo that
+# merely completed the documented skills-sync step.
+out="$(run_gh_section none "${SKILLS_ONLY}")"
+case "$out" in
+*"Project board writes"*) fail "the skill's presence must not imply a board: ${out}" ;;
+esac
+
+echo "==> a fine-grained/App token reads as unknown, with the right remedy"
+# Its Projects access is a permission, not a scope, so it may well be able to
+# write — and `gh auth refresh` cannot change it either way.
+out="$(run_gh_section fine-grained)"
+case "$out" in
+*"lacks 'project'"*) fail "a scope-less token must not be reported as lacking a scope: ${out}" ;;
+*"no OAuth scopes reported"*) ;;
+*) fail "expected the fine-grained-token notice, got: ${out}" ;;
+esac
+case "$out" in
+*"gh auth refresh"*) fail "gh auth refresh cannot fix a fine-grained token: ${out}" ;;
+esac
+
+echo "==> an inactive account's scopes cannot answer for the active one"
+out="$(run_gh_section inactive-has-scope)"
+case "$out" in
+*"token has 'project'"*) fail "read the ACTIVE account's scopes, not every account's: ${out}" ;;
+*"lacks 'project'"*) ;;
+*) fail "expected the active account's missing scope to be reported, got: ${out}" ;;
+esac
+
+echo "==> gh without --active falls back instead of reading as unauthenticated"
+out="$(run_gh_section no-active-flag)"
+case "$out" in
+*"not authenticated"*) fail "a usage error must not read as a failed login: ${out}" ;;
+*"token has 'project'"*) ;;
+*) fail "expected the fallback to read the full report, got: ${out}" ;;
 esac
 
 echo "==> a probe that outlives its deadline says so, not 'not authenticated'"
