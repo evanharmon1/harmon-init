@@ -120,7 +120,9 @@ something to ask permission for.
   A `task challenge` round is long — 5–15 minutes is ordinary, past most
   agents' tool-call timeouts — so **run it in the background and poll**
   instead of blocking one call on it. Growing output means running, not hung;
-  relaunching a live run only doubles the cost. Details:
+  relaunching a live run only doubles the cost. Commit each round's fixes
+  before re-challenging, or the re-run scopes to the fix alone instead of the
+  whole change. Details:
   [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
   backgrounding").
 - **`task review`** — verification-checkpoint review; same adjudication, same

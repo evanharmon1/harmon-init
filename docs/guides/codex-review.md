@@ -81,6 +81,13 @@ Two things not to change when backgrounding:
   remote's default branch moved, refresh it with
   `git remote set-head origin --auto`, or the auto-selected base is silently
   the old one.
+
+  The scopes do not overlap: `--uncommitted` reads the worktree,
+  `--base` diffs commits, and **neither covers both**. A dirty tree always wins
+  the auto-selection, so once the branch has commits, an uncommitted fix
+  narrows the re-run to just that fix — and the clean pass then attests to the
+  fix rather than to the whole change. **Commit each round's fixes before
+  re-running**, so the branch diff is the whole change again.
 - **The runner.** Background `task challenge` itself, not
   `/codex:adversarial-review --background`: the slash command calls Codex
   directly, so it never receives the P0/P1/P2 scale that
