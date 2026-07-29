@@ -64,6 +64,12 @@ err() {
 # from the field they actually belong to rather than from anywhere in the file.
 # Any non-quote name matches: a name this misses would be silently absent from
 # the set comparison below, turning a drift failure into a false pass.
+# Field option name -> label suffix: lowercase, spaces to hyphens. Keeps the
+# sets sorted after the rewrite so an exact comparison stays valid.
+slugify() {
+    tr '[:upper:] ' '[:lower:]-' | sort -u
+}
+
 opt_names() {
     awk -v start="$2" '
         $0 ~ start { inblock = 1; next }
@@ -685,7 +691,7 @@ full) # project_management=github; github_org=test-org (an org repo)
     # somewhere in the file: `auth` living under Domain must not satisfy a
     # `layer:auth` label) and in both directions (a field option with no label is
     # drift too).
-    for pair in layer:Layer domain:Domain; do
+    for pair in layer:Layer domain:Domain agent:Agent; do
         fam="${pair%%:*}"
         field="${pair##*:}"
         # Each source's option set for this family, one name per line, sorted.
@@ -695,8 +701,12 @@ full) # project_management=github; github_org=test-org (an org repo)
         lbl_set="$(sed -n -E "s/^${fam}:([^|]+)\|.*/\1/p" scripts/setup-github-labels.sh | sort -u)"
         # `<fam>_opts='[ … ]'` in the org script; `create_single_select "<Field>" '[ … ]'`
         # in the project script. Both blocks end on a line starting with `]`.
-        fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='")"
-        prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '")"
+        # Field options are compared as SLUGS: labels are kebab-case by
+        # convention, so the `Agent` option "Claude Code" is the label
+        # `agent:claude-code`. For layer/domain the options are already single
+        # lowercase words and slugging is a no-op, so one rule covers all three.
+        fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='" | slugify)"
+        prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '" | slugify)"
         [ -n "$lbl_set" ] || err "no ${fam}: labels found in setup-github-labels.sh"
         [ "$lbl_set" = "$fld_set" ] ||
             err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != issue-field options [$(echo "$fld_set" | tr '\n' ' ')]"

@@ -72,6 +72,14 @@ layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 domain:auth|FBCA04|Authentication and authorization
 domain:billing|FBCA04|Billing and payments
 domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
+agent:claude-code|006B75|Claimed by Claude Code
+agent:codex|006B75|Claimed by Codex
+agent:gemini-cli|006B75|Claimed by Gemini CLI
+agent:qwen-code|006B75|Claimed by Qwen Code
+agent:deepseek|006B75|Claimed by DeepSeek
+agent:kimi-k2|006B75|Claimed by Kimi K2
+agent:glm|006B75|Claimed by GLM
+agent:github-copilot|006B75|Claimed by GitHub Copilot
 "
 
 printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do

@@ -382,6 +382,10 @@ create_single_select "Priority" '[
   {"name":"Low","color":"GRAY","description":""}
 ]'
 create_text "Product"
+# Agent mirrors the `agent:` label family in setup-github-labels.sh — same
+# option names, no sync between them, so extend both together. An agent claiming
+# an issue writes the field (board-visible) and the label (visible everywhere
+# else, and the only signal on an org, where Agent is an org issue field).
 create_single_select "Agent" '[
   {"name":"Claude Code","color":"ORANGE","description":""},
   {"name":"Codex","color":"BLUE","description":""},
