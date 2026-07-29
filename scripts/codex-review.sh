@@ -96,6 +96,72 @@ warn_if_dirty() {
     echo "      the working tree alone." >&2
 }
 
+# An explicit --base gets the same guarantee the auto-detect path already has:
+# the comparison base must be the branch the PR will actually merge into. A
+# local branch lagging its upstream is precisely the case that path resolves
+# refs/remotes/origin/HEAD to avoid — with a stale base, commits that already
+# merged upstream sit inside base...HEAD and get reviewed as if this branch
+# introduced them. Observed cost: findings against a file the branch never
+# touched, and a whole review round spent triaging them.
+#
+# Advisory, never fatal (exit stays 0): reviewing against a deliberately older
+# base is a legitimate thing to ask for, and the run is advisory anyway.
+#
+# The trigger compares the two MERGE BASES, not "is the upstream tip an
+# ancestor of HEAD". Contamination is a property of where each diff starts:
+# base...HEAD begins at merge-base(base, HEAD), upstream...HEAD begins at
+# merge-base(upstream, HEAD), and the commits the stale base drags in are
+# exactly those the second reaches and the first does not. Counting them IS the
+# test — a count of zero covers both innocent shapes without a special case:
+# a branch carrying nothing of the upstream (the merge bases coincide, so
+# base...HEAD is already correct and a warning would be crying wolf), and a
+# base that has diverged ahead of its upstream rather than fallen behind.
+#
+# Testing the upstream tip instead would miss the ordinary half-updated branch
+# — base at A, upstream since advanced A→B→C, HEAD carrying B but not yet C —
+# where C is not an ancestor of HEAD and yet B's already-merged changes sit
+# inside base...HEAD.
+#
+# Only a local branch has an upstream, and only its SHORT name answers to
+# @{upstream} — `refs/heads/main@{upstream}` is not an upstream query and just
+# fails, so the full-ref spelling that --base otherwise accepts would skip this
+# check silently. Normalize through symbolic-full-name, which maps every local
+# spelling (main, heads/main, refs/heads/main) onto one name and resolves tags,
+# raw shas, and remote-qualified refs like origin/main to something outside
+# refs/heads/ — none of which has an upstream to compare against, and
+# origin/main is already the ref this warning would have recommended.
+warn_if_base_stale() {
+    local full ref upstream mb_base mb_up t_base t_up carried plural
+    full="$(git rev-parse --symbolic-full-name "$1" 2>/dev/null || true)"
+    case "$full" in
+    refs/heads/*) ref="${full#refs/heads/}" ;;
+    *) return 0 ;;
+    esac
+    upstream="$(git rev-parse --abbrev-ref "${ref}@{upstream}" 2>/dev/null || true)"
+    [ -n "$upstream" ] || return 0
+    mb_base="$(git merge-base "$ref" HEAD 2>/dev/null || true)"
+    mb_up="$(git merge-base "$upstream" HEAD 2>/dev/null || true)"
+    { [ -n "$mb_base" ] && [ -n "$mb_up" ]; } || return 0
+    carried="$(git rev-list --count "${mb_base}..${mb_up}" 2>/dev/null || echo 0)"
+    [ "$carried" -gt 0 ] || return 0
+    # Commits are the unit of the count but trees are the unit of the review:
+    # an upstream gap that nets out to nothing — a change and its revert — puts
+    # commits between the two merge bases while leaving base...HEAD and
+    # upstream...HEAD byte-identical. Codex would read the same diff either way,
+    # so warning there is the same crying-wolf this check exists to avoid.
+    t_base="$(git rev-parse "${mb_base}^{tree}" 2>/dev/null || true)"
+    t_up="$(git rev-parse "${mb_up}^{tree}" 2>/dev/null || true)"
+    [ "$t_base" != "$t_up" ] || return 0
+    if [ "$carried" -eq 1 ]; then
+        plural=""
+    else
+        plural="s"
+    fi
+    echo "Warning: base '$1' lags its upstream '${upstream}', so the review scope $1...HEAD" >&2
+    echo "         contains ${carried} commit${plural} that already merged upstream." >&2
+    echo "         Pass --base ${upstream} to review only this branch's changes." >&2
+}
+
 scope=""
 manifest=""
 focus=""
@@ -104,6 +170,9 @@ focus=""
 target_kind=""
 empty_desc=""
 empty_hint=""
+# The --base ref itself, kept because the post-parse warnings need it: it is
+# otherwise only reachable interpolated into the scope sentence.
+base_ref=""
 require_single_target() {
     if [ -n "$scope" ]; then
         echo "conflicting target flags: --base, --uncommitted, and --commit are mutually exclusive." >&2
@@ -131,6 +200,7 @@ while [ $# -gt 0 ]; do
         scope="Review the changes on the current branch relative to base branch '$2' (the merge-base diff $2...HEAD)."
         manifest="$(git_diff_name_status "$2...HEAD" 2>/dev/null | cap_manifest || true)"
         target_kind="base"
+        base_ref="$2"
         empty_desc="the merge-base diff $2...HEAD is empty — HEAD changes no files beyond '$2'."
         # --commit belongs here too: a branch whose commits net out to no change
         # (an add and its revert) is already committed and has a clean tree, so
@@ -184,6 +254,7 @@ done
 # conflicting flags, whatever that base's diff contains).
 if [ "$target_kind" = "base" ]; then
     warn_if_dirty
+    warn_if_base_stale "$base_ref"
 fi
 if [ -n "$target_kind" ] && [ -z "$manifest" ]; then
     refuse_empty_scope "$empty_desc" "$empty_hint"

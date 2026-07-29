@@ -108,6 +108,96 @@ echo "$out" | grep -q "watch the hooks" || fail "focus text missing from prompt:
 echo "$out" | grep -q "Only P0 and P1 decide" || fail "review prompt missing the P0/P1 gating rule: $out"
 echo "$out" | grep -q "carried into the pull request description" || fail "review prompt missing the P2 handoff clause: $out"
 
+echo "==> --base warns when the ref lags an upstream HEAD already contains"
+# The reported bug: `--base main` on a checkout whose local main trails
+# origin/main reviews the already-merged commits as if this branch introduced
+# them, drawing findings against files the branch never touched.
+# basestale is pinned at the CURRENT origin/develop and tracks it, so advancing
+# the upstream afterwards leaves it behind by exactly the new commits.
+git branch -q --track basestale origin/develop
+(
+    cd "${test_tmp}/upstream"
+    echo one >merged-one.txt
+    echo two >merged-two.txt
+    git add merged-one.txt merged-two.txt
+    git_t commit -q -m "upstream work 1" -- merged-one.txt
+    git_t commit -q -m "upstream work 2" -- merged-two.txt
+)
+git fetch -q origin
+pre_merge="$(git rev-parse HEAD)"
+git_t merge -q --no-edit origin/develop
+out="$(run review --base basestale)" || fail "stale-base run exited non-zero (must stay advisory): $out"
+# Advisory, not fatal: the review still has to happen, or the warning has
+# turned a nudge into a refusal.
+echo "$out" | grep -q "STUB-ARGS:exec review" || fail "stale-base warning suppressed the review: $out"
+echo "$out" | grep -q "lags its upstream 'origin/develop'" || fail "stale-base warning missing: $out"
+echo "$out" | grep -q "contains 2 commits that already merged upstream" || fail "stale-base warning miscounted the carried commits: $out"
+echo "$out" | grep -q -- "--base origin/develop" || fail "stale-base warning does not name the remote-qualified ref: $out"
+
+echo "==> --base warns on a HALF-updated branch, where the upstream tip is not in HEAD"
+# Base at A, upstream since advanced A->B->C, HEAD carrying B but not C. The
+# upstream tip is NOT an ancestor of HEAD, yet B's already-merged changes sit
+# inside basestale...HEAD — so an is-ancestor(upstream, HEAD) trigger goes
+# silent on exactly the contamination it exists to catch. The merge bases are
+# what differ (A vs B), which is why the check compares those.
+git checkout -q -b halfway "$pre_merge"
+git_t merge -q --no-edit origin/develop~1
+out="$(run review --base basestale)" || fail "half-updated stale-base run exited non-zero: $out"
+echo "$out" | grep -q "lags its upstream 'origin/develop'" || fail "no warning on a half-updated branch: $out"
+echo "$out" | grep -q "contains 1 commit that already merged upstream" || fail "half-updated warning miscounted (or mis-pluralized) the carried commits: $out"
+git checkout -q feature
+
+echo "==> a stale base whose upstream commits are NOT in HEAD stays silent"
+# The other side of the merge-base comparison: with nothing of the upstream in
+# HEAD both diffs start at the same commit, base...HEAD is already correct, and
+# a warning here would be a false positive on a healthy run.
+git checkout -q -b prestale "$pre_merge"
+out="$(run review --base basestale)" || fail "pre-merge stale-base run exited non-zero: $out"
+echo "$out" | grep -q "lags its upstream" && fail "warned on a base whose upstream commits HEAD does not contain: $out"
+git checkout -q feature
+
+echo "==> --base refs with no upstream never warn"
+# A tag, a raw sha, and a remote-qualified ref have no @{upstream}; each must
+# reach the review silently instead of erroring out of the resolution attempt.
+git tag basetag basestale
+for ref in basetag "$(git rev-parse basestale)" origin/develop; do
+    out="$(run review --base "$ref")" || fail "--base '$ref' exited non-zero: $out"
+    echo "$out" | grep -q "STUB-ARGS:exec review" || fail "--base '$ref' did not reach codex: $out"
+    echo "$out" | grep -q "lags its upstream" && fail "--base '$ref' has no upstream but warned: $out"
+done
+
+echo "==> a tree-neutral upstream gap does not warn"
+# The gap is real in commits and empty in content — a file added upstream and
+# reverted upstream. base...HEAD and origin/develop...HEAD are then identical,
+# so Codex reads the same diff either way and there is nothing to warn about.
+# neutralbase is pinned BEFORE the pair lands, so it is genuinely behind.
+git branch -q --track neutralbase origin/develop
+(
+    cd "${test_tmp}/upstream"
+    echo scratch >revertme.txt
+    git add revertme.txt
+    git_t commit -q -m "add revertme"
+    git rm -q revertme.txt
+    git_t commit -q -m "revert revertme"
+)
+git fetch -q origin
+git checkout -q -b neutral origin/develop
+echo n >neutral.txt
+git add neutral.txt
+git_t commit -q -m "work on top of the tree-neutral gap"
+out="$(run review --base neutralbase)" || fail "tree-neutral run exited non-zero: $out"
+echo "$out" | grep -q "lags its upstream" && fail "warned on an upstream gap that changes no files: $out"
+git checkout -q feature
+
+echo "==> the full-ref spelling of a local branch still warns"
+# --base accepts refs/heads/<branch> (rev-parse resolves it), but
+# `refs/heads/main@{upstream}` is not an upstream query and simply fails, so
+# without normalization this spelling would skip the check silently.
+for ref in refs/heads/basestale heads/basestale; do
+    out="$(run review --base "$ref")" || fail "--base '$ref' exited non-zero: $out"
+    echo "$out" | grep -q "lags its upstream 'origin/develop'" || fail "--base '$ref' skipped the stale-base check: $out"
+done
+
 echo "==> commits plus a dirty tree review BOTH halves, in labelled sections"
 # The reported bug: the two scopes are disjoint and the dirty tree used to win
 # outright, so a re-run after an uncommitted fix reviewed that fix alone and
@@ -443,4 +533,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (27 cases)"
+echo "codex-review + codex-gate guards OK (33 cases)"
