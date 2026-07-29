@@ -257,8 +257,8 @@ thread — neither shows on the board, which is where work is actually watched.
 So two agents, or an agent and a human, start the same issue because nothing
 visible said it was taken.
 
-An agent starting work therefore writes **all four**, because each is blind
-where the others see:
+An agent starting work therefore writes every one of these it *can*, because
+each is blind where the others see:
 
 | Signal | Answers | Shows up in |
 |---|---|---|
@@ -267,10 +267,18 @@ where the others see:
 | `agent:*` label | same, mirrored | the issue page, `gh issue list --label` |
 | assignee | that *someone* has it | notifications, `gh issue list --assignee` |
 
-The `agent:*` label is not redundant with the `Agent` field. On an organization
-`Agent` is an org **issue field**, which the Projects V2 API an agent can reach
-does not write — so the label is the *only* agent-identity signal an agent can
-both set and read there. Nothing syncs a label to a field value either way.
+**Which of those an agent can actually write depends on the owner**, so the
+claim step differs and the `Agent` row is not a universal requirement:
+
+| Owner | `Agent` | Identity signal the agent writes |
+|---|---|---|
+| Personal account | a **project** field — writable | the field *and* the label |
+| Organization | an org **issue field** — not writable via Projects V2 | the label only |
+
+That is why the `agent:*` label is not redundant with the `Agent` field: on an
+org it is the only agent-identity signal an agent can both set and read, and an
+agent there should treat the field write as unavailable rather than as a
+missing step. Nothing syncs a label to a field value either way.
 
 **A claim is a signal, not a lock.** None of these writes is atomic, and two
 sessions running as the same GitHub user are invisible to each other — the

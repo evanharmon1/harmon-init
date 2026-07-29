@@ -701,12 +701,19 @@ full) # project_management=github; github_org=test-org (an org repo)
         lbl_set="$(sed -n -E "s/^${fam}:([^|]+)\|.*/\1/p" scripts/setup-github-labels.sh | sort -u)"
         # `<fam>_opts='[ … ]'` in the org script; `create_single_select "<Field>" '[ … ]'`
         # in the project script. Both blocks end on a line starting with `]`.
-        # Field options are compared as SLUGS: labels are kebab-case by
-        # convention, so the `Agent` option "Claude Code" is the label
-        # `agent:claude-code`. For layer/domain the options are already single
-        # lowercase words and slugging is a no-op, so one rule covers all three.
-        fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='" | slugify)"
-        prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '" | slugify)"
+        # Layer and Domain are compared EXACTLY: their option names and label
+        # suffixes are meant to be character-identical, and normalizing would
+        # let `Domain: Auth` pass against `domain:auth` — drift this guard has
+        # always caught. Only Agent is slugged, because its options are
+        # multi-word display names ("Claude Code") whose labels are kebab-case
+        # by convention (`agent:claude-code`); there the mapping, not the
+        # string, is the invariant.
+        case "$fam" in
+        agent) normalize=slugify ;;
+        *) normalize=cat ;;
+        esac
+        fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='" | "$normalize")"
+        prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '" | "$normalize")"
         [ -n "$lbl_set" ] || err "no ${fam}: labels found in setup-github-labels.sh"
         [ "$lbl_set" = "$fld_set" ] ||
             err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != issue-field options [$(echo "$fld_set" | tr '\n' ' ')]"
