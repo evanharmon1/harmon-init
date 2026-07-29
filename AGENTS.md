@@ -250,16 +250,18 @@ something to ask permission for.
   re-entered — the post-push cloud/bot review is the second-model check at
   this stage.
   Shepherd is **externally driven** — CI results and other people's comments
-  are its input, so it cannot manufacture a round on its own; its cap is
-  independent of the other loop caps and bounds how long you wait on others,
+  are its input, so it cannot manufacture a round on its own. A round is one
+  fix push, or one no-change cycle where everything is answered and nothing
+  needs fixing; waiting on CI or a reviewer is never a round, and this cap is
+  independent of any other stage's. What it bounds is other people's findings,
   not self-generated work. It is not wholly immune, though — a reviewer can
   flag the fix your *last* round pushed, so if the rounds start circling your
   own patches, step back and ask whether the findings are about the change you
-  set out to make or about a previous round's fix. Deciding that nothing more
-  has landed is governed by "Checks green is a non-terminal state" below, not
-  by the absence of an immediate reply. Caps do not carry across stages and
-  neither do
-  decisions: **a decision to stop one loop does not transfer to another**,
+  set out to make or about a previous round's fix. Whether anything more has
+  landed is settled by "Checks green is a non-terminal state" below, not by
+  the absence of an immediate reply. Stopping one stage's loop is never a
+  decision about another's:
+  **a decision to stop one loop does not transfer to another**,
   because each is bounded for its own reason. "We have looped enough" is a
   judgement about one loop's self-generated work, and carrying it here skips
   this stage instead of bounding it, leaving the PR with reviews unanswered.
