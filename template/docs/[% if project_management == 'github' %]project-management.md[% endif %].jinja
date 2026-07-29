@@ -313,22 +313,32 @@ each is blind where the others see:
 | Signal | Answers | Shows up in |
 |---|---|---|
 | `Status` = `In Progress` | where it is in delivery | the board |
-| `Agent` = e.g. `Claude Code` | which agent holds it | the board, grouped views |
-| `agent:*` label | same, mirrored | the issue page, `gh issue list --label` |
+| `agent:*` label | which agent is working it **right now** | the issue page, `gh issue list --label` |
 | assignee | that *someone* has it | notifications, `gh issue list --assignee` |
 
-**Which of those an agent can actually write depends on the owner**, so the
-claim step differs and the `Agent` row is not a universal requirement:
+**`Agent` is not on that list, and a claim must not write it.** The two look
+like the same fact and are not:
 
-| Owner | `Agent` | Identity signal the agent writes |
-|---|---|---|
-| Personal account | a **project** field — writable | the field *and* the label |
-| Organization | an org **issue field** — not writable via Projects V2 | the label only |
+| | Means | Set by | When |
+|---|---|---|---|
+| **`Agent`** field | which agent *should* implement it | whoever plans/triages | at planning, before the work starts |
+| **`agent:*`** label | which agent *is* implementing it | the agent itself | at claim, released at hand-off |
 
-That is why the `agent:*` label is not redundant with the `Agent` field: on an
-org it is the only agent-identity signal an agent can both set and read, and an
-agent there should treat the field write as unavailable rather than as a
-missing step. Nothing syncs a label to a field value either way.
+They share one vocabulary — the same option names, which is why the two lists
+are extended together — but they answer different questions. Overwriting
+`Agent` at claim time would destroy the planning assignment the **Agent queue**
+view is built on (that view lists issues *whose `Agent` field is set*), and
+would silently reassign work planned for one agent to whichever agent happened
+to pick it up.
+
+So a claim writes the **label**. If the label and the field disagree, that is
+information, not drift: it means a different agent picked up work planned for
+another one. Worth noticing, not worth auto-correcting.
+
+This also removes an owner-type problem: on an organization `Agent` is an org
+**issue field** that the Projects V2 API cannot write anyway, so a claim that
+depended on it would have been impossible there. The label works identically on
+both owner types.
 
 These labels ship with `task setup:github-labels`, which is generated only for
 `project_management: github`. A repo on `none` or `linear` gets no label
