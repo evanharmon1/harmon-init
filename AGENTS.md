@@ -250,13 +250,23 @@ something to ask permission for.
   re-entered — the post-push cloud/bot review is the second-model check at
   this stage.
   Shepherd is **externally driven** — CI results and other people's comments
-  are its input, so it cannot manufacture its own rounds; its cap is
+  are its input, so it cannot manufacture a round on its own; its cap is
   independent of the other loop caps and bounds how long you wait on others,
-  not self-generated work. Caps do not carry across stages and neither do
+  not self-generated work. It is not wholly immune, though — a reviewer can
+  flag the fix your *last* round pushed, so if the rounds start circling your
+  own patches, step back and ask whether the findings are about the change you
+  set out to make or about a previous round's fix. Deciding that nothing more
+  has landed is governed by "Checks green is a non-terminal state" below, not
+  by the absence of an immediate reply. Caps do not carry across stages and
+  neither do
   decisions: **a decision to stop one loop does not transfer to another**,
   because each is bounded for its own reason. "We have looped enough" is a
   judgement about one loop's self-generated work, and carrying it here skips
   this stage instead of bounding it, leaving the PR with reviews unanswered.
+  The converse also holds: stopping to **escalate** something you cannot
+  resolve halts the whole change rather than one loop, so it is not a licence
+  to move on to the next stage either — a persistent P0/P1 at the challenge or
+  review cap means wait for Evan, not open the PR anyway.
   If checks still fail or findings remain after 5 rounds, stop and
   summarize what's unresolved on the PR for Evan.
   Where a **vendored** skill (`/shepherd`)
