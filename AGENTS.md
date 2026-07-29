@@ -204,9 +204,13 @@ something to ask permission for.
   then **re-run `task challenge`**. The stage passes only when a re-run comes
   back with **no confirmed P0 or P1 findings** — fixing the findings is not
   the exit condition, a clean pass is. **P2s do not gate this stage**: carry
-  them to the PR (see "Deferring P2s" below). Max **6** challenge → fix →
-  re-challenge
+  them to the PR (see "Deferring P2s" below). This loop is
+  **self-referential** — the fixes you make in response to a round become the
+  next round's input, so it can generate its own work indefinitely — and that
+  is what the cap defends against: max **6** challenge → fix → re-challenge
   rounds; if P0/P1 findings persist, stop and escalate to Evan.
+  "Between rounds, check what the findings are about" below is how you catch
+  the loop feeding on itself before the cap does.
   A `task challenge` round is long — 5–15 minutes is ordinary, past most
   agents' tool-call timeouts — so **run it in the background and poll**
   instead of blocking one call on it. Growing output means running, not hung;
@@ -218,8 +222,9 @@ something to ask permission for.
   [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
   backgrounding").
 - **`task review`** — verification-checkpoint review; same adjudication, same
-  P0/P1 clean-pass exit condition, and the same background-and-poll handling,
-  with its own max **6** rounds.
+  P0/P1 clean-pass exit condition, the same self-referential shape and so the
+  same reason for a cap, and the same background-and-poll handling, with its
+  own max **6** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
@@ -243,9 +248,18 @@ something to ask permission for.
   but do not leave them unaddressed. Shepherd-round fixes must pass `task
   verify` before each push; the local challenge/review loops are not
   re-entered — the post-push cloud/bot review is the second-model check at
-  this stage. This cap is independent of the other loop caps. If checks still
-  fail or findings remain after 5 rounds, stop and summarize what's
-  unresolved on the PR for Evan. Where a **vendored** skill (`/shepherd`)
+  this stage.
+  Shepherd is **externally driven** — CI results and other people's comments
+  are its input, so it cannot manufacture its own rounds; its cap is
+  independent of the other loop caps and bounds how long you wait on others,
+  not self-generated work. Caps do not carry across stages and neither do
+  decisions: **a decision to stop one loop does not transfer to another**,
+  because each is bounded for its own reason. "We have looped enough" is a
+  judgement about one loop's self-generated work, and carrying it here skips
+  this stage instead of bounding it, leaving the PR with reviews unanswered.
+  If checks still fail or findings remain after 5 rounds, stop and
+  summarize what's unresolved on the PR for Evan.
+  Where a **vendored** skill (`/shepherd`)
   states a different cap or exit condition, **this file wins** — the skills
   are synced from harmon-devkit on its own release cadence and can lag a
   policy change made here.
