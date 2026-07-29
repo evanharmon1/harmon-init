@@ -207,8 +207,17 @@ something to ask permission for.
   them to the PR (see "Deferring P2s" below). Max **6** challenge → fix →
   re-challenge
   rounds; if P0/P1 findings persist, stop and escalate to Evan.
-- **`task review`** — verification-checkpoint review; same adjudication and
-  same P0/P1 clean-pass exit condition, with its own max **6** rounds.
+  A `task challenge` round is long — 5–15 minutes is ordinary, past most
+  agents' tool-call timeouts — so **run it in the background and poll**
+  instead of blocking one call on it. Growing output means running, not hung;
+  relaunching a live run only doubles the cost. Commit each round's fixes
+  before re-challenging, or the re-run scopes to the fix alone instead of the
+  whole change. Details:
+  [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
+  backgrounding").
+- **`task review`** — verification-checkpoint review; same adjudication, same
+  P0/P1 clean-pass exit condition, and the same background-and-poll handling,
+  with its own max **6** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
