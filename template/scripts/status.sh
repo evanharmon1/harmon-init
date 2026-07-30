@@ -360,14 +360,38 @@ if should_show "gh"; then
             # included) is vendored into repos that have no board at all.
             # Keying on the skill would demand the `project` scope from every
             # one of them. setup-github-project.sh is generated only for
-            # `project_management: github`, which makes it an exact proxy for
-            # "this repo has a board to write to".
+            # `project_management: github`, which makes it a proxy for "this
+            # repo is configured to have a board".
+            #
+            # The accepted cost, deliberately chosen: a repo on
+            # `project_management: none` whose issues someone adds to a board by
+            # hand gets no session-start warning, and learns from the claim's own
+            # exit 2 instead. Nothing on disk can distinguish that repo from one
+            # that simply opted out — board membership is remote state — so the
+            # gate can only pick which error to make. A red line in every
+            # opted-out repo, every session, is the worse one: it is universal
+            # rather than conditional, and a check that cries wolf everywhere
+            # stops being read where it matters.
             if [[ -f scripts/setup-github-project.sh ]]; then
                 echo ""
                 # Read the file directly — no pipe. A `grep -q` consumer on a
                 # pipeline can take SIGPIPE, which `pipefail` turns into a
                 # failure of the whole pipeline.
                 gh_scopes="$(grep -i 'token scopes:' "${GH_AUTH_FILE}" 2>/dev/null || true)"
+                # `gh auth refresh` edits the STORED credential, and an
+                # env-provided token overrides that — so telling someone running
+                # on GH_TOKEN to refresh is advice that cannot work. gh names the
+                # source in its report, so use it to pick the remedy once rather
+                # than repeating a guess in each branch below.
+                gh_remedy="run: gh auth refresh -s project"
+                case "$(<"${GH_AUTH_FILE}")" in
+                *"(GH_TOKEN)"*)
+                    gh_remedy="reissue GH_TOKEN with the 'project' scope (an env token overrides gh auth refresh)"
+                    ;;
+                *"(GITHUB_TOKEN)"*)
+                    gh_remedy="reissue GITHUB_TOKEN with the 'project' scope (an env token overrides gh auth refresh)"
+                    ;;
+                esac
                 if [[ -z "${gh_scopes}" ]]; then
                     checkline unknown "Project board writes" \
                         "could not read token scopes from gh auth status"
@@ -387,10 +411,10 @@ if should_show "gh"; then
                     # mistaken for working: `--show` reads the card fine, so the
                     # board looks reachable right up to the write that moves it.
                     checkline no "Project board writes" \
-                        "'read:project' is read-only — claims cannot move the board; run: gh auth refresh -s project"
+                        "'read:project' is read-only — claims cannot move the board; ${gh_remedy}"
                 else
                     checkline no "Project board writes" \
-                        "token lacks 'project' — claims cannot move the board; run: gh auth refresh -s project"
+                        "token lacks 'project' — claims cannot move the board; ${gh_remedy}"
                 fi
             fi
         } | section_box

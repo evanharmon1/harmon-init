@@ -101,6 +101,15 @@ make_stub() {
             echo '    fi'
             echo '    exit 0'
             ;;
+        env-token-no-scope)
+            # A classic PAT supplied through GH_TOKEN: it reports real scopes, so
+            # the scope verdict is correct — but `gh auth refresh` edits the
+            # stored credential, which this one overrides, so that remedy cannot
+            # work here.
+            echo '    echo "  X Failed to log in to github.com using token (GH_TOKEN)"'
+            echo "    echo \"  - Token scopes: 'gist', 'repo'\""
+            echo '    exit 0'
+            ;;
         other-host-has-scope)
             # Two hosts; only the unrelated one holds 'project'. A stub that
             # ignores --hostname proves the cross-host bug; this one honours it,
@@ -230,6 +239,17 @@ case "$out" in
 *"token has 'project'"*) fail "read the ACTIVE account's scopes, not every account's: ${out}" ;;
 *"lacks 'project'"*) ;;
 *) fail "expected the active account's missing scope to be reported, got: ${out}" ;;
+esac
+
+echo "==> an env-provided token gets a remedy that can actually work"
+# The scope verdict is right; only the fix differs. `gh auth refresh` edits the
+# stored credential, which GH_TOKEN overrides — so recommending it here would be
+# advice that silently changes nothing.
+out="$(run_gh_section env-token-no-scope)"
+case "$out" in
+*"gh auth refresh -s project"*) fail "gh auth refresh cannot change an env token: ${out}" ;;
+*"reissue GH_TOKEN"*) ;;
+*) fail "expected an env-token remedy, got: ${out}" ;;
 esac
 
 echo "==> another host's scopes cannot answer for the targeted one"

@@ -85,17 +85,27 @@ case "$scopes_line" in
     ;;
 *"'project'"*) ;;
 *"'"*)
-    cat >&2 <<'SCOPE_ERR'
-This token cannot write GitHub Projects: 'gh auth status' reports no 'project' scope.
-
-Every write below (the board, its Status pipeline, the Size field) would fail on
-the first API call. Fix it, then re-run:
-
-    gh auth refresh -s project
-
-Note that read-only 'read:project' is enough to *see* a board but not to create
-or reconcile one, so this script requires the full 'project' scope.
-SCOPE_ERR
+    # `gh auth refresh` edits the STORED credential, which an env-provided token
+    # overrides — so that remedy is unusable for anyone running on GH_TOKEN or
+    # GITHUB_TOKEN. gh names the source in its report; use it.
+    remedy="    gh auth refresh -s project"
+    case "$auth_report" in
+    *"(GH_TOKEN)"*)
+        remedy="    Reissue the token in GH_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    *"(GITHUB_TOKEN)"*)
+        remedy="    Reissue the token in GITHUB_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    esac
+    printf '%s\n\n%s\n\n%s\n\n%s\n' \
+        "This token cannot write GitHub Projects: 'gh auth status' reports no 'project' scope." \
+        "Every write below (the board, its Status pipeline, the Size field) would fail on
+the first API call. Fix it, then re-run:" \
+        "$remedy" \
+        "Note that read-only 'read:project' is enough to *see* a board but not to create
+or reconcile one, so this script requires the full 'project' scope." >&2
     exit 1
     ;;
 *)
