@@ -30,6 +30,13 @@ fail() {
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
+# The scope preflight's probe. $STUB_SCOPES unset means "authenticated, but the
+# scope list could not be parsed" — the state every reconciliation case below
+# runs in, and one the preflight must not treat as a failure.
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+    [ -n "${STUB_SCOPES:-}" ] && echo "  - Token scopes: ${STUB_SCOPES}"
+    exit 0
+fi
 q=""
 for a in "$@"; do case "$a" in query=*) q="${a#query=}" ;; esac; done
 case "$q" in
@@ -200,5 +207,70 @@ case "$mut" in
 *'name:"raced-in"'*) : ;;
 *) fail "an option added between the snapshot and the write was deleted — the pre-write re-read is missing" ;;
 esac
+
+# ── Scope preflight ─────────────────────────────────────────────────────────
+# Without the 'project' scope the run fails either way — `gh api graphql` exits
+# non-zero on INSUFFICIENT_SCOPES and `set -e` takes the script with it. What is
+# being tested is that it fails BEFORE any API call and says what to do about
+# it, instead of surfacing a raw GraphQL error that names neither.
+
+# run_expecting_scope_failure SCOPES — run with that scope list, require a
+# non-zero exit, and echo the output.
+run_expecting_scope_failure() {
+    printf '%s' "$complete" >"$STUB_FIELDS_FILE"
+    : >"$STUB_FIELDS_FILE2"
+    rm -f "$tmp_seen"
+    : >"$MUTATIONS"
+    if STUB_SCOPES="$1" "$script" --owner someuser --title "Test Project" \
+        >"$tmp/out" 2>&1; then
+        fail "a token with scopes '$1' must not be accepted for board writes"
+    fi
+    cat "$tmp/out"
+}
+
+echo "==> a token without the project scope is refused, naming the remedy"
+out=$(run_expecting_scope_failure "'gist', 'read:org', 'repo'")
+case "$out" in
+*"gh auth refresh -s project"*) ;;
+*) fail "expected the refusal to name the remedy, got: $out" ;;
+esac
+[ "$(updates)" = 0 ] || fail "the preflight must refuse before any mutation"
+case "$out" in
+*"Resolving owner"*) fail "the preflight must refuse before the first API call" ;;
+esac
+
+echo "==> read-only 'read:project' is refused too — writes need the full scope"
+# Easy to mistake for sufficient: it reads a board perfectly well, and every
+# write below still fails.
+out=$(run_expecting_scope_failure "'gist', 'read:project', 'repo'")
+case "$out" in
+*"gh auth refresh -s project"*) ;;
+*) fail "read:project must be refused for writes, got: $out" ;;
+esac
+
+echo "==> a fine-grained/App token is NOT refused — its access is a permission"
+# It reports no OAuth scopes at all, which is not the same as lacking one: such a
+# token may well be able to write Projects, and `gh auth refresh` cannot change
+# it either way. Refusing here would block a capable credential.
+printf '%s' "$complete" >"$STUB_FIELDS_FILE"
+: >"$STUB_FIELDS_FILE2"
+rm -f "$tmp_seen"
+: >"$MUTATIONS"
+STUB_SCOPES="none" "$script" --owner someuser --title "Test Project" \
+    >"$tmp/out" 2>&1 || fail "a token reporting no OAuth scopes must not be refused"
+grep -q "no OAuth scopes" "$tmp/out" ||
+    fail "expected the fine-grained-token notice, got: $(cat "$tmp/out")"
+grep -q "gh auth refresh" "$tmp/out" &&
+    fail "gh auth refresh cannot fix a fine-grained token"
+
+echo "==> a token WITH the project scope reconciles normally"
+printf '%s' "$complete" >"$STUB_FIELDS_FILE"
+: >"$STUB_FIELDS_FILE2"
+rm -f "$tmp_seen"
+: >"$MUTATIONS"
+STUB_SCOPES="'gist', 'project', 'repo'" "$script" --owner someuser \
+    --title "Test Project" >"$tmp/out" 2>&1 ||
+    fail "a token with the project scope must be accepted"
+[ "$(updates)" = 0 ] || fail "an already-synced project should still write nothing"
 
 echo "PASS: setup-github-project.sh field reconciliation"

@@ -76,6 +76,7 @@ tasks:
       - task: check
       - task: test:tasks
       - task: test:ci-results
+      - task: test:status
       - task: test:renovate-pins
       - task: test:release-title
       - task: test:setup-github-project
@@ -299,6 +300,11 @@ tasks:
     desc: Unit-test the fail-closed CI aggregate result helper
     cmds:
       - ./scripts/test-ci-results.sh
+
+  test:status:
+    desc: Unit-test the status board-writes scope check (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-status.sh
 
   test:renovate-pins:
     desc: Check every annotated shell version pin is extractable by Renovate

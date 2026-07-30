@@ -55,6 +55,98 @@ for tool in gh jq; do
     fi
 done
 
+# ── Scope preflight ─────────────────────────────────────────────────────────
+# Every mutation below needs the 'project' scope, which `gh auth login` does not
+# grant by default. Without it the run still fails — `gh api graphql` exits
+# non-zero on an INSUFFICIENT_SCOPES error and `set -e` takes the script with it
+# — but it fails at the first projectsV2 query with a raw GraphQL error that
+# says nothing about scopes or how to fix it. Checking here converts that into
+# one actionable line, before any API call. It is deliberately NOT fatal on an
+# unreadable scope list: a token whose scopes cannot be parsed (a GitHub App
+# installation token, a future `gh` output change) may still be perfectly able
+# to do the work, and refusing to run would be a worse failure than the one
+# this guard replaces.
+# Narrow the report to the one credential the API calls below will use.
+# `gh auth status` covers every account on every host, and the scope line cannot
+# tell them apart: --active excludes a second account on this host, --hostname
+# excludes an unrelated host whose scopes say nothing about this run (which
+# targets GH_HOST or github.com). Older gh (pre-2.40) has no --active — fall back
+# rather than read a usage error as a missing scope; multi-account per host
+# arrived with 2.40, so one host there already means one account.
+# The host this run will target. GH_HOST is gh's override for when a host cannot
+# be determined from repository context, so context comes first when it is unset —
+# forcing github.com would narrow the probe to a host the API calls below do not
+# use, and reject a valid Enterprise login over it.
+gh_host="${GH_HOST:-}"
+if [ -z "$gh_host" ]; then
+    remote_url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    case "$remote_url" in
+    *://*)
+        gh_host="${remote_url#*://}"
+        gh_host="${gh_host#*@}"
+        gh_host="${gh_host%%/*}"
+        gh_host="${gh_host%%:*}"
+        ;;
+    *@*:*)
+        gh_host="${remote_url#*@}"
+        gh_host="${gh_host%%:*}"
+        ;;
+    esac
+fi
+gh_host="${gh_host:-github.com}"
+auth_report="$(gh auth status --active --hostname "$gh_host" 2>&1 || true)"
+case "$auth_report" in
+*"unknown flag"*) auth_report="$(gh auth status --hostname "$gh_host" 2>&1 || true)" ;;
+esac
+scopes_line="$(printf '%s\n' "$auth_report" | grep -i 'token scopes:' || true)"
+case "$scopes_line" in
+"")
+    echo "==> Could not read token scopes from 'gh auth status' — continuing; a scope error below means: gh auth refresh -s project" >&2
+    ;;
+*"'project'"*) ;;
+*"'"*)
+    # `gh auth refresh` edits the STORED credential, which an env-provided token
+    # overrides — so that remedy is unusable for anyone running on GH_TOKEN or
+    # GITHUB_TOKEN. gh names the source in its report; use it.
+    remedy="    gh auth refresh -s project"
+    case "$auth_report" in
+    *"(GH_TOKEN)"*)
+        remedy="    Reissue the token in GH_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    *"(GITHUB_TOKEN)"*)
+        remedy="    Reissue the token in GITHUB_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    *"(GH_ENTERPRISE_TOKEN)"*)
+        remedy="    Reissue the token in GH_ENTERPRISE_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    *"(GITHUB_ENTERPRISE_TOKEN)"*)
+        remedy="    Reissue the token in GITHUB_ENTERPRISE_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    esac
+    printf '%s\n\n%s\n\n%s\n\n%s\n' \
+        "This token cannot write GitHub Projects: 'gh auth status' reports no 'project' scope." \
+        "Every write below (the board, its Status pipeline, the Size field) would fail on
+the first API call. Fix it, then re-run:" \
+        "$remedy" \
+        "Note that read-only 'read:project' is enough to *see* a board but not to create
+or reconcile one, so this script requires the full 'project' scope." >&2
+    exit 1
+    ;;
+*)
+    # A scopes line with no scopes in it: a fine-grained PAT or an App
+    # installation token, whose Projects access is a permission granted where
+    # the token was issued rather than an OAuth scope. Such a token may be
+    # perfectly able to do this work, and `gh auth refresh` cannot change it
+    # (an env-provided GH_TOKEN cannot be refreshed at all) — so refusing here
+    # would block a capable credential over a naming mismatch.
+    echo "==> Token reports no OAuth scopes (fine-grained or App token) — continuing; if a write below fails, grant it 'Projects: Read and write' where the token was issued" >&2
+    ;;
+esac
+
 # Full Status pipeline (docs/project-management.md), in board order. GitHub's API
 # cannot create the visual groups, so these render as a flat, ordered list.
 status_pipeline='[

@@ -12,6 +12,70 @@ Every repo the owner controls feeds that one board; an issue can belong to
 multiple projects, but this default board is its home. Reach for a second,
 focused project only when a body of work needs its own.
 
+## Token scopes
+
+Everything on this page that touches the board — `task setup:github-project`,
+and the `Status` writes the [claim lifecycle](#claiming--making-an-agents-work-visible-while-it-happens)
+makes — goes through the Projects V2 API, and `gh auth login` does **not** grant
+access to it by default. Nothing else notices: the same token still reads
+issues, opens PRs, and drives CI perfectly well, so the gap shows up only as
+board writes that do nothing.
+
+| Scope | Grants | Enough for |
+|---|---|---|
+| *(neither)* | — | nothing here — every board read and write fails |
+| `read:project` | read Projects | reading a card's current `Status`; **no writes** |
+| `project` | read **and write** Projects | everything on this page |
+
+Ask for the full scope. It is a superset, so there is no reason to request
+`read:project` alongside it:
+
+```sh
+gh auth refresh -s project
+```
+
+Check what a token actually carries:
+
+```sh
+gh auth status | grep 'Token scopes'
+```
+
+`task status:gh` reports this as **Project board writes**, so a missing scope
+surfaces at session start — before a claim is made against a board that cannot
+receive it. `task setup:github-project` refuses to run without it rather than
+failing partway through its writes.
+
+Two adjacent scopes, for completeness: an organization's **issue types** need
+`admin:org` (reported by `task status:setup`), and the vendored claim skills
+hint at `gh auth refresh -s read:project,project` — equivalent for this purpose,
+since `project` alone already covers it.
+
+### Scopes are only half the story
+
+The table above is about **classic OAuth scopes**, which is what `gh auth login`
+issues and `gh auth refresh` edits. A **fine-grained PAT** or a GitHub App
+installation token has none of them: its Projects access is a *permission*
+granted where the token was issued. `gh auth status` reports no scope list for
+one, so `task status:gh` can only report the check as **unknown**, and
+`gh auth refresh` cannot help — a token supplied through the environment as
+`GH_TOKEN` cannot be refreshed at all. Grant it **Projects: Read and write** at
+the source (organization permissions, for an org-owned board) instead.
+
+The bot credential this repo documents ([bot-account.md](guides/bot-account.md))
+is exactly such a token. This is a **personal** account, so it is granted no
+Projects permission at all — that row of the PAT table is organization-scoped,
+and a user-owned board has no equivalent setting to hand a second account. So an
+agent running as the bot **cannot move a card**, and there is no permission to
+raise: the board is moved by you, while the claim stays visible through the
+`agent:*` label and the assignee — see
+[Claiming](#claiming--making-an-agents-work-visible-while-it-happens), which is
+exactly why a claim writes all three signals instead of relying on the board
+alone. To have claims move cards here, run the agent under your own `gh` login
+(which the scope table above applies to) rather than the bot's.
+
+The status check does not treat a read-only credential as broken; it reports what
+the credential can do.
+
 ## Status pipeline
 
 `Status` is a single-select field with exactly one meaning: **where in the flow
@@ -295,6 +359,18 @@ This also removes an owner-type problem: on an organization `Agent` is an org
 **issue field** that the Projects V2 API cannot write anyway, so a claim that
 depended on it would have been impossible there. The label works identically on
 both owner types.
+
+**A board write can fail without anyone learning.** Every `Status` write in the
+lifecycle needs the [`project` scope](#token-scopes). Without it each one exits
+2 — "could not verify" — and the steps handle that correctly *individually*:
+it is an auth condition they cannot fix, so they note it and carry on. In
+aggregate that is the worst outcome available. The agent reports the issue
+claimed, the board says nothing was ever started, and neither is wrong from
+where it stands; the hand-back then cannot restore a prior status it was never
+able to read. Nothing in the loop escalates, so the board silently stops
+tracking agent work in **both** directions until a human happens to notice it
+has gone stale. Check the scope at session start (`task status:gh`), not after
+the claim.
 
 **A claim is a signal, not a lock.** None of these writes is atomic, and two
 sessions running as the same GitHub user are invisible to each other — the
