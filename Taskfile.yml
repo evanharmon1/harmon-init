@@ -607,8 +607,10 @@ tasks:
     desc: "Detect feat/fix commits a tag ships that its changelog section omits (swallowed entries from a release-please merge race)"
     vars:
       TAG: '{{default "" .CLI_ARGS}}'
+    env:
+      TAG: '{{.TAG}}'
     cmds:
-      - ./scripts/check-changelog-coverage.sh {{.TAG}}
+      - ./scripts/check-changelog-coverage.sh "$TAG"
 
   # ── Clean ─────────────────────────────────────────────────────
   clean:
