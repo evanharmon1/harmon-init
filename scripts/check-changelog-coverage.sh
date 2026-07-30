@@ -31,6 +31,14 @@ if [ -z "$tag" ]; then
     exit 0
 fi
 
+# Validate that the tag (whether explicit or resolved) actually exists — a
+# typo in an explicit tag should exit 2 (configuration error), not 1
+# (swallowed entries) or exit silently on a pipefail.
+if ! git rev-parse --verify "${tag}^{commit}" >/dev/null 2>&1; then
+    echo "check-changelog-coverage: ${tag} is not a valid tag or commit" >&2
+    exit 2
+fi
+
 # The changelog header uses the version WITHOUT the leading 'v'.
 version="${tag#v}"
 
@@ -47,7 +55,9 @@ prev_tag=""
 section="$(sed -n "/^## \[${version}\]/,/^## \[/p" "$changelog")"
 if [ -n "$section" ]; then
     # Extract the compare URL from the header line (first line of the section).
-    compare_url="$(echo "$section" | head -1 | sed -n 's/.*compare\/\([^)]*\)).*/\1/p')"
+    # Use sed to process only line 1 — avoids a head -1 pipeline that can
+    # SIGPIPE on large sections with pipefail+set -e.
+    compare_url="$(echo "$section" | sed -n '1s/.*compare\/\([^)]*\)).*/\1/p')"
     if [ -n "$compare_url" ]; then
         prev_tag="${compare_url%%...*}"
     fi
@@ -70,7 +80,7 @@ fi
 # becomes a single non-merge commit on main whose subject is the PR title.
 # In a merge-commit workflow the detector would miss entries; that is a known
 # limitation.
-commits="$(git log --no-merges --format='%h %s' "${prev_tag}..${tag}" \
+commits="$(git log --no-merges --format='%h %s' --abbrev=7 "${prev_tag}..${tag}" \
     -E --grep='^(feat|fix)(\(.+\))?!?:' 2>/dev/null)" || {
     echo "check-changelog-coverage: unable to list commits in ${prev_tag}..${tag} — range may not exist in this checkout (shallow clone?)" >&2
     exit 2
