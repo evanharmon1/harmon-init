@@ -103,21 +103,20 @@ Plus these **organization** permissions:
 
 | Permission | Level | Purpose |
 | --- | --- | --- |
-| Projects | Read-only | Board context — what is in flight, what is blocked |
+| Projects | Read and write | Board writes for claim lifecycle ([project-management.md](../project-management.md)) |
 | Variables | Read-only | Org-level CI configuration |
 
 > **Organization permissions are org-scoped; the selected-repo list does not
 > bound them.** A repository permission stops at the repos you selected. An
 > organization permission reaches **every** project and variable in the org —
-> including repos deliberately left off that list. These two are granted anyway,
-> because read access to non-secret CI config and your own boards is genuinely
-> low impact and gives agents context they can use. But record the trade rather
-> than rediscover it: the answer to _"what could a leaked bot token reach?"_ is
-> **the selected repos, plus every project and variable in the org**. Revisit the
-> day the org holds a repo the bot should not see.
+> including repos deliberately left off that list. Projects write is granted
+> deliberately so the claim lifecycle can move cards; the cost is that a
+> compromised token can write to every board the org owns, not just this
+> repo's. Revisit the day the org holds a repo the bot should not see.
 [% endif %]
-**Read is cheap; write is the line.** Variables and Projects are read-only above
-for a reason that is not squeamishness — see the exclusions below.
+**Read is cheap; write is the line — and Projects crosses it deliberately.**
+Variables stay read-only for a reason that is not squeamishness — see the
+exclusions below.
 
 **Deliberately excluded.** This list is _what the bot needs_, and the distinction
 is load-bearing, because the bot's PAT is the **agent's own credential**:

@@ -61,24 +61,16 @@ one, so `task status:gh` can only report the check as **unknown**, and
 `GH_TOKEN` cannot be refreshed at all. Grant it **Projects: Read and write** at
 the source (organization permissions, for an org-owned board) instead.
 [% if devcontainer and github_org != author_git_provider_username %]
-That matters here because the bot credential this template documents is exactly
-such a token — and [bot-account.md](guides/bot-account.md) deliberately grants
-it **`Projects: Read-only`**. So an agent running as the bot **cannot move a
-card**, by design, however the scope check reports. Two honest ways to live with
-that, both a decision rather than a default:
-
-- **Leave it read-only** and accept that cards are moved by humans and by
-  `project-automation.yml` from PR and CI events, not by the claim. The
-  `agent:*` label and the assignee still make the claim visible; see
-  [Claiming](#claiming--making-an-agents-work-visible-while-it-happens), which
-  is exactly why a claim writes all three signals instead of relying on the
-  board alone.
-- **Grant the bot `Projects: Read and write`** if you want claims to move cards,
-  understanding that organization permissions are not bounded by the token's
-  repository list — that grant reaches every board the owner has.
-
-Nothing here picks for you, and the status check does not treat a read-only bot
-as broken; it reports what the credential can do.
+That matters here because the bot credential this template documents
+([bot-account.md](guides/bot-account.md)) deliberately grants it **`Projects:
+Read and write`** — so an agent running as the bot **can** move cards through
+the claim lifecycle as documented below. The cost is that organization
+permissions are not bounded by the token's repository list; that write reaches
+every board the org owns. Accepting that radius is a deliberate decision
+recorded in [security.md](../architecture/security.md), and the trade is stated
+where the permission is granted
+([bot-account.md](guides/bot-account.md),
+[branch-protection.md](../architecture/branch-protection.md)).
 [% elif devcontainer %]
 The bot credential this template documents ([bot-account.md](guides/bot-account.md))
 is exactly such a token. On a personal account it is granted no Projects
