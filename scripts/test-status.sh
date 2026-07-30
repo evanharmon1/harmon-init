@@ -303,6 +303,23 @@ else
     echo "    (skipped: no timeout binary — the probe is unbounded here)"
 fi
 
+echo "==> status:setup distinguishes a timeout from a missing login too"
+# The setup section shares the one auth probe, so it inherits the probe's
+# distinctions or silently loses them: on a deadline it must not tell an
+# authenticated user to run `gh auth login`. Reachable hermetically because this
+# gate precedes every other gh call in that section.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+    make_stub hangs
+    out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 NETWORK_TIMEOUT=1 "${WITH_BOARD}" setup 2>&1)"
+    case "$out" in
+    *"gh auth login"*) fail "a timeout must not be reported as a missing login: ${out}" ;;
+    *"timed out"*) ;;
+    *) fail "expected a timeout notice from status:setup, got: ${out}" ;;
+    esac
+else
+    echo "    (skipped: no timeout binary — the probe is unbounded here)"
+fi
+
 echo "==> no user-facing message hardcodes the refresh remedy"
 # The remedy is derived from the credential source once, because `gh auth refresh`
 # is wrong for an env-provided or fine-grained token. Every message must use that

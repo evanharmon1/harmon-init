@@ -555,8 +555,13 @@ if [[ "${SECTION}" == "setup" ]]; then
     } | section_box
 
     # Reuses the single bounded probe above rather than making a second,
-    # unbounded `gh auth status` call to learn the same thing.
-    if [[ "${GH_AUTHED}" != true ]]; then
+    # unbounded `gh auth status` call to learn the same thing. Sharing that probe
+    # means sharing its distinctions too: bounding it made a slow network look
+    # exactly like a missing login, and telling an authenticated user to run
+    # `gh auth login` because GitHub was slow sends them to fix the wrong thing.
+    if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
+        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s -- skipping)" | section_box
+    elif [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- run 'gh auth login')" | section_box
     else
         d="${TMPDIR_STATUS}"
