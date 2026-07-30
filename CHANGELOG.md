@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.8.6](https://github.com/evanharmon1/harmon-init/compare/v4.8.5...v4.8.6) (2026-07-30)
+
+
+### Bug Fixes
+
+* **docs:** grant bot PAT Projects write so org-repo claims can move cards ([#485](https://github.com/evanharmon1/harmon-init/issues/485)) ([a2ab025](https://github.com/evanharmon1/harmon-init/commit/a2ab0257b8b2a1576e5fd37393479b47aba5078c))
+* **template:** add changelog coverage detector for release-please merge races ([#482](https://github.com/evanharmon1/harmon-init/issues/482)) ([#488](https://github.com/evanharmon1/harmon-init/issues/488)) ([7c0b7b9](https://github.com/evanharmon1/harmon-init/commit/7c0b7b9cc5a5409426c819f299603bc389bf9d03))
+
 ## [4.8.5](https://github.com/evanharmon1/harmon-init/compare/v4.8.4...v4.8.5) (2026-07-30)
 
 
