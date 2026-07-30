@@ -61,24 +61,20 @@ one, so `task status:gh` can only report the check as **unknown**, and
 `GH_TOKEN` cannot be refreshed at all. Grant it **Projects: Read and write** at
 the source (organization permissions, for an org-owned board) instead.
 
-That matters here because the bot credential this template documents is exactly
-such a token — and [bot-account.md](guides/bot-account.md) deliberately grants
-it **`Projects: Read-only` — "Grant read; never write."** So an agent running as
-the bot **cannot move a card**, by design, however the scope check reports. Two
-honest ways to live with that, both a decision rather than a default:
+The bot credential this repo documents ([bot-account.md](guides/bot-account.md))
+is exactly such a token. This is a **personal** account, so it is granted no
+Projects permission at all — that row of the PAT table is organization-scoped,
+and a user-owned board has no equivalent setting to hand a second account. So an
+agent running as the bot **cannot move a card**, and there is no permission to
+raise: the board is moved by you, while the claim stays visible through the
+`agent:*` label and the assignee — see
+[Claiming](#claiming--making-an-agents-work-visible-while-it-happens), which is
+exactly why a claim writes all three signals instead of relying on the board
+alone. To have claims move cards here, run the agent under your own `gh` login
+(which the scope table above applies to) rather than the bot's.
 
-- **Leave it read-only** and accept that cards are moved by humans — and, on an
-  organization, by `project-automation.yml` from PR and CI events — not by the
-  claim. The `agent:*` label and the assignee still make the claim visible; see
-  [Claiming](#claiming--making-an-agents-work-visible-while-it-happens), which
-  is exactly why a claim writes all three signals instead of relying on the
-  board alone.
-- **Grant the bot `Projects: Read and write`** if you want claims to move cards,
-  understanding that org permissions are not bounded by the token's repository
-  list — that grant reaches every board the owner has.
-
-Nothing in this repo picks for you, and the status check does not treat a
-read-only bot as broken; it reports what the credential can do.
+The status check does not treat a read-only credential as broken; it reports what
+the credential can do.
 
 ## Status pipeline
 

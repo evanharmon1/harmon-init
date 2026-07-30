@@ -66,13 +66,17 @@ done
 # installation token, a future `gh` output change) may still be perfectly able
 # to do the work, and refusing to run would be a worse failure than the one
 # this guard replaces.
-# --active: `gh auth status` reports every known account, and an inactive one
-# holding 'project' must not answer for the credential this run will use. Older
-# gh (pre-2.40) has no such flag — fall back rather than read a usage error as a
-# missing scope.
-auth_report="$(gh auth status --active 2>&1 || true)"
+# Narrow the report to the one credential the API calls below will use.
+# `gh auth status` covers every account on every host, and the scope line cannot
+# tell them apart: --active excludes a second account on this host, --hostname
+# excludes an unrelated host whose scopes say nothing about this run (which
+# targets GH_HOST or github.com). Older gh (pre-2.40) has no --active — fall back
+# rather than read a usage error as a missing scope; multi-account per host
+# arrived with 2.40, so one host there already means one account.
+gh_host="${GH_HOST:-github.com}"
+auth_report="$(gh auth status --active --hostname "$gh_host" 2>&1 || true)"
 case "$auth_report" in
-*"unknown flag"*) auth_report="$(gh auth status 2>&1 || true)" ;;
+*"unknown flag"*) auth_report="$(gh auth status --hostname "$gh_host" 2>&1 || true)" ;;
 esac
 scopes_line="$(printf '%s\n' "$auth_report" | grep -i 'token scopes:' || true)"
 case "$scopes_line" in

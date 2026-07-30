@@ -198,19 +198,24 @@ GH_AUTHED=false
 GH_AUTH_TIMEDOUT=false
 if should_show "gh"; then
     gh_auth_rc=0
-    # --active, because `gh auth status` reports EVERY known account and the
-    # scope line read below cannot tell them apart: a second, inactive account
-    # holding `project` would answer for the credential gh actually uses.
-    # (Residual, accepted: with several hosts each having an active account, all
-    # of them are still reported. Narrowing further needs the repo's host, which
-    # this reporter does not resolve.)
-    run_timeout "${NETWORK_TIMEOUT}" gh auth status --active >"${GH_AUTH_FILE}" 2>&1 ||
+    # `gh auth status` reports every account on every host, and the scope line
+    # read below cannot tell them apart — so narrow it to one credential from
+    # both directions: --active (not a second, inactive account on this host)
+    # and --hostname (not an unrelated host's account, whose scopes say nothing
+    # about the API calls this repo makes). A GitHub Enterprise user who has not
+    # set GH_HOST gets no match and the check reports "unknown", which is the
+    # right answer — better than a green light earned by the wrong token.
+    run_timeout "${NETWORK_TIMEOUT}" gh auth status --active \
+        --hostname "${GH_HOST:-github.com}" >"${GH_AUTH_FILE}" 2>&1 ||
         gh_auth_rc=$?
     if grep -qi 'unknown flag' "${GH_AUTH_FILE}" 2>/dev/null; then
-        # gh predates --active (added in 2.40). Fall back to the full report
-        # rather than reading a usage error as a failed login.
+        # gh predates --active (added in 2.40). Fall back rather than read a
+        # usage error as a failed login — and keep --hostname, which is far
+        # older. Multi-account per host arrived WITH 2.40, so on a gh this old
+        # one host means one account and the narrowing is complete anyway.
         gh_auth_rc=0
-        run_timeout "${NETWORK_TIMEOUT}" gh auth status >"${GH_AUTH_FILE}" 2>&1 ||
+        run_timeout "${NETWORK_TIMEOUT}" gh auth status \
+            --hostname "${GH_HOST:-github.com}" >"${GH_AUTH_FILE}" 2>&1 ||
             gh_auth_rc=$?
     fi
     # 124 is `timeout`'s own "deadline hit" code. Distinguished from a real

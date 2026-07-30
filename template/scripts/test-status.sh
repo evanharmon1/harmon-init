@@ -101,6 +101,19 @@ make_stub() {
             echo '    fi'
             echo '    exit 0'
             ;;
+        other-host-has-scope)
+            # Two hosts; only the unrelated one holds 'project'. A stub that
+            # ignores --hostname proves the cross-host bug; this one honours it,
+            # so the check must read the targeted host's line only.
+            echo "    host=\"\"; prev=\"\""
+            echo '    for a in "$@"; do case "$prev" in --hostname) host="$a" ;; esac; prev="$a"; done'
+            echo '    if [ "$host" = "github.com" ]; then'
+            echo "        echo \"  - Token scopes: 'gist', 'repo'\""
+            echo '    else'
+            echo "        echo \"  - Token scopes: 'gist', 'project', 'repo'\""
+            echo '    fi'
+            echo '    exit 0'
+            ;;
         no-active-flag)
             # gh predates --active (pre-2.40): the flag is a usage error, which
             # must not read as a failed login.
@@ -219,6 +232,16 @@ case "$out" in
 *) fail "expected the active account's missing scope to be reported, got: ${out}" ;;
 esac
 
+echo "==> another host's scopes cannot answer for the targeted one"
+# The scopes of an account on an unrelated host say nothing about the API calls
+# this repo makes.
+out="$(run_gh_section other-host-has-scope)"
+case "$out" in
+*"token has 'project'"*) fail "read the targeted host's scopes, not every host's: ${out}" ;;
+*"lacks 'project'"*) ;;
+*) fail "expected the targeted host's missing scope to be reported, got: ${out}" ;;
+esac
+
 echo "==> gh without --active falls back instead of reading as unauthenticated"
 out="$(run_gh_section no-active-flag)"
 case "$out" in
@@ -242,6 +265,26 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
     esac
 else
     echo "    (skipped: no timeout binary — the probe is unbounded here)"
+fi
+
+echo "==> the session-start hook allows more time than this section can spend"
+# A coupling that rots silently, and whose failure is total rather than partial:
+# status.sh buffers each section before printing it (section_box reads all of its
+# input first), so an outer deadline that fires mid-section discards everything
+# the section was about to report — including the board-writes line. The section
+# spends up to NETWORK_TIMEOUT on the auth probe and then up to NETWORK_TIMEOUT
+# again on the PR/run probes, so the hook must allow more than twice the probe
+# budget. Skipped where the hook is not generated (no devcontainer).
+hook=".devcontainer/config/claude-hooks/session-start-context.sh"
+if [ -f "$hook" ]; then
+    budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:gh.*/\1/p' "$hook")"
+    probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
+    [ -n "$budget" ] || fail "could not read the status:gh timeout out of ${hook}"
+    [ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
+    [ "$budget" -gt "$((probe * 2))" ] ||
+        fail "hook allows ${budget}s but the section can spend $((probe * 2))s on probes alone — the board-writes line is lost first"
+else
+    echo "    (skipped: no devcontainer hook in this profile)"
 fi
 
 echo "==> the check never runs the setup section's Projects query"
