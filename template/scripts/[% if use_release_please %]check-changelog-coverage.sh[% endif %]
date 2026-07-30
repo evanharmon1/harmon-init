@@ -34,8 +34,8 @@ fi
 # Validate that the tag (whether explicit or resolved) actually exists — a
 # typo in an explicit tag should exit 2 (configuration error), not 1
 # (swallowed entries) or exit silently on a pipefail.
-if ! git rev-parse --verify "${tag}^{commit}" >/dev/null 2>&1; then
-    echo "check-changelog-coverage: ${tag} is not a valid tag or commit" >&2
+if ! git rev-parse --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+    echo "check-changelog-coverage: ${tag} is not a valid tag" >&2
     exit 2
 fi
 
