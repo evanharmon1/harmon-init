@@ -178,6 +178,41 @@ has_scope() {
     esac
 }
 
+# gh_target_host — the host gh will actually use for THIS repository.
+#
+# Narrowing `gh auth status --hostname` is only safe against the same host the
+# repo-aware calls use. Forcing github.com disowns a valid Enterprise login
+# (`gh auth login --hostname ghe.example.com`, no GH_HOST exported): the probe
+# exits non-zero, which this script reads as "not authenticated" and skips the
+# whole GitHub section — while `gh pr list` and `gh run list` would have worked
+# fine against that remote. So resolve it the way gh documents: GH_HOST is the
+# override for when a host "cannot be determined from repository context", which
+# means repository context comes first when GH_HOST is unset.
+#
+# Local and network-free — the remote URL is the context. github.com only as a
+# last resort, when there is no remote to read.
+gh_target_host() {
+    local url host=""
+    if [[ -n "${GH_HOST:-}" ]]; then
+        printf '%s' "${GH_HOST}"
+        return 0
+    fi
+    url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    case "${url}" in
+    *://*)                 # scheme://[user@]host[:port]/path
+        host="${url#*://}" # drop the scheme
+        host="${host#*@}"  # drop any userinfo
+        host="${host%%/*}" # drop the path
+        host="${host%%:*}" # drop any port
+        ;;
+    *@*:*) # scp-like: user@host:owner/repo
+        host="${url#*@}"
+        host="${host%%:*}"
+        ;;
+    esac
+    printf '%s' "${host:-github.com}"
+}
+
 # ── Parallel data collection ────────────────────────────────────────────────
 
 PID_PRS=""
@@ -205,11 +240,11 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     # read below cannot tell them apart — so narrow it to one credential from
     # both directions: --active (not a second, inactive account on this host)
     # and --hostname (not an unrelated host's account, whose scopes say nothing
-    # about the API calls this repo makes). A GitHub Enterprise user who has not
-    # set GH_HOST gets no match and the check reports "unknown", which is the
-    # right answer — better than a green light earned by the wrong token.
+    # about the API calls this repo makes). The host comes from the repository,
+    # not a github.com assumption — see gh_target_host.
+    gh_host="$(gh_target_host)"
     run_timeout "${NETWORK_TIMEOUT}" gh auth status --active \
-        --hostname "${GH_HOST:-github.com}" >"${GH_AUTH_FILE}" 2>&1 ||
+        --hostname "${gh_host}" >"${GH_AUTH_FILE}" 2>&1 ||
         gh_auth_rc=$?
     if grep -qi 'unknown flag' "${GH_AUTH_FILE}" 2>/dev/null; then
         # gh predates --active (added in 2.40). Fall back rather than read a
@@ -218,7 +253,7 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
         # one host means one account and the narrowing is complete anyway.
         gh_auth_rc=0
         run_timeout "${NETWORK_TIMEOUT}" gh auth status \
-            --hostname "${GH_HOST:-github.com}" >"${GH_AUTH_FILE}" 2>&1 ||
+            --hostname "${gh_host}" >"${GH_AUTH_FILE}" 2>&1 ||
             gh_auth_rc=$?
     fi
     # 124 is `timeout`'s own "deadline hit" code. Distinguished from a real

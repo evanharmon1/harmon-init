@@ -73,7 +73,27 @@ done
 # targets GH_HOST or github.com). Older gh (pre-2.40) has no --active — fall back
 # rather than read a usage error as a missing scope; multi-account per host
 # arrived with 2.40, so one host there already means one account.
-gh_host="${GH_HOST:-github.com}"
+# The host this run will target. GH_HOST is gh's override for when a host cannot
+# be determined from repository context, so context comes first when it is unset —
+# forcing github.com would narrow the probe to a host the API calls below do not
+# use, and reject a valid Enterprise login over it.
+gh_host="${GH_HOST:-}"
+if [ -z "$gh_host" ]; then
+    remote_url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    case "$remote_url" in
+    *://*)
+        gh_host="${remote_url#*://}"
+        gh_host="${gh_host#*@}"
+        gh_host="${gh_host%%/*}"
+        gh_host="${gh_host%%:*}"
+        ;;
+    *@*:*)
+        gh_host="${remote_url#*@}"
+        gh_host="${gh_host%%:*}"
+        ;;
+    esac
+fi
+gh_host="${gh_host:-github.com}"
 auth_report="$(gh auth status --active --hostname "$gh_host" 2>&1 || true)"
 case "$auth_report" in
 *"unknown flag"*) auth_report="$(gh auth status --hostname "$gh_host" 2>&1 || true)" ;;

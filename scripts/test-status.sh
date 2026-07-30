@@ -38,9 +38,18 @@ done
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
+# A board repo whose remote is a GitHub Enterprise host, and which exports no
+# GH_HOST — the case where forcing github.com disowns a valid login.
+mkdir -p "${TMP}/enterprise/scripts"
+cp "${status}" "${TMP}/enterprise/scripts/status.sh"
+: >"${TMP}/enterprise/scripts/setup-github-project.sh"
+git -C "${TMP}/enterprise" init -q
+git -C "${TMP}/enterprise" remote add origin git@ghe.example.com:owner/repo.git
+
 WITH_BOARD="${TMP}/with-board/scripts/status.sh"
 NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
+ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -115,6 +124,20 @@ make_stub() {
             # environment. Same override problem as GH_TOKEN, different name.
             echo '    echo "  X Failed to log in using token (GH_ENTERPRISE_TOKEN)"'
             echo "    echo \"  - Token scopes: 'gist', 'repo'\""
+            echo '    exit 0'
+            ;;
+        records-hostname)
+            # Records the --hostname it was handed, and only authenticates for
+            # the Enterprise host — so forcing github.com fails the probe and
+            # takes the whole section down, exactly as the real gh would.
+            echo '    host=""; prev=""'
+            echo '    for a in "$@"; do case "$prev" in --hostname) host="$a" ;; esac; prev="$a"; done'
+            echo '    echo "$host" >>"$STUB_HOSTS"'
+            echo '    if [ "$host" != "ghe.example.com" ]; then'
+            echo '        echo "You are not logged into any GitHub hosts." >&2'
+            echo '        exit 1'
+            echo '    fi'
+            echo "    echo \"  - Token scopes: 'gist', 'project', 'repo'\""
             echo '    exit 0'
             ;;
         other-host-has-scope)
@@ -267,6 +290,33 @@ case "$out" in
 *"reissue GH_ENTERPRISE_TOKEN"*) ;;
 *) fail "expected the Enterprise env-token remedy, got: ${out}" ;;
 esac
+
+echo "==> the auth host comes from the repository, not a github.com assumption"
+# A GHES repo with no GH_HOST exported. Forcing github.com would fail the probe,
+# which this script reads as "not authenticated" — losing the PR list, the CI
+# list, and the board-writes line all at once, while `gh pr list` would have
+# worked fine against that remote.
+STUB_HOSTS="${TMP}/hosts.txt"
+export STUB_HOSTS
+: >"${STUB_HOSTS}"
+out="$(run_gh_section records-hostname "${ENTERPRISE}")"
+grep -qx 'ghe.example.com' "${STUB_HOSTS}" ||
+    fail "probe used $(tr '\n' ' ' <"${STUB_HOSTS}") — expected the remote's host"
+case "$out" in
+*"not authenticated"*) fail "a valid Enterprise login must not read as unauthenticated: ${out}" ;;
+*"token has 'project'"*) ;;
+*) fail "expected the Enterprise section to render, got: ${out}" ;;
+esac
+
+echo "==> GH_HOST still overrides the repository's remote"
+: >"${STUB_HOSTS}"
+out="$(
+    make_stub records-hostname
+    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 \
+        GH_HOST=ghe.example.com "${WITH_BOARD}" gh 2>&1
+)"
+grep -qx 'ghe.example.com' "${STUB_HOSTS}" ||
+    fail "GH_HOST must win over the remote, got: $(tr '\n' ' ' <"${STUB_HOSTS}")"
 
 echo "==> another host's scopes cannot answer for the targeted one"
 # The scopes of an account on an unrelated host say nothing about the API calls
