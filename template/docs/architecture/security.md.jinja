@@ -245,7 +245,7 @@ Write it down rather than re-derive it under pressure:
 - **The selected repos** — at the level each collaborator grant allows, capped by
   the permission table. It can push branches, open PRs, and comment. It **cannot**
   merge `main` (ruleset + CODEOWNERS), edit workflows, or change settings.
-[% if github_org != author_git_provider_username %]
+[% if github_org != author_git_provider_username and project_management == 'github' %]
 - **Plus every project and variable in the org** — because **organization
   permissions are org-scoped and the selected-repo list does not bound them**. A
   repository permission stops at the repos you picked; an organization permission
@@ -253,6 +253,12 @@ Write it down rather than re-derive it under pressure:
   and Projects (board writes for the claim lifecycle — the write is deliberate,
   and its cost is that a compromised token can write to every board the org
   owns). Revisit the day the org holds a repo the bot should not see.
+[% elif github_org != author_git_provider_username %]
+- **Plus every variable in the org** — because **organization
+  permissions are org-scoped and the selected-repo list does not bound them**. A
+  repository permission stops at the repos you picked; an organization permission
+  does not. That reach is accepted for Variables (non-secret config, read-only)
+  and is worth revisiting the day the org holds a repo the bot should not see.
 [% endif %]
 
 **Read is cheap; write is the line.** Variables are read-only deliberately:
