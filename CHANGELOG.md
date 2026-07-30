@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.8.4](https://github.com/evanharmon1/harmon-init/compare/v4.8.3...v4.8.4) (2026-07-30)
+
+
+### Bug Fixes
+
+* **template:** make a missing project scope visible before a claim depends on it ([#474](https://github.com/evanharmon1/harmon-init/issues/474)) ([f2c3bec](https://github.com/evanharmon1/harmon-init/commit/f2c3becb8169fee412a0a58d64c5f9a2d2b82538))
+
 ## [4.8.3](https://github.com/evanharmon1/harmon-init/compare/v4.8.2...v4.8.3) (2026-07-30)
 
 
