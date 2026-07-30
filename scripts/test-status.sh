@@ -110,6 +110,13 @@ make_stub() {
             echo "    echo \"  - Token scopes: 'gist', 'repo'\""
             echo '    exit 0'
             ;;
+        enterprise-env-token)
+            # GH_ENTERPRISE_TOKEN is how gh authenticates against GHES from the
+            # environment. Same override problem as GH_TOKEN, different name.
+            echo '    echo "  X Failed to log in using token (GH_ENTERPRISE_TOKEN)"'
+            echo "    echo \"  - Token scopes: 'gist', 'repo'\""
+            echo '    exit 0'
+            ;;
         other-host-has-scope)
             # Two hosts; only the unrelated one holds 'project'. A stub that
             # ignores --hostname proves the cross-host bug; this one honours it,
@@ -252,6 +259,15 @@ case "$out" in
 *) fail "expected an env-token remedy, got: ${out}" ;;
 esac
 
+echo "==> an Enterprise env token gets the same treatment as GH_TOKEN"
+# The override problem is a property of environment tokens, not of github.com.
+out="$(run_gh_section enterprise-env-token)"
+case "$out" in
+*"gh auth refresh -s project"*) fail "gh auth refresh cannot change an env token: ${out}" ;;
+*"reissue GH_ENTERPRISE_TOKEN"*) ;;
+*) fail "expected the Enterprise env-token remedy, got: ${out}" ;;
+esac
+
 echo "==> another host's scopes cannot answer for the targeted one"
 # The scopes of an account on an unrelated host say nothing about the API calls
 # this repo makes.
@@ -286,6 +302,24 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
 else
     echo "    (skipped: no timeout binary — the probe is unbounded here)"
 fi
+
+echo "==> no user-facing message hardcodes the refresh remedy"
+# The remedy is derived from the credential source once, because `gh auth refresh`
+# is wrong for an env-provided or fine-grained token. Every message must use that
+# derivation — a hardcoded copy is how one call site silently drifts back to
+# advice that cannot work, and the setup section (which needs live GitHub data to
+# render) cannot be driven by the stub above. So assert it statically instead:
+# the literal may appear only in a comment or in the derivation itself.
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+    *"#"*"gh auth refresh"*) continue ;; # a comment explaining the rule
+    *GH_REMEDY=*) continue ;;            # the derivation itself
+    *) fail "hardcoded refresh remedy — use \${GH_REMEDY}: ${line}" ;;
+    esac
+done <<EOF
+$(grep -n 'gh auth refresh' "${status}" || true)
+EOF
 
 echo "==> the session-start hook allows more time than this section can spend"
 # A coupling that rots silently, and whose failure is total rather than partial:

@@ -196,7 +196,10 @@ GH_AUTH_FILE="${TMPDIR_STATUS}/auth.txt"
 : >"${GH_AUTH_FILE}"
 GH_AUTHED=false
 GH_AUTH_TIMEDOUT=false
-if should_show "gh"; then
+# The setup section needs this too — it reports the same credential's ability to
+# read the board, and used to run its own `gh auth status` to decide whether to
+# render at all. One probe, two consumers.
+if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     gh_auth_rc=0
     # `gh auth status` reports every account on every host, and the scope line
     # read below cannot tell them apart — so narrow it to one credential from
@@ -228,7 +231,44 @@ if should_show "gh"; then
     esac
 fi
 
-if [[ "${GH_AUTHED}" == true ]]; then
+# The token's scope line, and how to give THIS credential Projects write access.
+# Derived once, because every call site below would otherwise guess — and a
+# remedy that cannot work is worse than none. `gh auth refresh` edits only the
+# STORED classic credential: it cannot touch an env-provided token (which
+# overrides the stored one, on github.com and Enterprise alike) and cannot add a
+# fine-grained or App token's permissions, which are not OAuth scopes at all.
+GH_SCOPES_LINE=""
+GH_REMEDY="run: gh auth refresh -s project"
+if [[ -s "${GH_AUTH_FILE}" ]]; then
+    GH_SCOPES_LINE="$(grep -i 'token scopes:' "${GH_AUTH_FILE}" 2>/dev/null || true)"
+    case "$(<"${GH_AUTH_FILE}")" in
+    *"(GH_TOKEN)"*)
+        GH_REMEDY="reissue GH_TOKEN with Projects write — an env token overrides gh auth refresh"
+        ;;
+    *"(GITHUB_TOKEN)"*)
+        GH_REMEDY="reissue GITHUB_TOKEN with Projects write — an env token overrides gh auth refresh"
+        ;;
+    *"(GH_ENTERPRISE_TOKEN)"*)
+        GH_REMEDY="reissue GH_ENTERPRISE_TOKEN with Projects write — an env token overrides gh auth refresh"
+        ;;
+    *"(GITHUB_ENTERPRISE_TOKEN)"*)
+        GH_REMEDY="reissue GITHUB_ENTERPRISE_TOKEN with Projects write — an env token overrides gh auth refresh"
+        ;;
+    *)
+        # Not an env token. A scope line with no scopes in it is a fine-grained
+        # PAT or an App installation token — a permission, granted at the source.
+        if [[ -n "${GH_SCOPES_LINE}" && "${GH_SCOPES_LINE}" != *"'"* ]]; then
+            GH_REMEDY="set its Projects permission where the token was issued"
+        fi
+        ;;
+    esac
+fi
+
+# `should_show "gh"` as well as the auth flag: the auth probe above now also runs
+# for the setup section, and these two lists are read only by the GitHub section.
+# Without the guard, `task status:setup` would spend two network calls fetching
+# data nothing displays.
+if [[ "${GH_AUTHED}" == true ]] && should_show "gh"; then
     run_timeout "${NETWORK_TIMEOUT}" gh pr list --limit 10 \
         --json number,title,headRefName \
         >"${TMPDIR_STATUS}/prs.json" 2>/dev/null &
@@ -374,47 +414,28 @@ if should_show "gh"; then
             # stops being read where it matters.
             if [[ -f scripts/setup-github-project.sh ]]; then
                 echo ""
-                # Read the file directly — no pipe. A `grep -q` consumer on a
-                # pipeline can take SIGPIPE, which `pipefail` turns into a
-                # failure of the whole pipeline.
-                gh_scopes="$(grep -i 'token scopes:' "${GH_AUTH_FILE}" 2>/dev/null || true)"
-                # `gh auth refresh` edits the STORED credential, and an
-                # env-provided token overrides that — so telling someone running
-                # on GH_TOKEN to refresh is advice that cannot work. gh names the
-                # source in its report, so use it to pick the remedy once rather
-                # than repeating a guess in each branch below.
-                gh_remedy="run: gh auth refresh -s project"
-                case "$(<"${GH_AUTH_FILE}")" in
-                *"(GH_TOKEN)"*)
-                    gh_remedy="reissue GH_TOKEN with the 'project' scope (an env token overrides gh auth refresh)"
-                    ;;
-                *"(GITHUB_TOKEN)"*)
-                    gh_remedy="reissue GITHUB_TOKEN with the 'project' scope (an env token overrides gh auth refresh)"
-                    ;;
-                esac
-                if [[ -z "${gh_scopes}" ]]; then
+                if [[ -z "${GH_SCOPES_LINE}" ]]; then
                     checkline unknown "Project board writes" \
                         "could not read token scopes from gh auth status"
-                elif [[ "${gh_scopes}" != *"'"* ]]; then
+                elif [[ "${GH_SCOPES_LINE}" != *"'"* ]]; then
                     # A fine-grained PAT or App token carries permissions, not
                     # OAuth scopes, and gh reports the line with no scopes in
                     # it. Such a token may well be able to write Projects — so
-                    # this is genuinely unknown, and `gh auth refresh` is the
-                    # wrong advice: an env-provided GH_TOKEN cannot be refreshed
-                    # at all. The generated bot credential is exactly this case.
+                    # this is genuinely unknown rather than a failure. The
+                    # generated bot credential is exactly this case.
                     checkline unknown "Project board writes" \
-                        "no OAuth scopes reported (fine-grained or App token) — set its Projects permission where it was issued"
-                elif has_scope "${gh_scopes}" project; then
+                        "no OAuth scopes reported (fine-grained or App token) — ${GH_REMEDY}"
+                elif has_scope "${GH_SCOPES_LINE}" project; then
                     checkline ok "Project board writes" "token has 'project'"
-                elif has_scope "${gh_scopes}" read:project; then
+                elif has_scope "${GH_SCOPES_LINE}" read:project; then
                     # Called out separately because it is the state most easily
                     # mistaken for working: `--show` reads the card fine, so the
                     # board looks reachable right up to the write that moves it.
                     checkline no "Project board writes" \
-                        "'read:project' is read-only — claims cannot move the board; ${gh_remedy}"
+                        "'read:project' is read-only — claims cannot move the board; ${GH_REMEDY}"
                 else
                     checkline no "Project board writes" \
-                        "token lacks 'project' — claims cannot move the board; ${gh_remedy}"
+                        "token lacks 'project' — claims cannot move the board; ${GH_REMEDY}"
                 fi
             fi
         } | section_box
@@ -533,7 +554,9 @@ if [[ "${SECTION}" == "setup" ]]; then
         fi
     } | section_box
 
-    if ! gh auth status &>/dev/null 2>&1; then
+    # Reuses the single bounded probe above rather than making a second,
+    # unbounded `gh auth status` call to learn the same thing.
+    if [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- run 'gh auth login')" | section_box
     else
         d="${TMPDIR_STATUS}"
@@ -811,7 +834,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                     fi
                 else
                     checkline unknown "GitHub Project linked" \
-                        "unreadable — run: gh auth refresh -s project"
+                        "unreadable — ${GH_REMEDY}"
                 fi
                 if [ -f scripts/setup-github-labels.sh ]; then
                     # The expected set is read out of the setup script's own

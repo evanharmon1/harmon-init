@@ -98,6 +98,14 @@ case "$scopes_line" in
         remedy="    Reissue the token in GITHUB_TOKEN with the 'project' scope.
     (gh auth refresh cannot help: the environment token overrides the stored one.)"
         ;;
+    *"(GH_ENTERPRISE_TOKEN)"*)
+        remedy="    Reissue the token in GH_ENTERPRISE_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
+    *"(GITHUB_ENTERPRISE_TOKEN)"*)
+        remedy="    Reissue the token in GITHUB_ENTERPRISE_TOKEN with the 'project' scope.
+    (gh auth refresh cannot help: the environment token overrides the stored one.)"
+        ;;
     esac
     printf '%s\n\n%s\n\n%s\n\n%s\n' \
         "This token cannot write GitHub Projects: 'gh auth status' reports no 'project' scope." \
