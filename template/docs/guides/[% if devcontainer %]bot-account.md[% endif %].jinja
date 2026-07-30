@@ -179,9 +179,13 @@ rebuild the devcontainer so the env-file re-reads it. Nothing else references th
 value, which is the point of keeping it in exactly one place.
 
 A leaked bot PAT is bounded but not harmless: it can push branches and open PRs
-on the selected repos. It **cannot** merge `main`, edit workflows, or change repo
+on the selected repos[% if github_org != author_git_provider_username and project_management == 'github' %],
+and with Projects write it can mutate cards and fields on every org board[% endif %].
+It **cannot** merge `main`, edit workflows, or change repo
 settings. Revoke, re-issue, and check the repos' branch and PR lists for anything
-you did not create.
+you did not create[% if github_org != author_git_provider_username and project_management == 'github' %],
+and audit every reachable project board for unexpected card moves or field
+changes[% endif %].
 
 ## What the bot cannot do — by construction
 
