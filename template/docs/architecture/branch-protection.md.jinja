@@ -98,7 +98,7 @@ permissions and nothing more:
 > hold it — it was briefly offered, then withdrawn. Don't go looking for it: CI
 > state comes from **Actions** (workflow runs) and **Commit statuses** (the PR
 > rollup), which is what the tooling actually reads.
-[% if github_org != author_git_provider_username and project_management == 'github' %]
+[% if devcontainer and github_org != author_git_provider_username and project_management == 'github' %]
 Plus these **organization** permissions:
 
 | Permission | Level | Purpose |
@@ -113,7 +113,7 @@ Plus these **organization** permissions:
 > deliberately so the claim lifecycle can move cards; the cost is that a
 > compromised token can write to every board the org owns, not just this
 > repo's. Revisit the day the org holds a repo the bot should not see.
-[% elif github_org != author_git_provider_username %]
+[% elif devcontainer and github_org != author_git_provider_username %]
 Plus this **organization** permission:
 
 | Permission | Level | Purpose |
@@ -126,11 +126,11 @@ Plus this **organization** permission:
 > repos deliberately left off that list. Read access to non-secret CI config
 > is low impact and gives agents context they can use.
 [% endif %]
-[% if github_org != author_git_provider_username and project_management == 'github' %]
+[% if devcontainer and github_org != author_git_provider_username and project_management == 'github' %]
 **Read is cheap; write is the line — and Projects crosses it deliberately.**
 Variables stay read-only for a reason that is not squeamishness — see the
 exclusions below.
-[% elif github_org != author_git_provider_username %]
+[% elif devcontainer and github_org != author_git_provider_username %]
 **Read is cheap; write is the line.** Variables are read-only above for a
 reason that is not squeamishness — see the exclusions below.
 [% else %]
