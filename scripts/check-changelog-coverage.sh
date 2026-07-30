@@ -19,7 +19,13 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 changelog="${repo_root}/CHANGELOG.md"
 
-tag="${1:-$(git describe --tags --abbrev=0 2>/dev/null)}"
+# Resolve the tag separately from the parameter expansion so `set -e` does not
+# abort the script when git-describe fails in a tagless repo — the intent is
+# for the guard below to handle that case gracefully.
+tag="${1:-}"
+if [ -z "$tag" ]; then
+    tag="$(git describe --tags --abbrev=0 2>/dev/null)" || true
+fi
 if [ -z "$tag" ]; then
     echo "check-changelog-coverage: no tags in this repo — nothing to check"
     exit 0
@@ -65,7 +71,10 @@ fi
 # In a merge-commit workflow the detector would miss entries; that is a known
 # limitation.
 commits="$(git log --no-merges --format='%h %s' "${prev_tag}..${tag}" \
-    -E --grep='^(feat|fix)(\(.+\))?!?:' 2>/dev/null || true)"
+    -E --grep='^(feat|fix)(\(.+\))?!?:' 2>/dev/null)" || {
+    echo "check-changelog-coverage: unable to list commits in ${prev_tag}..${tag} — range may not exist in this checkout (shallow clone?)" >&2
+    exit 2
+}
 
 if [ -z "$commits" ]; then
     echo "check-changelog-coverage: no feat/fix commits in ${prev_tag}..${tag}"
