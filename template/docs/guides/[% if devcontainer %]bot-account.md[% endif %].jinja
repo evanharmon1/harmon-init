@@ -123,7 +123,8 @@ access tokens → **Fine-grained tokens** → Generate new token.
 | **Resource owner** | the owner of the repos — `[[ github_org ]]` | Pick the *user* and org repos are unreachable, no matter the permissions. An org may require approval before the token works. |
 | **Repository access** | *Only select repositories* — exactly the repos the bot works on | This list **is** the blast radius. Never "All repositories". |
 | **Repository permissions** | the table in [branch-protection.md](../architecture/branch-protection.md#bot-account-pat-permissions), and nothing more | Notably **no Workflows** and **no Administration** — see [security.md](../architecture/security.md). |
-[% if github_org != author_git_provider_username %]| **Organization permissions** | Projects: Read and write · Variables: Read-only | Board writes for claim lifecycle ([project-management.md](../project-management.md)) and CI context. **These are org-scoped — the repo list above does not bound them.** Granting write here reaches every board the org owns; accept that radius deliberately. |
+[% if github_org != author_git_provider_username and project_management == 'github' %]| **Organization permissions** | Projects: Read and write · Variables: Read-only | Board writes for claim lifecycle ([project-management.md](../project-management.md)) and CI context. **These are org-scoped — the repo list above does not bound them.** Granting write here reaches every board the org owns; accept that radius deliberately. |
+[% elif github_org != author_git_provider_username %]| **Organization permissions** | Variables: Read-only | Org-level CI configuration. **These are org-scoped — the repo list above does not bound them.** |
 [% endif %]| **Expiration** | set one; record the date | A token that never expires is a credential you will never rotate. |
 
 Copy the value once — GitHub will not show it again.
