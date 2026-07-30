@@ -106,9 +106,16 @@ issue, and two agents start implementing.
      ```sh
      me="$(gh api user --jq .login)"
      [ -n "$me" ] || { echo 'identity lookup failed — treat as unclaimed'; exit 1; }
-     gh issue view <n> --repo "$repo" --json comments \
-       --jq --arg me "$me" '.comments[] | select(.author.login == $me)'
+     comments="$(gh issue view <n> --repo "$repo" --json comments)" \
+       || { echo 'comment fetch failed — treat as unclaimed'; exit 1; }
+     jq -r --arg me "$me" '.comments[] | select(.author.login == $me)' \
+       <<<"$comments"
      ```
+
+     (External `jq` over a checked fetch — `gh`'s own `--jq` takes a single
+     expression and does not forward jq options like `--arg`, so the inline
+     form cannot run at all; and piping `gh` straight into `jq` would let a
+     failed fetch read as "no matching comment" instead of *unknown*.)
 
      A failed identity lookup is *unknown*, never *mine* — fall through to
      outcome 4 and offer `/preflight` rather than proceeding on an unverified
@@ -197,6 +204,16 @@ git remote set-head "$remote" --auto
 default="$(git symbolic-ref --short "refs/remotes/$remote/HEAD")"
 git switch -c <branch> "$default"
 ```
+
+**If the branch you just created differs from the branch the claim comment
+recorded, refresh the claim.** `/preflight` usually ran before this step
+existed, so its comment names the default branch or an intended name — and
+that line is a parsed contract now: the claim-release workflow releases an
+unmerged PR's claim only when the PR's head matches it
+(`track-work/references/claim-lifecycle.md`). Post a new `Claiming —` comment
+with the real branch and the same record values (latest trusted claim wins,
+so this becomes the claim of record; nothing else changed, so the record
+lines carry over verbatim). Skip this when the names already match.
 
 The default branch is not always named `main`, which is why it is resolved
 rather than assumed.
