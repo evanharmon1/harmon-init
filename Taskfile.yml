@@ -603,6 +603,15 @@ tasks:
       - git push origin {{.NEXT_TAG}}
       - gh release create {{.NEXT_TAG}} --generate-notes --title "{{.NEXT_TAG}}"
 
+  release:check-coverage:
+    desc: "Detect feat/fix commits a tag ships that its changelog section omits (swallowed entries from a release-please merge race)"
+    vars:
+      TAG: '{{default "" .CLI_ARGS}}'
+    env:
+      TAG: '{{.TAG}}'
+    cmds:
+      - ./scripts/check-changelog-coverage.sh "$TAG"
+
   # ── Clean ─────────────────────────────────────────────────────
   clean:
     desc: Remove build artifacts and caches
