@@ -211,6 +211,21 @@ use_codex_review:
     defaults off.
   default: no
 
+use_codex_cloud_review:
+  type: bool
+  help: >-
+    CODEX CLOUD REVIEW: Require a terminal Codex review attributable to every
+    PR head before shepherding can report green? Defaults off and requires
+    CODEX REVIEW. A maintainer must connect the repository to Codex cloud
+    review through GitHub. Free-tier access is not assumed: availability and
+    quotas depend on the maintainer's ChatGPT plan, and paid access may be
+    required. Private repositories require explicit GitHub connector
+    permission. This is a required shepherd signal, not a GitHub status check;
+    after two unavailable attempts the agent stops and escalates.
+  default: no
+  when: "[[ use_codex_review ]]"
+  validator: "[% if use_codex_cloud_review and not use_codex_review %]Enable CODEX REVIEW before CODEX CLOUD REVIEW.[% endif %]"
+
 use_coderabbit:
   type: bool
   help: >-

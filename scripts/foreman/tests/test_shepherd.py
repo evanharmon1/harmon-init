@@ -140,6 +140,7 @@ class MergeReadiness(unittest.TestCase):
             "mergeStateStatus": merge_state,
             "mergeable": mergeable,
             "statusCheckRollup": [],
+            "labels": [],
         }
         gh.review_threads.return_value = []
         gh.viewer.return_value = "bot"
@@ -158,6 +159,35 @@ class MergeReadiness(unittest.TestCase):
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "ready")
         gh.label_own_pr.assert_called_once_with(23, add=["ready-to-merge"])
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_cloud_review_requirement_fails_closed_to_manual_shepherd(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        cfg = Config(require_codex_cloud_review=True)
+        gh.pr_status.return_value["labels"] = [{"name": "ready-to-merge"}]
+        work = shepherd_pr(gh, cfg, Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("manual shepherd", work.detail)
+        gh.label_own_pr.assert_called_once_with(23, remove=["ready-to-merge"])
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_cloud_review_requirement_removes_readiness_while_checks_run(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_status.return_value["statusCheckRollup"] = [
+            {"status": "IN_PROGRESS", "conclusion": ""}
+        ]
+        gh.pr_status.return_value["labels"] = [{"name": "ready-to-merge"}]
+
+        work = shepherd_pr(
+            gh,
+            Config(require_codex_cloud_review=True),
+            Path("."),
+            {"number": 23, "_unit": 17},
+            [],
+        )
+
+        self.assertEqual(work.state, "settling")
+        gh.label_own_pr.assert_called_once_with(23, remove=["ready-to-merge"])
 
 
 class SignatureCatalog(unittest.TestCase):

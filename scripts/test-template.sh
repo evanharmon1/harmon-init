@@ -145,6 +145,7 @@ full)
         --data snyk_scan_schedule=weekly
         --data release_content_paths="src docs"
         --data use_codex_review=true
+        --data use_codex_cloud_review=true
         --data use_coderabbit=true
     )
     ;;
@@ -162,6 +163,7 @@ meta)
         --data project_management=linear
         --data snyk_scan_schedule=daily
         --data use_codeql=false
+        --data use_codex_review=true
     )
     copier_flags+=(--skip-tasks)
     ;;
@@ -839,19 +841,19 @@ else
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
 fi
 
-# ── 9d3. codex review renders per use_codex_review (default off) ────
-# Only `full` opts in; every other profile uses the default (off). The
-# tasks, helper scripts, project Codex config, Claude plugin enablement,
-# and guide are all conditional — assert they appear/disappear together so
-# a broken gate can't ship dead weight into opted-out repos or drop the
-# wiring from opted-in ones.
-if [ "$profile" = "full" ]; then
+# ── 9d3. local/cloud Codex review render independently (both default off) ────
+# `meta` opts into local review only; `full` opts into local + cloud review.
+# Every other profile leaves both off. This covers the legacy local-only
+# behavior as well as the stricter explicit cloud-review contract.
+if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
     [ -x scripts/codex-review.sh ] || err "scripts/codex-review.sh missing or not executable (use_codex_review=true)"
     [ -x scripts/codex-gate.sh ] || err "scripts/codex-gate.sh missing or not executable (use_codex_review=true)"
     [ -x scripts/test-codex-review.sh ] || err "scripts/test-codex-review.sh missing or not executable (use_codex_review=true)"
     grep -q 'test:codex-review:' Taskfile.yml || err "test:codex-review task missing (use_codex_review=true)"
     [ -f .codex/config.toml ] || err ".codex/config.toml missing (use_codex_review=true)"
     [ -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md missing (use_codex_review=true)"
+    grep -Fq 'use_codex_cloud_review' docs/guides/codex-review.md ||
+        err "Codex guide missing optional cloud review setup (use_codex_review=true)"
     grep -q 'challenge:codex:' Taskfile.yml || err "challenge:codex task missing (use_codex_review=true)"
     grep -q 'codex:gate:enable:' Taskfile.yml || err "codex:gate:enable task missing (use_codex_review=true)"
     grep -q '"codex@openai-codex": true' .claude/settings.json || err ".claude/settings.json missing codex plugin enablement (use_codex_review=true)"
@@ -862,6 +864,27 @@ else
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
+fi
+if [ "$profile" = "full" ]; then
+    grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
+    grep -Fq 'headRefOid' AGENTS.md || err "AGENTS missing current-head Codex shepherd contract (use_codex_cloud_review=true)"
+    grep -Fq 'exact trigger comment' AGENTS.md || err "AGENTS permits unbound Codex reactions (use_codex_cloud_review=true)"
+    grep -Fq 'comment ID returned for that trigger' AGENTS.md || err "AGENTS does not retain the Codex trigger comment ID"
+    grep -Fq 'expected Codex bot/App' AGENTS.md || err "AGENTS missing Codex result actor authentication (use_codex_cloud_review=true)"
+    grep -Fq 'Reviewed commit:' AGENTS.md || err "AGENTS missing commit-bound Codex result contract (use_codex_cloud_review=true)"
+    grep -Fq 'If both attempts' AGENTS.md &&
+        grep -Fq 'are incomplete, stop and escalate without reporting green' AGENTS.md ||
+        err "AGENTS missing bounded Codex retry contract (use_codex_cloud_review=true)"
+    ! grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS permits CI-only completion despite use_codex_cloud_review=true"
+    grep -Fq 'require_codex_cloud_review = true' .foreman.toml ||
+        err "Foreman does not fail closed for required Codex cloud review"
+else
+    ! grep -Fq '@codex review' AGENTS.md || err "AGENTS rendered Codex shepherd trigger but use_codex_cloud_review is off"
+fi
+if [ "$profile" = "meta" ]; then
+    grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
+    grep -Fq 'require_codex_cloud_review = false' .foreman.toml ||
+        err "Foreman cloud review gate enabled without explicit opt-in"
 fi
 
 # ── 9d4. CodeRabbit renders only when explicitly enabled ───────────

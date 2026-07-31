@@ -160,6 +160,31 @@ something to ask permission for.
   Shepherd-round fixes must pass `task verify` before each push; the local
   challenge/review loops are not re-entered — the post-push cloud/bot review
   is the second-model check at this stage.
+[% if use_codex_cloud_review %]
+  **Require a current-head Codex result.** On initial shepherd entry and
+  immediately after every fix push, capture the PR's current `headRefOid` and
+  the head's push time, then post `@codex review`. Record the request time and
+  the comment ID returned for that trigger. Poll PR reactions, top-level
+  comments, reviews, and inline review comments; fetch trigger reactions by
+  that exact comment ID. A Codex result is terminal for that captured head only
+  when it is either: a clean review or top-level comment authored by the
+  expected Codex bot/App whose `Reviewed commit:` identifies that head; a fresh
+  👍 from that bot on that exact trigger comment, created after both the head
+  push and the review request, with no newer contradictory bot result; or
+  review findings authored by that bot which identify that head and must be
+  adjudicated before the cycle can become clean. Earlier comments, reviews,
+  inline findings, and reactions never count for a newer head. A 👀 is pending,
+  not success; if it disappears without a terminal result, the attempt is
+  incomplete.
+  Give each attempt a full 10–15 minute window. If the first attempt is
+  incomplete, post `@codex review` once more for the same head and run one more
+  full window, recording and using the new trigger comment ID. If both attempts
+  are incomplete, stop and escalate without reporting green. Waiting and the
+  one allowed re-trigger do not consume a shepherd fix round. Immediately
+  before accepting the result or reporting green, fetch `headRefOid` and all
+  four review surfaces again; a changed head invalidates the result and starts
+  a new current-head cycle.
+[% endif %]
   Shepherd is **externally driven** — CI results and other people's comments
   are its input, so it cannot manufacture a round on its own. A round is one
   fix push, or one no-change cycle where everything is answered and nothing
@@ -190,12 +215,22 @@ something to ask permission for.
   the middle of the shepherd stage. Bot and human reviews land *after* checks
   settle, so `gh pr checks --watch` returns at exactly the moment the review
   has not run yet: an empty comment list read at that instant means "not
-  reviewed yet", not "nothing to answer". Wait for **both** signals — let
+  reviewed yet", not "nothing to answer".
+[% if use_codex_cloud_review %]
+  Wait for **both** signals: every check must conclude, and the required
+  current-head Codex cycle above must reach a terminal result. Green CI while
+  that cycle is pending or incomplete is still non-terminal.
+- **Stop at green.** Once checks pass, the current-head Codex cycle is clean,
+  and no review findings are unresolved, report that and stop — merging is
+  always a human decision.
+[% else %]
+  Wait for **both** signals — let
   every check conclude, then give the reviewer a bounded window (~10–15
   minutes) on the current head, and proceed on CI alone only if nothing lands
   in it.
 - **Stop at green.** Once checks pass *and* no review findings are unresolved,
   report that and stop — merging is always a human decision.
+[% endif %]
 
 ## Definition of Done
 
@@ -259,10 +294,17 @@ Setup and mechanics: [docs/guides/codex-review.md](docs/guides/codex-review.md).
   past a BLOCK** — adjudicate the finding or escalate to the maintainer instead.
 
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
-before `task ci`. If Codex cloud review is also connected to the repo, it
-reviews PRs too — it posts inline comments only for high-priority findings;
-a bare 👍 reaction from the Codex bot is its clean pass, and a lone 👀 that
-never resolves means the cloud run failed.
+before `task ci`.
+[% if use_codex_cloud_review %]
+Codex cloud review is also connected to the repo; it reviews PRs too and posts
+inline comments only for high-priority findings.
+During shepherding, accept its clean comments, reviews, or reactions only under
+the current-head cycle above: stale activity is not evidence for the current
+commit, and a lone 👀 that disappears or never resolves is an incomplete
+attempt.
+[% else %]
+These local tasks do not imply that Codex cloud review is installed or required.
+[% endif %]
 
 **Treat Codex findings as hypotheses, not authority.** For every finding:
 

@@ -26,6 +26,14 @@ DEFAULT_INTERVAL_S = 300
 MAX_CONSECUTIVE_FAILURES = 3
 
 
+def human_handoff_messages(report: shepherd_mod.ShepherdReport) -> list[str]:
+    """Durable heartbeat lines for shepherd work that needs a person."""
+    return [
+        f"NEEDS HUMAN #{unit_number}: {detail}"
+        for unit_number, detail in sorted(report.environmental.items())
+    ]
+
+
 def parse_interval(text: str) -> int:
     match = re.fullmatch(r"(\d+)\s*([smh]?)", text.strip())
     if not match:
@@ -90,8 +98,11 @@ def run_watch(
             ready = len(shep.ready_order)
             heartbeat(
                 f"open={len(open_units)} dispatched={dispatched} waiting={waiting} "
-                f"failed={failed} prs-ready={ready} cost=${total_cost:.2f}"
+                f"failed={failed} prs-ready={ready} "
+                f"needs-human={len(shep.environmental)} cost=${total_cost:.2f}"
             )
+            for message in human_handoff_messages(shep):
+                heartbeat(message)
             if shep.ready_order and dispatched == 0 and not failed:
                 if not idle_notified:
                     info(

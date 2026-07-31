@@ -8,6 +8,7 @@
 
 backend = "claude"
 require_approval = true
+require_codex_cloud_review = [[ 'true' if use_codex_cloud_review else 'false' ]]
 inputs = "auto"
 [% if use_node %]
 # `task ci` includes the port-binding `test:e2e` tier, while `task verify` is

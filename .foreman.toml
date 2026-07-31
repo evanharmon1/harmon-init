@@ -7,6 +7,7 @@
 
 backend = "claude"
 require_approval = true
+require_codex_cloud_review = true
 inputs = "auto"
 verify_command = ["task", "ci"]
 max_parallel = 3

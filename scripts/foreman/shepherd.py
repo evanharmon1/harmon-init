@@ -219,6 +219,9 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         title=status["title"],
     )
     remote_name = worktree.remote(cfg)
+    status_labels = {entry["name"] for entry in status.get("labels") or []}
+    if cfg.require_codex_cloud_review and "ready-to-merge" in status_labels:
+        gh.label_own_pr(work.number, remove=["ready-to-merge"])
     checks_state, failed = classify_checks(status.get("statusCheckRollup"))
 
     if checks_state == "pending":
@@ -388,6 +391,12 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         return work
 
     if merge_state == "CLEAN":
+        if cfg.require_codex_cloud_review:
+            work.state, work.detail = (
+                "escalated",
+                "current-head Codex cloud review requires manual shepherd completion",
+            )
+            return work
         gh.label_own_pr(work.number, add=["ready-to-merge"])
         work.state, work.detail = (
             "ready",

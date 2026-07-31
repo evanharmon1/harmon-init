@@ -153,6 +153,12 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
 - **Green + adjudicated + `mergeStateStatus=CLEAN`** → `ready-to-merge` label
   plus a dependency-aware suggested merge order. Foreman performs no merge
   action of any kind.
+- **`require_codex_cloud_review = true`** → Foreman fails closed before that
+  label, removes a stale readiness label from fresh PR status before any
+  state-specific return, and escalates to the manual shepherd procedure, which
+  owns the current-head Codex trigger, bounded retries, and terminal-result
+  validation. Watch mode writes this handoff and its detail to the heartbeat
+  log instead of silently idling.
 
 ## Watch mode and unattended runs
 

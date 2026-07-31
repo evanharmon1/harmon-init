@@ -45,8 +45,9 @@ use_codeql: true
 codeql_languages:
   - python
 
-# This repo dogfoods the Codex second-model review; CodeRabbit stays off.
+# This repo dogfoods local and cloud Codex review; CodeRabbit stays off.
 use_codex_review: true
+use_codex_cloud_review: true
 use_coderabbit: false
 
 devcontainer: true
