@@ -224,7 +224,9 @@ task ci         # full CI mirror
 The full staged loop — including the PR-shepherding rounds — is defined in
 AGENTS.md ("Dev Loop"). If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
-bare 👍 reaction as the clean pass.
+👍 from the pinned Codex bot actor ID `199175422` on the exact
+`@codex review` trigger comment as the clean pass. That reaction must post
+after both the current head was pushed and its review request was created.
 
 ## Finding priorities
 
