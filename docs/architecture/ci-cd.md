@@ -24,6 +24,8 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   weekly or daily cadence. It has only schedule/manual triggers, runs Snyk SAST
   and SCA as advisory second-opinion scans, and is never a required PR check.
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
+- `publish-harmon-devcontainer.yml` — **root-only**: validates and publishes the
+  shared amd64/arm64 toolchain image, then maintains its reviewed pin PR.
 - `release.yml` — release-please maintains the rolling release PR.
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 - `sync-harmon-devkit.yml` — **root-only**: turns a published harmon-devkit
@@ -34,8 +36,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 Most root workflows are the rendered form of a `template/` twin and must be
 edited in lockstep (AGENTS.md, "Dogfood parity"). A few are **root-only**: they
 exist because harmon-init sits inside harmon-platform, and a generated repo has
-no such edge. `close-milestone-on-release.yml` and `sync-harmon-devkit.yml` are
-root-only; they have no `template/` counterpart, and the dogfood checks are
+no such edge. `close-milestone-on-release.yml`, `sync-harmon-devkit.yml`, and
+`publish-harmon-devcontainer.yml` are root-only; they have no `template/`
+counterpart, and the dogfood checks are
 twin-driven (they walk `template/`), so root-only files are correctly invisible
 to them. Do not add a twin to make them "consistent".
 
@@ -123,6 +126,16 @@ broken and you are deliberately falling back to the manual route.
 
 The harmon-devkit side of the edge (emitting the dispatch on release) lives in
 that repository's `release.yml`.
+
+## Shared devcontainer publication
+
+The root-only `images/devcontainer/` producer and
+`publish-harmon-devcontainer.yml` own the common Harmon development toolchain.
+Pull requests build candidates without registry credentials; trusted `main`
+runs publish immutable source tags and validate anonymous pulls before the
+least-privilege CI App token is minted for pin propagation. The complete image,
+overlay, bootstrap, monotonic-update, and rollback contract is documented in
+[devcontainer-image.md](devcontainer-image.md).
 
 ## Authentication
 

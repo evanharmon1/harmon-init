@@ -47,6 +47,7 @@ jobs:
       - run: task test:release-title
       - run: task test:setup-github-project
       - run: task test:sync-devkit-release
+      - run: task test:devcontainer:image:automation
       - run: task test:skills-pin-parity
       - name: Dogfood parity (verbatim template files match their root twins)
         run: task test:dogfood-parity
