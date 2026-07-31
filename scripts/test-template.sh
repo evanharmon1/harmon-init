@@ -146,6 +146,7 @@ full)
         --data release_content_paths="src docs"
         --data use_codex_review=true
         --data use_coderabbit=true
+        --data use_alternative_claude_providers=true
     )
     ;;
 meta)
@@ -924,6 +925,34 @@ else
         err "rendered .devcontainer/Dockerfile has no 'ARG TASK_VERSION=' pin"
     grep -qF 'go-task/task/releases/download/v${TASK_VERSION}/task_linux_' .devcontainer/Dockerfile ||
         err "rendered .devcontainer/Dockerfile does not install task from the pinned release URL"
+fi
+
+# ── 9e2. alt-model providers render per use_alternative_claude_providers ──
+# Only `full` opts in; every other devcontainer-on profile uses the default
+# (off). The provider launcher file is jinja-gated by filename, and the four
+# API keys are gated inside each devcontainer.json initializeCommand — assert
+# both appear/disappear together so a broken gate can't ship paid-provider
+# wiring into opted-out repos, where the bypassPermissions bot would then read
+# live paid keys (AGENTS.md paid-SaaS default-off hard rule). Skipped when
+# devcontainer=false: there is no .devcontainer to gate (asserted by 9e).
+if [ -d .devcontainer ]; then
+    if [ "$profile" = "full" ]; then
+        [ -f .devcontainer/config/claude-providers.sh ] ||
+            err ".devcontainer/config/claude-providers.sh missing (use_alternative_claude_providers=true)"
+        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+            [ -f "$dc_cfg" ] || continue
+            grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY' "$dc_cfg" ||
+                err "$dc_cfg initializeCommand omits the provider keys (use_alternative_claude_providers=true)"
+        done
+    else
+        [ ! -f .devcontainer/config/claude-providers.sh ] ||
+            err ".devcontainer/config/claude-providers.sh rendered but use_alternative_claude_providers is off"
+        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+            [ -f "$dc_cfg" ] || continue
+            ! grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY' "$dc_cfg" ||
+                err "$dc_cfg initializeCommand includes provider keys but use_alternative_claude_providers is off"
+        done
+    fi
 fi
 
 # ── 9f. .prettierignore: web-app-only entries are gated by project type ──

@@ -22,23 +22,41 @@ fi
 ENV_FILE="${1:-.devcontainer/devcontainer.env}"
 shift || true
 
-# All vars this script knows how to manage. Anything in this list but
-# NOT in the per-profile allow-list below is considered forbidden and is
-# unconditionally stripped from the env-file on every run.
-# ANTHROPIC_API_KEY is in the managed list so the eviction loop strips it from
-# the env-file if it ever lands there — it must never be allowed into the
-# container since it silently overrides CLAUDE_CODE_OAUTH_TOKEN.
-ALL_MANAGED_VARS=(TS_AUTHKEY GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY ANTHROPIC_API_KEY)
+# Vars this script knows how to MANAGE. Anything in this list but NOT in the
+# per-profile allow-list below is considered forbidden and is unconditionally
+# stripped from the env-file on every run. The env-file is actively-managed
+# runtime state, NOT user data — TS_AUTHKEY is evicted from the bot profile the
+# same way — so this is secret hygiene, not a mutation of user-owned files (the
+# values themselves live in 1Password; the env-file is only a projection).
+#
+# The managed set has three tiers:
+#   BASE_MANAGED_VARS    — always-on secrets every profile may carry. These form
+#                          the implicit default allow-list (the no-arg fallback).
+#   ANTHROPIC_API_KEY    — managed ONLY for eviction; never allow-listed. It
+#                          silently overrides CLAUDE_CODE_OAUTH_TOKEN, so it must
+#                          never reach the container.
+#   OPT_IN_PROVIDER_KEYS — alt-model keys (use_alternative_claude_providers).
+#                          Managed for eviction but NEVER in the implicit default:
+#                          they reach the env-file only when initializeCommand
+#                          explicitly passes them (the rendered allow-lists, when
+#                          opted in). That stops a no-arg invocation from
+#                          injecting paid opt-in credentials into a default-off
+#                          repo, and a revoked opt-in from leaving live paid keys
+#                          readable in the bypassPermissions bot's env. The keys
+#                          stay safe in 1Password; only the injection stops.
+BASE_MANAGED_VARS=(TS_AUTHKEY GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
+OPT_IN_PROVIDER_KEYS=(KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY)
+ALL_MANAGED_VARS=("${BASE_MANAGED_VARS[@]}" ANTHROPIC_API_KEY "${OPT_IN_PROVIDER_KEYS[@]}")
 
 # Vars this profile is allowed to populate. Caller passes the allow-list
-# as additional args after the env-file path. With no extra args we
-# default to all known vars except ANTHROPIC_API_KEY, which must never
-# be allowed into the container (it silently overrides CLAUDE_CODE_OAUTH_TOKEN).
+# as additional args after the env-file path. With no extra args we default to
+# the always-on base vars only — ANTHROPIC_API_KEY (never allowed) and the opt-in
+# provider keys (only when the caller passes them) are excluded, so the no-arg
+# fallback evicts them rather than injecting them.
 if [ "$#" -gt 0 ]; then
     ALLOWED_VARS=("$@")
 else
-    # Safe default: all managed vars; ANTHROPIC_API_KEY is filtered below.
-    ALLOWED_VARS=("${ALL_MANAGED_VARS[@]}")
+    ALLOWED_VARS=("${BASE_MANAGED_VARS[@]}")
 fi
 
 contains() {

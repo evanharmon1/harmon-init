@@ -83,9 +83,40 @@ Variables per profile:
 | `CLAUDE_CODE_OAUTH_TOKEN` | ✅ | ✅ | Claude Code |
 | `AGENT_DECK_TELEGRAM_KEY` | ✅ | ✅ | agent-deck bridge (optional) |
 | `TS_AUTHKEY` | — | ✅ | Tailscale (dev only) |
+| `KIMI_API_KEY` / `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY` | ✅ | ✅ | alt-model wrappers (opt-in: `use_alternative_claude_providers`) |
 
 `ANTHROPIC_API_KEY` is deliberately **forbidden** — it silently overrides
 `CLAUDE_CODE_OAUTH_TOKEN`, so `init-env.sh` strips it from the env-file.
+
+### Alternative model providers (`claude-kimi` / `claude-deepseek` / `claude-glm`)
+
+Opt in with the `use_alternative_claude_providers` Copier answer (default off;
+asked only when `devcontainer=true`) to ship the `claude-kimi`, `claude-deepseek`,
+and `claude-glm` shell functions. They mirror the host wrappers in harmon-dotfiles:
+each launches `claude` in a subshell with `ANTHROPIC_BASE_URL` +
+`ANTHROPIC_AUTH_TOKEN` pointed at a provider's native Anthropic-compatible
+`/anthropic` endpoint (Moonshot Kimi K3, DeepSeek V4, Z.AI GLM-5.2 — no proxy),
+plus the per-tier `ANTHROPIC_*_MODEL` vars. The functions live in
+`.devcontainer/config/claude-providers.sh` and are sourced from `shell-aliases.sh`.
+
+The provider API keys flow through the same env-file pipeline as everything else
+(`init-env.sh` allow-list → `devcontainer.env` → `--env-file`), so add them to your
+1Password Environments mount. **Both profiles** receive the keys when opted in. The
+bot runs `bypassPermissions`, so be aware a headless agent in the bot can read them —
+this is a deliberate extension of the bot's posture, not an oversight. The wrappers
+themselves are interactive (you type `claude-glm`); a default `agent-deck`/foreman
+launch still invokes plain `claude`.
+
+Two container-specific details differ from the host wrappers:
+
+- Each wrapper `unset`s `CLAUDE_CODE_OAUTH_TOKEN` in its launch subshell (in addition
+  to `ANTHROPIC_API_KEY`). The container sets the OAuth token via its env-file; left
+  set, it would compete with the provider's `ANTHROPIC_AUTH_TOKEN`. Unsetting it
+  guarantees the provider auth wins for that launch only.
+- The `op run` key fallback (used when the env var is absent) re-sources the
+  image-baked `/usr/local/share/devcontainer-config/claude-providers.sh`, not
+  `~/.dotfiles/.functions`. It works only in the dev profile (the bot has no
+  1Password CLI); in the bot the env-file is the only key source.
 
 ### What `init-env.sh` does
 
@@ -115,8 +146,9 @@ repo** (one template serves every repo). To stand this repo up in Coder:
 2. Create a workspace from it and set the parameters:
    - **repo** → `https://github.com/evanharmon1/harmon-init`
    - secrets → `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`
-     (+ `TS_AUTHKEY` if you want Tailscale). Coder passes these into the
-     workspace's host environment, where `init-env.sh` picks them up.
+     (+ `TS_AUTHKEY` if you want Tailscale); `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
+     `DEEPSEEK_API_KEY`, `ZAI_API_KEY` for the alt-model wrappers. Coder passes these
+     into the workspace's host environment, where `init-env.sh` picks them up.
 3. The build pulls `ghcr.io/evanharmon1/harmon-init-devcontainer` from GHCR as a cache. If that
    package is private, give the Coder builder a read token (or make the package
    public); a cache miss only makes the first build slower.

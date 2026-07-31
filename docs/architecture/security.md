@@ -13,7 +13,9 @@ current — it is the reference for "where do secrets live and who can do what".
   (a virtual `.env` mounted over a UNIX pipe — never written to disk or git) or
   `op run`/`op inject`; CI reads from GitHub Actions secrets.
   Devcontainer secrets are `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-  `AGENT_DECK_TELEGRAM_KEY` (+ `TS_AUTHKEY`, dev profile only) — see
+  `AGENT_DECK_TELEGRAM_KEY` (+ `TS_AUTHKEY`, dev profile only), plus the
+  alt-model provider keys (`KIMI_API_KEY`/`MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`,
+  `ZAI_API_KEY`) when opted in — see
   [../guides/devcontainers.md](../guides/devcontainers.md).
   TODO: list the 1Password vault/items this project uses.
 - **Auditable changes.** `main` is protected; changes land via reviewed PRs
