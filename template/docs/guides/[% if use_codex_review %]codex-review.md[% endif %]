@@ -2,11 +2,12 @@
 
 A second AI model — the [OpenAI Codex CLI](https://developers.openai.com/codex/cli)
 — reviews changes in this repo: manual review/challenge tasks, plus an optional
-automatic Claude Code → Codex stop-gate. Everything is local and advisory:
-nothing runs in CI, no PR check depends on Codex, and `verify`/`ci` never
-invoke it. Findings are hypotheses for the primary agent to adjudicate — the
-protocol and the loop caps live in AGENTS.md ("Second-Model
-Review").
+automatic Claude Code → Codex stop-gate. Those tasks are local and advisory:
+nothing runs in CI, no PR check depends on Codex, and `verify`/`ci` never invoke
+it. Repositories can separately opt into a required current-head result from
+Codex cloud review during PR shepherding. Findings are hypotheses for the
+primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
+("Second-Model Review").
 
 ## Setup
 
@@ -29,6 +30,15 @@ Review").
    /plugin install codex@openai-codex
    /codex:setup
    ```
+
+5. **If `use_codex_cloud_review` is enabled, connect this repository to Codex
+   cloud review for PR shepherding.** The Copier opt-in adds the policy but
+   cannot grant GitHub access: a maintainer must connect Codex through ChatGPT
+   and allow the repository in the GitHub connector. Availability and quotas
+   depend on the maintainer's ChatGPT plan, and private repositories require
+   explicit connector access. Cloud review is a required shepherd signal, not
+   a required GitHub status check; if it stays unavailable for both bounded
+   attempts, the agent stops and escalates.
 
 ## Manual reviews
 
@@ -214,7 +224,9 @@ task ci         # full CI mirror
 The full staged loop — including the PR-shepherding rounds — is defined in
 AGENTS.md ("Dev Loop"). If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
-bare 👍 reaction as the clean pass.
+👍 from the pinned Codex bot actor ID `199175422` on the exact
+`@codex review` trigger comment as the clean pass. That reaction must post
+after both the current head was pushed and its review request was created.
 
 ## Finding priorities
 
