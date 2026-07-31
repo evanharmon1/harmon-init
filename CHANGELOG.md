@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.9.0](https://github.com/evanharmon1/harmon-init/compare/v4.8.6...v4.9.0) (2026-07-31)
+
+
+### Features
+
+* add opt-in alternative Claude Code model providers to devcontainers ([#492](https://github.com/evanharmon1/harmon-init/issues/492)) ([6ef79c8](https://github.com/evanharmon1/harmon-init/commit/6ef79c8be27488531e6315b6a122c1e386a03dca))
+
+
+### Bug Fixes
+
+* **template:** require current-head Codex shepherd completion ([#493](https://github.com/evanharmon1/harmon-init/issues/493)) ([d2bc365](https://github.com/evanharmon1/harmon-init/commit/d2bc3659f69cab185343d849d2df9fe20eced0ac))
+
 ## [4.8.6](https://github.com/evanharmon1/harmon-init/compare/v4.8.5...v4.8.6) (2026-07-30)
 
 
