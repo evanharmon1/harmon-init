@@ -1,0 +1,249 @@
+name: Publish Harmon devcontainer
+run-name: ${{ github.actor }} is validating the shared Harmon devcontainer image
+
+# ROOT-ONLY. Generated repositories consume this image but never publish it.
+# The first successful publication stops at the documented bootstrap boundary;
+# after thin consumers exist, the final job maintains one rolling pin PR.
+on:
+  pull_request:
+    paths:
+      - "images/devcontainer/**"
+      - "scripts/test-devcontainer-image.sh"
+      - "scripts/publish-devcontainer-image.sh"
+      - ".github/workflows/publish-harmon-devcontainer.yml"
+  push:
+    branches: [main]
+    paths:
+      - "images/devcontainer/**"
+      - "scripts/publish-devcontainer-image.sh"
+      - ".github/workflows/publish-harmon-devcontainer.yml"
+  schedule:
+    # Reconcile a failed publish/sync without a workflow_dispatch that could run
+    # an unreviewed branch's workflow definition with the PR-write App token.
+    - cron: "23 8 * * *"
+
+concurrency:
+  group: >-
+    publish-harmon-devcontainer-${{
+      github.event_name == 'pull_request' && github.event.pull_request.number || 'main'
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - name: Free space on a disposable hosted runner
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+      - name: Build and smoke-test the native candidate and repository overlay
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/test-devcontainer-image.sh "$SOURCE_SHA"
+      - name: Build and smoke-test the arm64 candidate under QEMU
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          image="harmon-devcontainer-arm64:${SOURCE_SHA}"
+          docker buildx build --pull --platform linux/arm64 \
+            --build-arg "IMAGE_REVISION=${SOURCE_SHA}" \
+            --load --tag "$image" images/devcontainer
+          docker run --rm --platform linux/arm64 \
+            --env "EXPECTED_REVISION=${SOURCE_SHA}" \
+            --env EXPECTED_ARCHITECTURE=arm64 \
+            "$image" /usr/local/sbin/smoke.sh
+
+  candidate-verify:
+    if: always() && github.event_name == 'pull_request'
+    needs: [candidate]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    steps:
+      - name: Verify the untrusted-fork boundary
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          CANDIDATE_RESULT: ${{ needs.candidate.result }}
+        run: |
+          test "$CANDIDATE_RESULT" = skipped
+          echo "Untrusted-fork boundary enforced: repository-controlled image build skipped."
+      - name: Verify the candidate passed
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          CANDIDATE_RESULT: ${{ needs.candidate.result }}
+        run: test "$CANDIDATE_RESULT" = success
+
+  publish:
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the immutable image source revision
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          source_sha=$(./scripts/publish-devcontainer-image.sh source "$EVENT_NAME" "$EVENT_SHA")
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Verify publish and sync automation before registry credentials exist
+        run: ./scripts/test-devcontainer-image-automation.sh
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Free space on a disposable hosted runner
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+      - name: Publish once, then validate architectures, provenance, and public pull
+        id: publish
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          digest=$(./scripts/publish-devcontainer-image.sh publish "$SOURCE_SHA")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  prepare-pin:
+    if: needs.publish.result == 'success'
+    needs: [publish]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 60
+    outputs:
+      ready: ${{ steps.bundle.outputs.ready }}
+      base_sha: ${{ steps.bundle.outputs.base_sha }}
+      prepared_sha: ${{ steps.bundle.outputs.prepared_sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: ./.github/actions/setup
+        with:
+          lint-tools: "true"
+          gitleaks: "true"
+      - name: Install template-render tooling
+        run: |
+          uv tool install --force copier
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install --global @devcontainers/cli lefthook pnpm
+      - name: Configure git for Copier's rendered repositories
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global init.defaultBranch main
+      - name: Prepare and verify the rolling pin commit without write credentials
+        env:
+          SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
+          MANIFEST_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: ./scripts/sync-devcontainer-image.sh prepare "$SOURCE_SHA" "$MANIFEST_DIGEST"
+      - name: Bundle the verified commit for the isolated publisher
+        id: bundle
+        run: |
+          base_sha=$(git rev-parse main)
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          if test "$(git branch --show-current)" != bot/sync-harmon-devcontainer; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "prepared_sha=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prepared_sha=$(git rev-parse HEAD)
+          git bundle create prepared-pin.bundle main bot/sync-harmon-devcontainer
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "prepared_sha=$prepared_sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.bundle.outputs.ready == 'true'
+        with:
+          name: harmon-devcontainer-prepared-pin
+          path: prepared-pin.bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  sync-pin:
+    if: needs.prepare-pin.outputs.ready == 'true'
+    needs: [publish, prepare-pin]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    steps:
+      # This is a fresh runner. It installs no mutable tooling and imports only
+      # a one-commit Git bundle whose parent, tree scope, and pin are checked
+      # before the App private key or token exists in this process namespace.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.prepare-pin.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: harmon-devcontainer-prepared-pin
+      - name: Import and validate the verified commit
+        env:
+          BASE_SHA: ${{ needs.prepare-pin.outputs.base_sha }}
+          PREPARED_SHA: ${{ needs.prepare-pin.outputs.prepared_sha }}
+          SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
+          MANIFEST_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          git fetch prepared-pin.bundle \
+            refs/heads/bot/sync-harmon-devcontainer:refs/heads/bot/sync-harmon-devcontainer
+          git checkout bot/sync-harmon-devcontainer
+          test "$(git rev-parse HEAD)" = "$PREPARED_SHA"
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          changed=$(git diff --no-renames --name-only "$BASE_SHA..HEAD")
+          test "$changed" = ".devcontainer/Dockerfile
+          template/[% if devcontainer %].devcontainer[% endif %]/Dockerfile"
+          expected="FROM ghcr.io/evanharmon1/harmon-devcontainer:sha-${SOURCE_SHA}@${MANIFEST_DIGEST}"
+          for file in ".devcontainer/Dockerfile" \
+            "template/[% if devcontainer %].devcontainer[% endif %]/Dockerfile"; do
+            test "$(sed -n '1p' "$file")" = "$expected"
+            diff -u \
+              <(git show "${BASE_SHA}:${file}" | tail -n +2) \
+              <(tail -n +2 "$file")
+          done
+          test "$(./scripts/sync-devcontainer-image.sh pinned)" = \
+            "$SOURCE_SHA $MANIFEST_DIGEST"
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Publish the prepared rolling branch and PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
+          MANIFEST_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: ./scripts/sync-devcontainer-image.sh publish "$SOURCE_SHA" "$MANIFEST_DIGEST"

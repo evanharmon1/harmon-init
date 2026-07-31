@@ -225,7 +225,16 @@ def twin_name(path):
     name = rendered(path)
     return name[: -len(".jinja")] if name.endswith(".jinja") else name
 
-SWEEP = [".skills-sync.yaml", "Taskfile.yml", ".devcontainer", ".github", "scripts", "taskfiles", "template"]
+SWEEP = [
+    ".skills-sync.yaml",
+    "Taskfile.yml",
+    "images",
+    ".devcontainer",
+    ".github",
+    "scripts",
+    "taskfiles",
+    "template",
+]
 file_pins = {}  # path -> {(dep, datasource), ...}
 for top in SWEEP:
     base = pathlib.Path(top)
@@ -260,6 +269,21 @@ for root_path, root_pins in sorted(file_pins.items()):
                 f"across two PRs, each updating only one twin (verbatim twins "
                 f"then fail test:dogfood-parity)"
             )
+
+# The root-only producer pins must land in the same reviewed Devcontainer batch;
+# generated repositories have no images/devcontainer/ source and therefore no
+# corresponding template rule.
+producer_group = resolve_group(
+    root_cfg,
+    "images/devcontainer/Dockerfile",
+    "semgrep",
+    "pypi",
+)
+if producer_group != "Devcontainer":
+    errors.append(
+        "root config: semgrep in images/devcontainer/Dockerfile resolves to "
+        f"group {producer_group!r}, expected 'Devcontainer'"
+    )
 
 # ── Template config: rendered packageRules route consumer pins correctly ────
 # The generated repo has no parity gate, so the requirement is the opposite
