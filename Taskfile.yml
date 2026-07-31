@@ -81,6 +81,7 @@ tasks:
       - task: test:release-title
       - task: test:setup-github-project
       - task: test:sync-devkit-release
+      - task: test:devcontainer:image:automation
       - task: test:skills-pin-parity
       - task: test:dogfood-parity
       - task: test:dogfood-structure
@@ -286,6 +287,16 @@ tasks:
     cmds:
       - ./scripts/devcontainer-assert.sh unit
 
+  test:devcontainer:image:
+    desc: Build and smoke-test the canonical shared image and current repository overlay
+    cmds:
+      - ./scripts/test-devcontainer-image.sh {{.CLI_ARGS}}
+
+  test:devcontainer:image:automation:
+    desc: Unit-test shared-image manifest/publish/pin automation (offline, stubbed boundaries)
+    cmds:
+      - ./scripts/test-devcontainer-image-automation.sh
+
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
     cmds:
@@ -325,6 +336,20 @@ tasks:
     desc: Unit-test the harmon-devkit release→sync-PR automation (offline, stubbed gh/task)
     cmds:
       - ./scripts/test-sync-devkit-release.sh
+
+  sync:devcontainer-image:prepare:
+    desc: Prepare and verify a rolling shared-image consumer pin without write credentials
+    requires:
+      vars: [SOURCE_SHA, MANIFEST_DIGEST]
+    cmds:
+      - ./scripts/sync-devcontainer-image.sh prepare "{{.SOURCE_SHA}}" "{{.MANIFEST_DIGEST}}"
+
+  sync:devcontainer-image:publish:
+    desc: Publish an already-prepared shared-image consumer pin branch and PR
+    requires:
+      vars: [SOURCE_SHA, MANIFEST_DIGEST]
+    cmds:
+      - ./scripts/sync-devcontainer-image.sh publish "{{.SOURCE_SHA}}" "{{.MANIFEST_DIGEST}}"
 
   # ROOT-ONLY (a generated repo has ONE skills-sync manifest, so it has nothing
   # to compare). Closes a real hole: `verify:skills*` both read only the ROOT
