@@ -52,6 +52,10 @@ use_coderabbit: false
 
 devcontainer: true
 
+# Dogfoods the alternative-model provider wrappers (claude-kimi/deepseek/glm)
+# in both devcontainer profiles. Keys come from 1Password Environments locally.
+use_alternative_claude_providers: true
+
 # Root ships docs/project-management.md plus setup:github-project / -labels.
 project_management: github
 

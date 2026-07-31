@@ -14,7 +14,9 @@ current — it is the reference for "where do secrets live and who can do what".
   `op run`/`op inject`; CI reads from GitHub Actions secrets.
 [% if devcontainer %]
   Devcontainer secrets are `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-  `AGENT_DECK_TELEGRAM_KEY` (+ `TS_AUTHKEY`, dev profile only) — see
+  `AGENT_DECK_TELEGRAM_KEY` (+ `TS_AUTHKEY`, dev profile only)[% if use_alternative_claude_providers %], plus the
+  alt-model provider keys (`KIMI_API_KEY`/`MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`,
+  `ZAI_API_KEY`) when opted in[% endif %] — see
   [../guides/devcontainers.md](../guides/devcontainers.md).
 [% endif %]
   TODO: list the 1Password vault/items this project uses.
