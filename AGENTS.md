@@ -229,6 +229,13 @@ something to ask permission for.
 - **Open the PR** — conventional commit, push the branch, `gh pr create` with
   a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
   title rule below).
+- **Git transport** — pushes authenticate over HTTPS via `gh` (dotfiles-managed
+  hosts and the devcontainers rewrite GitHub SSH URLs to HTTPS via
+  `url.insteadOf`; harmon-dotfiles ADR 0002). Never work around an SSH failure
+  by pushing to a raw `https://…` URL — a URL push bypasses the named remote
+  and leaves stale tracking refs. On an unprovisioned host, force the helper
+  against the *named* remote:
+  `git -c credential.helper= -c credential.helper='!gh auth git-credential' push`.
 - **Shepherd the PR (`/shepherd`, max 5 rounds).** `gh pr create` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. `/shepherd` is the
