@@ -93,6 +93,13 @@ def classify_checks(rollup: list[dict] | None) -> tuple[str, list[dict]]:
     return "green", []
 
 
+def ready_label_is_authoritative(
+    labels: list[str], *, require_codex_cloud_review: bool
+) -> bool:
+    """Whether read-only reporting may trust Foreman's readiness label."""
+    return "ready-to-merge" in labels and not require_codex_cloud_review
+
+
 def trusted_review_threads(
     gh: GitHub, cfg: Config, threads: list[dict]
 ) -> tuple[list[dict], int]:

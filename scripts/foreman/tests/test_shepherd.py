@@ -9,7 +9,12 @@ from unittest.mock import MagicMock, patch
 from foreman import signatures as signatures_mod
 from foreman.config import Config
 from foreman.github import GitHub
-from foreman.shepherd import classify_checks, shepherd_pr, trusted_review_threads
+from foreman.shepherd import (
+    classify_checks,
+    ready_label_is_authoritative,
+    shepherd_pr,
+    trusted_review_threads,
+)
 from foreman.tests.fakes import make_github
 from foreman.util import ForemanError
 
@@ -46,6 +51,24 @@ class ClassifyChecks(unittest.TestCase):
         state, failed = classify_checks([{"state": "FAILURE", "context": "ci/legacy"}])
         self.assertEqual(state, "red")
         self.assertEqual(failed[0]["context"], "ci/legacy")
+
+
+class ReadinessLabelAuthority(unittest.TestCase):
+    def test_default_policy_accepts_readiness_label(self):
+        self.assertTrue(
+            ready_label_is_authoritative(
+                ["foreman-dispatched", "ready-to-merge"],
+                require_codex_cloud_review=False,
+            )
+        )
+
+    def test_cloud_review_policy_ignores_stale_readiness_label(self):
+        self.assertFalse(
+            ready_label_is_authoritative(
+                ["foreman-dispatched", "ready-to-merge"],
+                require_codex_cloud_review=True,
+            )
+        )
 
 
 class TrustedReviewThreads(unittest.TestCase):
