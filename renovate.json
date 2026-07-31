@@ -93,8 +93,14 @@
       "groupName": "Docker images"
     },
     {
-      "description": "Batch all devcontainer updates (base image + annotated tools) into one PR — must come after the Docker images rule so the base image lands here instead. Root scripts/** and taskfiles/** are included because every regex-managed pin under them (@devcontainers/cli, semgrep, markdownlint-cli2, ruff, black) is a dogfood-parity twin of a template/** copy this rule already claims — a dep whose root and template copies resolve to different groups gets split across two PRs, and each fails test:dogfood-parity. In this repo the group is effectively 'devcontainer + template-shipped tool pins'",
-      "matchFileNames": [".devcontainer/**", "template/**", "scripts/**", "taskfiles/**"],
+      "description": "Batch the canonical shared-image source, current dogfood/template devcontainers, and their coupled script pins into one PR — must come after the Docker images rule so base images land here instead. Root scripts/** and taskfiles/** are included because their regex-managed pins are dogfood-parity twins of template/** copies; splitting a dependency across groups makes each Renovate PR fail parity.",
+      "matchFileNames": [
+        "images/devcontainer/**",
+        ".devcontainer/**",
+        "template/**",
+        "scripts/**",
+        "taskfiles/**"
+      ],
       "groupName": "Devcontainer"
     },
     {

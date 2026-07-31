@@ -579,6 +579,11 @@ the workflow rules above:
   `template-test`), **not** built per profile — the dogfood build covers every
   profile only because the template `Dockerfile` is kept free of copier
   conditionals (profile-invariant). See `docs/architecture/ci-cd.md`.
+- `.github/workflows/publish-harmon-devcontainer.yml` — root-only producer for
+  the public shared amd64/arm64 toolchain image. Candidate PRs build without
+  registry credentials; trusted `main` publishes immutable source tags and the
+  tested helper maintains one reviewed consumer-pin PR. See
+  `docs/architecture/devcontainer-image.md`.
 - `.github/workflows/claude-{plan,implement,review}.yml` — Claude Code GitHub
   Actions. They (and `release.yml`) authenticate as the CI **GitHub App**
   (`CI_APP_CLIENT_ID` variable + `CI_APP_PRIVATE_KEY` secret) and need the
