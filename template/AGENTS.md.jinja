@@ -167,12 +167,13 @@ something to ask permission for.
   the comment ID returned for that trigger. Poll PR reactions, top-level
   comments, reviews, and inline review comments; fetch trigger reactions by
   that exact comment ID. A Codex result is terminal for that captured head only
-  when it is either: a clean review or top-level comment authored by the
-  expected Codex bot/App whose `Reviewed commit:` identifies that head; a fresh
-  👍 from that bot on that exact trigger comment, created after both the head
-  push and the review request, with no newer contradictory bot result; or
-  review findings authored by that bot which identify that head and must be
-  adjudicated before the cycle can become clean. Earlier comments, reviews,
+  when it is either: a clean review or top-level comment authored by GitHub
+  actor ID `199175422` (`chatgpt-codex-connector[bot]`, type `Bot`) whose
+  `Reviewed commit:` identifies that head; a fresh 👍 from that bot on that
+  exact trigger comment, created after both the head push and the review
+  request, with no newer contradictory bot result; or review findings authored
+  by that bot which identify that head and must be adjudicated before the
+  cycle can become clean. Earlier comments, reviews,
   inline findings, and reactions never count for a newer head. A 👀 is pending,
   not success; if it disappears without a terminal result, the attempt is
   incomplete.

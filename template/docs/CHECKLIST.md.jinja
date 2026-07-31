@@ -75,6 +75,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       installation. Deleting `.coderabbit.yaml` and bot trust does not revoke
       existing App access.
 [% endif %]
+[% if use_codex_cloud_review %]
+- [ ] **[human-only] Connect Codex cloud review** — connect this repository in
+      ChatGPT Codex settings, grant private-repository access if applicable,
+      and confirm review activity is authored by GitHub actor ID `199175422`
+      (`chatgpt-codex-connector[bot]`, type `Bot`).
+[% endif %]
 - [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API

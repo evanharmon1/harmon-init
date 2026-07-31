@@ -29,7 +29,7 @@ MAX_CONSECUTIVE_FAILURES = 3
 def human_handoff_messages(report: shepherd_mod.ShepherdReport) -> list[str]:
     """Durable heartbeat lines for shepherd work that needs a person."""
     return [
-        f"NEEDS HUMAN #{unit_number}: {detail}"
+        f"NEEDS HUMAN #{unit_number}: {' '.join(detail.split())}"
         for unit_number, detail in sorted(report.environmental.items())
     ]
 

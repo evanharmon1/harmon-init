@@ -33,14 +33,14 @@ class HumanHandoffMessages(unittest.TestCase):
         report = ShepherdReport(
             environmental={
                 23: "current-head Codex cloud review requires manual shepherd completion",
-                7: "environmental CI failure persisted",
+                7: "environmental CI failure\n  persisted after retry",
             }
         )
 
         self.assertEqual(
             human_handoff_messages(report),
             [
-                "NEEDS HUMAN #7: environmental CI failure persisted",
+                "NEEDS HUMAN #7: environmental CI failure persisted after retry",
                 (
                     "NEEDS HUMAN #23: current-head Codex cloud review requires "
                     "manual shepherd completion"

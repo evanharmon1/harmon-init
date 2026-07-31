@@ -870,7 +870,7 @@ if [ "$profile" = "full" ]; then
     grep -Fq 'headRefOid' AGENTS.md || err "AGENTS missing current-head Codex shepherd contract (use_codex_cloud_review=true)"
     grep -Fq 'exact trigger comment' AGENTS.md || err "AGENTS permits unbound Codex reactions (use_codex_cloud_review=true)"
     grep -Fq 'comment ID returned for that trigger' AGENTS.md || err "AGENTS does not retain the Codex trigger comment ID"
-    grep -Fq 'expected Codex bot/App' AGENTS.md || err "AGENTS missing Codex result actor authentication (use_codex_cloud_review=true)"
+    grep -Fq 'actor ID `199175422`' AGENTS.md || err "AGENTS missing pinned Codex result actor identity (use_codex_cloud_review=true)"
     grep -Fq 'Reviewed commit:' AGENTS.md || err "AGENTS missing commit-bound Codex result contract (use_codex_cloud_review=true)"
     grep -Fq 'If both attempts' AGENTS.md &&
         grep -Fq 'are incomplete, stop and escalate without reporting green' AGENTS.md ||
@@ -878,8 +878,12 @@ if [ "$profile" = "full" ]; then
     ! grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS permits CI-only completion despite use_codex_cloud_review=true"
     grep -Fq 'require_codex_cloud_review = true' .foreman.toml ||
         err "Foreman does not fail closed for required Codex cloud review"
+    grep -Fq 'Connect Codex cloud review' docs/CHECKLIST.md ||
+        err "CHECKLIST missing required Codex cloud connector setup"
 else
     ! grep -Fq '@codex review' AGENTS.md || err "AGENTS rendered Codex shepherd trigger but use_codex_cloud_review is off"
+    ! grep -Fq 'Connect Codex cloud review' docs/CHECKLIST.md ||
+        err "CHECKLIST rendered Codex cloud connector setup without explicit opt-in"
 fi
 if [ "$profile" = "meta" ]; then
     grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
