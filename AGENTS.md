@@ -234,8 +234,10 @@ something to ask permission for.
   `url.insteadOf`; harmon-dotfiles ADR 0002). Never work around an SSH failure
   by pushing to a raw `https://…` URL — a URL push bypasses the named remote
   and leaves stale tracking refs. On an unprovisioned host, force the helper
-  against the *named* remote:
-  `git -c credential.helper= -c credential.helper='!gh auth git-credential' push`.
+  and the rewrite against the *named* remote:
+  `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" push`
+  (a credential helper only applies to HTTPS, so without the `insteadOf` an
+  SSH-form remote still goes over SSH).
 - **Shepherd the PR (`/shepherd`, max 5 rounds).** `gh pr create` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. `/shepherd` is the
