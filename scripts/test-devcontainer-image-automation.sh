@@ -66,13 +66,24 @@ scheduled_source="$(cd "$source_fixture" && ./scripts/publish-devcontainer-image
 [ "$scheduled_source" = "$producer_source" ] || fail "schedule disagreed with the push image source"
 pass
 
-# Verification completes before the workflow mints its short-lived write token.
+# The offline automation suite is a required pre-merge check and runs before
+# either registry credentials or the App write token exist in publishing jobs.
+ci_automation_line="$(grep -n 'run: task test:devcontainer:image:automation' \
+    .github/workflows/build.yml | cut -d: -f1)"
+publish_automation_line="$(grep -n 'run: ./scripts/test-devcontainer-image-automation.sh' \
+    .github/workflows/publish-harmon-devcontainer.yml | cut -d: -f1)"
+registry_token_line="$(grep -n 'docker/login-action@' \
+    .github/workflows/publish-harmon-devcontainer.yml | cut -d: -f1)"
 prepare_line="$(grep -n 'sync-devcontainer-image.sh prepare' \
     .github/workflows/publish-harmon-devcontainer.yml | cut -d: -f1)"
 token_line="$(grep -n 'actions/create-github-app-token@' \
     .github/workflows/publish-harmon-devcontainer.yml | tail -1 | cut -d: -f1)"
 publish_line="$(grep -n 'sync-devcontainer-image.sh publish' \
     .github/workflows/publish-harmon-devcontainer.yml | cut -d: -f1)"
+if [ -z "$ci_automation_line" ] || [ -z "$publish_automation_line" ] ||
+    [ "$publish_automation_line" -ge "$registry_token_line" ]; then
+    fail "automation tests are not enforced before image publication"
+fi
 if [ "$prepare_line" -ge "$token_line" ] || [ "$token_line" -ge "$publish_line" ]; then
     fail "write token is not isolated between prepare and publish steps"
 fi
