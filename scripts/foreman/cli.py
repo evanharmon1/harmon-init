@@ -285,7 +285,14 @@ def cmd_status(args: argparse.Namespace) -> int:
                 status.get("statusCheckRollup")
             )
             labels = [label["name"] for label in status.get("labels") or []]
-            state = "ready-to-merge" if "ready-to-merge" in labels else "pr-open"
+            state = (
+                "ready-to-merge"
+                if shepherd_mod.ready_label_is_authoritative(
+                    labels,
+                    require_codex_cloud_review=cfg.require_codex_cloud_review,
+                )
+                else "pr-open"
+            )
             if state == "ready-to-merge":
                 ready.append(
                     shepherd_mod.PrWork(

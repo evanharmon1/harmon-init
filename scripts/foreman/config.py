@@ -22,6 +22,7 @@ class Config:
     backend: str = "claude"
     backend_version: str = ""  # expected CLI version prefix; "" = don't assert
     require_approval: bool = True  # strict arming: only foreman-approved units dispatch
+    require_codex_cloud_review: bool = False
     inputs: str = "auto"  # auto | fields | labels
     verify_command: list[str] = field(default_factory=lambda: ["task", "ci"])
     max_parallel: int = 3
