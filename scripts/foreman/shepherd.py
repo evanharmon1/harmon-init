@@ -431,16 +431,35 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 "a reviewer requested changes — needs a human, not a handoff",
             )
             return work
-        # "Nothing reported" is not "everything passed". classify_checks calls an
-        # empty rollup green, which is the right display value for a repo with no
-        # CI but the wrong basis for a one-way handoff: GitHub populates the
-        # rollup asynchronously, so a tick right after the push — or a repo whose
-        # required-checks ruleset was never imported, leaving mergeStateStatus
-        # CLEAN — would promote before a single check existed.
-        if not status.get("statusCheckRollup"):
+        # "Nothing failed" is not "the required checks passed". classify_checks
+        # reports on whatever has shown up, and GitHub registers checks
+        # incrementally, so one fast check can be green while a required workflow
+        # has not appeared at all. `mergeStateStatus` cannot settle it either —
+        # DRAFT masks the BLOCKED that missing required checks would otherwise
+        # produce. Ask the base branch what it enforces and compare.
+        required = gh.required_checks(status.get("baseRefName") or gh.default_branch())
+        if not required:
+            work.state, work.detail = (
+                "escalated",
+                (
+                    "base branch enforces no required checks — nothing to certify "
+                    "for a handoff; import the branch ruleset or promote by hand"
+                ),
+            )
+            return work
+        reported = {
+            name
+            for name in (
+                (ctx.get("name") or ctx.get("context"))
+                for ctx in status.get("statusCheckRollup") or []
+            )
+            if name
+        }
+        missing = sorted(required - reported)
+        if missing:
             work.state, work.detail = (
                 "settling",
-                "no checks have reported on this head yet — not promoting",
+                f"required check(s) not reported yet: {', '.join(missing)}",
             )
             return work
         # Mergeability is computed asynchronously, so it reads UNKNOWN for a

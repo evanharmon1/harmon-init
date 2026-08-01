@@ -165,13 +165,20 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
     until a code owner approves, so only genuinely mergeable PRs enter that
     order.
 
-  The gate is the deterministic part of AGENTS.md's: green checks that actually
-  reported (an empty `statusCheckRollup` is "nothing ran yet", not "nothing
-  failed" — it defers), every review thread dispositioned, `reviewDecision` not
-  `CHANGES_REQUESTED`, `mergeable=MERGEABLE` (it reads `UNKNOWN` for a while
-  after every push, and "not known to conflict" is not "mergeable"), and
-  `headRefOid` re-read immediately before promoting and unchanged since the gate
-  ran. A push landing mid-gate defers to the next tick;
+  The gate is the deterministic part of AGENTS.md's: every check the **base
+  branch requires** has reported and none failed, every review thread
+  dispositioned, `reviewDecision` not `CHANGES_REQUESTED`, `mergeable=MERGEABLE`
+  (it reads `UNKNOWN` for a while after every push, and "not known to conflict"
+  is not "mergeable"), and `headRefOid` re-read immediately before promoting and
+  unchanged since the gate ran.
+
+  The required set comes from `GET /repos/{slug}/rules/branches/{base}` — one
+  endpoint covering rulesets and classic protection — because a non-empty
+  rollup proves nothing on its own: GitHub registers checks incrementally, and
+  `DRAFT` masks the `BLOCKED` that a missing required check would otherwise
+  produce. A branch that enforces **no** required checks escalates rather than
+  promoting: there is no CI result to certify, which usually means the branch
+  ruleset was never imported (docs/CHECKLIST.md). A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never

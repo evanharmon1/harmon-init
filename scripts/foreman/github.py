@@ -281,6 +281,31 @@ class GitHub:
             raise ForemanError(f"review threads: invalid thread list for PR #{number}")
         return nodes
 
+    def required_checks(self, branch: str) -> set[str]:
+        """Check contexts `branch` requires — rulesets and classic protection.
+
+        One endpoint covers both, so this is what the base branch will actually
+        enforce at merge time. An empty set means the branch enforces nothing;
+        that is a real configuration, not an error, and the caller decides what
+        it means. A failed call raises, because "could not ask" must never read
+        as "nothing is required".
+        """
+        rules = self.gh.json(
+            ["api", f"repos/{self.repo_slug()}/rules/branches/{branch}"]
+        )
+        contexts: set[str] = set()
+        for rule in rules or []:
+            if not isinstance(rule, dict):
+                continue
+            if rule.get("type") != "required_status_checks":
+                continue
+            params = rule.get("parameters") or {}
+            for check in params.get("required_status_checks") or []:
+                context = (check or {}).get("context")
+                if context:
+                    contexts.add(context)
+        return contexts
+
     def branch_exists_remote(self, branch: str) -> bool:
         return self.gh.ok(["api", f"repos/{self.repo_slug()}/branches/{branch}"])
 

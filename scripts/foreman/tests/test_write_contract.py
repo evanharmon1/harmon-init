@@ -104,6 +104,41 @@ class GuardedChannels(unittest.TestCase):
         self.assertFalse(runner.called_with_prefix(["pr", "ready"]))
 
 
+class RequiredChecks(unittest.TestCase):
+    """What the base branch enforces — the gate's "required CI" condition."""
+
+    @staticmethod
+    def rules() -> list[dict]:
+        return [
+            {"type": "pull_request", "parameters": {}},
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "verify"},
+                        {"context": "security"},
+                    ]
+                },
+            },
+        ]
+
+    def test_contexts_are_collected_from_the_branch_rules(self):
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/rules/branches/main"], self.rules())
+        self.assertEqual(gh.required_checks("main"), {"verify", "security"})
+
+    def test_a_branch_enforcing_nothing_returns_empty(self):
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/rules/branches/main"], [])
+        self.assertEqual(gh.required_checks("main"), set())
+
+    def test_a_failed_lookup_raises_rather_than_reading_as_none_required(self):
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/rules/branches/main"], "boom", rc=1)
+        with self.assertRaises(ForemanError):
+            gh.required_checks("main")
+
+
 class DraftLifecycle(unittest.TestCase):
     """PRs are opened as the agent workbench, never as a human handoff."""
 
