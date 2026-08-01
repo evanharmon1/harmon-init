@@ -1,8 +1,10 @@
 # Devcontainer incidents
 
 Worked diagnoses of real failures in this devcontainer, and where the shipped
-fix for each lives. Every one is already handled by the scripts in
-`.devcontainer/` — this exists so that when something *looks* like one of these,
+fix for each lives. Every one is already handled — by the scripts in
+`.devcontainer/` or by the shared
+`ghcr.io/evanharmon1/harmon-devcontainer` toolchain image the Dockerfile
+extends — so this exists so that when something *looks* like one of these,
 you can tell quickly whether the guard failed or you have found something new.
 
 For everyday problems see [troubleshooting.md](troubleshooting.md); this file is
