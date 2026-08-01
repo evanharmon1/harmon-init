@@ -91,6 +91,18 @@ if [ "$prepare_line" -ge "$token_line" ] || [ "$token_line" -ge "$publish_line" 
 fi
 pass
 
+# The sync-pin bundle must be staged OUTSIDE the checkout: an artifact
+# downloaded into the worktree survives as an untracked file, and the
+# token-bearing publish phase fails closed on any dirty tree — which killed
+# the first ready=true sync-pin (run 30722269327).
+grep -q 'path: ${{ runner.temp }}/prepared-pin' \
+    .github/workflows/publish-harmon-devcontainer.yml ||
+    fail "sync-pin downloads the prepared bundle into the repository checkout"
+grep -qF 'git fetch "${RUNNER_TEMP}/prepared-pin/prepared-pin.bundle"' \
+    .github/workflows/publish-harmon-devcontainer.yml ||
+    fail "bundle import does not read from the runner temp staging path"
+pass
+
 # Fixture: real git state and helper, stubbed registry/GitHub/task boundaries.
 fixture="$tmp_root/fixture"
 origin="$tmp_root/origin.git"

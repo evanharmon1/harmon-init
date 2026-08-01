@@ -205,9 +205,14 @@ jobs:
           ref: ${{ needs.prepare-pin.outputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The bundle must land OUTSIDE the checkout: an artifact downloaded into
+      # the worktree stays behind as an untracked file, and the token-bearing
+      # publish phase fails closed on any dirty tree (first observed on run
+      # 30722269327, the first ready=true sync-pin).
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: harmon-devcontainer-prepared-pin
+          path: ${{ runner.temp }}/prepared-pin
       - name: Import and validate the verified commit
         env:
           BASE_SHA: ${{ needs.prepare-pin.outputs.base_sha }}
@@ -215,7 +220,7 @@ jobs:
           SOURCE_SHA: ${{ needs.publish.outputs.source_sha }}
           MANIFEST_DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
-          git fetch prepared-pin.bundle \
+          git fetch "${RUNNER_TEMP}/prepared-pin/prepared-pin.bundle" \
             refs/heads/bot/sync-harmon-devcontainer:refs/heads/bot/sync-harmon-devcontainer
           git checkout bot/sync-harmon-devcontainer
           test "$(git rev-parse HEAD)" = "$PREPARED_SHA"
