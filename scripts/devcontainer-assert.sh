@@ -44,11 +44,14 @@ HARMON_IMAGE_MANIFEST="/usr/local/share/harmon-devcontainer/manifest.json"
 # aliases) or digestless tags could silently change bytes under every
 # consumer, so any other FROM shape fails (harmon-init#489).
 assert_image_pin() {
-    local dockerfile="$1" from_count ref source digest
-    from_count="$(grep -c '^FROM ' "$dockerfile" || true)"
+    # Dockerfile instructions are case-insensitive and tolerate leading
+    # whitespace, so match by uppercased first token — a lowercase `from` or
+    # trailing `user root` must not slip past the pin/permission checks.
+    local dockerfile="$1" from_count ref source digest last_user
+    from_count="$(awk 'toupper($1) == "FROM" { n++ } END { print n + 0 }' "$dockerfile")"
     [ "$from_count" = "1" ] ||
         fail "${dockerfile} must have exactly one FROM line extending the shared image (found ${from_count})"
-    ref="$(sed -n 's/^FROM[[:space:]]*//p' "$dockerfile")"
+    ref="$(awk 'toupper($1) == "FROM" { print $2; exit }' "$dockerfile")"
     case "$ref" in
     "${HARMON_IMAGE}:sha-"*"@sha256:"*) ;;
     *) fail "${dockerfile} FROM '${ref}' is not the approved immutable '${HARMON_IMAGE}:sha-<source-commit>@sha256:<manifest-digest>' reference" ;;
@@ -68,10 +71,12 @@ assert_image_pin() {
         ;;
     *) fail "${dockerfile} image digest 'sha256:${digest}' is not a 64-hex manifest digest" ;;
     esac
-    grep -q '^RUN /usr/local/sbin/install-harmon-repo-config$' "$dockerfile" ||
+    awk 'toupper($1) == "RUN" && $2 == "/usr/local/sbin/install-harmon-repo-config" && NF == 2 { found = 1 }
+        END { exit !found }' "$dockerfile" ||
         fail "${dockerfile} does not invoke the image's install-harmon-repo-config overlay installer"
-    [ "$(sed -n 's/^USER[[:space:]]*//p' "$dockerfile" | tail -1)" = "vscode" ] ||
-        fail "${dockerfile} does not finish as USER vscode"
+    last_user="$(awk 'toupper($1) == "USER" { user = $2 } END { print user }' "$dockerfile")"
+    [ "$last_user" = "vscode" ] ||
+        fail "${dockerfile} does not finish as USER vscode (last USER is '${last_user}')"
     printf '%s\n' "$source"
 }
 

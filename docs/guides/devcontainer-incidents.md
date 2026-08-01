@@ -28,12 +28,16 @@ lookup is not.
 The tell is that it is **flaky rather than deterministic**, and that a rerun
 with no code change goes green. Do not go looking for a defect in the diff.
 
-Shipped fix: tools are installed in the `Dockerfile` from pinned
+Shipped fix: shared tools are installed from pinned
 `https://github.com/<owner>/<repo>/releases/download/v${FOO_VERSION}/…` URLs
-carrying `# renovate: datasource=github-releases` annotations, not from
-Features that resolve a version at build time. `task` was the last holdout
-(harmon-init#427); `scripts/devcontainer-assert.sh unit` — which `task ci`
-runs — now fails if the Feature returns or the pin goes missing.
+carrying `# renovate: datasource=github-releases` annotations — in the
+canonical `ghcr.io/evanharmon1/harmon-devcontainer` image source
+(harmon-init's `images/devcontainer/`), not in Features that resolve a
+version at build time. The repo `Dockerfile` is a thin overlay pinned to an
+immutable `tag@digest` of that image and carries no tool pins of its own.
+`task` was the last holdout (harmon-init#427);
+`scripts/devcontainer-assert.sh unit` — which `task ci` runs — now fails if
+the Feature returns or the image pin goes floating or missing.
 
 **Generalize this one.** Any build-time call to an unauthenticated public API
 is a flake waiting to happen. Pinning the Feature's own version does *not* fix
