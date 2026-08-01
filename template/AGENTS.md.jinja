@@ -279,7 +279,10 @@ interactive shepherding[% if use_foreman %] and by Foreman[% endif %] alike. A
 draft may be marked ready for review only when **all** of the following hold for
 its current `headRefOid`:
 
-- Required CI checks have concluded successfully.
+- Required CI checks have concluded successfully. An empty check list is
+  *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
+  taken moments after the push reports nothing having run rather than nothing
+  to run.
 [% if use_codex_cloud_review %]
 - The current-head Codex cycle above is terminal and clean.
 [% endif %]

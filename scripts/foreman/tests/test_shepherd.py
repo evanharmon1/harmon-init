@@ -167,7 +167,7 @@ class MergeReadiness(unittest.TestCase):
             "reviewDecision": "",
             "mergeStateStatus": merge_state,
             "mergeable": mergeable,
-            "statusCheckRollup": [],
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
             "labels": [],
         }
         # Gate re-read, then the post-promotion confirmation.
@@ -241,6 +241,20 @@ class MergeReadiness(unittest.TestCase):
         self.assertEqual(work.state, "escalated")
         self.assertIn("refusing to promote", work.detail)
         gh.ready_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_empty_check_rollup_is_not_evidence_of_a_green_head(self, _remote):
+        # classify_checks calls an empty rollup green (right for display, wrong
+        # for a one-way handoff): GitHub fills the rollup asynchronously, and a
+        # repo whose required-checks ruleset was never imported reports CLEAN
+        # with nothing having run.
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_status.return_value["statusCheckRollup"] = []
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        self.assertIn("no checks have reported", work.detail)
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_unreadable_draft_state_refuses_to_promote(self, _remote):

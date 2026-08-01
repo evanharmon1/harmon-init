@@ -156,10 +156,12 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   is prohibited. Foreman re-checks disposition completeness afterwards.
 - **Readiness gate passes** → promote the draft with `gh pr ready`, apply the
   `ready-to-merge` label, and report a dependency-aware suggested merge order.
-  The gate is the deterministic part of AGENTS.md's: green checks, every review
-  thread dispositioned, `mergeStateStatus=CLEAN`, `reviewDecision` not
-  `CHANGES_REQUESTED`, and `headRefOid` re-read immediately before promoting and
-  unchanged since the gate ran. A push landing mid-gate defers to the next tick;
+  The gate is the deterministic part of AGENTS.md's: green checks that actually
+  reported (an empty `statusCheckRollup` is "nothing ran yet", not "nothing
+  failed" — it defers), every review thread dispositioned,
+  `mergeStateStatus=CLEAN`, `reviewDecision` not `CHANGES_REQUESTED`, and
+  `headRefOid` re-read immediately before promoting and unchanged since the gate
+  ran. A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never

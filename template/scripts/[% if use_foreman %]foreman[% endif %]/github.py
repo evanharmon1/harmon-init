@@ -350,7 +350,24 @@ class GitHub:
         ]
         for label in labels:
             args += ["--label", label]
-        out = self.gh.call(args, input_text=body)
+        try:
+            out = self.gh.call(args, input_text=body)
+        except ForemanError as exc:
+            # Diagnosis only — the substring test cannot change behavior, it just
+            # replaces gh's bare "Draft pull requests are not supported in this
+            # repository" with what to do about it. GitHub restricts drafts on
+            # private repos to paid plans, and that is the first place the
+            # lifecycle would fail in a generated repo.
+            if "draft" in str(exc).lower():
+                raise ForemanError(
+                    "could not open a DRAFT pull request. GitHub restricts draft "
+                    "PRs on private repositories to paid plans, and the draft is "
+                    "the workbench this lifecycle is built on (AGENTS.md, 'Dev "
+                    "Loop'). Make the repository public or upgrade its plan — do "
+                    "not drop --draft, which would publish unshepherded agent work "
+                    f"as a human handoff. Underlying error: {exc}"
+                ) from exc
+            raise
         return out.strip().splitlines()[-1] if out.strip() else ""
 
     def _own_pr_guard(self, number: int, action: str) -> dict:

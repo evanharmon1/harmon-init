@@ -418,6 +418,18 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 "a reviewer requested changes — needs a human, not a handoff",
             )
             return work
+        # "Nothing reported" is not "everything passed". classify_checks calls an
+        # empty rollup green, which is the right display value for a repo with no
+        # CI but the wrong basis for a one-way handoff: GitHub populates the
+        # rollup asynchronously, so a tick right after the push — or a repo whose
+        # required-checks ruleset was never imported, leaving mergeStateStatus
+        # CLEAN — would promote before a single check existed.
+        if not status.get("statusCheckRollup"):
+            work.state, work.detail = (
+                "settling",
+                "no checks have reported on this head yet — not promoting",
+            )
+            return work
         # Re-read the head immediately before the one-way promotion: a push
         # landing since the gate snapshot invalidates every result above it.
         # Every read below fails CLOSED — a field that is missing or unreadable

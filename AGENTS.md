@@ -355,7 +355,10 @@ The single definition of "the automated lifecycle is complete", used by
 interactive shepherding and by Foreman alike. A draft may be marked ready for
 review only when **all** of the following hold for its current `headRefOid`:
 
-- Required CI checks have concluded successfully.
+- Required CI checks have concluded successfully. An empty check list is
+  *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
+  taken moments after the push reports nothing having run rather than nothing
+  to run.
 - The current-head Codex cycle above is terminal and clean (Codex review is
   enabled here; where it is off, this condition drops out).
 - Every review finding is fixed, declined with evidence, or filed as follow-up

@@ -115,6 +115,20 @@ class DraftLifecycle(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertIn("--draft", created[0])
 
+    def test_unsupported_draft_error_names_the_cause(self):
+        # A private repo on a free plan cannot open drafts at all; gh's bare
+        # message does not say what to do, and "drop --draft" is the wrong fix.
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "create"],
+            "GraphQL: Draft pull requests are not supported in this repository.",
+            rc=1,
+        )
+        with self.assertRaises(ForemanError) as ctx:
+            gh.create_pr(title="t", body="b", head="h", base="main", labels=[])
+        self.assertIn("paid plans", str(ctx.exception))
+        self.assertIn("do not drop --draft", str(ctx.exception))
+
     def test_promotion_goes_through_gh_pr_ready(self):
         gh, runner = make_github()
         runner.when(
