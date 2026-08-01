@@ -46,6 +46,16 @@ inspect_manifest() {
     docker buildx imagetools inspect "$1" --format '{{json .Manifest}}'
 }
 
+# A credential-free config directory for anonymous registry operations. CLI
+# plugins (buildx) are discovered through the config directory on per-user
+# installs, so expose them via symlink — plugins are binaries, not credentials.
+anon_config() {
+    _ac_dir="$(mktemp -d)"
+    _ac_plugins="${DOCKER_CONFIG:-${HOME}/.docker}/cli-plugins"
+    [ -d "$_ac_plugins" ] && ln -s "$_ac_plugins" "$_ac_dir/cli-plugins"
+    printf '%s\n' "$_ac_dir"
+}
+
 inspect_existing() {
     _ie_ref="$1"
     _ie_error="$(mktemp)"
@@ -76,7 +86,7 @@ validate_index() {
     assert_sha "$_vi_source"
     assert_digest "$_vi_expected"
     _vi_ref="$(image_ref "$_vi_source")"
-    _vi_config="$(mktemp -d)"
+    _vi_config="$(anon_config)"
     _vi_manifest="$(DOCKER_CONFIG="$_vi_config" inspect_manifest "$_vi_ref")" || {
         rm -rf "$_vi_config"
         die "$_vi_ref is not anonymously inspectable"
@@ -109,7 +119,7 @@ validate_public_image() {
     _vp_digest="$2"
     validate_index "$_vp_source" "$_vp_digest" >/dev/null
     _vp_ref="$(image_ref "$_vp_source")@${_vp_digest}"
-    _vp_config="$(mktemp -d)"
+    _vp_config="$(anon_config)"
     _vp_index="$(DOCKER_CONFIG="$_vp_config" inspect_manifest "$_vp_ref")" || {
         rm -rf "$_vp_config"
         die "$_vp_ref is not anonymously inspectable"
@@ -131,7 +141,7 @@ validate_public_image() {
         else
             _vp_child_ref="${IMAGE}@${_vp_arm64_child}"
         fi
-        _vp_config="$(mktemp -d)"
+        _vp_config="$(anon_config)"
         if ! DOCKER_CONFIG="$_vp_config" docker pull --platform "linux/${_vp_arch}" "$_vp_child_ref" >/dev/null; then
             rm -rf "$_vp_config"
             die "anonymous linux/${_vp_arch} pull of $_vp_child_ref was refused by the registry or network (child-digest pulls cannot collide with a local reference)"

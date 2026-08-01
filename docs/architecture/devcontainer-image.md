@@ -38,6 +38,50 @@ The producer build context is `images/devcontainer/`, whose `.dockerignore`
 allows only the Dockerfile and contract helpers. This is the primary control
 that prevents unrelated repository contents from entering a layer.
 
+## Thin consumers
+
+The root `.devcontainer/Dockerfile` and its template twin are byte-identical
+thin overlays over the published image:
+
+```dockerfile
+FROM ghcr.io/evanharmon1/harmon-devcontainer:sha-<source-commit>@sha256:<digest>
+
+USER root
+COPY .devcontainer/config/ /usr/local/share/devcontainer-config/
+RUN /usr/local/sbin/install-harmon-repo-config
+USER vscode
+```
+
+Rules that `devcontainer-assert.sh` enforces:
+
+- exactly one `FROM`, and it must be the approved public package pinned by
+  **both** the `sha-<40-hex-source-commit>` tag and the manifest-list digest —
+  floating tags (`latest`, `main`, release aliases) and digestless tags are
+  rejected;
+- the overlay installer runs and the file finishes as `USER vscode`;
+- in container mode, the running image's `manifest.json` revision must match
+  the Dockerfile pin, and critical tools (e.g. `task`) must match the
+  manifest's versions — consumer Dockerfiles no longer carry tool ARGs, so
+  Renovate coverage for shared tool pins lives only in `images/devcontainer/`.
+
+**Customization:** genuinely repository-specific native packages go in a
+clearly delimited layer between `FROM` and the overlay installer. Shared
+tooling belongs in the canonical image, not in consumers; do not create image
+variants for one repository's needs.
+
+**Updates:** the image reference is template-owned, not a persisted Copier
+answer — a normal `copier update` advances the approved pin. Within
+harmon-init, the rolling `bot/sync-harmon-devcontainer` PR is the reviewed
+bridge from "image bytes exist" to "harmon-init recommends those bytes".
+
+**Rollback:** revert the `FROM` line to the previous reviewed `tag@digest`.
+Source-commit tags are immutable, so a rollback cannot silently resolve to
+different bytes.
+
+**Outage behavior:** pulls need no GHCR credential; if GHCR is unavailable,
+existing local/runner caches keep working and clean builders fail closed
+rather than falling back to an unpinned image.
+
 ## Validation and publication
 
 `publish-harmon-devcontainer.yml` has three trusted paths:

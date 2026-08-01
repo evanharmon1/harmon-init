@@ -948,10 +948,17 @@ else
         ! grep -q 'features/go-task' "$dc_cfg" ||
             err "rendered $dc_cfg installs task via a devcontainer Feature (harmon-init#427)"
     done
-    grep -q '^ARG TASK_VERSION=' .devcontainer/Dockerfile ||
-        err "rendered .devcontainer/Dockerfile has no 'ARG TASK_VERSION=' pin"
-    grep -qF 'go-task/task/releases/download/v${TASK_VERSION}/task_linux_' .devcontainer/Dockerfile ||
-        err "rendered .devcontainer/Dockerfile does not install task from the pinned release URL"
+    # The rendered Dockerfile must be a thin consumer of the shared image:
+    # exactly the approved immutable tag@digest reference, the overlay
+    # installer, and no consumer-side toolchain pins (those live only in
+    # images/devcontainer; harmon-init#489/#504).
+    grep -qE '^FROM ghcr\.io/evanharmon1/harmon-devcontainer:sha-[0-9a-f]{40}@sha256:[0-9a-f]{64}$' \
+        .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile does not extend the approved immutable shared image reference"
+    grep -q '^RUN /usr/local/sbin/install-harmon-repo-config$' .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile does not invoke the image overlay installer"
+    ! grep -q '^ARG TASK_VERSION=' .devcontainer/Dockerfile ||
+        err "rendered .devcontainer/Dockerfile still carries a consumer-side TASK_VERSION pin"
 fi
 
 # ── 9e2. alt-model providers render per use_alternative_claude_providers ──
