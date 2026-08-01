@@ -55,13 +55,15 @@ one and still seeing "stopped" does not mean the fix was wrong.
 
 ### 1. A missing `pnpm` kills every later lifecycle command
 
-Node is installed from NodeSource, but without `corepack enable pnpm` the
+Node is installed from NodeSource in the shared toolchain image, but without
+`corepack enable pnpm` the
 `postCreateCommand` fails at `pnpm install` with exit 127 — and
 `@devcontainers/cli` then **skips all remaining lifecycle commands**, including
 `postStartCommand`. The conductor never starts, and the error you see is about
 pnpm, not about the conductor.
 
-Shipped fix: `corepack enable pnpm` in the Dockerfile's Node layer.
+Shipped fix: `corepack enable pnpm` in the shared image's Node layer
+(harmon-init's `images/devcontainer/Dockerfile`).
 
 **Generalize this one.** Any non-zero exit in `postCreateCommand` silently
 cancels `postStartCommand`. If a start-time service is mysteriously absent,
@@ -90,15 +92,15 @@ re-injection in `postStartCommand` so a change takes effect without a rebuild.
 
 ### 4. `ModuleNotFoundError: No module named 'toml'`
 
-The Dockerfile installs `toml` and `aiogram` for the **system** Python, but the
-devcontainer Python feature installs its own and takes over `python3` on PATH.
-The bridge therefore starts once on the Dockerfile's Python and crashes on
-restart under the feature's.
+The shared toolchain image installs `toml` and `aiogram` for the **system**
+Python, but the devcontainer Python feature installs its own and takes over
+`python3` on PATH. The bridge therefore starts once on the image's Python and
+crashes on restart under the feature's.
 
 Shipped fix: `pip install --quiet toml aiogram` in `post-create-common.sh`,
 which runs *after* features are installed.
 
-**Generalize this one too.** Anything the Dockerfile installs into a runtime a
+**Generalize this one too.** Anything the image installs into a runtime a
 devcontainer feature later replaces must be reinstalled post-create.
 
 ### 5. Coder rebuilds reused a stale checkout
