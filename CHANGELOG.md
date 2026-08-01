@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.10.1](https://github.com/evanharmon1/harmon-init/compare/v4.10.0...v4.10.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.15.0 ([#509](https://github.com/evanharmon1/harmon-init/issues/509)) ([1c7ba84](https://github.com/evanharmon1/harmon-init/commit/1c7ba841a3ebe63696aaf3d2ee85a8104a1721ac))
+* **test:** sanitize GH_APP_SLUG in devcontainer image automation fixture ([#507](https://github.com/evanharmon1/harmon-init/issues/507)) ([08cd953](https://github.com/evanharmon1/harmon-init/commit/08cd95363496e2cb54c0419fba1a90a559fdb993))
+
 ## [4.10.0](https://github.com/evanharmon1/harmon-init/compare/v4.9.1...v4.10.0) (2026-08-01)
 
 
