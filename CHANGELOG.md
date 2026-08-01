@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.10.0](https://github.com/evanharmon1/harmon-init/compare/v4.9.1...v4.10.0) (2026-08-01)
+
+
+### Features
+
+* rewrite GitHub SSH URLs to HTTPS in devcontainers ([#500](https://github.com/evanharmon1/harmon-init/issues/500)) ([ea005c3](https://github.com/evanharmon1/harmon-init/commit/ea005c33b7f61bc82e644f33f9aa24bb05fef24a))
+
+
+### Bug Fixes
+
+* cover every GitHub SSH endpoint form in devcontainer rewrite ([#506](https://github.com/evanharmon1/harmon-init/issues/506)) ([70df340](https://github.com/evanharmon1/harmon-init/commit/70df340c0952b6c57c206d5660764a0409ab6a6a))
+* **template:** sync harmon-devkit skills to v0.14.0 ([#502](https://github.com/evanharmon1/harmon-init/issues/502)) ([07292a0](https://github.com/evanharmon1/harmon-init/commit/07292a09eaf233d08163dce264a2de8c9be9e719))
+
 ## [4.9.1](https://github.com/evanharmon1/harmon-init/compare/v4.9.0...v4.9.1) (2026-07-31)
 
 
