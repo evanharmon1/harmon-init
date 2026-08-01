@@ -50,7 +50,8 @@ class PrWork:
     url: str
     title: str
     state: str = (
-        "healthy"  # healthy | fixed | rebased | adjudicated | waiting | escalated | settling | ready
+        # promoted = draft handed to a human; ready = mergeable, feeds merge order
+        "healthy"  # healthy | fixed | rebased | adjudicated | waiting | escalated | settling | promoted | ready
     )
     detail: str = ""
     actions: int = 0
@@ -298,7 +299,12 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         return work
 
     merge_state = (status.get("mergeStateStatus") or "").upper()
-    if merge_state in ("BEHIND", "DIRTY"):
+    # A draft reports mergeStateStatus=DRAFT — the draft flag is itself what
+    # blocks the merge — so DRAFT can stand in front of a conflicting branch.
+    # `mergeable` is computed independently of the draft flag, so consult both
+    # before concluding the branch does not need a rebase.
+    mergeable = (status.get("mergeable") or "").upper()
+    if merge_state in ("BEHIND", "DIRTY") or mergeable == "CONFLICTING":
         wt_path = _ensure_worktree(
             cfg, root, work.unit_number, work.branch, remote_name
         )
@@ -405,7 +411,14 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         )
         return work
 
-    if merge_state == "CLEAN":
+    # Two transitions, one gate. CLEAN is unreachable while the PR is a draft,
+    # so testing for it alone would make the promotion below dead code:
+    #   DRAFT → promote to ready for review (the human handoff)
+    #   CLEAN → label ready-to-merge (mergeable now; the human decides)
+    # A promoted PR usually reports BLOCKED next (code-owner review pending) and
+    # only becomes CLEAN once approved, so the label still means what it always
+    # did and only `ready` feeds the suggested merge order.
+    if merge_state in ("DRAFT", "CLEAN"):
         if cfg.require_codex_cloud_review:
             work.state, work.detail = (
                 "escalated",
@@ -467,14 +480,25 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                     "promotion to ready for review not confirmed on the gated head",
                 )
                 return work
-            transition = "promoted to ready for review"
-        else:
-            # Idempotent re-entry: never manufacture a second ready event.
-            transition = "already ready for review"
+            # Deliberately NOT "ready": the merge order is for PRs a human can
+            # merge now, and this one has not been reviewed yet. The next tick
+            # sees a non-draft PR and labels it once GitHub reports CLEAN.
+            work.state, work.detail = (
+                "promoted",
+                "readiness gate passed — promoted to ready for human review",
+            )
+            return work
+        # Already non-draft (idempotent re-entry: never a second ready event).
+        if merge_state != "CLEAN":
+            work.state, work.detail = (
+                "healthy",
+                f"ready for review; mergeState={merge_state}",
+            )
+            return work
         gh.label_own_pr(work.number, add=["ready-to-merge"])
         work.state, work.detail = (
             "ready",
-            f"green, adjudicated, mergeState=CLEAN — {transition}, awaiting human merge",
+            "green, adjudicated, mergeState=CLEAN — awaiting human merge",
         )
     else:
         work.state, work.detail = "healthy", f"mergeState={merge_state or 'UNKNOWN'}"

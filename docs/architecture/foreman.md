@@ -149,19 +149,27 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
 - **Behind/conflicting after a sibling merge** → `git merge-tree` dry run
   enumerates conflicts; clean rebases are mechanical, conflicted ones go to
   the agent (rebase additively, regenerate generated artifacts via tooling,
-  re-verify) — always rebase, never merge-main.
+  re-verify) — always rebase, never merge-main. Triggered by
+  `mergeStateStatus` **or** `mergeable=CONFLICTING`, because `DRAFT` can stand
+  in front of a conflicting branch while `mergeable` is computed independently.
 - **Unresolved review threads** → the agent adjudicates each finding: apply
   (commit + reply + resolve) or decline with technical reasoning (bots are
   sometimes wrong; deterministic facts beat speculation). Blanket-accepting
   is prohibited. Foreman re-checks disposition completeness afterwards.
-- **Readiness gate passes** → promote the draft with `gh pr ready`, apply the
-  `ready-to-merge` label, and report a dependency-aware suggested merge order.
+- **Readiness gate passes** → two transitions, gated identically but distinct in
+  meaning. A draft reports `mergeStateStatus=DRAFT` (the draft flag is itself
+  what blocks the merge), so `CLEAN` only becomes reachable after promotion:
+  - `DRAFT` → `gh pr ready` — the human handoff, reported as `promoted`.
+  - `CLEAN` → the `ready-to-merge` label plus a dependency-aware suggested merge
+    order, reported as `ready`. A freshly promoted PR usually reports `BLOCKED`
+    until a code owner approves, so only genuinely mergeable PRs enter that
+    order.
+
   The gate is the deterministic part of AGENTS.md's: green checks that actually
   reported (an empty `statusCheckRollup` is "nothing ran yet", not "nothing
-  failed" — it defers), every review thread dispositioned,
-  `mergeStateStatus=CLEAN`, `reviewDecision` not `CHANGES_REQUESTED`, and
-  `headRefOid` re-read immediately before promoting and unchanged since the gate
-  ran. A push landing mid-gate defers to the next tick;
+  failed" — it defers), every review thread dispositioned, `reviewDecision` not
+  `CHANGES_REQUESTED`, and `headRefOid` re-read immediately before promoting and
+  unchanged since the gate ran. A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never

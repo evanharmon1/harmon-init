@@ -155,7 +155,15 @@ class MergeReadiness(unittest.TestCase):
     HEAD = "d15ea5e"
 
     @classmethod
-    def github(cls, merge_state: str, mergeable: str) -> MagicMock:
+    def github(
+        cls, merge_state: str, mergeable: str, *, draft: bool = True
+    ) -> MagicMock:
+        """A foreman PR as GitHub actually reports it.
+
+        `merge_state` and `draft` are not independent: GitHub reports
+        mergeStateStatus=DRAFT while the draft flag is set, and CLEAN only
+        becomes reachable after promotion. Pass the pair that can co-occur.
+        """
         gh = MagicMock(spec=GitHub)
         gh.pr_status.return_value = {
             "number": 23,
@@ -163,16 +171,16 @@ class MergeReadiness(unittest.TestCase):
             "url": "https://github.com/owner/repo/pull/23",
             "headRefName": "foreman/feat/17-example",
             "headRefOid": cls.HEAD,
-            "isDraft": True,
+            "isDraft": draft,
             "reviewDecision": "",
             "mergeStateStatus": merge_state,
             "mergeable": mergeable,
             "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
             "labels": [],
         }
-        # Gate re-read, then the post-promotion confirmation.
+        # Gate re-read, then (for a draft) the post-promotion confirmation.
         gh.pr_head.side_effect = [
-            {"state": "OPEN", "isDraft": True, "headRefOid": cls.HEAD},
+            {"state": "OPEN", "isDraft": draft, "headRefOid": cls.HEAD},
             {"state": "OPEN", "isDraft": False, "headRefOid": cls.HEAD},
         ]
         gh.review_threads.return_value = []
@@ -180,38 +188,55 @@ class MergeReadiness(unittest.TestCase):
         return gh
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
-    def test_mergeable_but_blocked_pr_is_not_ready(self, _remote):
-        gh = self.github("BLOCKED", "MERGEABLE")
+    def test_blocked_non_draft_pr_is_not_labelled(self, _remote):
+        gh = self.github("BLOCKED", "MERGEABLE", draft=False)
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "healthy")
         gh.label_own_pr.assert_not_called()
         gh.ready_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
-    def test_clean_draft_is_promoted_and_labelled(self, _remote):
-        gh = self.github("CLEAN", "MERGEABLE")
+    def test_draft_merge_state_still_reaches_the_promotion_gate(self, _remote):
+        # The regression this guards: a draft reports mergeStateStatus=DRAFT,
+        # never CLEAN, so gating promotion on CLEAN alone made it dead code and
+        # left every foreman draft sitting at "healthy, mergeState=DRAFT".
+        gh = self.github("DRAFT", "MERGEABLE")
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
-        self.assertEqual(work.state, "ready")
+        self.assertEqual(work.state, "promoted")
         gh.ready_own_pr.assert_called_once_with(23)
-        gh.label_own_pr.assert_called_once_with(23, add=["ready-to-merge"])
-        self.assertIn("promoted to ready for review", work.detail)
+        self.assertIn("promoted to ready for human review", work.detail)
+        # Not mergeable yet — a just-promoted PR has not been reviewed, so it
+        # must not carry the merge label or enter the suggested merge order.
+        gh.label_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
-    def test_already_ready_pr_is_not_promoted_twice(self, _remote):
-        gh = self.github("CLEAN", "MERGEABLE")
-        gh.pr_status.return_value["isDraft"] = False
-        gh.pr_head.side_effect = [
-            {"state": "OPEN", "isDraft": False, "headRefOid": self.HEAD}
-        ]
+    def test_clean_non_draft_pr_is_labelled_not_promoted_again(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE", draft=False)
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "ready")
         gh.ready_own_pr.assert_not_called()
         gh.label_own_pr.assert_called_once_with(23, add=["ready-to-merge"])
-        self.assertIn("already ready for review", work.detail)
+
+    @patch("foreman.shepherd.worktree.push")
+    @patch("foreman.shepherd.worktree.rebase_onto", return_value=True)
+    @patch("foreman.shepherd.worktree.merge_tree_conflicts", return_value=[])
+    @patch("foreman.shepherd.worktree.fetch")
+    @patch("foreman.shepherd._ensure_worktree", return_value=Path("."))
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_conflicting_draft_is_rebased_despite_the_draft_merge_state(
+        self, _remote, _worktree, _fetch, conflicts, _rebase, _push
+    ):
+        # DRAFT can stand in front of a conflicting branch; `mergeable` is
+        # computed independently, so the rebase path must consult it too.
+        gh = self.github("DRAFT", "CONFLICTING")
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        conflicts.assert_called_once()
+        self.assertEqual(work.state, "rebased")
+        gh.ready_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_requested_changes_block_the_handoff(self, _remote):
-        gh = self.github("CLEAN", "MERGEABLE")
+        gh = self.github("DRAFT", "MERGEABLE")
         gh.pr_status.return_value["reviewDecision"] = "CHANGES_REQUESTED"
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "escalated")
@@ -221,7 +246,7 @@ class MergeReadiness(unittest.TestCase):
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_head_moving_during_the_gate_defers_promotion(self, _remote):
-        gh = self.github("CLEAN", "MERGEABLE")
+        gh = self.github("DRAFT", "MERGEABLE")
         gh.pr_head.side_effect = [
             {"state": "OPEN", "isDraft": True, "headRefOid": "beefbee"}
         ]
@@ -233,7 +258,7 @@ class MergeReadiness(unittest.TestCase):
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_closed_pr_is_never_promoted(self, _remote):
-        gh = self.github("CLEAN", "MERGEABLE")
+        gh = self.github("DRAFT", "MERGEABLE")
         gh.pr_head.side_effect = [
             {"state": "CLOSED", "isDraft": True, "headRefOid": self.HEAD}
         ]
@@ -246,9 +271,9 @@ class MergeReadiness(unittest.TestCase):
     def test_empty_check_rollup_is_not_evidence_of_a_green_head(self, _remote):
         # classify_checks calls an empty rollup green (right for display, wrong
         # for a one-way handoff): GitHub fills the rollup asynchronously, and a
-        # repo whose required-checks ruleset was never imported reports CLEAN
-        # with nothing having run.
-        gh = self.github("CLEAN", "MERGEABLE")
+        # repo whose required-checks ruleset was never imported reports nothing
+        # blocking with nothing having run.
+        gh = self.github("DRAFT", "MERGEABLE")
         gh.pr_status.return_value["statusCheckRollup"] = []
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "settling")
