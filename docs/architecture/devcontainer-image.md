@@ -63,9 +63,12 @@ does not receive a long-lived personal token or permission to change package
 settings, and consumer propagation cannot begin while the package is private.
 
 Publication fails closed unless the manifest digest is valid, both required
-architectures exist, the source label and tool manifest match, and an amd64
-image can be pulled with an empty Docker credential directory. A failed check
-cannot advance consumers.
+architectures exist, the source label and tool manifest match, and each
+platform's image can be pulled with an empty Docker credential directory.
+Validation pulls each platform by its own child-manifest digest resolved from
+the validated index — two platforms pulled through the shared top-level
+reference would collide locally on the second pull ("cannot overwrite
+digest"). A failed check cannot advance consumers.
 
 ## Pin propagation
 

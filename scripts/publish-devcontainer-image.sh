@@ -95,28 +95,59 @@ validate_index() {
     printf '%s\n' "$_vi_expected"
 }
 
+platform_child_digest() {
+    _pc_index="$1"
+    _pc_arch="$2"
+    _pc_child="$(printf '%s' "$_pc_index" | jq -r --arg arch "$_pc_arch" \
+        'first(.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest) // empty')"
+    assert_digest "$_pc_child"
+    printf '%s\n' "$_pc_child"
+}
+
 validate_public_image() {
     _vp_source="$1"
     _vp_digest="$2"
     validate_index "$_vp_source" "$_vp_digest" >/dev/null
     _vp_ref="$(image_ref "$_vp_source")@${_vp_digest}"
+    _vp_config="$(mktemp -d)"
+    _vp_index="$(DOCKER_CONFIG="$_vp_config" inspect_manifest "$_vp_ref")" || {
+        rm -rf "$_vp_config"
+        die "$_vp_ref is not anonymously inspectable"
+    }
+    rm -rf "$_vp_config"
+
+    # Pull each platform by its unique child-manifest digest. Pulling both
+    # platforms through the shared top-level reference makes the second pull
+    # fail locally with "cannot overwrite digest" after Docker binds the first
+    # platform's child to that reference — a client-side collision that is
+    # indistinguishable from a registry denial in the exit status alone.
+    _vp_amd64_child="$(platform_child_digest "$_vp_index" amd64)"
+    _vp_arm64_child="$(platform_child_digest "$_vp_index" arm64)"
+    [ "$_vp_amd64_child" != "$_vp_arm64_child" ] ||
+        die "index $_vp_digest resolves amd64 and arm64 to one child digest $_vp_amd64_child"
     for _vp_arch in amd64 arm64; do
+        if [ "$_vp_arch" = amd64 ]; then
+            _vp_child_ref="${IMAGE}@${_vp_amd64_child}"
+        else
+            _vp_child_ref="${IMAGE}@${_vp_arm64_child}"
+        fi
         _vp_config="$(mktemp -d)"
-        if ! DOCKER_CONFIG="$_vp_config" docker pull --platform "linux/${_vp_arch}" "$_vp_ref" >/dev/null; then
+        if ! DOCKER_CONFIG="$_vp_config" docker pull --platform "linux/${_vp_arch}" "$_vp_child_ref" >/dev/null; then
             rm -rf "$_vp_config"
-            die "anonymous ${_vp_arch} pull failed for $_vp_ref"
+            die "anonymous linux/${_vp_arch} pull of $_vp_child_ref was refused by the registry or network (child-digest pulls cannot collide with a local reference)"
         fi
         rm -rf "$_vp_config"
 
-        _vp_revision="$(docker image inspect "$_vp_ref" \
+        _vp_revision="$(docker image inspect "$_vp_child_ref" \
             --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
         [ "$_vp_revision" = "$_vp_source" ] ||
             die "published ${_vp_arch} label revision '$_vp_revision' does not match '$_vp_source'"
         docker run --rm --pull=never --platform "linux/${_vp_arch}" \
             --env "EXPECTED_REVISION=${_vp_source}" \
             --env "EXPECTED_ARCHITECTURE=${_vp_arch}" \
-            "$_vp_ref" /usr/local/sbin/smoke.sh >/dev/null ||
-            die "published ${_vp_arch} smoke check failed for $_vp_ref"
+            "$_vp_child_ref" /usr/local/sbin/smoke.sh >/dev/null ||
+            die "published ${_vp_arch} smoke check failed for $_vp_child_ref"
+        docker image rm "$_vp_child_ref" >/dev/null 2>&1 || true
     done
     note "validated public amd64/arm64 image $_vp_ref"
 }

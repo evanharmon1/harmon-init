@@ -19,6 +19,8 @@ pass() {
 sha_a=1111111111111111111111111111111111111111
 digest_a=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 digest_b=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+child_amd64=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+child_arm64=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 
 # Manifest generation is deterministic, valid JSON, and rejects unsafe values.
 manifest_dir="$tmp_root/manifest"
@@ -116,14 +118,26 @@ if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ]; then
     fi
     if [ "\${DOCKER_STUB_MODE:-}" = missing-arm ]; then
 cat <<'JSON'
-{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"${digest_a}","manifests":[{"platform":{"os":"linux","architecture":"amd64"}}]}
+{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"${digest_a}","manifests":[{"digest":"${child_amd64}","platform":{"os":"linux","architecture":"amd64"}}]}
+JSON
+        exit 0
+    fi
+    if [ "\${DOCKER_STUB_MODE:-}" = duplicate-child ]; then
+cat <<'JSON'
+{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"${digest_a}","manifests":[{"digest":"${child_amd64}","platform":{"os":"linux","architecture":"amd64"}},{"digest":"${child_amd64}","platform":{"os":"linux","architecture":"arm64"}}]}
 JSON
         exit 0
     fi
 cat <<'JSON'
-{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"${digest_a}","manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}
+{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"${digest_a}","manifests":[{"digest":"${child_amd64}","platform":{"os":"linux","architecture":"amd64"}},{"digest":"${child_arm64}","platform":{"os":"linux","architecture":"arm64"}}]}
 JSON
     exit 0
+fi
+if [ "\${1:-}" = "pull" ]; then
+    if [ -z "\${DOCKER_CONFIG:-}" ] || [ -s "\${DOCKER_CONFIG}/config.json" ]; then
+        echo "ERROR: stub pull ran with ambient registry credentials" >&2
+        exit 1
+    fi
 fi
 if [ "\${1:-} \${2:-}" = "image inspect" ]; then
     printf '%s\n' "\${DOCKER_STUB_REVISION:-}"
@@ -260,6 +274,32 @@ run_fixture env DOCKER_STUB_MODE=missing-once DOCKER_STUB_STATE="$docker_state" 
     DOCKER_STUB_LOG="$docker_log" DOCKER_STUB_REVISION="$old_source" \
     ./scripts/publish-devcontainer-image.sh publish "$old_source" >/dev/null
 grep -q '^buildx build' "$docker_log" || fail "absent immutable tag did not trigger publication"
+pass
+
+# An existing-tag reconciliation rerun validates without any push and pulls
+# each platform anonymously by its distinct child-manifest digest — never
+# through the shared top-level index reference, whose second platform pull
+# fails locally with "cannot overwrite digest".
+: >"$docker_log"
+run_fixture env DOCKER_STUB_LOG="$docker_log" DOCKER_STUB_REVISION="$old_source" \
+    ./scripts/publish-devcontainer-image.sh publish "$old_source" >/dev/null
+if grep -q '^buildx build' "$docker_log"; then
+    fail "existing-tag rerun attempted a build/push"
+fi
+grep -q "^pull --platform linux/amd64 ghcr.io/evanharmon1/harmon-devcontainer@${child_amd64}\$" \
+    "$docker_log" || fail "amd64 validation did not pull its own child digest"
+grep -q "^pull --platform linux/arm64 ghcr.io/evanharmon1/harmon-devcontainer@${child_arm64}\$" \
+    "$docker_log" || fail "arm64 validation did not pull its own child digest"
+if grep '^pull ' "$docker_log" | grep -q "@${digest_a}"; then
+    fail "validation pulled through the top-level index digest"
+fi
+pass
+
+# An index that resolves both platforms to one child digest fails closed.
+if run_fixture env DOCKER_STUB_MODE=duplicate-child DOCKER_STUB_REVISION="$old_source" \
+    ./scripts/publish-devcontainer-image.sh validate "$old_source" "$digest_a" >/dev/null 2>&1; then
+    fail "validation accepted duplicate per-platform child digests"
+fi
 pass
 
 # The credential-bearing publish phase must not invoke registry validation;
