@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.11.0](https://github.com/evanharmon1/harmon-init/compare/v4.10.2...v4.11.0) (2026-08-01)
+
+
+### Features
+
+* **devcontainer:** convert consumers to the shared toolchain image ([#516](https://github.com/evanharmon1/harmon-init/issues/516)) ([80e5c1b](https://github.com/evanharmon1/harmon-init/commit/80e5c1b7b4232e2d364cae2c4fdd80a608c70c54))
+
+
+### Bug Fixes
+
+* **devcontainer:** avoid multi-arch public-pull digest collision ([#515](https://github.com/evanharmon1/harmon-init/issues/515)) ([da2da6f](https://github.com/evanharmon1/harmon-init/commit/da2da6f3d1dc14a97387fd6e75ed71d3ccf2cee6)), closes [#505](https://github.com/evanharmon1/harmon-init/issues/505)
+* **devcontainer:** rewrite the Claude Code status line ([#513](https://github.com/evanharmon1/harmon-init/issues/513)) ([8c8800c](https://github.com/evanharmon1/harmon-init/commit/8c8800cbdb805a017a9370237a5cb80da395ba32))
+
 ## [4.10.2](https://github.com/evanharmon1/harmon-init/compare/v4.10.1...v4.10.2) (2026-08-01)
 
 
