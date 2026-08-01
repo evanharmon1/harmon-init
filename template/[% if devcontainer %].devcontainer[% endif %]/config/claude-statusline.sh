@@ -90,8 +90,11 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 fields=$(jq -r '
+  # C0 (0-31), DEL, and C1 (128-159) all go. C1 matters because a terminal in
+  # 8-bit mode reads U+009B as CSI outright — the same escape this strips in
+  # its ESC-[ form, arriving by a route a C0-only filter would wave through.
   def s: (. // "") | tostring | explode
-         | map(select(. > 31 and . != 127)) | implode;
+         | map(select(. > 31 and . != 127 and (. < 128 or . > 159))) | implode;
   def n: (. // 0) | if type == "number" then floor else 0 end;
   # Like n, but absence stays absent. A session without a subscription — API
   # key, Bedrock, Vertex, an alternative provider — has no .rate_limits at all,
@@ -133,7 +136,11 @@ IFS=$'\037' read -r cur_dir proj_dir model effort fast thinking cc_ver style \
     pr_num pr_url pr_state rl5_pct rl5_at rl7_pct rl7_at <<<"$fields"
 
 [ -n "${model:-}" ] || model="Claude"
-[ -n "${cur_dir:-}" ] || cur_dir="$PWD"
+# $PWD never passed through the jq filter, so it is stripped here instead.
+# Without this, running from a directory whose name contains ESC or BEL would
+# reopen the injection path on exactly the paths that reach this fallback — an
+# unparseable payload, or one carrying no workspace at all.
+[ -n "${cur_dir:-}" ] || cur_dir="${PWD//[[:cntrl:]]/}"
 
 # One clock read serves every relative figure below. The wall-clock time itself
 # is deliberately not shown: the terminal, the OS, and the wall already have it,
@@ -153,6 +160,10 @@ num() { case "${1:-}" in '' | *[!0-9]*) return 1 ;; esac }
 sane() {
     local v=$1
     case "$v" in '' | *[!0-9]*) v=$2 ;; esac
+    # 10# because bash reads a leading zero as octal: STATUSLINE_CTX_WIDTH=08
+    # passes the digits-only test above and then dies on "value too great for
+    # base", which is a stranger failure than the typo it came from.
+    v=$((10#$v))
     ((v < $3)) && v=$3
     ((v > $4)) && v=$4
     REPLY=$v
