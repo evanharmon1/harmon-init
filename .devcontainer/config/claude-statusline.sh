@@ -18,10 +18,12 @@
 # it survives the ~/.claude volume mount, and wired up via the `statusLine` key
 # in config/claude-user-defaults.json — a seed default the user can override.
 #
-# This runs on every keystroke-ish refresh, so it is built to stay cheap: two
-# forks total (one `jq`, one `date`) and no others. In particular there is no
-# `git` subprocess — the branch is read straight out of .git/HEAD — no logging,
-# and no network. Everything else is bash builtins, and the helpers below
+# This runs on every keystroke-ish refresh, so it is built to stay cheap: it
+# executes exactly two external commands, `jq` and `date`. In particular there
+# is no `git` subprocess — the branch is read straight out of .git/HEAD — stdin
+# is drained by `read` rather than `cat`, and jq is fed by here-string rather
+# than a pipeline, so neither costs an extra process. No logging, and no
+# network. Everything else is bash builtins, and the helpers below
 # deliberately return through $REPLY rather than $(...) because a command
 # substitution is a subshell fork; at ~20 segments a render that is the
 # difference between a couple of forks and two dozen.
@@ -31,7 +33,10 @@
 # than blank the status line entirely.
 set -uo pipefail
 
-input=$(cat)
+# Drain stdin with the builtin rather than `cat`. -d '' reads to EOF in one go
+# and returns nonzero there, which is the normal path — the payload is in
+# $input either way, so the status is deliberately ignored.
+IFS= read -r -d '' input || true
 
 # ---- toggles (override in the environment) ----
 : "${STATUSLINE_COLOR:=1}"     # 0 disables color (NO_COLOR is honored too)
@@ -84,10 +89,15 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 0
 fi
 
-fields=$(printf '%s' "$input" | jq -r '
+fields=$(jq -r '
   def s: (. // "") | tostring | explode
          | map(select(. > 31 and . != 127)) | implode;
   def n: (. // 0) | if type == "number" then floor else 0 end;
+  # Like n, but absence stays absent. A session without a subscription — API
+  # key, Bedrock, Vertex, an alternative provider — has no .rate_limits at all,
+  # and folding that to 0 would draw two empty quota bars claiming a fresh
+  # allowance the session does not have. Only a real 0 may render as 0.
+  def o: if . == null then "" else (. | n) end;
   [ ((.workspace.current_dir // .cwd)   | s)
   , (.workspace.project_dir             | s)
   , (.model.display_name                | s)
@@ -108,11 +118,11 @@ fields=$(printf '%s' "$input" | jq -r '
   , (.pr.number                             | s)
   , (.pr.url                                | s)
   , (.pr.review_state                       | s)
-  , (.rate_limits.five_hour.used_percentage | n)
-  , (.rate_limits.five_hour.resets_at       | n)
-  , (.rate_limits.seven_day.used_percentage | n)
-  , (.rate_limits.seven_day.resets_at       | n)
-  ] | map(tostring) | join("\u001f")' 2>/dev/null)
+  , (.rate_limits.five_hour.used_percentage | o)
+  , (.rate_limits.five_hour.resets_at       | o)
+  , (.rate_limits.seven_day.used_percentage | o)
+  , (.rate_limits.seven_day.resets_at       | o)
+  ] | map(tostring) | join("\u001f")' <<<"$input" 2>/dev/null)
 
 # Split on U+001F (unit separator), not a tab: TAB is IFS *whitespace*, so
 # `read` would collapse runs of it and silently shift every field after the
@@ -132,6 +142,24 @@ now=$(date +%s)
 
 # ---- helpers (results land in $REPLY) ----
 num() { case "${1:-}" in '' | *[!0-9]*) return 1 ;; esac }
+
+# sane <value> <default> <min> <max> — a bounded integer, whatever was passed.
+#
+# The numeric overrides are user-supplied and end up inside (( )), where bash
+# resolves a bare word as a *variable name*: STATUSLINE_CTX_WIDTH=abc is an
+# unbound variable under `set -u`, which aborts the render mid-line. A typo in
+# an optional knob must not be able to blank the status line, and an absurd
+# width must not make every refresh build an unbounded string.
+sane() {
+    local v=$1
+    case "$v" in '' | *[!0-9]*) v=$2 ;; esac
+    ((v < $3)) && v=$3
+    ((v > $4)) && v=$4
+    REPLY=$v
+}
+sane "$STATUSLINE_CTX_WIDTH" 16 1 60 && STATUSLINE_CTX_WIDTH=$REPLY
+sane "$STATUSLINE_RL_WIDTH" 7 0 60 && STATUSLINE_RL_WIDTH=$REPLY
+sane "$STATUSLINE_RL_PCT" 0 0 1 && STATUSLINE_RL_PCT=$REPLY
 
 # bar <used-pct> <width> — the filled portion represents consumption.
 bar() {
