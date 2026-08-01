@@ -20,7 +20,12 @@ reviews:
 
   auto_review:
     enabled: true
-    drafts: false
+    # Review drafts: the draft PR is the agent workbench (AGENTS.md, "Dev
+    # Loop"), and the readiness gate that promotes it to ready-for-review
+    # expects every configured reviewer to have settled first. Left false, the
+    # review would fire on promotion — after the gate it was meant to inform,
+    # and with nobody left to act on the findings before a human sees them.
+    drafts: true
     # Also auto-review stacked PRs — ones whose base is a feature branch rather
     # than main — so each slice of a PR stack gets reviewed before the stack
     # starts merging. Regex list; the default branch is always included.

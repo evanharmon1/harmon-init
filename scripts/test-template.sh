@@ -840,6 +840,14 @@ else
     [ -f .claude/agents/foreman-implementer.md ] || err "foreman agent definitions missing"
     grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman Taskfile include missing"
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
+    # Foreman's PRs are the same draft workbench the Dev Loop defines: opened
+    # draft, promoted only out of the readiness gate, never merged.
+    grep -Fq '"--draft"' scripts/foreman/github.py ||
+        err "foreman opens non-draft PRs — the draft-workbench lifecycle is broken"
+    grep -Fq 'def ready_own_pr' scripts/foreman/github.py ||
+        err "foreman has no guarded ready-for-review promotion"
+    grep -Fq 'ready_own_pr' scripts/foreman/shepherd.py ||
+        err "foreman shepherd never promotes a passing draft"
 fi
 
 # ── 9d3. local/cloud Codex review render independently (both default off) ────
@@ -881,10 +889,16 @@ if [ "$profile" = "full" ]; then
         err "Foreman does not fail closed for required Codex cloud review"
     grep -Fq 'Connect Codex cloud review' docs/CHECKLIST.md ||
         err "CHECKLIST missing required Codex cloud connector setup"
+    # Promotion is what makes this prerequisite load-bearing: with Automatic
+    # reviews on, `gh pr ready` starts a review AFTER the gate that promoted.
+    grep -Fq 'Disable Codex Automatic reviews' docs/CHECKLIST.md ||
+        err "CHECKLIST missing the human-configured Codex Automatic-reviews prerequisite"
 else
     ! grep -Fq '@codex review' AGENTS.md || err "AGENTS rendered Codex shepherd trigger but use_codex_cloud_review is off"
     ! grep -Fq 'Connect Codex cloud review' docs/CHECKLIST.md ||
         err "CHECKLIST rendered Codex cloud connector setup without explicit opt-in"
+    ! grep -Fq 'Disable Codex Automatic reviews' docs/CHECKLIST.md ||
+        err "CHECKLIST rendered the Codex Automatic-reviews step without explicit opt-in"
 fi
 if [ "$profile" = "meta" ]; then
     grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
@@ -905,6 +919,10 @@ if [ "$profile" = "full" ]; then
         err "Claude review workflow does not trust CodeRabbit (use_coderabbit=true)"
     grep -q 'coderabbitai' .foreman.toml ||
         err "Foreman does not trust CodeRabbit reviews (use_coderabbit=true)"
+    # The draft PR is the workbench, so a reviewer that skips drafts would only
+    # ever report after the readiness gate promoted the PR past it.
+    grep -Eq '^ +drafts: true$' .coderabbit.yaml ||
+        err "CodeRabbit skips drafts — it cannot review the draft workbench"
 else
     [ ! -f .coderabbit.yaml ] ||
         err ".coderabbit.yaml rendered but use_coderabbit is off"
@@ -919,6 +937,44 @@ else
             err "Foreman trusts CodeRabbit reviews but use_coderabbit is off"
     fi
 fi
+
+# ── 9d5. the draft-PR workbench lifecycle renders in every profile ──
+# Draft = agent workbench, ready-for-review = human handoff, merge = human only
+# (AGENTS.md "Dev Loop"). The vendored implement/shepherd skills defer to the
+# generated AGENTS.md, so if these statements go missing the whole lifecycle
+# silently reverts to "open a PR and hope" in every downstream repo.
+grep -Fq 'gh pr create --draft' AGENTS.md ||
+    err "AGENTS does not open PRs as drafts (draft-workbench lifecycle)"
+grep -Fq '### Readiness gate' AGENTS.md ||
+    err "AGENTS defines no readiness gate for the ready-for-review transition"
+grep -Fq 'gh pr ready' AGENTS.md ||
+    err "AGENTS never promotes the draft to ready for review"
+grep -Fq 'reviewDecision' AGENTS.md ||
+    err "AGENTS readiness gate ignores a CHANGES_REQUESTED review decision"
+grep -Fq 'mergeStateStatus' AGENTS.md ||
+    err "AGENTS readiness gate ignores mergeability state"
+grep -Fqi 'never merge' AGENTS.md ||
+    err "AGENTS lost the human-only merge boundary"
+
+# The headless implement workflow opens the draft and stops there: it cannot
+# complete the readiness gate, so a promotion from it would make "non-draft"
+# stop meaning "a human should look at this". Assert the prohibition is stated
+# rather than that the string is absent — the prohibition names the command.
+grep -Fq 'gh pr create --draft' .github/workflows/claude-implement.yml ||
+    err "claude-implement.yml does not open a draft PR"
+grep -Fq 'NEVER run `gh pr ready`' .github/workflows/claude-implement.yml ||
+    err "claude-implement.yml does not forbid promoting the draft it cannot gate"
+
+# Required checks must run on the draft, or the gate has nothing to read. A
+# bare `pull_request:` trigger already covers draft opened/synchronize; what
+# would break it is an explicit draft filter or a narrowed types: list.
+for wf in .github/workflows/*.yml; do
+    [ -f "$wf" ] || continue
+    ! grep -Fq 'pull_request.draft' "$wf" ||
+        err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
+done
+awk '/^on:/,/^jobs:/' .github/workflows/build.yml | grep -q 'types:' &&
+    err "build.yml narrows its pull_request types — draft opened/synchronize may not run"
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
 # minimal renders with devcontainer=false; every other profile has it on.

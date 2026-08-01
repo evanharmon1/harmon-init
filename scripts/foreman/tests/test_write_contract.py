@@ -23,6 +23,7 @@ def _mutations(gh):
             "create_pr",
             lambda: gh.create_pr(title="t", body="b", head="h", base="main", labels=[]),
         ),
+        ("ready_own_pr", lambda: gh.ready_own_pr(1)),
         ("edit_own_pr_body", lambda: gh.edit_own_pr_body(1, "b")),
         ("label_own_pr", lambda: gh.label_own_pr(1, add=["ready-to-merge"])),
         ("comment_own_pr", lambda: gh.comment_own_pr(1, "b")),
@@ -91,6 +92,40 @@ class GuardedChannels(unittest.TestCase):
         )
         with self.assertRaises(ForemanError):
             gh.label_own_pr(9, add=["priority:high"])
+
+    def test_promotion_refuses_a_foreign_pr(self):
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "view", "9"],
+            {"number": 9, "author": {"login": "human"}, "labels": [], "body": ""},
+        )
+        with self.assertRaises(ForemanError):
+            gh.ready_own_pr(9)
+        self.assertFalse(runner.called_with_prefix(["pr", "ready"]))
+
+
+class DraftLifecycle(unittest.TestCase):
+    """PRs are opened as the agent workbench, never as a human handoff."""
+
+    def test_created_prs_are_drafts(self):
+        gh, runner = make_github()
+        runner.when(["pr", "create"], "https://github.com/owner/repo/pull/5\n")
+        gh.create_pr(title="t", body="b", head="h", base="main", labels=[])
+        created = runner.called_with_prefix(["pr", "create"])
+        self.assertEqual(len(created), 1)
+        self.assertIn("--draft", created[0])
+
+    def test_promotion_goes_through_gh_pr_ready(self):
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "view", "5"],
+            {"number": 5, "author": {"login": "bot"}, "labels": [], "body": ""},
+        )
+        runner.when(["pr", "ready", "5"], "")
+        gh.ready_own_pr(5)
+        self.assertEqual(
+            runner.called_with_prefix(["pr", "ready"]), [["pr", "ready", "5"]]
+        )
 
     def test_status_comment_edits_only_own_marked_comment(self):
         gh, runner = make_github()

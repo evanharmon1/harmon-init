@@ -152,19 +152,29 @@ class ReviewThreadRetrieval(unittest.TestCase):
 
 
 class MergeReadiness(unittest.TestCase):
-    @staticmethod
-    def github(merge_state: str, mergeable: str) -> MagicMock:
+    HEAD = "d15ea5e"
+
+    @classmethod
+    def github(cls, merge_state: str, mergeable: str) -> MagicMock:
         gh = MagicMock(spec=GitHub)
         gh.pr_status.return_value = {
             "number": 23,
             "title": "Example",
             "url": "https://github.com/owner/repo/pull/23",
             "headRefName": "foreman/feat/17-example",
+            "headRefOid": cls.HEAD,
+            "isDraft": True,
+            "reviewDecision": "",
             "mergeStateStatus": merge_state,
             "mergeable": mergeable,
             "statusCheckRollup": [],
             "labels": [],
         }
+        # Gate re-read, then the post-promotion confirmation.
+        gh.pr_head.side_effect = [
+            {"state": "OPEN", "isDraft": True, "headRefOid": cls.HEAD},
+            {"state": "OPEN", "isDraft": False, "headRefOid": cls.HEAD},
+        ]
         gh.review_threads.return_value = []
         gh.viewer.return_value = "bot"
         return gh
@@ -175,13 +185,96 @@ class MergeReadiness(unittest.TestCase):
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "healthy")
         gh.label_own_pr.assert_not_called()
+        gh.ready_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
-    def test_clean_pr_is_ready(self, _remote):
+    def test_clean_draft_is_promoted_and_labelled(self, _remote):
         gh = self.github("CLEAN", "MERGEABLE")
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "ready")
+        gh.ready_own_pr.assert_called_once_with(23)
         gh.label_own_pr.assert_called_once_with(23, add=["ready-to-merge"])
+        self.assertIn("promoted to ready for review", work.detail)
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_already_ready_pr_is_not_promoted_twice(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_status.return_value["isDraft"] = False
+        gh.pr_head.side_effect = [
+            {"state": "OPEN", "isDraft": False, "headRefOid": self.HEAD}
+        ]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "ready")
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_called_once_with(23, add=["ready-to-merge"])
+        self.assertIn("already ready for review", work.detail)
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_requested_changes_block_the_handoff(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_status.return_value["reviewDecision"] = "CHANGES_REQUESTED"
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("requested changes", work.detail)
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_head_moving_during_the_gate_defers_promotion(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_head.side_effect = [
+            {"state": "OPEN", "isDraft": True, "headRefOid": "beefbee"}
+        ]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        self.assertIn("head moved", work.detail)
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_closed_pr_is_never_promoted(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_head.side_effect = [
+            {"state": "CLOSED", "isDraft": True, "headRefOid": self.HEAD}
+        ]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("refusing to promote", work.detail)
+        gh.ready_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_unreadable_draft_state_refuses_to_promote(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        gh.pr_head.side_effect = [{"state": "OPEN", "headRefOid": self.HEAD}]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("draft state", work.detail)
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_unreadable_gated_head_defers_promotion(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        del gh.pr_status.return_value["headRefOid"]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_unconfirmed_promotion_escalates_without_labelling(self, _remote):
+        gh = self.github("CLEAN", "MERGEABLE")
+        # The promotion command returned, but the PR is still draft: treat the
+        # transition as unproven rather than reporting a handoff that may not
+        # have happened.
+        gh.pr_head.side_effect = [
+            {"state": "OPEN", "isDraft": True, "headRefOid": self.HEAD},
+            {"state": "OPEN", "isDraft": True, "headRefOid": self.HEAD},
+        ]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("not confirmed", work.detail)
+        gh.label_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_cloud_review_requirement_fails_closed_to_manual_shepherd(self, _remote):

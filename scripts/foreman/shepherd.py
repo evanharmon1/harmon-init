@@ -8,8 +8,16 @@ Deterministic triggers → bounded agent actions:
                 ones go to the agent (rebase additively, re-verify, push)
   unresolved review-bot threads → resume the agent to adjudicate each finding
                 (apply or decline-with-reasoning; blanket-accepting prohibited)
-  green ∧ adjudicated ∧ mergeStateStatus=CLEAN → label ready-to-merge and
-                report a dependency-aware suggested merge order.
+  readiness gate passes → promote the draft to ready for review, label
+                ready-to-merge, and report a dependency-aware suggested merge
+                order.
+
+The gate is AGENTS.md's ("Dev Loop" → "Readiness gate"), reduced to the part
+foreman can decide deterministically: green checks, every review thread
+dispositioned, mergeStateStatus=CLEAN, reviewDecision not CHANGES_REQUESTED,
+and the head unchanged between the checks above and the promotion itself.
+Anything unproven leaves the PR draft — promotion notifies CODEOWNERS and
+cannot be unsent, so "not yet established" must never promote speculatively.
 
 Foreman never merges. `gh run rerun` is assumed unavailable to the bot token;
 the CI retrigger primitive is an empty commit.
@@ -404,10 +412,57 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 "current-head Codex cloud review requires manual shepherd completion",
             )
             return work
+        if (status.get("reviewDecision") or "").upper() == "CHANGES_REQUESTED":
+            work.state, work.detail = (
+                "escalated",
+                "a reviewer requested changes — needs a human, not a handoff",
+            )
+            return work
+        # Re-read the head immediately before the one-way promotion: a push
+        # landing since the gate snapshot invalidates every result above it.
+        # Every read below fails CLOSED — a field that is missing or unreadable
+        # is "unknown", never "unchanged".
+        head = gh.pr_head(work.number)
+        if (head.get("state") or "").upper() != "OPEN":
+            work.state, work.detail = (
+                "escalated",
+                f"PR is {head.get('state') or 'UNKNOWN'} — refusing to promote",
+            )
+            return work
+        gated_head = status.get("headRefOid")
+        if not gated_head or head.get("headRefOid") != gated_head:
+            work.state, work.detail = (
+                "settling",
+                "head moved or unreadable during the readiness gate — re-gating",
+            )
+            return work
+        is_draft = head.get("isDraft")
+        if is_draft not in (True, False):
+            work.state, work.detail = (
+                "escalated",
+                "could not read the PR's draft state — refusing to promote",
+            )
+            return work
+        if is_draft:
+            gh.ready_own_pr(work.number)
+            confirmed = gh.pr_head(work.number)
+            if (
+                confirmed.get("isDraft") is not False
+                or confirmed.get("headRefOid") != gated_head
+            ):
+                work.state, work.detail = (
+                    "escalated",
+                    "promotion to ready for review not confirmed on the gated head",
+                )
+                return work
+            transition = "promoted to ready for review"
+        else:
+            # Idempotent re-entry: never manufacture a second ready event.
+            transition = "already ready for review"
         gh.label_own_pr(work.number, add=["ready-to-merge"])
         work.state, work.detail = (
             "ready",
-            "green, adjudicated, mergeState=CLEAN — awaiting human merge",
+            f"green, adjudicated, mergeState=CLEAN — {transition}, awaiting human merge",
         )
     else:
         work.state, work.detail = "healthy", f"mergeState={merge_state or 'UNKNOWN'}"

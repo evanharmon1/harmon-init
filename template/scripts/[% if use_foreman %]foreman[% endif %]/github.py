@@ -1,7 +1,8 @@
 """All GitHub access — every read and every mutation lives here, nowhere else.
 
 Write contract (docs/architecture/foreman.md): foreman MAY create/push its own
-branches, open non-draft PRs, edit its OWN PRs and their foreman-namespace
+branches, open DRAFT PRs, promote its OWN draft PR to ready for review once its
+readiness gate passes, edit its OWN PRs and their foreman-namespace
 labels, create/edit the single marker-identified status comment per unit,
 resolve review threads it dispositioned, post human-approved preflight
 correction comments, and idempotently ensure its label definitions exist.
@@ -241,8 +242,13 @@ class GitHub:
         return self.pr_view(
             number,
             "number,title,body,url,state,isDraft,merged,mergedAt,author,labels,"
-            "headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,statusCheckRollup",
+            "headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,"
+            "reviewDecision,statusCheckRollup",
         )
+
+    def pr_head(self, number: int) -> dict:
+        """The cheap re-read the readiness gate makes right before promoting."""
+        return self.pr_view(number, "state,isDraft,headRefOid")
 
     def review_threads(self, number: int) -> list[dict]:
         out = self.gh.json(
@@ -326,9 +332,13 @@ class GitHub:
         self, *, title: str, body: str, head: str, base: str, labels: list[str]
     ) -> str:
         self._assert_writable("create PR")
+        # Always a draft: the PR is the agent workbench until the readiness gate
+        # promotes it (AGENTS.md, "Dev Loop"). Non-draft is the human handoff,
+        # and foreman must never manufacture that at creation time.
         args = [
             "pr",
             "create",
+            "--draft",
             "--title",
             title,
             "--body-file",
@@ -377,6 +387,18 @@ class GitHub:
             args += ["--remove-label", name]
         if len(args) > 3:
             self.gh.call(args)
+
+    def ready_own_pr(self, number: int) -> None:
+        """Promote foreman's own draft PR to ready for review.
+
+        The one-way door in the lifecycle: it notifies CODEOWNERS and requested
+        reviewers, and `--undo` cannot unsend that. Callers must have satisfied
+        the full readiness gate (shepherd.py) on an unchanged head first; this
+        method only enforces the write contract, not the gate.
+        """
+        self._assert_writable("promote own PR to ready for review")
+        self._own_pr_guard(number, "mark ready for review")
+        self.gh.call(["pr", "ready", str(number)])
 
     def comment_own_pr(self, number: int, body: str) -> None:
         self._assert_writable("comment on own PR")
