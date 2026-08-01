@@ -168,8 +168,10 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   The gate is the deterministic part of AGENTS.md's: green checks that actually
   reported (an empty `statusCheckRollup` is "nothing ran yet", not "nothing
   failed" — it defers), every review thread dispositioned, `reviewDecision` not
-  `CHANGES_REQUESTED`, and `headRefOid` re-read immediately before promoting and
-  unchanged since the gate ran. A push landing mid-gate defers to the next tick;
+  `CHANGES_REQUESTED`, `mergeable=MERGEABLE` (it reads `UNKNOWN` for a while
+  after every push, and "not known to conflict" is not "mergeable"), and
+  `headRefOid` re-read immediately before promoting and unchanged since the gate
+  ran. A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never

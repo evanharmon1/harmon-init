@@ -443,6 +443,16 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 "no checks have reported on this head yet — not promoting",
             )
             return work
+        # Mergeability is computed asynchronously, so it reads UNKNOWN for a
+        # while after every push. The rebase path above only acts on a definite
+        # CONFLICTING; UNKNOWN reaches here, and "not known to conflict" is not
+        # the same as mergeable.
+        if mergeable != "MERGEABLE":
+            work.state, work.detail = (
+                "settling",
+                f"mergeability still {mergeable or 'UNKNOWN'} — re-gating next tick",
+            )
+            return work
         # Re-read the head immediately before the one-way promotion: a push
         # landing since the gate snapshot invalidates every result above it.
         # Every read below fails CLOSED — a field that is missing or unreadable

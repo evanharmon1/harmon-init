@@ -282,6 +282,17 @@ class MergeReadiness(unittest.TestCase):
         gh.label_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_unknown_mergeability_defers_promotion(self, _remote):
+        # GitHub computes mergeability asynchronously, so it reads UNKNOWN for a
+        # while after every push. "Not known to conflict" is not "mergeable".
+        gh = self.github("DRAFT", "UNKNOWN")
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        self.assertIn("mergeability still UNKNOWN", work.detail)
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_unreadable_draft_state_refuses_to_promote(self, _remote):
         gh = self.github("CLEAN", "MERGEABLE")
         gh.pr_head.side_effect = [{"state": "OPEN", "headRefOid": self.HEAD}]
