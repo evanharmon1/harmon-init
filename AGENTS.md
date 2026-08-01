@@ -235,9 +235,9 @@ something to ask permission for.
   by pushing to a raw `https://…` URL — a URL push bypasses the named remote
   and leaves stale tracking refs. On an unprovisioned host, force the helper
   and the rewrite against the *named* remote:
-  `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" push`
-  (a credential helper only applies to HTTPS, so without the `insteadOf` an
-  SSH-form remote still goes over SSH).
+  `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
+  (a credential helper only applies to HTTPS, and `insteadOf` is prefix
+  matching — every SSH form needs its own mapping, hence all four).
 - **Shepherd the PR (`/shepherd`, max 5 rounds).** `gh pr create` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. `/shepherd` is the
