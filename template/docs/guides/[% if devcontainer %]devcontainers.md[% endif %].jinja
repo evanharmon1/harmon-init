@@ -177,10 +177,10 @@ repo** (one template serves every repo). To stand this repo up in Coder:
    package is private, give the Coder builder a read token (or make the package
    public); a cache miss only makes the first build slower.
 
-> Unlike harmon-infra, this repo's `Dockerfile` uses the **public** Microsoft
-> base image, so the classic-PAT / private-base-image (`ghcr_read_token`)
-> complication does not apply here — only the repo's own `-devcontainer` cache
-> image matters.
+> This repo's `Dockerfile` is a thin overlay on the **public** shared
+> `ghcr.io/evanharmon1/harmon-devcontainer` toolchain image (pinned by
+> immutable `tag@digest`), so no registry credential is needed for the base —
+> only the repo's own `-devcontainer` cache image matters.
 
 ## Working on related repos
 
