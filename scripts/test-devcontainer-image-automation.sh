@@ -165,7 +165,11 @@ git -C "$fixture" push -u origin main >/dev/null
 run_fixture() {
     (
         cd "$fixture"
-        env -u GH_TOKEN -u GITHUB_TOKEN \
+        # Sanitize inherited env: the sync-harmon-devkit workflow exports
+        # GH_APP_SLUG job-wide, which would leak into the fixture and drive
+        # sync-devcontainer-image.sh's App-identity path against the gh stub
+        # (die "unexpected App bot id ''") — exactly as it failed in CI.
+        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_APP_SLUG \
             PATH="$bin_dir:$PATH" GH_STUB_LOG="$tmp_root/gh.log" TASK_STUB_LOG="$tmp_root/task.log" \
             "$@"
     )
