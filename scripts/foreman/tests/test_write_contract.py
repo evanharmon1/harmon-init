@@ -139,6 +139,25 @@ class RequiredChecks(unittest.TestCase):
             gh.required_checks("main")
 
 
+class ReviewAuthors(unittest.TestCase):
+    """Who reviewed a given head — the configured-bot half of the gate."""
+
+    def test_paginated_reviews_are_slurped_into_one_document(self):
+        # `gh api --paginate` alone emits one JSON array per page, which
+        # Gh.json's single json.loads() cannot read — so a PR with enough
+        # reviews to paginate would make the bot gate escalate forever.
+        gh, runner = make_github()
+        runner.when(
+            ["api", "repos/owner/repo/pulls/7/reviews"],
+            [
+                [{"user": {"login": "coderabbitai[bot]"}, "commit_id": "abc"}],
+                [{"user": {"login": "Copilot"}, "commit_id": "abc"}],
+            ],
+        )
+        self.assertEqual(gh.review_authors(7, "abc"), {"coderabbitai[bot]", "Copilot"})
+        self.assertIn("--slurp", runner.called_with_prefix(["api"])[0])
+
+
 class BranchStaleness(unittest.TestCase):
     """How far behind base a branch is — DRAFT hides it from mergeStateStatus."""
 
@@ -169,6 +188,19 @@ class DraftLifecycle(unittest.TestCase):
         created = runner.called_with_prefix(["pr", "create"])
         self.assertEqual(len(created), 1)
         self.assertIn("--draft", created[0])
+
+    def test_an_unrelated_creation_failure_keeps_its_own_cause(self):
+        # ForemanError embeds the whole invocation, and that always contains
+        # `--draft`, so a bare "draft" test relabels every failure as a
+        # paid-plan limitation and buries the real one.
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "create"], "GraphQL: Could not resolve to a Repository", rc=1
+        )
+        with self.assertRaises(ForemanError) as ctx:
+            gh.create_pr(title="t", body="b", head="h", base="main", labels=[])
+        self.assertNotIn("paid plans", str(ctx.exception))
+        self.assertIn("Could not resolve", str(ctx.exception))
 
     def test_unsupported_draft_error_names_the_cause(self):
         # A private repo on a free plan cannot open drafts at all; gh's bare

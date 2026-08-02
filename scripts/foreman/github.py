@@ -31,6 +31,10 @@ Runner = Callable[[list[str], str | None], tuple[int, str, str]]
 
 STATUS_MARKER = "<!-- foreman:unit-status -->"
 
+# GitHub's own wording when a repository cannot open drafts (private repos on
+# unpaid plans). Matched case-folded against the error text.
+UNSUPPORTED_DRAFT_ERROR = "draft pull requests are not supported"
+
 # Labels foreman idempotently ensures and is allowed to apply to its own PRs.
 FOREMAN_LABELS = {
     "foreman-dispatched": ("1D76DB", "PR opened by foreman for a dispatched unit"),
@@ -289,16 +293,22 @@ class GitHub:
         review reads as current — observed on harmon-init#520, where a review of
         `c56103a` carried an inline comment stamped with the newer head.
         """
-        rows = (
+        # --slurp with --paginate, as issue_comments() does: without it `gh`
+        # emits one JSON array per page and Gh.json's single json.loads() fails
+        # on the second, so a PR with enough reviews to paginate would make this
+        # gate escalate forever instead of reading them.
+        pages = (
             self.gh.json(
                 [
                     "api",
                     f"repos/{self.repo_slug()}/pulls/{number}/reviews",
                     "--paginate",
+                    "--slurp",
                 ]
             )
             or []
         )
+        rows = [row for page in pages for row in page]
         return {
             login
             for login in (
@@ -421,12 +431,12 @@ class GitHub:
         try:
             out = self.gh.call(args, input_text=body)
         except ForemanError as exc:
-            # Diagnosis only — the substring test cannot change behavior, it just
-            # replaces gh's bare "Draft pull requests are not supported in this
-            # repository" with what to do about it. GitHub restricts drafts on
-            # private repos to paid plans, and that is the first place the
-            # lifecycle would fail in a generated repo.
-            if "draft" in str(exc).lower():
+            # Diagnosis only. Match GitHub's specific message, NOT a bare
+            # "draft": ForemanError embeds the whole invocation, which always
+            # contains `--draft`, so a looser test relabels every creation
+            # failure — expired auth, a bad base, a missing label — as a
+            # paid-plan limitation and buries the real cause.
+            if UNSUPPORTED_DRAFT_ERROR in str(exc).casefold():
                 raise ForemanError(
                     "could not open a DRAFT pull request. GitHub restricts draft "
                     "PRs on private repositories to paid plans, and the draft is "
