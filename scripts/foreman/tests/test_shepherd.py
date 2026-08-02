@@ -53,6 +53,25 @@ class ClassifyChecks(unittest.TestCase):
         self.assertEqual(state, "red")
         self.assertEqual(failed[0]["context"], "ci/legacy")
 
+    def test_unsuccessful_terminal_conclusions_are_red(self):
+        # Conclusions are matched against an allowlist of passing values, so a
+        # conclusion this code has never heard of cannot read as success.
+        # GitHub's set already outgrew the old blocklist with these two.
+        for conclusion in ("STARTUP_FAILURE", "STALE", "SOMETHING_NEW"):
+            state, failed = classify_checks(
+                [{"status": "COMPLETED", "conclusion": conclusion, "name": "verify"}]
+            )
+            self.assertEqual(state, "red", conclusion)
+            self.assertEqual(failed[0]["name"], "verify")
+
+    def test_passing_conclusions_stay_green(self):
+        for conclusion in ("SUCCESS", "SKIPPED", "NEUTRAL"):
+            self.assertEqual(
+                classify_checks([{"status": "COMPLETED", "conclusion": conclusion}])[0],
+                "green",
+                conclusion,
+            )
+
     def test_pending_legacy_status_is_not_green(self):
         # A legacy commit status has no `status` field and carries its state
         # where a check run carries its conclusion, so a pending one used to

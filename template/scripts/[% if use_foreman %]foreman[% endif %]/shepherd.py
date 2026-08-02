@@ -123,12 +123,16 @@ def classify_checks(rollup: list[dict] | None) -> tuple[str, list[dict]]:
     for ctx in rollup or []:
         status = (ctx.get("status") or "").upper()
         conclusion = (ctx.get("conclusion") or ctx.get("state") or "").upper()
-        if conclusion in (
-            "FAILURE",
-            "TIMED_OUT",
-            "ACTION_REQUIRED",
-            "CANCELLED",
-            "ERROR",
+        # An ALLOWLIST of passing conclusions, not a blocklist of failures: a
+        # conclusion this function has never heard of must not read as success.
+        # GitHub's set already outgrew the old list — STARTUP_FAILURE and STALE
+        # both fell through as green — and it can grow again.
+        if conclusion and conclusion not in (
+            "SUCCESS",
+            "SKIPPED",
+            "NEUTRAL",
+            "PENDING",
+            "EXPECTED",
         ):
             failed.append(ctx)
         elif (
