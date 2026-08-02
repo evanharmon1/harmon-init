@@ -227,7 +227,7 @@ non-draft PR must always mean the automated work is done.
   them to the PR (see "Deferring P2s" below). This loop is
   **self-referential** — the fixes you make in response to a round become the
   next round's input, so it can generate its own work indefinitely — and that
-  is what the cap defends against: max **6** challenge → fix → re-challenge
+  is what the cap defends against: max **4** challenge → fix → re-challenge
   rounds; if P0/P1 findings persist, stop and escalate to Evan.
   "Between rounds, check what the findings are about" below is how you catch
   the loop feeding on itself before the cap does.
@@ -244,7 +244,7 @@ non-draft PR must always mean the automated work is done.
 - **`task review`** — verification-checkpoint review; same adjudication, same
   P0/P1 clean-pass exit condition, the same self-referential shape and so the
   same reason for a cap, and the same background-and-poll handling, with its
-  own max **6** rounds.
+  own max **4** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the draft PR** — conventional commit, push the branch,
   **`gh pr create --draft`** with a clear what/why/verification summary (mind
@@ -261,7 +261,7 @@ non-draft PR must always mean the automated work is done.
   `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix
   matching — every SSH form needs its own mapping, hence all four).
-- **Shepherd the draft to ready for review (`/shepherd`, max 5 rounds).**
+- **Shepherd the draft to ready for review (`/shepherd`, max 4 rounds).**
   `gh pr create --draft` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. The PR stays draft
@@ -328,7 +328,7 @@ non-draft PR must always mean the automated work is done.
   resolve halts the whole change rather than one loop, so it is not a licence
   to move on to the next stage either — a persistent P0/P1 at the challenge or
   review cap means wait for Evan, not open the PR anyway.
-  If checks still fail or findings remain after 5 rounds, stop and
+  If checks still fail or findings remain after 4 rounds, stop and
   summarize what's unresolved on the PR for Evan.
   Where a **vendored** skill (`/shepherd`)
   states a different cap or exit condition, **this file wins** — the skills
@@ -500,7 +500,7 @@ round's fixes, ask where they *live* — in the change you set out to make, or i
 code that exists only because an earlier round asked for it. **A round whose
 findings are all about the previous round's fix is the tell**, and it is
 visible in round 2 — the first round that can show it. Do not wait for the
-pattern to be unmistakable in round 4.
+pattern to be unmistakable in round 3, by which point only one round is left.
 
 **Deleting the added code is a legitimate way to reach a clean pass.** When a
 round's findings are about scaffolding rather than the change, weigh removing
@@ -590,7 +590,7 @@ stated here and in the Dev Loop above, and holds whether or not the optional
 
 **Loop cap and exit:** a stage exits only on a **clean re-run** — no
 confirmed P0 or P1 findings — never on "findings fixed" alone, with at most
-**6** challenge iterations and **6** review iterations (challenge → fix →
+**4** challenge iterations and **4** review iterations (challenge → fix →
 re-challenge, and likewise for review). If P0/P1 disagreement persists at the
 cap, stop and surface it to Evan instead of iterating further.
 
