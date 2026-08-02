@@ -3,7 +3,7 @@ name: shepherd
 description: >-
   Shepherd a draft PR to ready for review — watch CI and incoming bot/human reviews,
   treat findings as hypotheses (verify, fix only what's confirmed, explain
-  rejections in per-thread replies), push, and re-watch, for at most 5
+  rejections in per-thread replies), push, and re-watch, for at most 4
   rounds. Invoke as /shepherd [PR # or URL].
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(git branch --show-current), Bash(git remote), Bash(git remote get-url:*), Bash(gh pr view:*), Bash(gh pr checks:*), Bash(gh pr list:*), Bash(gh run view:*), Bash(gh run list:*)
@@ -15,7 +15,7 @@ allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(git branch --show-curr
 
 Opening a draft PR is not the end. Shepherd it: watch CI **and** incoming
 bot/human reviews, adjudicate what lands, fix what's confirmed, and re-watch
-— for at most **5 rounds**. Both signals matter and both must end green: a
+— for at most **4 rounds**. Both signals matter and both must end green: a
 PR is not done until CI/CD workflows pass *and* no unresolved review findings
 remain. This cap is independent of any other loop caps used earlier in the
 dev flow.
@@ -37,8 +37,8 @@ stop as blocked rather than doing active agent work on a ready PR.
 **The repository's own policy outranks this file.** Where its `AGENTS.md`
 states a different shepherd cap or exit condition, follow `AGENTS.md` — it is
 the policy, this skill is the procedure. Read the cap from what `AGENTS.md`
-actually states, never from inferring its vintage: a four-round cap is correct
-in a repo whose `AGENTS.md` still says four, and stops being correct the
+actually states, never from inferring its vintage: a three-round cap is correct
+in a repo whose `AGENTS.md` still says three, and stops being correct the
 moment that file says otherwise — including in repos that have not yet adopted
 the P0/P1-gating dev flow.
 
@@ -53,7 +53,7 @@ follow-up issue.
 **Round accounting (read this first):** one round = one fix push, **or**
 one no-change adjudication cycle (everything rejected/external — replies
 posted, nothing to fix — then back to watching). Count rounds explicitly
-(say "round 2 of 5") — the counter only ever increases, every wait below is
+(say "round 2 of 4") — the counter only ever increases, every wait below is
 bounded, and every path ends in one of the stop conditions in step 6, so
 the loop cannot run forever.
 
@@ -359,6 +359,18 @@ issue may be moved at all.
   previous-head verdicts, and reactions on any other comment do not count.
   Actor ambiguity, malformed or incomplete API data, a changed head, and an
   ambiguous commit prefix fail closed.
+
+  Classification is three-way, because "I cannot tell" is a real answer and
+  reporting it as a finding is a false statement about what the reviewer said.
+  A result that opens with the clean verdict sentence but carries a P0/P1/P2
+  marker is a **finding**; one whose trailing clause is empty or an *observed*
+  praise string is **clean**; anything else is **indeterminate** and escalates.
+  The trailing clause is matched against a literal list rather than a shape,
+  because no pattern over characters separates "Chef's kiss." from "but a race
+  remains." Being unlisted costs one escalation; being wrong would pass a PR
+  the reviewer flagged. When an escalation turns out to be genuinely new
+  praise, add the exact string to `observed_praise` in the helper and pin it
+  in `scripts/test-shepherd-codex.sh` — do not loosen the match.
 
   Persist each attempt under the git directory so branch switches and resumed
   sessions cannot duplicate it:
@@ -796,7 +808,7 @@ loops indefinitely:
    rest.`
    Then stop.
 2. **Cap reached** — checks still fail or findings remain unresolved after
-   5 rounds: stop.
+   4 rounds: stop.
 3. **No progress** — the same failure signature or finding survives two
    consecutive rounds unchanged **and** it is the sole remaining blocker
    (or the rounds made no material progress overall): stop early; burning
