@@ -114,6 +114,15 @@ make_stubs() {
 #!/usr/bin/env bash
 set -eu
 printf 'gh %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" >>"$STUB_LOG"
+# Snapshot a --body-file's CONTENT here: the helper's EXIT trap removes the
+# file, so a test that recorded only the path would find it already gone.
+_prev=""
+for _a in "$@"; do
+    if [ "$_prev" = "--body-file" ] && [ -f "$_a" ]; then
+        cat "$_a" >"${STUB_BODY_CAPTURE:-/dev/null}"
+    fi
+    _prev="$_a"
+done
 case "${1:-}" in
 api)
     path="${2:-}"
@@ -267,6 +276,7 @@ run_helper() {
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
             STUB_SYNC_DELETE_LOCAL="${STUB_SYNC_DELETE_LOCAL:-}" \
             STUB_SYNC_ADD_SKILL="${STUB_SYNC_ADD_SKILL:-}" \
+            STUB_BODY_CAPTURE="${STUB_BODY_CAPTURE:-}" \
             STUB_SYNC_ADD_AGENT="${STUB_SYNC_ADD_AGENT:-}" \
             STUB_SYNC_DELETE_LOCAL_AGENT="${STUB_SYNC_DELETE_LOCAL_AGENT:-}" \
             STUB_SYNC_DROP_SKILL="${STUB_SYNC_DROP_SKILL:-}" \
@@ -293,6 +303,8 @@ v1.0.0 true false"
     STUB_FAIL_TASKS=""
     STUB_SYNC_ADD_AGENT=""
     STUB_SYNC_DELETE_LOCAL_AGENT=""
+    STUB_BODY_CAPTURE="$TMPROOT/pr-body-capture.txt"
+    : >"$STUB_BODY_CAPTURE"
     FIXTURE_AGENTS=""
     STUB_SYNC_TOUCH_UNRELATED=""
     STUB_SYNC_DELETE_LOCAL=""
@@ -544,6 +556,32 @@ rc="$(run_helper "$fix" run v0.9.0)"
 pushed "$fix" || fail "a legitimate agents sync did not push"
 grep -q "^# ref: v0.9.0 " "$fix/.claude/agents/.AGENTS_PROVENANCE" ||
     fail "the agents stamp was not re-pinned"
+
+start "the generated PR body describes the vendored agents"
+FIXTURE_AGENTS=1
+fix="$(new_fixture body_agents)"
+FIXTURE_AGENTS=""
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "the agents sync failed: $(cat "$LAST_OUT")"
+# The body reaches gh via --body-file; the stub logs the whole command line, so
+# recover the file it was handed and read what reviewers would actually see.
+_body="$STUB_BODY_CAPTURE"
+[ -s "$_body" ] || fail "no --body-file content was captured from gh"
+grep -q "vendored agents" "$_body" ||
+    fail "the PR body omits the vendored agents row: $(cat "$_body")"
+grep -q "AGENTS_PROVENANCE" "$_body" ||
+    fail "the PR body omits the agents provenance: $(cat "$_body")"
+
+start "a body for a manifest WITHOUT agents stays unchanged"
+fix="$(new_fixture body_noagents)"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "the skills-only sync failed: $(cat "$LAST_OUT")"
+_body="$STUB_BODY_CAPTURE"
+[ -s "$_body" ] || fail "no --body-file content was captured from gh"
+! grep -q "vendored agents" "$_body" ||
+    fail "a skills-only PR body mentions agents: $(cat "$_body")"
+! grep -q "AGENTS_PROVENANCE" "$_body" ||
+    fail "a skills-only PR body mentions the agents provenance: $(cat "$_body")"
 
 start "an agent the new pin adds stays in scope"
 FIXTURE_AGENTS=1

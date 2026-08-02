@@ -406,9 +406,19 @@ configure_identity() {
 
 write_pr_body() {
     _wb_old="$1" _wb_new="$2" _wb_prov="$3"
+    # The agents rows are built here rather than inlined below so the body stays
+    # honest when the manifest has no `agents:` block: an empty string collapses
+    # to nothing instead of an "agents: (none)" row nobody needs.
+    _wb_adest="$(agents_dest_from_manifest)"
+    _wb_arow=""
+    _wb_aline=""
+    if [ -n "$_wb_adest" ] && [ -f "$_wb_adest/.AGENTS_PROVENANCE" ]; then
+        _wb_arow="| vendored agents | $(prov_field "$_wb_adest/.AGENTS_PROVENANCE" managed) |${LF}"
+        _wb_aline="- \`${_wb_adest}/.AGENTS_PROVENANCE\` and the managed agent files were re-vendored from that tag.${LF}"
+    fi
     BODY_FILE="$(mktemp)"
     cat >"$BODY_FILE" <<EOF
-Automated pin-and-sync of the vendored harmon-devkit agent skills.
+Automated pin-and-sync of the vendored harmon-devkit agent skills${_wb_adest:+ and shared subagents}.
 
 | | |
 | --- | --- |
@@ -417,12 +427,12 @@ Automated pin-and-sync of the vendored harmon-devkit agent skills.
 | upstream release | https://github.com/${DEVKIT_REPO}/releases/tag/${_wb_new} |
 | categories | $(prov_field "$_wb_prov" categories) |
 | vendored skills | $(prov_field "$_wb_prov" managed) |
-
+${_wb_arow}
 ## What changed
 
 - \`${ROOT_MANIFEST}\` and the template twin pin \`${_wb_new}\`.
 - \`${_wb_prov}\` and the managed skill directories were re-vendored from that tag.
-
+${_wb_aline}
 Nothing else — the run aborts if the sync writes a path it does not own.
 
 ## Verification
