@@ -159,13 +159,20 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   sometimes wrong; deterministic facts beat speculation). Blanket-accepting
   is prohibited. Foreman re-checks disposition completeness afterwards.
 - **Readiness gate passes** → two transitions, gated identically but distinct in
-  meaning. A draft reports `mergeStateStatus=DRAFT` (the draft flag is itself
-  what blocks the merge), so `CLEAN` only becomes reachable after promotion:
-  - `DRAFT` → `gh pr ready` — the human handoff, reported as `promoted`.
-  - `CLEAN` → the `ready-to-merge` label plus a dependency-aware suggested merge
-    order, reported as `ready`. A freshly promoted PR usually reports `BLOCKED`
-    until a code owner approves, so only genuinely mergeable PRs enter that
-    order.
+  meaning:
+  - **still a draft** → `gh pr ready` — the human handoff, reported as
+    `promoted`.
+  - **`mergeStateStatus=CLEAN`** → the `ready-to-merge` label plus a
+    dependency-aware suggested merge order, reported as `ready`. A freshly
+    promoted PR usually reports `BLOCKED` until a code owner approves, so only
+    genuinely mergeable PRs enter that order.
+
+  The merge state is tested as a **blocklist** (not `DIRTY`, `BEHIND`, or
+  `UNKNOWN`), never an allowlist. `mergeStateStatus` is one value with a
+  precedence order that the draft flag does not win: a draft reports `BEHIND`
+  when its branch is stale and `BLOCKED` when the base ruleset requires a review
+  nobody has given. Requiring `DRAFT` or `CLEAN` would refuse to promote in
+  exactly the case promotion exists to resolve.
 
   The gate is the deterministic part of AGENTS.md's: every check the **base
   branch requires** has reported and none failed, every review thread

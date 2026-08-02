@@ -216,6 +216,27 @@ class MergeReadiness(unittest.TestCase):
         gh.ready_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_blocked_draft_is_still_promoted(self, _remote):
+        # Observed live on harmon-init#520: a draft in a repo whose ruleset
+        # requires code-owner review reports BLOCKED, not DRAFT — the draft flag
+        # does not win mergeStateStatus' precedence order. BLOCKED means "the
+        # required review has not happened", which is precisely what promoting
+        # asks for, so an allowlist of DRAFT/CLEAN would deadlock the handoff.
+        gh = self.github("BLOCKED", "MERGEABLE")
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "promoted")
+        gh.ready_own_pr.assert_called_once_with(23)
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_unknown_merge_state_never_promotes(self, _remote):
+        gh = self.github("UNKNOWN", "MERGEABLE")
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "healthy")
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_draft_merge_state_still_reaches_the_promotion_gate(self, _remote):
         # The regression this guards: a draft reports mergeStateStatus=DRAFT,
         # never CLEAN, so gating promotion on CLEAN alone made it dead code and

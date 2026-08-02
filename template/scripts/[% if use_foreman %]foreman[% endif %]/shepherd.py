@@ -419,14 +419,18 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         )
         return work
 
-    # Two transitions, one gate. CLEAN is unreachable while the PR is a draft,
-    # so testing for it alone would make the promotion below dead code:
-    #   DRAFT → promote to ready for review (the human handoff)
-    #   CLEAN → label ready-to-merge (mergeable now; the human decides)
-    # A promoted PR usually reports BLOCKED next (code-owner review pending) and
-    # only becomes CLEAN once approved, so the label still means what it always
-    # did and only `ready` feeds the suggested merge order.
-    if merge_state in ("DRAFT", "CLEAN"):
+    # Two transitions, one gate.
+    #   still draft → promote to ready for review (the human handoff)
+    #   CLEAN       → label ready-to-merge (mergeable now; the human decides)
+    # Tested as a BLOCKLIST, matching AGENTS.md's gate ("neither DIRTY, BEHIND,
+    # nor UNKNOWN"), because mergeStateStatus is a single value with a
+    # precedence order and the draft flag does not win it: observed live, a
+    # draft reports BEHIND when its branch is stale and BLOCKED when the base
+    # ruleset requires a review nobody has given. An allowlist of DRAFT/CLEAN
+    # would refuse to promote in exactly the case promotion exists to resolve.
+    # DIRTY and BEHIND cannot reach here — the rebase path above returns on
+    # both — so only UNKNOWN (indeterminate) and an unreadable value are left.
+    if merge_state and merge_state != "UNKNOWN":
         if cfg.require_codex_cloud_review:
             work.state, work.detail = (
                 "escalated",
