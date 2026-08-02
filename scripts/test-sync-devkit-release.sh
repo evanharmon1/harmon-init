@@ -557,6 +557,40 @@ pushed "$fix" || fail "a legitimate agents sync did not push"
 grep -q "^# ref: v0.9.0 " "$fix/.claude/agents/.AGENTS_PROVENANCE" ||
     fail "the agents stamp was not re-pinned"
 
+start "a stale agents stamp is not treated as nothing-to-do"
+FIXTURE_AGENTS=1
+fix="$(new_fixture noop_agents_stale v0.9.0 v0.9.0 v0.9.0)"
+FIXTURE_AGENTS=""
+# Skills are already current at the target; only the AGENTS stamp lags. The
+# replay must still run, or the documented recovery command cannot repair it.
+sed 's|^# ref: .*|# ref: v0.8.7 (1111111111111111111111111111111111111111)|' \
+    "$fix/.claude/agents/.AGENTS_PROVENANCE" >"$fix/tmp-ap" && mv "$fix/tmp-ap" "$fix/.claude/agents/.AGENTS_PROVENANCE"
+git -C "$fix" add -A && git -C "$fix" commit --quiet -m "stale agents stamp"
+# Publish it: the helper refuses to run when local main is ahead of origin.
+git -C "$fix" push --quiet origin main
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "the repair replay failed: $(cat "$LAST_OUT")"
+! grep -q "nothing to do" "$LAST_OUT" || fail "a stale agents stamp was reported as nothing to do: $(cat "$LAST_OUT")"
+grep -q "^# ref: v0.9.0 " "$fix/.claude/agents/.AGENTS_PROVENANCE" || fail "the agents stamp was not repaired"
+
+start "a MISSING agents stamp is not treated as nothing-to-do"
+FIXTURE_AGENTS=1
+fix="$(new_fixture noop_agents_gone v0.9.0 v0.9.0 v0.9.0)"
+FIXTURE_AGENTS=""
+rm -f "$fix/.claude/agents/.AGENTS_PROVENANCE"
+git -C "$fix" add -A && git -C "$fix" commit --quiet -m "drop agents stamp"
+git -C "$fix" push --quiet origin main
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "the repair replay failed: $(cat "$LAST_OUT")"
+! grep -q "nothing to do" "$LAST_OUT" || fail "a missing agents stamp was reported as nothing to do: $(cat "$LAST_OUT")"
+test -f "$fix/.claude/agents/.AGENTS_PROVENANCE" || fail "the agents stamp was not restored"
+
+start "a fully current repo WITHOUT agents still short-circuits"
+fix="$(new_fixture noop_noagents v0.9.0 v0.9.0 v0.9.0)"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "the no-op path failed: $(cat "$LAST_OUT")"
+grep -q "nothing to do" "$LAST_OUT" || fail "a current skills-only repo did not short-circuit: $(cat "$LAST_OUT")"
+
 start "the generated PR body describes the vendored agents"
 FIXTURE_AGENTS=1
 fix="$(new_fixture body_agents)"

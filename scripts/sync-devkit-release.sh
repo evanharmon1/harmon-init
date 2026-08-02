@@ -600,7 +600,22 @@ cmd_run() {
     assert_safe_dest "$_run_dest"
     _run_prov="$_run_dest/.SKILLS_PROVENANCE"
 
-    if [ "$_run_current" = "$_run_target" ] && [ "$(prov_ref "$_run_prov")" = "$_run_target" ]; then
+    # The agents stamp is part of "already vendored" once the manifest requests
+    # agents. Without this, a repo whose skills are current but whose
+    # .AGENTS_PROVENANCE is missing or stale — a partial manual commit, a
+    # deletion — takes the no-op path on a replay, so the documented recovery
+    # command reports "nothing to do" and cannot repair the very thing that is
+    # broken.
+    _run_adest="$(agents_dest_from_manifest)"
+    _run_agents_current=1
+    if [ -n "$_run_adest" ]; then
+        _run_aprov="$_run_adest/.AGENTS_PROVENANCE"
+        [ -f "$_run_aprov" ] && [ "$(prov_ref "$_run_aprov")" = "$_run_target" ] || _run_agents_current=0
+    fi
+
+    if [ "$_run_current" = "$_run_target" ] &&
+        [ "$(prov_ref "$_run_prov")" = "$_run_target" ] &&
+        [ "$_run_agents_current" -eq 1 ]; then
         note "already pinned and vendored at $_run_target — nothing to do"
         return 0
     fi
