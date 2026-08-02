@@ -130,12 +130,25 @@ EOF
 # ── Manifests ─────────────────────────────────────────────────────────
 # Read with sed rather than yq: the template twin is jinja (its `categories:`
 # block is a `[% for %]` loop), so it is not parseable YAML until rendered.
+# manifest_field FILE KEY [root] — the single value of a `KEY:` line.
+#
+# The optional third argument restricts the match to a TOP-LEVEL key. That is
+# needed for `dest`, which appears once at column 0 for skills and again,
+# indented, inside the optional `agents:` block — an unanchored match counts two
+# and aborts. `ref` stays unanchored because it lives nested under `source:`.
 manifest_field() {
-    _mf_file="$1" _mf_key="$2"
-    _mf_n="$(grep -c "^[[:space:]]*${_mf_key}:" "$_mf_file" || true)"
+    _mf_file="$1" _mf_key="$2" _mf_anchor="${3:-}"
+    if [ "$_mf_anchor" = "root" ]; then
+        _mf_grep="^${_mf_key}:"
+        _mf_sed="s/^${_mf_key}:[[:space:]]*\\([^[:space:]#]*\\).*/\\1/p"
+    else
+        _mf_grep="^[[:space:]]*${_mf_key}:"
+        _mf_sed="s/^[[:space:]]*${_mf_key}:[[:space:]]*\\([^[:space:]#]*\\).*/\\1/p"
+    fi
+    _mf_n="$(grep -c "$_mf_grep" "$_mf_file" || true)"
     [ "$_mf_n" = "1" ] ||
-        die "expected exactly one '${_mf_key}:' line in $_mf_file (found $_mf_n)"
-    sed -n "s/^[[:space:]]*${_mf_key}:[[:space:]]*\\([^[:space:]#]*\\).*/\\1/p" "$_mf_file"
+        die "expected exactly one top-level '${_mf_key}:' line in $_mf_file (found $_mf_n)"
+    sed -n "$_mf_sed" "$_mf_file"
 }
 
 set_pin() {
@@ -229,21 +242,55 @@ changed_paths_nl() {
 # lines: a skill the new pin dropped appears only in the old list, one it added
 # only in the new. Anything else — a local skill, an unrelated file — is an
 # unexpected write and aborts the run before anything is committed or pushed.
+# managed_from_stamp PROV — the `# managed:` names recorded on a provenance
+# stamp, taken from BOTH the committed and working-tree copies so a name the
+# sync just added or just removed is allowed either way.
+managed_from_stamp() {
+    {
+        git show "HEAD:$1" 2>/dev/null || true
+        cat "$1" 2>/dev/null || true
+    } | awk 'index($0, "# managed:") == 1 {
+            sub(/^# managed:[[:space:]]*/, "")
+            n = split($0, parts, ",")
+            for (i = 1; i <= n; i++) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
+                if (parts[i] != "") print parts[i]
+            }
+        }'
+}
+
+# agents_dest_from_manifest — the agents dest the root manifest declares, or
+# empty when it has no `agents:` block. Read with yq when available and by a
+# narrow grep otherwise, because this runs in CI where yq is present but also on
+# a maintainer's machine where it may not be.
+agents_dest_from_manifest() {
+    if command -v yq >/dev/null 2>&1; then
+        _adfm="$(yq -r '.agents.dest // ""' "$ROOT_MANIFEST" 2>/dev/null || true)"
+        [ "$_adfm" != "null" ] || _adfm=""
+        printf '%s' "$_adfm"
+        return 0
+    fi
+    sed -n '/^agents:/,$p' "$ROOT_MANIFEST" |
+        sed -n 's/^[[:space:]]*dest:[[:space:]]*//p' | head -n 1 |
+        sed 's/[[:space:]]*#.*//' | tr -d '"'"'"''
+}
+
 assert_expected_scope() {
     _aes_dest="$1"
     _aes_prov="$_aes_dest/.SKILLS_PROVENANCE"
+    # Agents ride the same manifest, so the sync writes their dest too. This
+    # check FAILS CLOSED — without teaching it the agents paths, every
+    # `.claude/agents/*.md` the sync legitimately wrote would read as a rogue
+    # write and abort the automated pin-bump PR.
+    _aes_adest="$(agents_dest_from_manifest)"
+    _aes_aprov=""
+    _aes_aallow=""
+    if [ -n "$_aes_adest" ]; then
+        _aes_aprov="$_aes_adest/.AGENTS_PROVENANCE"
+        _aes_aallow="$(managed_from_stamp "$_aes_aprov")"
+    fi
     _aes_allow="$(
-        {
-            git show "HEAD:$_aes_prov" 2>/dev/null || true
-            cat "$_aes_prov" 2>/dev/null || true
-        } | awk 'index($0, "# managed:") == 1 {
-                sub(/^# managed:[[:space:]]*/, "")
-                n = split($0, parts, ",")
-                for (i = 1; i <= n; i++) {
-                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
-                    if (parts[i] != "") print parts[i]
-                }
-            }'
+        managed_from_stamp "$_aes_prov"
     )"
     # Delimited membership test (no `grep` subprocess): a pipeline whose reader
     # exits early can report SIGPIPE under `pipefail` and reject a legitimate
@@ -258,6 +305,9 @@ assert_expected_scope() {
         case "$_aes_p" in
         "$ROOT_MANIFEST" | "$TEMPLATE_MANIFEST" | "$_aes_prov") continue ;;
         esac
+        if [ -n "$_aes_aprov" ] && [ "$_aes_p" = "$_aes_aprov" ]; then
+            continue
+        fi
         _aes_ok=0
         case "$_aes_p" in
         "$_aes_dest"/*)
@@ -268,13 +318,32 @@ assert_expected_scope() {
             esac
             ;;
         esac
+        # A managed AGENT: flat `<dest>/<name>.md`, allowed only when that name
+        # is on the agents stamp — a local agent the sync must never touch is
+        # not on it, so an unexpected write to one still aborts the run.
+        if [ "$_aes_ok" -eq 0 ] && [ -n "$_aes_adest" ]; then
+            case "$_aes_p" in
+            "$_aes_adest"/*.md)
+                _aes_aname="${_aes_p#"$_aes_adest"/}"
+                case "$_aes_aname" in
+                */*) ;;
+                *)
+                    _aes_aname="${_aes_aname%.md}"
+                    case "${LF}${_aes_aallow}${LF}" in
+                    *"${LF}${_aes_aname}${LF}"*) _aes_ok=1 ;;
+                    esac
+                    ;;
+                esac
+                ;;
+            esac
+        fi
         [ "$_aes_ok" -eq 1 ] || _aes_bad="${_aes_bad}  - ${_aes_p}${LF}"
     done < <(changed_paths_z)
 
     if [ -n "$_aes_bad" ]; then
         echo "sync-devkit-release: the sync wrote paths it does not own:" >&2
         printf '%s' "$_aes_bad" >&2
-        die "expected only the two skills-sync manifests, $_aes_prov, and managed skills under $_aes_dest/ — inspect by hand"
+        die "expected only the two skills-sync manifests, the provenance stamps, managed skills under $_aes_dest/, and managed agents under ${_aes_adest:-<none>}/ — inspect by hand"
     fi
 }
 
@@ -517,7 +586,7 @@ cmd_run() {
 
     _run_target="$(cmd_resolve "$_run_tag")"
     _run_current="$(cmd_pinned)"
-    _run_dest="$(manifest_field "$ROOT_MANIFEST" dest)"
+    _run_dest="$(manifest_field "$ROOT_MANIFEST" dest root)"
     assert_safe_dest "$_run_dest"
     _run_prov="$_run_dest/.SKILLS_PROVENANCE"
 

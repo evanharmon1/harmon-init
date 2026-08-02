@@ -170,6 +170,17 @@ skill_categories:
     + (['infra'] if (include_terraform or include_ansible or project_type == 'iac') else []) ]]
   when: "[[ use_skills_sync ]]"
 
+use_shared_agents:
+  type: bool
+  help: "AGENTS: Also vendor harmon-devkit's shared subagents (e.g. implementer) into .claude/agents?"
+  # Rides the same manifest, and therefore the same pinned ref, as the skills
+  # above — a thin agent defers to a skill by reading it, so two pins that could
+  # disagree would leave an agent following a procedure that no longer exists.
+  # The manifest requests ["*"], so a new devkit agent arrives on the next pin
+  # bump exactly as a new skill in a requested category already does.
+  default: yes
+  when: "[[ use_skills_sync ]]"
+
 use_foreman:
   type: bool
   help: "FOREMAN: Include foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:*; Python 3.11+ at runtime)?"

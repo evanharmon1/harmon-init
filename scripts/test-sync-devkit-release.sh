@@ -61,6 +61,21 @@ categories:
 [% endfor %]
 dest: .claude/skills
 EOF
+    # Agents are OPT-IN so every pre-existing case keeps proving that a manifest
+    # WITHOUT an `agents:` block is unaffected by any of this.
+    if [ -n "${FIXTURE_AGENTS:-}" ]; then
+        mkdir -p "$_nf_dir/.claude/agents"
+        printf 'agents:\n  names: ["*"]\n  dest: .claude/agents\n' >>"$_nf_dir/$ROOT_MANIFEST_NAME"
+        printf 'vendored agent at %s\n' "$_nf_pin" >"$_nf_dir/.claude/agents/implementer.md"
+        printf 'a local agent the sync must never touch\n' >"$_nf_dir/.claude/agents/local-agent.md"
+        cat >"$_nf_dir/.claude/agents/.AGENTS_PROVENANCE" <<EOF
+# VENDORED from harmon-devkit — DO NOT EDIT the managed agents here.
+# ref: $_nf_prov_pin (1111111111111111111111111111111111111111)
+# path: ai/agents
+# names: *
+# managed: implementer
+EOF
+    fi
     printf 'vendored at %s\n' "$_nf_pin" >"$_nf_dir/.claude/skills/standardize-repo/SKILL.md"
     printf 'a local skill the sync must never touch\n' >"$_nf_dir/.claude/skills/local-only/SKILL.md"
     cat >"$_nf_dir/.claude/skills/.SKILLS_PROVENANCE" <<EOF
@@ -200,6 +215,23 @@ sync:skills)
         echo "# categories: repo"
         echo "# managed: $managed"
     } >.claude/skills/.SKILLS_PROVENANCE
+    if grep -q '^agents:' .skills-sync.yaml 2>/dev/null; then
+        amanaged="implementer"
+        mkdir -p .claude/agents
+        printf 'vendored agent at %s\n' "$ref" >.claude/agents/implementer.md
+        if [ -n "${STUB_SYNC_ADD_AGENT:-}" ]; then
+            printf 'new agent at %s\n' "$ref" >".claude/agents/${STUB_SYNC_ADD_AGENT}.md"
+            amanaged="$amanaged, ${STUB_SYNC_ADD_AGENT}"
+        fi
+        [ -z "${STUB_SYNC_DELETE_LOCAL_AGENT:-}" ] || rm -f .claude/agents/local-agent.md
+        {
+            echo "# VENDORED from harmon-devkit — DO NOT EDIT the managed agents here."
+            echo "# ref: $ref (2222222222222222222222222222222222222222)"
+            echo "# path: ai/agents"
+            echo "# names: *"
+            echo "# managed: $amanaged"
+        } >.claude/agents/.AGENTS_PROVENANCE
+    fi
     [ -z "${STUB_SYNC_TOUCH_UNRELATED:-}" ] || echo "oops" >"${STUB_SYNC_TOUCH_UNRELATED}"
     [ -z "${STUB_SYNC_DELETE_LOCAL:-}" ] || rm -rf .claude/skills/local-only
     ;;
@@ -235,6 +267,8 @@ run_helper() {
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
             STUB_SYNC_DELETE_LOCAL="${STUB_SYNC_DELETE_LOCAL:-}" \
             STUB_SYNC_ADD_SKILL="${STUB_SYNC_ADD_SKILL:-}" \
+            STUB_SYNC_ADD_AGENT="${STUB_SYNC_ADD_AGENT:-}" \
+            STUB_SYNC_DELETE_LOCAL_AGENT="${STUB_SYNC_DELETE_LOCAL_AGENT:-}" \
             STUB_SYNC_DROP_SKILL="${STUB_SYNC_DROP_SKILL:-}" \
             GH_APP_SLUG="${GH_APP_SLUG:-}" \
             GH_TOKEN="${GH_TOKEN:-}" \
@@ -257,6 +291,9 @@ v1.0.0 true false"
     STUB_PR_LIST=""
     STUB_PR_TITLE=""
     STUB_FAIL_TASKS=""
+    STUB_SYNC_ADD_AGENT=""
+    STUB_SYNC_DELETE_LOCAL_AGENT=""
+    FIXTURE_AGENTS=""
     STUB_SYNC_TOUCH_UNRELATED=""
     STUB_SYNC_DELETE_LOCAL=""
     STUB_SYNC_ADD_SKILL=""
@@ -497,6 +534,34 @@ rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" != 0 ] || fail "deleting a local skill was accepted"
 grep -q "local-only" "$LAST_OUT" || fail "the deleted local skill was not named: $(cat "$LAST_OUT")"
 ! pushed "$fix" || fail "a local-skill deletion still pushed"
+
+start "a vendored agent and its stamp stay in scope"
+FIXTURE_AGENTS=1
+fix="$(new_fixture scope_agents)"
+FIXTURE_AGENTS=""
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "a legitimate agents sync was rejected: $(cat "$LAST_OUT")"
+pushed "$fix" || fail "a legitimate agents sync did not push"
+grep -q "^# ref: v0.9.0 " "$fix/.claude/agents/.AGENTS_PROVENANCE" ||
+    fail "the agents stamp was not re-pinned"
+
+start "an agent the new pin adds stays in scope"
+FIXTURE_AGENTS=1
+fix="$(new_fixture scope_agent_added)"
+FIXTURE_AGENTS=""
+STUB_SYNC_ADD_AGENT="reviewer"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "adding a managed agent was rejected: $(cat "$LAST_OUT")"
+
+start "a sync that deletes a LOCAL agent fails closed"
+FIXTURE_AGENTS=1
+fix="$(new_fixture scope_agent_local)"
+FIXTURE_AGENTS=""
+STUB_SYNC_DELETE_LOCAL_AGENT="1"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "deleting a local agent was accepted"
+grep -q "local-agent" "$LAST_OUT" || fail "the deleted local agent was not named: $(cat "$LAST_OUT")"
+! pushed "$fix" || fail "a local-agent deletion still pushed"
 
 start "a skill the new pin adds or drops stays in scope"
 fix="$(new_fixture scope_managed)"
