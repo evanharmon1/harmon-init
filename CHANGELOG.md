@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.13.0](https://github.com/evanharmon1/harmon-init/compare/v4.12.0...v4.13.0) (2026-08-02)
+
+
+### Features
+
+* cap the Codex review loops at 4 rounds each ([#533](https://github.com/evanharmon1/harmon-init/issues/533)) ([6043e1b](https://github.com/evanharmon1/harmon-init/commit/6043e1b6c7c5d0094f6f8e80414de19e6aed78de))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.16.0 ([#528](https://github.com/evanharmon1/harmon-init/issues/528)) ([f659853](https://github.com/evanharmon1/harmon-init/commit/f6598532484a043d59af7f66bf09a7da00ce85ce))
+
 ## [4.12.0](https://github.com/evanharmon1/harmon-init/compare/v4.11.2...v4.12.0) (2026-08-02)
 
 
