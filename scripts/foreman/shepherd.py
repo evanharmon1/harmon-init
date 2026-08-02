@@ -91,8 +91,13 @@ def classify_checks(rollup: list[dict] | None) -> tuple[str, list[dict]]:
             "ERROR",
         ):
             failed.append(ctx)
-        elif status in ("QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED") or (
-            not conclusion and status not in ("COMPLETED",)
+        elif (
+            # A legacy commit status carries its state where a check run carries
+            # its conclusion, and no `status` field at all — so without these two
+            # a pending required context reads as green.
+            conclusion in ("PENDING", "EXPECTED")
+            or status in ("QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED")
+            or (not conclusion and status not in ("COMPLETED",))
         ):
             pending = True
     if failed:
@@ -299,12 +304,15 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         return work
 
     merge_state = (status.get("mergeStateStatus") or "").upper()
+    base_branch = status.get("baseRefName") or gh.default_branch()
     # A draft reports mergeStateStatus=DRAFT — the draft flag is itself what
-    # blocks the merge — so DRAFT can stand in front of a conflicting branch.
-    # `mergeable` is computed independently of the draft flag, so consult both
-    # before concluding the branch does not need a rebase.
+    # blocks the merge — so DRAFT stands in front of BEHIND and DIRTY alike.
+    # `mergeable` is computed independently of the draft flag and catches
+    # conflicts; staleness has no such field, so ask git how far behind the
+    # branch is rather than trusting a status the draft flag overwrote.
     mergeable = (status.get("mergeable") or "").upper()
-    if merge_state in ("BEHIND", "DIRTY") or mergeable == "CONFLICTING":
+    stale = merge_state == "DRAFT" and gh.behind_by(base_branch, work.branch) > 0
+    if merge_state in ("BEHIND", "DIRTY") or mergeable == "CONFLICTING" or stale:
         wt_path = _ensure_worktree(
             cfg, root, work.unit_number, work.branch, remote_name
         )
@@ -437,7 +445,7 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         # has not appeared at all. `mergeStateStatus` cannot settle it either —
         # DRAFT masks the BLOCKED that missing required checks would otherwise
         # produce. Ask the base branch what it enforces and compare.
-        required = gh.required_checks(status.get("baseRefName") or gh.default_branch())
+        required = gh.required_checks(base_branch)
         if not required:
             work.state, work.detail = (
                 "escalated",

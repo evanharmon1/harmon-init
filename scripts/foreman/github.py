@@ -281,6 +281,21 @@ class GitHub:
             raise ForemanError(f"review threads: invalid thread list for PR #{number}")
         return nodes
 
+    def behind_by(self, base: str, head: str) -> int:
+        """Commits on `base` that `head` does not have.
+
+        Asked directly instead of inferred from `mergeStateStatus`, because a
+        draft reports DRAFT — which masks BEHIND the same way it masks BLOCKED.
+        A response without the field raises rather than reading as up to date.
+        """
+        data = self.gh.json(
+            ["api", f"repos/{self.repo_slug()}/compare/{base}...{head}"]
+        )
+        value = (data or {}).get("behind_by")
+        if not isinstance(value, int):
+            raise ForemanError(f"compare {base}...{head}: no behind_by in response")
+        return value
+
     def required_checks(self, branch: str) -> set[str]:
         """Check contexts `branch` requires — rulesets and classic protection.
 

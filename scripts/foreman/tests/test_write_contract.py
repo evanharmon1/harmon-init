@@ -139,6 +139,26 @@ class RequiredChecks(unittest.TestCase):
             gh.required_checks("main")
 
 
+class BranchStaleness(unittest.TestCase):
+    """How far behind base a branch is — DRAFT hides it from mergeStateStatus."""
+
+    def test_behind_by_is_read_from_the_compare_api(self):
+        gh, runner = make_github()
+        runner.when(
+            ["api", "repos/owner/repo/compare/main...feature"],
+            {"behind_by": 4, "ahead_by": 1},
+        )
+        self.assertEqual(gh.behind_by("main", "feature"), 4)
+
+    def test_a_response_without_the_field_raises(self):
+        # Reading a malformed response as "up to date" would promote a stale
+        # draft; unknown must fail closed like every other gate input.
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/compare/main...feature"], {})
+        with self.assertRaises(ForemanError):
+            gh.behind_by("main", "feature")
+
+
 class DraftLifecycle(unittest.TestCase):
     """PRs are opened as the agent workbench, never as a human handoff."""
 

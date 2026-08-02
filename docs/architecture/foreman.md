@@ -149,9 +149,11 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
 - **Behind/conflicting after a sibling merge** → `git merge-tree` dry run
   enumerates conflicts; clean rebases are mechanical, conflicted ones go to
   the agent (rebase additively, regenerate generated artifacts via tooling,
-  re-verify) — always rebase, never merge-main. Triggered by
-  `mergeStateStatus` **or** `mergeable=CONFLICTING`, because `DRAFT` can stand
-  in front of a conflicting branch while `mergeable` is computed independently.
+  re-verify) — always rebase, never merge-main. `DRAFT` stands in front of both
+  `BEHIND` and `DIRTY`, so the trigger does not trust `mergeStateStatus` alone:
+  conflicts come from `mergeable=CONFLICTING` (computed independently of the
+  draft flag) and staleness — which has no such field — from comparing the
+  branch to its base (`behind_by`) whenever the PR is a draft.
 - **Unresolved review threads** → the agent adjudicates each finding: apply
   (commit + reply + resolve) or decline with technical reasoning (bots are
   sometimes wrong; deterministic facts beat speculation). Blanket-accepting
