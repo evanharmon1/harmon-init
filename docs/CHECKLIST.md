@@ -29,7 +29,9 @@ this: the parity gate skips jinja twins, the structure gate checks headings and
 tasks rather than prose, and this file is on audit-dogfood.sh's SKIP list. Hence
 this comment. -->
 - [ ] **Vendored agent skills stay pinned**: `.skills-sync.yaml` pins which
-      harmon-devkit skill categories this repo vendors into `.claude/skills/`.
+      harmon-devkit skill categories this repo vendors into `.claude/skills/`,
+      and — when the manifest carries an `agents:` block — which shared
+      subagents it vendors into `.claude/agents/`, at the same pinned ref.
       **In this repo the bump is automated** — publishing a stable
       [harmon-devkit release](https://github.com/evanharmon1/harmon-devkit/releases)
       opens or updates one rolling `bot/sync-harmon-devkit` PR with both
@@ -42,8 +44,8 @@ this comment. -->
       **The fully manual fallback is a two-step, and this repo has TWO
       manifests:** edit `ref` in both `.skills-sync.yaml` **and**
       `template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja`,
-      then run `task sync:skills` and commit the refreshed `.claude/skills/` in
-      the same PR. `task sync:skills` reads only the root manifest, so editing
+      then run `task sync:skills` and commit the refreshed `.claude/skills/`
+      (and `.claude/agents/`, if the manifest requests agents) in the same PR. `task sync:skills` reads only the root manifest, so editing
       just that one leaves the template shipping the old pin to generated repos
       — and the next automated run aborts with `pin disagreement` until someone
       reconciles them by hand. Only this fully manual route has that trap: the

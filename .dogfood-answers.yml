@@ -34,6 +34,7 @@ release_content_paths: template
 
 # Vendors the `repo` category (the standardize-repo skill) from harmon-devkit.
 use_skills_sync: true
+use_shared_agents: true
 skill_categories:
   - universal
   - repo
