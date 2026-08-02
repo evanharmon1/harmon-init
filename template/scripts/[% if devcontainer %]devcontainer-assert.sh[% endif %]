@@ -119,6 +119,20 @@ assert_unit() {
     done
     assert_image_pin "$dockerfile" >/dev/null
 
+    # The starship prompt is a powerline design built on Nerd Font private-use
+    # codepoints: every segment transition is a separator glyph. They were lost
+    # to a paste before the file first landed and nothing noticed across two
+    # commits (harmon-init#535) — a config stripped of them still parses as
+    # valid TOML, so only an explicit check catches it. Assert the separator
+    # survives; the escape is U+E0B0's UTF-8 bytes in octal because macOS bash
+    # 3.2 has no \uXXXX in $'…' and BSD grep has no -P.
+    local starship_config
+    starship_config="${repo_root}/.devcontainer/config/starship.toml"
+    [ -f "$starship_config" ] || fail "starship config not found at ${starship_config}"
+    if ! LC_ALL=C grep -q $'\356\202\260' "$starship_config"; then
+        fail "${starship_config} has no U+E0B0 powerline separators — the Nerd Font glyphs were stripped (harmon-init#535)"
+    fi
+
     # Run from a non-repo temp dir so `git rev-parse --is-inside-work-tree`
     # inside init-env.sh is false and the rebuild `git pull` never fires.
     local work_dir env_file
