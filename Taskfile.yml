@@ -87,6 +87,7 @@ tasks:
       - task: test:dogfood-structure
       - task: foreman:test
       - task: test:hooks
+      - task: test:statusline
       - task: test:codex-review
       - task: test:template
 
@@ -286,6 +287,11 @@ tasks:
     desc: Unit-assert devcontainer permission invariants (no container needed)
     cmds:
       - ./scripts/devcontainer-assert.sh unit
+
+  test:statusline:
+    desc: Unit-test the devcontainer status line renderer (no container needed)
+    cmds:
+      - ./scripts/test-statusline.sh
 
   test:devcontainer:image:
     desc: Build and smoke-test the canonical shared image and current repository overlay

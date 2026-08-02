@@ -69,6 +69,7 @@ jobs:
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
       - run: task test:hooks
+      - run: task test:statusline
       - run: task test:devcontainer:permissions
 
   security:

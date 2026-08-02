@@ -72,6 +72,7 @@ jobs:
 [% endif %]
 [% if devcontainer %]
       - run: task test:hooks
+      - run: task test:statusline
       - run: task test:devcontainer:permissions
 [% endif %]
 [% if use_node %]
