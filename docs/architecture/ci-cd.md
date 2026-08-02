@@ -14,7 +14,16 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 ## Workflows
 
 - `build.yml` — on push/PR to `main`: lint, security, then the aggregate **`verify`** job.
+  Its `pull_request:` trigger carries **no** `types:` filter, so it fires on
+  draft `opened`/`synchronize` too. That is load-bearing, not incidental: PRs
+  are drafts for their whole automated life (AGENTS.md, "Dev Loop"), and the
+  readiness gate that promotes one reads these check results. Narrowing the
+  trigger, or gating a job on `github.event.pull_request.draft`, would leave the
+  gate with nothing to read until after the handoff it is supposed to authorize.
 - `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
+  `claude-implement` opens a **draft** PR as its normal deliverable and never
+  promotes it: it cannot complete the readiness gate, so the handoff belongs to
+  a shepherd session.
 - `codeql.yml` — Python CodeQL SAST. It runs automatically because Harmon Init is
   public; the private-repository path requires paid GitHub Code Security and
   `FULL_SECURITY_SCAN=true`.

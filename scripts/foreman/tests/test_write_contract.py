@@ -23,6 +23,7 @@ def _mutations(gh):
             "create_pr",
             lambda: gh.create_pr(title="t", body="b", head="h", base="main", labels=[]),
         ),
+        ("ready_own_pr", lambda: gh.ready_own_pr(1)),
         ("edit_own_pr_body", lambda: gh.edit_own_pr_body(1, "b")),
         ("label_own_pr", lambda: gh.label_own_pr(1, add=["ready-to-merge"])),
         ("comment_own_pr", lambda: gh.comment_own_pr(1, "b")),
@@ -91,6 +92,141 @@ class GuardedChannels(unittest.TestCase):
         )
         with self.assertRaises(ForemanError):
             gh.label_own_pr(9, add=["priority:high"])
+
+    def test_promotion_refuses_a_foreign_pr(self):
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "view", "9"],
+            {"number": 9, "author": {"login": "human"}, "labels": [], "body": ""},
+        )
+        with self.assertRaises(ForemanError):
+            gh.ready_own_pr(9)
+        self.assertFalse(runner.called_with_prefix(["pr", "ready"]))
+
+
+class RequiredChecks(unittest.TestCase):
+    """What the base branch enforces — the gate's "required CI" condition."""
+
+    @staticmethod
+    def rules() -> list[dict]:
+        return [
+            {"type": "pull_request", "parameters": {}},
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "verify"},
+                        {"context": "security"},
+                    ]
+                },
+            },
+        ]
+
+    def test_contexts_are_collected_from_the_branch_rules(self):
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/rules/branches/main"], self.rules())
+        self.assertEqual(gh.required_checks("main"), {"verify", "security"})
+
+    def test_a_branch_enforcing_nothing_returns_empty(self):
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/rules/branches/main"], [])
+        self.assertEqual(gh.required_checks("main"), set())
+
+    def test_a_failed_lookup_raises_rather_than_reading_as_none_required(self):
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/rules/branches/main"], "boom", rc=1)
+        with self.assertRaises(ForemanError):
+            gh.required_checks("main")
+
+
+class ReviewAuthors(unittest.TestCase):
+    """Who reviewed a given head — the configured-bot half of the gate."""
+
+    def test_paginated_reviews_are_slurped_into_one_document(self):
+        # `gh api --paginate` alone emits one JSON array per page, which
+        # Gh.json's single json.loads() cannot read — so a PR with enough
+        # reviews to paginate would make the bot gate escalate forever.
+        gh, runner = make_github()
+        runner.when(
+            ["api", "repos/owner/repo/pulls/7/reviews"],
+            [
+                [{"user": {"login": "coderabbitai[bot]"}, "commit_id": "abc"}],
+                [{"user": {"login": "Copilot"}, "commit_id": "abc"}],
+            ],
+        )
+        self.assertEqual(gh.review_authors(7, "abc"), {"coderabbitai[bot]", "Copilot"})
+        self.assertIn("--slurp", runner.called_with_prefix(["api"])[0])
+
+
+class BranchStaleness(unittest.TestCase):
+    """How far behind base a branch is — DRAFT hides it from mergeStateStatus."""
+
+    def test_behind_by_is_read_from_the_compare_api(self):
+        gh, runner = make_github()
+        runner.when(
+            ["api", "repos/owner/repo/compare/main...feature"],
+            {"behind_by": 4, "ahead_by": 1},
+        )
+        self.assertEqual(gh.behind_by("main", "feature"), 4)
+
+    def test_a_response_without_the_field_raises(self):
+        # Reading a malformed response as "up to date" would promote a stale
+        # draft; unknown must fail closed like every other gate input.
+        gh, runner = make_github()
+        runner.when(["api", "repos/owner/repo/compare/main...feature"], {})
+        with self.assertRaises(ForemanError):
+            gh.behind_by("main", "feature")
+
+
+class DraftLifecycle(unittest.TestCase):
+    """PRs are opened as the agent workbench, never as a human handoff."""
+
+    def test_created_prs_are_drafts(self):
+        gh, runner = make_github()
+        runner.when(["pr", "create"], "https://github.com/owner/repo/pull/5\n")
+        gh.create_pr(title="t", body="b", head="h", base="main", labels=[])
+        created = runner.called_with_prefix(["pr", "create"])
+        self.assertEqual(len(created), 1)
+        self.assertIn("--draft", created[0])
+
+    def test_an_unrelated_creation_failure_keeps_its_own_cause(self):
+        # ForemanError embeds the whole invocation, and that always contains
+        # `--draft`, so a bare "draft" test relabels every failure as a
+        # paid-plan limitation and buries the real one.
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "create"], "GraphQL: Could not resolve to a Repository", rc=1
+        )
+        with self.assertRaises(ForemanError) as ctx:
+            gh.create_pr(title="t", body="b", head="h", base="main", labels=[])
+        self.assertNotIn("paid plans", str(ctx.exception))
+        self.assertIn("Could not resolve", str(ctx.exception))
+
+    def test_unsupported_draft_error_names_the_cause(self):
+        # A private repo on a free plan cannot open drafts at all; gh's bare
+        # message does not say what to do, and "drop --draft" is the wrong fix.
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "create"],
+            "GraphQL: Draft pull requests are not supported in this repository.",
+            rc=1,
+        )
+        with self.assertRaises(ForemanError) as ctx:
+            gh.create_pr(title="t", body="b", head="h", base="main", labels=[])
+        self.assertIn("paid plans", str(ctx.exception))
+        self.assertIn("do not drop --draft", str(ctx.exception))
+
+    def test_promotion_goes_through_gh_pr_ready(self):
+        gh, runner = make_github()
+        runner.when(
+            ["pr", "view", "5"],
+            {"number": 5, "author": {"login": "bot"}, "labels": [], "body": ""},
+        )
+        runner.when(["pr", "ready", "5"], "")
+        gh.ready_own_pr(5)
+        self.assertEqual(
+            runner.called_with_prefix(["pr", "ready"]), [["pr", "ready", "5"]]
+        )
 
     def test_status_comment_edits_only_own_marked_comment(self):
         gh, runner = make_github()

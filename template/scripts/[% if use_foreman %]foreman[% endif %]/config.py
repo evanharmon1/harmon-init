@@ -35,6 +35,12 @@ class Config:
         default_factory=lambda: ["OWNER", "MEMBER", "COLLABORATOR"]
     )
     review_sender_trust: list[str] = field(default_factory=lambda: ["Copilot"])
+    # Bots whose review of the current head the readiness gate waits for. Empty
+    # by default: foreman cannot detect which bots a repo has installed, and
+    # review_sender_trust says whose findings are safe to quote, not who will
+    # post — waiting on that list would stall every repo whose Copilot entry
+    # never reviews. Name a bot here to make its silence blocking.
+    required_review_bots: list[str] = field(default_factory=list)
     branch_prefix: str = "foreman"
     worktrees_dir: str = ".worktrees/foreman"
     runtime_dir: str = ".foreman"

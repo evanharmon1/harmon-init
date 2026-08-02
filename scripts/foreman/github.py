@@ -1,7 +1,8 @@
 """All GitHub access — every read and every mutation lives here, nowhere else.
 
 Write contract (docs/architecture/foreman.md): foreman MAY create/push its own
-branches, open non-draft PRs, edit its OWN PRs and their foreman-namespace
+branches, open DRAFT PRs, promote its OWN draft PR to ready for review once its
+readiness gate passes, edit its OWN PRs and their foreman-namespace
 labels, create/edit the single marker-identified status comment per unit,
 resolve review threads it dispositioned, post human-approved preflight
 correction comments, and idempotently ensure its label definitions exist.
@@ -29,6 +30,10 @@ from foreman.util import ForemanError, run
 Runner = Callable[[list[str], str | None], tuple[int, str, str]]
 
 STATUS_MARKER = "<!-- foreman:unit-status -->"
+
+# GitHub's own wording when a repository cannot open drafts (private repos on
+# unpaid plans). Matched case-folded against the error text.
+UNSUPPORTED_DRAFT_ERROR = "draft pull requests are not supported"
 
 # Labels foreman idempotently ensures and is allowed to apply to its own PRs.
 FOREMAN_LABELS = {
@@ -241,7 +246,20 @@ class GitHub:
         return self.pr_view(
             number,
             "number,title,body,url,state,isDraft,merged,mergedAt,author,labels,"
-            "headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,statusCheckRollup",
+            "headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,"
+            "reviewDecision,statusCheckRollup",
+        )
+
+    def pr_gate_snapshot(self, number: int) -> dict:
+        """Every volatile field the readiness gate decides on, read together.
+
+        One call, compared as a unit, so a field cannot go stale between the
+        gate's checks and the one-way promotion. Adding a condition to the gate
+        means adding it here — not another sequential re-read, which is how
+        `reviewDecision` came to be checked once at the top and never refreshed.
+        """
+        return self.pr_view(
+            number, "state,isDraft,headRefOid,reviewDecision,statusCheckRollup"
         )
 
     def review_threads(self, number: int) -> list[dict]:
@@ -274,6 +292,80 @@ class GitHub:
         ):
             raise ForemanError(f"review threads: invalid thread list for PR #{number}")
         return nodes
+
+    def review_authors(self, number: int, commit: str) -> set[str]:
+        """Logins that submitted a review of exactly `commit`.
+
+        Reviews only. An inline comment's `commit_id` is re-anchored to the
+        latest commit when its line survives a push, so a comment from an older
+        review reads as current — observed on harmon-init#520, where a review of
+        `c56103a` carried an inline comment stamped with the newer head.
+        """
+        # --slurp with --paginate, as issue_comments() does: without it `gh`
+        # emits one JSON array per page and Gh.json's single json.loads() fails
+        # on the second, so a PR with enough reviews to paginate would make this
+        # gate escalate forever instead of reading them.
+        pages = (
+            self.gh.json(
+                [
+                    "api",
+                    f"repos/{self.repo_slug()}/pulls/{number}/reviews",
+                    "--paginate",
+                    "--slurp",
+                ]
+            )
+            or []
+        )
+        rows = [row for page in pages for row in page]
+        return {
+            login
+            for login in (
+                ((row.get("user") or {}).get("login") or "")
+                for row in rows
+                if isinstance(row, dict) and row.get("commit_id") == commit
+            )
+            if login
+        }
+
+    def behind_by(self, base: str, head: str) -> int:
+        """Commits on `base` that `head` does not have.
+
+        Asked directly instead of inferred from `mergeStateStatus`, because a
+        draft reports DRAFT — which masks BEHIND the same way it masks BLOCKED.
+        A response without the field raises rather than reading as up to date.
+        """
+        data = self.gh.json(
+            ["api", f"repos/{self.repo_slug()}/compare/{base}...{head}"]
+        )
+        value = (data or {}).get("behind_by")
+        if not isinstance(value, int):
+            raise ForemanError(f"compare {base}...{head}: no behind_by in response")
+        return value
+
+    def required_checks(self, branch: str) -> set[str]:
+        """Check contexts `branch` requires — rulesets and classic protection.
+
+        One endpoint covers both, so this is what the base branch will actually
+        enforce at merge time. An empty set means the branch enforces nothing;
+        that is a real configuration, not an error, and the caller decides what
+        it means. A failed call raises, because "could not ask" must never read
+        as "nothing is required".
+        """
+        rules = self.gh.json(
+            ["api", f"repos/{self.repo_slug()}/rules/branches/{branch}"]
+        )
+        contexts: set[str] = set()
+        for rule in rules or []:
+            if not isinstance(rule, dict):
+                continue
+            if rule.get("type") != "required_status_checks":
+                continue
+            params = rule.get("parameters") or {}
+            for check in params.get("required_status_checks") or []:
+                context = (check or {}).get("context")
+                if context:
+                    contexts.add(context)
+        return contexts
 
     def branch_exists_remote(self, branch: str) -> bool:
         return self.gh.ok(["api", f"repos/{self.repo_slug()}/branches/{branch}"])
@@ -326,9 +418,13 @@ class GitHub:
         self, *, title: str, body: str, head: str, base: str, labels: list[str]
     ) -> str:
         self._assert_writable("create PR")
+        # Always a draft: the PR is the agent workbench until the readiness gate
+        # promotes it (AGENTS.md, "Dev Loop"). Non-draft is the human handoff,
+        # and foreman must never manufacture that at creation time.
         args = [
             "pr",
             "create",
+            "--draft",
             "--title",
             title,
             "--body-file",
@@ -340,7 +436,24 @@ class GitHub:
         ]
         for label in labels:
             args += ["--label", label]
-        out = self.gh.call(args, input_text=body)
+        try:
+            out = self.gh.call(args, input_text=body)
+        except ForemanError as exc:
+            # Diagnosis only. Match GitHub's specific message, NOT a bare
+            # "draft": ForemanError embeds the whole invocation, which always
+            # contains `--draft`, so a looser test relabels every creation
+            # failure — expired auth, a bad base, a missing label — as a
+            # paid-plan limitation and buries the real cause.
+            if UNSUPPORTED_DRAFT_ERROR in str(exc).casefold():
+                raise ForemanError(
+                    "could not open a DRAFT pull request. GitHub restricts draft "
+                    "PRs on private repositories to paid plans, and the draft is "
+                    "the workbench this lifecycle is built on (AGENTS.md, 'Dev "
+                    "Loop'). Make the repository public or upgrade its plan — do "
+                    "not drop --draft, which would publish unshepherded agent work "
+                    f"as a human handoff. Underlying error: {exc}"
+                ) from exc
+            raise
         return out.strip().splitlines()[-1] if out.strip() else ""
 
     def _own_pr_guard(self, number: int, action: str) -> dict:
@@ -377,6 +490,18 @@ class GitHub:
             args += ["--remove-label", name]
         if len(args) > 3:
             self.gh.call(args)
+
+    def ready_own_pr(self, number: int) -> None:
+        """Promote foreman's own draft PR to ready for review.
+
+        The one-way door in the lifecycle: it notifies CODEOWNERS and requested
+        reviewers, and `--undo` cannot unsend that. Callers must have satisfied
+        the full readiness gate (shepherd.py) on an unchanged head first; this
+        method only enforces the write contract, not the gate.
+        """
+        self._assert_writable("promote own PR to ready for review")
+        self._own_pr_guard(number, "mark ready for review")
+        self.gh.call(["pr", "ready", str(number)])
 
     def comment_own_pr(self, number: int, body: str) -> None:
         self._assert_writable("comment on own PR")

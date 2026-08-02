@@ -280,7 +280,14 @@ git_init:
 
 github_remote_create:
   type: bool
-  help: "GITHUB REMOTE: Create the remote repo on GitHub (gh repo create, private, pushes initial state)?"
+  help: >-
+    GITHUB REMOTE: Create the remote repo on GitHub (gh repo create, private,
+    pushes initial state)? Note it is created PRIVATE, and GitHub restricts
+    draft pull requests on private repositories to its paid plans. The generated
+    agent workflow opens every PR as a draft and promotes it only through the
+    readiness gate (AGENTS.md), so on a private free-plan repo that lifecycle
+    fails at `gh pr create --draft`. Make the repo public, upgrade the plan, or
+    plan to drive PRs by hand there — see docs/CHECKLIST.md.
   default: no
 
 github_release_init:

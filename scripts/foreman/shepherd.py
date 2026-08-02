@@ -8,8 +8,16 @@ Deterministic triggers → bounded agent actions:
                 ones go to the agent (rebase additively, re-verify, push)
   unresolved review-bot threads → resume the agent to adjudicate each finding
                 (apply or decline-with-reasoning; blanket-accepting prohibited)
-  green ∧ adjudicated ∧ mergeStateStatus=CLEAN → label ready-to-merge and
-                report a dependency-aware suggested merge order.
+  readiness gate passes → promote the draft to ready for review, label
+                ready-to-merge, and report a dependency-aware suggested merge
+                order.
+
+The gate is AGENTS.md's ("Dev Loop" → "Readiness gate"), reduced to the part
+foreman can decide deterministically: green checks, every review thread
+dispositioned, mergeStateStatus=CLEAN, reviewDecision not CHANGES_REQUESTED,
+and the head unchanged between the checks above and the promotion itself.
+Anything unproven leaves the PR draft — promotion notifies CODEOWNERS and
+cannot be unsent, so "not yet established" must never promote speculatively.
 
 Foreman never merges. `gh run rerun` is assumed unavailable to the bot token;
 the CI retrigger primitive is an empty commit.
@@ -19,6 +27,7 @@ from __future__ import annotations
 
 import graphlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,6 +42,82 @@ from foreman.util import info, warn, write_text
 
 MAX_AGENT_ACTIONS_PER_PR = 2  # per shepherd run; watch ticks give more rounds
 
+_DEFERRED_HEADING = re.compile(
+    r"^#{1,6}[ \t]+Deferred findings[ \t]*$", re.IGNORECASE | re.MULTILINE
+)
+_NEXT_HEADING = re.compile(r"^#{1,6}[ \t]+\S", re.MULTILINE)
+_UNCHECKED_ITEM = re.compile(r"^[ \t]*[-*][ \t]+\[[ \t]\]", re.MULTILINE)
+
+
+def unchecked_deferred_findings(body: str) -> int:
+    """Open items under a PR body's `## Deferred findings` heading.
+
+    AGENTS.md's readiness gate requires every one to be ticked with its
+    disposition before promotion: they are the low-priority findings the local
+    review loops deliberately carried to this stage, so promoting past them
+    hands a human work the automated lifecycle said it would settle.
+    """
+    heading = _DEFERRED_HEADING.search(body or "")
+    if not heading:
+        return 0
+    section = (body or "")[heading.end() :]
+    following = _NEXT_HEADING.search(section)
+    if following:
+        section = section[: following.start()]
+    return len(_UNCHECKED_ITEM.findall(section))
+
+
+def _bot_key(login: str) -> str:
+    """A bot login comparable across GitHub's two spellings of it.
+
+    REST reports an App as `coderabbitai[bot]`; GraphQL reports the same actor
+    as `coderabbitai`. `review_sender_trust` is matched against GraphQL logins
+    and `required_review_bots` against REST ones, so an exact comparison makes
+    one of the two lists silently never match — and for a *required* reviewer
+    that is not a missed trust check but a permanent stall. Normalising costs a
+    theoretical confusion between an App and a human of the same base name,
+    which this gate does not rely on: it asks whether a reviewer weighed in,
+    not whether to trust what they said.
+    """
+    return login.strip().casefold().removesuffix("[bot]")
+
+
+def required_checks_blocker(rollup: list[dict] | None, required: set[str]) -> str:
+    """Why the base branch's required checks do not yet certify this head, if so.
+
+    Empty string means they do. Used twice — once on the opening status read and
+    once on the pre-promotion snapshot — because a re-run changes the rollup
+    without changing the head, so a green read taken before the gate's other
+    lookups proves nothing by the time promotion happens.
+    """
+    state, _failed = classify_checks(rollup)
+    if state != "green":
+        return f"checks are {state} on this head"
+    reported = {
+        name
+        for name in ((ctx.get("name") or ctx.get("context")) for ctx in rollup or [])
+        if name
+    }
+    missing = sorted(required - reported)
+    return (
+        f"required check(s) not reported yet: {', '.join(missing)}" if missing else ""
+    )
+
+
+def missing_bot_reviews(gh: GitHub, cfg: Config, number: int, head: str) -> list[str]:
+    """Configured review bots with no review of this exact head.
+
+    Empty `required_review_bots` means no wait — deliberately, because foreman
+    cannot detect which bots a repository has installed. `review_sender_trust`
+    cannot stand in for it: that list says whose findings are safe to put in a
+    prompt, not who is expected to post, so keying on it would stall every repo
+    whose default `Copilot` entry never reviews anything.
+    """
+    if not cfg.required_review_bots:
+        return []
+    reviewed = {_bot_key(login) for login in gh.review_authors(number, head)}
+    return [bot for bot in cfg.required_review_bots if _bot_key(bot) not in reviewed]
+
 
 @dataclass
 class PrWork:
@@ -42,7 +127,8 @@ class PrWork:
     url: str
     title: str
     state: str = (
-        "healthy"  # healthy | fixed | rebased | adjudicated | waiting | escalated | settling | ready
+        # promoted = draft handed to a human; ready = mergeable, feeds merge order
+        "healthy"  # healthy | fixed | rebased | adjudicated | waiting | escalated | settling | promoted | ready
     )
     detail: str = ""
     actions: int = 0
@@ -74,16 +160,25 @@ def classify_checks(rollup: list[dict] | None) -> tuple[str, list[dict]]:
     for ctx in rollup or []:
         status = (ctx.get("status") or "").upper()
         conclusion = (ctx.get("conclusion") or ctx.get("state") or "").upper()
-        if conclusion in (
-            "FAILURE",
-            "TIMED_OUT",
-            "ACTION_REQUIRED",
-            "CANCELLED",
-            "ERROR",
+        # An ALLOWLIST of passing conclusions, not a blocklist of failures: a
+        # conclusion this function has never heard of must not read as success.
+        # GitHub's set already outgrew the old list — STARTUP_FAILURE and STALE
+        # both fell through as green — and it can grow again.
+        if conclusion and conclusion not in (
+            "SUCCESS",
+            "SKIPPED",
+            "NEUTRAL",
+            "PENDING",
+            "EXPECTED",
         ):
             failed.append(ctx)
-        elif status in ("QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED") or (
-            not conclusion and status not in ("COMPLETED",)
+        elif (
+            # A legacy commit status carries its state where a check run carries
+            # its conclusion, and no `status` field at all — so without these two
+            # a pending required context reads as green.
+            conclusion in ("PENDING", "EXPECTED")
+            or status in ("QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED")
+            or (not conclusion and status not in ("COMPLETED",))
         ):
             pending = True
     if failed:
@@ -290,7 +385,15 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         return work
 
     merge_state = (status.get("mergeStateStatus") or "").upper()
-    if merge_state in ("BEHIND", "DIRTY"):
+    base_branch = status.get("baseRefName") or gh.default_branch()
+    # A draft reports mergeStateStatus=DRAFT — the draft flag is itself what
+    # blocks the merge — so DRAFT stands in front of BEHIND and DIRTY alike.
+    # `mergeable` is computed independently of the draft flag and catches
+    # conflicts; staleness has no such field, so ask git how far behind the
+    # branch is rather than trusting a status the draft flag overwrote.
+    mergeable = (status.get("mergeable") or "").upper()
+    stale = merge_state == "DRAFT" and gh.behind_by(base_branch, work.branch) > 0
+    if merge_state in ("BEHIND", "DIRTY") or mergeable == "CONFLICTING" or stale:
         wt_path = _ensure_worktree(
             cfg, root, work.unit_number, work.branch, remote_name
         )
@@ -397,11 +500,165 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
         )
         return work
 
-    if merge_state == "CLEAN":
+    # Two transitions, one gate.
+    #   still draft → promote to ready for review (the human handoff)
+    #   CLEAN       → label ready-to-merge (mergeable now; the human decides)
+    # Tested as a BLOCKLIST, matching AGENTS.md's gate ("neither DIRTY, BEHIND,
+    # nor UNKNOWN"), because mergeStateStatus is a single value with a
+    # precedence order and the draft flag does not win it: observed live, a
+    # draft reports BEHIND when its branch is stale and BLOCKED when the base
+    # ruleset requires a review nobody has given. An allowlist of DRAFT/CLEAN
+    # would refuse to promote in exactly the case promotion exists to resolve.
+    # DIRTY and BEHIND cannot reach here — the rebase path above returns on
+    # both — so only UNKNOWN (indeterminate) and an unreadable value are left.
+    if merge_state and merge_state != "UNKNOWN":
         if cfg.require_codex_cloud_review:
             work.state, work.detail = (
                 "escalated",
                 "current-head Codex cloud review requires manual shepherd completion",
+            )
+            return work
+        if (status.get("reviewDecision") or "").upper() == "CHANGES_REQUESTED":
+            work.state, work.detail = (
+                "escalated",
+                "a reviewer requested changes — needs a human, not a handoff",
+            )
+            return work
+        # "Nothing failed" is not "the required checks passed". classify_checks
+        # reports on whatever has shown up, and GitHub registers checks
+        # incrementally, so one fast check can be green while a required workflow
+        # has not appeared at all. `mergeStateStatus` cannot settle it either —
+        # DRAFT masks the BLOCKED that missing required checks would otherwise
+        # produce. Ask the base branch what it enforces and compare.
+        required = gh.required_checks(base_branch)
+        if not required:
+            work.state, work.detail = (
+                "escalated",
+                (
+                    "base branch enforces no required checks — nothing to certify "
+                    "for a handoff; import the branch ruleset or promote by hand"
+                ),
+            )
+            return work
+        blocker = required_checks_blocker(status.get("statusCheckRollup"), required)
+        if blocker:
+            work.state, work.detail = "settling", blocker
+            return work
+        open_findings = unchecked_deferred_findings(status.get("body") or "")
+        if open_findings:
+            work.state, work.detail = (
+                "escalated",
+                f"{open_findings} deferred finding(s) in the PR body are unchecked",
+            )
+            return work
+        # An empty review-thread list means "nothing found" OR "hasn't looked
+        # yet", and a bot that reviews drafts can post after CI settles. Where
+        # the repo names bots it expects to hear from, wait for their review of
+        # this head rather than reading silence as approval.
+        awaited = missing_bot_reviews(
+            gh, cfg, work.number, status.get("headRefOid", "")
+        )
+        if awaited:
+            work.state, work.detail = (
+                "settling",
+                f"awaiting review of this head from: {', '.join(awaited)}",
+            )
+            return work
+        # Mergeability is computed asynchronously, so it reads UNKNOWN for a
+        # while after every push. The rebase path above only acts on a definite
+        # CONFLICTING; UNKNOWN reaches here, and "not known to conflict" is not
+        # the same as mergeable.
+        if mergeable != "MERGEABLE":
+            work.state, work.detail = (
+                "settling",
+                f"mergeability still {mergeable or 'UNKNOWN'} — re-gating next tick",
+            )
+            return work
+        # One fresh snapshot immediately before the one-way promotion, decided
+        # as a unit. Everything checked above came from a `pr_status` read taken
+        # before the required-check lookup, the mergeability read, and the wait
+        # for a configured reviewer — any of which gives a late review time to
+        # land. Every field below fails CLOSED: missing or unreadable is
+        # "unknown", never "unchanged".
+        fresh = gh.pr_gate_snapshot(work.number)
+        if (fresh.get("state") or "").upper() != "OPEN":
+            work.state, work.detail = (
+                "escalated",
+                f"PR is {fresh.get('state') or 'UNKNOWN'} — refusing to promote",
+            )
+            return work
+        gated_head = status.get("headRefOid")
+        if not gated_head or fresh.get("headRefOid") != gated_head:
+            work.state, work.detail = (
+                "settling",
+                "head moved or unreadable during the readiness gate — re-gating",
+            )
+            return work
+        # Re-checked here, not just at the top: a summary-only CHANGES_REQUESTED
+        # review creates no thread, so neither the thread re-read below nor the
+        # head comparison above would notice one that arrived mid-gate.
+        if (fresh.get("reviewDecision") or "").upper() == "CHANGES_REQUESTED":
+            work.state, work.detail = (
+                "escalated",
+                "changes requested during the readiness gate — needs a human",
+            )
+            return work
+        # CI state moves without the head moving: a re-run turns the green read
+        # taken above into pending or failed while headRefOid stays put. Re-check
+        # against the snapshot's own rollup.
+        blocker = required_checks_blocker(fresh.get("statusCheckRollup"), required)
+        if blocker:
+            work.state, work.detail = "settling", f"{blocker} — re-gating"
+            return work
+        is_draft = fresh.get("isDraft")
+        if is_draft not in (True, False):
+            work.state, work.detail = (
+                "escalated",
+                "could not read the PR's draft state — refusing to promote",
+            )
+            return work
+        if is_draft:
+            # Last read before the one-way door. The thread snapshot near the
+            # top of this function is older than everything checked since — and
+            # a review bot submits its verdict and its inline findings in one
+            # action, so the very review the gate just waited for can carry
+            # threads that snapshot could not have seen. Re-read; anything new
+            # goes back through the normal adjudication path next tick.
+            late = [
+                thread
+                for thread in gh.review_threads(work.number)
+                if not thread.get("isResolved")
+            ]
+            if late:
+                work.state, work.detail = (
+                    "settling",
+                    f"{len(late)} review thread(s) landed during the gate — re-gating",
+                )
+                return work
+            gh.ready_own_pr(work.number)
+            confirmed = gh.pr_gate_snapshot(work.number)
+            if (
+                confirmed.get("isDraft") is not False
+                or confirmed.get("headRefOid") != gated_head
+            ):
+                work.state, work.detail = (
+                    "escalated",
+                    "promotion to ready for review not confirmed on the gated head",
+                )
+                return work
+            # Deliberately NOT "ready": the merge order is for PRs a human can
+            # merge now, and this one has not been reviewed yet. The next tick
+            # sees a non-draft PR and labels it once GitHub reports CLEAN.
+            work.state, work.detail = (
+                "promoted",
+                "readiness gate passed — promoted to ready for human review",
+            )
+            return work
+        # Already non-draft (idempotent re-entry: never a second ready event).
+        if merge_state != "CLEAN":
+            work.state, work.detail = (
+                "healthy",
+                f"ready for review; mergeState={merge_state}",
             )
             return work
         gh.label_own_pr(work.number, add=["ready-to-merge"])

@@ -123,11 +123,15 @@ task foreman:cleanup   # prune worktrees/branches for closed units
    still armed, dependencies still satisfied, the spec hash (bodies +
    trusted comments) unchanged since dispatch, and no PR appeared meanwhile.
    Drift means no push and a flagged unit.
-8. **PR** — non-draft (review bots skip drafts), machine-readable marker,
-   `Closes #N` (or `Refs` when human tasks remain), test evidence, Handoff,
-   and human-only-tasks sections. On failure the worktree, session ref, and
-   a generated resume-state are preserved; the issue stays open so
-   dependents stay blocked.
+8. **Draft PR** — the workbench (AGENTS.md, "Dev Loop"): machine-readable
+   marker, `Closes #N` (or `Refs` when human tasks remain), test evidence,
+   Handoff, and human-only-tasks sections. It stays draft until shepherd's
+   readiness gate promotes it, so a non-draft foreman PR always means the
+   automated work is finished. Configure review bots to review drafts
+   (CodeRabbit: `reviews.auto_review.drafts: true`) or they will not see the
+   PR while foreman can still act on their findings. On failure the worktree,
+   session ref, and a generated resume-state are preserved; the issue stays
+   open so dependents stay blocked.
 9. **Status comment** — exactly one foreman-owned comment per unit, found by
    marker and edited in place. Display only; never read back for decisions.
 
@@ -145,20 +149,86 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
 - **Behind/conflicting after a sibling merge** → `git merge-tree` dry run
   enumerates conflicts; clean rebases are mechanical, conflicted ones go to
   the agent (rebase additively, regenerate generated artifacts via tooling,
-  re-verify) — always rebase, never merge-main.
+  re-verify) — always rebase, never merge-main. `DRAFT` stands in front of both
+  `BEHIND` and `DIRTY`, so the trigger does not trust `mergeStateStatus` alone:
+  conflicts come from `mergeable=CONFLICTING` (computed independently of the
+  draft flag) and staleness — which has no such field — from comparing the
+  branch to its base (`behind_by`) whenever the PR is a draft.
 - **Unresolved review threads** → the agent adjudicates each finding: apply
   (commit + reply + resolve) or decline with technical reasoning (bots are
   sometimes wrong; deterministic facts beat speculation). Blanket-accepting
   is prohibited. Foreman re-checks disposition completeness afterwards.
-- **Green + adjudicated + `mergeStateStatus=CLEAN`** → `ready-to-merge` label
-  plus a dependency-aware suggested merge order. Foreman performs no merge
-  action of any kind.
-- **`require_codex_cloud_review = true`** → Foreman fails closed before that
-  label, removes a stale readiness label from fresh PR status before any
-  state-specific return, and escalates to the manual shepherd procedure, which
-  owns the current-head Codex trigger, bounded retries, and terminal-result
-  validation. Watch mode writes this handoff and its detail to the heartbeat
-  log instead of silently idling.
+- **Readiness gate passes** → two transitions, gated identically but distinct in
+  meaning:
+  - **still a draft** → `gh pr ready` — the human handoff, reported as
+    `promoted`.
+  - **`mergeStateStatus=CLEAN`** → the `ready-to-merge` label plus a
+    dependency-aware suggested merge order, reported as `ready`. A freshly
+    promoted PR usually reports `BLOCKED` until a code owner approves, so only
+    genuinely mergeable PRs enter that order.
+
+  The merge state is tested as a **blocklist** (not `DIRTY`, `BEHIND`, or
+  `UNKNOWN`), never an allowlist. `mergeStateStatus` is one value with a
+  precedence order that the draft flag does not win: a draft reports `BEHIND`
+  when its branch is stale and `BLOCKED` when the base ruleset requires a review
+  nobody has given. Requiring `DRAFT` or `CLEAN` would refuse to promote in
+  exactly the case promotion exists to resolve.
+
+  The gate is the deterministic part of AGENTS.md's: every check the **base
+  branch requires** has reported and none failed, every review thread
+  dispositioned, `reviewDecision` not `CHANGES_REQUESTED`, `mergeable=MERGEABLE`
+  (it reads `UNKNOWN` for a while after every push, and "not known to conflict"
+  is not "mergeable"), and `headRefOid` re-read immediately before promoting and
+  unchanged since the gate ran.
+
+  The required set comes from `GET /repos/{slug}/rules/branches/{base}` — one
+  endpoint covering rulesets and classic protection — because a non-empty
+  rollup proves nothing on its own: GitHub registers checks incrementally, and
+  `DRAFT` masks the `BLOCKED` that a missing required check would otherwise
+  produce. A branch that enforces **no** required checks escalates rather than
+  promoting: there is no CI result to certify, which usually means the branch
+  ruleset was never imported (docs/CHECKLIST.md).
+
+  Two more conditions come from the same "absence of evidence" principle.
+  Unchecked items under a `## Deferred findings` heading in the PR body block
+  promotion — they are open work the local loops carried to this stage on
+  purpose. And an empty review-thread list means "nothing found" *or* "hasn't
+  looked yet", so each bot named in `required_review_bots` must have reviewed
+  this exact head. That list is empty by default and separate from
+  `review_sender_trust`: foreman cannot detect which bots a repo has installed,
+  and trust says whose findings are safe to quote, not who will post. Only
+  reviews count, never inline comments — GitHub re-anchors an inline comment's
+  `commit_id` to the newest commit when its line survives a push, so a stale
+  review's comment reads as current (observed on harmon-init#520).
+
+  Immediately before `gh pr ready` the gate takes **one fresh snapshot** —
+  `state`, `isDraft`, `headRefOid`, `reviewDecision`, `statusCheckRollup` in a
+  single read — plus a re-read of the review threads, and decides on those
+  together. The rollup is re-classified against the required set rather than
+  trusted from the opening read, because a re-run changes CI state without
+  changing the head. Everything
+  checked earlier came from a `pr_status` read taken before the required-check
+  lookup, the mergeability read, and the wait for a configured reviewer, any of
+  which gives a late review time to land. A bot submits its verdict and its
+  inline findings in one action, so the very review the gate waited for can
+  carry threads the earlier snapshot never saw; and a summary-only
+  `CHANGES_REQUESTED` creates no thread at all, which is why the decision is
+  re-read rather than trusted from the top. A new condition on the gate belongs
+  in that snapshot — not as another sequential re-read. A push landing mid-gate defers to the next tick;
+  anything else unproven escalates. The transition is confirmed by re-reading
+  `isDraft` on the same head — an unconfirmed promotion escalates rather than
+  reporting a handoff. Promotion is idempotent: an already-ready PR is never
+  promoted twice. Foreman performs no merge action of any kind.
+- **After promotion** foreman keeps adjudicating findings that land later, but
+  never returns the PR to draft — promotion already notified CODEOWNERS and
+  requested reviewers, and `gh pr ready --undo` cannot unsend that.
+- **`require_codex_cloud_review = true`** → Foreman fails closed before both the
+  promotion and the label, removes a stale readiness label from fresh PR status
+  before any state-specific return, and escalates to the manual shepherd
+  procedure, which owns the current-head Codex trigger, bounded retries, and
+  terminal-result validation. Such a PR therefore stays draft under foreman —
+  the human handoff is the manual procedure's to make. Watch mode writes this
+  handoff and its detail to the heartbeat log instead of silently idling.
 
 ## Watch mode and unattended runs
 
@@ -193,13 +263,16 @@ USD budgets bind. Switching is a config flip plus one secret.
   refuses to write.
 - **Write contract**: every GitHub mutation lives in
   `scripts/foreman/github.py` and nowhere else. Foreman may create/push its
-  own branches, open non-draft PRs, edit its own PRs and their
+  own branches, open draft PRs, promote its own draft to ready for review once
+  the readiness gate passes, edit its own PRs and their
   foreman-namespace labels, upsert one marker-identified status comment per
   unit, resolve threads it dispositioned, post human-approved preflight
   corrections, and ensure its label definitions. It must never merge, close
   or reopen issues, edit issue bodies/titles, touch human comments, or write
   fields/types/dependency edges — those operations do not exist in the
-  module, and the test suite greps to keep them absent.
+  module, and the test suite greps to keep them absent. Marking ready for
+  review is a handoff, not a merge: it requests human review and never
+  authorizes the merge itself.
 - **Prompt-injection surface**: only trusted-association issue comments and
   review threads whose authors match a trusted association, Foreman's account,
   or `review_sender_trust` enter prompts. Other unresolved review threads go to
@@ -227,6 +300,7 @@ expected_login = "your-bot"   # identity assertion; "" skips
 billing = "subscription"      # subscription | api
 sandboxed = false             # FOREMAN_SANDBOXED=1 env inside the bot container
 review_sender_trust = ["Copilot"] # add "coderabbitai" when use_coderabbit=true
+required_review_bots = []     # bots whose review of the head gating promotion
 
 [budgets]
 dispatch_usd = 20.0           # binds in api billing mode
