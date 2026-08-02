@@ -33,8 +33,12 @@ review_sender_trust = [[ '["coderabbitai", "Copilot"]' if use_coderabbit else '[
 # on it would stall on a bot that never reviews. Naming a bot here makes its
 # silence blocking rather than reading an empty thread list as "nothing found".
 [% if use_coderabbit %]# CodeRabbit reviews drafts (reviews.auto_review.drafts: true), so its verdict
-# is available before promotion — wait for it.
-required_review_bots = ["coderabbitai"][% else %]required_review_bots = []
+# is available before promotion — wait for it. Spelled with the `[bot]` suffix
+# because this list is matched against REST review authors, where an App is
+# `coderabbitai[bot]`; review_sender_trust above is matched against GraphQL
+# logins, where the same actor is plain `coderabbitai`. Foreman normalises the
+# suffix away, so either spelling works — but keep them accurate to their API.
+required_review_bots = ["coderabbitai[bot]"][% else %]required_review_bots = []
 # Add a bot's login here once one that reviews drafts is installed.[% endif %]
 
 # subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD

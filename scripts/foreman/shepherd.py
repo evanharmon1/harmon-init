@@ -67,6 +67,21 @@ def unchecked_deferred_findings(body: str) -> int:
     return len(_UNCHECKED_ITEM.findall(section))
 
 
+def _bot_key(login: str) -> str:
+    """A bot login comparable across GitHub's two spellings of it.
+
+    REST reports an App as `coderabbitai[bot]`; GraphQL reports the same actor
+    as `coderabbitai`. `review_sender_trust` is matched against GraphQL logins
+    and `required_review_bots` against REST ones, so an exact comparison makes
+    one of the two lists silently never match — and for a *required* reviewer
+    that is not a missed trust check but a permanent stall. Normalising costs a
+    theoretical confusion between an App and a human of the same base name,
+    which this gate does not rely on: it asks whether a reviewer weighed in,
+    not whether to trust what they said.
+    """
+    return login.strip().casefold().removesuffix("[bot]")
+
+
 def missing_bot_reviews(gh: GitHub, cfg: Config, number: int, head: str) -> list[str]:
     """Configured review bots with no review of this exact head.
 
@@ -78,8 +93,8 @@ def missing_bot_reviews(gh: GitHub, cfg: Config, number: int, head: str) -> list
     """
     if not cfg.required_review_bots:
         return []
-    reviewed = {login.casefold() for login in gh.review_authors(number, head)}
-    return [bot for bot in cfg.required_review_bots if bot.casefold() not in reviewed]
+    reviewed = {_bot_key(login) for login in gh.review_authors(number, head)}
+    return [bot for bot in cfg.required_review_bots if _bot_key(bot) not in reviewed]
 
 
 @dataclass

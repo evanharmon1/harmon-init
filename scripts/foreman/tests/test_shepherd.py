@@ -469,6 +469,28 @@ class MergeReadiness(unittest.TestCase):
         gh.ready_own_pr.assert_called_once_with(23)
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_bot_logins_match_across_githubs_two_spellings(self, _remote):
+        # REST calls the App `coderabbitai[bot]`; GraphQL calls it
+        # `coderabbitai`. An exact comparison makes the configured entry never
+        # match a real review, which for a REQUIRED reviewer is a permanent
+        # stall, not a missed check. Both spellings must resolve, both ways.
+        for configured, reviewed in (
+            ("coderabbitai", "coderabbitai[bot]"),  # the shipped template pair
+            ("coderabbitai[bot]", "coderabbitai"),
+            ("coderabbitai[bot]", "coderabbitai[bot]"),
+        ):
+            gh = self.github("BLOCKED", "MERGEABLE")
+            gh.review_authors.return_value = {reviewed}
+            work = shepherd_pr(
+                gh,
+                Config(required_review_bots=[configured]),
+                Path("."),
+                {"number": 23, "_unit": 17},
+                [],
+            )
+            self.assertEqual(work.state, "promoted", f"{configured} vs {reviewed}")
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_no_configured_bots_means_no_wait(self, _remote):
         gh = self.github("BLOCKED", "MERGEABLE")
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
