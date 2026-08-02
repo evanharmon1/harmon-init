@@ -53,15 +53,15 @@ volume never holds is the code those settings point at.
 session, so a container session reads identically:
 
 ```text
-📁 ~/git/harmon-init  🌿 main  🔀 #512 ✓  ▪ session name  · a1b2c3d4
+📁 ~/git/harmon-init  🌿 main  PR #512 ✓  ▪ session name  · a1b2c3d4
 🧠 ▕████░░░░░░░░░░░░▏ 24%  760k left  🤖 Opus 5 1M · medium · ⚡ · 💭  📟 v2.1.220
 💰 $0.43  ✎ +120/-45  ⏱ 11m session
-🚦 5h ▕█░░░░░░▏ 🔄 2h13m   ·   7d ▕░░░░░░░▏ 🔄 4d20h
+🚦 5h ▕█░░░░░░▏ ⧖ 2h13m   ·   7d ▕░░░░░░░▏ ⧖ 4d20h
 ```
 
 Reading down: where you are, how much room and horsepower are left, what the
 session has cost, and how close the 5-hour and 7-day subscription limits are to
-biting (`🔄` is time until that window resets). Segments that would say nothing
+biting (`⧖` is time until that window resets). Segments that would say nothing
 are omitted rather than shown empty — the PR only appears on a branch that has
 one, `⚡` and `💭` only when fast mode and extended thinking are on, and the
 launch directory only when it differs from the one you are in.
