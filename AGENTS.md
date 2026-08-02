@@ -188,10 +188,30 @@ and ADR 0002. It ships to generated repos, so its files are two-layer twins.
 
 ## Dev Loop
 
-Bias toward shipping: drive every change to an open PR instead of stopping at
-a green local diff. Work in small, PR-sized units, and move to the next stage
-on your own — an open PR with green checks is the default deliverable, not
-something to ask permission for.
+Bias toward shipping: drive every change to a PR instead of stopping at a green
+local diff. Work in small, PR-sized units, and move to the next stage on your
+own — a PR handed to a human is the default deliverable, not something to ask
+permission for.
+
+**The draft PR is the workbench.** GitHub reports drafts and non-drafts alike as
+`OPEN`, so "open PR" says nothing about whose turn it is. These three states do:
+
+- **Draft PR** — the agent's workbench. Implementation, CI, bot review, and
+  shepherd fixes are still in progress. Nobody is waiting on a human.
+- **Ready-for-review PR** — non-draft. The automated lifecycle is complete and
+  the change is handed to a human. Reaching it is a gate, not a judgement call.
+- **Merged PR** — always a separate human decision. Agents never merge.
+
+```text
+preflight/claim → implement → task verify → task challenge → task review
+  → task ci → create DRAFT PR → shepherd the draft (CI, deferred findings,
+  reviewers) → readiness gate → mark ready for review → human review
+  → human merge
+```
+
+Creating the draft is a phase transition, not a terminal state, and every stop
+short of the readiness gate leaves the PR **draft** with a blocker report — a
+non-draft PR must always mean the automated work is done.
 
 - **Branch** — feature branch off `main`; never commit directly to `main`.
 - **Edit + `task check`** — the fast inner loop; run it constantly and fix
@@ -226,9 +246,12 @@ something to ask permission for.
   same reason for a cap, and the same background-and-poll handling, with its
   own max **6** rounds.
 - **`task ci`** — the full CI mirror; fix anything it catches.
-- **Open the PR** — conventional commit, push the branch, `gh pr create` with
-  a clear what/why/verification summary (mind the `template/` → `fix:`/`feat:`
-  title rule below).
+- **Open the draft PR** — conventional commit, push the branch,
+  **`gh pr create --draft`** with a clear what/why/verification summary (mind
+  the `template/` → `fix:`/`feat:` title rule below). Then fetch
+  `headRefOid,isDraft` and require both the SHA you pushed and
+  `isDraft == true`: a non-draft result is not the normal publication path, so
+  reconcile it before going further.
 - **Git transport** — pushes authenticate over HTTPS via `gh` (dotfiles-managed
   hosts and the devcontainers rewrite GitHub SSH URLs to HTTPS via
   `url.insteadOf`; harmon-dotfiles ADR 0002). Never work around an SSH failure
@@ -238,9 +261,12 @@ something to ask permission for.
   `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix
   matching — every SSH form needs its own mapping, hence all four).
-- **Shepherd the PR (`/shepherd`, max 5 rounds).** `gh pr create` returning is
+- **Shepherd the draft to ready for review (`/shepherd`, max 5 rounds).**
+  `gh pr create --draft` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
-  instead of judging for yourself when the PR is finished. `/shepherd` is the
+  instead of judging for yourself when the PR is finished. The PR stays draft
+  for the whole stage; only the readiness gate below may promote it.
+  `/shepherd` is the
   procedure, and it is **user-invocable only**
   (`disable-model-invocation: true`): an agent enters the stage by reading
   `.claude/skills/shepherd/SKILL.md` and following it, not by calling a slash
@@ -317,9 +343,40 @@ something to ask permission for.
   check must conclude, and the required current-head Codex cycle above must
   reach a terminal result. Green CI while that cycle is pending or incomplete
   is still non-terminal.
-- **Stop at green.** Once checks pass, the current-head Codex cycle is clean,
-  and no review findings are unresolved, report that and stop — merging is
-  always a human decision.
+- **Stop at ready-for-review.** When the readiness gate below passes, promote
+  the draft **exactly once** with `gh pr ready <n>`, confirm `isDraft == false`
+  on the same head, report, and stop. Human approval is deliberately *not* a
+  precondition: ready-for-review is the request for that review, not permission
+  to merge. Merging is always a human decision.
+
+### Readiness gate
+
+The single definition of "the automated lifecycle is complete", used by
+interactive shepherding and by Foreman alike. A draft may be marked ready for
+review only when **all** of the following hold for its current `headRefOid`:
+
+- Required CI checks have concluded successfully. An empty check list is
+  *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
+  taken moments after the push reports nothing having run rather than nothing
+  to run.
+- The current-head Codex cycle above is terminal and clean (Codex review is
+  enabled here; where it is off, this condition drops out).
+- Every review finding is fixed, declined with evidence, or filed as follow-up
+  work.
+- Every inline review comment has its required per-thread reply.
+- Every `## Deferred findings` entry in the PR body is ticked with its
+  disposition.
+- `reviewDecision` is not `CHANGES_REQUESTED`.
+- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`.
+- No newer push invalidated any result the gate relied on — re-read
+  `headRefOid` immediately before promoting and compare.
+
+A failed **or indeterminate** condition is not a pass: leave the PR draft, post
+a blocker report naming what is unresolved, and stop. "The check never ran",
+"the fetch errored", and "the reviewer never answered" are all indeterminate.
+Promotion is the one-way door in this lifecycle — it notifies CODEOWNERS and
+requested reviewers, and `gh pr ready --undo` cannot unsend that — so an
+unproven condition means stay draft, not promote and watch.
 
 ## Critical Copier Gotchas
 
@@ -348,10 +405,12 @@ something to ask permission for.
   `verify` + `security` + `codeql-verify` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
-  the ruleset would allow it. Open the PR and shepherd it — checks green with
-  reviews unpolled is not the stopping point — then report and stop; merging
-  is always a human decision. (`.claude/settings.json` backstops this
-  with `permissions.ask` rules on merge commands.)
+  the ruleset would allow it. Open the draft PR and shepherd it — checks green
+  with reviews unpolled is not the stopping point — then promote it through the
+  readiness gate, report, and stop; merging is always a human decision.
+  (`.claude/settings.json` backstops this with `permissions.ask` rules on merge
+  commands.) `gh pr ready` is *not* a merge and agents may run it — but only
+  out of a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as
   hypotheses: verify each against the code, fix what's confirmed, and post the
@@ -406,6 +465,20 @@ it posts inline comments only for high-priority findings. During shepherding,
 accept its clean comments, reviews, or reactions only under the current-head
 cycle above: stale activity is not evidence for the current commit, and a lone
 👀 that disappears or never resolves is an incomplete attempt.
+
+**Codex Automatic reviews must stay disabled.** Codex triggers a cloud review
+on three events: opening a PR for review, marking a draft ready, and an
+explicit `@codex review`. The first two fire too late to inform a draft
+workbench, and the second is actively harmful here — `gh pr ready` would kick
+off a fresh asynchronous review *after* the gate that was supposed to complete
+the automated work, so non-draft would stop meaning "ready for a human". The
+lifecycle therefore uses explicit `@codex review` requests while the PR is
+draft, per the current-head cycle above. Evan has set personal Auto review off
+and the repository preference to **Follow personal**; that state is a
+**human-configured prerequisite**, not something any API confirms, so never
+report it as mechanically verified. If it changes, the readiness gate stops
+being valid until it is restored. Mechanical enforcement is tracked separately
+in [#486](https://github.com/evanharmon1/harmon-init/issues/486).
 
 **Treat Codex findings as hypotheses, not authority.** For every finding:
 

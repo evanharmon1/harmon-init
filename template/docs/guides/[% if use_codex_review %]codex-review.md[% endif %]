@@ -40,6 +40,17 @@ primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
    a required GitHub status check; if it stays unavailable for both bounded
    attempts, the agent stops and escalates.
 
+6. **Then disable Codex Automatic reviews** — personal Auto review off, and the
+   repository's Auto code review preference set to **Follow personal**. Codex
+   triggers a cloud review on three events: opening a PR for review, marking a
+   draft ready, and an explicit `@codex review`. Only the third is usable here:
+   the PR is a draft for the whole automated lifecycle, so the first never
+   fires, and the second fires *after* the readiness gate — starting a new
+   asynchronous review at the exact moment "non-draft" is supposed to mean the
+   automated work is done. No API reports this setting, so it is a
+   human-configured prerequisite recorded in docs/CHECKLIST.md; the readiness
+   gate trusts that record and must never claim it was mechanically verified.
+
 ## Manual reviews
 
 | Command | What it does |
@@ -216,17 +227,25 @@ task challenge  # adversarial second model — adjudicate, fix, re-challenge
                 # until a CLEAN pass (no P0/P1 findings), ≤6 rounds
 task review     # verification checkpoint — same clean-pass exit, ≤6 rounds
 task ci         # full CI mirror
-# → open the PR, then shepherd it: watch CI + reviews, settle the deferred
+# → open a DRAFT PR, then shepherd it: watch CI + reviews, settle the deferred
 #   P2s, adjudicate → fix → push, ≤5 rounds (independent of the loops above)
+# → readiness gate passes → gh pr ready (the handoff to a human)
 # → merging stays a human decision
 ```
 
-The full staged loop — including the PR-shepherding rounds — is defined in
-AGENTS.md ("Dev Loop"). If Codex cloud review is connected to the repo, PRs
+The full staged loop — including the PR-shepherding rounds and the readiness
+gate that ends them — is defined in AGENTS.md ("Dev Loop"). The PR is a
+**draft** for every stage above: it is the agent's workbench, and promoting it
+is the one signal that the automated work is finished.
+
+If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
 👍 from the pinned Codex bot actor ID `199175422` on the exact
 `@codex review` trigger comment as the clean pass. That reaction must post
 after both the current head was pushed and its review request was created.
+Those requests are explicit and made while the PR is draft — which is why
+Automatic reviews must be off (setup step 6): an automatic review triggered by
+`gh pr ready` would land after the gate that promoted the PR.
 
 ## Finding priorities
 
