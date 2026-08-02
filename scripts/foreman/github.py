@@ -258,7 +258,9 @@ class GitHub:
         means adding it here — not another sequential re-read, which is how
         `reviewDecision` came to be checked once at the top and never refreshed.
         """
-        return self.pr_view(number, "state,isDraft,headRefOid,reviewDecision")
+        return self.pr_view(
+            number, "state,isDraft,headRefOid,reviewDecision,statusCheckRollup"
+        )
 
     def review_threads(self, number: int) -> list[dict]:
         out = self.gh.json(

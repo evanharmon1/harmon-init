@@ -202,8 +202,11 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   review's comment reads as current (observed on harmon-init#520).
 
   Immediately before `gh pr ready` the gate takes **one fresh snapshot** —
-  `state`, `isDraft`, `headRefOid`, `reviewDecision` in a single read — plus a
-  re-read of the review threads, and decides on those together. Everything
+  `state`, `isDraft`, `headRefOid`, `reviewDecision`, `statusCheckRollup` in a
+  single read — plus a re-read of the review threads, and decides on those
+  together. The rollup is re-classified against the required set rather than
+  trusted from the opening read, because a re-run changes CI state without
+  changing the head. Everything
   checked earlier came from a `pr_status` read taken before the required-check
   lookup, the mergeability read, and the wait for a configured reviewer, any of
   which gives a late review time to land. A bot submits its verdict and its

@@ -217,6 +217,25 @@ class ReviewThreadRetrieval(unittest.TestCase):
 class MergeReadiness(unittest.TestCase):
     HEAD = "d15ea5e"
 
+    @staticmethod
+    def green_rollup() -> list[dict]:
+        return [
+            {"name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"name": "security", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        ]
+
+    @classmethod
+    def snapshot(cls, *, is_draft: bool, **overrides) -> dict:
+        snap = {
+            "state": "OPEN",
+            "isDraft": is_draft,
+            "headRefOid": cls.HEAD,
+            "reviewDecision": "",
+            "statusCheckRollup": cls.green_rollup(),
+        }
+        snap.update(overrides)
+        return snap
+
     @classmethod
     def github(
         cls, merge_state: str, mergeable: str, *, draft: bool = True
@@ -255,12 +274,14 @@ class MergeReadiness(unittest.TestCase):
                 "isDraft": draft,
                 "headRefOid": cls.HEAD,
                 "reviewDecision": "",
+                "statusCheckRollup": cls.green_rollup(),
             },
             {
                 "state": "OPEN",
                 "isDraft": False,
                 "headRefOid": cls.HEAD,
                 "reviewDecision": "",
+                "statusCheckRollup": cls.green_rollup(),
             },
         ]
         gh.review_threads.return_value = []
@@ -523,6 +544,7 @@ class MergeReadiness(unittest.TestCase):
                 "isDraft": True,
                 "headRefOid": self.HEAD,
                 "reviewDecision": "CHANGES_REQUESTED",
+                "statusCheckRollup": self.green_rollup(),
             }
         ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
@@ -530,6 +552,30 @@ class MergeReadiness(unittest.TestCase):
         self.assertIn("changes requested during the readiness gate", work.detail)
         gh.ready_own_pr.assert_not_called()
         gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_a_rerun_during_the_gate_stops_the_promotion(self, _remote):
+        # CI moves without the head moving: a re-run turns the green read taken
+        # at the top of the gate into pending while headRefOid stays put, so the
+        # snapshot has to carry the rollup and be re-classified against it.
+        gh = self.github("BLOCKED", "MERGEABLE")
+        gh.pr_gate_snapshot.side_effect = [
+            self.snapshot(
+                is_draft=True,
+                statusCheckRollup=[
+                    {"name": "verify", "status": "IN_PROGRESS", "conclusion": ""},
+                    {
+                        "name": "security",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                ],
+            )
+        ]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        self.assertIn("checks are pending", work.detail)
+        gh.ready_own_pr.assert_not_called()
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_threads_landing_during_the_gate_stop_the_promotion(self, _remote):
@@ -566,7 +612,12 @@ class MergeReadiness(unittest.TestCase):
     def test_unreadable_draft_state_refuses_to_promote(self, _remote):
         gh = self.github("CLEAN", "MERGEABLE")
         gh.pr_gate_snapshot.side_effect = [
-            {"state": "OPEN", "headRefOid": self.HEAD, "reviewDecision": ""}
+            {
+                "state": "OPEN",
+                "headRefOid": self.HEAD,
+                "reviewDecision": "",
+                "statusCheckRollup": self.green_rollup(),
+            }
         ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "escalated")
@@ -590,18 +641,8 @@ class MergeReadiness(unittest.TestCase):
         # transition as unproven rather than reporting a handoff that may not
         # have happened.
         gh.pr_gate_snapshot.side_effect = [
-            {
-                "state": "OPEN",
-                "isDraft": True,
-                "headRefOid": self.HEAD,
-                "reviewDecision": "",
-            },
-            {
-                "state": "OPEN",
-                "isDraft": True,
-                "headRefOid": self.HEAD,
-                "reviewDecision": "",
-            },
+            self.snapshot(is_draft=True),
+            self.snapshot(is_draft=True),
         ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "escalated")

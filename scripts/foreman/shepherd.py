@@ -82,6 +82,28 @@ def _bot_key(login: str) -> str:
     return login.strip().casefold().removesuffix("[bot]")
 
 
+def required_checks_blocker(rollup: list[dict] | None, required: set[str]) -> str:
+    """Why the base branch's required checks do not yet certify this head, if so.
+
+    Empty string means they do. Used twice — once on the opening status read and
+    once on the pre-promotion snapshot — because a re-run changes the rollup
+    without changing the head, so a green read taken before the gate's other
+    lookups proves nothing by the time promotion happens.
+    """
+    state, _failed = classify_checks(rollup)
+    if state != "green":
+        return f"checks are {state} on this head"
+    reported = {
+        name
+        for name in ((ctx.get("name") or ctx.get("context")) for ctx in rollup or [])
+        if name
+    }
+    missing = sorted(required - reported)
+    return (
+        f"required check(s) not reported yet: {', '.join(missing)}" if missing else ""
+    )
+
+
 def missing_bot_reviews(gh: GitHub, cfg: Config, number: int, head: str) -> list[str]:
     """Configured review bots with no review of this exact head.
 
@@ -518,20 +540,9 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 ),
             )
             return work
-        reported = {
-            name
-            for name in (
-                (ctx.get("name") or ctx.get("context"))
-                for ctx in status.get("statusCheckRollup") or []
-            )
-            if name
-        }
-        missing = sorted(required - reported)
-        if missing:
-            work.state, work.detail = (
-                "settling",
-                f"required check(s) not reported yet: {', '.join(missing)}",
-            )
+        blocker = required_checks_blocker(status.get("statusCheckRollup"), required)
+        if blocker:
+            work.state, work.detail = "settling", blocker
             return work
         open_findings = unchecked_deferred_findings(status.get("body") or "")
         if open_findings:
@@ -591,6 +602,13 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 "escalated",
                 "changes requested during the readiness gate — needs a human",
             )
+            return work
+        # CI state moves without the head moving: a re-run turns the green read
+        # taken above into pending or failed while headRefOid stays put. Re-check
+        # against the snapshot's own rollup.
+        blocker = required_checks_blocker(fresh.get("statusCheckRollup"), required)
+        if blocker:
+            work.state, work.detail = "settling", f"{blocker} — re-gating"
             return work
         is_draft = fresh.get("isDraft")
         if is_draft not in (True, False):
