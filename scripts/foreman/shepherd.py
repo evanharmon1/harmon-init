@@ -589,6 +589,23 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             )
             return work
         if is_draft:
+            # Last read before the one-way door. The thread snapshot near the
+            # top of this function is older than everything checked since — and
+            # a review bot submits its verdict and its inline findings in one
+            # action, so the very review the gate just waited for can carry
+            # threads that snapshot could not have seen. Re-read; anything new
+            # goes back through the normal adjudication path next tick.
+            late = [
+                thread
+                for thread in gh.review_threads(work.number)
+                if not thread.get("isResolved")
+            ]
+            if late:
+                work.state, work.detail = (
+                    "settling",
+                    f"{len(late)} review thread(s) landed during the gate — re-gating",
+                )
+                return work
             gh.ready_own_pr(work.number)
             confirmed = gh.pr_head(work.number)
             if (

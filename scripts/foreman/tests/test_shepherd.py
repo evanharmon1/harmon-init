@@ -491,6 +491,19 @@ class MergeReadiness(unittest.TestCase):
             self.assertEqual(work.state, "promoted", f"{configured} vs {reviewed}")
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_threads_landing_during_the_gate_stop_the_promotion(self, _remote):
+        # A review bot submits its verdict and its inline findings in one
+        # action, so the review the gate waited for can carry threads the
+        # earlier snapshot could not have seen. First read: none. Second read
+        # (immediately before promoting): one.
+        gh = self.github("BLOCKED", "MERGEABLE")
+        gh.review_threads.side_effect = [[], [{"id": "T_late", "isResolved": False}]]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        self.assertIn("landed during the gate", work.detail)
+        gh.ready_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_no_configured_bots_means_no_wait(self, _remote):
         gh = self.github("BLOCKED", "MERGEABLE")
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])

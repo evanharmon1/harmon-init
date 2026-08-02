@@ -199,7 +199,13 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   and trust says whose findings are safe to quote, not who will post. Only
   reviews count, never inline comments — GitHub re-anchors an inline comment's
   `commit_id` to the newest commit when its line survives a push, so a stale
-  review's comment reads as current (observed on harmon-init#520). A push landing mid-gate defers to the next tick;
+  review's comment reads as current (observed on harmon-init#520).
+
+  The review threads are then re-read immediately before `gh pr ready`. A bot
+  submits its verdict and its inline findings in one action, so the very review
+  the gate waited for can carry threads the earlier snapshot could not have
+  seen; anything that appears sends the PR back through normal adjudication on
+  the next tick instead of through the one-way door. A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never
