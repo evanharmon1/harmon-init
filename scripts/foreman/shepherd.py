@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import graphlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,45 @@ from foreman.graph import MARKER_RE
 from foreman.util import info, warn, write_text
 
 MAX_AGENT_ACTIONS_PER_PR = 2  # per shepherd run; watch ticks give more rounds
+
+_DEFERRED_HEADING = re.compile(
+    r"^#{1,6}[ \t]+Deferred findings[ \t]*$", re.IGNORECASE | re.MULTILINE
+)
+_NEXT_HEADING = re.compile(r"^#{1,6}[ \t]+\S", re.MULTILINE)
+_UNCHECKED_ITEM = re.compile(r"^[ \t]*[-*][ \t]+\[[ \t]\]", re.MULTILINE)
+
+
+def unchecked_deferred_findings(body: str) -> int:
+    """Open items under a PR body's `## Deferred findings` heading.
+
+    AGENTS.md's readiness gate requires every one to be ticked with its
+    disposition before promotion: they are the low-priority findings the local
+    review loops deliberately carried to this stage, so promoting past them
+    hands a human work the automated lifecycle said it would settle.
+    """
+    heading = _DEFERRED_HEADING.search(body or "")
+    if not heading:
+        return 0
+    section = (body or "")[heading.end() :]
+    following = _NEXT_HEADING.search(section)
+    if following:
+        section = section[: following.start()]
+    return len(_UNCHECKED_ITEM.findall(section))
+
+
+def missing_bot_reviews(gh: GitHub, cfg: Config, number: int, head: str) -> list[str]:
+    """Configured review bots with no review of this exact head.
+
+    Empty `required_review_bots` means no wait — deliberately, because foreman
+    cannot detect which bots a repository has installed. `review_sender_trust`
+    cannot stand in for it: that list says whose findings are safe to put in a
+    prompt, not who is expected to post, so keying on it would stall every repo
+    whose default `Copilot` entry never reviews anything.
+    """
+    if not cfg.required_review_bots:
+        return []
+    reviewed = {login.casefold() for login in gh.review_authors(number, head)}
+    return [bot for bot in cfg.required_review_bots if bot.casefold() not in reviewed]
 
 
 @dataclass
@@ -472,6 +512,26 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
             work.state, work.detail = (
                 "settling",
                 f"required check(s) not reported yet: {', '.join(missing)}",
+            )
+            return work
+        open_findings = unchecked_deferred_findings(status.get("body") or "")
+        if open_findings:
+            work.state, work.detail = (
+                "escalated",
+                f"{open_findings} deferred finding(s) in the PR body are unchecked",
+            )
+            return work
+        # An empty review-thread list means "nothing found" OR "hasn't looked
+        # yet", and a bot that reviews drafts can post after CI settles. Where
+        # the repo names bots it expects to hear from, wait for their review of
+        # this head rather than reading silence as approval.
+        awaited = missing_bot_reviews(
+            gh, cfg, work.number, status.get("headRefOid", "")
+        )
+        if awaited:
+            work.state, work.detail = (
+                "settling",
+                f"awaiting review of this head from: {', '.join(awaited)}",
             )
             return work
         # Mergeability is computed asynchronously, so it reads UNKNOWN for a

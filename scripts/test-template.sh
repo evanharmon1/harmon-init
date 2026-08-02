@@ -848,6 +848,8 @@ else
         err "foreman has no guarded ready-for-review promotion"
     grep -Fq 'ready_own_pr' scripts/foreman/shepherd.py ||
         err "foreman shepherd never promotes a passing draft"
+    grep -Fq 'required_review_bots' .foreman.toml ||
+        err "foreman config cannot declare a draft reviewer the gate waits for"
 fi
 
 # ── 9d3. local/cloud Codex review render independently (both default off) ────

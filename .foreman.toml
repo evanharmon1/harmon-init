@@ -18,6 +18,14 @@ expected_login = "evanharmon1-bot"
 # account may contribute unresolved review-thread content to agent prompts.
 review_sender_trust = ["Copilot"]
 
+# Bots whose review of the CURRENT head the readiness gate waits for before
+# promoting a draft. Empty by default and deliberately separate from
+# review_sender_trust: that list says whose findings are safe to quote, not who
+# is expected to post, so waiting on it would stall on a bot that never reviews.
+# Name a draft-reviewing bot here to make its silence blocking rather than
+# reading an empty thread list as "reviewed, nothing found".
+required_review_bots = []
+
 # subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD
 # budgets are inert (guardrails bind on timeout/turns). api: adapters export
 # FOREMAN_ANTHROPIC_API_KEY process-locally; USD budgets bind.

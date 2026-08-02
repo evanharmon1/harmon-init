@@ -187,7 +187,19 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   `DRAFT` masks the `BLOCKED` that a missing required check would otherwise
   produce. A branch that enforces **no** required checks escalates rather than
   promoting: there is no CI result to certify, which usually means the branch
-  ruleset was never imported (docs/CHECKLIST.md). A push landing mid-gate defers to the next tick;
+  ruleset was never imported (docs/CHECKLIST.md).
+
+  Two more conditions come from the same "absence of evidence" principle.
+  Unchecked items under a `## Deferred findings` heading in the PR body block
+  promotion — they are open work the local loops carried to this stage on
+  purpose. And an empty review-thread list means "nothing found" *or* "hasn't
+  looked yet", so each bot named in `required_review_bots` must have reviewed
+  this exact head. That list is empty by default and separate from
+  `review_sender_trust`: foreman cannot detect which bots a repo has installed,
+  and trust says whose findings are safe to quote, not who will post. Only
+  reviews count, never inline comments — GitHub re-anchors an inline comment's
+  `commit_id` to the newest commit when its line survives a push, so a stale
+  review's comment reads as current (observed on harmon-init#520). A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never
@@ -273,6 +285,7 @@ expected_login = "your-bot"   # identity assertion; "" skips
 billing = "subscription"      # subscription | api
 sandboxed = false             # FOREMAN_SANDBOXED=1 env inside the bot container
 review_sender_trust = ["Copilot"] # add "coderabbitai" when use_coderabbit=true
+required_review_bots = []     # bots whose review of the head gating promotion
 
 [budgets]
 dispatch_usd = 20.0           # binds in api billing mode

@@ -281,6 +281,34 @@ class GitHub:
             raise ForemanError(f"review threads: invalid thread list for PR #{number}")
         return nodes
 
+    def review_authors(self, number: int, commit: str) -> set[str]:
+        """Logins that submitted a review of exactly `commit`.
+
+        Reviews only. An inline comment's `commit_id` is re-anchored to the
+        latest commit when its line survives a push, so a comment from an older
+        review reads as current — observed on harmon-init#520, where a review of
+        `c56103a` carried an inline comment stamped with the newer head.
+        """
+        rows = (
+            self.gh.json(
+                [
+                    "api",
+                    f"repos/{self.repo_slug()}/pulls/{number}/reviews",
+                    "--paginate",
+                ]
+            )
+            or []
+        )
+        return {
+            login
+            for login in (
+                ((row.get("user") or {}).get("login") or "")
+                for row in rows
+                if isinstance(row, dict) and row.get("commit_id") == commit
+            )
+            if login
+        }
+
     def behind_by(self, base: str, head: str) -> int:
         """Commits on `base` that `head` does not have.
 

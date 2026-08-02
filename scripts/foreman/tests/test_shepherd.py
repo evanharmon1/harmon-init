@@ -14,6 +14,7 @@ from foreman.shepherd import (
     ready_label_is_authoritative,
     shepherd_pr,
     trusted_review_threads,
+    unchecked_deferred_findings,
 )
 from foreman.tests.fakes import make_github
 from foreman.util import ForemanError
@@ -64,6 +65,35 @@ class ClassifyChecks(unittest.TestCase):
         )
         self.assertEqual(
             classify_checks([{"context": "ci", "state": "SUCCESS"}])[0], "green"
+        )
+
+
+class DeferredFindings(unittest.TestCase):
+    BODY = """## Summary
+
+Something.
+
+## Deferred findings
+
+- [x] settled one — fixed in abc123
+- [ ] still open — needs a decision
+* [ ] alternate bullet marker
+
+## Handoff
+
+- [ ] this list is under a different heading and must not count
+"""
+
+    def test_only_unchecked_items_in_the_section_count(self):
+        self.assertEqual(unchecked_deferred_findings(self.BODY), 2)
+
+    def test_no_section_means_nothing_open(self):
+        self.assertEqual(unchecked_deferred_findings("## Summary\n\n- [ ] a task"), 0)
+        self.assertEqual(unchecked_deferred_findings(""), 0)
+
+    def test_a_fully_settled_section_is_clear(self):
+        self.assertEqual(
+            unchecked_deferred_findings("## Deferred findings\n\n- [x] done\n"), 0
         )
 
 
@@ -198,6 +228,7 @@ class MergeReadiness(unittest.TestCase):
         }
         gh.required_checks.return_value = {"verify", "security"}
         gh.behind_by.return_value = 0
+        gh.review_authors.return_value = set()
         # Gate re-read, then (for a draft) the post-promotion confirmation.
         gh.pr_head.side_effect = [
             {"state": "OPEN", "isDraft": draft, "headRefOid": cls.HEAD},
@@ -385,6 +416,45 @@ class MergeReadiness(unittest.TestCase):
         self.assertEqual(work.state, "escalated")
         self.assertIn("no required checks", work.detail)
         gh.ready_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_unchecked_deferred_findings_block_the_handoff(self, _remote):
+        gh = self.github("BLOCKED", "MERGEABLE")
+        gh.pr_status.return_value["body"] = (
+            "## Deferred findings\n\n- [ ] still open — needs a decision\n"
+        )
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("unchecked", work.detail)
+        gh.ready_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_a_configured_bot_that_has_not_reviewed_blocks_promotion(self, _remote):
+        # An empty review-thread list means "nothing found" OR "hasn't looked
+        # yet"; a bot reviewing drafts can post after CI settles.
+        gh = self.github("BLOCKED", "MERGEABLE")
+        cfg = Config(required_review_bots=["coderabbitai"])
+        work = shepherd_pr(gh, cfg, Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "settling")
+        self.assertIn("coderabbitai", work.detail)
+        gh.ready_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_a_configured_bot_that_reviewed_this_head_unblocks(self, _remote):
+        gh = self.github("BLOCKED", "MERGEABLE")
+        gh.review_authors.return_value = {"CodeRabbitAI"}  # case-insensitive
+        cfg = Config(required_review_bots=["coderabbitai"])
+        work = shepherd_pr(gh, cfg, Path("."), {"number": 23, "_unit": 17}, [])
+        gh.review_authors.assert_called_once_with(23, self.HEAD)
+        self.assertEqual(work.state, "promoted")
+        gh.ready_own_pr.assert_called_once_with(23)
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_no_configured_bots_means_no_wait(self, _remote):
+        gh = self.github("BLOCKED", "MERGEABLE")
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        gh.review_authors.assert_not_called()
+        self.assertEqual(work.state, "promoted")
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_unknown_mergeability_defers_promotion(self, _remote):

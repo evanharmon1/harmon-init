@@ -27,6 +27,16 @@ expected_login = "[[ author_git_provider_username ]]-bot"
 # account may contribute unresolved review-thread content to agent prompts.
 review_sender_trust = [[ '["coderabbitai", "Copilot"]' if use_coderabbit else '["Copilot"]' ]]
 
+# Bots whose review of the CURRENT head the readiness gate waits for before
+# promoting a draft. Deliberately separate from review_sender_trust: that list
+# says whose findings are safe to quote, not who is expected to post, so waiting
+# on it would stall on a bot that never reviews. Naming a bot here makes its
+# silence blocking rather than reading an empty thread list as "nothing found".
+[% if use_coderabbit %]# CodeRabbit reviews drafts (reviews.auto_review.drafts: true), so its verdict
+# is available before promotion — wait for it.
+required_review_bots = ["coderabbitai"][% else %]required_review_bots = []
+# Add a bot's login here once one that reviews drafts is installed.[% endif %]
+
 # subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD
 # budgets are inert (guardrails bind on timeout/turns). api: adapters export
 # FOREMAN_ANTHROPIC_API_KEY process-locally; USD budgets bind.
