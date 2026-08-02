@@ -153,6 +153,16 @@ it points here.
   repo** — create, edit, and delete it freely; `task sync:skills` and the
   `verify:skills*` drift checks never touch or report it. Never hand-edit the
   managed (vendored) skills — change them in harmon-devkit and bump the pin.
+[% if use_shared_agents %]
+- **Vendored vs local agents:** the same rule, one directory over. The
+  `agents:` block in `.skills-sync.yaml` vendors harmon-devkit's shared
+  subagents into `.claude/agents/`, and the sync manages only the files on the
+  `# managed:` line of `.claude/agents/.AGENTS_PROVENANCE`. Any other `.md`
+  there is a local agent this repo owns, and the sync never touches it. Agents
+  are pinned by the **same `source.ref` as the skills** — a shared agent is thin
+  and defers to a skill by reading it, so two pins that could disagree would
+  leave an agent following a procedure that no longer exists.
+[% endif %]
 [% endif %]
 - **Doc filenames are kebab-case** (`branch-protection.md`, `ci-cd.md`). The
   conventional uppercase project files keep their names: `README.md`,
