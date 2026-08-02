@@ -201,11 +201,17 @@ Deterministic triggers → bounded agent actions on open foreman PRs:
   `commit_id` to the newest commit when its line survives a push, so a stale
   review's comment reads as current (observed on harmon-init#520).
 
-  The review threads are then re-read immediately before `gh pr ready`. A bot
-  submits its verdict and its inline findings in one action, so the very review
-  the gate waited for can carry threads the earlier snapshot could not have
-  seen; anything that appears sends the PR back through normal adjudication on
-  the next tick instead of through the one-way door. A push landing mid-gate defers to the next tick;
+  Immediately before `gh pr ready` the gate takes **one fresh snapshot** —
+  `state`, `isDraft`, `headRefOid`, `reviewDecision` in a single read — plus a
+  re-read of the review threads, and decides on those together. Everything
+  checked earlier came from a `pr_status` read taken before the required-check
+  lookup, the mergeability read, and the wait for a configured reviewer, any of
+  which gives a late review time to land. A bot submits its verdict and its
+  inline findings in one action, so the very review the gate waited for can
+  carry threads the earlier snapshot never saw; and a summary-only
+  `CHANGES_REQUESTED` creates no thread at all, which is why the decision is
+  re-read rather than trusted from the top. A new condition on the gate belongs
+  in that snapshot — not as another sequential re-read. A push landing mid-gate defers to the next tick;
   anything else unproven escalates. The transition is confirmed by re-reading
   `isDraft` on the same head — an unconfirmed promotion escalates rather than
   reporting a handoff. Promotion is idempotent: an already-ready PR is never

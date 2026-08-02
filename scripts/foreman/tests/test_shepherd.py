@@ -249,9 +249,19 @@ class MergeReadiness(unittest.TestCase):
         gh.behind_by.return_value = 0
         gh.review_authors.return_value = set()
         # Gate re-read, then (for a draft) the post-promotion confirmation.
-        gh.pr_head.side_effect = [
-            {"state": "OPEN", "isDraft": draft, "headRefOid": cls.HEAD},
-            {"state": "OPEN", "isDraft": False, "headRefOid": cls.HEAD},
+        gh.pr_gate_snapshot.side_effect = [
+            {
+                "state": "OPEN",
+                "isDraft": draft,
+                "headRefOid": cls.HEAD,
+                "reviewDecision": "",
+            },
+            {
+                "state": "OPEN",
+                "isDraft": False,
+                "headRefOid": cls.HEAD,
+                "reviewDecision": "",
+            },
         ]
         gh.review_threads.return_value = []
         gh.viewer.return_value = "bot"
@@ -367,8 +377,13 @@ class MergeReadiness(unittest.TestCase):
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_head_moving_during_the_gate_defers_promotion(self, _remote):
         gh = self.github("DRAFT", "MERGEABLE")
-        gh.pr_head.side_effect = [
-            {"state": "OPEN", "isDraft": True, "headRefOid": "beefbee"}
+        gh.pr_gate_snapshot.side_effect = [
+            {
+                "state": "OPEN",
+                "isDraft": True,
+                "headRefOid": "beefbee",
+                "reviewDecision": "",
+            }
         ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "settling")
@@ -379,8 +394,13 @@ class MergeReadiness(unittest.TestCase):
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_closed_pr_is_never_promoted(self, _remote):
         gh = self.github("DRAFT", "MERGEABLE")
-        gh.pr_head.side_effect = [
-            {"state": "CLOSED", "isDraft": True, "headRefOid": self.HEAD}
+        gh.pr_gate_snapshot.side_effect = [
+            {
+                "state": "CLOSED",
+                "isDraft": True,
+                "headRefOid": self.HEAD,
+                "reviewDecision": "",
+            }
         ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "escalated")
@@ -491,6 +511,27 @@ class MergeReadiness(unittest.TestCase):
             self.assertEqual(work.state, "promoted", f"{configured} vs {reviewed}")
 
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
+    def test_changes_requested_during_the_gate_stops_the_promotion(self, _remote):
+        # A summary-only CHANGES_REQUESTED review creates no thread, so neither
+        # the thread re-read nor the head comparison notices it. Only re-reading
+        # reviewDecision in the pre-promotion snapshot catches one that arrived
+        # after the opening pr_status read.
+        gh = self.github("BLOCKED", "MERGEABLE")
+        gh.pr_gate_snapshot.side_effect = [
+            {
+                "state": "OPEN",
+                "isDraft": True,
+                "headRefOid": self.HEAD,
+                "reviewDecision": "CHANGES_REQUESTED",
+            }
+        ]
+        work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
+        self.assertEqual(work.state, "escalated")
+        self.assertIn("changes requested during the readiness gate", work.detail)
+        gh.ready_own_pr.assert_not_called()
+        gh.label_own_pr.assert_not_called()
+
+    @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_threads_landing_during_the_gate_stop_the_promotion(self, _remote):
         # A review bot submits its verdict and its inline findings in one
         # action, so the review the gate waited for can carry threads the
@@ -524,7 +565,9 @@ class MergeReadiness(unittest.TestCase):
     @patch("foreman.shepherd.worktree.remote", return_value="origin")
     def test_unreadable_draft_state_refuses_to_promote(self, _remote):
         gh = self.github("CLEAN", "MERGEABLE")
-        gh.pr_head.side_effect = [{"state": "OPEN", "headRefOid": self.HEAD}]
+        gh.pr_gate_snapshot.side_effect = [
+            {"state": "OPEN", "headRefOid": self.HEAD, "reviewDecision": ""}
+        ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "escalated")
         self.assertIn("draft state", work.detail)
@@ -546,9 +589,19 @@ class MergeReadiness(unittest.TestCase):
         # The promotion command returned, but the PR is still draft: treat the
         # transition as unproven rather than reporting a handoff that may not
         # have happened.
-        gh.pr_head.side_effect = [
-            {"state": "OPEN", "isDraft": True, "headRefOid": self.HEAD},
-            {"state": "OPEN", "isDraft": True, "headRefOid": self.HEAD},
+        gh.pr_gate_snapshot.side_effect = [
+            {
+                "state": "OPEN",
+                "isDraft": True,
+                "headRefOid": self.HEAD,
+                "reviewDecision": "",
+            },
+            {
+                "state": "OPEN",
+                "isDraft": True,
+                "headRefOid": self.HEAD,
+                "reviewDecision": "",
+            },
         ]
         work = shepherd_pr(gh, Config(), Path("."), {"number": 23, "_unit": 17}, [])
         self.assertEqual(work.state, "escalated")

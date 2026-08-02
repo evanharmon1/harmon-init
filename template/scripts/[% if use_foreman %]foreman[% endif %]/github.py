@@ -250,9 +250,15 @@ class GitHub:
             "reviewDecision,statusCheckRollup",
         )
 
-    def pr_head(self, number: int) -> dict:
-        """The cheap re-read the readiness gate makes right before promoting."""
-        return self.pr_view(number, "state,isDraft,headRefOid")
+    def pr_gate_snapshot(self, number: int) -> dict:
+        """Every volatile field the readiness gate decides on, read together.
+
+        One call, compared as a unit, so a field cannot go stale between the
+        gate's checks and the one-way promotion. Adding a condition to the gate
+        means adding it here — not another sequential re-read, which is how
+        `reviewDecision` came to be checked once at the top and never refreshed.
+        """
+        return self.pr_view(number, "state,isDraft,headRefOid,reviewDecision")
 
     def review_threads(self, number: int) -> list[dict]:
         out = self.gh.json(

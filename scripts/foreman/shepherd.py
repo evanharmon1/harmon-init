@@ -563,25 +563,36 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 f"mergeability still {mergeable or 'UNKNOWN'} — re-gating next tick",
             )
             return work
-        # Re-read the head immediately before the one-way promotion: a push
-        # landing since the gate snapshot invalidates every result above it.
-        # Every read below fails CLOSED — a field that is missing or unreadable
-        # is "unknown", never "unchanged".
-        head = gh.pr_head(work.number)
-        if (head.get("state") or "").upper() != "OPEN":
+        # One fresh snapshot immediately before the one-way promotion, decided
+        # as a unit. Everything checked above came from a `pr_status` read taken
+        # before the required-check lookup, the mergeability read, and the wait
+        # for a configured reviewer — any of which gives a late review time to
+        # land. Every field below fails CLOSED: missing or unreadable is
+        # "unknown", never "unchanged".
+        fresh = gh.pr_gate_snapshot(work.number)
+        if (fresh.get("state") or "").upper() != "OPEN":
             work.state, work.detail = (
                 "escalated",
-                f"PR is {head.get('state') or 'UNKNOWN'} — refusing to promote",
+                f"PR is {fresh.get('state') or 'UNKNOWN'} — refusing to promote",
             )
             return work
         gated_head = status.get("headRefOid")
-        if not gated_head or head.get("headRefOid") != gated_head:
+        if not gated_head or fresh.get("headRefOid") != gated_head:
             work.state, work.detail = (
                 "settling",
                 "head moved or unreadable during the readiness gate — re-gating",
             )
             return work
-        is_draft = head.get("isDraft")
+        # Re-checked here, not just at the top: a summary-only CHANGES_REQUESTED
+        # review creates no thread, so neither the thread re-read below nor the
+        # head comparison above would notice one that arrived mid-gate.
+        if (fresh.get("reviewDecision") or "").upper() == "CHANGES_REQUESTED":
+            work.state, work.detail = (
+                "escalated",
+                "changes requested during the readiness gate — needs a human",
+            )
+            return work
+        is_draft = fresh.get("isDraft")
         if is_draft not in (True, False):
             work.state, work.detail = (
                 "escalated",
@@ -607,7 +618,7 @@ def shepherd_pr(gh: GitHub, cfg: Config, root: Path, pr: dict, catalog) -> PrWor
                 )
                 return work
             gh.ready_own_pr(work.number)
-            confirmed = gh.pr_head(work.number)
+            confirmed = gh.pr_gate_snapshot(work.number)
             if (
                 confirmed.get("isDraft") is not False
                 or confirmed.get("headRefOid") != gated_head
