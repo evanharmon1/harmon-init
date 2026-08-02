@@ -204,9 +204,13 @@ jobs:
           # --allowedTools, so shell composition still gets around it. It raises
           # the cost of a mistaken or injected promotion; the boundary that
           # actually holds is branch protection (the bot cannot merge).
+          # All three pattern forms are listed deliberately: the bare command,
+          # the documented `:*` prefix form, and the space-glob form the
+          # allowlist below uses. A deny rule that matches nothing is worse than
+          # none — it reads as a control while allowing the command outright.
           claude_args: >-
             --model opus --effort high --max-budget-usd 25 --max-turns 200
-            --disallowedTools "Bash(gh pr ready:*)"
+            --disallowedTools "Bash(gh pr ready)" "Bash(gh pr ready:*)" "Bash(gh pr ready *)"
             --allowedTools "Edit,MultiEdit,Write,Read,NotebookEdit,Glob,Grep,LS,TodoWrite,Bash(task *),Bash(pnpm *),Bash(npx *),Bash(node *),Bash(git *),Bash(gh *),Bash(cd *),Bash(ls *),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(rg *),Bash(find *),Bash(sed *),Bash(awk *),Bash(jq *),Bash(wc *),Bash(sort *),Bash(diff *),Bash(echo *),Bash(mkdir *),Bash(cp *),Bash(mv *),Bash(which *),Bash(pwd)"
           # yamllint enable rule:line-length
           prompt: |
