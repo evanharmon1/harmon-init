@@ -3,10 +3,10 @@
 #
 # Gives a container session the same four-line status line as a host session:
 #
-#   📁 ~/git/my-project  🌿 main  🔀 #512 ✓  ▪ session name  · a1b2c3d4
+#   📁 ~/git/my-project  🌿 main  PR #512 ✓  ▪ session name  · a1b2c3d4
 #   🧠 ▕████░░░░░░░░░░░░▏ 24%  760k left  🤖 Opus 5 1M · medium · ⚡ · 💭  📟 v2.1.220
 #   💰 $0.43  ✎ +120/-45  ⏱ 11m session
-#   🚦 5h ▕█░░░░░░▏ 🔄 2h13m   ·   7d ▕░░░░░░░▏ 🔄 4d20h
+#   🚦 5h ▕█░░░░░░▏ ⧖ 2h13m   ·   7d ▕░░░░░░░▏ ⧖ 4d20h
 #
 # Reading down: where you are, how much room and horsepower you have left, what
 # the session has cost, and how close the subscription limits are to biting.
@@ -301,7 +301,11 @@ if num "${pr_num:-}"; then
     changes_requested) label+=' ✗' ;;
     pending | commented) label+=' ⋯' ;;
     esac
-    seg '🔀' "$PR" "$label"
+    # The only word in an emoji slot on this line, so it is dimmed: left at the
+    # default foreground it would be the BRIGHTEST thing on line 1, which is the
+    # opposite of what a label should be. Gray label, pink number — the same
+    # "quiet key, loud value" the rest of the line already reads as.
+    seg "${DIM}PR${RST}" "$PR" "$label"
 fi
 
 [ -n "${sname:-}" ] && seg '▪' "$META" "$sname"
@@ -379,7 +383,7 @@ rl() {
     # it rather than render a countdown that has stopped meaning anything.
     if num "$at" && ((at > now)); then
         dur $((at - now))
-        printf ' %s🔄 %s%s' "$DIM" "$REPLY" "$RST"
+        printf ' %s⧖ %s%s' "$DIM" "$REPLY" "$RST"
     fi
 }
 if num "${rl5_pct:-}" || num "${rl7_pct:-}"; then
