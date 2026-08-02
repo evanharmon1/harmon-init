@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.14.0](https://github.com/evanharmon1/harmon-init/compare/v4.13.0...v4.14.0) (2026-08-02)
+
+
+### Features
+
+* vendor harmon-devkit's shared subagents into .claude/agents ([#541](https://github.com/evanharmon1/harmon-init/issues/541)) ([9f1cb1e](https://github.com/evanharmon1/harmon-init/commit/9f1cb1e4ab3bb723852dcf5b0625fd72c2356a8c))
+
+
+### Bug Fixes
+
+* **devcontainer:** quiet the status line's two loudest glyphs ([#531](https://github.com/evanharmon1/harmon-init/issues/531)) ([3aec972](https://github.com/evanharmon1/harmon-init/commit/3aec97259015399c352d2a51a2cb92cafec1416c))
+* **devcontainer:** render unknown context usage as n/a instead of 0% ([#529](https://github.com/evanharmon1/harmon-init/issues/529)) ([bbc92ef](https://github.com/evanharmon1/harmon-init/commit/bbc92efad68e35a112fb079105830155f2dbadc4))
+
 ## [4.13.0](https://github.com/evanharmon1/harmon-init/compare/v4.12.0...v4.13.0) (2026-08-02)
 
 
