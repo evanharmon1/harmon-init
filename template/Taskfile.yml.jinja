@@ -122,6 +122,7 @@ tasks:
 [% endif %]
 [% if devcontainer %]
       - task: test:hooks
+      - task: test:statusline
 [% endif %]
       - task: test
 
@@ -679,6 +680,11 @@ tasks:
     desc: Unit-assert devcontainer permission invariants (no container needed)
     cmds:
       - ./scripts/devcontainer-assert.sh unit
+
+  test:statusline:
+    desc: Unit-test the devcontainer status line renderer (no container needed)
+    cmds:
+      - ./scripts/test-statusline.sh
 
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to

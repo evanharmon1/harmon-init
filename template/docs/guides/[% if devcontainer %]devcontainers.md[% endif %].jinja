@@ -64,7 +64,9 @@ session has cost, and how close the 5-hour and 7-day subscription limits are to
 biting (`🔄` is time until that window resets). Segments that would say nothing
 are omitted rather than shown empty — the PR only appears on a branch that has
 one, `⚡` and `💭` only when fast mode and extended thinking are on, and the
-launch directory only when it differs from the one you are in.
+launch directory only when it differs from the one you are in. Unknown is not
+empty: a payload carrying no context percentage renders `🧠 context n/a`, never
+a 0% bar over a window that may be nearly full.
 
 Both gauges fill as they are consumed and shift mint → peach → coral past 60%
 and 80%; the limit bars run the same scale at under half the width in a muted

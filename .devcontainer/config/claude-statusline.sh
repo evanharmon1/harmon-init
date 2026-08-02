@@ -111,8 +111,18 @@ fields=$(jq -r '
   , (.output_style.name                 | s)
   , (.session_id                        | s | .[0:8])
   , (.session_name                      | s)
-  , ((.context_window.used_percentage
-       // (100 - (.context_window.remaining_percentage // 100))) | n)
+  # The context gauge has three states, not two: a percentage, and "unknown".
+  # A payload carrying neither field — an early-session refresh, or a Claude
+  # Code that reports only token counts — must reach the renderer as absent so
+  # it draws `context n/a`. Defaulting the missing remainder to 100 would make
+  # `100 - 100 = 0` and paint an empty green bar over a context window that may
+  # be nearly full: the one wrong answer worse than no answer. Same rule as `o`
+  # above, one field deeper.
+  , (if   (.context_window.used_percentage      | type) == "number"
+     then (.context_window.used_percentage      | floor)
+     elif (.context_window.remaining_percentage | type) == "number"
+     then ((100 - .context_window.remaining_percentage) | floor)
+     else "" end)
   , (.context_window.context_window_size    | n)
   , (.cost.total_cost_usd                   | (. // 0) | tostring)
   , (.cost.total_lines_added                | n)
