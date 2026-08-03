@@ -1,0 +1,9 @@
+# VENDORED from harmon-devkit — DO NOT EDIT the managed agents here.
+# source: https://github.com/evanharmon1/harmon-devkit.git
+# ref: v0.18.0 (26b0ae83ef7cc20d7f3319c3d859d0afba271b6d)
+# path: ai/agents
+# names: *
+# managed: implementer
+# update: edit .skills-sync.yaml, then run 'task sync:skills' and commit.
+# Any file NOT listed on '# managed:' is a local agent owned by this
+# repo — the sync never touches it.

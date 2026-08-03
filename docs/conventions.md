@@ -110,6 +110,22 @@ it points here.
   repo** — create, edit, and delete it freely; `task sync:skills` and the
   `verify:skills*` drift checks never touch or report it. Never hand-edit the
   managed (vendored) skills — change them in harmon-devkit and bump the pin.
+- **Vendored vs local agents:** the same rule, one directory over. The
+  `agents:` block in `.skills-sync.yaml` vendors harmon-devkit's shared
+  subagents into `.claude/agents/`, and the sync manages only the files on the
+  `# managed:` line of `.claude/agents/.AGENTS_PROVENANCE`. This repo's own
+  `foreman-*` agents live there too and are never touched. Agents are pinned by
+  the **same `source.ref` as the skills** — deliberately, because a shared agent
+  is thin and defers to a skill by reading it, so two pins that could disagree
+  would leave an agent following a procedure that no longer exists.
+- **The sync engine must not lag the manifest.** `scripts/sync-skills.sh` and
+  its `template/` twin are copied verbatim from a harmon-devkit release. An
+  engine older than a manifest feature **ignores it silently** — one predating
+  `agents:` support vendors the skills, exits 0, and never mentions the block it
+  skipped, and its `verify` is silent too. No handshake can catch that: a
+  released program cannot recognise a future manifest key. So when a devkit
+  release adds a manifest feature, update the engine in the same change as the
+  manifest that uses it.
 - **Doc filenames are kebab-case** (`branch-protection.md`, `ci-cd.md`). The
   conventional uppercase project files keep their names: `README.md`,
   `AGENTS.md`, `DESIGN.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
