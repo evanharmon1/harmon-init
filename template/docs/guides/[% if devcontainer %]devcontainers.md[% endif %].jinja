@@ -92,8 +92,9 @@ colours. Three places hit this; the container is the only one this repo can fix
 for you.
 
 **Inside the container — handled.** `.devcontainer/config/ghostty.terminfo` is
-Ghostty's own entry (`infocmp -x xterm-ghostty`), and the image build compiles
-it with `tic -x` before any shell exists. Like the Claude policy above it lives
+a checked-in copy of Ghostty's own entry (`infocmp -x xterm-ghostty`), and the
+image build compiles it with `tic -x` before any shell exists — refresh it when
+a Ghostty release changes the entry, since nothing here notices on its own. Like the Claude policy above it lives
 in the **image**, so a volume wipe cannot take it away, and it is a *required*
 config file — a missing `ghostty.terminfo` fails the build rather than shipping
 a container that breaks only for Ghostty users. It earns its keep on every path
@@ -121,17 +122,20 @@ shell-integration-features = ssh-env,ssh-terminfo
   naming an entry nothing recognises.
 
 Enable both — Ghostty tries the real entry and degrades to a working one.
-Features you leave out keep their defaults, so that one line does not disturb
-`cursor`, `title`, or `path`. The inverse is the trap worth knowing: pasting the
-full list that `ghostty +show-config --default` prints **pins** every feature in
-it, `no-sudo` included, so a `sudo` you had deliberately enabled goes off.
+Features you leave out keep their defaults, so on a config that does not already
+set the key, that one line is the whole change and `cursor`, `title`, and `path`
+are untouched. If you *do* already set it, merge the two features into your
+existing value rather than replacing it — whatever you drop reverts to its
+default. For the same reason, do not paste the full list that
+`ghostty +show-config --default` prints: it **pins** every feature in it,
+`no-sudo` included, so a `sudo` you had deliberately enabled goes off.
 
 **`docker exec` into some other container — nothing propagates the entry.** A
 container not built from this repo's `config/` has no `xterm-ghostty`, and
 neither `ssh-terminfo` nor the image build reaches inside it. `docker exec` does
-not forward your `TERM` either — with `-t` the process gets the daemon's default
-`xterm`, so the session works but loses 256 colours — and a `TERM=… docker exec`
-prefix changes only the client's environment. Ask for the terminal you want with
+not forward your `TERM` either — the process gets whatever the image or
+container sets, or the daemon's `xterm` default under `-t` if nothing does — and
+a `TERM=… docker exec` prefix changes only the client's environment. Ask for the terminal you want with
 `-e`: `docker exec -e TERM=xterm-256color -it <container> bash`.
 
 ## Secrets — 1Password Environments (the standard)
