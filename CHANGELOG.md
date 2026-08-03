@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.14.3](https://github.com/evanharmon1/harmon-init/compare/v4.14.2...v4.14.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 4fd95f15 ([#569](https://github.com/evanharmon1/harmon-init/issues/569)) ([fcd5a20](https://github.com/evanharmon1/harmon-init/commit/fcd5a207742e0f91151d1de9bc9015072d5bcf62))
+* **template:** stop shipping references to the maintainer's personal dotfiles repo ([#573](https://github.com/evanharmon1/harmon-init/issues/573)) ([cd7f765](https://github.com/evanharmon1/harmon-init/commit/cd7f7659b178fb5a841508051aedd955cb04c930))
+
 ## [4.14.2](https://github.com/evanharmon1/harmon-init/compare/v4.14.1...v4.14.2) (2026-08-03)
 
 
