@@ -114,24 +114,28 @@ shell-integration-features = ssh-env,ssh-terminfo
 ```
 
 - `ssh-terminfo` installs Ghostty's terminfo into the remote's `~/.terminfo` on
-  first connection and caches which hosts are done, so the install happens once.
-  It needs `infocmp` locally and `tic` on the remote. `ghostty +ssh-cache` lists
-  that cache and clears entries; the cache records the host and the time, never
-  expires, and a hit is trusted without re-checking. Two ways it goes stale, and
-  they need different fixes:
-  - **Host reprovisioned under the same `user@host`.** Clearing its cache entry
-    is enough: the rebuilt host has no entry, so the next connection installs
-    one.
-  - **A Ghostty upgrade changed the entry.** Clearing the cache is *not* enough.
-    On a miss, the wrapper runs `infocmp xterm-ghostty` on the remote and takes
-    **any** existing entry as success — it never compares versions and never
-    re-runs `tic` — then re-caches the host. Delete the remote's own copy under
-    `~/.terminfo` as well, then reconnect.
-- `ssh-env` is the fallback for hosts where installing cannot work (no `tic`, a
-  read-only or locked-down host): TERM is converted to `xterm-256color` and
-  `COLORTERM` / `TERM_PROGRAM` / `TERM_PROGRAM_VERSION` are forwarded (subject
-  to the remote `sshd_config`'s `AcceptEnv`), rather than leaving a session
-  naming an entry nothing recognises.
+  first connection and caches the host, so the install happens once. It needs
+  `infocmp` locally and `tic` on the remote. `ghostty +ssh-cache` lists and
+  clears that cache; it is keyed on `user@hostname` (not the port), never
+  expires, and a hit is trusted without re-checking — so a rebuilt host needs
+  its entry cleared, and a Ghostty upgrade needs that *plus* replacing the entry
+  the remote resolves, because the installer treats any existing `xterm-ghostty`
+  as success and never re-runs `tic`.
+
+  **Connect once interactively before running `ssh host <command>` against a new
+  host.** The wrapper only touches `ssh` typed in an interactive Ghostty shell —
+  scripts and non-interactive shells never see it — but on an *uncached* host it
+  appends its installer to your argument list, which `ssh` joins onto your remote
+  command. Traced against 1.3.1: `ssh host "touch /tmp/x"` on an uncached host
+  runs your command **twice**, once with the installer text tacked on as an
+  argument and once for real; the installer itself never executes, and the
+  wrapper reads that exit status as success and caches the host as done. A plain
+  interactive `ssh host` first avoids all of it.
+- `ssh-env` forwards `COLORTERM` and `TERM_PROGRAM` / `TERM_PROGRAM_VERSION`,
+  subject to the remote `sshd_config`'s `AcceptEnv`. The `xterm-256color`
+  downgrade is not this feature's doing: the wrapper starts every session there
+  and upgrades to `xterm-ghostty` only once the entry is known to be present, so
+  a host where installation cannot work still gets a terminal that resolves.
 
 Enable both — Ghostty tries the real entry and degrades to a working one.
 Features you leave out keep their defaults, so on a config that does not already
