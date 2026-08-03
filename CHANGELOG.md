@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.14.1](https://github.com/evanharmon1/harmon-init/compare/v4.14.0...v4.14.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **devcontainer:** restore the Nerd Font glyphs in starship.toml ([#546](https://github.com/evanharmon1/harmon-init/issues/546)) ([f503fd1](https://github.com/evanharmon1/harmon-init/commit/f503fd1629b6f90825c3cff274b5d3b6bad9327d))
+
 ## [4.14.0](https://github.com/evanharmon1/harmon-init/compare/v4.13.0...v4.14.0) (2026-08-02)
 
 
