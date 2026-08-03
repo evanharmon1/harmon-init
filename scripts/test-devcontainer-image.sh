@@ -59,12 +59,19 @@ docker build \
     --tag "$overlay" \
     .
 
+# Run as vscode, which is what makes the terminfo assertion meaningful: the
+# overlay compiles ghostty.terminfo as root, and Debian tic writes to
+# /etc/terminfo only while it can — a regression that sent the entry to
+# /root/.terminfo would still leave `tic` exiting 0 and the image building
+# clean, while every Ghostty session in the container fell back to "unknown
+# terminal type". Looking it up as the user who gets the shell is the check.
 docker run --rm "$overlay" sh -eu -c '
     [ "$(id -un)" = vscode ]
     [ -f /etc/claude-code/managed-settings.json ]
     [ -x /etc/claude-code/hooks/protect-files.sh ]
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
+    infocmp -1 xterm-ghostty >/dev/null
 '
 
 echo "test-devcontainer-image: candidate and repository overlay passed"
