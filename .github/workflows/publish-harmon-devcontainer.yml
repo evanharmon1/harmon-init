@@ -11,6 +11,11 @@ on:
       - "scripts/test-devcontainer-image.sh"
       - "scripts/publish-devcontainer-image.sh"
       - ".github/workflows/publish-harmon-devcontainer.yml"
+      # The overlay assertions in test-devcontainer-image.sh are the only place
+      # the compiled ghostty terminfo is checked, so a terminfo-only PR has to
+      # reach them. PR-side only, deliberately: this file is repository config,
+      # not image content, so it must never trigger a publish on main.
+      - ".devcontainer/config/ghostty.terminfo"
   push:
     branches: [main]
     paths:

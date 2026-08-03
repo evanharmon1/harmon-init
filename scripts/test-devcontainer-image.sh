@@ -65,6 +65,13 @@ docker build \
 # /root/.terminfo would still leave `tic` exiting 0 and the image building
 # clean, while every Ghostty session in the container fell back to "unknown
 # terminal type". Looking it up as the user who gets the shell is the check.
+#
+# The second lookup guards the entry's *content*, which resolution alone cannot:
+# a refresh that dropped the dim branch from `sgr` would still compile and still
+# resolve. It asserts the branch (`%p5` → `;2`), not the whole capability
+# string, so an ordinary refresh does not have to update this test — and it is
+# not a general staleness check, which cannot live in CI at all (no Ghostty on a
+# Linux runner) and is tracked separately in #557.
 docker run --rm "$overlay" sh -eu -c '
     [ "$(id -un)" = vscode ]
     [ -f /etc/claude-code/managed-settings.json ]
@@ -72,6 +79,7 @@ docker run --rm "$overlay" sh -eu -c '
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
     infocmp -1 xterm-ghostty >/dev/null
+    infocmp -1 xterm-ghostty | grep -q "sgr=.*%p5%t;2"
 '
 
 echo "test-devcontainer-image: candidate and repository overlay passed"
