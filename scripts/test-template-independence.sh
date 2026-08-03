@@ -73,6 +73,22 @@ while IFS= read -r target; do
         echo "FAIL: ${path} — chezmoi/dotfiles machinery must not ship to consumers" >&2
         fail=1
     done < <(find "$target" \( -iname '*chezmoi*' -o -iname '*harmon-dotfiles*' \) -print)
+
+    # Symlink TARGETS. copier.yml sets _preserve_symlinks, so a link under
+    # template/ is emitted into generated repos still a link — and the target is
+    # where the dependency lives. Neither scan above sees it: `grep -r` does not
+    # read link targets (that is -R, which we must not use here — it would
+    # follow a link out of the tree and scan whatever it lands on), and
+    # `find -iname` matches only the link's own name. Read the target directly.
+    while IFS= read -r link; do
+        [ -n "$link" ] || continue
+        dest=$(readlink "$link") || continue
+        [ -n "$dest" ] || continue
+        if printf '%s\n' "$dest" | grep -qEi "$PATTERN"; then
+            echo "FAIL: ${link} is a symlink to ${dest}" >&2
+            fail=1
+        fi
+    done < <(find "$target" -type l -print)
 done <<EOF
 $TARGETS
 EOF
