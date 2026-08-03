@@ -85,6 +85,7 @@ tasks:
       - task: test:skills-pin-parity
       - task: test:dogfood-parity
       - task: test:dogfood-structure
+      - task: test:starship-glyphs
       - task: foreman:test
       - task: test:hooks
       - task: test:statusline
@@ -382,6 +383,13 @@ tasks:
     desc: Every section/task the rendered template ships must exist in the root layer
     cmds:
       - ./scripts/test-dogfood-structure.sh
+
+  # Root-only on purpose: the powerline glyphs are harmon-init's own theme
+  # choice, not an invariant to impose on generated repos (see the script).
+  test:starship-glyphs:
+    desc: harmon-init's own starship configs must retain their Nerd Font separators
+    cmds:
+      - ./scripts/test-starship-glyphs.sh
 
   audit:dogfood:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"
