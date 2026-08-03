@@ -137,9 +137,17 @@ The profile also blanks `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, and
 `GH_TOKEN` → `GITHUB_TOKEN` → the enterprise names → your stored login, so
 dropping only the first would hand the container to whichever alias an env-file
 happened to carry — silently, and as the wrong identity. An empty value reads as
-unset, and `containerEnv` outranks the env-file, so the aliases are neutralized
-rather than deleted: the env-file may hold a same-named application secret this
-profile has no business removing.
+unset, and `containerEnv` outranks the env-file.
+
+Those three names are therefore **reserved** in the dev profile. The blank
+reaches every process, not just `gh`, so an application in this container that
+reads `GITHUB_TOKEN` at runtime gets an empty string and needs a different
+variable name. That is the deliberate trade: one container cannot let the same
+name mean both "who `gh` is" and "the app's credential", and in the profile whose
+defining property is its GitHub identity, `gh`'s meaning wins. Note this is the
+*runtime* value only — the env-file keeps whatever it held; blanking shadows it
+rather than deleting it, which is why this is not done by evicting the names in
+`init-env.sh` (that would destroy the value in **both** profiles' env-files).
 
 **You will do this again after every rebuild.** `~/.config/gh` is on no volume —
 [architecture/security.md](../architecture/security.md) explains why that is the

@@ -81,11 +81,24 @@
   // `gh auth login`, so removing only the first hands this container to the
   // next env token in the chain — silently, and as the wrong identity. gh reads
   // an EMPTY value as unset, and containerEnv becomes docker --env, which
-  // outranks --env-file, so blanking here neutralizes any alias the env-file
-  // carries. Blanking beats evicting: init-env.sh does not recognize these
-  // names, and an env-file entry may be this repo's own application secret that
-  // the devcontainer has no business deleting. GH_TOKEN itself needs no entry —
-  // init-env.sh knows that name and evicts it from the env-file.
+  // outranks --env-file.
+  //
+  // These three names are consequently RESERVED in this profile. The blank
+  // reaches every process, not only gh, so an application reading GITHUB_TOKEN
+  // at runtime gets an empty string and must use a different variable name.
+  // That is the deliberate trade: one container cannot let the same name mean
+  // both "who gh is" and "the app's credential", and in the profile whose
+  // defining property is its GitHub identity, gh's meaning wins.
+  //
+  // Two alternatives were rejected. Evicting the names in init-env.sh is worse
+  // than blanking — it deletes the value from BOTH profiles' env-files, losing
+  // data rather than shadowing it. Scoping the unset to a `gh` shell wrapper
+  // does not work: git runs the credential helper as
+  // `!/usr/bin/gh auth git-credential`, an absolute path that bypasses any
+  // shell function, so `git push` would go on using the alias.
+  //
+  // GH_TOKEN itself needs no entry — init-env.sh knows that name and evicts it
+  // from the env-file.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "DEVCONTAINER_TAILSCALE": "true",
