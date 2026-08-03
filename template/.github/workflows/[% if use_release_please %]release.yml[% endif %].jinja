@@ -99,7 +99,7 @@ jobs:
       name: production
       # TODO: add `url: https://<your-domain>` once the custom domain exists.
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # Tag from release-please on release runs; the dispatched ref on
@@ -111,7 +111,7 @@ jobs:
       # deploy credentials -- a cold install is the safe trade. deploy-preview
       # keeps its cache: that job builds the PR's own code, so poisoning it
       # grants nothing the PR does not already have.
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           # renovate: datasource=node-version depName=node
           node-version: "24"
