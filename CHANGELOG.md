@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.14.2](https://github.com/evanharmon1/harmon-init/compare/v4.14.1...v4.14.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* **ci:** diff the release guard against the live base branch ([#570](https://github.com/evanharmon1/harmon-init/issues/570)) ([fdb4ad9](https://github.com/evanharmon1/harmon-init/commit/fdb4ad96ece3c675a59f21764f9f1b60fdcbe229))
+* **devcontainer:** authenticate the dev profile as the operator, not the bot ([#559](https://github.com/evanharmon1/harmon-init/issues/559)) ([0704fbd](https://github.com/evanharmon1/harmon-init/commit/0704fbd6439951dc19e776269acf29d87e4f013b))
+* **devcontainer:** document the ghostty terminfo entry and the SSH + docker exec gaps ([#554](https://github.com/evanharmon1/harmon-init/issues/554)) ([c490a39](https://github.com/evanharmon1/harmon-init/commit/c490a391b3be21a32f48e32c1ffce0aab4dbcb66))
+* **devcontainer:** update shared image to c490a391 ([#562](https://github.com/evanharmon1/harmon-init/issues/562)) ([36ca786](https://github.com/evanharmon1/harmon-init/commit/36ca7866cdfbd606a4563fe7fa24b98734a463d2))
+* **devcontainer:** update shared image to e0f52ee2 ([#568](https://github.com/evanharmon1/harmon-init/issues/568)) ([fe0bfd5](https://github.com/evanharmon1/harmon-init/commit/fe0bfd50aa1675d54abdad93e4d3dcda8d662a71))
+* **template:** sync harmon-devkit skills to v0.19.0 ([#553](https://github.com/evanharmon1/harmon-init/issues/553)) ([8fc6778](https://github.com/evanharmon1/harmon-init/commit/8fc6778d0efbf68216e66da2eac7374fb1ea51e5))
+
 ## [4.14.1](https://github.com/evanharmon1/harmon-init/compare/v4.14.0...v4.14.1) (2026-08-03)
 
 
