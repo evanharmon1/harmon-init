@@ -86,6 +86,7 @@ tasks:
       - task: test:dogfood-parity
       - task: test:dogfood-structure
       - task: test:starship-glyphs
+      - task: test:template-independence
       - task: foreman:test
       - task: test:hooks
       - task: test:statusline
@@ -390,6 +391,14 @@ tasks:
     desc: harmon-init's own starship configs must retain their Nerd Font separators
     cmds:
       - ./scripts/test-starship-glyphs.sh
+
+  # Root-only: a generated repo has no template/ to scan. Makes the Hard Rule in
+  # AGENTS.md enforceable — the maintainer's personal dotfiles repo is not
+  # readable by a consumer, so shipped output must never name it or chezmoi.
+  test:template-independence:
+    desc: "Guard: consumer-facing output names neither harmon-dotfiles nor chezmoi"
+    cmds:
+      - ./scripts/test-template-independence.sh
 
   audit:dogfood:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"

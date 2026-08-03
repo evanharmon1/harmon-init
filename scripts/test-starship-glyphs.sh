@@ -44,7 +44,7 @@ while IFS= read -r file; do
     checked=$((checked + 1))
     if ! LC_ALL=C grep -q "$SEP" "$file"; then
         echo "FAIL: ${file} has no U+E0B0 powerline separators — the Nerd Font glyphs were stripped (harmon-init#535)" >&2
-        echo "  restore from the harmon-dotfiles reference (dot_config/starship.toml) rather than retyping them" >&2
+        echo "  restore them from this file's own git history rather than retyping them" >&2
         fail=1
     fi
 done <<EOF

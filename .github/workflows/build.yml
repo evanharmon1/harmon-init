@@ -49,6 +49,8 @@ jobs:
       - run: task test:sync-devkit-release
       - run: task test:devcontainer:image:automation
       - run: task test:skills-pin-parity
+      - name: Template independence (no harmon-dotfiles/chezmoi in shipped output)
+        run: task test:template-independence
       - name: Dogfood parity (verbatim template files match their root twins)
         run: task test:dogfood-parity
       # The structure check renders template/, so it needs copier. Installed

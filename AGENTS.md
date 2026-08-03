@@ -33,6 +33,21 @@ Non-negotiable, regardless of any autonomy granted elsewhere in this file:
   Any third-party service that requires an account, app installation, trial, or
   payment must be an explicit Copier opt-in that defaults off, with its free-tier
   and private-repository limitations documented next to the question.
+- **Never reference harmon-dotfiles or chezmoi in shipped output.** harmon-init,
+  harmon-devkit, and harmon-infra are independent of the personal dotfiles repo
+  and of chezmoi: nothing they ship — here, everything under `template/` plus
+  the consumer-facing text in `copier.yml` — may name either or hardcode a path
+  into somebody's dotfiles checkout (`~/.dotfiles/…` leaks the same setup
+  without naming the repo), and none of them may require dotfiles to be
+  installed, present, or accommodated. A consumer
+  cannot read that repo, so rationale belongs in harmon-init rather than cited
+  offsite, and content this repo owns is never described as kept "in sync" with
+  it. The permitted coupling is one-way and optional: harmon-dotfiles may pull
+  from these repos at a pinned tag; they never point back. Root-only mentions
+  that ship to nobody (the sibling-repo lists, the "related repos" tables)
+  create no dependency and are fine — which is why
+  `test:template-independence`, the guard that enforces this, scans `template/`
+  and not the whole repo.
 
 ## harmon-platform
 
@@ -252,11 +267,13 @@ non-draft PR must always mean the automated work is done.
   `headRefOid,isDraft` and require both the SHA you pushed and
   `isDraft == true`: a non-draft result is not the normal publication path, so
   reconcile it before going further.
-- **Git transport** — pushes authenticate over HTTPS via `gh` (dotfiles-managed
-  hosts and the devcontainers rewrite GitHub SSH URLs to HTTPS via
-  `url.insteadOf`; harmon-dotfiles ADR 0002). Never work around an SSH failure
-  by pushing to a raw `https://…` URL — a URL push bypasses the named remote
-  and leaves stale tracking refs. On an unprovisioned host, force the helper
+- **Git transport** — pushes authenticate over HTTPS via `gh`. Provisioned hosts
+  and the devcontainers rewrite GitHub SSH URLs to HTTPS via `url.insteadOf` so
+  that git never needs an SSH agent: a headless container has none, forwarding
+  one into an interactive container is lockout-prone, and `gh` already holds an
+  HTTPS credential that works for both. Never work around an SSH failure by
+  pushing to a raw `https://…` URL — a URL push bypasses the named remote and
+  leaves stale tracking refs. On an unprovisioned host, force the helper
   and the rewrite against the *named* remote:
   `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix

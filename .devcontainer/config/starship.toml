@@ -1,6 +1,5 @@
-# Powerline prompt shared with harmon-dotfiles (dot_config/starship.toml).
-# Keep the two in sync; this copy drops the chezmoi:managed header and adds
-# this block.
+# Powerline prompt for this repo's devcontainers. This file is the authority
+# for its own contents — nothing outside this repo owns or syncs it.
 #
 # REQUIRES A NERD FONT ON THE CLIENT. The separators and markers below are
 # private-use-area codepoints; fonts are client-side, so the container can only

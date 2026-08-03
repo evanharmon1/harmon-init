@@ -3,8 +3,8 @@
 #
 # claude-providers.sh — alternative Anthropic-compatible model launchers, SOURCED
 # (not executed) from shell-aliases.sh (which is sourced from ~/.bashrc / ~/.zshrc
-# by post-create-common.sh). Mirrors the host wrappers in harmon-dotfiles
-# (~/.dotfiles/.functions). Intentionally omits `set -euo pipefail` (it is sourced).
+# by post-create-common.sh). Mirrors the equivalent host shell functions.
+# Intentionally omits `set -euo pipefail` (it is sourced).
 #
 # Each function launches Claude Code against a provider's native /anthropic endpoint
 # by setting ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (+ per-tier model env vars) in
@@ -15,8 +15,8 @@
 #
 # CONTAINER ADAPTATIONS vs the host wrappers:
 #   1. The `op run` re-exec re-sources THIS file's baked path
-#      (/usr/local/share/devcontainer-config/claude-providers.sh), not
-#      ~/.dotfiles/.functions.
+#      (/usr/local/share/devcontainer-config/claude-providers.sh), not whatever
+#      host file defines the equivalent functions.
 #   2. The launch subshell unsets CLAUDE_CODE_OAUTH_TOKEN (in addition to
 #      ANTHROPIC_API_KEY). The container sets CLAUDE_CODE_OAUTH_TOKEN via its
 #      env-file; if left set, it would compete with the provider's
