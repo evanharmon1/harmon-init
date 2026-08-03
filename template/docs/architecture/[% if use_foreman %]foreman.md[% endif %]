@@ -285,7 +285,12 @@ USD budgets bind. Switching is a config flip plus one secret.
   CI-repair, rebase, and preflight agents do not receive `GH_TOKEN`; only the
   adjudication agent receives the intentionally scoped bot token needed for its
   reply-and-resolve contract. Cloud, 1Password, SSH-agent, and unrelated host
-  credentials never cross the adapter boundary.
+  credentials never cross the adapter boundary. Note where that guarantee stops:
+  `HOME` *is* on the allowlist, so an agent still reaches whatever `~/.config/gh`
+  holds. In the bot devcontainer nothing normally does — that profile
+  authenticates from `GH_TOKEN` alone — which is why foreman belongs there and
+  not in the human `dev/` profile, where an operator's own `gh auth login` would
+  make this withholding vacuous.
 
 ## Configuration (.foreman.toml)
 
