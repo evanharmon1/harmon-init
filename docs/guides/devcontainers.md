@@ -96,8 +96,9 @@ Ghostty's own entry (`infocmp -x xterm-ghostty`), and the image build compiles
 it with `tic -x` before any shell exists. Like the Claude policy above it lives
 in the **image**, so a volume wipe cannot take it away, and it is a *required*
 config file — a missing `ghostty.terminfo` fails the build rather than shipping
-a container that breaks only for Ghostty users. Nothing is needed on your side:
-open a shell in the container from Ghostty and `xterm-ghostty` resolves.
+a container that breaks only for Ghostty users. It earns its keep on every path
+that actually carries your `TERM` inside — SSH forwards it by protocol, so a
+`coder ssh` session lands as `xterm-ghostty` and resolves.
 
 **Over SSH from the host — Ghostty's job, not this repo's.** Ghostty ships both
 relevant shell-integration features **disabled** (1.3.1 defaults to
@@ -124,8 +125,11 @@ silently turned off. (On Evan's machines this file is chezmoi-managed in
 
 **`docker exec` into some other container — nothing propagates the entry.** A
 container not built from this repo's `config/` has no `xterm-ghostty`, and
-neither `ssh-terminfo` nor the image build reaches inside it, so override TERM
-for that command: `TERM=xterm-256color docker exec -it <container> bash`.
+neither `ssh-terminfo` nor the image build reaches inside it. `docker exec` does
+not forward your `TERM` either — with `-t` the process gets the daemon's default
+`xterm`, so the session works but loses 256 colours — and a `TERM=… docker exec`
+prefix changes only the client's environment. Ask for the terminal you want with
+`-e`: `docker exec -e TERM=xterm-256color -it <container> bash`.
 
 ## Secrets — 1Password Environments (the standard)
 
