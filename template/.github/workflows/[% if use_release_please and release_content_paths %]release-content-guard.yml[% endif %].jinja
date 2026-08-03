@@ -50,6 +50,12 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The base BRANCH, not `pull_request.base.sha`: the payload's base sha
+          # is the base tip as of PR creation and is not refreshed when the base
+          # branch moves, so a rebased/force-pushed head makes the three-dot
+          # merge base fall behind and sweeps the base branch's own commits into
+          # the PR's changed-file list (false positives). `fetch-depth: 0`
+          # fetches every branch, so origin/<base> is present and current.
+          BASE_SHA: origin/${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: task guard:release-title
