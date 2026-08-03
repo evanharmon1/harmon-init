@@ -132,6 +132,15 @@ the separate step that bridges the login into git's credential helper; the
 `post-create` that normally does it has already run by the time you log in, so
 run it yourself.
 
+The profile also blanks `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, and
+`GITHUB_ENTERPRISE_TOKEN` in `containerEnv`. `gh`'s credential precedence runs
+`GH_TOKEN` → `GITHUB_TOKEN` → the enterprise names → your stored login, so
+dropping only the first would hand the container to whichever alias an env-file
+happened to carry — silently, and as the wrong identity. An empty value reads as
+unset, and `containerEnv` outranks the env-file, so the aliases are neutralized
+rather than deleted: the env-file may hold a same-named application secret this
+profile has no business removing.
+
 **You will do this again after every rebuild.** `~/.config/gh` is on no volume —
 [architecture/security.md](../architecture/security.md) explains why that is the
 trade rather than an oversight.

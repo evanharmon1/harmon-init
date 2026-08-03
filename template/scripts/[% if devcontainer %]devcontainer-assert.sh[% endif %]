@@ -288,6 +288,22 @@ assert_config_invariants() {
         [ "$has_tun" != "0" ] || fail "dev config is missing the /dev/net/tun device"
         [ "$has_ts_init" = "1" ] || fail "dev config does not reference TS_AUTHKEY in initializeCommand"
         [ "$has_gh_init" = "0" ] || fail "dev config references GH_TOKEN in initializeCommand (a human profile must carry no bot credential)"
+
+        # Dropping GH_TOKEN only removes the FIRST link in gh's credential
+        # chain. GITHUB_TOKEN and the enterprise aliases outrank the stored
+        # `gh auth login` too, and init-env.sh does not recognize those names,
+        # so an env-file carrying one would quietly own this profile's identity
+        # while every check above still passed. containerEnv (docker --env,
+        # which outranks --env-file) must blank each one; gh reads empty as
+        # unset. A MISSING key is a failure, not a pass — that is the state
+        # this assertion exists to catch.
+        local alias_var blanked
+        for alias_var in GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
+            blanked="$(printf '%s' "$cfg" |
+                jq -r --arg v "$alias_var" '(.configuration.containerEnv // {})[$v] // "<absent>"')"
+            [ "$blanked" = "" ] ||
+                fail "dev config does not blank ${alias_var} in containerEnv (gh would prefer it over the operator's login); found '${blanked}'"
+        done
     fi
 }
 

@@ -176,6 +176,13 @@ container silently wins every `gh` call and, through the credential helper, ever
 from the dev env-file on every rebuild, and `scripts/devcontainer-assert.sh`
 asserts the absence in both the config and the running container.
 
+Removing `GH_TOKEN` is necessary but not sufficient, and the shortfall is the
+quiet kind. `gh` falls through to `GITHUB_TOKEN`, then the enterprise aliases,
+then the stored login — so dropping only the first hands the container to
+whichever alias happens to be present, still as the wrong identity and with
+nothing to show for it. The profile therefore blanks all three aliases in
+`containerEnv`, which outranks the env-file and which `gh` reads as unset.
+
 Three consequences worth stating plainly:
 
 - **The ceiling is your own access, not a curated repo list.** A fine-grained PAT

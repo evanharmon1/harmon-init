@@ -74,10 +74,25 @@
   // low|medium|high for the persisted effortLevel field, while the env var
   // accepts low|medium|high|max. Resolution order at runtime: env var >
   // settings.json effortLevel > model default.
+  //
+  // GITHUB_TOKEN and the enterprise aliases are blanked because dropping
+  // GH_TOKEN alone does not finish the job: gh's precedence is GH_TOKEN >
+  // GITHUB_TOKEN > GH_ENTERPRISE_TOKEN > GITHUB_ENTERPRISE_TOKEN > the stored
+  // `gh auth login`, so removing only the first hands this container to the
+  // next env token in the chain — silently, and as the wrong identity. gh reads
+  // an EMPTY value as unset, and containerEnv becomes docker --env, which
+  // outranks --env-file, so blanking here neutralizes any alias the env-file
+  // carries. Blanking beats evicting: init-env.sh does not recognize these
+  // names, and an env-file entry may be this repo's own application secret that
+  // the devcontainer has no business deleting. GH_TOKEN itself needs no entry —
+  // init-env.sh knows that name and evicts it from the env-file.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "DEVCONTAINER_TAILSCALE": "true",
-    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+    "CLAUDE_CODE_EFFORT_LEVEL": "max",
+    "GITHUB_TOKEN": "",
+    "GH_ENTERPRISE_TOKEN": "",
+    "GITHUB_ENTERPRISE_TOKEN": ""
   },
 [% if include_ansible %]
   "remoteEnv": {
