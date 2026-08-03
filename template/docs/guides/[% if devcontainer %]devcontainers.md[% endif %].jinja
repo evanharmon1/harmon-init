@@ -112,9 +112,12 @@ shell-integration-features = ssh-env,ssh-terminfo
 - `ssh-terminfo` installs Ghostty's terminfo on the remote on first connection
   and caches which hosts are done, so the install happens once. It needs
   `infocmp` locally and `tic` on the remote. `ghostty +ssh-cache` lists that
-  cache and clears entries — reach for it when a host is reprovisioned under
-  the same `user@host`, because a cache hit is trusted without re-checking and
-  the rebuilt host no longer has the entry.
+  cache and clears entries; the cache records the host, the time, and the
+  terminal name — not which version of the entry was installed — and never
+  expires, so a hit is trusted without re-checking. Clear the entry when a host
+  is reprovisioned under the same `user@host` (the rebuilt host has no terminfo
+  at all) and after a Ghostty upgrade that changes the entry (the remote keeps
+  the old one indefinitely).
 - `ssh-env` is the fallback for hosts where installing cannot work (no `tic`, a
   read-only or locked-down host): TERM is converted to `xterm-256color` and
   `COLORTERM` / `TERM_PROGRAM` / `TERM_PROGRAM_VERSION` are forwarded (subject
