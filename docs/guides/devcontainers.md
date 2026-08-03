@@ -82,6 +82,51 @@ directly, worktrees included — and nothing written to disk.
 To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
 at it — the seed merge will not overwrite it.
 
+## Terminal type and Ghostty terminfo
+
+Ghostty sets `TERM=xterm-ghostty`. That name is correct on the machine running
+Ghostty and unknown almost everywhere else, so on any system whose terminfo
+database lacks the entry every ncurses program — `vim`, `less`, `htop`, `tmux`,
+`zellij` — fails with "unknown terminal type" or renders with broken keys and
+colours. Three places hit this; the container is the only one this repo can fix
+for you.
+
+**Inside the container — handled.** `.devcontainer/config/ghostty.terminfo` is
+Ghostty's own entry (`infocmp -x xterm-ghostty`), and the image build compiles
+it with `tic -x` before any shell exists. Like the Claude policy above it lives
+in the **image**, so a volume wipe cannot take it away, and it is a *required*
+config file — a missing `ghostty.terminfo` fails the build rather than shipping
+a container that breaks only for Ghostty users. Nothing is needed on your side:
+open a shell in the container from Ghostty and `xterm-ghostty` resolves.
+
+**Over SSH from the host — Ghostty's job, not this repo's.** Ghostty ships both
+relevant shell-integration features **disabled** (1.3.1 defaults to
+`no-ssh-env,no-ssh-terminfo`); enable them in your Ghostty config:
+
+```text
+shell-integration-features = cursor,no-sudo,title,ssh-env,ssh-terminfo,path
+```
+
+- `ssh-terminfo` installs Ghostty's terminfo on the remote on first connection
+  and caches which hosts are done — `ghostty +ssh-cache` inspects or clears
+  that cache. It needs `infocmp` locally and `tic` on the remote.
+- `ssh-env` is the fallback for hosts where installing cannot work (no `tic`, a
+  read-only or locked-down host): TERM is converted to `xterm-256color` and
+  `COLORTERM` / `TERM_PROGRAM` / `TERM_PROGRAM_VERSION` are forwarded (subject
+  to the remote `sshd_config`'s `AcceptEnv`), rather than leaving a session
+  naming an entry nothing recognises.
+
+Enable both — Ghostty tries the real entry and degrades to a working one. Mind
+that the key **replaces** the default list rather than extending it, so
+`cursor`, `no-sudo`, `title`, and `path` have to be restated or they are
+silently turned off. (On Evan's machines this file is chezmoi-managed in
+[harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles).)
+
+**`docker exec` into some other container — nothing propagates the entry.** A
+container not built from this repo's `config/` has no `xterm-ghostty`, and
+neither `ssh-terminfo` nor the image build reaches inside it, so override TERM
+for that command: `TERM=xterm-256color docker exec -it <container> bash`.
+
 ## Secrets — 1Password Environments (the standard)
 
 Don't hand-write or copy `devcontainer.env`. The standard is **1Password
