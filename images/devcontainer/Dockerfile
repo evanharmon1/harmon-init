@@ -11,7 +11,7 @@ ARG TASK_VERSION=3.52.0
 # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
 ARG SHFMT_VERSION=3.13.1
 # renovate: datasource=github-releases depName=hadolint/hadolint extractVersion=^v?(?<version>.+)$
-ARG HADOLINT_VERSION=2.14.0
+ARG HADOLINT_VERSION=2.15.1
 # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
 ARG ACTIONLINT_VERSION=1.7.12
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
@@ -21,25 +21,25 @@ ARG YQ_VERSION=4.53.3
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.44.3
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.226
+ARG WORKMUX_VERSION=0.1.232
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.13.1
+ARG AOE_VERSION=1.13.2
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
 ARG CLAUDE_CODE_VERSION=2.1.220
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.145.0
+ARG CODEX_VERSION=0.146.0
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.52.0
+ARG GEMINI_CLI_VERSION=0.53.0
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.10.10
+ARG AGENT_DECK_VERSION=1.10.11
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
-ARG SESH_VERSION=2.27.0
+ARG SESH_VERSION=2.28.0
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.10.0
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.171.0
+ARG SEMGREP_VERSION=1.172.0
 # renovate: datasource=npm depName=@playwright/test
-ARG PLAYWRIGHT_VERSION=1.62.0
+ARG PLAYWRIGHT_VERSION=1.62.1
 # renovate: datasource=npm depName=@playwright/cli
 ARG PLAYWRIGHT_CLI_VERSION=0.1.17
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
@@ -65,7 +65,7 @@ ARG ONEFETCH_VERSION=2.27.1
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
 ARG WTF_VERSION=0.50.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
-ARG XH_VERSION=0.26.1
+ARG XH_VERSION=0.26.2
 # renovate: datasource=github-releases depName=evilmartians/lefthook extractVersion=^v?(?<version>.+)$
 ARG LEFTHOOK_VERSION=2.1.10
 # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
@@ -75,7 +75,7 @@ ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
-ARG UV_VERSION=0.11.32
+ARG UV_VERSION=0.12.1
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
 ARG STARSHIP_VERSION=1.26.0
 
