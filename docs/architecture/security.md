@@ -12,8 +12,9 @@ current — it is the reference for "where do secrets live and who can do what".
 - **Secrets via 1Password.** Local env comes from **1Password Environments**
   (a virtual `.env` mounted over a UNIX pipe — never written to disk or git) or
   `op run`/`op inject`; CI reads from GitHub Actions secrets.
-  Devcontainer secrets are `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-  `AGENT_DECK_TELEGRAM_KEY` (+ `TS_AUTHKEY`, dev profile only), plus the
+  Devcontainer secrets are `CLAUDE_CODE_OAUTH_TOKEN` and
+  `AGENT_DECK_TELEGRAM_KEY` in both profiles, `GH_TOKEN` in the bot profile only,
+  `TS_AUTHKEY` in the dev profile only, plus the
   alt-model provider keys (`KIMI_API_KEY`/`MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`,
   `ZAI_API_KEY`) when opted in — see
   [../guides/devcontainers.md](../guides/devcontainers.md).
@@ -157,7 +158,46 @@ capability rather than enabling everything reflexively:
   devcontainer with a scoped fine-grained PAT (Write, no admin) for its in-container
   git pushes. Cannot push to or merge `main`. (CI **workflows** authenticate
   separately as the `evanharmon1-ci` GitHub App — see below.)
-- **Operator** (you) — full access from the human `dev/` devcontainer or host.
+- **Operator** (you) — the human `dev/` devcontainer and the host, authenticated
+  by an ordinary `gh auth login` against your own account. The bot's PAT is
+  **absent** from that profile.
+
+Each profile authenticates as the identity it commits as, and neither carries the
+other's credential.
+
+### The operator's credential in the `dev/` profile
+
+The `dev/` profile commits as the operator, so it authenticates as the operator.
+It carries **no `GH_TOKEN`** — not as tidiness, but because there is no other way
+to get this right. `gh` prefers `GH_TOKEN` over any stored credential
+unconditionally and exposes no precedence knob, so a bot PAT sitting in a human
+container silently wins every `gh` call and, through the credential helper, every
+`git push`. Removing it *is* the mechanism. `init-env.sh` evicts a stale value
+from the dev env-file on every rebuild, and `scripts/devcontainer-assert.sh`
+asserts the absence in both the config and the running container.
+
+Three consequences worth stating plainly:
+
+- **The ceiling is your own access, not a curated repo list.** A fine-grained PAT
+  has exactly one resource owner, so the previous arrangement capped the human
+  container at that token's selected repositories — every other org was
+  unreachable no matter what your account could see. An OAuth login has no such
+  cap. That is the point, and also the cost: this container now reaches
+  everything you do.
+- **The credential is not persisted.** `~/.config/gh` is on no volume, so a
+  rebuild ends the session and you log in again. Deliberate: the container has no
+  keyring, so `gh` would store the token as plaintext `hosts.yml`, and persisting
+  it would leave a broad, long-lived credential at rest on a docker volume. The
+  trade is friction in exchange for nothing at rest. Steps:
+  [guides/devcontainers.md](../guides/devcontainers.md).
+- **Unattended agents belong in the bot profile.** A human-authed container gives
+  any agent running in it your full reach, and an agent can read its own
+  container's credentials. Attended work in `dev/`; headless and Foreman runs in
+  the bot container, where the PAT's denials below still apply. Note what this
+  removes: foreman's `backend_environment` withholds `GH_TOKEN` from dispatch,
+  CI-repair, rebase, and preflight agents, but `HOME` is in its env allow-list —
+  so a gh-stored login makes that least-privilege gate **vacuous** in `dev/`. The
+  gate is real only in the profile it was written for.
 
 ### The bot's fine-grained PAT
 
@@ -365,7 +405,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-*, sync-harmon-devkit | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
 | `SNYK_TOKEN` | optional Snyk CLI scans; also `snyk-scheduled.yml` when explicitly generated | local env / 1Password by default; Actions secret only for scheduled/paid CI | manual |
-| `GH_TOKEN` (the bot's PAT) | the devcontainer agent's `gh`/git operations | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
+| `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 | TODO | TODO | TODO | TODO |
 
 ## Rotation & incident notes

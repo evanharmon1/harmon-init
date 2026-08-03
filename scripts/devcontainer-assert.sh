@@ -131,7 +131,7 @@ assert_unit() {
     }
 
     local bot_allow=(GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
-    local dev_allow=(TS_AUTHKEY GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
+    local dev_allow=(TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
 
     # 1. Bot strips TS_AUTHKEY from the host env; keeps an allowed var.
     env_file="${work_dir}/env-bot-strip"
@@ -151,11 +151,28 @@ assert_unit() {
         fail "bot profile failed to evict a stale TS_AUTHKEY"
     fi
 
-    # 3. Dev keeps TS_AUTHKEY when the dev allow-list includes it.
+    # 3. Dev keeps TS_AUTHKEY when the dev allow-list includes it — and refuses
+    #    GH_TOKEN even though the host env sets it. The human profile commits as
+    #    the operator, so it must authenticate as the operator (via `gh auth
+    #    login`) rather than carry the bot's PAT.
     env_file="${work_dir}/env-dev-keep"
     : >"$env_file"
     TS_AUTHKEY=keep GH_TOKEN=fake bash "$init_env" "$env_file" "${dev_allow[@]}"
     has_var TS_AUTHKEY "$env_file" || fail "dev profile dropped allowed TS_AUTHKEY"
+    if has_var GH_TOKEN "$env_file"; then
+        fail "dev profile injected GH_TOKEN — a human profile must carry no bot credential"
+    fi
+
+    # 3b. Dev evicts a STALE GH_TOKEN already in the file when GH_TOKEN is unset
+    #     in the host env. This is what retires the value an earlier rebuild wrote
+    #     back when the dev allow-list still included it — dropping it from the
+    #     allow-list alone would leave the old token sitting in the env-file.
+    env_file="${work_dir}/env-dev-evict"
+    printf 'GH_TOKEN=stale\nTS_AUTHKEY=old\n' >"$env_file"
+    (unset GH_TOKEN && TS_AUTHKEY=new bash "$init_env" "$env_file" "${dev_allow[@]}")
+    if has_var GH_TOKEN "$env_file"; then
+        fail "dev profile failed to evict a stale GH_TOKEN"
+    fi
 
     # 4. ANTHROPIC_API_KEY is ALWAYS stripped, even if passed in the allow-list
     #    (it silently overrides CLAUDE_CODE_OAUTH_TOKEN).
@@ -197,9 +214,15 @@ assert_unit() {
 # bot: NO tailscale feature, NO 1Password CLI feature, NO /dev/net/tun runArg,
 #      NO TS_AUTHKEY in initializeCommand — the bot container must hold no path
 #      to production secrets or the tailnet. dev: all four present.
+# GH_TOKEN is the one invariant that runs the OTHER way. The bot's scoped PAT
+# belongs in the bot profile only; the dev profile commits as the operator and
+# so must authenticate as the operator, never as the bot. Asserted statically
+# because the failure is silent at runtime: `gh` prefers GH_TOKEN over a stored
+# credential unconditionally, so a re-added allow-list entry would quietly put
+# the bot back in charge of a human's pushes.
 assert_config_invariants() {
     local repo_root="$1" config="$2" profile="$3"
-    local cfg has_ts_feature has_op_feature has_tun has_ts_init
+    local cfg has_ts_feature has_op_feature has_tun has_ts_init has_gh_init
 
     # read-configuration 0.87+ probes Docker for an existing container even
     # though this assertion only needs the static JSONC. A no-op docker path
@@ -218,17 +241,21 @@ assert_config_invariants() {
         jq -r '[.configuration.runArgs // [] | .[] | select(test("/dev/net/tun"))] | length')"
     has_ts_init="$(printf '%s' "$cfg" |
         jq -r '(.configuration.initializeCommand // "") | test("TS_AUTHKEY") | if . then 1 else 0 end')"
+    has_gh_init="$(printf '%s' "$cfg" |
+        jq -r '(.configuration.initializeCommand // "") | test("GH_TOKEN") | if . then 1 else 0 end')"
 
     if [ "$profile" = "bot" ]; then
         [ "$has_ts_feature" = "0" ] || fail "bot config has a tailscale feature"
         [ "$has_op_feature" = "0" ] || fail "bot config has a 1Password CLI feature (no secret-store path in the bot container)"
         [ "$has_tun" = "0" ] || fail "bot config requests /dev/net/tun"
         [ "$has_ts_init" = "0" ] || fail "bot config references TS_AUTHKEY in initializeCommand"
+        [ "$has_gh_init" = "1" ] || fail "bot config does not reference GH_TOKEN in initializeCommand"
     else
         [ "$has_ts_feature" != "0" ] || fail "dev config is missing the tailscale feature"
         [ "$has_op_feature" != "0" ] || fail "dev config is missing the 1Password CLI feature"
         [ "$has_tun" != "0" ] || fail "dev config is missing the /dev/net/tun device"
         [ "$has_ts_init" = "1" ] || fail "dev config does not reference TS_AUTHKEY in initializeCommand"
+        [ "$has_gh_init" = "0" ] || fail "dev config references GH_TOKEN in initializeCommand (a human profile must carry no bot credential)"
     fi
 }
 
@@ -314,6 +341,14 @@ assert_container() {
         if ! docker exec -u vscode "$container_id" sh -c 'command -v tailscale' >/dev/null 2>&1; then
             fail "tailscale CLI is missing from the dev container"
         fi
+
+        # The live counterpart of the static GH_TOKEN invariant: a human profile
+        # authenticates as the operator through `gh auth login`, so the bot's PAT
+        # must not be in this container's environment. Captured, never echoed —
+        # same discipline as the bot's TS_AUTHKEY check above.
+        local gh_token
+        gh_token="$(docker exec -u vscode "$container_id" printenv GH_TOKEN 2>/dev/null || true)"
+        [ -z "$gh_token" ] || fail "GH_TOKEN is set in the dev container"
     fi
 
     echo "==> devcontainer container assertions passed for ${config} (${profile})."

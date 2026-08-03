@@ -35,7 +35,21 @@ if [ -n "${REMOTE_CONTAINERS_IPC:-}" ] || [ "${REMOTE_CONTAINERS:-}" = "true" ];
 elif gh auth status >/dev/null 2>&1; then
     gh auth setup-git
 else
-    echo "GitHub CLI is not authenticated; skipping gh auth setup."
+    # Loud on purpose. The human profile carries no GH_TOKEN — it authenticates
+    # as the operator, and that credential is not persisted across rebuilds — so
+    # this branch is the normal first-run state there, not only a bot
+    # misconfiguration. Until it is resolved, git pushes and `gh` both fail and
+    # sibling repos do not clone. Print the fix rather than a shrug.
+    echo "=============================================================="
+    echo "  GitHub CLI is NOT authenticated — git push and gh will fail."
+    echo ""
+    echo "    gh auth login --hostname github.com --git-protocol https \\"
+    echo "      --web --scopes \"workflow,project\""
+    echo "    gh auth setup-git"
+    echo ""
+    echo "  Then re-run: bash .devcontainer/scripts/bootstrap-related-repos.sh"
+    echo "  See docs/guides/devcontainers.md."
+    echo "=============================================================="
 fi
 
 # Rewrite every GitHub SSH URL form to HTTPS for fetch AND push: in-container

@@ -1,7 +1,7 @@
 {
   // Local dev profile.
   // This intentionally omits the root profile's containerEnv block because the
-  // local runArgs env-file already provides TS_AUTHKEY and GH_TOKEN.
+  // local runArgs env-file already provides TS_AUTHKEY.
   "name": "DEV - devcontainer-harmon-init",
   "containerName": "devcontainer-harmon-init-dev",
   // Minimum to run the intended workload (Playwright + agents). Codespaces
@@ -19,10 +19,18 @@
   // Dev profile is the only place TS_AUTHKEY is allowed — Tailscale is
   // installed here and tailscale-connect.sh needs the key to bring up the
   // tunnel.
+  // GH_TOKEN is deliberately ABSENT, and the omission is the point: this
+  // profile commits as the operator, so it must authenticate as the operator.
+  // `gh` prefers GH_TOKEN over any stored credential unconditionally and offers
+  // no precedence knob, so the only way to let a human's own `gh auth login`
+  // win is to keep the bot's PAT out of this container entirely. init-env.sh
+  // evicts a stale GH_TOKEN from this env-file on every rebuild (it is in that
+  // script's EVICT_VARS). Log in with `gh auth login` — see
+  // docs/guides/devcontainers.md.
   // Alternative-model provider keys (KIMI/DEEPSEEK/ZAI) are opt-in via
   // use_alternative_claude_providers; when on they land in this env-file so the
   // claude-kimi/deepseek/glm wrappers (and the op fallback) work here.
-  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/dev/devcontainer.env TS_AUTHKEY GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY",
+  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/dev/devcontainer.env TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY",
   "runArgs": [
     "--init",
     "--shm-size=2g",

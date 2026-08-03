@@ -4,13 +4,15 @@ Harmon Init ships a **dual-profile** devcontainer. Both profiles share
 one `Dockerfile` and the baked `.devcontainer/config/` tree; they differ in
 which secrets and capabilities they allow.
 
-| Profile | Path | For | Tailscale |
-|---|---|---|---|
-| **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, Gemini) | no |
-| **Dev** | `.devcontainer/dev/devcontainer.json` | humans | yes (`TS_AUTHKEY`, `--device=/dev/net/tun`) |
+| Profile | Path | For | GitHub auth | Tailscale |
+|---|---|---|---|---|
+| **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, Gemini) | the bot's PAT via `GH_TOKEN` | no |
+| **Dev** | `.devcontainer/dev/devcontainer.json` | humans | the operator's own `gh auth login` | yes (`TS_AUTHKEY`, `--device=/dev/net/tun`) |
 
-The bot profile intentionally omits `TS_AUTHKEY` from its allow-list so a tailnet
-key never reaches an agent container.
+Each profile authenticates as the identity it commits as, and the omissions are
+what make that true: the bot profile leaves `TS_AUTHKEY` off its allow-list so a
+tailnet key never reaches an agent container, and the dev profile leaves
+`GH_TOKEN` off so a bot credential never reaches a human one.
 
 **Claude permission mode differs by profile.** The **bot** defaults to
 `bypassPermissions` (Claude runs tools without per-action prompts — the container
@@ -101,7 +103,7 @@ Variables per profile:
 
 | Variable | Bot | Dev | What it's for |
 |---|---|---|---|
-| `GH_TOKEN` | ✅ | ✅ | `gh` CLI / API |
+| `GH_TOKEN` | ✅ | — | the **bot's** `gh` CLI / API (dev logs in as you instead) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | ✅ | ✅ | Claude Code |
 | `AGENT_DECK_TELEGRAM_KEY` | ✅ | ✅ | agent-deck bridge (optional) |
 | `TS_AUTHKEY` | — | ✅ | Tailscale (dev only) |
@@ -109,6 +111,50 @@ Variables per profile:
 
 `ANTHROPIC_API_KEY` is deliberately **forbidden** — it silently overrides
 `CLAUDE_CODE_OAUTH_TOKEN`, so `init-env.sh` strips it from the env-file.
+
+### Operator GitHub login (dev profile)
+
+The dev profile ships no `GH_TOKEN`, so `gh` and `git` are unauthenticated until
+you log in as yourself:
+
+```sh
+gh auth login --hostname github.com --git-protocol https \
+  --web --scopes "workflow,project"
+gh auth setup-git
+```
+
+`--scopes` is *additive* to gh's defaults (`repo`, `read:org`, `gist`). `project`
+is what Projects V2 writes need — without it `task status:gh` reports the board
+as unreachable — and `workflow` lets you edit `.github/workflows/`, which the bot
+is deliberately denied. `--web` opens a browser when there is one and otherwise
+prints a device code, so it works over a plain terminal. `gh auth setup-git` is
+the separate step that bridges the login into git's credential helper; the
+`post-create` that normally does it has already run by the time you log in, so
+run it yourself.
+
+**You will do this again after every rebuild.** `~/.config/gh` is on no volume —
+[architecture/security.md](../architecture/security.md) explains why that is the
+trade rather than an oversight.
+
+Nothing fails hard before you log in. `post-create` prints the commands above,
+sibling repos are skipped with a warning (re-run
+`bash .devcontainer/scripts/bootstrap-related-repos.sh` afterwards), and
+`task verify` is unaffected — the skills sync clones the public harmon-devkit
+over plain HTTPS. What does not work is anything that talks to GitHub *as you*:
+`git push`, `gh pr`, `gh api`.
+
+Under **VS Code Remote-Containers** this differs in mechanism, not identity:
+`post-create-common.sh` unsets the in-container gh credential helpers and lets
+VS Code forward the host's, so *git* already acts as you on attach while `gh`
+still needs its own login. On Coder and the plain CLI both go through
+`gh auth login`.
+
+**If an org restricts third-party OAuth apps** (or enforces SAML SSO), the GitHub
+CLI app needs that org's approval before your login reaches its repos. Approving
+the app is the fix. Where an org genuinely cannot, the fallback is
+`gh auth login --with-token` with an SSO-authorized **classic** PAT — not a
+fine-grained one. A fine-grained PAT has exactly one resource owner, so using one
+here would reintroduce the single-org ceiling this arrangement exists to remove.
 
 ### Alternative model providers (`claude-kimi` / `claude-deepseek` / `claude-glm`)
 
@@ -144,7 +190,8 @@ Two container-specific details differ from the host wrappers:
 
 On container init the devcontainer runs `.devcontainer/scripts/init-env.sh` on
 the **host**. It enforces the per-profile allow-list (e.g. evicts `TS_AUTHKEY`
-and `ANTHROPIC_API_KEY` from the bot env-file on every rebuild) and, in
+and `ANTHROPIC_API_KEY` from the bot env-file, and `GH_TOKEN` from the dev one,
+on every rebuild) and, in
 environments where the 1Password app isn't present (**Coder / Codespaces**),
 captures the same variables from the **host environment**, where they arrive as
 workspace/template parameters. It does **not** call `op` itself — 1Password
@@ -167,8 +214,10 @@ repo** (one template serves every repo). To stand this repo up in Coder:
    the Coder `git-clone` + `devcontainers-cli` modules.
 2. Create a workspace from it and set the parameters:
    - **repo** → `https://github.com/evanharmon1/harmon-init`
-   - secrets → `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`
-     (+ `TS_AUTHKEY` if you want Tailscale); `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
+   - secrets → `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`, and
+     `GH_TOKEN` **for a bot workspace only** — a dev workspace runs
+     `gh auth login` instead (+ `TS_AUTHKEY` if you want Tailscale);
+     `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
      `DEEPSEEK_API_KEY`, `ZAI_API_KEY` for the alt-model wrappers. Coder passes these
      into the workspace's host environment, where `init-env.sh` picks them up.
 3. The build pulls `ghcr.io/evanharmon1/harmon-init-devcontainer` from GHCR as a cache. If that
