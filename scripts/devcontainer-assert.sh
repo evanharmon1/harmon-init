@@ -203,7 +203,39 @@ assert_unit() {
     *) fail "tailscale-connect.sh did not report tailscale unavailable: ${ts_out}" ;;
     esac
 
-    # 7. Static devcontainer.json invariants via the devcontainers CLI.
+    # 7. The shared post-create guidance must never steer a BOT container to an
+    #    operator `gh auth login`. Following that advice would put a human
+    #    credential — `workflow` scope included — inside a bypassPermissions
+    #    agent container, which is the escalation the bot PAT's denials exist to
+    #    stop. Each profile opts in via DEVCONTAINER_GH_AUTH, so the DEFAULT has
+    #    to be the conservative token message: an unset or misspelled value must
+    #    fail safe, not print the operator instructions.
+    local post_create_common helper_src help_out
+    post_create_common="${repo_root}/.devcontainer/scripts/post-create-common.sh"
+    [ -f "$post_create_common" ] || fail "post-create-common.sh not found at ${post_create_common}"
+    helper_src="${work_dir}/gh-auth-help.sh"
+    sed -n '/^gh_auth_help()/,/^}/p' "$post_create_common" >"$helper_src"
+    [ -s "$helper_src" ] || fail "could not extract gh_auth_help() from ${post_create_common}"
+
+    # Match a pasteable COMMAND line — `gh` as the first token — not the bare
+    # phrase. The token message names `gh auth login` on purpose, in a "do NOT
+    # run this here" warning; a substring test would read that warning as the
+    # very thing it warns against, and the check would be worse than useless.
+    offers_login() {
+        printf '%s\n' "$1" | grep -qE '^[[:space:]]*gh[[:space:]]+auth[[:space:]]+login'
+    }
+
+    help_out="$(unset DEVCONTAINER_GH_AUTH && "$bash_bin" -c '. "$1"; gh_auth_help "gh auth setup-git"' _ "$helper_src")"
+    if offers_login "$help_out"; then
+        fail "post-create gh guidance offers an operator login by default — a bot container must never be told to run one"
+    fi
+
+    help_out="$(DEVCONTAINER_GH_AUTH=login "$bash_bin" -c '. "$1"; gh_auth_help "gh auth setup-git"' _ "$helper_src")"
+    if ! offers_login "$help_out"; then
+        fail "post-create gh guidance omits the operator login where the profile declares one"
+    fi
+
+    # 8. Static devcontainer.json invariants via the devcontainers CLI.
     assert_config_invariants "$repo_root" "$bot_config" bot
     assert_config_invariants "$repo_root" "$dev_config" dev
 
