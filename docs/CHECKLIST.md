@@ -206,8 +206,10 @@ this comment. -->
       `.env.example`-style files
 - [ ] Devcontainer secrets: create a **1Password environment** that mounts
       `.devcontainer/devcontainer.env` (and `.devcontainer/dev/devcontainer.env`)
-      with `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`
-      (+ `TS_AUTHKEY` for the dev profile). `init-env.sh` enforces the per-profile
+      with `CLAUDE_CODE_OAUTH_TOKEN` and `AGENT_DECK_TELEGRAM_KEY`, plus
+      `GH_TOKEN` for the bot profile and `TS_AUTHKEY` for the dev one — the dev
+      profile carries no `GH_TOKEN` and runs `gh auth login` instead.
+      `init-env.sh` enforces the per-profile
       allow-list; on Coder the values come from workspace parameters. See
       [guides/devcontainers.md](guides/devcontainers.md)
 
