@@ -265,7 +265,7 @@ here would reintroduce the single-org ceiling this arrangement exists to remove.
 
 Opt in with the `use_alternative_claude_providers` Copier answer (default off;
 asked only when `devcontainer=true`) to ship the `claude-kimi`, `claude-deepseek`,
-and `claude-glm` shell functions. They mirror the host wrappers in harmon-dotfiles:
+and `claude-glm` shell functions. They mirror the equivalent host wrappers:
 each launches `claude` in a subshell with `ANTHROPIC_BASE_URL` +
 `ANTHROPIC_AUTH_TOKEN` pointed at a provider's native Anthropic-compatible
 `/anthropic` endpoint (Moonshot Kimi K3, DeepSeek V4, Z.AI GLM-5.2 — no proxy),
