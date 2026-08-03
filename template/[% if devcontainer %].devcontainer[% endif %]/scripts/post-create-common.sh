@@ -56,9 +56,9 @@ fi
 # git ops never depend on an SSH agent (absent in bot containers; lockout-
 # prone when forwarded into human ones). Covers the scp form (git@github.com:)
 # plus all three ssh:// forms, including the explicit port-443 endpoint. HTTPS auth comes from gh
-# (GH_TOKEN, above) in bot/Coder profiles, or VS Code's forwarded host
-# credential helper on attach. Mirrors the host dotfiles policy
-# (harmon-dotfiles ADR 0002).
+# (GH_TOKEN in the bot profile, the operator's own `gh auth login` in the dev
+# one), or VS Code's forwarded host credential helper on attach. Mirrors the
+# host dotfiles policy (harmon-dotfiles ADR 0002).
 # insteadOf is multi-valued, so reset then re-add: a plain scalar set exits 5
 # ("cannot overwrite multiple values") on re-run and would fail post-create.
 # Unset with --fixed-value so only the four managed values are removed — a
