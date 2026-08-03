@@ -84,6 +84,93 @@ directly, worktrees included — and nothing written to disk.
 To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
 at it — the seed merge will not overwrite it.
 
+## Terminal type and Ghostty terminfo
+
+Ghostty sets `TERM=xterm-ghostty`. That name is correct on the machine running
+Ghostty and unknown almost everywhere else, so on any system whose terminfo
+database lacks the entry every ncurses program — `vim`, `less`, `htop`, `tmux`,
+`zellij` — fails with "unknown terminal type" or renders with broken keys and
+colours. Three places hit this; the container is the only one this repo can fix
+for you.
+
+**Inside the container — handled.** `.devcontainer/config/ghostty.terminfo` is
+a checked-in copy of Ghostty's own entry (`infocmp -x xterm-ghostty`), and the
+image build compiles it with `tic -x` before any shell exists — refresh it when
+a Ghostty release changes the entry, since nothing here notices on its own. Like
+the Claude policy above it lives in the **image**, so a volume wipe cannot take
+it away, and it is a *required* config file — a missing `ghostty.terminfo` fails
+the build rather than shipping a container that breaks only for Ghostty users. It earns its keep on every path
+that actually carries your `TERM` inside — SSH forwards it by protocol, so a
+`coder ssh` session lands as `xterm-ghostty` and resolves.
+
+**Over SSH from the host — Ghostty's job, not this repo's.** Ghostty ships both
+relevant SSH features **disabled** (1.3.1 defaults to
+`no-ssh-env,no-ssh-terminfo`). Both ride on Ghostty's shell integration, so they
+exist only where that loaded — the default `shell-integration = detect` covers
+bash, zsh, fish, elvish, and nu; with it off, or in a shell it does not cover,
+the key below is inert and neither feature runs.
+
+**Start with `ssh-env` alone.** It costs nothing and cannot surprise you:
+
+```text
+shell-integration-features = ssh-env
+```
+
+It forwards `COLORTERM` and `TERM_PROGRAM` / `TERM_PROGRAM_VERSION` (subject to
+the remote `sshd_config`'s `AcceptEnv`), and the wrapper starts every SSH
+session at `xterm-256color` — a name every host resolves. Nothing is written to
+the remote. Note that the downgrade is the wrapper's doing, not this feature's:
+it starts there regardless and upgrades to `xterm-ghostty` only once the entry
+is known to be present.
+
+**Add `ssh-terminfo` only if you want full `xterm-ghostty` fidelity on remotes**,
+and read this first:
+
+```text
+shell-integration-features = ssh-env,ssh-terminfo
+```
+
+- It installs Ghostty's terminfo into the remote's `~/.terminfo` on first
+  connection, then caches the host so it happens once. It needs `infocmp`
+  locally and `tic` on the remote.
+- **The first `ssh host <command>` to an uncached host runs that command
+  twice.** The wrapper appends its installer to your argument list and `ssh`
+  joins the lot into one remote command line, so your command runs on the
+  remote, the installer runs after it, and then the real session runs your
+  command again. Traced against 1.3.1. A deploy, a migration, or anything else
+  non-idempotent happens twice. Two things bound it — the wrapper exists only
+  for `ssh` typed in an interactive Ghostty shell (scripts never see it), and
+  connecting once interactively caches the host and avoids it — but that is a
+  rule you have to remember for every new host. If you drive fresh hosts with
+  one-shot remote commands, leave `ssh-terminfo` off and install the entry
+  yourself.
+- `ghostty +ssh-cache` lists and clears the cache; it is keyed on
+  `user@hostname` (not the port), never expires, and a hit is trusted without
+  re-checking — so a rebuilt host needs its entry cleared, and a Ghostty upgrade
+  needs that *plus* replacing the entry the remote resolves, because the
+  installer treats any existing `xterm-ghostty` as success and never re-runs
+  `tic`.
+
+Whichever you choose: features you leave out keep their defaults, so on a config that does not already
+set the key, that one line is the whole change and `cursor`, `title`, and `path`
+are untouched. If you *do* already set it, merge the two features into your
+existing value rather than replacing it — whatever you drop reverts to its
+default. For the same reason, do not paste the full list that
+`ghostty +show-config --default` prints: it **pins** every feature in it,
+`no-sudo` included, so a `sudo` you had deliberately enabled goes off. (On
+Evan's machines this file is chezmoi-managed in
+[harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles), which has
+both features on — an informed choice, given the caveat above.)
+
+**`docker exec` into some other container — nothing propagates the entry.** A
+container not built from this repo's `config/` has no `xterm-ghostty`, and
+neither `ssh-terminfo` nor the image build reaches inside it. `docker exec` does
+not forward your `TERM` either — the process gets whatever the image or
+container sets, or the daemon's `xterm` default under `-t` if nothing does — and
+a `TERM=… docker exec` prefix changes only the client's environment. Ask for the
+terminal you want with `-e`:
+`docker exec -e TERM=xterm-256color -it <container> bash`.
+
 ## Secrets — 1Password Environments (the standard)
 
 Don't hand-write or copy `devcontainer.env`. The standard is **1Password
