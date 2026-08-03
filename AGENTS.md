@@ -36,8 +36,10 @@ Non-negotiable, regardless of any autonomy granted elsewhere in this file:
 - **Never reference harmon-dotfiles or chezmoi in shipped output.** harmon-init,
   harmon-devkit, and harmon-infra are independent of the personal dotfiles repo
   and of chezmoi: nothing they ship — here, everything under `template/` plus
-  the consumer-facing text in `copier.yml` — may name either, and none of them
-  may require dotfiles to be installed, present, or accommodated. A consumer
+  the consumer-facing text in `copier.yml` — may name either or hardcode a path
+  into somebody's dotfiles checkout (`~/.dotfiles/…` leaks the same setup
+  without naming the repo), and none of them may require dotfiles to be
+  installed, present, or accommodated. A consumer
   cannot read that repo, so rationale belongs in harmon-init rather than cited
   offsite, and content this repo owns is never described as kept "in sync" with
   it. The permitted coupling is one-way and optional: harmon-dotfiles may pull

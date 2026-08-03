@@ -25,8 +25,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Case-insensitive — a capitalized "Chezmoi" in prose ships just the same. No
-# grep -P and no \b: BSD grep has neither, and these two tokens need no anchors.
-PATTERN='harmon-dotfiles|chezmoi'
+# grep -P and no \b: BSD grep has neither, and these tokens need no anchors.
+#
+# The third alternative catches a hardcoded path into somebody's dotfiles
+# CHECKOUT (~/.dotfiles/..., $HOME/.dotfiles/...) — the leak this guard first
+# missed: the devcontainer guide named `~/.dotfiles/.functions` long after the
+# repo name was gone, so the two names alone reported independence while a
+# pointer to the maintainer's layout still shipped.
+#
+# It is deliberately the PATH and not the word "dotfiles". A generated project
+# may legitimately discuss a consumer's own dotfiles, and banning the English
+# word would fail on text that breaks no invariant. What must never ship is an
+# absolute path into a particular person's dotfiles tree.
+PATTERN='harmon-dotfiles|chezmoi|/\.dotfiles'
 
 # What a consumer receives. Read as whole lines throughout: paths under template/
 # carry jinja conditionals, so they contain spaces and brackets.
@@ -50,7 +61,7 @@ while IFS= read -r target; do
     # follow-up grep shows the lines so the failure is actionable.
     while IFS= read -r file; do
         [ -n "$file" ] || continue
-        echo "FAIL: ${file} references harmon-dotfiles or chezmoi" >&2
+        echo "FAIL: ${file} references harmon-dotfiles, chezmoi, or a personal dotfiles path" >&2
         grep -nEi "$PATTERN" "$file" | sed 's/^/      /' >&2
         fail=1
     done < <(grep -rlIEi "$PATTERN" "$target" 2>/dev/null || true)
@@ -67,9 +78,9 @@ $TARGETS
 EOF
 
 if [ "$fail" -ne 0 ]; then
-    echo "template independence: generated output must not reference harmon-dotfiles or chezmoi" >&2
+    echo "template independence: generated output must not reference harmon-dotfiles, chezmoi, or a personal dotfiles checkout" >&2
     echo "  state the rationale in harmon-init rather than citing that repo, and drop the name" >&2
     echo "  where it is only a pointer (AGENTS.md, \"Hard Rules\")" >&2
     exit 1
 fi
-echo "template independence OK: ${scanned} consumer-facing target(s) name neither harmon-dotfiles nor chezmoi"
+echo "template independence OK: ${scanned} consumer-facing target(s) name no personal dotfiles repo, path, or chezmoi"
