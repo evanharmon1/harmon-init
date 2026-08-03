@@ -25,6 +25,28 @@ PROFILE_SOURCE_LINE='source /usr/local/share/devcontainer-config/shell-aliases.s
 git config --global user.name "${DEVCONTAINER_GIT_NAME}"
 git config --global user.email "${DEVCONTAINER_GIT_EMAIL}"
 
+# Loud, actionable guidance for an unauthenticated `gh`. The dev profile carries
+# no GH_TOKEN and does not persist its login, so this is that profile's ordinary
+# first-run state in EVERY attach mode — not just a bot misconfiguration on the
+# headless path. Hence a shared helper: the VS Code branch below needs the same
+# message and would otherwise say nothing at all.
+# $1 is an extra command to print — the git bridge, which only some paths want.
+gh_login_help() {
+    echo "=============================================================="
+    echo "  GitHub CLI is NOT authenticated — gh pr / gh api and the"
+    echo "  related-repo clones will fail until you log in:"
+    echo ""
+    echo "    gh auth login --hostname github.com --git-protocol https \\"
+    echo "      --web --scopes \"workflow,project\""
+    if [ -n "${1:-}" ]; then
+        echo "    $1"
+    fi
+    echo ""
+    echo "  Then re-run: bash .devcontainer/scripts/bootstrap-related-repos.sh"
+    echo "  See docs/guides/devcontainers.md."
+    echo "=============================================================="
+}
+
 # Let VS Code's devcontainer integration manage the in-container git credential
 # helper. Installing gh's URL-specific helpers here can confuse the remote
 # containers bootstrap when it replaces credential.helper on attach.
@@ -32,24 +54,16 @@ if [ -n "${REMOTE_CONTAINERS_IPC:-}" ] || [ "${REMOTE_CONTAINERS:-}" = "true" ];
     git config --global --unset-all credential.https://github.com.helper || true
     git config --global --unset-all credential.https://gist.github.com.helper || true
     echo "VS Code devcontainer detected; skipping gh auth setup-git."
+    # VS Code's forwarded host credential covers *git* on this path, but not
+    # `gh` — it reads its own config, and the dev profile supplies no GH_TOKEN.
+    # Pass NO git bridge: unsetting those helpers two lines up is deliberate, so
+    # telling the user to run `gh auth setup-git` would undo it.
+    gh auth status >/dev/null 2>&1 || gh_login_help
 elif gh auth status >/dev/null 2>&1; then
     gh auth setup-git
 else
-    # Loud on purpose. The human profile carries no GH_TOKEN — it authenticates
-    # as the operator, and that credential is not persisted across rebuilds — so
-    # this branch is the normal first-run state there, not only a bot
-    # misconfiguration. Until it is resolved, git pushes and `gh` both fail and
-    # sibling repos do not clone. Print the fix rather than a shrug.
-    echo "=============================================================="
-    echo "  GitHub CLI is NOT authenticated — git push and gh will fail."
-    echo ""
-    echo "    gh auth login --hostname github.com --git-protocol https \\"
-    echo "      --web --scopes \"workflow,project\""
-    echo "    gh auth setup-git"
-    echo ""
-    echo "  Then re-run: bash .devcontainer/scripts/bootstrap-related-repos.sh"
-    echo "  See docs/guides/devcontainers.md."
-    echo "=============================================================="
+    # Nothing manages git's credential here, so the bridge is part of the fix.
+    gh_login_help "gh auth setup-git"
 fi
 
 # Rewrite every GitHub SSH URL form to HTTPS for fetch AND push: in-container

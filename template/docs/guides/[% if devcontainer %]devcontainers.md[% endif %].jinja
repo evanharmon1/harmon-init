@@ -147,8 +147,10 @@ not work is anything that talks to GitHub *as you*: `git push`, `gh pr`,
 Under **VS Code Remote-Containers** this differs in mechanism, not identity:
 `post-create-common.sh` unsets the in-container gh credential helpers and lets
 VS Code forward the host's, so *git* already acts as you on attach while `gh`
-still needs its own login. On Coder and the plain CLI both go through
-`gh auth login`.
+still needs its own login. Run `gh auth login` there but **not**
+`gh auth setup-git` — re-adding the helper fights the one VS Code manages, which
+is why post-create unset it. On Coder and the plain CLI, where nothing else
+manages git's credential, both commands apply.
 
 **If an org restricts third-party OAuth apps** (or enforces SAML SSO), the GitHub
 CLI app needs that org's approval before your login reaches its repos. Approving
