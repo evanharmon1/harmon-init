@@ -166,11 +166,13 @@ error silently reverts the lifecycle rather than fixing anything.
   fetch `headRefOid,isDraft` and require both the SHA you pushed and
   `isDraft == true`: a non-draft result is not the normal publication path, so
   reconcile it before going further.
-- **Git transport** — pushes authenticate over HTTPS via `gh` (dotfiles-managed
-  hosts and the devcontainers rewrite GitHub SSH URLs to HTTPS via
-  `url.insteadOf`; harmon-dotfiles ADR 0002). Never work around an SSH failure
-  by pushing to a raw `https://…` URL — a URL push bypasses the named remote
-  and leaves stale tracking refs. On an unprovisioned host, force the helper
+- **Git transport** — pushes authenticate over HTTPS via `gh`. Provisioned hosts
+  and the devcontainers rewrite GitHub SSH URLs to HTTPS via `url.insteadOf` so
+  that git never needs an SSH agent: a headless container has none, forwarding
+  one into an interactive container is lockout-prone, and `gh` already holds an
+  HTTPS credential that works for both. Never work around an SSH failure by
+  pushing to a raw `https://…` URL — a URL push bypasses the named remote and
+  leaves stale tracking refs. On an unprovisioned host, force the helper
   and the rewrite against the *named* remote:
   `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix

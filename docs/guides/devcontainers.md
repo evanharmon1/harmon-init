@@ -266,7 +266,7 @@ here would reintroduce the single-org ceiling this arrangement exists to remove.
 
 Opt in with the `use_alternative_claude_providers` Copier answer (default off;
 asked only when `devcontainer=true`) to ship the `claude-kimi`, `claude-deepseek`,
-and `claude-glm` shell functions. They mirror the host wrappers in harmon-dotfiles:
+and `claude-glm` shell functions. They mirror the equivalent host wrappers:
 each launches `claude` in a subshell with `ANTHROPIC_BASE_URL` +
 `ANTHROPIC_AUTH_TOKEN` pointed at a provider's native Anthropic-compatible
 `/anthropic` endpoint (Moonshot Kimi K3, DeepSeek V4, Z.AI GLM-5.2 — no proxy),
@@ -289,7 +289,8 @@ Two container-specific details differ from the host wrappers:
   guarantees the provider auth wins for that launch only.
 - The `op run` key fallback (used when the env var is absent) re-sources the
   image-baked `/usr/local/share/devcontainer-config/claude-providers.sh`, not
-  `~/.dotfiles/.functions`. It works only in the dev profile (the bot has no
+  whatever host file defines the equivalent functions. It works only in the dev
+  profile (the bot has no
   1Password CLI); in the bot the env-file is the only key source.
 
 ### What `init-env.sh` does
