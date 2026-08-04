@@ -78,10 +78,22 @@ fi
 if [ ! -d "$dest_dir" ]; then
     fail "destination directory does not exist: $dest_dir"
 fi
-if [ -e "$dest" ]; then
+# `-L` as well as `-e`: a DANGLING symlink at the destination is something that
+# already exists and would be silently clobbered by `mv`, but `-e` follows the
+# link and reports false. A vault or cloud-synced folder going missing leaves
+# exactly that state behind.
+if [ -e "$dest" ] || [ -L "$dest" ]; then
     fail "$dest already exists"
 fi
 
 mv "$src" "$dest"
-ln -s "$dest" "$src"
+
+# Put the file back if the backlink cannot be created — otherwise the sidecar
+# has left .meta/ and a re-run cannot repair it (the source is gone and the
+# destination now exists, which is the refusal case above). A repo on a
+# filesystem without symlink support hits this.
+if ! ln -s "$dest" "$src"; then
+    mv "$dest" "$src" || fail "could not symlink $src, AND could not move $dest back — the file is at $dest"
+    fail "could not create the symlink at $src — $file was left in .meta/"
+fi
 echo "meta-install: moved $file to $dest_dir and linked it back into .meta/"

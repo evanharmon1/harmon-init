@@ -124,10 +124,47 @@ if run obsidian Demo '~/Vault2' >/dev/null 2>&1; then
 else
     pass "existing destination file rejected"
 fi
+# A DANGLING symlink at the destination is something that exists; `-e` follows
+# the link and reports false, so `mv` would silently replace it.
+mkdir -p "$sandbox/fakehome/Vault3"
+ln -s "$sandbox/fakehome/nowhere.md" "$sandbox/fakehome/Vault3/Demo.md"
+if run obsidian Demo '~/Vault3' >/dev/null 2>&1; then
+    fail "clobbered a dangling symlink at the destination"
+else
+    pass "dangling destination symlink rejected"
+fi
+if [ -L "$sandbox/fakehome/Vault3/Demo.md" ] && [ -e "$sandbox/repo/.meta/Demo.md" ]; then
+    pass "both the dangling link and the source survived the refusal"
+else
+    fail "the refusal did not leave the dangling link and the source intact"
+fi
 if run nonsense Demo '~/Vault' >/dev/null 2>&1; then
     fail "accepted an unknown kind"
 else
     pass "unknown kind rejected"
+fi
+teardown
+
+echo "==> a failed backlink puts the file back in .meta/"
+setup
+# The move has to succeed and only the `ln -s` fail, which no filesystem
+# permission arrangement produces (`mv` out of .meta/ needs the same write
+# permission `ln -s` into it does). Stubbing `ln` on PATH isolates that one
+# step — the point is the rollback branch, not how ln came to fail.
+mkdir -p "$sandbox/fakehome/Vault" "$sandbox/bin"
+printf '#!/bin/sh\nexit 1\n' >"$sandbox/bin/ln"
+chmod +x "$sandbox/bin/ln"
+printf 'note\n' >"$sandbox/repo/.meta/Demo.md"
+if (cd "$sandbox/repo" && HOME="$sandbox/fakehome" PATH="$sandbox/bin:$PATH" \
+    "$script" obsidian Demo '~/Vault') >/dev/null 2>&1; then
+    fail "reported success despite the symlink failing"
+else
+    pass "failed backlink is reported as a failure"
+fi
+if [ -f "$sandbox/repo/.meta/Demo.md" ] && [ ! -e "$sandbox/fakehome/Vault/Demo.md" ]; then
+    pass "file rolled back into .meta/ and the destination is clean"
+else
+    fail "file was stranded — not in .meta/, or left at the destination"
 fi
 teardown
 
