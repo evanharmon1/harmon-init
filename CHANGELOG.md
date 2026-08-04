@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.15.0](https://github.com/evanharmon1/harmon-init/compare/v4.14.4...v4.15.0) (2026-08-04)
+
+
+### Features
+
+* reduce foreman to a thin pinned-uvx integration (foreman v2) ([#584](https://github.com/evanharmon1/harmon-init/issues/584)) ([0a984de](https://github.com/evanharmon1/harmon-init/commit/0a984deabb73b5adac2e3a6ea82f6f95369599dd))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.20.2 ([#583](https://github.com/evanharmon1/harmon-init/issues/583)) ([0defa91](https://github.com/evanharmon1/harmon-init/commit/0defa91be21afe2a4d334ab483ad2f6916562b26))
+
 ## [4.14.4](https://github.com/evanharmon1/harmon-init/compare/v4.14.3...v4.14.4) (2026-08-04)
 
 
