@@ -183,8 +183,8 @@ use_shared_agents:
 
 use_foreman:
   type: bool
-  help: "FOREMAN: Include foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:*; Python 3.11+ at runtime)?"
-  default: yes
+  help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv plus operator setup: bot identity, arming labels, rulesets)?"
+  default: no
 
 use_codeql:
   type: bool
@@ -205,8 +205,8 @@ codeql_languages:
     Python: python
   default: >-
     [[ ((['javascript-typescript'] if project_type in ['web-astro', 'web-app'] else [])
-    + (['python'] if (include_ansible or project_type == 'iac'
-    or use_foreman) else [])) if use_codeql else [] ]]
+    + (['python'] if (include_ansible or project_type == 'iac')
+    else [])) if use_codeql else [] ]]
   validator: "[% if use_codeql and not codeql_languages %]Select at least one first-party CodeQL language.[% endif %]"
 
 use_codex_review:

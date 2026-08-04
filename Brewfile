@@ -38,11 +38,9 @@ brew "hadolint"
 # Skills sync (scripts/sync-skills.sh reads .skills-sync.yaml)
 brew "yq"
 
-# Python tooling (uv; foreman lint runs pinned ruff/black via uvx)
+# Python tool runner (Semgrep CE and the pinned foreman CLI run via uvx,
+# which provisions its own interpreter)
 brew "uv"
-# foreman runs as bare `python3 -m foreman` and needs >= 3.11 (tomllib);
-# stock macOS ships 3.9, so the interpreter itself is a dependency.
-brew "python"
 
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)
 brew "node"

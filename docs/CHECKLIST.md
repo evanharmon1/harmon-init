@@ -108,7 +108,7 @@ this comment. -->
       and re-check it here if Codex's settings change.
 - [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example — foreman trusts its
-      findings via `review_sender_trust`), turn on its draft-review option.
+      findings via `trusted_actors`), turn on its draft-review option.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.

@@ -105,7 +105,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% endif %]
 - [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example[% if use_foreman %] — foreman trusts its
-      findings via `review_sender_trust`[% endif %]), turn on its draft-review option.
+      findings via `trusted_actors`[% endif %]), turn on its draft-review option.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
@@ -292,11 +292,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
 - [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `verify_command = ["task", "ci"]` with `max_parallel = 3` — parallel
-      Foreman worktrees would then race for the Playwright port. Pick one before
-      you dispatch: point `verify_command` at `["task", "verify"]` (port-free,
-      but drops e2e + security from the gate), set `max_parallel = 1`, or derive
-      a per-worktree port in `playwright.config.ts`.
+      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
+      parallel Foreman worktrees would then race for the Playwright port. Pick
+      one before you dispatch: point the `[verify]` default at
+      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
+      set `max_parallel = 1`, or derive a per-worktree port in
+      `playwright.config.ts`.
 [% endif %]
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
@@ -365,11 +366,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
 - [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `verify_command = ["task", "ci"]` with `max_parallel = 3` — parallel
-      Foreman worktrees would then race for the Playwright port. Pick one before
-      you dispatch: point `verify_command` at `["task", "verify"]` (port-free,
-      but drops e2e + security from the gate), set `max_parallel = 1`, or derive
-      a per-worktree port in `playwright.config.ts`.
+      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
+      parallel Foreman worktrees would then race for the Playwright port. Pick
+      one before you dispatch: point the `[verify]` default at
+      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
+      set `max_parallel = 1`, or derive a per-worktree port in
+      `playwright.config.ts`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
       `task verify`, and a step in CI's lint job) regenerates and **fails** if

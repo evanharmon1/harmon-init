@@ -195,11 +195,15 @@ one carve-out: a check that needs **CI-only infrastructure** (a browser install,
 a service container, credentials that only exist on a runner) stays out of `ci`
 and is documented as an exception rather than being faked locally.
 
-**Foreman** (`scripts/foreman/`, `taskfiles/foreman.yml`) is the deterministic
+**Foreman** (`taskfiles/foreman.yml`, `.foreman.toml`) is the deterministic
 supervisor for milestone-driven agent dispatch: explicit arming via
 `foreman:*` labels (issue fields on org repos), hardened doneness, a strict
-write contract, and **never a merge** — see `docs/architecture/foreman.md`
-and ADR 0002. It ships to generated repos, so its files are two-layer twins.
+write contract, and **never a merge**. The CLI lives in
+[ponderousdev/foreman](https://github.com/ponderousdev/foreman) (spec, ADRs,
+and architecture docs there); this repo pins a released tag via
+`FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 0002
+records the v1 in-repo design this superseded). The wrapper and config ship
+to generated repos, so they are two-layer twins.
 
 ## Dev Loop
 

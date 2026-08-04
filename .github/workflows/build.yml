@@ -67,7 +67,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Dogfood structure (template sections/tasks exist in the root layer)
         run: task test:dogfood-structure
-      - run: task foreman:test
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
       - run: task test:hooks

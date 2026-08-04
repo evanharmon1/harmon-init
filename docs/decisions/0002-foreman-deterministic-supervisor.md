@@ -4,7 +4,11 @@ Date: 2026-07-12
 
 ## Status
 
-Accepted
+Accepted; distribution superseded. The principles below stand, but foreman no
+longer lives in this repo: the source was extracted to
+[ponderousdev/foreman](https://github.com/ponderousdev/foreman) (its spec and
+ADRs govern it now), and harmon-init ships only a thin integration — a
+pinned `uvx` wrapper (`taskfiles/foreman.yml`) plus `.foreman.toml`.
 
 ## Context
 

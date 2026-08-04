@@ -25,13 +25,13 @@ runs:
       with:
         # renovate: datasource=node-version depName=node
         node-version: "24"
-    # foreman runs as a bare `python3 -m foreman` and needs >= 3.11 (tomllib);
-    # pin the interpreter rather than inheriting whatever the runner image ships
-    # (a self-hosted CI_RUNS_ON runner may have no python3 at all).
+    # yamllint installs via `python3 -m pip` below; pin the interpreter rather
+    # than inheriting whatever the runner image ships (a self-hosted CI_RUNS_ON
+    # runner may have no python3 at all).
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: "3.13"
-    # uv provides uvx for pinned Semgrep CE and foreman:lint's ruff/black.
+    # uv provides uvx for pinned Semgrep CE and the pinned foreman CLI.
     - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
     - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
       with:

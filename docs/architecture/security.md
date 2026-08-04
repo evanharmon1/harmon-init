@@ -201,10 +201,10 @@ Three consequences worth stating plainly:
   any agent running in it your full reach, and an agent can read its own
   container's credentials. Attended work in `dev/`; headless and Foreman runs in
   the bot container, where the PAT's denials below still apply. Note what this
-  removes: foreman's `backend_environment` withholds `GH_TOKEN` from dispatch,
-  CI-repair, rebase, and preflight agents, but `HOME` is in its env allow-list —
-  so a gh-stored login makes that least-privilege gate **vacuous** in `dev/`. The
-  gate is real only in the profile it was written for.
+  removes: foreman builds each agent's environment as a strict allowlist that
+  swaps `GH_TOKEN` for the read-only agent token, but `HOME` is in that
+  allow-list — so a gh-stored login makes that least-privilege gate **vacuous**
+  in `dev/`. The gate is real only in the profile it was written for.
 
 ### The bot's fine-grained PAT
 

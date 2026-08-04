@@ -32,10 +32,10 @@ brew "node"
 brew "pnpm"
 brew "lychee"
 [% endif %]
-# Python tool runner (Semgrep CE[% if use_python %] + project dependencies[% endif %][% if use_foreman %] + foreman lint[% endif %] use uv/uvx)
+# Python tool runner (Semgrep CE[% if use_python %] + project dependencies[% endif %][% if use_foreman %] + the pinned foreman CLI[% endif %] use uv/uvx)
 brew "uv"
-[% if use_foreman or use_python %]
-# [% if use_foreman %]foreman runs as bare `python3 -m foreman` and needs >= 3.11 (tomllib)[% else %]this project targets Python >= 3.11[% endif %];
+[% if use_python %]
+# this project targets Python >= 3.11;
 # stock macOS ships 3.9, so the interpreter itself is a dependency.
 brew "python"
 [% endif %]

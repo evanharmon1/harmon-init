@@ -15,7 +15,8 @@ output:
 
 includes:
   # Foreman — deterministic supervisor for milestone-driven agent dispatch
-  # (task foreman:plan / dispatch / shepherd / watch ...; docs/architecture/foreman.md)
+  # (task foreman:plan / dispatch / shepherd / watch ...; the CLI is pinned
+  # and fetched via uvx in taskfiles/foreman.yml)
   foreman: taskfiles/foreman.yml
 
 tasks:
@@ -89,7 +90,6 @@ tasks:
       - task: test:dogfood-structure
       - task: test:starship-glyphs
       - task: test:template-independence
-      - task: foreman:test
       - task: test:hooks
       - task: test:statusline
       - task: test:codex-review
@@ -108,7 +108,6 @@ tasks:
       - lint:markdown
       - lint:actions
       - lint:hygiene
-      - foreman:lint
 
   lint:yaml:
     desc: yamllint (template/ excluded via .yamllint ignore)
@@ -613,7 +612,7 @@ tasks:
     vars:
       REPO: "evanharmon1/harmon-init"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}" --foreman
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.

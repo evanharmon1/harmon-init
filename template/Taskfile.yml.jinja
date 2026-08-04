@@ -10,7 +10,8 @@ output:
 
 includes:
   # Foreman — deterministic supervisor for milestone-driven agent dispatch
-  # (task foreman:plan / dispatch / shepherd / watch ...; docs/architecture/foreman.md)
+  # (task foreman:plan / dispatch / shepherd / watch ...; the CLI is pinned
+  # and fetched via uvx in taskfiles/foreman.yml)
   foreman: taskfiles/foreman.yml
 [% endif %]
 
@@ -118,9 +119,6 @@ tasks:
 [% if project_management == 'github' and github_org != author_git_provider_username %]
       - task: test:setup-github-issue-fields
 [% endif %]
-[% if use_foreman %]
-      - task: foreman:test
-[% endif %]
 [% if devcontainer %]
       - task: test:hooks
       - task: test:statusline
@@ -161,9 +159,6 @@ tasks:
 [% endif %]
 [% if use_python %]
       - lint:python
-[% endif %]
-[% if use_foreman %]
-      - foreman:lint
 [% endif %]
 [% if include_terraform %]
       - lint:terraform
@@ -952,7 +947,7 @@ tasks:
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"[% if use_foreman %] --foreman[% endif %]
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-fields:

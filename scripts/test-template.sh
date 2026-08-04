@@ -114,9 +114,6 @@ minimal)
     # Exercise the devcontainer OFF branch (default on -> every other profile
     # covers the ON branch; full also sets it explicitly).
     data_args+=(--data devcontainer=false)
-    # Exercise the foreman OFF branch (default on -> every other profile
-    # covers the ON branch + its conditionally-named files).
-    data_args+=(--data use_foreman=false)
     ;;
 web)
     data_args+=(--data project_type=web-astro)
@@ -126,6 +123,9 @@ webapp)
     ;;
 iac)
     data_args+=(--data project_type=iac)
+    # Exercise the foreman ON branch with otherwise-default answers
+    # (use_foreman defaults off; full covers ON + coderabbit/cloud review).
+    data_args+=(--data use_foreman=true)
     ;;
 full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
@@ -148,6 +148,7 @@ full)
         --data use_codex_cloud_review=true
         --data use_coderabbit=true
         --data use_alternative_claude_providers=true
+        --data use_foreman=true
     )
     ;;
 meta)
@@ -399,9 +400,9 @@ if [ -f pyproject.toml ]; then
 fi
 
 # ── 1e. Renovate can see the pins the template actually ships ───────
-# foreman's taskfiles/foreman.yml carries `# renovate:`-annotated ruff/black
-# pins in `FOO_VERSION: x.y.z` form; without a Taskfile manager they rot
-# invisibly in every generated repo.
+# foreman's taskfiles/foreman.yml carries the `# renovate:`-annotated
+# FOREMAN_VERSION pin in `FOO_VERSION: x.y.z` form; without a Taskfile
+# manager it rots invisibly in every generated repo.
 if grep -q '^use_foreman:[[:space:]]*\(true\|yes\)$' .copier-answers.yml; then
     # Anchor on the managerFilePatterns entry, not on "Taskfile" or the
     # `FOO_VERSION: ` matchString: both also appear in this manager's own
@@ -409,8 +410,6 @@ if grep -q '^use_foreman:[[:space:]]*\(true\|yes\)$' .copier-answers.yml; then
     # those silently passes even when the manager is gutted.
     grep -q 'taskfiles\\\\/' renovate.json ||
         err "renovate.json has no Taskfile manager for the shipped FOO_VERSION pins"
-    grep -q 'brew "python"' Brewfile ||
-        err "Brewfile lacks python; foreman needs >= 3.11 and macOS ships 3.9"
 fi
 
 # ── 2. No unrendered Copier variables leaked into output ────────────
@@ -841,37 +840,55 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     ;;
 esac
 
-# ── 9d2. foreman renders per use_foreman (default on) ───────────────
-# minimal renders with use_foreman=false (OFF branch); every other profile
-# uses the default (on). The Taskfile include, scripts, config, and agent
-# definitions are all conditionally named — assert they appear/disappear
-# together so a broken gate can't ship silently.
-if [ "$profile" = "minimal" ]; then
-    [ ! -d scripts/foreman ] || err "scripts/foreman/ rendered but use_foreman=false"
-    [ ! -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml rendered but use_foreman=false"
-    [ ! -f .foreman.toml ] || err ".foreman.toml rendered but use_foreman=false"
-    [ ! -d .claude/agents ] || err ".claude/agents rendered but use_foreman=false"
-    ! grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman include rendered but use_foreman=false"
-else
-    [ -d scripts/foreman ] || err "scripts/foreman/ missing (use_foreman default on)"
-    [ -x scripts/foreman/backends/claude.sh ] || err "foreman claude.sh backend missing or not executable"
-    [ -x scripts/foreman/backends/mock.sh ] || err "foreman mock.sh backend missing or not executable"
-    [ -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml missing (use_foreman default on)"
-    [ -f .foreman.toml ] || err ".foreman.toml missing (use_foreman default on)"
-    [ -f .claude/agents/foreman-implementer.md ] || err "foreman agent definitions missing"
+# ── 9d2. foreman renders per use_foreman (default off) ──────────────
+# `iac` (defaults + foreman) and `full` (foreman + coderabbit + cloud
+# review) opt in; every other profile exercises the default-off branch.
+# Foreman v2 is a THIN integration: the template ships only the wrapper
+# taskfile (a pinned uvx invocation of ponderousdev/foreman) and
+# .foreman.toml — no vendored source, agents, or architecture doc.
+case "$profile" in
+iac | full)
+    [ -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml missing (use_foreman=true)"
+    [ -f .foreman.toml ] || err ".foreman.toml missing (use_foreman=true)"
     grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman Taskfile include missing"
+    # The wrapper must invoke the pinned console script fetched via uvx —
+    # never the retired v1 vendored-module path.
+    grep -Fq 'uvx --from git+https://github.com/ponderousdev/foreman@v' taskfiles/foreman.yml ||
+        err "foreman wrapper does not invoke the pinned uvx git-tag CLI"
+    ! grep -q 'python3 -m foreman' taskfiles/foreman.yml ||
+        err "foreman wrapper still invokes the v1 PYTHONPATH module path"
+    # The pin must be Renovate-bumpable: annotated with the github-tags
+    # datasource AND extractVersion — release tags are v-prefixed, so without
+    # extractVersion no bump PR ever appears (silent rot).
+    grep -Fq 'datasource=github-tags depName=ponderousdev/foreman' taskfiles/foreman.yml ||
+        err "FOREMAN_VERSION pin lacks its renovate github-tags annotation"
+    grep -Fq 'extractVersion=^v' taskfiles/foreman.yml ||
+        err "FOREMAN_VERSION annotation lacks extractVersion for v-prefixed tags"
+    grep -Eq '^  FOREMAN_VERSION: [0-9]' taskfiles/foreman.yml ||
+        err "no bare-version FOREMAN_VERSION pin for Renovate to bump"
+    # Retired v1 surfaces must not render.
+    [ ! -d scripts/foreman ] || err "vendored foreman source rendered (v2 is a thin integration)"
+    [ ! -f docs/architecture/foreman.md ] || err "retired foreman architecture doc rendered"
+    # v2 config vocabulary (runner/trusted_actors/[verify]); the v1 keys are
+    # warned-and-ignored by the CLI, so shipping them would be silent rot.
+    grep -q '^runner = ' .foreman.toml || err ".foreman.toml missing v2 runner key"
+    grep -q '^trusted_actors = ' .foreman.toml || err ".foreman.toml missing v2 trusted_actors"
+    grep -q '^\[verify\]' .foreman.toml || err ".foreman.toml missing v2 [verify] table"
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
-    # Foreman's PRs are the same draft workbench the Dev Loop defines: opened
-    # draft, promoted only out of the readiness gate, never merged.
-    grep -Fq '"--draft"' scripts/foreman/github.py ||
-        err "foreman opens non-draft PRs — the draft-workbench lifecycle is broken"
-    grep -Fq 'def ready_own_pr' scripts/foreman/github.py ||
-        err "foreman has no guarded ready-for-review promotion"
-    grep -Fq 'ready_own_pr' scripts/foreman/shepherd.py ||
-        err "foreman shepherd never promotes a passing draft"
-    grep -Fq 'required_review_bots' .foreman.toml ||
-        err "foreman config cannot declare a draft reviewer the gate waits for"
-fi
+    ! grep -q '^verify_command' .foreman.toml || err ".foreman.toml still ships the v1 verify_command key"
+    ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
+        err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
+    ;;
+*)
+    [ ! -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml rendered but use_foreman is off"
+    [ ! -f .foreman.toml ] || err ".foreman.toml rendered but use_foreman is off"
+    ! grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman include rendered but use_foreman is off"
+    ;;
+esac
+# The template never renders .claude/agents in ANY profile: shared agent
+# definitions arrive via the skills sync at runtime, and foreman v2 injects
+# its own rules instead of shipping vendored agent prompts.
+[ ! -d .claude/agents ] || err ".claude/agents rendered — agents arrive via skills sync, not the template"
 
 # ── 9d3. local/cloud Codex review render independently (both default off) ────
 # `meta` opts into local review only; `full` opts into local + cloud review.
@@ -908,8 +925,6 @@ if [ "$profile" = "full" ]; then
         grep -Fq 'are incomplete, stop and escalate without reporting green' AGENTS.md ||
         err "AGENTS missing bounded Codex retry contract (use_codex_cloud_review=true)"
     ! grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS permits CI-only completion despite use_codex_cloud_review=true"
-    grep -Fq 'require_codex_cloud_review = true' .foreman.toml ||
-        err "Foreman does not fail closed for required Codex cloud review"
     grep -Fq 'Connect Codex cloud review' docs/CHECKLIST.md ||
         err "CHECKLIST missing required Codex cloud connector setup"
     # Promotion is what makes this prerequisite load-bearing: with Automatic
@@ -925,8 +940,6 @@ else
 fi
 if [ "$profile" = "meta" ]; then
     grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
-    grep -Fq 'require_codex_cloud_review = false' .foreman.toml ||
-        err "Foreman cloud review gate enabled without explicit opt-in"
 fi
 
 # ── 9d4. CodeRabbit renders only when explicitly enabled ───────────
