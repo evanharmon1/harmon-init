@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.14.4](https://github.com/evanharmon1/harmon-init/compare/v4.14.3...v4.14.4) (2026-08-04)
+
+
+### Bug Fixes
+
+* **template:** resolve Bunch and Obsidian paths against the calling user's home ([#578](https://github.com/evanharmon1/harmon-init/issues/578)) ([e18c7d5](https://github.com/evanharmon1/harmon-init/commit/e18c7d5fbb92dd5aaddb6bb64253859eaa3ebcfc))
+
 ## [4.14.3](https://github.com/evanharmon1/harmon-init/compare/v4.14.2...v4.14.3) (2026-08-03)
 
 
