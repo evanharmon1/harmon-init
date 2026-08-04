@@ -197,7 +197,9 @@ and is documented as an exception rather than being faked locally.
 
 **Foreman** (`taskfiles/foreman.yml`, `.foreman.toml`) is the deterministic
 supervisor for milestone-driven agent dispatch: explicit arming via
-`foreman:*` labels (issue fields on org repos), hardened doneness, a strict
+`foreman:*` labels (the only attributable mode — v2 refuses issue-field
+arming because GitHub exposes no actor for field changes), hardened
+doneness, a strict
 write contract, and **never a merge**. The CLI lives in
 [ponderousdev/foreman](https://github.com/ponderousdev/foreman) (spec, ADRs,
 and architecture docs there); this repo pins a released tag via

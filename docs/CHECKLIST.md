@@ -119,7 +119,9 @@ this comment. -->
 - [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
       foreman hands to dispatched agents: export/store it as
       `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
-      inject it (1Password → devcontainer.env). Run `task setup:github-labels`
+      inject it (1Password → devcontainer.env). Confirm the bot PAT's
+      selected-repo list grants read on `ponderousdev/foreman` — uvx cannot
+      fetch the pinned CLI without it. Run `task setup:github-labels`
       so the `foreman:*` arming labels exist, then `task foreman:preflight`
       (inside the bot devcontainer — foreman refuses to start anywhere else)
       to assert the security controls before any dispatch.
