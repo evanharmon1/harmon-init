@@ -24,11 +24,11 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `claude-implement` opens a **draft** PR as its normal deliverable and never
   promotes it: it cannot complete the readiness gate, so the handoff belongs to
   a shepherd session.
-- `codeql.yml` — Python CodeQL SAST. It runs automatically because Harmon Init is
-  public; the private-repository path requires paid GitHub Code Security and
-  `FULL_SECURITY_SCAN=true`.
-- The `build.yml` security job runs gitleaks + dependency audit and, when a
-  repository is private without the paid CodeQL opt-in, Semgrep CE.
+- The `build.yml` security job runs gitleaks + dependency audit + Semgrep CE
+  (this repo has no CodeQL workflow — no first-party CodeQL-supported
+  language). Generated repos with `use_codeql=true` add `codeql.yml`, and
+  their security job runs Semgrep CE only when the repository is private
+  without the paid CodeQL opt-in.
 - Generated repositories may explicitly opt into `snyk-scheduled.yml` at a
   weekly or daily cadence. It has only schedule/manual triggers, runs Snyk SAST
   and SCA as advisory second-opinion scans, and is never a required PR check.

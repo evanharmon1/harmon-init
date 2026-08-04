@@ -113,6 +113,15 @@ config, toolchain, devcontainer, and dev environment — against the items below
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
       key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
+[% if use_foreman %]
+- [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
+      foreman hands to dispatched agents: export/store it as
+      `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
+      inject it (1Password → devcontainer.env). Run `task setup:github-labels`
+      so the `foreman:*` arming labels exist, then `task foreman:preflight`
+      (inside the bot devcontainer — foreman refuses to start anywhere else)
+      to assert the security controls before any dispatch.
+[% endif %]
 [% if use_codeql %]
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
       free for the selected `codeql_languages`; confirm a successful upload in

@@ -754,7 +754,15 @@ meta) # project_management=linear
 *) # project_management=none — neither the doc nor the project-setup scripts render
     [ ! -f docs/project-management.md ] || err "docs/project-management.md present but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-project.sh ] || err "setup-github-project.sh rendered but project_management=none for profile '$profile'"
-    [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management=none for profile '$profile'"
+    # The label script is gated on `project_management == 'github' OR
+    # use_foreman`: foreman's arming labels are human inputs the CLI never
+    # auto-creates, so a foreman repo needs the script regardless of its
+    # project-management answer. `iac` is the pm=none + use_foreman=true case.
+    if [ "$profile" = "iac" ]; then
+        [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing: use_foreman=true needs the arming-label setup even with project_management=none"
+    else
+        [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management=none and use_foreman=false for profile '$profile'"
+    fi
     [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-issue-types.sh ] || err "org-gated setup-github-issue-types.sh rendered for personal-repo profile '$profile'"
     ;;
@@ -876,6 +884,11 @@ iac | full)
     grep -q '^\[verify\]' .foreman.toml || err ".foreman.toml missing v2 [verify] table"
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
     ! grep -q '^verify_command' .foreman.toml || err ".foreman.toml still ships the v1 verify_command key"
+    # Arming labels are human inputs foreman never auto-creates: the label
+    # script must render and the Taskfile must pass it --foreman.
+    [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing for use_foreman=true"
+    grep -q '^foreman:claude|' scripts/setup-github-labels.sh || err "label script lacks the foreman arming-label family"
+    grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
     ;;

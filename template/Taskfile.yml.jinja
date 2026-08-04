@@ -941,13 +941,17 @@ tasks:
       metadata fields). Requires `gh auth refresh -s project`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
+[% endif %]
+[% if project_management == 'github' or use_foreman %]
 
   setup:github-labels:
-    desc: Idempotently create/update this repo's starter labels (see docs/project-management.md). Requires `gh` with repo write.
+    desc: Idempotently create/update this repo's starter labels[% if use_foreman %] incl. the foreman arming labels[% endif %]. Requires `gh` with repo write.
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
       - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"[% if use_foreman %] --foreman[% endif %]
+[% endif %]
+[% if project_management == 'github' %]
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-fields:
