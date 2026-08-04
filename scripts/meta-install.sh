@@ -10,8 +10,11 @@
 # than in the Taskfile string — is what keeps the answer defaults free of any
 # one user's absolute home path (see issue #552).
 #
-# macOS only: both destinations (iCloud Drive, an Obsidian vault) are macOS
-# conventions, and `task util:*-install` is documented as such.
+# There is deliberately no macOS platform check. Both destinations are macOS
+# conventions in practice, but nothing here is macOS-specific — it moves a file
+# and symlinks it back — and a `uname` gate would only replace the clear "that
+# directory does not exist" failure with a less useful one, while making the
+# whole script unexercised on this repo's Linux CI.
 #
 # Usage:
 #   meta-install.sh bunch    <project_name> <bunches_directory>
@@ -54,8 +57,6 @@ obsidian)
     fail "usage: meta-install.sh {bunch|obsidian} <project_name> <destination_directory>"
     ;;
 esac
-
-[ "$(uname -s)" = "Darwin" ] || fail "macOS only (found $(uname -s))"
 
 src=".meta/${file}"
 dest="${dest_dir}/${file}"

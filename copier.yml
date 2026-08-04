@@ -311,10 +311,27 @@ bunch_add:
   help: "BUNCH: Add Bunch file to project (macOS-only, moves file to iCloud)?"
   default: no
 
+# Prompted only when the feature is on, and recorded in .copier-answers.yml so
+# `copier update` keeps the answer. The default is one iCloud layout, not
+# everyone's: the install task fails on a destination that does not exist, so a
+# consumer with a different vault must be able to say so rather than have the
+# copier run abort. `~` is expanded at run time by scripts/meta-install.sh.
+bunches_directory:
+  type: str
+  help: "BUNCH: Directory holding your .bunch files (must already exist)"
+  default: "~/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
+  when: "[[ bunch_add ]]"
+
 obsidian_project_add:
   type: bool
   help: "OBSIDIAN: Add Obsidian project note to the vault (macOS-only)?"
   default: no
+
+obsidian_directory:
+  type: str
+  help: "OBSIDIAN: Vault directory the project note is filed under (must already exist)"
+  default: "~/Local/Memex/Professional"
+  when: "[[ obsidian_project_add ]]"
 
 run_task_install:
   type: bool
@@ -368,25 +385,15 @@ devcontainer_image:
   when: false
 
 # Paths
-# These must stay `~`-relative — never an absolute `/Users/<name>/...` — so a
-# generated repo never carries a path that only resolves on one machine. The
-# `~` is expanded at run time by scripts/meta-install.sh, because the values are
-# rendered into single-quoted Taskfile commands where the shell will not expand
-# it (issue #552). `projects_directory` is the exception: it is written unquoted
-# into the .bunch `$ open -a ...` line, where Bunch's own shell expands it.
+# Must stay `~`-relative — never an absolute `/Users/<name>/...` — so a generated
+# repo never carries a path that only resolves on one machine (issue #552). This
+# one is written UNQUOTED into the .bunch `$ open -a ...` line, where Bunch's own
+# shell expands it; the prompted Bunch/Obsidian destinations above are expanded
+# by scripts/meta-install.sh instead, because they render into single-quoted
+# Taskfile commands where the shell will not expand a `~`.
 projects_directory:
   type: str
   default: ~/git
-  when: false
-
-bunches_directory:
-  type: str
-  default: "~/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
-  when: false
-
-obsidian_directory:
-  type: str
-  default: "~/Local/Memex/Professional"
   when: false
 
 # Demographics

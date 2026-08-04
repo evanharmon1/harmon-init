@@ -12,11 +12,6 @@ set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 script="$repo/scripts/meta-install.sh"
 
-if [ "$(uname -s)" != "Darwin" ]; then
-    echo "test-meta-install: SKIP (macOS-only script, found $(uname -s))"
-    exit 0
-fi
-
 failures=0
 pass() { echo "  ok — $1"; }
 fail() {
