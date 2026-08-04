@@ -77,6 +77,8 @@ tasks:
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
+      - task: test:meta-install
+      - task: test:copier-validators
       - task: test:renovate-pins
       - task: test:release-title
       - task: test:setup-github-project
@@ -324,6 +326,16 @@ tasks:
     desc: Unit-test the status board-writes scope check (stubbed gh, no network)
     cmds:
       - ./scripts/test-status.sh
+
+  test:meta-install:
+    desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
+    cmds:
+      - ./scripts/test-meta-install.sh
+
+  test:copier-validators:
+    desc: Guard the answer validators that keep unsafe characters out of rendered paths
+    cmds:
+      - ./scripts/test-copier-validators.sh
 
   test:renovate-pins:
     desc: Check every annotated shell version pin is extractable by Renovate
@@ -706,8 +718,7 @@ tasks:
   util:bunch-install:
     desc: Move the Bunch file to iCloud and replace it with a symlink (macOS)
     cmds:
-      - mv '.meta/Code Project - Harmon Init.bunch' '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/'
-      - ln -s '/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches/Code Project - Harmon Init.bunch' .meta
+      - ./scripts/meta-install.sh bunch 'Harmon Init' '~/Library/Mobile Documents/com~apple~CloudDocs/Bunches'
 
   util:obsidian-add:
     desc: Scaffold the Obsidian project note in .meta (mirrors what the template generates)
@@ -717,5 +728,4 @@ tasks:
   util:obsidian-install:
     desc: Move the Obsidian note to the vault and replace it with a symlink (macOS)
     cmds:
-      - mv '.meta/Harmon Init.md' '/Users/evan/Local/Memex/Professional/'
-      - ln -s '/Users/evan/Local/Memex/Professional/Harmon Init.md' .meta
+      - ./scripts/meta-install.sh obsidian 'Harmon Init' '~/Local/Memex/Professional'

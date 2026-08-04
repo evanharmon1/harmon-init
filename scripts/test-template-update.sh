@@ -88,13 +88,29 @@ gitq "$gen" commit -qm "initial scaffold"
 
 # 3. Customize the repo the NORMAL way: edit a template-owned file in place
 #    (add a project task) and a one-time seed (README).
-cat >>"$gen/Taskfile.yml" <<'YAML'
-
-  deploy:
-    desc: project-specific task added in the repo
-    cmds:
-      - echo deploying
-YAML
+#
+#    The task is inserted just after `tasks:` rather than appended at EOF, and
+#    that placement is load-bearing. A repo edit sitting immediately after the
+#    file's final line is ADJACENT to whatever the template changes at the tail,
+#    and git conflicts on adjacent hunks — so an EOF append made this test fail
+#    for ANY template change to the last task in the Taskfile, no matter how
+#    correct that change was. That is git's merge behaviour, not a template
+#    defect, and gating on it means the last task can never be edited again.
+#    Inserting into the body still exercises exactly what this step is for:
+#    a repo edit to a template-owned file surviving three-way merge.
+awk '
+    { print }
+    !done && /^tasks:$/ {
+        print ""
+        print "  deploy:"
+        print "    desc: project-specific task added in the repo"
+        print "    cmds:"
+        print "      - echo deploying"
+        done = 1
+    }
+' "$gen/Taskfile.yml" >"$work/Taskfile.yml" && mv "$work/Taskfile.yml" "$gen/Taskfile.yml"
+grep -q 'project-specific task added in the repo' "$gen/Taskfile.yml" ||
+    err "fixture failed to insert the repo's own task — no 'tasks:' line matched"
 echo "- repo-owned changelog entry" >>"$gen/CHANGELOG.md"
 gitq "$gen" add -A
 gitq "$gen" commit -qm customize

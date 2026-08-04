@@ -105,6 +105,7 @@ tasks:
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
+      - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
 [% endif %]
@@ -636,6 +637,11 @@ tasks:
     desc: Unit-test the status board-writes scope check (stubbed gh, no network)
     cmds:
       - ./scripts/test-status.sh
+
+  test:meta-install:
+    desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
+    cmds:
+      - ./scripts/test-meta-install.sh
 [% if use_codex_review %]
 
   test:codex-review:
@@ -1093,8 +1099,7 @@ tasks:
   util:bunch-install:
     desc: Move the Bunch file to iCloud and replace it with a symlink (macOS)
     cmds:
-      - mv '.meta/Code Project - [[ project_name ]].bunch' '[[ bunches_directory ]]/'
-      - ln -s '[[ bunches_directory ]]/Code Project - [[ project_name ]].bunch' .meta
+      - ./scripts/meta-install.sh bunch '[[ project_name ]]' '[[ bunches_directory ]]'
 
   util:obsidian-add:
     desc: Scaffold the Obsidian project note in .meta (mirrors what the template generates)
@@ -1104,5 +1109,4 @@ tasks:
   util:obsidian-install:
     desc: Move the Obsidian note to the vault and replace it with a symlink (macOS)
     cmds:
-      - mv '.meta/[[ project_name ]].md' '[[ obsidian_directory ]]/Personal/Digital'
-      - ln -s '[[ obsidian_directory ]]/Personal/Digital/[[ project_name ]].md' .meta
+      - ./scripts/meta-install.sh obsidian '[[ project_name ]]' '[[ obsidian_directory ]]'

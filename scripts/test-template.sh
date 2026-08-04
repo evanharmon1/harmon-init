@@ -664,6 +664,27 @@ if [ "$profile" = "meta" ]; then
     [ -f ".meta/Smoke Test.md" ] || err "Obsidian note missing from .meta/"
 fi
 
+# ── 9a. No copier answer leaks one machine's absolute home path ─────
+# A `/Users/<name>` or `/home/<name>` literal in rendered output is a default
+# that only resolves on the maintainer's laptop (issue #552). Home-relative
+# paths belong in the answers as `~/...`, expanded at run time by the script
+# that consumes them. Runs for every profile: the leak this caught lived behind
+# `when: false` answers that are never prompted, so nothing else would surface
+# it.
+# Two exemptions, both structural rather than stylistic:
+#   /home/vscode/  — the devcontainer's own in-container home, identical for
+#                    every consumer, so it is not machine-specific at all.
+#   .copier-answers.yml — copier records the template source in `_src_path`,
+#                    and this harness renders from a local checkout. Real
+#                    consumers get the repository URL there.
+home_leaks="$(grep -rIn -E '(/Users/|/home/)[A-Za-z0-9._-]+/' . \
+    --exclude-dir=.git --exclude=.copier-answers.yml |
+    grep -v '/home/vscode/' || true)"
+if [ -n "$home_leaks" ]; then
+    printf '%s\n' "$home_leaks" >&2
+    err "rendered output contains an absolute home path (see above) — use a ~-relative copier default"
+fi
+
 # ── 9b. docs/project-management.md rendered per project_management answer ──
 # Two mutually-exclusive conditional-named source files share the rendered name
 # docs/project-management.md; assert the right one lands (and none does when the

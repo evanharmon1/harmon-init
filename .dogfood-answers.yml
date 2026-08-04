@@ -63,5 +63,12 @@ project_management: github
 # Snyk stays manual/local (public-repo posture: CodeQL + Dependabot + gitleaks).
 snyk_scan_schedule: "off"
 
+# The root's .meta sidecars are installed, and the root Taskfile renders these
+# two destinations. They match the copier defaults today; recording them means a
+# future default change shows up as drift instead of silently redefining what
+# the root layer is supposed to be a render of.
+bunches_directory: "~/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
+obsidian_directory: "~/Local/Memex/Professional"
+
 include_terraform: false
 include_ansible: false
