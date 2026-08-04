@@ -9,10 +9,11 @@
 #
 # NOTE (D4): this repository is PUBLIC, so foreman classifies every unit as
 # requiring the `untrusted-input` boundary, which the local runner never
-# provides — dispatch refuses by design until an isolated runner (sprite,
-# v2.1) ships. plan / vet / status / preflight remain fully usable.
+# provides — dispatch refuses by design until an isolated runner ships in a
+# FUTURE foreman release (sprite/docker are named in config but not yet
+# implemented). plan / vet / status / preflight remain fully usable.
 
-# Where units execute: local (v2.0) | sprite (v2.1) | docker (v2.2).
+# Where units execute: local today; sprite and docker are roadmap names.
 runner = "local"
 backend = "claude"
 require_approval = true

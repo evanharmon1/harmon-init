@@ -16,7 +16,7 @@ Common issues in Harmon Init and how to fix them.
 
 ## CI
 
-- **Required check missing on a PR** — ensure Build & Validate and CodeQL ran;
+- **Required check missing on a PR** — ensure Build & Validate ran;
   required checks are `verify` and `security`.
 
 ## Deeper devcontainer failures
