@@ -122,10 +122,15 @@ config, toolchain, devcontainer, and dev environment — against the items below
       fetch the pinned CLI without it. Run `task setup:github-labels`
       so the `foreman:*` arming labels exist. Import the two tag rulesets
       (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
-      `… Immutability.json`, same UI import as the branch ruleset) and create
-      the standing probe tag (`git tag v0.0.0-probe && git push origin
-      v0.0.0-probe`) — preflight empirically asserts `v*` tags are immutable
-      and fails until both exist. Then `task foreman:preflight` (inside the
+      `… Immutability.json`, same UI import as the branch ruleset), then add
+      the CI GitHub App to the **Creation** ruleset's bypass list (`always`) —
+      release-please tags via that App, and bypass-actor App IDs are
+      per-installation so the JSON cannot ship them. (Immutability keeps an
+      empty bypass list on purpose: a moved `v*` tag is code execution in
+      every consumer, so nobody bypasses it.) Create the standing probe tag
+      (`git tag v0.0.0-probe && git push origin v0.0.0-probe`) — preflight
+      empirically asserts `v*` tags are immutable and fails until both
+      rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
       the security controls before any dispatch.
 [% endif %]

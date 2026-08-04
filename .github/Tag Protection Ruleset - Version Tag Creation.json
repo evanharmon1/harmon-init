@@ -6,7 +6,9 @@
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["refs/tags/v*"],
+      "include": [
+        "refs/tags/v*"
+      ],
       "exclude": []
     }
   },
@@ -17,8 +19,8 @@
   ],
   "bypass_actors": [
     {
-      "actor_id": null,
-      "actor_type": "OrganizationAdmin",
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
       "bypass_mode": "always"
     }
   ]
