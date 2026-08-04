@@ -59,6 +59,18 @@ obsidian)
 esac
 
 src=".meta/${file}"
+
+# The destination has to be absolute before it is used. `mv` resolves a relative
+# path from the repo root (this script cd'd there), but the symlink written into
+# .meta/ resolves the SAME text from .meta/ — so a relative answer like `vault`
+# would move the file to <repo>/vault/ and then link to .meta/vault/, reporting
+# success while leaving a dangling link. Canonicalising here also collapses a
+# symlinked destination directory to its real path. The check comes first
+# because `cd` needs the directory to exist.
+if [ ! -d "$dest_dir" ]; then
+    fail "destination directory does not exist: $dest_dir"
+fi
+dest_dir="$(cd "$dest_dir" && pwd -P)"
 dest="${dest_dir}/${file}"
 
 # Already installed: .meta/<file> is the symlink pointing at an existing dest.
@@ -74,9 +86,6 @@ if [ -L "$src" ]; then
 fi
 if [ ! -e "$src" ]; then
     fail "$src not found — run 'task util:${kind}-add' first"
-fi
-if [ ! -d "$dest_dir" ]; then
-    fail "destination directory does not exist: $dest_dir"
 fi
 # `-L` as well as `-e`: a DANGLING symlink at the destination is something that
 # already exists and would be silently clobbered by `mv`, but `-e` follows the

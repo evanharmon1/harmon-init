@@ -103,6 +103,26 @@ else
 fi
 teardown
 
+echo "==> a relative destination is made absolute before the link is written"
+setup
+mkdir -p "$sandbox/repo/vault"
+printf 'note\n' >"$sandbox/repo/.meta/Demo.md"
+if run obsidian Demo 'vault' >/dev/null 2>&1; then
+    if [ -e "$sandbox/repo/.meta/Demo.md" ]; then
+        pass "backlink resolves (not dangling via .meta/vault/)"
+    else
+        fail "backlink dangles — the relative path was written into the symlink"
+    fi
+    if [ -f "$sandbox/repo/vault/Demo.md" ]; then
+        pass "file landed in the repo-root-relative directory"
+    else
+        fail "file did not land where the relative path pointed"
+    fi
+else
+    fail "rejected a relative destination that exists"
+fi
+teardown
+
 echo "==> refuses rather than guessing"
 setup
 mkdir -p "$sandbox/fakehome/Vault"
