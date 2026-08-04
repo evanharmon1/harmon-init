@@ -63,9 +63,6 @@ jobs:
 [% if project_management == 'github' and github_org != author_git_provider_username %]
       - run: task test:setup-github-issue-fields
 [% endif %]
-[% if use_foreman %]
-      - run: task foreman:test
-[% endif %]
 [% if use_skills_sync %]
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills

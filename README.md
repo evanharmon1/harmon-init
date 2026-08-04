@@ -14,7 +14,6 @@ also be applied to existing repos to standardize them.
 Author: Evan Harmon
 
 [![Build & Validate](https://github.com/evanharmon1/harmon-init/actions/workflows/build.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/build.yml)
-[![CodeQL](https://github.com/evanharmon1/harmon-init/actions/workflows/codeql.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/codeql.yml)
 [![Devcontainer Build](https://github.com/evanharmon1/harmon-init/actions/workflows/devcontainer-build.yml/badge.svg)](https://github.com/evanharmon1/harmon-init/actions/workflows/devcontainer-build.yml)
 [![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/evanharmon1/harmon-init)
 [![Latest Release](https://img.shields.io/github/v/release/evanharmon1/harmon-init?sort=semver)](https://github.com/evanharmon1/harmon-init/releases)

@@ -17,19 +17,29 @@
 # `layer:backend`, and `layer:infra` labels — re-map the issues and delete those
 # three by hand if you want the one vocabulary.
 #
-# Usage: setup-github-labels.sh --repo <owner/repo>
+# Usage: setup-github-labels.sh --repo <owner/repo> [--foreman]
 # Needs: gh authed with repo write.
+#
+# --foreman additionally creates the foreman arming labels (human inputs the
+# foreman CLI reads but never auto-creates). The flag is passed by the
+# Taskfile target when the repo uses foreman, keeping this script identical
+# across repos that do and don't.
 #
 # NOTE: hits the live GitHub API, so it is not exercised by `task test:template`
 # (guarded by shellcheck + shfmt only). Test it against a scratch repo.
 set -euo pipefail
 
 repo=""
+foreman=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --repo)
         repo="${2:-}"
         shift 2
+        ;;
+    --foreman)
+        foreman=1
+        shift
         ;;
     *)
         echo "Unknown argument: $1" >&2
@@ -81,6 +91,29 @@ agent:kimi-k2|006B75|Claimed by Kimi K2
 agent:glm|006B75|Claimed by GLM
 agent:github-copilot|006B75|Claimed by GitHub Copilot
 "
+
+# Foreman arming labels (--foreman): human inputs for label-mode arming
+# (ponderousdev/foreman). `foreman:<backend>` selects the backend and implies
+# approval; the rest are foreman's own workflow-state protocol. Distinct from
+# the `agent:*` claim family above: a claim says which agent IS working an
+# issue, a `foreman:*` selector arms it for dispatch. Colors/descriptions
+# mirror ponderousdev/foreman's own labels.
+foreman_labels="
+foreman:approved|1D76DB|Arm with the repo default backend
+foreman:claude|1D76DB|Arm this issue for foreman dispatch with the claude backend
+foreman:codex|1D76DB|Arm this issue for foreman dispatch with the codex backend
+foreman:gemini|1D76DB|Arm this issue for foreman dispatch with the gemini backend
+foreman:deepseek|1D76DB|Arm this issue for foreman dispatch with the deepseek backend
+foreman:glm|1D76DB|Arm this issue for foreman dispatch with the glm backend
+foreman:kimi|1D76DB|Arm this issue for foreman dispatch with the kimi backend
+foreman:copilot|1D76DB|Arm this issue for foreman dispatch with the copilot backend
+foreman:hold|D93F0B|Exclude from foreman dispatch (always wins)
+foreman:satisfied|0E8A16|Human override: treat this dependency as satisfied
+foreman:external|BFDADC|External dependency: satisfied when closed as completed
+"
+if [ "$foreman" = 1 ]; then
+    labels="$labels$foreman_labels"
+fi
 
 printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do
     [ -z "$name" ] && continue

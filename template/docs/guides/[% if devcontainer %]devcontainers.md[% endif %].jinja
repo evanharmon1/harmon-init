@@ -188,6 +188,8 @@ Variables per profile:
 | Variable | Bot | Dev | What it's for |
 |---|---|---|---|
 | `GH_TOKEN` | ✅ | — | the **bot's** `gh` CLI / API (dev logs in as you instead) |
+[% if use_foreman %]| `FOREMAN_AGENT_GH_TOKEN` | ✅ | — | the separate READ-ONLY PAT foreman hands to dispatched agents as their `GH_TOKEN` |
+[% endif %]
 | `CLAUDE_CODE_OAUTH_TOKEN` | ✅ | ✅ | Claude Code |
 | `AGENT_DECK_TELEGRAM_KEY` | ✅ | ✅ | agent-deck bridge (optional) |
 | `TS_AUTHKEY` | — | ✅ | Tailscale (dev only) |

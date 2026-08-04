@@ -55,7 +55,7 @@
     },
     {
       "customType": "regex",
-      "description": "Taskfile tool pins (root Taskfile + included taskfiles/, both layers), `FOO_VERSION: x.y.z` var style — used by foreman:lint's uvx-pinned ruff/black. The taskfiles pattern tolerates a trailing jinja conditional in the directory name (template/[% if use_foreman %]taskfiles[% endif %]/) — without it the template twin's pins are invisible to Renovate and only the root copy gets bumped, which fails test:dogfood-parity",
+      "description": "Taskfile tool pins (root Taskfile + included taskfiles/, both layers), `FOO_VERSION: x.y.z` var style — used by the uvx-pinned foreman CLI (FOREMAN_VERSION in taskfiles/foreman.yml). The taskfiles pattern tolerates a trailing jinja conditional in the directory name (template/[% if use_foreman %]taskfiles[% endif %]/) — without it the template twin's pins are invisible to Renovate and only the root copy gets bumped, which fails test:dogfood-parity",
       "managerFilePatterns": [
         "/(^|\\/)Taskfile\\.ya?ml(\\.jinja)?$/",
         "/taskfiles(\\[% endif %\\])?\\/[^/]+\\.ya?ml$/"
@@ -138,6 +138,11 @@
       "matchPackageNames": ["anthropics/claude-code-action"],
       "groupName": null,
       "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Eject ponderousdev/foreman from the Devcontainer batch (which claims taskfiles/**): a Foreman bump changes what `task foreman:*` executes and is reviewed on its own, not inside an unrelated tooling batch. Must come after the grouping rules so this override wins.",
+      "matchPackageNames": ["ponderousdev/foreman"],
+      "groupName": null
     }
   ]
 }

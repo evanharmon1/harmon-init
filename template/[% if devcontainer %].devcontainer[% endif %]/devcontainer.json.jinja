@@ -23,7 +23,7 @@
   // Alternative-model provider keys (KIMI/DEEPSEEK/ZAI) are opt-in via
   // use_alternative_claude_providers; when on they land in this env-file too,
   // so a headless/bypass bot can read them — a deliberate posture extension.
-  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/devcontainer.env GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY[% if use_alternative_claude_providers %] KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY[% endif %]",
+  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/devcontainer.env GH_TOKEN[% if use_foreman %] FOREMAN_AGENT_GH_TOKEN[% endif %] CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY[% if use_alternative_claude_providers %] KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY[% endif %]",
   "runArgs": [
     "--init",
     "--shm-size=2g",
@@ -73,9 +73,13 @@
   // low|medium|high for the persisted effortLevel field, while the env var
   // accepts low|medium|high|max. Resolution order at runtime: env var >
   // settings.json effortLevel > model default.
+  //
+  // FOREMAN_DEVCONTAINER: foreman's D2 startup tripwire — it refuses to run
+  // anywhere this marker is not "bot" (only the bot profile sets it).
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
-    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+    "CLAUDE_CODE_EFFORT_LEVEL": "max",
+    "FOREMAN_DEVCONTAINER": "bot"
   },
 [% if include_ansible %]
   "remoteEnv": {

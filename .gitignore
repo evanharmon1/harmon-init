@@ -79,8 +79,6 @@ settings.local.json
 # Foreman runtime artifacts (logs, prompts, resume states — never state-of-record)
 .foreman/
 .foreman-stop
-__pycache__/
-*.pyc
 
 # Devcontainer env files (injected locally via 1Password, never committed)
 .devcontainer/**/devcontainer.env

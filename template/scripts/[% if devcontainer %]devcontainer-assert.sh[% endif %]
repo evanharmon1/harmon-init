@@ -130,14 +130,16 @@ assert_unit() {
         grep -q "^${1}=" "$2"
     }
 
-    local bot_allow=(GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
+    local bot_allow=(GH_TOKEN FOREMAN_AGENT_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
     local dev_allow=(TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
 
-    # 1. Bot strips TS_AUTHKEY from the host env; keeps an allowed var.
+    # 1. Bot strips TS_AUTHKEY from the host env; keeps allowed vars —
+    #    including the read-only agent token foreman requires for dispatch.
     env_file="${work_dir}/env-bot-strip"
     : >"$env_file"
-    TS_AUTHKEY=fake GH_TOKEN=fake bash "$init_env" "$env_file" "${bot_allow[@]}"
+    TS_AUTHKEY=fake GH_TOKEN=fake FOREMAN_AGENT_GH_TOKEN=fake bash "$init_env" "$env_file" "${bot_allow[@]}"
     has_var GH_TOKEN "$env_file" || fail "bot profile dropped allowed GH_TOKEN"
+    has_var FOREMAN_AGENT_GH_TOKEN "$env_file" || fail "bot profile dropped allowed FOREMAN_AGENT_GH_TOKEN (foreman dispatch needs it)"
     if has_var TS_AUTHKEY "$env_file"; then
         fail "bot profile leaked TS_AUTHKEY into the env-file"
     fi
@@ -157,10 +159,13 @@ assert_unit() {
     #    login`) rather than carry the bot's PAT.
     env_file="${work_dir}/env-dev-keep"
     : >"$env_file"
-    TS_AUTHKEY=keep GH_TOKEN=fake bash "$init_env" "$env_file" "${dev_allow[@]}"
+    TS_AUTHKEY=keep GH_TOKEN=fake FOREMAN_AGENT_GH_TOKEN=fake bash "$init_env" "$env_file" "${dev_allow[@]}"
     has_var TS_AUTHKEY "$env_file" || fail "dev profile dropped allowed TS_AUTHKEY"
     if has_var GH_TOKEN "$env_file"; then
         fail "dev profile injected GH_TOKEN — a human profile must carry no bot credential"
+    fi
+    if has_var FOREMAN_AGENT_GH_TOKEN "$env_file"; then
+        fail "dev profile injected FOREMAN_AGENT_GH_TOKEN — agent tokens stay in the bot profile"
     fi
 
     # 3b. Dev evicts a STALE GH_TOKEN already in the file when GH_TOKEN is unset
@@ -275,6 +280,9 @@ assert_config_invariants() {
         jq -r '(.configuration.initializeCommand // "") | test("TS_AUTHKEY") | if . then 1 else 0 end')"
     has_gh_init="$(printf '%s' "$cfg" |
         jq -r '(.configuration.initializeCommand // "") | test("GH_TOKEN") | if . then 1 else 0 end')"
+    local foreman_marker
+    foreman_marker="$(printf '%s' "$cfg" |
+        jq -r '.configuration.containerEnv.FOREMAN_DEVCONTAINER // ""')"
 
     if [ "$profile" = "bot" ]; then
         [ "$has_ts_feature" = "0" ] || fail "bot config has a tailscale feature"
@@ -282,12 +290,17 @@ assert_config_invariants() {
         [ "$has_tun" = "0" ] || fail "bot config requests /dev/net/tun"
         [ "$has_ts_init" = "0" ] || fail "bot config references TS_AUTHKEY in initializeCommand"
         [ "$has_gh_init" = "1" ] || fail "bot config does not reference GH_TOKEN in initializeCommand"
+        # Foreman's D2 startup tripwire: it refuses even read-only commands
+        # unless FOREMAN_DEVCONTAINER=bot, so losing this marker breaks every
+        # task foreman:* while verify stays green.
+        [ "$foreman_marker" = "bot" ] || fail "bot config does not set containerEnv.FOREMAN_DEVCONTAINER=bot (foreman refuses to start)"
     else
         [ "$has_ts_feature" != "0" ] || fail "dev config is missing the tailscale feature"
         [ "$has_op_feature" != "0" ] || fail "dev config is missing the 1Password CLI feature"
         [ "$has_tun" != "0" ] || fail "dev config is missing the /dev/net/tun device"
         [ "$has_ts_init" = "1" ] || fail "dev config does not reference TS_AUTHKEY in initializeCommand"
         [ "$has_gh_init" = "0" ] || fail "dev config references GH_TOKEN in initializeCommand (a human profile must carry no bot credential)"
+        [ -z "$foreman_marker" ] || fail "dev config sets FOREMAN_DEVCONTAINER — foreman must refuse to run in the human profile"
 
         # Dropping GH_TOKEN only removes the FIRST link in gh's credential
         # chain. GITHUB_TOKEN and the enterprise aliases outrank the stored

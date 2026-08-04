@@ -17,7 +17,7 @@ it points here.
   major bump.
 - **Feature branches only.** Direct commits to `main` are blocked by the
   `guard:no-commit-to-main` pre-commit hook and the branch ruleset. Land changes
-  via a PR; code-owner review and the `verify` + `security` + `codeql-verify`
+  via a PR; code-owner review and the `verify` + `security`
   checks are required.
 - **Never bypass hooks** (`--no-verify` is forbidden) — fix the underlying issue.
   In the devcontainer a Claude Code hook actively blocks `--no-verify` and
@@ -113,8 +113,7 @@ it points here.
 - **Vendored vs local agents:** the same rule, one directory over. The
   `agents:` block in `.skills-sync.yaml` vendors harmon-devkit's shared
   subagents into `.claude/agents/`, and the sync manages only the files on the
-  `# managed:` line of `.claude/agents/.AGENTS_PROVENANCE`. This repo's own
-  `foreman-*` agents live there too and are never touched. Agents are pinned by
+  `# managed:` line of `.claude/agents/.AGENTS_PROVENANCE`. Agents are pinned by
   the **same `source.ref` as the skills** — deliberately, because a shared agent
   is thin and defers to a skill by reading it, so two pins that could disagree
   would leave an agent following a procedure that no longer exists.

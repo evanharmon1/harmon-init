@@ -34,4 +34,3 @@ onward (diagrams and component deep-dives also live here):
 - [branch-protection.md](branch-protection.md) — in-repo (CODEOWNERS) + out-of-repo (ruleset, Actions toggles, bot model) stitched into one picture (grep can't see GitHub settings).
 - [tests.md](tests.md) — the testing strategy holistically (shape, layers, what's tested where); routes to the testing decision and the guides.
 - [devcontainer-image.md](devcontainer-image.md) — the canonical shared toolchain image, immutable consumer contract, publication, and pin propagation.
-- [foreman.md](foreman.md) — the deterministic supervisor that dispatches armed issues to headless agents and shepherds their PRs to a human merge; state of record is GitHub + git.

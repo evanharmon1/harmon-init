@@ -41,10 +41,10 @@ skill_categories:
 
 use_foreman: true
 
-# Public repo -> CodeQL is free. foreman is the first-party Python.
-use_codeql: true
-codeql_languages:
-  - python
+# No first-party source language remains (foreman is a pinned external CLI,
+# not vendored Python), so CodeQL has nothing to analyze here. The template
+# still ships CodeQL for consumers that select a language.
+use_codeql: false
 
 # This repo dogfoods local and cloud Codex review; CodeRabbit stays off.
 use_codex_review: true

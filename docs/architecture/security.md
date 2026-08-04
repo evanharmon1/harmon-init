@@ -26,13 +26,15 @@ current — it is the reference for "where do secrets live and who can do what".
 
 Harmon Init's scanner policy separates a free baseline from optional commercial
 defense in depth. GitHub-hosted CodeQL is the preferred SAST engine where it is
-free: every public repository with a supported language. Semgrep Community
-Edition (CE) is the free CI fallback for private repositories and for generated
-profiles that do not have a CodeQL workflow.
+free: every public repository with a supported first-party language. Semgrep
+Community Edition (CE) is the free CI fallback for private repositories and for
+profiles without a CodeQL workflow — including this root repo, whose only
+first-party source is shell/config (foreman is a pinned external CLI, not
+vendored Python), so it has no CodeQL workflow.
 
 | Axis | Root status | Default for generated repos |
 |---|---|---|
-| **SAST** — flaws in first-party code | CodeQL in public CI; Semgrep CE via `task security:sast` locally | Public Node/Python: CodeQL; free private Node/Python: Semgrep CE; other profiles: Semgrep CE |
+| **SAST** — flaws in first-party code | Semgrep CE in CI and via `task security:sast` (no CodeQL workflow — no first-party CodeQL-supported language) | Public Node/Python: CodeQL; free private Node/Python: Semgrep CE; other profiles: Semgrep CE |
 | **SCA** — dependency CVEs | Dependabot alerts + `task security:audit` (no root manifests today) | Dependabot alerts + `pnpm audit` / `pip-audit` |
 | **Secrets** | gitleaks in pre-push and CI | gitleaks in pre-push and CI |
 | **IaC** | N/A at the root | checkov for Terraform profiles |
@@ -67,11 +69,15 @@ coverage.
 
 ### CodeQL eligibility
 
-CodeQL runs automatically for Harmon Init and every generated public Node/Python
-repository. GitHub code scanning and standard GitHub-hosted Actions runners are
-free for public repositories. CodeQL is preferred over Semgrep CE there because
-its supported-language queries include deeper interprocedural and data-flow
-analysis and integrate directly with GitHub's Security tab.
+The root repo deliberately has no CodeQL workflow: with foreman extracted to
+its own repository, harmon-init's first-party source is shell and config,
+which CodeQL does not analyze — Semgrep CE in `build.yml` is its SAST engine
+at both visibilities. CodeQL runs automatically for every generated public
+Node/Python repository. GitHub code scanning and standard GitHub-hosted
+Actions runners are free for public repositories. CodeQL is preferred over
+Semgrep CE there because its supported-language queries include deeper
+interprocedural and data-flow analysis and integrate directly with GitHub's
+Security tab.
 
 For private/internal repositories, CodeQL code scanning requires an organization
 on GitHub Team or Enterprise with
@@ -201,10 +207,10 @@ Three consequences worth stating plainly:
   any agent running in it your full reach, and an agent can read its own
   container's credentials. Attended work in `dev/`; headless and Foreman runs in
   the bot container, where the PAT's denials below still apply. Note what this
-  removes: foreman's `backend_environment` withholds `GH_TOKEN` from dispatch,
-  CI-repair, rebase, and preflight agents, but `HOME` is in its env allow-list —
-  so a gh-stored login makes that least-privilege gate **vacuous** in `dev/`. The
-  gate is real only in the profile it was written for.
+  removes: foreman builds each agent's environment as a strict allowlist that
+  swaps `GH_TOKEN` for the read-only agent token, but `HOME` is in that
+  allow-list — so a gh-stored login makes that least-privilege gate **vacuous**
+  in `dev/`. The gate is real only in the profile it was written for.
 
 ### The bot's fine-grained PAT
 
@@ -413,6 +419,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
 | `SNYK_TOKEN` | optional Snyk CLI scans; also `snyk-scheduled.yml` when explicitly generated | local env / 1Password by default; Actions secret only for scheduled/paid CI | manual |
 | `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
+| `FOREMAN_AGENT_GH_TOKEN` (read-only PAT) | handed by foreman to dispatched agents as their `GH_TOKEN`; bot profile only, required before any dispatch | 1Password Environment → devcontainer `--env-file` | manual; rotate with the bot PAT |
 | TODO | TODO | TODO | TODO |
 
 ## Rotation & incident notes
