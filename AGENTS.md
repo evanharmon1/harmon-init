@@ -203,7 +203,12 @@ write contract, and **never a merge**. The CLI lives in
 and architecture docs there); this repo pins a released tag via
 `FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 0002
 records the v1 in-repo design this superseded). The wrapper and config ship
-to generated repos, so they are two-layer twins.
+to generated repos, so they are two-layer twins. Foreman's own PRs follow
+foreman's lifecycle, not the Dev Loop below: it opens non-draft PRs under
+its own verify gate and marks green ones with a `ready-to-merge` label —
+humans still do every merge. On this public repo, D4 classifies every unit
+`untrusted-input`, so **dispatch refuses under the local runner by design**
+(plan / vet / status / preflight all work) until an isolated runner ships.
 
 ## Dev Loop
 
@@ -423,7 +428,7 @@ unproven condition means stay draft, not promote and watch.
 
 - No direct commits to main (enforced by lefthook `guard:no-commit-to-main` and the
   branch ruleset). Work on feature branches; PRs require code-owner review and the
-  `verify` + `security` + `codeql-verify` status checks.
+  `verify` + `security` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
   the ruleset would allow it. Open the draft PR and shepherd it — checks green

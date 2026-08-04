@@ -53,9 +53,12 @@ task foreman:plan -- --milestone <n>  # foreman: dry-run the dispatch graph
 
 **Foreman** (`task foreman:*`) is the deterministic supervisor that dispatches
 armed issues to headless agents, verifies their output, opens PRs, and
-shepherds them to mergeable — merging is always a human decision. The CLI is
-pinned in `taskfiles/foreman.yml` and fetched via `uvx`; configuration is
-`.foreman.toml`. See https://github.com/ponderousdev/foreman.
+shepherds them to mergeable — merging is always a human decision. Foreman's
+own PRs follow foreman's lifecycle, not the Dev Loop below: it opens
+non-draft PRs under its own verify gate and marks green ones with a
+`ready-to-merge` label. The CLI is pinned in `taskfiles/foreman.yml` and
+fetched via `uvx`; configuration is `.foreman.toml`. See
+https://github.com/ponderousdev/foreman.
 [% endif %]
 
 `check` is deliberately kept fast (lint[% if use_node %] + typecheck[% endif %]) so editors, git hooks, and

@@ -1,17 +1,22 @@
 # Foreman configuration for [[ project_name ]] — read by the pinned Foreman
 # CLI (taskfiles/foreman.yml; https://github.com/ponderousdev/foreman).
 #
-# Issue custom fields are org-only: on an org-owned repo `inputs = "auto"`
-# resolves to fields mode (`foreman`, `foreman-budget-usd`,
-# `foreman-timeout-min`); on a personal-account repo it falls back to labels
-# (`foreman:claude`, `foreman:hold`, ...). Explicit approval is required
-# before any issue is dispatchable.
+# Arming is label mode (`foreman:claude`, `foreman:hold`, ...): D13 needs a
+# trusted, timeline-attributable arming actor, and GitHub exposes no actor
+# for issue-field changes — fields mode fails closed by design, so it is
+# never selected here (`auto` would pick it on any org with issue fields).
+# Explicit approval is required before any issue is dispatchable.
+#
+# NOTE (D4): on a PUBLIC repository foreman classifies every unit as
+# requiring the `untrusted-input` boundary, which the local runner never
+# provides — dispatch refuses by design until an isolated runner (sprite,
+# v2.1) ships. plan / vet / status / preflight remain fully usable.
 
 # Where units execute: local (v2.0) | sprite (v2.1) | docker (v2.2).
 runner = "local"
 backend = "claude"
 require_approval = true
-inputs = "auto"
+inputs = "labels"
 max_parallel = 3
 branch_prefix = "foreman"
 # Identity asserted before any write.

@@ -93,8 +93,7 @@ jobs:
         run: task security:secrets
       - name: Dependency audit
         run: task security:audit
-      - name: Private-repo SAST fallback (Semgrep CE)
-        if: github.event.repository.private && vars.FULL_SECURITY_SCAN != 'true'
+      - name: SAST (Semgrep Community Edition)
         run: task security:sast
 
   template-test:
