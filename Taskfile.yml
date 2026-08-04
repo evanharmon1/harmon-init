@@ -627,7 +627,7 @@ tasks:
     desc: Bump patch version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 --exclude="*-probe" 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3+1}'
     cmds:
@@ -640,7 +640,7 @@ tasks:
     desc: Bump minor version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 --exclude="*-probe" 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%d.0", $1, $2+1}'
     cmds:
@@ -653,7 +653,7 @@ tasks:
     desc: Bump major version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 --exclude="*-probe" 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "v%d.0.0", substr($1,2)+1}'
     cmds:
