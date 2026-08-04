@@ -34,9 +34,10 @@ brew "lychee"
 [% endif %]
 # Python tool runner (Semgrep CE[% if use_python %] + project dependencies[% endif %][% if use_foreman %] + the pinned foreman CLI[% endif %] use uv/uvx)
 brew "uv"
-[% if use_python %]
-# this project targets Python >= 3.11;
-# stock macOS ships 3.9, so the interpreter itself is a dependency.
+[% if use_foreman or use_python %]
+# [% if use_python %]this project targets Python >= 3.11[% else %]lint-hygiene.sh parses .foreman.toml with bare `python3` + tomllib (>= 3.11)[% endif %];
+# stock macOS ships 3.9 and uv provides no `python3` shim, so the interpreter
+# itself is still a dependency.
 brew "python"
 [% endif %]
 [% if include_terraform %]

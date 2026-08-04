@@ -1,0 +1,25 @@
+{
+  "name": "Version Tag Creation",
+  "target": "tag",
+  "source_type": "Repository",
+  "source": "[[ github_org ]]/[[ project_slug ]]",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/v*"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    }
+  ],
+  "bypass_actors": [
+    {
+      "actor_id": null,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "always"
+    }
+  ]
+}

@@ -185,7 +185,6 @@ use_foreman:
   type: bool
   help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv, read access to that repo, and operator setup: bot identity, arming labels, rulesets)?"
   default: no
-  validator: "[% if use_foreman and not devcontainer %]Foreman runs only inside the bot devcontainer (its D2 tripwire refuses any other environment) — enable devcontainer or disable use_foreman.[% endif %]"
 
 use_codeql:
   type: bool
@@ -257,6 +256,10 @@ devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
   default: yes
+  # Validated here (after both answers are typed) rather than on use_foreman:
+  # a validator on the earlier question reads this one's raw default and lets
+  # the forbidden combination through.
+  validator: "[% if use_foreman and not devcontainer %]Foreman runs only inside the bot devcontainer (its D2 tripwire refuses any other environment) — enable devcontainer or disable use_foreman.[% endif %]"
 
 use_alternative_claude_providers:
   type: bool

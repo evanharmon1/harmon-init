@@ -120,9 +120,14 @@ config, toolchain, devcontainer, and dev environment — against the items below
       inject it (1Password → devcontainer.env). Confirm the bot PAT's
       selected-repo list grants read on `ponderousdev/foreman` — uvx cannot
       fetch the pinned CLI without it. Run `task setup:github-labels`
-      so the `foreman:*` arming labels exist, then `task foreman:preflight`
-      (inside the bot devcontainer — foreman refuses to start anywhere else)
-      to assert the security controls before any dispatch.
+      so the `foreman:*` arming labels exist. Import the two tag rulesets
+      (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
+      `… Immutability.json`, same UI import as the branch ruleset) and create
+      the standing probe tag (`git tag v0.0.0-probe && git push origin
+      v0.0.0-probe`) — preflight empirically asserts `v*` tags are immutable
+      and fails until both exist. Then `task foreman:preflight` (inside the
+      bot devcontainer — foreman refuses to start anywhere else) to assert
+      the security controls before any dispatch.
 [% endif %]
 [% if use_codeql %]
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
