@@ -455,6 +455,8 @@ even the in-org radius small:
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | [% if use_release_please %]release-please, [% endif %]claude-*[% if github_org != author_git_provider_username %], project-automation[% endif %] | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | re-run `claude setup-token` |
 [% if devcontainer %]| `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
+[% if use_foreman %]| `FOREMAN_AGENT_GH_TOKEN` (read-only PAT) | handed by foreman to dispatched agents as their `GH_TOKEN`; bot profile only, required before any dispatch | 1Password Environment → devcontainer `--env-file` | manual; rotate with the bot PAT |
+[% endif %]
 [% endif %]| `SNYK_TOKEN` | optional Snyk CLI scans[% if snyk_scan_schedule != 'off' %] + `snyk-scheduled.yml`[% endif %] | local env / 1Password by default[% if snyk_scan_schedule != 'off' %]; Actions secret for the generated schedule[% endif %] | manual |
 | TODO | TODO | TODO | TODO |
 

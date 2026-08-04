@@ -136,7 +136,10 @@ config, toolchain, devcontainer, and dev environment — against the items below
       empirically asserts `v*` tags are immutable and fails until both
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
-      the security controls before any dispatch.
+      the security controls before any dispatch. Finally, while
+      `ponderousdev/foreman` is private, grant this repo's Renovate
+      installation read access to it (App grant or a `hostRules` token) —
+      without it the `FOREMAN_VERSION` bump PRs silently never appear.
 [% endif %]
 [% if use_codeql %]
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for

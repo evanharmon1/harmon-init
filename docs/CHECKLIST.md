@@ -138,7 +138,10 @@ this comment. -->
       empirically asserts `v*` tags are immutable and fails until both
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
-      the security controls before any dispatch.
+      the security controls before any dispatch. Finally, while
+      `ponderousdev/foreman` is private, grant this repo's Renovate
+      installation read access to it (App grant or a `hostRules` token) —
+      without it the `FOREMAN_VERSION` bump PRs silently never appear.
 - [ ] **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
       first-party source is shell/config; foreman is a pinned external CLI), so
       Semgrep CE runs in `build.yml` at both visibilities. Generated supported

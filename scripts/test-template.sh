@@ -891,11 +891,32 @@ iac | full)
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
+    # Preflight's D14 probes need both tag rulesets; their bypass actor is
+    # owner-shaped (org repos: OrganizationAdmin; personal: repo admin role 5).
+    [ -f ".github/Tag Protection Ruleset - Version Tag Creation.json" ] ||
+        err "tag Creation ruleset missing (use_foreman=true; preflight needs it)"
+    [ -f ".github/Tag Protection Ruleset - Version Tag Immutability.json" ] ||
+        err "tag Immutability ruleset missing (use_foreman=true; preflight needs it)"
+    grep -q '"type": "creation"' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
+        err "tag Creation ruleset lost its creation rule"
+    grep -Fq '"bypass_actors": []' ".github/Tag Protection Ruleset - Version Tag Immutability.json" ||
+        err "tag Immutability ruleset gained a bypass actor — a moved v* tag is code execution in every consumer"
+    if [ "$profile" = "full" ]; then # org-owned
+        grep -q 'OrganizationAdmin' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
+            err "org repo's Creation ruleset lacks the OrganizationAdmin bypass"
+    else # iac — personal-account
+        grep -q '"actor_type": "RepositoryRole"' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
+            err "personal repo's Creation ruleset lacks the repository-admin bypass (OrganizationAdmin does not exist there)"
+    fi
     ;;
 *)
     [ ! -f taskfiles/foreman.yml ] || err "taskfiles/foreman.yml rendered but use_foreman is off"
     [ ! -f .foreman.toml ] || err ".foreman.toml rendered but use_foreman is off"
     ! grep -q 'foreman: taskfiles/foreman.yml' Taskfile.yml || err "foreman include rendered but use_foreman is off"
+    [ ! -f ".github/Tag Protection Ruleset - Version Tag Creation.json" ] ||
+        err "tag Creation ruleset rendered but use_foreman is off"
+    [ ! -f ".github/Tag Protection Ruleset - Version Tag Immutability.json" ] ||
+        err "tag Immutability ruleset rendered but use_foreman is off"
     ;;
 esac
 # The template never renders .claude/agents in ANY profile: shared agent
