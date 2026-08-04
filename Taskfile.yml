@@ -78,6 +78,7 @@ tasks:
       - task: test:ci-results
       - task: test:status
       - task: test:meta-install
+      - task: test:copier-validators
       - task: test:renovate-pins
       - task: test:release-title
       - task: test:setup-github-project
@@ -330,6 +331,11 @@ tasks:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
     cmds:
       - ./scripts/test-meta-install.sh
+
+  test:copier-validators:
+    desc: Guard the answer validators that keep unsafe characters out of rendered paths
+    cmds:
+      - ./scripts/test-copier-validators.sh
 
   test:renovate-pins:
     desc: Check every annotated shell version pin is extractable by Renovate
