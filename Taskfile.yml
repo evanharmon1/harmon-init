@@ -15,7 +15,8 @@ output:
 
 includes:
   # Foreman — deterministic supervisor for milestone-driven agent dispatch
-  # (task foreman:plan / dispatch / shepherd / watch ...; docs/architecture/foreman.md)
+  # (task foreman:plan / dispatch / shepherd / watch ...; the CLI is pinned
+  # and fetched via uvx in taskfiles/foreman.yml)
   foreman: taskfiles/foreman.yml
 
 tasks:
@@ -89,7 +90,6 @@ tasks:
       - task: test:dogfood-structure
       - task: test:starship-glyphs
       - task: test:template-independence
-      - task: foreman:test
       - task: test:hooks
       - task: test:statusline
       - task: test:codex-review
@@ -108,7 +108,6 @@ tasks:
       - lint:markdown
       - lint:actions
       - lint:hygiene
-      - foreman:lint
 
   lint:yaml:
     desc: yamllint (template/ excluded via .yamllint ignore)
@@ -613,7 +612,7 @@ tasks:
     vars:
       REPO: "evanharmon1/harmon-init"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}" --foreman
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.
@@ -628,7 +627,7 @@ tasks:
     desc: Bump patch version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3+1}'
     cmds:
@@ -641,7 +640,7 @@ tasks:
     desc: Bump minor version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%d.0", $1, $2+1}'
     cmds:
@@ -654,7 +653,7 @@ tasks:
     desc: Bump major version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "v%d.0.0", substr($1,2)+1}'
     cmds:

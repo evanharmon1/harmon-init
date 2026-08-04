@@ -105,7 +105,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
 [% endif %]
 - [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example[% if use_foreman %] — foreman trusts its
-      findings via `review_sender_trust`[% endif %]), turn on its draft-review option.
+      findings via `trusted_actors`[% endif %]), turn on its draft-review option.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
@@ -113,6 +113,34 @@ config, toolchain, devcontainer, and dev environment — against the items below
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
       key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
+[% if use_foreman %]
+- [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
+      foreman hands to dispatched agents: export/store it as
+      `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
+      inject it (1Password → devcontainer.env). Confirm the credential git
+      presents in the bot container can read `ponderousdev/foreman` — uvx
+      cannot fetch the pinned CLI without it, and a fine-grained PAT is bound
+      to ONE resource owner, so a token scoped to this repo's owner cannot
+      also reach it: until foreman is public this needs the bot to hold a
+      grant on that repo per foreman's operator docs
+      (docs/architecture/security.md there). Run `task setup:github-labels`
+      so the `foreman:*` arming labels exist. Import the two tag rulesets
+      (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
+      `… Immutability.json`, same UI import as the branch ruleset), then add
+      the CI GitHub App to the **Creation** ruleset's bypass list (`always`) —
+      release-please tags via that App, and bypass-actor App IDs are
+      per-installation so the JSON cannot ship them. (Immutability keeps an
+      empty bypass list on purpose: a moved `v*` tag is code execution in
+      every consumer, so nobody bypasses it.) Create the standing probe tag
+      (`git tag v0.0.0-probe && git push origin v0.0.0-probe`) — preflight
+      empirically asserts `v*` tags are immutable and fails until both
+      rulesets and the tag exist. Then `task foreman:preflight` (inside the
+      bot devcontainer — foreman refuses to start anywhere else) to assert
+      the security controls before any dispatch. Finally, while
+      `ponderousdev/foreman` is private, grant this repo's Renovate
+      installation read access to it (App grant or a `hostRules` token) —
+      without it the `FOREMAN_VERSION` bump PRs silently never appear.
+[% endif %]
 [% if use_codeql %]
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
       free for the selected `codeql_languages`; confirm a successful upload in
@@ -292,11 +320,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
 - [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `verify_command = ["task", "ci"]` with `max_parallel = 3` — parallel
-      Foreman worktrees would then race for the Playwright port. Pick one before
-      you dispatch: point `verify_command` at `["task", "verify"]` (port-free,
-      but drops e2e + security from the gate), set `max_parallel = 1`, or derive
-      a per-worktree port in `playwright.config.ts`.
+      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
+      parallel Foreman worktrees would then race for the Playwright port. Pick
+      one before you dispatch: point the `[verify]` default at
+      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
+      set `max_parallel = 1`, or derive a per-worktree port in
+      `playwright.config.ts`.
 [% endif %]
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
@@ -365,11 +394,12 @@ config, toolchain, devcontainer, and dev environment — against the items below
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
 - [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `verify_command = ["task", "ci"]` with `max_parallel = 3` — parallel
-      Foreman worktrees would then race for the Playwright port. Pick one before
-      you dispatch: point `verify_command` at `["task", "verify"]` (port-free,
-      but drops e2e + security from the gate), set `max_parallel = 1`, or derive
-      a per-worktree port in `playwright.config.ts`.
+      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
+      parallel Foreman worktrees would then race for the Playwright port. Pick
+      one before you dispatch: point the `[verify]` default at
+      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
+      set `max_parallel = 1`, or derive a per-worktree port in
+      `playwright.config.ts`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
       `task verify`, and a step in CI's lint job) regenerates and **fails** if

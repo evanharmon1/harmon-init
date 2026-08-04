@@ -14,6 +14,16 @@
 # recorded _commit to be a resolvable version tag, so HEAD/dirty refs won't do).
 set -euo pipefail
 
+# Copier clones the template into a TemporaryDirectory; a large diff (the
+# foreman-v2 strip deletes >100 files) trips git auto-gc in that clone, and
+# the detached gc process is still writing .git/objects when Python's
+# cleanup rmtrees the dir — "OSError: Directory not empty: 'objects'",
+# reproducible on CI's slower disks. Kill auto-gc for every git this test
+# spawns (GIT_CONFIG_* env is inherited by copier's git subprocesses).
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
+export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d -t harmon-init-update-XXXXXX)"
 trap 'rm -rf "$work"' EXIT

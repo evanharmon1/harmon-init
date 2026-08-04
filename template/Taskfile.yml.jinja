@@ -10,7 +10,8 @@ output:
 
 includes:
   # Foreman — deterministic supervisor for milestone-driven agent dispatch
-  # (task foreman:plan / dispatch / shepherd / watch ...; docs/architecture/foreman.md)
+  # (task foreman:plan / dispatch / shepherd / watch ...; the CLI is pinned
+  # and fetched via uvx in taskfiles/foreman.yml)
   foreman: taskfiles/foreman.yml
 [% endif %]
 
@@ -118,9 +119,6 @@ tasks:
 [% if project_management == 'github' and github_org != author_git_provider_username %]
       - task: test:setup-github-issue-fields
 [% endif %]
-[% if use_foreman %]
-      - task: foreman:test
-[% endif %]
 [% if devcontainer %]
       - task: test:hooks
       - task: test:statusline
@@ -161,9 +159,6 @@ tasks:
 [% endif %]
 [% if use_python %]
       - lint:python
-[% endif %]
-[% if use_foreman %]
-      - foreman:lint
 [% endif %]
 [% if include_terraform %]
       - lint:terraform
@@ -946,13 +941,17 @@ tasks:
       metadata fields). Requires `gh auth refresh -s project`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
+[% endif %]
+[% if project_management == 'github' or use_foreman %]
 
   setup:github-labels:
-    desc: Idempotently create/update this repo's starter labels (see docs/project-management.md). Requires `gh` with repo write.
+    desc: Idempotently create/update this repo's starter labels[% if use_foreman %] incl. the foreman arming labels[% endif %]. Requires `gh` with repo write.
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"[% if use_foreman %] --foreman[% endif %]
+[% endif %]
+[% if project_management == 'github' %]
 [% if github_org != author_git_provider_username %]
 
   setup:github-issue-fields:
@@ -994,7 +993,7 @@ tasks:
     desc: Bump patch version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3+1}'
     cmds:
@@ -1007,7 +1006,7 @@ tasks:
     desc: Bump minor version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "%s.%d.0", $1, $2+1}'
     cmds:
@@ -1020,7 +1019,7 @@ tasks:
     desc: Bump major version and release
     vars:
       CURRENT_TAG:
-        sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+        sh: git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "v0.0.0"
       NEXT_TAG:
         sh: echo "{{.CURRENT_TAG}}" | awk -F. '{printf "v%d.0.0", substr($1,2)+1}'
     cmds:

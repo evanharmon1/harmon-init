@@ -195,11 +195,27 @@ one carve-out: a check that needs **CI-only infrastructure** (a browser install,
 a service container, credentials that only exist on a runner) stays out of `ci`
 and is documented as an exception rather than being faked locally.
 
-**Foreman** (`scripts/foreman/`, `taskfiles/foreman.yml`) is the deterministic
+**Foreman** (`taskfiles/foreman.yml`, `.foreman.toml`) is the deterministic
 supervisor for milestone-driven agent dispatch: explicit arming via
-`foreman:*` labels (issue fields on org repos), hardened doneness, a strict
-write contract, and **never a merge** — see `docs/architecture/foreman.md`
-and ADR 0002. It ships to generated repos, so its files are two-layer twins.
+`foreman:*` labels (the only attributable mode — v2 refuses issue-field
+arming because GitHub exposes no actor for field changes), hardened
+doneness, a strict
+write contract, and **never a merge**. The CLI lives in
+[ponderousdev/foreman](https://github.com/ponderousdev/foreman) (spec, ADRs,
+and architecture docs there); this repo pins a released tag via
+`FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 0002
+records the v1 in-repo design this superseded). The wrapper and config ship
+to generated repos, so they are two-layer twins. Foreman's own PRs follow
+foreman's lifecycle, not the Dev Loop below: it opens non-draft PRs under
+its own verify gate and marks green ones with a `ready-to-merge` label —
+humans still do every merge. Foreman v2 currently has no cloud-review gate
+(v1's `require_codex_cloud_review` was dropped —
+[ponderousdev/foreman#104](https://github.com/ponderousdev/foreman/issues/104)
+tracks restoring one), so its `ready-to-merge` label asserts green CI +
+resolved threads, not a Codex verdict. On this public repo, D4 classifies
+every unit `untrusted-input`, so **dispatch refuses under the local runner
+by design** (plan / vet / status / preflight all work) until an isolated
+runner ships.
 
 ## Dev Loop
 
@@ -419,7 +435,7 @@ unproven condition means stay draft, not promote and watch.
 
 - No direct commits to main (enforced by lefthook `guard:no-commit-to-main` and the
   branch ruleset). Work on feature branches; PRs require code-owner review and the
-  `verify` + `security` + `codeql-verify` status checks.
+  `verify` + `security` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
   the ruleset would allow it. Open the draft PR and shepherd it — checks green

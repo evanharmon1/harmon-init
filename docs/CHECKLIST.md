@@ -79,7 +79,7 @@ this comment. -->
       scoped to one resource owner, so a **new owner needs a new PAT**. Both layers
       are required — the collaborator grant sets the ceiling, the PAT's repo list
       reaches it. Procedure: [guides/bot-account.md](guides/bot-account.md).
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `codeql.yml` are on `main` so the required `verify`/`security`/`codeql-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` is on `main` so the required `verify`/`security` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 
 - [ ] **Install and activate Renovate** — install the
       [Renovate app](https://github.com/apps/renovate) for **Only select
@@ -108,7 +108,7 @@ this comment. -->
       and re-check it here if Codex's settings change.
 - [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example — foreman trusts its
-      findings via `review_sender_trust`), turn on its draft-review option.
+      findings via `trusted_actors`), turn on its draft-review option.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
@@ -116,13 +116,40 @@ this comment. -->
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
       key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
-- [ ] **Free SAST coverage** — Harmon Init's public `codeql.yml` runs CodeQL
-      automatically and uploads results to the Security tab. Confirm a successful
-      run. Generated supported public stacks do the same; free private repos use
-      Semgrep CE in `build.yml` unless paid private CodeQL is explicitly enabled.
-- [ ] **Choose the Snyk posture** — Harmon Init currently uses the public-repo
-      default (CodeQL + Dependabot alerts/Renovate + gitleaks), so Snyk remains
-      off. Free private repos keep Snyk manual/local via
+- [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
+      foreman hands to dispatched agents: export/store it as
+      `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
+      inject it (1Password → devcontainer.env). Confirm the credential git
+      presents in the bot container can read `ponderousdev/foreman` — uvx
+      cannot fetch the pinned CLI without it, and a fine-grained PAT is bound
+      to ONE resource owner, so a token scoped to this repo's owner cannot
+      also reach it: until foreman is public this needs the bot to hold a
+      grant on that repo per foreman's operator docs
+      (docs/architecture/security.md there). Run `task setup:github-labels`
+      so the `foreman:*` arming labels exist. Import the two tag rulesets
+      (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
+      `… Immutability.json`, same UI import as the branch ruleset), then add
+      the CI GitHub App to the **Creation** ruleset's bypass list (`always`) —
+      release-please tags via that App, and bypass-actor App IDs are
+      per-installation so the JSON cannot ship them. (Immutability keeps an
+      empty bypass list on purpose: a moved `v*` tag is code execution in
+      every consumer, so nobody bypasses it.) Create the standing probe tag
+      (`git tag v0.0.0-probe && git push origin v0.0.0-probe`) — preflight
+      empirically asserts `v*` tags are immutable and fails until both
+      rulesets and the tag exist. Then `task foreman:preflight` (inside the
+      bot devcontainer — foreman refuses to start anywhere else) to assert
+      the security controls before any dispatch. Finally, while
+      `ponderousdev/foreman` is private, grant this repo's Renovate
+      installation read access to it (App grant or a `hostRules` token) —
+      without it the `FOREMAN_VERSION` bump PRs silently never appear.
+- [ ] **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
+      first-party source is shell/config; foreman is a pinned external CLI), so
+      Semgrep CE runs in `build.yml` at both visibilities. Generated supported
+      public stacks run CodeQL automatically; free private repos use Semgrep CE
+      unless paid private CodeQL is explicitly enabled.
+- [ ] **Choose the Snyk posture** — Harmon Init currently uses the free
+      baseline (Semgrep CE + Dependabot alerts/Renovate + gitleaks), so Snyk
+      remains off. Free private repos keep Snyk manual/local via
       `task security:sast:snyk` and `task security:sca:snyk`; local tests consume
       the same Snyk Organization quota. Do not install the Snyk GitHub App for
       this posture; its PR checks are not required by the branch ruleset.

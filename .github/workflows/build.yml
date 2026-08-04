@@ -67,7 +67,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Dogfood structure (template sections/tasks exist in the root layer)
         run: task test:dogfood-structure
-      - run: task foreman:test
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
       - run: task test:hooks
@@ -94,8 +93,7 @@ jobs:
         run: task security:secrets
       - name: Dependency audit
         run: task security:audit
-      - name: Private-repo SAST fallback (Semgrep CE)
-        if: github.event.repository.private && vars.FULL_SECURITY_SCAN != 'true'
+      - name: SAST (Semgrep Community Edition)
         run: task security:sast
 
   template-test:

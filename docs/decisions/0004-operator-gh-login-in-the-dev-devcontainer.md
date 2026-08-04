@@ -82,14 +82,27 @@ Six forks came with that, each decided here:
 
    *Not* a code guard (e.g. a `DEVCONTAINER_PROFILE` marker that foreman
    refuses to dispatch under). That is new machinery across the configs and
-   `scripts/foreman/`, needing its own tests and two-layer twins, to enforce a
-   rule whose violation is already a deliberate act by the operator.
+   the then-vendored `scripts/foreman/`, needing its own tests and two-layer
+   twins, to enforce a rule whose violation is already a deliberate act by
+   the operator.
 
-   Worth recording because it is easy to miss: foreman's `backend_environment`
-   withholds `GH_TOKEN` from dispatch, CI-repair, rebase, and preflight agents,
-   but `HOME` is in `BACKEND_ENV_ALLOWLIST` — so a gh-stored login makes that
-   least-privilege gate **vacuous** in `dev/`. The gate is real only in the
-   profile it was written for, which is another way of saying the same policy.
+   *Amended (foreman v2 extraction):* the marker guard now exists anyway —
+   upstream. Foreman v2's own D2 tripwire refuses to start unless
+   `FOREMAN_DEVCONTAINER=bot`, so the bot profile sets that marker in
+   `containerEnv`. The rationale above stands for what THIS repo builds: the
+   guard arrived as upstream policy this repo merely marks for, not as
+   harmon-init machinery with its own test surface. Foreman's docs describe
+   it as "a guard against accident, not intent — trivially spoofable,
+   deliberately cheap", which is the same posture this decision took.
+
+   Worth recording because it is easy to miss: foreman builds each agent's
+   environment as a strict allowlist that withholds the write `GH_TOKEN`
+   from dispatch, CI-repair, rebase, and preflight agents (v1 called this
+   `backend_environment`; the v2 implementation lives in
+   ponderousdev/foreman), but `HOME` is in that allowlist — so a gh-stored
+   login makes that least-privilege gate **vacuous** in `dev/`. The gate is
+   real only in the profile it was written for, which is another way of
+   saying the same policy.
 
 5. **Org OAuth-app restrictions are resolved by approving the app.** Where an
    org genuinely cannot, the documented fallback is `gh auth login --with-token`

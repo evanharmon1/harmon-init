@@ -1,45 +1,37 @@
-# Foreman configuration for [[ project_name ]] (docs/architecture/foreman.md).
+# Foreman configuration for [[ project_name ]] — read by the pinned Foreman
+# CLI (taskfiles/foreman.yml; https://github.com/ponderousdev/foreman).
 #
-# Issue custom fields are org-only: on an org-owned repo `inputs = "auto"`
-# resolves to fields mode (`foreman`, `foreman-budget-usd`,
-# `foreman-timeout-min`); on a personal-account repo it falls back to labels
-# (`foreman:claude`, `foreman:hold`, ...). Explicit approval is required
-# before any issue is dispatchable.
+# Arming is label mode (`foreman:claude`, `foreman:hold`, ...): D13 needs a
+# trusted, timeline-attributable arming actor, and GitHub exposes no actor
+# for issue-field changes — fields mode fails closed by design, so it is
+# never selected here (`auto` would pick it on any org with issue fields).
+# Explicit approval is required before any issue is dispatchable.
+#
+# NOTE (D4): on a PUBLIC repository foreman classifies every unit as
+# requiring the `untrusted-input` boundary, which the local runner never
+# provides — dispatch refuses by design until an isolated runner ships in a
+# FUTURE foreman release (sprite/docker are named in config but not yet
+# implemented). plan / vet / status / preflight remain fully usable.
 
+# Where units execute: local today; sprite and docker are roadmap names.
+runner = "local"
 backend = "claude"
 require_approval = true
-require_codex_cloud_review = [[ 'true' if use_codex_cloud_review else 'false' ]]
-inputs = "auto"
-[% if use_node %]
-# `task ci` includes the port-binding `test:e2e` tier, while `task verify` is
-# port-free by design (docs/architecture/tests.md). With max_parallel > 1 that
-# matters only once this app ships a playwright.config.* — before then test:e2e
-# skips, so nothing binds a port. When you add the e2e suite, pick one: point
-# verify_command at ["task", "verify"], drop max_parallel to 1, or give the
-# Playwright config a per-worktree port.
-[% endif %]
-verify_command = ["task", "ci"]
+inputs = "labels"
 max_parallel = 3
 branch_prefix = "foreman"
+# Identity asserted before any write.
 expected_login = "[[ author_git_provider_username ]]-bot"
 
-# Only these GitHub logins, trusted author associations, and Foreman's own
-# account may contribute unresolved review-thread content to agent prompts.
-review_sender_trust = [[ '["coderabbitai", "Copilot"]' if use_coderabbit else '["Copilot"]' ]]
+# Accounts (humans and apps) whose content and arming events are trusted:
+# who may arm an issue, and whose review/comment content may be embedded in
+# agent prompts. Empty = nobody is trusted (fail closed). App accounts are
+# spelled with the `[bot]` suffix.
+trusted_actors = [[ '["' + author_git_provider_username + '", "' + author_git_provider_username + '-bot", "Copilot", "coderabbitai[bot]"]' if use_coderabbit else '["' + author_git_provider_username + '", "' + author_git_provider_username + '-bot", "Copilot"]' ]]
 
-# Bots whose review of the CURRENT head the readiness gate waits for before
-# promoting a draft. Deliberately separate from review_sender_trust: that list
-# says whose findings are safe to quote, not who is expected to post, so waiting
-# on it would stall on a bot that never reviews. Naming a bot here makes its
-# silence blocking rather than reading an empty thread list as "nothing found".
-[% if use_coderabbit %]# CodeRabbit reviews drafts (reviews.auto_review.drafts: true), so its verdict
-# is available before promotion — wait for it. Spelled with the `[bot]` suffix
-# because this list is matched against REST review authors, where an App is
-# `coderabbitai[bot]`; review_sender_trust above is matched against GraphQL
-# logins, where the same actor is plain `coderabbitai`. Foreman normalises the
-# suffix away, so either spelling works — but keep them accurate to their API.
-required_review_bots = ["coderabbitai[bot]"][% else %]required_review_bots = []
-# Add a bot's login here once one that reviews drafts is installed.[% endif %]
+# Hard capability requirements: the baseline gate cannot run without these;
+# a mismatch is refused before dispatch.
+required_capabilities = []
 
 # subscription (default): adapters inherit CLAUDE_CODE_OAUTH_TOKEN; USD
 # budgets are inert (guardrails bind on timeout/turns). api: adapters export
@@ -50,6 +42,23 @@ billing = "subscription"
 # let adapters run with a relaxed permission mode; the committed default stays
 # conservative for any other host.
 sandboxed = false
+
+# NOTE: [verify] must stay below every top-level key — in TOML, keys after a
+# section header belong to that section until the next header.
+#
+# The composed verify gate: `default` runs in every unit; capability-keyed
+# entries (docker, ports, untrusted-input) run additionally where the
+# capability is present. Whatever does not run in-unit is CI's job.
+[% if use_node %]
+# `task ci` includes the port-binding `test:e2e` tier, while `task verify` is
+# port-free by design (docs/architecture/tests.md). With max_parallel > 1 that
+# matters only once this app ships a playwright.config.* — before then test:e2e
+# skips, so nothing binds a port. When you add the e2e suite, pick one: point
+# [verify] default at ["task", "verify"], drop max_parallel to 1, or give the
+# Playwright config a per-worktree port.
+[% endif %]
+[verify]
+default = ["task", "ci"]
 
 [budgets]
 dispatch_usd = 20.0
