@@ -358,7 +358,7 @@ if should_show "git"; then
         status_text="dirty (${changed} files)"
     fi
 
-    tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "none")"
+    tag="$(git describe --tags --abbrev=0 --exclude="*-probe*" 2>/dev/null || echo "none")"
 
     {
         kv "Branch" "$CURRENT_BRANCH"
