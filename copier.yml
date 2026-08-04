@@ -321,7 +321,12 @@ bunches_directory:
   help: "BUNCH: Directory holding your .bunch files (must already exist)"
   default: "~/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
   when: "[[ bunch_add ]]"
-  validator: "[% if \"'\" in bunches_directory %]must not contain a single quote — the path renders into a single-quoted Taskfile command[% endif %]"
+  validator: >-
+    [% if "'" in bunches_directory or '"' in bunches_directory or ":" in bunches_directory
+       or "#" in bunches_directory or "$" in bunches_directory or "`" in bunches_directory
+       or "\\" in bunches_directory %]must not contain any of ' " : # $ ` \ —
+    the path is rendered into a Taskfile command, where those characters
+    break the YAML scalar or the shell quoting around it[% endif %]
 
 obsidian_project_add:
   type: bool
@@ -333,7 +338,12 @@ obsidian_directory:
   help: "OBSIDIAN: Vault directory the project note is filed under (must already exist)"
   default: "~/Local/Memex/Professional"
   when: "[[ obsidian_project_add ]]"
-  validator: "[% if \"'\" in obsidian_directory %]must not contain a single quote — the path renders into a single-quoted Taskfile command[% endif %]"
+  validator: >-
+    [% if "'" in obsidian_directory or '"' in obsidian_directory or ":" in obsidian_directory
+       or "#" in obsidian_directory or "$" in obsidian_directory or "`" in obsidian_directory
+       or "\\" in obsidian_directory %]must not contain any of ' " : # $ ` \ —
+    the path is rendered into a Taskfile command, where those characters
+    break the YAML scalar or the shell quoting around it[% endif %]
 
 run_task_install:
   type: bool
