@@ -119,9 +119,13 @@ this comment. -->
 - [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
       foreman hands to dispatched agents: export/store it as
       `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
-      inject it (1Password → devcontainer.env). Confirm the bot PAT's
-      selected-repo list grants read on `ponderousdev/foreman` — uvx cannot
-      fetch the pinned CLI without it. Run `task setup:github-labels`
+      inject it (1Password → devcontainer.env). Confirm the credential git
+      presents in the bot container can read `ponderousdev/foreman` — uvx
+      cannot fetch the pinned CLI without it, and a fine-grained PAT is bound
+      to ONE resource owner, so a token scoped to this repo's owner cannot
+      also reach it: until foreman is public this needs the bot to hold a
+      grant on that repo per foreman's operator docs
+      (docs/architecture/security.md there). Run `task setup:github-labels`
       so the `foreman:*` arming labels exist. Import the two tag rulesets
       (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
       `… Immutability.json`, same UI import as the branch ruleset), then add
