@@ -368,6 +368,12 @@ devcontainer_image:
   when: false
 
 # Paths
+# These must stay `~`-relative — never an absolute `/Users/<name>/...` — so a
+# generated repo never carries a path that only resolves on one machine. The
+# `~` is expanded at run time by scripts/meta-install.sh, because the values are
+# rendered into single-quoted Taskfile commands where the shell will not expand
+# it (issue #552). `projects_directory` is the exception: it is written unquoted
+# into the .bunch `$ open -a ...` line, where Bunch's own shell expands it.
 projects_directory:
   type: str
   default: ~/git
@@ -375,12 +381,12 @@ projects_directory:
 
 bunches_directory:
   type: str
-  default: "/Users/evan/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
+  default: "~/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
   when: false
 
 obsidian_directory:
   type: str
-  default: "/Users/evan/Local/Memex"
+  default: "~/Local/Memex/Professional"
   when: false
 
 # Demographics
