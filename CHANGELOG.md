@@ -8,6 +8,17 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.15.1](https://github.com/evanharmon1/harmon-init/compare/v4.15.0...v4.15.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **codex-review:** bound over-long CLI stderr lines so the verdict stays readable ([#606](https://github.com/evanharmon1/harmon-init/issues/606)) ([ddd9bdf](https://github.com/evanharmon1/harmon-init/commit/ddd9bdf3deebad85c4b62b5b061daad23e1e1df0))
+* **devcontainer:** own environment git config in the image's XDG layer ([#607](https://github.com/evanharmon1/harmon-init/issues/607)) ([f726535](https://github.com/evanharmon1/harmon-init/commit/f72653512d16a3c32fcf88263b1d579d3b2393ab)), closes [#542](https://github.com/evanharmon1/harmon-init/issues/542)
+* keep the foreman probe tag out of git describe so dirty-tree verify passes ([#600](https://github.com/evanharmon1/harmon-init/issues/600)) ([4596f1a](https://github.com/evanharmon1/harmon-init/commit/4596f1a6cca018834287982112dbfc789ce92288))
+* **template:** drop private-foreman caveats now that foreman is public ([#599](https://github.com/evanharmon1/harmon-init/issues/599)) ([07ce0b9](https://github.com/evanharmon1/harmon-init/commit/07ce0b97b8ece1729d32de60365654a250c42b54)), closes [#586](https://github.com/evanharmon1/harmon-init/issues/586)
+* **template:** sync harmon-devkit skills to v0.20.3 ([#609](https://github.com/evanharmon1/harmon-init/issues/609)) ([09849c1](https://github.com/evanharmon1/harmon-init/commit/09849c1d87731aef934fa29aa91b62b99168b4da))
+
 ## [4.15.0](https://github.com/evanharmon1/harmon-init/compare/v4.14.4...v4.15.0) (2026-08-04)
 
 
