@@ -124,6 +124,15 @@ htmlcov/
 # Foreman runtime artifacts (logs, prompts, resume states — never state-of-record)
 .foreman/
 .foreman-stop
+[% if not use_python %]
+
+# Python bytecode. Foreman used to ship in-repo Python; a checkout that ran that
+# version keeps an orphaned scripts/foreman/__pycache__ which was never tracked,
+# so `git status` is dirty before anyone edits anything. (Python projects ignore
+# these in the block above.)
+__pycache__/
+*.pyc
+[% endif %]
 [% endif %]
 [% if include_terraform %]
 
