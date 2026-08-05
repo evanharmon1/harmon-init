@@ -21,9 +21,23 @@ fi
 # by the Dockerfile. We only wire up the source line in the rc files below.
 PROFILE_SOURCE_LINE='source /usr/local/share/devcontainer-config/shell-aliases.sh'
 
-# Git identity for commits
-git config --global user.name "${DEVCONTAINER_GIT_NAME}"
-git config --global user.email "${DEVCONTAINER_GIT_EMAIL}"
+# All runtime git-config writes target the image's XDG environment config
+# explicitly. `git config --global` picks its file at runtime — ~/.gitconfig
+# when that file exists, the XDG file otherwise — and whether ~/.gitconfig
+# exists here depends on whether VS Code's copyGitConfig has copied the host's
+# in yet, so --global writes land in a different file per attach mode and per
+# lifecycle ordering. Pinning the file makes the environment layer
+# deterministic and keeps ~/.gitconfig personal-only (issue #542).
+ENV_GITCONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
+mkdir -p "$(dirname "$ENV_GITCONFIG")"
+
+# Git identity for commits. Written to the environment layer, so in a bot or
+# headless container DEVCONTAINER_GIT_* is the identity. When a human attaches
+# via VS Code and copyGitConfig brings their personal ~/.gitconfig in, its
+# user.* wins over this layer — that copy is personal-only config, and the
+# attaching human's own identity taking precedence is the intended outcome.
+git config --file "$ENV_GITCONFIG" user.name "${DEVCONTAINER_GIT_NAME}"
+git config --file "$ENV_GITCONFIG" user.email "${DEVCONTAINER_GIT_EMAIL}"
 
 # Loud, actionable guidance for an unauthenticated `gh`. The dev profile carries
 # no GH_TOKEN and does not persist its login, so this is that profile's ordinary
@@ -72,8 +86,14 @@ gh_auth_help() {
 # helper. Installing gh's URL-specific helpers here can confuse the remote
 # containers bootstrap when it replaces credential.helper on attach.
 if [ -n "${REMOTE_CONTAINERS_IPC:-}" ] || [ "${REMOTE_CONTAINERS:-}" = "true" ]; then
-    git config --global --unset-all credential.https://github.com.helper || true
-    git config --global --unset-all credential.https://gist.github.com.helper || true
+    # Unset from both global-scope files: a prior `gh auth setup-git` may have
+    # written the helpers to either one (gh uses --global, whose target file
+    # varies — see ENV_GITCONFIG above).
+    for cfg in "$ENV_GITCONFIG" "$HOME/.gitconfig"; do
+        [ -f "$cfg" ] || continue
+        git config --file "$cfg" --unset-all credential.https://github.com.helper || true
+        git config --file "$cfg" --unset-all credential.https://gist.github.com.helper || true
+    done
     echo "VS Code devcontainer detected; skipping gh auth setup-git."
     # VS Code's forwarded host credential covers *git* on this path, but not
     # `gh` — it reads its own config, and the dev profile supplies no GH_TOKEN.
@@ -87,27 +107,19 @@ else
     gh_auth_help "gh auth setup-git"
 fi
 
-# Rewrite every GitHub SSH URL form to HTTPS for fetch AND push: in-container
-# git ops never depend on an SSH agent (absent in bot containers; lockout-
-# prone when forwarded into human ones). Covers the scp form (git@github.com:)
-# plus all three ssh:// forms, including the explicit port-443 endpoint. HTTPS auth comes from gh
-# (GH_TOKEN in the bot profile, the operator's own `gh auth login` in the dev
-# one), or VS Code's forwarded host credential helper on attach.
-# insteadOf is multi-valued, so reset then re-add: a plain scalar set exits 5
-# ("cannot overwrite multiple values") on re-run and would fail post-create.
-# Unset with --fixed-value so only the four managed values are removed — a
-# whole-key --unset-all would delete user-defined aliases (e.g. github:).
-for ssh_form in "git@github.com:" "ssh://git@github.com/" "ssh://git@ssh.github.com:443/" "ssh://git@ssh.github.com/"; do
-    git config --global --fixed-value --unset-all url."https://github.com/".insteadOf "$ssh_form" || true
-    git config --global --add url."https://github.com/".insteadOf "$ssh_form"
-done
+# The GitHub SSH→HTTPS insteadOf rewrites are baked into the image's
+# environment gitconfig (.devcontainer/config/gitconfig) — static config
+# belongs in the image layer, not in runtime writes.
 
-echo "Git user: $(git config --global user.name)"
+# Effective read, not --global: the scoped read surface skips the XDG file
+# once ~/.gitconfig exists, so it would print empty exactly when identity
+# lives in the environment layer.
+echo "Git user: $(git config user.name)"
 echo "GitHub auth status:"
 gh auth status || true
 
-# Automatically set upstream branch without needing --set-upstream when pushing new branches
-git config --global push.autoSetupRemote true
+# push.autoSetupRemote is baked in the environment gitconfig alongside the
+# other static settings.
 
 echo "==> Fixing ownership of persistent volume dirs..."
 for dir in /home/vscode/.codex /home/vscode/.claude /home/vscode/.gemini \

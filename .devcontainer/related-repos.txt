@@ -9,9 +9,10 @@
 #   owner/repo@branch                # specific branch
 #   https://github.com/owner/repo    # full URL (also supports .git suffix)
 #   git@github.com:owner/repo.git    # ssh URL — accepted, but rewritten to
-#                                    # https by the container gitconfig
-#                                    # (post-create-common.sh); bot containers
-#                                    # have no SSH capability at all
+#                                    # https by the image-baked environment
+#                                    # gitconfig (.devcontainer/config/
+#                                    # gitconfig); bot containers have no SSH
+#                                    # capability at all
 #
 # Lines starting with # are comments; blank lines are ignored. Existing
 # /workspaces/<repo> dirs are never clobbered (no pull, no checkout, no reset).
