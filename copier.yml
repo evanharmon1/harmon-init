@@ -385,6 +385,22 @@ ci_runs_on_default:
   default: "[% if ci_runner == 'self-hosted' %][\"self-hosted\", \"linux\"][% else %]\"ubuntu-latest\"[% endif %]"
   when: false
 
+# Gates .github/workflows/claim-release.yml, which releases the claim markers
+# an agent session left on an issue once a close event says the work is done.
+# Computed rather than asked, because the answer is a CAPABILITY and not a
+# preference: the workflow only wires events to release-claim.sh, which ships
+# inside the vendored track-work skill. Without the skills sync AND the
+# `universal` category, that script is not on disk and the workflow would be a
+# red job on every close instead of a benign no-op — so there is nothing for a
+# question to offer. A repo that later vendors `universal` picks the workflow
+# up on its next `copier update`. Deliberately NOT tied to project_management:
+# the claim comment is written whether or not a board exists, and needs its
+# release comment either way.
+claim_release_available:
+  type: bool
+  default: "[[ use_skills_sync and 'universal' in skill_categories ]]"
+  when: false
+
 use_node:
   type: bool
   default: "[[ project_type in ['web-astro', 'web-app'] ]]"
