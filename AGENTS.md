@@ -639,6 +639,14 @@ the workflow rules above:
 
 - `group:action` Taskfile naming (e.g. `lint:shell`, not `shell:lint`); pin
   actions by SHA + `# vX.Y.Z`.
+- **Never gate a template file on `skill_categories`** — filename, `[% if %]`,
+  or a computed answer alike. The answer is recorded at scaffold time while
+  consumers are told to change categories in `.skills-sync.yaml`, so a gate on
+  it is permanently wrong for the repos it was meant to serve. Gate on
+  `use_skills_sync` and check for the asset at runtime, the way
+  `claim-release.yml` does. `task test:category-gates` enforces it; the
+  reasoning is in [docs/conventions.md](docs/conventions.md) under "Template
+  authoring".
 - Git hooks are managed by lefthook (`lefthook.yml`) and delegate to Taskfile
   targets — don't duplicate logic in hooks or workflows.
 - Secrets never go in git; local env via 1Password (`op run` / `op inject`).

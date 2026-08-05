@@ -91,6 +91,7 @@ tasks:
       - task: test:dogfood-structure
       - task: test:starship-glyphs
       - task: test:template-independence
+      - task: test:category-gates
       - task: test:hooks
       - task: test:statusline
       - task: test:codex-review
@@ -419,6 +420,11 @@ tasks:
     desc: "Guard: consumer-facing output names neither harmon-dotfiles nor chezmoi"
     cmds:
       - ./scripts/test-template-independence.sh
+
+  test:category-gates:
+    desc: "Guard: no template file renders conditionally on skill_categories (drifts; #622)"
+    cmds:
+      - ./scripts/test-category-gates.sh
 
   audit:dogfood:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"
