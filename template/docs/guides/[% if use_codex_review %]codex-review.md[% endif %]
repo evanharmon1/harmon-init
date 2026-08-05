@@ -365,3 +365,12 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   clean pass. Fix the cached ref (`git remote set-head origin --auto`), name a
   base with `--base <ref>`, or say the worktree really is the whole target
   with `--uncommitted`.
+- **A captured log is enormous, and the verdict is buried** — the CLI logs
+  some errors with the entire API response inlined, so one line can run to
+  hundreds of kilobytes and a retry loop repeats it. `codex-review.sh` bounds
+  each **stderr** line to `CODEX_REVIEW_MAX_STDERR_BYTES` (default 1024) and
+  marks what it cut; stdout, where the verdict is, is never filtered. Set the
+  variable to `0` to capture a payload in full when debugging the CLI itself.
+  A recurring dump usually means the CLI is older than the API it is talking
+  to — compare `codex --version` against the version your devcontainer image
+  ships, and rebuild or pull a newer image if it lags.
