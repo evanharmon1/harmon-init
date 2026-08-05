@@ -111,7 +111,10 @@ fi
 # environment gitconfig (.devcontainer/config/gitconfig) — static config
 # belongs in the image layer, not in runtime writes.
 
-echo "Git user: $(git config --global user.name)"
+# Effective read, not --global: the scoped read surface skips the XDG file
+# once ~/.gitconfig exists, so it would print empty exactly when identity
+# lives in the environment layer.
+echo "Git user: $(git config user.name)"
 echo "GitHub auth status:"
 gh auth status || true
 
