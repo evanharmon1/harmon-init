@@ -39,10 +39,12 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   releases the claim markers a session left on an issue. It holds `issues: write`
   and parses attacker-writable comment bodies, so it always checks out the
   **default branch** and never a PR head. It only wires events to
-  `release-claim.sh` in the vendored `track-work` skill, which is why the
-  template gates it on `claim_release_available` (skills sync on **and** the
-  `universal` category vendored) — a repo that will never have that script gets
-  no workflow rather than two permanent no-ops.
+  `release-claim.sh` in the vendored `track-work` skill, and no-ops with a
+  notice when that script is absent. The template gates it on
+  `claim_release_available` — `use_skills_sync` alone, deliberately **not** on
+  the `universal` category that carries the script, because categories are
+  edited in `.skills-sync.yaml` without updating any copier answer and a
+  narrower gate would never re-render for a repo that added them (#622).
 - `release.yml` — release-please maintains the rolling release PR.
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 - `sync-harmon-devkit.yml` — **root-only**: turns a published harmon-devkit

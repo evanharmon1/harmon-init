@@ -19,13 +19,14 @@ run-name: releasing claim markers after a close event
 # markers. Editing that script here is pointless — `task sync:skills`
 # overwrites it. Change it in harmon-devkit and bump the pin.
 #
-# Two different "no script on disk" cases, handled in two different places.
-# TRANSIENT — scaffolded but `task sync:skills` not run yet: the run: guard
-# below exits 0, because the skill that WRITES claims is the same one that is
-# missing, so there is provably nothing to release. PERMANENT — the repo does
-# not vendor the `universal` category at all: the script is never arriving, so
-# the copier gate (`claim_release_available`) does not render this file, rather
-# than shipping two jobs that fire on every close forever and always no-op.
+# "No script on disk" is handled at RUNTIME, by the run: guard below, not by
+# narrowing the copier gate that renders this file. The gate asks only whether
+# the repo vendors skills at all; which categories it vendors is editable after
+# scaffolding without updating any copier answer, so a gate that tested for the
+# `universal` category would stay false forever in a repo that added it the
+# documented way — leaving the claim skills writing markers with nothing to
+# release them. The guard makes the looser gate safe: no script AND no claim
+# skill means nothing was ever claimed, so it exits 0.
 #
 # Security: this workflow holds a write-capable token and reads
 # attacker-writable comment bodies, so it always checks out and runs

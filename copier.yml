@@ -389,16 +389,28 @@ ci_runs_on_default:
 # an agent session left on an issue once a close event says the work is done.
 # Computed rather than asked, because the answer is a CAPABILITY and not a
 # preference: the workflow only wires events to release-claim.sh, which ships
-# inside the vendored track-work skill. Without the skills sync AND the
-# `universal` category, that script is not on disk and the workflow would be a
-# red job on every close instead of a benign no-op — so there is nothing for a
-# question to offer. A repo that later vendors `universal` picks the workflow
-# up on its next `copier update`. Deliberately NOT tied to project_management:
-# the claim comment is written whether or not a board exists, and needs its
-# release comment either way.
+# inside the vendored skills, so a repo with no skills sync has nothing for a
+# question to offer. Deliberately NOT tied to project_management: the claim
+# comment is written whether or not a board exists, and needs its release
+# comment either way.
+#
+# Gates on `use_skills_sync` ALONE, deliberately not on `'universal' in
+# skill_categories`, even though `universal` is the category that carries the
+# script. Categories are editable after scaffolding — `copier.yml:155` and the
+# generated `.skills-sync.yaml` header both say so — and that edit does NOT
+# update the recorded answer. A narrower gate would therefore stay false
+# forever for a repo that adds `universal` the documented way: the claim skills
+# would be vendored and writing `Claiming —` markers while the workflow that
+# releases them was never rendered, stranding claims exactly as this workflow
+# exists to prevent. The runtime guard inside the workflow makes the looser
+# gate safe — with no script AND no claim skill on disk it exits 0 with a
+# notice — so the cost is two no-op jobs per close event in a repo that keeps
+# the skills sync but drops `universal`, and the benefit is that adding the
+# category later just works, with no `copier update` needed at all. See #622
+# for the general form of this coupling.
 claim_release_available:
   type: bool
-  default: "[[ use_skills_sync and 'universal' in skill_categories ]]"
+  default: "[[ use_skills_sync ]]"
   when: false
 
 use_node:
