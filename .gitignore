@@ -45,6 +45,14 @@ node_modules/
 # Taskfile fingerprint cache
 .task/
 
+# Python bytecode. Trees that ran foreman v1 (pre-#584) still carry an orphaned
+# scripts/foreman/__pycache__ that was never tracked, so a checkout that predates
+# it is dirty before anyone edits anything. More generally, copier's dirty-tree
+# wip commit stages with `git add -A`, so any unignored bytecode would be swept
+# into every local render.
+__pycache__/
+*.pyc
+
 # Git worktrees
 .worktrees/
 
