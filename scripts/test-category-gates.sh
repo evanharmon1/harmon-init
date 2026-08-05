@@ -52,32 +52,77 @@ done < <(find template -name "*${ANSWER}*" -print 2>/dev/null || true)
 
 # ── 2. Jinja conditionals under template/ ───────────────────────────────────
 # `[% if %]` / `[% elif %]` decide whether a BLOCK renders — same staleness, at
-# a finer grain. `[% for %]` is deliberately absent from this pattern: iterating
-# the answer to seed a file is the legitimate use.
+# a finer grain. `[% for %]` is deliberately NOT matched: iterating the answer
+# to seed a file is the legitimate use.
 #
-# No grep -P (BSD grep lacks it). `[%` needs no escaping inside a bracket
-# expression, and the delimiters are copier's, set by _envops in copier.yml.
-while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    echo "FAIL: ${hit}" >&2
-    fail=1
-done < <(grep -rnE "\[%-? *(el)?if [^%]*${ANSWER}" template 2>/dev/null || true)
+# Jinja statements may WRAP, and a line-based grep reads a wrapped one as two
+# lines that each look harmless — verified: a conditional split after
+# `[% if use_skills_sync` passed a line-based version of this check. So join
+# each statement into one logical line first, carrying its starting line number,
+# and match against that. Statements are delimited by copier's `[%`/`%]`
+# (_envops in copier.yml), so depth is just the running count of openers minus
+# closers.
+#
+# No grep -P (BSD grep lacks it); awk string-form separators for the same
+# portability reason.
+flatten_jinja() {
+    awk '
+        function cnt(s, pat,   a) { return split(s, a, pat) - 1 }
+        {
+            if (buf == "") { buf = $0; start = NR } else { buf = buf " " $0 }
+            if (cnt(buf, "\\[%") > cnt(buf, "%\\]")) next
+            print FILENAME ":" start ":" buf
+            buf = ""
+        }
+        END { if (buf != "") print FILENAME ":" start ":" buf }
+    ' "$1"
+}
+
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    while IFS= read -r hit; do
+        [ -n "$hit" ] || continue
+        echo "FAIL: ${hit}" >&2
+        fail=1
+    done < <(flatten_jinja "$file" | grep -E "\[%-? *(el)?if [^%]*${ANSWER}" || true)
+done < <(find template -type f -print 2>/dev/null || true)
 
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
 # A `default:` derives one answer from another, and a `when:` decides whether a
 # question is asked; either one reading `skill_categories` inherits its
 # staleness and hands it to whatever the derived answer gates.
 #
-# The question's OWN block is not an exception that needs allowlisting: its
-# `default:` seeds from `project_type` and its `when:` reads `use_skills_sync`,
-# so neither line mentions `skill_categories`. If that ever changes, this guard
-# firing on it is correct — a self-referential default is its own bug.
+# Parsed with yq rather than grepped, because a folded scalar hides the answer
+# from any line-based match — also verified: a `default: >-` wrapping before
+# `and 'universal' in skill_categories` passed a grepped version of this check,
+# while yq reports the joined value exactly. yq is already a hard dependency
+# (Brewfile, and build.yml installs it), so requiring it here adds nothing; a
+# MISSING yq is a hard failure rather than a skip, since a guard that silently
+# stops guarding is worse than no guard.
+#
+# The question's OWN block needs no allowlist entry: its `default:` seeds from
+# `project_type` and its `when:` reads `use_skills_sync`, so neither value
+# mentions `skill_categories`. If that ever changes, firing on it is correct —
+# a self-referential default is its own bug.
+if ! command -v yq >/dev/null 2>&1; then
+    echo "FAIL: yq is required to inspect copier.yml answers (brew bundle / see Brewfile)" >&2
+    exit 1
+fi
 while IFS= read -r hit; do
     [ -n "$hit" ] || continue
-    echo "FAIL: copier.yml:${hit}" >&2
+    echo "FAIL: copier.yml: ${hit}" >&2
     echo "      a computed answer gated on ${ANSWER} inherits its staleness" >&2
     fail=1
-done < <(grep -nE "^[[:space:]]*(default|when):.*${ANSWER}" copier.yml 2>/dev/null || true)
+done < <(yq -r "
+    to_entries
+    | map(select(.value | type == \"!!map\"))
+    | map(select(
+        ((.value.default // \"\") | tostring | contains(\"${ANSWER}\"))
+        or ((.value.when // \"\") | tostring | contains(\"${ANSWER}\"))
+      ))
+    | .[]
+    | .key + \": \" + ((.value.default // .value.when) | tostring)
+" copier.yml 2>/dev/null || true)
 
 if [ "$fail" -ne 0 ]; then
     cat >&2 <<'MSG'
