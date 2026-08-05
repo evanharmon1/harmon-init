@@ -125,8 +125,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
       release-please tags via that App, and bypass-actor App IDs are
       per-installation so the JSON cannot ship them. (Immutability keeps an
       empty bypass list on purpose: a moved `v*` tag is code execution in
-      every consumer, so nobody bypasses it.) Create the standing probe tag
-      (`git tag v0.0.0-probe && git push origin v0.0.0-probe`) — preflight
+      every consumer, so nobody bypasses it.) Create the standing probe tag on
+      an **orphan commit**, so it is reachable from no branch:
+      `git tag v0.0.0-probe "$(git commit-tree "$(git hash-object -t tree /dev/null)" -m 'foreman tag-immutability probe target (orphan; keep unreachable from any branch)')" && git push origin v0.0.0-probe`.
+      Do not tag `HEAD` or any commit on `main`: `git describe` considers only
+      tags reachable from `HEAD` and prefers the nearest, so a probe tag on a
+      release commit outranks the release tag, and everything deriving a
+      version from `git describe` — release tooling, image tags, package
+      builds — then reports `0.0.0-probe` instead of the release. The probe
+      only needs the remote tag's sha to differ from `main`'s, so an orphan
+      target satisfies it permanently. Preflight
       empirically asserts `v*` tags are immutable and fails until both
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert

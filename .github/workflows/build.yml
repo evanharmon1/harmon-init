@@ -34,6 +34,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history + tags so `test:tag-hygiene` below is a real assertion.
+          # The default shallow, tagless checkout leaves `git describe` with
+          # nothing to select, which would make that guard vacuous here — and a
+          # poisoned tag on origin is precisely what CI should name outright
+          # rather than surfacing as seven opaque template-test failures.
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           lint-tools: "true"
@@ -49,6 +55,9 @@ jobs:
       - run: task test:sync-devkit-release
       - run: task test:devcontainer:image:automation
       - run: task test:skills-pin-parity
+      # Meaningful only because this job checks out with fetch-depth: 0 above.
+      - name: Tag hygiene (no non-release tag where git describe would select it)
+        run: task test:tag-hygiene
       - name: Template independence (no harmon-dotfiles/chezmoi in shipped output)
         run: task test:template-independence
       - name: Dogfood parity (verbatim template files match their root twins)

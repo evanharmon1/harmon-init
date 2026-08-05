@@ -86,6 +86,7 @@ tasks:
       - task: test:sync-devkit-release
       - task: test:devcontainer:image:automation
       - task: test:skills-pin-parity
+      - task: test:tag-hygiene
       - task: test:dogfood-parity
       - task: test:dogfood-structure
       - task: test:starship-glyphs
@@ -381,6 +382,14 @@ tasks:
     desc: "Guard: the root and template skills-sync manifests pin the same harmon-devkit tag"
     cmds:
       - ./scripts/sync-devkit-release.sh pinned
+
+  # Root-only on purpose: only a repo that copier-renders ITSELF derives a
+  # template version from `git describe`, so only this repo can be broken by a
+  # non-release tag on the commit git describe selects (issue #598).
+  test:tag-hygiene:
+    desc: "Guard: no non-release tag sits where git describe would select it"
+    cmds:
+      - ./scripts/test-tag-hygiene.sh
 
   # ── Dogfood drift (root layer vs template/) ───────────────────
   # Three checks, in increasing looseness. The root layer is template/ rendered
