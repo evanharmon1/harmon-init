@@ -35,6 +35,14 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 - `publish-harmon-devcontainer.yml` — **root-only**: validates and publishes the
   shared amd64/arm64 toolchain image, then maintains its reviewed pin PR.
+- `claim-release.yml` — on `issues closed` and on `pull_request closed` **unmerged**,
+  releases the claim markers a session left on an issue. It holds `issues: write`
+  and parses attacker-writable comment bodies, so it always checks out the
+  **default branch** and never a PR head. It only wires events to
+  `release-claim.sh` in the vendored `track-work` skill, which is why the
+  template gates it on `claim_release_available` (skills sync on **and** the
+  `universal` category vendored) — a repo that will never have that script gets
+  no workflow rather than two permanent no-ops.
 - `release.yml` — release-please maintains the rolling release PR.
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 - `sync-harmon-devkit.yml` — **root-only**: turns a published harmon-devkit
