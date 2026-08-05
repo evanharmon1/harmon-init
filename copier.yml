@@ -183,7 +183,7 @@ use_shared_agents:
 
 use_foreman:
   type: bool
-  help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv, read access to that repo, and operator setup: bot identity, arming labels, rulesets)?"
+  help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv and operator setup: bot identity, arming labels, rulesets)?"
   default: no
 
 use_codeql:
