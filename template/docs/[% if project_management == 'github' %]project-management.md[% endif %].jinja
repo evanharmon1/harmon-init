@@ -450,14 +450,32 @@ approved, and never `Done`, which belongs to whoever merges. On org repos
 `project-automation.yml` already syncs `Status` from PR and CI events; anything
 writing the card should defer to it there rather than racing it.
 
+[% if claim_release_available %]
+**A session cannot be relied on to release it.** The release is owed after the
+merge, and no session is guaranteed to witness that: `/shepherd` stops before
+the merge on policy, so the session that claimed the issue is usually over by
+the time a human merges. `.github/workflows/claim-release.yml` is the release —
+on `issues closed` (by any means) and on `pull_request closed` **unmerged**, it
+undoes what the claim record says the claim added and posts the `Claim
+released —` supersede comment. It needs no secret beyond `GITHUB_TOKEN`.
+
+That workflow runs `release-claim.sh` out of the vendored `track-work` skill,
+so it does nothing until you have run `task sync:skills` — which is also when
+the skills that *write* claims arrive, so the two are never out of step. The
+contract it parses, and the gaps it deliberately does not cover (a merged PR
+with no closing keyword, an unmerged fork PR), are in
+`.claude/skills/track-work/references/claim-lifecycle.md`.
+
+[% endif %]
 > **Whether this is automatic depends on the skills you have vendored.**
 > Writing and releasing these markers is implemented by harmon-devkit's
-> `preflight` / `shepherd` / `close` skills; older releases only assign the
-> issue. Check yours rather than assuming — the pin moves on its own schedule,
-> via the automated devkit-release sync:
+> `claim` / `shepherd` / `wrap` skills; older releases only assign the issue,
+> and the three were named `preflight` / `shepherd` / `close` before
+> harmon-devkit v0.21.0. Check yours rather than assuming — the pin moves on
+> its own schedule, via the automated devkit-release sync:
 >
 > ```sh
-> grep -l 'agent:claude-code' .claude/skills/preflight/SKILL.md
+> grep -rl 'agent:claude-code' .claude/skills/claim/ .claude/skills/wrap/
 > ```
 >
 > A match means claiming is automated end to end. No match means the `agent:`

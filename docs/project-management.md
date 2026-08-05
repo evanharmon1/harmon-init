@@ -385,14 +385,28 @@ follows the pipeline honestly — `In Progress` at claim, `Verifying` while CI
 runs, `In Review` awaiting a human, `Ready to Merge` only once actually
 approved, and never `Done`, which belongs to whoever merges.
 
+**A session cannot be relied on to release it.** The release is owed after the
+merge, and no session is guaranteed to witness that: `/shepherd` stops before
+the merge on policy, so the session that claimed the issue is usually over by
+the time a human merges. `.github/workflows/claim-release.yml` is the release —
+on `issues closed` (by any means) and on `pull_request closed` **unmerged**, it
+undoes what the claim record says the claim added and posts the `Claim
+released —` supersede comment. It needs no secret beyond `GITHUB_TOKEN`.
+
+The contract it parses — and the accepted gaps, including the merged-PR and
+fork-PR cases it deliberately does not cover — is
+[`claim-lifecycle.md`](../.claude/skills/track-work/references/claim-lifecycle.md)
+in the vendored `track-work` skill.
+
 > **Whether this is automatic depends on the skills vendored here.** Writing
-> and releasing these markers is implemented by harmon-devkit's `preflight` /
-> `shepherd` / `close` skills; older releases only assign the issue. The pin
-> moves on its own schedule via `sync-harmon-devkit.yml`, so check rather than
-> assume:
+> and releasing these markers is implemented by harmon-devkit's `claim` /
+> `shepherd` / `wrap` skills; older releases only assign the issue, and the
+> three were named `preflight` / `shepherd` / `close` before harmon-devkit
+> v0.21.0. The pin moves on its own schedule via `sync-harmon-devkit.yml`, so
+> check rather than assume:
 >
 > ```sh
-> grep -l 'agent:claude-code' .claude/skills/preflight/SKILL.md
+> grep -rl 'agent:claude-code' .claude/skills/claim/ .claude/skills/wrap/
 > ```
 >
 > A match means claiming is automated end to end. No match means the `agent:`
