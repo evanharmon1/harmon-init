@@ -51,10 +51,20 @@ fi
 # Per-line ceiling for the CLI's stderr (see bound_stderr_lines at the bottom).
 # Validated here rather than at the point of use so a typo fails before the
 # git work and the review, not after them. 0 disables the bound.
+#
+# The 18-digit ceiling is about what `test -eq` can compare, not a view on
+# useful line lengths: a value past INT64_MAX makes it fail with "integer
+# expression expected" on stderr — leaking a confusing line into the stream
+# this whole change exists to keep clean — and then fall through to an
+# effectively unbounded run. 18 digits is the widest that always fits.
 MAX_STDERR_BYTES="${CODEX_REVIEW_MAX_STDERR_BYTES:-1024}"
 case "$MAX_STDERR_BYTES" in
 '' | *[!0-9]*)
     echo "CODEX_REVIEW_MAX_STDERR_BYTES must be a non-negative integer (got: '${MAX_STDERR_BYTES}')" >&2
+    exit 2
+    ;;
+[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*)
+    echo "CODEX_REVIEW_MAX_STDERR_BYTES is implausibly large (got: '${MAX_STDERR_BYTES}'); use 0 to disable the bound" >&2
     exit 2
     ;;
 esac

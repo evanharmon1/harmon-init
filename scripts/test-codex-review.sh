@@ -497,6 +497,21 @@ if out="$(CODEX_REVIEW_MAX_STDERR_BYTES=abc ./scripts/codex-review.sh review --u
 fi
 echo "$out" | grep -q "STUB-ARGS" && fail "codex invoked despite an invalid bound: $out"
 echo "$out" | grep -q "must be a non-negative integer" || fail "missing validation message: $out"
+
+echo "==> a bound past INT64_MAX is refused rather than leaking a shell error"
+# All-digit but too wide for `test -eq`, which fails with "integer expression
+# expected" ON STDERR and then runs effectively unbounded — a shell error in
+# the very stream this change exists to keep clean.
+if out="$(CODEX_REVIEW_MAX_STDERR_BYTES=999999999999999999999 ./scripts/codex-review.sh review --uncommitted 2>&1)"; then
+    fail "an INT64_MAX-exceeding bound was accepted: $out"
+fi
+echo "$out" | grep -q "integer expression expected" && fail "shell arithmetic error leaked to the caller: $out"
+echo "$out" | grep -q "implausibly large" || fail "missing implausible-bound message: $out"
+# The widest value that still compares cleanly must keep working.
+CODEX_REVIEW_MAX_STDERR_BYTES=999999999999999999 STUB_BIG_STDERR=40000 \
+    ./scripts/codex-review.sh review --uncommitted >/dev/null 2>"$big_err" ||
+    fail "the widest safe bound was rejected: $(cat "$big_err")"
+grep -q "integer expression expected" "$big_err" && fail "shell arithmetic error at the 18-digit boundary: $(cat "$big_err")"
 rm -f bound.txt
 
 echo "==> gate: another repo's project-scoped plugin install is not accepted"
@@ -596,4 +611,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 echo "$out" | grep -q "non-interactive" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK (33 cases)"
+echo "codex-review + codex-gate guards OK (38 cases)"
