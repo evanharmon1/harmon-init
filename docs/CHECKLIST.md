@@ -119,13 +119,7 @@ this comment. -->
 - [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
       foreman hands to dispatched agents: export/store it as
       `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
-      inject it (1Password → devcontainer.env). Confirm the credential git
-      presents in the bot container can read `ponderousdev/foreman` — uvx
-      cannot fetch the pinned CLI without it, and a fine-grained PAT is bound
-      to ONE resource owner, so a token scoped to this repo's owner cannot
-      also reach it: until foreman is public this needs the bot to hold a
-      grant on that repo per foreman's operator docs
-      (docs/architecture/security.md there). Run `task setup:github-labels`
+      inject it (1Password → devcontainer.env). Run `task setup:github-labels`
       so the `foreman:*` arming labels exist. Import the two tag rulesets
       (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
       `… Immutability.json`, same UI import as the branch ruleset), then add
@@ -147,10 +141,7 @@ this comment. -->
       empirically asserts `v*` tags are immutable and fails until both
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
-      the security controls before any dispatch. Finally, while
-      `ponderousdev/foreman` is private, grant this repo's Renovate
-      installation read access to it (App grant or a `hostRules` token) —
-      without it the `FOREMAN_VERSION` bump PRs silently never appear.
+      the security controls before any dispatch.
 - [ ] **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
       first-party source is shell/config; foreman is a pinned external CLI), so
       Semgrep CE runs in `build.yml` at both visibilities. Generated supported
