@@ -40,6 +40,14 @@ cd "$(dirname "$0")/.."
 ANSWER='skill_categories'
 fail=0
 
+# A missing scan target means the checks below quietly examine nothing. Same
+# precedent as test-template-independence.sh, which fails on an absent target
+# rather than reporting the invariant held over an empty search.
+[ -d template ] || {
+    echo "FAIL: template/ is missing — nothing was scanned" >&2
+    exit 1
+}
+
 # ── 1. Filenames ────────────────────────────────────────────────────────────
 # A conditional in a PATH is the strongest form of the gate: copier skips a file
 # whose rendered name is empty, so the file simply never appears.
@@ -108,12 +116,15 @@ if ! command -v yq >/dev/null 2>&1; then
     echo "FAIL: yq is required to inspect copier.yml answers (brew bundle / see Brewfile)" >&2
     exit 1
 fi
-while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    echo "FAIL: copier.yml: ${hit}" >&2
-    echo "      a computed answer gated on ${ANSWER} inherits its staleness" >&2
-    fail=1
-done < <(yq -r "
+
+# A FAILED yq must not read as "no gates found". yq being present does not mean
+# it is the right yq — build.yml already warns that `pip install yq` is a
+# different tool (a jq wrapper) — and the wrong one exits non-zero on this
+# expression. Swallowing that with `|| true` would leave the whole
+# computed-answer check silently disabled while the guard printed OK, which is
+# the exact failure this guard exists to prevent, one level up. Capture first,
+# fail loudly, and only then iterate.
+if ! answer_gates="$(yq -r "
     to_entries
     | map(select(.value | type == \"!!map\"))
     | map(select(
@@ -122,7 +133,21 @@ done < <(yq -r "
       ))
     | .[]
     | .key + \": \" + ((.value.default // .value.when) | tostring)
-" copier.yml 2>/dev/null || true)
+" copier.yml 2>&1)"; then
+    echo "FAIL: yq could not parse copier.yml — the computed-answer check did NOT run" >&2
+    printf '      %s\n' "$answer_gates" >&2
+    echo "      needs mikefarah/yq; 'pip install yq' is a different tool (a jq wrapper)" >&2
+    exit 1
+fi
+
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    echo "FAIL: copier.yml: ${hit}" >&2
+    echo "      a computed answer gated on ${ANSWER} inherits its staleness" >&2
+    fail=1
+done <<EOF
+${answer_gates}
+EOF
 
 if [ "$fail" -ne 0 ]; then
     cat >&2 <<'MSG'
