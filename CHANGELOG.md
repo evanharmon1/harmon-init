@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.16.0](https://github.com/evanharmon1/harmon-init/compare/v4.15.2...v4.16.0) (2026-08-05)
+
+
+### Features
+
+* **template:** ship claim-release workflow so claims stop stranding ([#621](https://github.com/evanharmon1/harmon-init/issues/621)) ([570a1eb](https://github.com/evanharmon1/harmon-init/commit/570a1eb14f8701e14d68e59399c466c1b57d9741))
+
 ## [4.15.2](https://github.com/evanharmon1/harmon-init/compare/v4.15.1...v4.15.2) (2026-08-05)
 
 
