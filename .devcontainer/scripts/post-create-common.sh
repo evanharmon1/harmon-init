@@ -124,6 +124,7 @@ gh auth status || true
 echo "==> Fixing ownership of persistent volume dirs..."
 for dir in /home/vscode/.codex /home/vscode/.claude /home/vscode/.gemini \
     /home/vscode/.agent-deck /home/vscode/.shell-history \
+    /home/vscode/.config /home/vscode/.config/herdr \
     /home/vscode/.local /home/vscode/.local/share /home/vscode/.local/share/zoxide; do
     sudo mkdir -p "$dir"
     sudo chown vscode:vscode "$dir"
