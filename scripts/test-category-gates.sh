@@ -80,10 +80,15 @@ done < <(find template -name "*${ANSWER}*" -print 2>/dev/null || true)
 # evade. Same "intentional divergences are allowlisted, WITH REASONS" pattern
 # as scripts/audit-dogfood.sh and scripts/test-dogfood-structure.sh.
 #
-# Entries are `path|substring`, matched literally (grep -F) against the whole
-# line — never a regex, so a metacharacter in an entry cannot silently widen
-# it. Keep them narrow enough to be about the specific legitimate use: a
-# too-broad entry re-opens the hole this design closes.
+# Entries are `path|text`. The PATH is the COMPLETE repo-relative path and is
+# compared for equality — never a substring, because a substring exemption
+# leaks to any lookalike path: with suffix matching, a stray
+# `template/foo.skills-sync.yaml[% endif %].jinja` (or a `.bak` copy) inherited
+# the real file's exemption and could carry a gate. The TEXT is matched
+# literally and subtracted from the line (see `allowed` below), never treated
+# as a regex, so a metacharacter in an entry cannot silently widen it. Keep the
+# text narrow enough to be about the specific legitimate use: a too-broad entry
+# re-opens the hole this design closes.
 #
 #   .skills-sync.yaml…jinja|[% for cat in skill_categories %]
 #       Seeds the manifest's category list from the answer. This is the whole
@@ -95,9 +100,9 @@ done < <(find template -name "*${ANSWER}*" -print 2>/dev/null || true)
 #   CHECKLIST.md.jinja|from your `skill_categories` answer
 #       Consumer-facing prose explaining the answer.
 ALLOWLIST="
-.skills-sync.yaml[% endif %].jinja|[% for cat in skill_categories %]
-.skills-sync.yaml[% endif %].jinja|Categories came from the skill_categories
-docs/CHECKLIST.md.jinja|from your \`skill_categories\` answer
+template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|[% for cat in skill_categories %]
+template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|Categories came from the skill_categories
+template/docs/CHECKLIST.md.jinja|from your \`skill_categories\` answer
 "
 
 # allowed PATH LINE — true only when NOTHING on the line is unaccounted for.
@@ -116,10 +121,9 @@ allowed() {
         [ -n "$entry" ] || continue
         _a_path=${entry%%|*}
         _a_text=${entry#*|}
-        case "$1" in
-        *"$_a_path"*) ;;
-        *) continue ;;
-        esac
+        # EXACT path, not a substring: a suffix match let any lookalike path
+        # inherit this exemption.
+        [ "$1" = "$_a_path" ] || continue
         # Strip ONE occurrence. Quoting inside the expansion keeps the text
         # literal, so a glob character in an entry cannot widen the match.
         case "$_a_residue" in
