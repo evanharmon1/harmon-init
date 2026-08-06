@@ -10,7 +10,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-HELPER="$SCRIPT_DIR/sync-devkit-release.sh"
+# The helper is co-located. In the template source both files carry conditional
+# names ([% if … %]…[% endif %]); in a rendered repo they are plain
+# sync-devkit-release.sh. Resolve whichever is present.
+if [ -f "$SCRIPT_DIR/sync-devkit-release.sh" ]; then
+    HELPER="$SCRIPT_DIR/sync-devkit-release.sh"
+elif [ -f "$SCRIPT_DIR/[% if use_skills_sync %]sync-devkit-release.sh[% endif %]" ]; then
+    HELPER="$SCRIPT_DIR/[% if use_skills_sync %]sync-devkit-release.sh[% endif %]"
+else
+    echo "cannot find sync-devkit-release.sh" >&2
+    exit 1
+fi
 TEST_ROOT="$(mktemp -d)"
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
@@ -44,6 +54,8 @@ categories:
   - universal
 dest: .claude/skills
 YAML
+    mkdir -p .claude/skills
+    echo "scripts/_sync-devkit-release.sh" >.gitignore
 
     git add -A && git commit -m "initial" >/dev/null 2>&1
     git init --bare "$_bf_bare" >/dev/null 2>&1
@@ -96,26 +108,32 @@ SCRIPT
 }
 
 write_gh_stub() {
-    cat >"$BIN_DIR/gh" <<SCRIPT
+    cat >"$BIN_DIR/gh" <<'SCRIPT'
 #!/usr/bin/env bash
-echo "gh \$*" >>"$GH_LOG"
-case "\${1:-}--\${2:-}" in
-api--repos/*/releases/latest) echo '{"tag_name":"v0.9.0"}';;
+echo "gh $*" >>"$GH_LOG"
+# Emulate --jq output: the helper passes --jq <expr> which gh applies to the
+# JSON response. Reproduce the two expressions the helper actually uses.
+case "${1:-}--${2:-}" in
+api--repos/*/releases/latest)
+    # helper calls: --jq '.tag_name'
+    echo 'v0.9.0'
+    ;;
 api--repos/*/releases/tags/*)
-    _t="\${4#*/}"
-    case "\$_t" in
-    v0.8.0|v0.9.0|v0.10.0|v1.0.0|v2.0.0) echo "{\"tag_name\":\"\$_t\",\"draft\":false,\"prerelease\":false}";;
-    v9.9.9) echo "no published release"; exit 1;;
-    *) echo "{\"tag_name\":\"\$_t\",\"draft\":false,\"prerelease\":false}";;
+    _tag="${4#*/}"
+    case "$_tag" in
+    v0.8.0|v0.9.0|v0.10.0|v1.0.0|v2.0.0)
+        # helper calls: --jq '[.tag_name, (.draft|tostring), (.prerelease|tostring)] | join(" ")'
+        echo "$_tag false false"
+        ;;
+    v9.9.9) echo "no published release" >&2; exit 1;;
+    *) echo "$_tag false false" ;;
     esac
     ;;
 pr--list) echo '[]';;
 pr--create) echo "created";;
 pr--edit) echo "edited";;
 pr--view) echo '{"title":""}';;
-api--/users/*)
-    echo '{"id":12345}'
-    ;;
+api--/users/*) echo '{"id":12345}' ;;
 *) exit 0;;
 esac
 SCRIPT
@@ -166,21 +184,28 @@ assert_commit_title() {
     _act_dir="$1" _act_title="$2"
     _act_got="$(git -C "$_act_dir" log -1 --format=%s)"
     [ "$_act_got" = "$_act_title" ] || {
-        echo "expected commit '$act_title', got '$_act_got'" >&2
+        echo "expected commit '$_act_title', got '$_act_got'" >&2
         return 1
     }
 }
 
 # ── run_helper ────────────────────────────────────────────────────────
-# Runs the real helper from the fixture directory. Scrubs GH_TOKEN so a stale
-# env value cannot leak into the helper — the test stubs gh, so the token must
-# never reach git.
+# Copies the helper into the fixture's scripts/ directory and runs the copy
+# from the fixture root. Scrubs GH_TOKEN so a stale env value cannot leak
+# into the helper — the test stubs gh, so the token must never reach git.
+# The helper calls cd "$(dirname "$0")/.." to reach the repo root from its
+# scripts/ location; we replicate that layout so it resolves to the fixture.
 run_helper() {
-    (cd "$FIXTURE" && env -u GH_TOKEN -u GITHUB_TOKEN "$HELPER" "$@")
+    mkdir -p "$FIXTURE/scripts"
+    cp "$HELPER" "$FIXTURE/scripts/_sync-devkit-release.sh"
+    (cd "$FIXTURE" && PATH="$BIN_DIR:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/_sync-devkit-release.sh "$@")
 }
 
 run_helper_with_tag() {
-    (cd "$FIXTURE" && env -u GH_TOKEN -u GITHUB_TOKEN SYNC_DEVKIT_TAG="$1" "$HELPER" run)
+    mkdir -p "$FIXTURE/scripts"
+    cp "$HELPER" "$FIXTURE/scripts/_sync-devkit-release.sh"
+    git -C "$FIXTURE" add scripts/_sync-devkit-release.sh >/dev/null 2>&1 || true
+    (cd "$FIXTURE" && PATH="$BIN_DIR:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN SYNC_DEVKIT_TAG="$1" bash scripts/_sync-devkit-release.sh run)
 }
 
 # ── Tests ─────────────────────────────────────────────────────────────
@@ -419,12 +444,14 @@ test_bogus_app_slug_refused() {
 test_usage_exit() {
     note "no subcommand prints usage and exits 2"
     FIXTURE="$(build_fixture v0.1.0)"
-    run_helper 2>&1 | grep -q usage || {
-        echo "expected usage"
+    _rc=0
+    _out="$(run_helper 2>&1)" || _rc=$?
+    echo "$_out" | grep -q usage || {
+        echo "expected usage, got: $_out"
         return 1
     }
-    [ "${PIPESTATUS[0]}" -eq 2 ] || {
-        echo "expected exit 2"
+    [ "$_rc" -eq 2 ] || {
+        echo "expected exit 2, got $_rc"
         return 1
     }
 }

@@ -35,17 +35,32 @@ jobs:
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 30
     steps:
+      # Log a notice when the CI App is not configured, so the maintainer
+      # knows the workflow exists but is inert. The subsequent steps gate on
+      # the same variable, so this is purely informational.
+      - name: Log sync status
+        run: |
+          if [ -z "${CI_APP_CLIENT_ID:-}" ]; then
+            echo "CI_APP_CLIENT_ID is not set — sync-harmon-devkit is inert." \
+              "Set CI_APP_CLIENT_ID and CI_APP_PRIVATE_KEY (repo or org" \
+              "variables) to enable automated skills-sync PRs." \
+              "See docs/CHECKLIST.md."
+          fi
+        env:
+          CI_APP_CLIENT_ID: ${{ vars.CI_APP_CLIENT_ID || '' }}
       # CI GitHub App token, not GITHUB_TOKEN: a PR opened by GITHUB_TOKEN
       # never triggers CI, and branch protection requires those checks before
       # the sync PR can merge.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
+        if: vars.CI_APP_CLIENT_ID != ''
         with:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: vars.CI_APP_CLIENT_ID != ''
         with:
           ref: main
           fetch-depth: 0
@@ -53,12 +68,14 @@ jobs:
           # credential helper; GH_TOKEN is scrubbed from the task subprocesses.
           persist-credentials: false
       - uses: ./.github/actions/setup
+        if: vars.CI_APP_CLIENT_ID != ''
         with:
           # yq is required by scripts/sync-skills.sh (task sync:skills);
           # gitleaks backs the security:secrets pre-push gate in the helper.
           lint-tools: "true"
           gitleaks: "true"
       - name: Pin, vendor, verify, and open or update the sync PR
+        if: vars.CI_APP_CLIENT_ID != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
