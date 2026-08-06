@@ -195,7 +195,9 @@ herdr
 
 or let Herdr do the SSH itself — it wraps `ssh`, so it uses whatever host alias
 your SSH config defines (on Coder, `coder config-ssh` writes the
-`coder.<workspace>` aliases):
+`coder.<workspace>` aliases). This form runs a local Herdr thin client, so
+install Herdr on the machine you attach from first (`brew install herdr` on
+macOS, or the installer at [herdr.dev](https://herdr.dev/)):
 
 ```bash
 herdr --remote <container-ssh-host>

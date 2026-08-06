@@ -192,7 +192,9 @@ coder ssh <workspace>
 herdr
 ```
 
-or let Herdr do the SSH itself:
+or let Herdr do the SSH itself — this form runs a **local** Herdr thin client,
+so install Herdr on the laptop first (`brew install herdr`, or the installer
+at [herdr.dev](https://herdr.dev/)):
 
 ```bash
 herdr --remote coder.<workspace>

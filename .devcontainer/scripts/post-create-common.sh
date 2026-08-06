@@ -166,17 +166,19 @@ if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
     ln -sfn "/home/vscode/.persistent/zoxide" "$HOME/.local/share/zoxide"
     mkdir -p "/home/vscode/.persistent/herdr" "$HOME/.config"
     # Unlike the agent dirs above, ~/.config/herdr can hold the only copy of
-    # session snapshots — never delete the source unless the copy succeeded.
+    # session snapshots — never delete the source unless the copy succeeded,
+    # and fail the lifecycle rather than continue unpersisted: a
+    # warn-and-continue would let Herdr write snapshots the next rebuild
+    # silently discards.
     if [ -d "$HOME/.config/herdr" ] && [ ! -L "$HOME/.config/herdr" ]; then
-        if cp -a "$HOME/.config/herdr/." "/home/vscode/.persistent/herdr/"; then
-            rm -rf "${HOME:?}/.config/herdr"
-        else
-            echo "WARN: Herdr state migration failed; leaving ~/.config/herdr in place (unpersisted)" >&2
+        if ! cp -a "$HOME/.config/herdr/." "/home/vscode/.persistent/herdr/"; then
+            echo "ERROR: Herdr state migration to ~/.persistent failed;" \
+                "fix the persistent volume and rebuild" >&2
+            exit 1
         fi
+        rm -rf "${HOME:?}/.config/herdr"
     fi
-    if [ ! -e "$HOME/.config/herdr" ] || [ -L "$HOME/.config/herdr" ]; then
-        ln -sfn "/home/vscode/.persistent/herdr" "$HOME/.config/herdr"
-    fi
+    ln -sfn "/home/vscode/.persistent/herdr" "$HOME/.config/herdr"
 fi
 
 # --- Agent-Deck config seeding ---
