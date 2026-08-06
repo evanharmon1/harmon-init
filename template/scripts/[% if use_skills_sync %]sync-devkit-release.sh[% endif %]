@@ -582,9 +582,20 @@ cmd_run() {
         [ -f "$_run_aprov" ] && [ "$(prov_ref "$_run_aprov")" = "$_run_target" ] || _run_agents_current=0
     fi
 
+    # A matching provenance stamp alone is not enough to take the no-op path:
+    # a managed skill directory could have been deleted or emptied since the
+    # last sync. Verify that the skills dest exists and is non-empty; if it
+    # has been damaged, proceed with the sync so the idempotent re-vendor
+    # repairs it.
+    _run_skills_intact=1
+    if [ ! -d "$_run_dest" ] || [ -z "$(ls -A "$_run_dest" 2>/dev/null)" ]; then
+        _run_skills_intact=0
+    fi
+
     if [ "$_run_current" = "$_run_target" ] &&
         [ "$(prov_ref "$_run_prov")" = "$_run_target" ] &&
-        [ "$_run_agents_current" -eq 1 ]; then
+        [ "$_run_agents_current" -eq 1 ] &&
+        [ "$_run_skills_intact" -eq 1 ]; then
         note "already pinned and vendored at $_run_target — nothing to do"
         return 0
     fi
