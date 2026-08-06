@@ -134,6 +134,54 @@ it points here.
   `docs/guides/` (build it) · `docs/runbooks/` (operate it). Folder landing
   pages are `README.md`.
 
+## Template authoring
+
+Root-only — these rules govern files under `template/`, which no generated repo
+has.
+
+- **Never gate a template file on `skill_categories`.** Not a filename
+  condition, not a `[% if %]`, not a computed answer's `default:`/`when:`.
+  `task test:category-gates` enforces this (`scripts/test-category-gates.sh`,
+  in both `verify` and the CI lint job).
+
+  The guard works by **allowlist**: every occurrence of the answer under
+  `template/` fails unless it is listed in the script with a reason (today,
+  three — the `.skills-sync.yaml` seed loop and two prose mentions). So adding
+  a legitimate new mention costs one allowlist line, and that line is the point
+  — it forces the "is this a gate or a seed?" question at review time. An
+  earlier revision enumerated the *banned* forms instead and was evaded three
+  times in three review rounds by ordinary Jinja (a wrapped conditional,
+  `[%+ if`, `[% if(...)`); a denylist over an open-ended grammar can only be as
+  complete as the last author's imagination, and it reports success over
+  everything it failed to imagine.
+
+  The answer is recorded once at scaffold time, but the documented way to change
+  categories afterwards is to edit `.skills-sync.yaml` — said by the question's
+  own help text and by the generated manifest's header. That edit never updates
+  the answer, and `copier update` applies the **template's** diff rather than
+  overwriting, so the consumer's manifest edit survives while the answer stays
+  stale permanently. The manifest is what `task sync:skills` reads, so the
+  skills vendor correctly; only a file gated on the answer breaks — silently,
+  and on every future update, in exactly the repos it was meant to serve.
+
+  **Instead:** gate on `use_skills_sync` (whether the repo vendors skills at
+  all — an answer that cannot drift) and have the shipped file check for the
+  asset it needs at **runtime**.
+  [`claim-release.yml`](../.github/workflows/claim-release.yml) is the worked
+  example: it renders whenever the skills sync is on, and its `run:` guard exits
+  0 with a notice when `release-claim.sh` is absent. Iterating the answer to
+  *seed* a file — how `.skills-sync.yaml` gets its category list — stays
+  correct; it is the conditional use that rots.
+
+  Written after `claim_release_available` shipped as
+  `use_skills_sync and 'universal' in skill_categories` and was caught in
+  review ([#622](https://github.com/evanharmon1/harmon-init/issues/622) carries
+  the analysis and the options weighed).
+
+- The same shape of question is worth asking of **any** answer a consumer is
+  told to edit elsewhere: if the file is the source of truth, the answer is a
+  seed, and gating on a seed is a bug that only appears months later.
+
 ## Releases
 
 - Releases are intentional via **release-please**: merge the rolling release PR
@@ -144,7 +192,7 @@ it points here.
   Fixes** (patch), `feat!` / `BREAKING CHANGE:` → major. The rest (`build`,
   `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`) don't cut
   a release on their own — they ride along in the next one.
-- **On a squash-merge repo the PR title _is_ the release type.** GitHub sets the
+- **On a squash-merge repo the PR title *is* the release type.** GitHub sets the
   squash commit subject from the PR title for a multi-commit PR, and release-please
   reads only that subject — the individual `fix:`/`feat:` commits inside the PR are
   invisible in the squashed body. So a PR whose title is `chore:`/`docs:` merges
