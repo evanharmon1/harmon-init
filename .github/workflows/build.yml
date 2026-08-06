@@ -60,6 +60,13 @@ jobs:
         run: task test:tag-hygiene
       - name: Template independence (no harmon-dotfiles/chezmoi in shipped output)
         run: task test:template-independence
+      # Root-only, like the independence guard above: a generated repo has no
+      # template/ to scan, so this has no twin in build.yml.jinja. It must be
+      # listed HERE and not only in `verify` — this job enumerates its steps by
+      # hand, so a check added to `verify` alone never runs in CI and the
+      # invariant regresses under a green aggregate check (#614, same drift).
+      - name: Category gates (no template file gated on skill_categories)
+        run: task test:category-gates
       - name: Dogfood parity (verbatim template files match their root twins)
         run: task test:dogfood-parity
       # The structure check renders template/, so it needs copier. Installed
