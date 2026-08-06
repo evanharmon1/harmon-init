@@ -100,8 +100,18 @@ ALLOWLIST="
 docs/CHECKLIST.md.jinja|from your \`skill_categories\` answer
 "
 
+# allowed PATH LINE — true only when NOTHING on the line is unaccounted for.
+#
+# It works by SUBTRACTION, not by matching. Each applicable entry removes one
+# occurrence of its approved text from a working copy of the line; the line is
+# allowed only if no `skill_categories` survives that. An earlier version
+# returned true on the first entry that matched anywhere in the line, which
+# accepted the whole line on the strength of its approved part — appending
+# `[[ 'bad' if 'universal' in skill_categories else 'ok' ]]` to the allowlisted
+# header passed the guard. Approving the prose on a line must not approve
+# whatever else shares that line.
 allowed() {
-    # $1 = path, $2 = the matched line. Literal comparisons throughout.
+    _a_residue=$2
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         _a_path=${entry%%|*}
@@ -110,13 +120,21 @@ allowed() {
         *"$_a_path"*) ;;
         *) continue ;;
         esac
-        case "$2" in
-        *"$_a_text"*) return 0 ;;
+        # Strip ONE occurrence. Quoting inside the expansion keeps the text
+        # literal, so a glob character in an entry cannot widen the match.
+        case "$_a_residue" in
+        *"$_a_text"*)
+            _a_residue="${_a_residue%%"$_a_text"*}${_a_residue#*"$_a_text"}"
+            ;;
         esac
     done <<EOF
 ${ALLOWLIST}
 EOF
-    return 1
+    # Anything left is unapproved.
+    case "$_a_residue" in
+    *"$ANSWER"*) return 1 ;;
+    esac
+    return 0
 }
 
 while IFS= read -r hit; do
