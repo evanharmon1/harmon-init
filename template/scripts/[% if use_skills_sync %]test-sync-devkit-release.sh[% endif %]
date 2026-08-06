@@ -119,7 +119,7 @@ api--repos/*/releases/latest)
     echo 'v0.9.0'
     ;;
 api--repos/*/releases/tags/*)
-    _tag="${4#*/}"
+    _tag="${2##*/}"
     case "$_tag" in
     v0.8.0|v0.9.0|v0.10.0|v1.0.0|v2.0.0)
         # helper calls: --jq '[.tag_name, (.draft|tostring), (.prerelease|tostring)] | join(" ")'
@@ -306,6 +306,7 @@ test_noop_when_current() {
     echo "# categories: universal" >>"$FIXTURE/.claude/skills/.SKILLS_PROVENANCE"
     echo "# managed: universal" >>"$FIXTURE/.claude/skills/.SKILLS_PROVENANCE"
     mkdir -p "$FIXTURE/.claude/skills/universal"
+    git -C "$FIXTURE" add .claude/skills/.SKILLS_PROVENANCE .claude/skills/universal >/dev/null 2>&1 || true
     run_helper_with_tag v0.1.0
     # Should be no-op — task sync:skills was never called
     ! grep -q "task sync:skills" "$TASK_LOG" 2>/dev/null || {
