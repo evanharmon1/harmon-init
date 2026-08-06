@@ -171,6 +171,48 @@ a `TERM=… docker exec` prefix changes only the client's environment. Ask for t
 terminal you want with `-e`:
 `docker exec -e TERM=xterm-256color -it <container> bash`.
 
+## Persistent agent sessions (Herdr)
+
+**Herdr** is the agent-session runtime in both profiles: it owns the panes your
+coding agents run in and tracks each one's state (working / blocked / idle) so
+you can see at a glance which agent is waiting on you. `zellij` and `tmux` are
+still installed and still the right tool for general terminal multiplexing —
+Herdr is not a replacement for them, it is the layer that knows what an *agent*
+pane is doing.
+
+The server **auto-starts on the first `herdr` invocation**. There is no `herdr
+server start` subcommand to run first, and looking for one is the usual way to
+waste ten minutes; to check whether a server is already live, run `herdr
+status`.
+
+To attach from a laptop, either SSH in and run it there:
+
+```bash
+coder ssh <workspace>
+herdr
+```
+
+or let Herdr do the SSH itself:
+
+```bash
+herdr --remote coder.<workspace>
+```
+
+`coder config-ssh` is what writes those `coder.<workspace>` host aliases into
+your SSH config, so run it once before the `--remote` form.
+
+`~/.config/herdr` is a **named volume** (`herdr-config-…`, per profile), so
+Herdr's own state survives a rebuild: with snapshot restore and
+`resume_agents_on_restore` enabled, your agent panes come back after the
+container is rebuilt. The agent *conversations* persist separately, in the
+`~/.claude`, `~/.codex`, and `~/.gemini` volumes.
+
+The server socket deliberately does **not** live in that volume. The image sets
+`HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a socket left behind by a
+dead server cannot ride along in the persisted config directory into the next
+container. (Herdr derives the client socket from the same variable —
+`/tmp/herdr-client.sock`.)
+
 ## Secrets — 1Password Environments (the standard)
 
 Don't hand-write or copy `devcontainer.env`. The standard is **1Password

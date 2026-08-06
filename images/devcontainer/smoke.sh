@@ -26,7 +26,7 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
 fi
 
 for tool in task shfmt hadolint actionlint terraform-docs yq lefthook gitleaks sops act uv semgrep \
-    claude codex gemini agent-deck playwright playwright-cli zellij workmux aoe sesh dmux starship \
+    claude codex gemini agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
@@ -62,6 +62,7 @@ run_version playwright-cli playwright-cli --help
 run_version zellij zellij --version
 run_version aoe aoe --version
 run_version sesh sesh --version
+run_version herdr herdr --version
 run_version starship starship --version
 run_version dive dive --version
 run_version fx fx --version
