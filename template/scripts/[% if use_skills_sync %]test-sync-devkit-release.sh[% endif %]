@@ -129,11 +129,11 @@ api--repos/*/releases/tags/*)
     *) echo "$_tag false false" ;;
     esac
     ;;
-pr--list) echo '[]';;
+pr--list) echo '';;
 pr--create) echo "created";;
 pr--edit) echo "edited";;
 pr--view) echo '{"title":""}';;
-api--/users/*) echo '{"id":12345}' ;;
+api--/users/*) echo '12345' ;;
 *) exit 0;;
 esac
 SCRIPT
@@ -272,15 +272,15 @@ test_happy_path() {
     clear_logs
     write_gh_stub
     write_task_stub pass
-    run_helper_with_tag v0.9.0
-    assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml"
-    assert_task_logged "task sync:skills"
-    assert_task_logged "task verify:skills:offline"
-    assert_task_logged "task security:secrets"
-    assert_task_not_logged "task verify:skills"
-    assert_task_not_logged "task verify"
-    assert_gh_logged "gh pr create"
-    assert_commit_title "$FIXTURE" "fix: sync harmon-devkit skills to v0.9.0"
+    run_helper_with_tag v0.9.0 || return 1
+    assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml" || return 1
+    assert_task_logged "task sync:skills" || return 1
+    assert_task_logged "task verify:skills:offline" || return 1
+    assert_task_logged "task security:secrets" || return 1
+    assert_task_not_logged "task verify:skills" || return 1
+    assert_task_not_logged "task verify" || return 1
+    assert_gh_logged "gh pr create" || return 1
+    assert_commit_title "$FIXTURE" "fix: sync harmon-devkit skills to v0.9.0" || return 1
 }
 
 test_happy_path_with_agents() {
@@ -290,8 +290,8 @@ test_happy_path_with_agents() {
     clear_logs
     write_gh_stub
     write_task_stub pass
-    run_helper_with_tag v0.9.0
-    assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml"
+    run_helper_with_tag v0.9.0 || return 1
+    assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml" || return 1
 }
 
 test_noop_when_current() {
@@ -307,7 +307,9 @@ test_noop_when_current() {
     echo "# managed: universal" >>"$FIXTURE/.claude/skills/.SKILLS_PROVENANCE"
     mkdir -p "$FIXTURE/.claude/skills/universal"
     git -C "$FIXTURE" add .claude/skills/.SKILLS_PROVENANCE .claude/skills/universal >/dev/null 2>&1 || true
-    run_helper_with_tag v0.1.0
+    git -C "$FIXTURE" commit -m "add provenance" >/dev/null 2>&1
+    git -C "$FIXTURE" push origin main >/dev/null 2>&1
+    run_helper_with_tag v0.1.0 || return 1
     # Should be no-op — task sync:skills was never called
     ! grep -q "task sync:skills" "$TASK_LOG" 2>/dev/null || {
         echo "should not have called sync:skills"
@@ -359,8 +361,8 @@ test_downgrade_allowed_with_env() {
     clear_logs
     write_gh_stub
     write_task_stub pass
-    SYNC_DEVKIT_ALLOW_DOWNGRADE=true run_helper_with_tag v0.8.0
-    assert_pin v0.8.0 "$FIXTURE/.skills-sync.yaml"
+    SYNC_DEVKIT_ALLOW_DOWNGRADE=true run_helper_with_tag v0.8.0 || return 1
+    assert_pin v0.8.0 "$FIXTURE/.skills-sync.yaml" || return 1
 }
 
 test_failing_sync_never_pushes() {
@@ -410,7 +412,7 @@ test_token_never_reaches_task() {
     write_gh_stub
     write_task_stub pass
     export GH_TOKEN=fake-token
-    run_helper_with_tag v0.9.0
+    run_helper_with_tag v0.9.0 || return 1
     # The task stub logged its env — if GH_TOKEN leaked, it would be in the log
     # (the run_helper scrubs it from the helper's env; the helper scrubs it
     # from the task subprocess via run_untrusted)
@@ -422,7 +424,7 @@ test_app_slug_identity() {
     clear_logs
     write_gh_stub
     write_task_stub pass
-    GH_APP_SLUG=my-ci-app run_helper_with_tag v0.9.0
+    GH_APP_SLUG=my-ci-app run_helper_with_tag v0.9.0 || return 1
     _name="$(git -C "$FIXTURE" log -1 --format='%an')"
     [ "$_name" = "my-ci-app[bot]" ] || {
         echo "expected my-ci-app[bot], got $_name" >&2

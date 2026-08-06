@@ -549,15 +549,17 @@ EOF
 #
 # The token is deliberately not persisted into .git/config (the repo-wide
 # `persist-credentials: false` hardening — see docs/architecture/security.md).
-# `-c` config is scoped to this one git process and the helper reads the token
-# from the environment, so it lands in neither argv nor any file, and no other
-# process inherits it — the sync and verification subprocesses run with
-# GH_TOKEN scrubbed (see run_untrusted). The empty first helper clears any
+# `-c` config is scoped to this one git process; the token is expanded into the
+# credential helper value by the shell and scrubbed from the git subprocess
+# environment so hooks (which execute repository-controlled Taskfile targets)
+# cannot inherit it. The sync and verification subprocesses run with GH_TOKEN
+# scrubbed separately (see run_untrusted). The empty first helper clears any
 # inherited helper list so ours answers.
 git_remote() {
     if [ -n "${GH_TOKEN:-}" ]; then
         # shellcheck disable=SC2016 # $GH_TOKEN must expand inside git's helper, not here
-        git -c credential.helper= \
+        env -u GH_TOKEN -u GITHUB_TOKEN \
+            git -c credential.helper= \
             -c credential.helper='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' \
             "$@"
     else
@@ -657,7 +659,7 @@ cmd_run() {
         note "the sync produced no change — nothing to commit"
         return 0
     fi
-    git commit -m "$_run_title" >/dev/null
+    env -u GH_TOKEN -u GITHUB_TOKEN git commit -m "$_run_title" >/dev/null
 
     # The scheduled reconciliation fires while the sync PR is still open, and
     # the pins on the base branch stay stale until it merges — so every run
