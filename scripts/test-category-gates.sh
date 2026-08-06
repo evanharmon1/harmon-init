@@ -71,6 +71,14 @@ done < <(find template -name "*${ANSWER}*" -print 2>/dev/null || true)
 # (_envops in copier.yml), so depth is just the running count of openers minus
 # closers.
 #
+# BOTH whitespace-control modifiers are accepted after `[%`. Jinja allows `-`
+# (strip) and `+` (keep), and `+` is not decorative here: copier.yml sets
+# trim_blocks and lstrip_blocks, which is exactly when an author reaches for
+# `[%+` to preserve a newline. A pattern matching only `-` therefore missed an
+# ordinary block conditional — the guard's PRIMARY target — rather than an
+# exotic one. Whitespace after the modifier is [[:space:]] and not a literal
+# space, so a tab does not slip past either.
+#
 # No grep -P (BSD grep lacks it); awk string-form separators for the same
 # portability reason.
 flatten_jinja() {
@@ -92,7 +100,7 @@ while IFS= read -r file; do
         [ -n "$hit" ] || continue
         echo "FAIL: ${hit}" >&2
         fail=1
-    done < <(flatten_jinja "$file" | grep -E "\[%-? *(el)?if [^%]*${ANSWER}" || true)
+    done < <(flatten_jinja "$file" | grep -E "\[%[-+]?[[:space:]]*(el)?if[[:space:]][^%]*${ANSWER}" || true)
 done < <(find template -type f -print 2>/dev/null || true)
 
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
