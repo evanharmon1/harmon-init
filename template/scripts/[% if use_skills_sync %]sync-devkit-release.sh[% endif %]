@@ -513,18 +513,20 @@ EOF
 #
 # The token is deliberately not persisted into .git/config (the repo-wide
 # `persist-credentials: false` hardening — see docs/architecture/security.md).
-# `-c` config is scoped to this one git process and the credential helper string
-# is single-quoted so ${GH_TOKEN} expands inside git's subprocess shell — it
-# must stay in the environment for that expansion. The sync and verification
-# subprocesses run with GH_TOKEN scrubbed separately (see run_untrusted);
-# git commit is wrapped with env -u (line 622) because it does not need the
-# token and must not hand it to pre-commit hooks. The empty first helper clears
-# any inherited helper list so ours answers.
+# The token is expanded into the -c credential.helper value by the shell and
+# scrubbed from the git subprocess environment so hooks (which execute
+# repository-controlled Taskfile targets) cannot inherit it. GitHub App
+# installation tokens contain only [A-Za-z0-9_-], so double-quote expansion
+# is safe. The sync and verification subprocesses run with GH_TOKEN scrubbed
+# separately (see run_untrusted); git commit is also wrapped with env -u
+# (line 622). The empty first helper clears any inherited helper list so ours
+# answers.
 git_remote() {
     if [ -n "${GH_TOKEN:-}" ]; then
-        # shellcheck disable=SC2016 # $GH_TOKEN must expand inside git's helper, not here
-        git -c credential.helper= \
-            -c credential.helper='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' \
+        _gt_token="${GH_TOKEN}"
+        env -u GH_TOKEN -u GITHUB_TOKEN \
+            git -c credential.helper= \
+            -c credential.helper="!f() { echo username=x-access-token; echo \"password=${_gt_token}\"; }; f" \
             "$@"
     else
         # Local/manual run: rely on whatever credentials the operator's git has.
@@ -569,36 +571,12 @@ cmd_run() {
     assert_safe_dest "$_run_dest"
     _run_prov="$_run_dest/.SKILLS_PROVENANCE"
 
-    # The agents stamp is part of "already vendored" once the manifest requests
-    # agents. Without this, a repo whose skills are current but whose
-    # .AGENTS_PROVENANCE is missing or stale — a partial manual commit, a
-    # deletion — takes the no-op path on a replay, so the documented recovery
-    # command reports "nothing to do" and cannot repair the very thing that is
-    # broken.
     _run_adest="$(agents_dest_from_manifest)"
-    _run_agents_current=1
-    if [ -n "$_run_adest" ]; then
-        _run_aprov="$_run_adest/.AGENTS_PROVENANCE"
-        [ -f "$_run_aprov" ] && [ "$(prov_ref "$_run_aprov")" = "$_run_target" ] || _run_agents_current=0
-    fi
-
-    # A matching provenance stamp alone is not enough to take the no-op path:
-    # a managed skill directory could have been deleted or emptied since the
-    # last sync. Verify that the skills dest exists and is non-empty; if it
-    # has been damaged, proceed with the sync so the idempotent re-vendor
-    # repairs it.
-    _run_skills_intact=1
-    if [ ! -d "$_run_dest" ] || [ -z "$(ls -A "$_run_dest" 2>/dev/null)" ]; then
-        _run_skills_intact=0
-    fi
-
-    if [ "$_run_current" = "$_run_target" ] &&
-        [ "$(prov_ref "$_run_prov")" = "$_run_target" ] &&
-        [ "$_run_agents_current" -eq 1 ] &&
-        [ "$_run_skills_intact" -eq 1 ]; then
-        note "already pinned and vendored at $_run_target — nothing to do"
-        return 0
-    fi
+    # Always run the idempotent sync — no early no-op return. The sync:skills
+    # task is cheap and idempotent; git diff --cached --quiet already catches
+    # the no-change case after it runs, so a no-op-path correctness gap
+    # (missing/corrupt managed directories, stale provenance, category changes)
+    # cannot cause weekly reconciliation to silently skip a needed repair.
     # Called as a bare statement so a failure aborts here: inside the command
     # substitutions below, `set -e` would not see it and the run would continue
     # with the guards silently disarmed.

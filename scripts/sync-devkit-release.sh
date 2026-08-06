@@ -549,18 +549,20 @@ EOF
 #
 # The token is deliberately not persisted into .git/config (the repo-wide
 # `persist-credentials: false` hardening — see docs/architecture/security.md).
-# `-c` config is scoped to this one git process and the credential helper string
-# is single-quoted so ${GH_TOKEN} expands inside git's subprocess shell — it
-# must stay in the environment for that expansion. The sync and verification
-# subprocesses run with GH_TOKEN scrubbed separately (see run_untrusted);
-# git commit is wrapped with env -u (line 662) because it does not need the
-# token and must not hand it to pre-commit hooks. The empty first helper clears
-# any inherited helper list so ours answers.
+# The token is expanded into the -c credential.helper value by the shell and
+# scrubbed from the git subprocess environment so hooks (which execute
+# repository-controlled Taskfile targets) cannot inherit it. GitHub App
+# installation tokens contain only [A-Za-z0-9_-], so double-quote expansion
+# is safe. The sync and verification subprocesses run with GH_TOKEN scrubbed
+# separately (see run_untrusted); git commit is also wrapped with env -u
+# (line 660). The empty first helper clears any inherited helper list so ours
+# answers.
 git_remote() {
     if [ -n "${GH_TOKEN:-}" ]; then
-        # shellcheck disable=SC2016 # $GH_TOKEN must expand inside git's helper, not here
-        git -c credential.helper= \
-            -c credential.helper='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' \
+        _gt_token="${GH_TOKEN}"
+        env -u GH_TOKEN -u GITHUB_TOKEN \
+            git -c credential.helper= \
+            -c credential.helper="!f() { echo username=x-access-token; echo \"password=${_gt_token}\"; }; f" \
             "$@"
     else
         # Local/manual run: rely on whatever credentials the operator's git has.
