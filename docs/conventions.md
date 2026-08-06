@@ -142,7 +142,18 @@ has.
 - **Never gate a template file on `skill_categories`.** Not a filename
   condition, not a `[% if %]`, not a computed answer's `default:`/`when:`.
   `task test:category-gates` enforces this (`scripts/test-category-gates.sh`,
-  part of `verify`).
+  in both `verify` and the CI lint job).
+
+  The guard works by **allowlist**: every occurrence of the answer under
+  `template/` fails unless it is listed in the script with a reason (today,
+  three — the `.skills-sync.yaml` seed loop and two prose mentions). So adding
+  a legitimate new mention costs one allowlist line, and that line is the point
+  — it forces the "is this a gate or a seed?" question at review time. An
+  earlier revision enumerated the *banned* forms instead and was evaded three
+  times in three review rounds by ordinary Jinja (a wrapped conditional,
+  `[%+ if`, `[% if(...)`); a denylist over an open-ended grammar can only be as
+  complete as the last author's imagination, and it reports success over
+  everything it failed to imagine.
 
   The answer is recorded once at scaffold time, but the documented way to change
   categories afterwards is to edit `.skills-sync.yaml` — said by the question's

@@ -58,50 +58,85 @@ while IFS= read -r path; do
     fail=1
 done < <(find template -name "*${ANSWER}*" -print 2>/dev/null || true)
 
-# ── 2. Jinja conditionals under template/ ───────────────────────────────────
-# `[% if %]` / `[% elif %]` decide whether a BLOCK renders — same staleness, at
-# a finer grain. `[% for %]` is deliberately NOT matched: iterating the answer
-# to seed a file is the legitimate use.
+# ── 2. Every mention under template/, minus an allowlist ────────────────────
+# ALLOWLIST, NOT A PATTERN LIST — and that choice was made the expensive way.
+# An earlier revision enumerated the banned FORMS and was evaded three times in
+# three review rounds, each by ordinary Jinja an author would plausibly write:
 #
-# Jinja statements may WRAP, and a line-based grep reads a wrapped one as two
-# lines that each look harmless — verified: a conditional split after
-# `[% if use_skills_sync` passed a line-based version of this check. So join
-# each statement into one logical line first, carrying its starting line number,
-# and match against that. Statements are delimited by copier's `[%`/`%]`
-# (_envops in copier.yml), so depth is just the running count of openers minus
-# closers.
+#   [% if use_skills_sync
+#      and 'universal' in skill_categories %]      wrapped across lines
+#   [%+ if 'universal' in skill_categories %]      whitespace-control modifier
+#   [% if('universal' in skill_categories) %]      parenthesised expression
 #
-# BOTH whitespace-control modifiers are accepted after `[%`. Jinja allows `-`
-# (strip) and `+` (keep), and `+` is not decorative here: copier.yml sets
-# trim_blocks and lstrip_blocks, which is exactly when an author reaches for
-# `[%+` to preserve a newline. A pattern matching only `-` therefore missed an
-# ordinary block conditional — the guard's PRIMARY target — rather than an
-# exotic one. Whitespace after the modifier is [[:space:]] and not a literal
-# space, so a tab does not slip past either.
+# Each was fixed, and the next round found another. That is the shape of the
+# problem, not bad luck: Jinja's grammar is open-ended, so an enumeration of
+# what is forbidden can only ever be as complete as the last person's
+# imagination — and it reports success over everything it failed to imagine,
+# which is worse than not checking at all.
 #
-# No grep -P (BSD grep lacks it); awk string-form separators for the same
-# portability reason.
-flatten_jinja() {
-    awk '
-        function cnt(s, pat,   a) { return split(s, a, pat) - 1 }
-        {
-            if (buf == "") { buf = $0; start = NR } else { buf = buf " " $0 }
-            if (cnt(buf, "\\[%") > cnt(buf, "%\\]")) next
-            print FILENAME ":" start ":" buf
-            buf = ""
-        }
-        END { if (buf != "") print FILENAME ":" start ":" buf }
-    ' "$1"
+# So the polarity is inverted. EVERY occurrence of the answer under template/
+# fails unless it is listed below with a reason. New legitimate uses cost one
+# allowlist line; new evasions cost nothing, because there is nothing left to
+# evade. Same "intentional divergences are allowlisted, WITH REASONS" pattern
+# as scripts/audit-dogfood.sh and scripts/test-dogfood-structure.sh.
+#
+# Entries are `path|substring`, matched literally (grep -F) against the whole
+# line — never a regex, so a metacharacter in an entry cannot silently widen
+# it. Keep them narrow enough to be about the specific legitimate use: a
+# too-broad entry re-opens the hole this design closes.
+#
+#   .skills-sync.yaml…jinja|[% for cat in skill_categories %]
+#       Seeds the manifest's category list from the answer. This is the whole
+#       purpose of the question, and it is ITERATION, not a gate: it decides
+#       the file's CONTENTS, never whether the file renders. A consumer then
+#       owns that list — which is precisely the drift the guard exists for.
+#   .skills-sync.yaml…jinja|Categories came from the skill_categories
+#       Header prose telling the consumer where the list came from.
+#   CHECKLIST.md.jinja|from your `skill_categories` answer
+#       Consumer-facing prose explaining the answer.
+ALLOWLIST="
+.skills-sync.yaml[% endif %].jinja|[% for cat in skill_categories %]
+.skills-sync.yaml[% endif %].jinja|Categories came from the skill_categories
+docs/CHECKLIST.md.jinja|from your \`skill_categories\` answer
+"
+
+allowed() {
+    # $1 = path, $2 = the matched line. Literal comparisons throughout.
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        _a_path=${entry%%|*}
+        _a_text=${entry#*|}
+        case "$1" in
+        *"$_a_path"*) ;;
+        *) continue ;;
+        esac
+        case "$2" in
+        *"$_a_text"*) return 0 ;;
+        esac
+    done <<EOF
+${ALLOWLIST}
+EOF
+    return 1
 }
 
-while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    while IFS= read -r hit; do
-        [ -n "$hit" ] || continue
-        echo "FAIL: ${hit}" >&2
-        fail=1
-    done < <(flatten_jinja "$file" | grep -E "\[%[-+]?[[:space:]]*(el)?if[[:space:]][^%]*${ANSWER}" || true)
-done < <(find template -type f -print 2>/dev/null || true)
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    # grep -n output: path:line:text — path may contain ':'? No: copier's
+    # jinja names use [% %] and spaces, never a colon, so the first two
+    # fields split cleanly.
+    hit_path=${hit%%:*}
+    hit_rest=${hit#*:}
+    hit_line=${hit_rest%%:*}
+    hit_text=${hit_rest#*:}
+    if allowed "$hit_path" "$hit_text"; then
+        continue
+    fi
+    echo "FAIL: ${hit_path}:${hit_line}" >&2
+    echo "      ${hit_text}" >&2
+    echo "      mentions ${ANSWER}; if this is a legitimate seed/prose use, add it" >&2
+    echo "      to ALLOWLIST in scripts/test-category-gates.sh WITH a reason" >&2
+    fail=1
+done < <(grep -rn "${ANSWER}" template 2>/dev/null || true)
 
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
 # A `default:` derives one answer from another, and a `when:` decides whether a
