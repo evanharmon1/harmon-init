@@ -181,29 +181,37 @@ The server **auto-starts on the first `herdr` invocation**. There is no `herdr
 server start` subcommand to run first; to check whether a server is already
 live, run `herdr status`.
 
-To attach from another machine, either SSH into the container's host and run it
-there:
+To attach from another machine, SSH in and run `herdr` — with the caveat that
+the SSH endpoint must execute **inside the devcontainer**, where this image
+installed Herdr and configured its socket. An SSH server that terminates on the
+Docker host attaches you to a host-side Herdr (or nothing at all). On Coder the
+agent runs inside the workspace container, so `coder ssh <workspace>` lands in
+the right place:
 
 ```bash
-ssh <host>
+ssh <container-ssh-host>
 herdr
 ```
 
 or let Herdr do the SSH itself — it wraps `ssh`, so it uses whatever host alias
-your SSH config defines:
+your SSH config defines (on Coder, `coder config-ssh` writes the
+`coder.<workspace>` aliases):
 
 ```bash
-herdr --remote <ssh-host>
+herdr --remote <container-ssh-host>
 ```
 
-On Coder, `coder ssh <workspace>` is the first form and `coder config-ssh`
-writes the `coder.<workspace>` aliases the second form can target.
-
-`~/.config/herdr` is a **named volume** (`herdr-config-…`, one per profile), so
-Herdr's own state survives a rebuild: with snapshot restore and
-`resume_agents_on_restore` enabled, your agent panes come back after the
-container is rebuilt. The agent *conversations* persist separately, in the
-`~/.claude`, `~/.codex`, and `~/.gemini` volumes.
+`~/.config/herdr` is a **named volume** (`herdr-config-…`, one per profile; on
+Coder it is symlinked into the `~/.persistent` volume instead), so Herdr's own
+state survives a rebuild: snapshot restore brings the workspace shape back —
+tabs, panes, cwds, layout — as fresh shells. Whether an agent *conversation*
+resumes inside its restored pane is a separate mechanism:
+`resume_agents_on_restore` only works for agents whose Herdr integration has
+been installed (`herdr integration install <agent>`) and has recorded a native
+session reference — and Gemini has no resume integration in v0.8. The
+conversations themselves persist regardless, in the `~/.claude`, `~/.codex`,
+and `~/.gemini` volumes, so a pane that restores as a plain shell can still
+resume its agent by hand (e.g. `claude --resume`).
 
 The server socket deliberately does **not** live in that volume. The image sets
 `HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a socket left behind by a

@@ -164,6 +164,12 @@ if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
         rm -rf "${HOME:?}/.local/share/zoxide"
     fi
     ln -sfn "/home/vscode/.persistent/zoxide" "$HOME/.local/share/zoxide"
+    mkdir -p "/home/vscode/.persistent/herdr" "$HOME/.config"
+    if [ -d "$HOME/.config/herdr" ] && [ ! -L "$HOME/.config/herdr" ]; then
+        cp -a "$HOME/.config/herdr/." "/home/vscode/.persistent/herdr/" 2>/dev/null || true
+        rm -rf "${HOME:?}/.config/herdr"
+    fi
+    ln -sfn "/home/vscode/.persistent/herdr" "$HOME/.config/herdr"
 fi
 
 # --- Agent-Deck config seeding ---
