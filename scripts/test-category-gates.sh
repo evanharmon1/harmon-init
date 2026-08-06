@@ -160,6 +160,54 @@ while IFS= read -r hit; do
     fail=1
 done < <(grep -rn "${ANSWER}" template 2>/dev/null || true)
 
+# ── 2b. Conditionals INSIDE a loop over the answer ──────────────────────────
+# The allowlist exempts a LINE, but a `[% for cat in skill_categories %]` binds
+# the answer's values to a loop variable that other lines can then gate on —
+# and those lines never name the answer, so check 2 cannot see them:
+#
+#   [% for cat in skill_categories %]      <- allowlisted, subtracted
+#   [% if cat == 'universal' %]            <- no `skill_categories` anywhere
+#     - [[ cat ]]
+#   [% endif %]
+#   [% endfor %]
+#
+# That renders content conditionally on the stale answer while the guard exits
+# 0, which is the invariant failing inside the one file the exemption protects.
+# Nothing else could reach it: the exemption is exactly where the hole is.
+#
+# ANY conditional inside such a loop fails, not only one naming the loop
+# variable. A conditional there decides which categories reach the output, so
+# whatever it tests, the emitted list is no longer simply the answer — and the
+# exemption exists on the premise that this loop is a faithful seed. Being
+# strict costs nothing today (the loop is three lines and holds no conditional)
+# and removes a judgement call from the next reader.
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    echo "FAIL: ${hit%%:*}:${hit#*:}" >&2
+    echo "      conditional inside a loop over ${ANSWER} — the loop variable" >&2
+    echo "      carries the stale answer, so this gates on it indirectly" >&2
+    fail=1
+done < <(
+    find template -type f -print 2>/dev/null | while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        awk -v F="$f" -v A="${ANSWER}" '
+            # depth counts nested [% for %] once we are inside a loop over the
+            # answer; the opening line itself is never scanned for a conditional.
+            index($0, "for ") && index($0, " in " A) && depth == 0 { depth = 1; next }
+            depth > 0 {
+                if (index($0, "[% for ") || index($0, "[%- for ") || index($0, "[%+ for ")) depth++
+                if (index($0, "endfor")) { depth--; if (depth <= 0) { depth = 0; next } }
+                # Statement form `[% if %]` AND expression form
+                # `[[ x if cond else y ]]` — inside a loop over the answer both
+                # decide what the emitted list contains, and the second slipped
+                # a statement-only pattern in testing.
+                if ($0 ~ /\[%[-+]?[[:space:]]*(el)?if[[:space:](]/ ||
+                    $0 ~ /\[\[[^]]*[[:space:]]if[[:space:]]/) print F ":" NR ":" $0
+            }
+        ' "$f"
+    done
+)
+
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
 # A `default:` derives one answer from another, and a `when:` decides whether a
 # question is asked; either one reading `skill_categories` inherits its
