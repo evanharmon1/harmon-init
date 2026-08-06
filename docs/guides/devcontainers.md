@@ -216,11 +216,14 @@ conversations themselves persist regardless, in the `~/.claude`, `~/.codex`,
 and `~/.gemini` volumes, so a pane that restores as a plain shell can still
 resume its agent by hand (e.g. `claude --resume`).
 
-The server socket deliberately does **not** live in that volume. The image sets
-`HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a socket left behind by a
-dead server cannot ride along in the persisted config directory into the next
-container. (Herdr derives the client socket from the same variable —
-`/tmp/herdr-client.sock`.)
+The default session's server socket deliberately does **not** live in that
+volume. The image sets `HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a
+socket left behind by a dead server cannot ride along in the persisted config
+directory into the next container. (Herdr derives the client socket from the
+same variable — `/tmp/herdr-client.sock`.) Named sessions (`herdr --session`)
+ignore that override and keep sockets under `~/.config/herdr/sessions/<name>/`,
+so a stale named-session socket can survive a rebuild — harmless, but if a
+named session misbehaves after a rebuild, delete its `herdr.sock` and reattach.
 
 ## Secrets — 1Password Environments (the standard)
 

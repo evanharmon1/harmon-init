@@ -298,9 +298,12 @@ RUN case "${TARGETARCH}" in \
         -o /usr/local/bin/herdr \
     && chmod +x /usr/local/bin/herdr
 
-# Keep Herdr's server socket out of ~/.config/herdr — that directory is
-# volume-persisted across rebuilds and a stale socket must not ride along.
-# (Herdr derives the client socket from this too: /tmp/herdr-client.sock.)
+# Keep Herdr's default-session server socket out of ~/.config/herdr — that
+# directory is volume-persisted across rebuilds and a stale socket must not
+# ride along. (Herdr derives the client socket from this too:
+# /tmp/herdr-client.sock. Named sessions ignore this override and keep their
+# sockets under ~/.config/herdr/sessions/<name>/, where a stale one may
+# persist — harmless but not covered.)
 ENV HERDR_SOCKET_PATH=/tmp/herdr.sock
 
 # ---------- Python and prompt tooling ----------
