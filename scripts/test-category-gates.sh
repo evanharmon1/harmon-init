@@ -58,189 +58,124 @@ while IFS= read -r path; do
     fail=1
 done < <(find template -name "*${ANSWER}*" -print 2>/dev/null || true)
 
-# ── 2. Every mention under template/, minus an allowlist ────────────────────
-# ALLOWLIST, NOT A PATTERN LIST — and that choice was made the expensive way.
-# An earlier revision enumerated the banned FORMS and was evaded three times in
-# three review rounds, each by ordinary Jinja an author would plausibly write:
+# ── 2. Mention-lines under template/ must match EXPECTED exactly ────────────
+# PIN THE LINES, DO NOT JUDGE THEM — and that choice was made the expensive
+# way. Five earlier revisions each tried to decide whether a given occurrence
+# was acceptable, and review defeated every one with something it had not
+# modelled: a denylist of Jinja forms (beaten by a wrapped conditional, then
+# `[%+ if`, then `[% if(...)`), a per-line allowlist (beaten by a lookalike
+# path, then by a gate appended to an approved line), and a mention count
+# (beaten by trading one approved mention for another).
 #
-#   [% if use_skills_sync
-#      and 'universal' in skill_categories %]      wrapped across lines
-#   [%+ if 'universal' in skill_categories %]      whitespace-control modifier
-#   [% if('universal' in skill_categories) %]      parenthesised expression
+# The common thread is the question itself. "Is this occurrence close enough to
+# an approved one?" has an endless supply of edge cases, and every answer that
+# is not exhaustive reports success over the cases it missed — worse than not
+# checking, because `verify` going green then means less than it did.
 #
-# Each was fixed, and the next round found another. That is the shape of the
-# problem, not bad luck: Jinja's grammar is open-ended, so an enumeration of
-# what is forbidden can only ever be as complete as the last person's
-# imagination — and it reports success over everything it failed to imagine,
-# which is worse than not checking at all.
+# EXPECTED is the complete, byte-for-byte list of lines that may mention the
+# answer, grouped by the file they live in. Not patterns, not counts — the
+# literal lines. A file's mention-lines must equal its block exactly, in order.
 #
-# So the polarity is inverted. EVERY occurrence of the answer under template/
-# fails unless it is listed below with a reason. New legitimate uses cost one
-# allowlist line; new evasions cost nothing, because there is nothing left to
-# evade. Same "intentional divergences are allowlisted, WITH REASONS" pattern
-# as scripts/audit-dogfood.sh and scripts/test-dogfood-structure.sh.
+# This replaces four earlier mechanisms (a per-line allowlist, literal
+# subtraction of approved text, a per-file mention cap, and a separate
+# exact-block pin for the seed loop), each of which was defeated in review by
+# something the previous one did not model: a lookalike path, a gate appended
+# to an approved line, a duplicated approved line, and finally trading one
+# approved mention for another so the totals still matched. Every one of those
+# is a way of asking "is this occurrence close enough to an approved one?" —
+# a question with an endless supply of edge cases.
 #
-# Entries are `path|text`. The PATH is the COMPLETE repo-relative path and is
-# compared for equality — never a substring, because a substring exemption
-# leaks to any lookalike path: with suffix matching, a stray
-# `template/foo.skills-sync.yaml[% endif %].jinja` (or a `.bak` copy) inherited
-# the real file's exemption and could carry a gate. The TEXT is matched
-# literally and subtracted from the line (see `allowed` below), never treated
-# as a regex, so a metacharacter in an entry cannot silently widen it. Keep the
-# text narrow enough to be about the specific legitimate use: a too-broad entry
-# re-opens the hole this design closes.
+# Comparing the whole set removes the question. Adding a mention, removing one,
+# editing one, reordering them, or swapping one for another all change the set,
+# so all of them fail without anything here having to anticipate them.
 #
-#   .skills-sync.yaml…jinja|[% for cat in skill_categories %]
-#       Seeds the manifest's category list from the answer. This is the whole
-#       purpose of the question, and it is ITERATION, not a gate: it decides
-#       the file's CONTENTS, never whether the file renders. A consumer then
-#       owns that list — which is precisely the drift the guard exists for.
-#   .skills-sync.yaml…jinja|Categories came from the skill_categories
-#       Header prose telling the consumer where the list came from.
-#   CHECKLIST.md.jinja|from your `skill_categories` answer
-#       Consumer-facing prose explaining the answer.
-ALLOWLIST="
-template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|[% for cat in skill_categories %]
-template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|Categories came from the skill_categories
-template/docs/CHECKLIST.md.jinja|from your \`skill_categories\` answer
-"
+# Editing these files deliberately costs one edit to EXPECTED, which is the
+# point: these lines are the entire licensed use of the answer in template
+# content, and a change to them deserves the review that updating this forces.
+#
+# Two consequences worth stating, because they are features and not oversights:
+#   - Reformatting an approved line fails until EXPECTED is updated. Whitespace
+#     included; the comparison is byte-exact.
+#   - A file with NO mentions and no EXPECTED block is fine — it is check 2's
+#     job to reject unapproved mentions, and it does that by finding any file
+#     whose mention-lines are not empty and not in EXPECTED.
+EXPECTED_SEED_FILE='template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja'
+EXPECTED_SEED='# harmon-devkit, pinned to a tag. Categories came from the skill_categories
+[% for cat in skill_categories %]'
 
-# allowed PATH LINE — true only when NOTHING on the line is unaccounted for.
-#
-# It works by SUBTRACTION, not by matching. Each applicable entry removes one
-# occurrence of its approved text from a working copy of the line; the line is
-# allowed only if no `skill_categories` survives that. An earlier version
-# returned true on the first entry that matched anywhere in the line, which
-# accepted the whole line on the strength of its approved part — appending
-# `[[ 'bad' if 'universal' in skill_categories else 'ok' ]]` to the allowlisted
-# header passed the guard. Approving the prose on a line must not approve
-# whatever else shares that line.
-allowed() {
-    _a_residue=$2
-    while IFS= read -r entry; do
-        [ -n "$entry" ] || continue
-        _a_path=${entry%%|*}
-        _a_text=${entry#*|}
-        # EXACT path, not a substring: a suffix match let any lookalike path
-        # inherit this exemption.
-        [ "$1" = "$_a_path" ] || continue
-        # Strip ONE occurrence. Quoting inside the expansion keeps the text
-        # literal, so a glob character in an entry cannot widen the match.
-        case "$_a_residue" in
-        *"$_a_text"*)
-            _a_residue="${_a_residue%%"$_a_text"*}${_a_residue#*"$_a_text"}"
-            ;;
-        esac
-    done <<EOF
-${ALLOWLIST}
-EOF
-    # Anything left is unapproved.
-    case "$_a_residue" in
-    *"$ANSWER"*) return 1 ;;
+EXPECTED_CHECKLIST_FILE='template/docs/CHECKLIST.md.jinja'
+EXPECTED_CHECKLIST='      skill categories this repo gets (from your `skill_categories` answer). Set'
+
+# expected_for PATH — echo the approved mention-lines for PATH, or nothing.
+expected_for() {
+    case "$1" in
+    "$EXPECTED_SEED_FILE") printf '%s\n' "$EXPECTED_SEED" ;;
+    "$EXPECTED_CHECKLIST_FILE") printf '%s\n' "$EXPECTED_CHECKLIST" ;;
+    *) : ;;
     esac
-    return 0
 }
 
-while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    # grep -n output: path:line:text — path may contain ':'? No: copier's
-    # jinja names use [% %] and spaces, never a colon, so the first two
-    # fields split cleanly.
-    hit_path=${hit%%:*}
-    hit_rest=${hit#*:}
-    hit_line=${hit_rest%%:*}
-    hit_text=${hit_rest#*:}
-    if allowed "$hit_path" "$hit_text"; then
-        continue
+# Every file under template/ that mentions the answer at all must match its
+# expected block exactly. Files with no expected block must have no mentions.
+while IFS= read -r tf; do
+    [ -n "$tf" ] || continue
+    _actual=$(grep "${ANSWER}" "$tf" 2>/dev/null) || continue
+    _want=$(expected_for "$tf")
+    [ "$_actual" = "$_want" ] && continue
+    echo "FAIL: ${tf}" >&2
+    if [ -z "$_want" ]; then
+        echo "      mentions ${ANSWER}, which no template file may do unless its" >&2
+        echo "      exact lines are listed in EXPECTED (scripts/test-category-gates.sh):" >&2
+    else
+        echo "      its ${ANSWER} lines do not match EXPECTED exactly." >&2
+        echo "      expected:" >&2
+        printf '%s\n' "$_want" | sed 's/^/        /' >&2
+        echo "      found:" >&2
     fi
-    echo "FAIL: ${hit_path}:${hit_line}" >&2
-    echo "      ${hit_text}" >&2
-    echo "      mentions ${ANSWER}; if this is a legitimate seed/prose use, add it" >&2
-    echo "      to ALLOWLIST in scripts/test-category-gates.sh WITH a reason" >&2
+    printf '%s\n' "$_actual" | sed 's/^/        /' >&2
     fail=1
-done < <(grep -rn "${ANSWER}" template 2>/dev/null || true)
+done < <(find template -type f -print 2>/dev/null || true)
 
-# ── 2b. The seed loop must be EXACTLY the known block ───────────────────────
-# Check 2 exempts the loop's opening LINE, and that is where every remaining
-# hole lived. `[% for cat in skill_categories %]` binds the answer to a loop
-# variable, so lines gating on THAT never name the answer and check 2 cannot
-# see them — and an earlier scanner that walked the loop body still missed
-# conditionals sharing the `for` or `endfor` line itself.
+# ── 2b. The seed loop's BODY must be exactly the known block ────────────────
+# Check 2 pins the lines that MENTION the answer, which cannot see the lines
+# that do not. `[% for cat in skill_categories %]` binds the answer to a loop
+# variable, so a conditional in the body gates on it while naming only `cat`:
 #
-# Both were symptoms of the same thing: hand-parsing Jinja. Every round of
-# review found another syntax the scanner did not model — a whitespace-control
-# modifier, a parenthesised expression, an inline ternary, a boundary line.
-# Jinja's grammar is not something a regex should be trying to follow.
+#   [% for cat in skill_categories %]   <- pinned by check 2
+#   [% if cat == 'universal' %]         <- no `skill_categories`, invisible there
+#     - [[ cat ]]
+#   [% endif %]
+#   [% endfor %]
 #
-# So this does not parse the loop; it PINS it. The block below is the entire
-# legitimate use of the answer in template content, all three lines of it. If
-# the file does not contain those bytes exactly, the guard fails — whether the
-# change is a nested conditional, a same-line one, a boundary-line one, an
-# inline ternary, or a form nobody has thought of yet. There is no grammar left
-# to outsmart.
-#
-# Reformatting the loop is a deliberate act that costs one edit here, and that
-# is the point: the loop's exact shape is what the exemption in check 2 is
-# vouching for, so the two must be changed together.
-SEED_FILE='template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja'
+# So the whole three-line block is pinned too. Both checks are load-bearing and
+# neither subsumes the other: check 2 catches changes to the mention-lines
+# themselves (edits, duplicates, removals, trades), this catches changes around
+# them. Dropping this one while rewriting check 2 silently reintroduced the
+# body-conditional hole, which the attack matrix caught before it shipped.
 SEED_BLOCK='[% for cat in skill_categories %]
   - [[ cat ]]
 [% endfor %]'
 
-if [ -f "$SEED_FILE" ]; then
-    # Compared as ONE flattened string, with newlines mapped to \001 on both
-    # sides, then matched with a quoted shell `case` — a literal substring test.
-    #
-    # NOT `grep -F`: it treats newlines in the PATTERN as pattern separators,
-    # so a multi-line -F pattern means "any one of these lines", which matches
-    # a tampered block just as happily as the real one. That version of this
-    # check was silently inert — it reported OK on every attack below — which
-    # is precisely the failure this guard exists to catch, met for the third
-    # time inside the guard itself. `grep -z` only changes the INPUT record
-    # separator and does not fix it.
-    _seed_actual=$(tr '\n' '\001' <"$SEED_FILE")
+if [ -f "$EXPECTED_SEED_FILE" ]; then
+    # Flattened and compared with a quoted `case` — a literal substring test.
+    # NOT `grep -F`: it reads newlines in the PATTERN as pattern separators, so
+    # a multi-line -F pattern means "any ONE of these lines" and matches a
+    # tampered block as happily as the real one. That version of this check was
+    # silently inert against every attack below.
+    _seed_actual=$(tr '\n' '\001' <"$EXPECTED_SEED_FILE")
     _seed_want=$(printf '%s' "$SEED_BLOCK" | tr '\n' '\001')
     case "$_seed_actual" in
-    *"$_seed_want"*) _seed_ok=1 ;;
-    *) _seed_ok=0 ;;
-    esac
-    if [ "$_seed_ok" -ne 1 ]; then
-        echo "FAIL: ${SEED_FILE}" >&2
+    *"$_seed_want"*) : ;;
+    *)
+        echo "FAIL: ${EXPECTED_SEED_FILE}" >&2
         echo "      the ${ANSWER} seed loop is not the exact expected block:" >&2
-        printf '        %s\n' "$SEED_BLOCK" | sed 's/^/      /' >&2
-        echo "      anything else there can gate output on the stale answer." >&2
-        echo "      If the loop was reformatted deliberately, update SEED_BLOCK" >&2
-        echo "      in scripts/test-category-gates.sh to match." >&2
+        printf '%s\n' "$SEED_BLOCK" | sed 's/^/        /' >&2
+        echo "      anything else inside it can gate output on the stale answer." >&2
+        echo "      If reformatted deliberately, update SEED_BLOCK to match." >&2
         fail=1
-    fi
+        ;;
+    esac
 fi
-
-# ── 2c. An allowlisted file may hold no MORE mentions than it is allowed ────
-# The block pin above proves a canonical seed loop EXISTS; it says nothing
-# about a second one. And check 2 exempts by line TEXT, so a duplicate of an
-# approved line is exempted just as readily as the original — append a whole
-# second `[% for cat in skill_categories %]` loop with a conditional inside it
-# and every check so far is satisfied while the file gates on the stale answer.
-#
-# So count. Each allowlisted file gets exactly as many mentions as it has
-# allowlist entries, no more. That closes duplicate loops and duplicate prose
-# alike, without either check having to reason about what the duplicate does.
-while IFS= read -r apath; do
-    [ -n "$apath" ] || continue
-    [ -f "$apath" ] || continue
-    _want=$(printf '%s\n' "$ALLOWLIST" | grep -c "^$(printf '%s' "$apath" | sed 's/[][\.*^$/]/\\&/g')|") || _want=0
-    _have=$(grep -c "${ANSWER}" "$apath") || _have=0
-    if [ "$_have" -gt "$_want" ]; then
-        echo "FAIL: ${apath}" >&2
-        echo "      ${_have} lines mention ${ANSWER} but only ${_want} are allowlisted" >&2
-        echo "      — a duplicate of an approved line is exempted just like the" >&2
-        echo "      original, so extras must be added to ALLOWLIST or removed:" >&2
-        grep -n "${ANSWER}" "$apath" | sed 's/^/        /' >&2
-        fail=1
-    fi
-done < <(printf '%s\n' "$ALLOWLIST" | while IFS= read -r e; do
-    [ -n "$e" ] && printf '%s\n' "${e%%|*}"
-done | sort -u)
 
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
 # A `default:` derives one answer from another, and a `when:` decides whether a
