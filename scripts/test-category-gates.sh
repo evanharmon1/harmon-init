@@ -215,6 +215,33 @@ if [ -f "$SEED_FILE" ]; then
     fi
 fi
 
+# ── 2c. An allowlisted file may hold no MORE mentions than it is allowed ────
+# The block pin above proves a canonical seed loop EXISTS; it says nothing
+# about a second one. And check 2 exempts by line TEXT, so a duplicate of an
+# approved line is exempted just as readily as the original — append a whole
+# second `[% for cat in skill_categories %]` loop with a conditional inside it
+# and every check so far is satisfied while the file gates on the stale answer.
+#
+# So count. Each allowlisted file gets exactly as many mentions as it has
+# allowlist entries, no more. That closes duplicate loops and duplicate prose
+# alike, without either check having to reason about what the duplicate does.
+while IFS= read -r apath; do
+    [ -n "$apath" ] || continue
+    [ -f "$apath" ] || continue
+    _want=$(printf '%s\n' "$ALLOWLIST" | grep -c "^$(printf '%s' "$apath" | sed 's/[][\.*^$/]/\\&/g')|") || _want=0
+    _have=$(grep -c "${ANSWER}" "$apath") || _have=0
+    if [ "$_have" -gt "$_want" ]; then
+        echo "FAIL: ${apath}" >&2
+        echo "      ${_have} lines mention ${ANSWER} but only ${_want} are allowlisted" >&2
+        echo "      — a duplicate of an approved line is exempted just like the" >&2
+        echo "      original, so extras must be added to ALLOWLIST or removed:" >&2
+        grep -n "${ANSWER}" "$apath" | sed 's/^/        /' >&2
+        fail=1
+    fi
+done < <(printf '%s\n' "$ALLOWLIST" | while IFS= read -r e; do
+    [ -n "$e" ] && printf '%s\n' "${e%%|*}"
+done | sort -u)
+
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
 # A `default:` derives one answer from another, and a `when:` decides whether a
 # question is asked; either one reading `skill_categories` inherits its
