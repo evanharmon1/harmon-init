@@ -371,7 +371,7 @@ tasks:
     cmds:
       - ./scripts/sync-devcontainer-image.sh publish "{{.SOURCE_SHA}}" "{{.MANIFEST_DIGEST}}"
 
-  # ROOT-ONLY (a generated repo has ONE skills-sync manifest, so it has nothing
+  # ROOT-ONLY: a generated repo has ONE skills-sync manifest, so it has nothing
   # to compare). Closes a real hole: `verify:skills*` both read only the ROOT
   # manifest, so a pin edited in the template twin alone leaves the root pin and
   # the provenance agreeing, passes every other gate, and ships a stale pin to
@@ -449,7 +449,9 @@ tasks:
     cmds:
       - ./scripts/sync-skills.sh verify-offline
 
-  # ROOT-ONLY (no template twin): the harmon-init <-> harmon-devkit release edge.
+  # ROOT VARIANT (the template ships a simpler twin for generated repos): the
+  # harmon-init <-> harmon-devkit release edge, driven by the root workflow
+  # (dispatch + schedule) with twin-manifest verification.
   # Driven by .github/workflows/sync-harmon-devkit.yml on a harmon-devkit release
   # dispatch, a manual dispatch, or the daily reconciliation schedule — see
   # docs/architecture/ci-cd.md. Opens/updates ONE PR and never merges anything.

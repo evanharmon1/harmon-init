@@ -1,46 +1,39 @@
 #!/usr/bin/env bash
 # sync-devkit-release.sh — turn a published harmon-devkit release into a
-# complete, verified harmon-init pin-and-sync PR.
+# complete, verified pin-and-sync PR for this repo.
 #
-# harmon-init vendors harmon-devkit's shared agent skills at a pinned tag
-# (.skills-sync.yaml plus its template twin). Bumping that pin by hand is a
-# six-step chore, and the two release-PR merges at either end are intentional
-# human gates. Everything BETWEEN them is deterministic, so this helper does it:
+# This is the downstream (generated-repo) twin of harmon-init's root-only
+# script. It handles a single .skills-sync.yaml manifest — no template twin,
+# no copier render verification. Bumping that pin by hand is a two-step chore,
+# and the release-PR merge at the harmon-devkit end is the only intentional
+# human gate. Everything BETWEEN them is deterministic, so this helper does it:
 #
 #   resolve + validate a stable upstream release
-#     -> rewrite BOTH pins
+#     -> rewrite the pin
 #     -> `task sync:skills`
 #     -> assert the diff touched nothing but the expected paths
-#     -> verify
+#     -> verify (offline + secrets)
 #     -> commit, force-push the rolling bot branch, open/update exactly ONE PR
 #
 # It never merges anything, and it never writes the base branch. A validation,
 # scope, or verification failure aborts BEFORE the push, so a broken sync can
 # never surface as an open PR.
 #
-# Root variant: this is the harmon-init-specific twin-manifest script (it
-# handles the root .skills-sync.yaml AND the template/ twin, validates both
-# pins agree, and includes the full template-render verification battery).
-# Generated repos render a simpler pull-based twin from template/
-# (single manifest, no copier interactions); both share the same name and
-# the same subcommands. See docs/architecture/ci-cd.md.
-#
 # Usage:
 #   sync-devkit-release.sh resolve [TAG]   # validate + print the tag to sync to
-#   sync-devkit-release.sh pinned          # print the agreed current pin
+#   sync-devkit-release.sh pinned          # print the current pin
 #   sync-devkit-release.sh run [TAG]       # the whole pipeline
 #
 # TAG defaults to $SYNC_DEVKIT_TAG, then to the latest stable upstream release.
 # Env: GH_APP_SLUG — when set, the bot commit identity is derived from the App.
 #      SYNC_DEVKIT_ALLOW_DOWNGRADE=true — permit pinning an older release than
-#      the current one (manual recovery only; the event path refuses it).
+#      the current one (manual recovery only).
 # Depends on: git, gh, task. Unit-tested by scripts/test-sync-devkit-release.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DEVKIT_REPO="evanharmon1/harmon-devkit"
-ROOT_MANIFEST=".skills-sync.yaml"
-TEMPLATE_MANIFEST='template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja'
+MANIFEST=".skills-sync.yaml"
 BASE_BRANCH="main"
 # One deterministic branch -> one rolling PR. A newer release rewrites it
 # instead of opening a second PR (see the force-push in cmd_run).
@@ -70,8 +63,7 @@ need_bin() {
 }
 
 need_manifests() {
-    [ -f "$ROOT_MANIFEST" ] || die "manifest '$ROOT_MANIFEST' not found"
-    [ -f "$TEMPLATE_MANIFEST" ] || die "manifest '$TEMPLATE_MANIFEST' not found"
+    [ -f "$MANIFEST" ] || die "manifest '$MANIFEST' not found"
 }
 
 # ── Tag validation ────────────────────────────────────────────────────
@@ -131,8 +123,6 @@ EOF
 }
 
 # ── Manifests ─────────────────────────────────────────────────────────
-# Read with sed rather than yq: the template twin is jinja (its `categories:`
-# block is a `[% for %]` loop), so it is not parseable YAML until rendered.
 # manifest_field FILE KEY [root] — the single value of a `KEY:` line.
 #
 # The optional third argument restricts the match to a TOP-LEVEL key. That is
@@ -150,7 +140,7 @@ manifest_field() {
     fi
     _mf_n="$(grep -c "$_mf_grep" "$_mf_file" || true)"
     [ "$_mf_n" = "1" ] ||
-        die "expected exactly one top-level '${_mf_key}:' line in $_mf_file (found $_mf_n)"
+        die "expected exactly one '${_mf_key}:' line in $_mf_file (found $_mf_n)"
     sed -n "$_mf_sed" "$_mf_file"
 }
 
@@ -167,14 +157,9 @@ set_pin() {
     rm -f "$_sp_tmp"
 }
 
-# cmd_pinned — the tag both manifests agree on. Pre-existing disagreement is a
-# human problem: bumping one side of an already-drifted pair would hide it.
+# cmd_pinned — the tag in the manifest.
 cmd_pinned() {
-    _cp_root="$(manifest_field "$ROOT_MANIFEST" ref)"
-    _cp_tpl="$(manifest_field "$TEMPLATE_MANIFEST" ref)"
-    [ "$_cp_root" = "$_cp_tpl" ] ||
-        die "pin disagreement: $ROOT_MANIFEST pins '$_cp_root' but the template twin pins '$_cp_tpl' — reconcile by hand before automating a bump"
-    printf '%s\n' "$_cp_root"
+    manifest_field "$MANIFEST" ref
 }
 
 # prov_field PROV FIELD — a `# FIELD: …` provenance header value. Single awk
@@ -208,7 +193,7 @@ version_key() {
 # out of order, and `concurrency` serializes runs without ordering them, so an
 # older tag can arrive after the pin has already advanced. Rolling the pin
 # backwards would open a bogus rollback PR that the next scheduled run (which
-# resolves the LATEST release) immediately flips back. Manual dispatch is a
+# resolves the LATEST release) immediately flips back. Manual intervention is a
 # deliberate act, so it may still downgrade — that is the recovery path off a
 # bad release.
 assert_not_a_downgrade() {
@@ -228,19 +213,14 @@ assert_safe_dest() {
 
 # ── Diff scope ────────────────────────────────────────────────────────
 # --no-renames so every change is exactly one path; -z so a path is never
-# quoted or split (the template manifest's filename contains spaces).
+# quoted or split.
 changed_paths_z() {
     git diff --no-renames --name-only -z HEAD
     git ls-files --others --exclude-standard -z
 }
 
-changed_paths_nl() {
-    git diff --no-renames --name-only HEAD
-    git ls-files --others --exclude-standard
-}
-
 # assert_expected_scope DEST — fail closed unless every changed path is one of
-# the two manifests, the provenance stamp, or a vendored skill the sync owns.
+# the manifest, the provenance stamp, or a vendored skill the sync owns.
 # The owned set is the UNION of the pre-sync (HEAD) and post-sync `# managed:`
 # lines: a skill the new pin dropped appears only in the old list, one it added
 # only in the new. Anything else — a local skill, an unrelated file — is an
@@ -262,18 +242,18 @@ managed_from_stamp() {
         }'
 }
 
-# agents_dest_from_manifest — the agents dest the root manifest declares, or
+# agents_dest_from_manifest — the agents dest the manifest declares, or
 # empty when it has no `agents:` block. Read with yq when available and by a
 # narrow grep otherwise, because this runs in CI where yq is present but also on
 # a maintainer's machine where it may not be.
 agents_dest_from_manifest() {
     if command -v yq >/dev/null 2>&1; then
-        _adfm="$(yq -r '.agents.dest // ""' "$ROOT_MANIFEST" 2>/dev/null || true)"
+        _adfm="$(yq -r '.agents.dest // ""' "$MANIFEST" 2>/dev/null || true)"
         [ "$_adfm" != "null" ] || _adfm=""
         printf '%s' "$_adfm"
         return 0
     fi
-    sed -n '/^agents:/,$p' "$ROOT_MANIFEST" |
+    sed -n '/^agents:/,$p' "$MANIFEST" |
         sed -n 's/^[[:space:]]*dest:[[:space:]]*//p' | head -n 1 |
         sed 's/[[:space:]]*#.*//' | tr -d '"'"'"''
 }
@@ -303,10 +283,8 @@ assert_expected_scope() {
     _aes_bad=""
     while IFS= read -r -d '' _aes_p; do
         [ -n "$_aes_p" ] || continue
-        # Quoted case patterns are literal matches — essential for the template
-        # manifest, whose name contains `[%`, a glob bracket expression.
         case "$_aes_p" in
-        "$ROOT_MANIFEST" | "$TEMPLATE_MANIFEST" | "$_aes_prov") continue ;;
+        "$MANIFEST" | "$_aes_prov") continue ;;
         esac
         if [ -n "$_aes_aprov" ] && [ "$_aes_p" = "$_aes_aprov" ]; then
             continue
@@ -346,48 +324,34 @@ assert_expected_scope() {
     if [ -n "$_aes_bad" ]; then
         echo "sync-devkit-release: the sync wrote paths it does not own:" >&2
         printf '%s' "$_aes_bad" >&2
-        die "expected only the two skills-sync manifests, the provenance stamps, managed skills under $_aes_dest/, and managed agents under ${_aes_adest:-<none>}/ — inspect by hand"
+        die "expected only the skills-sync manifest, the provenance stamps, managed skills under $_aes_dest/, and managed agents under ${_aes_adest:-<none>}/ — inspect by hand"
     fi
 }
 
 # ── Verification ──────────────────────────────────────────────────────
 # run_untrusted CMD… — run a subprocess WITHOUT the repo-write App token.
 #
-# The sync clones another repository and the verification gate renders the
-# copier template, running npx, uvx and rendered scripts. Those inherit this
-# process's environment, so leaving GH_TOKEN in it would hand a
-# contents:write + pull-requests:write credential to every one of them — the
+# The sync clones harmon-devkit and the verification runs task subprocesses.
+# Those inherit this process's environment, so leaving GH_TOKEN in it would hand
+# a contents:write + pull-requests:write credential to every one of them — the
 # exact exposure the non-persisted push credential exists to avoid. Everything
-# they reach is public (harmon-devkit, the npm and PyPI registries), so nothing
-# here needs the token; only `gh` and the single `git push` do.
+# they reach is public (harmon-devkit, registries), so nothing here needs the
+# token; only `gh` and the single `git push` do.
 run_untrusted() {
     env -u GH_TOKEN -u GITHUB_TOKEN "$@"
 }
 
-# Cheapest first. `verify` is the repo's definition-of-done gate and already
-# contains test:dogfood-parity, test:dogfood-structure and the whole
-# test:template render matrix; verify:skills is the NETWORK drift check that
-# `verify` deliberately leaves out (see the Taskfile's `ci` comment).
-#
-# security:secrets is here rather than left to the PR's own CI because this
-# step vendors files from another repository and the next step PUBLISHES them:
-# a credential that reached a harmon-devkit release would be in harmon-init's
-# remote history — and need rotating — before any PR check could object.
+# verify:skills:offline proves manifest↔vendored consistency cheaply;
+# security:secrets catches a credential that reached a harmon-devkit release
+# before the sync PR's own CI could. The full byte-drift check (verify:skills)
+# is left to the sync PR's CI, which runs it before branch protection allows
+# a merge.
 run_verification() {
-    for _rv_target in verify:skills:offline security:secrets verify:skills verify; do
+    for _rv_target in verify:skills:offline security:secrets; do
         note "verifying: task $_rv_target"
         run_untrusted task "$_rv_target" ||
             die "verification failed at 'task $_rv_target' — nothing pushed, no PR touched"
     done
-}
-
-# preflight_title TITLE — the PR changes template/, so a non-releasing title
-# would merge without cutting a tag and no downstream repo would ever receive
-# the new skills. Run the same guard CI runs, before the branch is pushed.
-preflight_title() {
-    PR_TITLE="$1" PR_BODY="" CHANGED_FILES="$(changed_paths_nl)" \
-        run_untrusted task guard:release-title ||
-        die "PR title '$1' would not cut a release for a template/ change"
 }
 
 # configure_identity — commit as the CI GitHub App rather than as whatever the
@@ -433,23 +397,23 @@ Automated pin-and-sync of the vendored harmon-devkit agent skills${_wb_adest:+ a
 ${_wb_arow}
 ## What changed
 
-- \`${ROOT_MANIFEST}\` and the template twin pin \`${_wb_new}\`.
+- \`${MANIFEST}\` pin \`${_wb_new}\`.
 - \`${_wb_prov}\` and the managed skill directories were re-vendored from that tag.
 ${_wb_aline}
 Nothing else — the run aborts if the sync writes a path it does not own.
 
 ## Verification
 
-\`task verify:skills:offline\`, \`task security:secrets\`, \`task verify:skills\`
-and \`task verify\` all passed on this commit before the branch was pushed, and
-the releasing PR title was pre-flighted through \`task guard:release-title\`.
+\`task verify:skills:offline\` and \`task security:secrets\` passed on this
+commit before the branch was pushed; the PR's own CI runs the full drift check
+(\`task verify:skills\`) before branch protection allows a merge.
 
 ## Merging
 
-**Merging stays manual.** This PR is opened by \`sync-harmon-devkit.yml\`; no
-workflow merges it, and none merges either repository's release PR. A newer
-stable harmon-devkit release rewrites this same branch rather than opening a
-second PR.
+**Merging stays manual.** This PR is opened by the scheduled
+\`sync-harmon-devkit.yml\` workflow; no automation merges it. A newer stable
+harmon-devkit release rewrites this same branch rather than opening a second
+PR.
 EOF
 }
 
@@ -458,9 +422,9 @@ EOF
 # `--head` filters by branch NAME only — gh cannot qualify it with an owner —
 # so a fork PR whose head branch happens to be called $SYNC_BRANCH is returned
 # too. Editing that would rewrite an unrelated contributor's PR with a
-# trusted-looking `fix(template): …` title and leave the real sync PR unopened,
-# so cross-repository heads are dropped. `// empty` matters as well: without it
-# jq prints the string "null" and the caller would go on to edit PR "null".
+# trusted-looking title and leave the real sync PR unopened, so cross-repository
+# heads are dropped. `// empty` matters as well: without it jq prints the
+# string "null" and the caller would go on to edit PR "null".
 open_pr_number() {
     _pn="$(gh pr list --head "$SYNC_BRANCH" --base "$BASE_BRANCH" --state open \
         --json number,isCrossRepository \
@@ -531,11 +495,11 @@ remote_sync_tree() {
 
 # sync_branch_pin — the tag an already-pushed sync branch carries, or empty.
 # The base branch alone is not enough to detect an out-of-order event: while a
-# sync PR is open, the base pin stays stale, so a delayed older dispatch would
+# sync PR is open, the base pin stays stale, so a delayed older event would
 # look like a legitimate move forward and force the open PR backwards.
 sync_branch_pin() {
     fetch_sync_branch
-    _sbp_yaml="$(git show "refs/remotes/origin/$SYNC_BRANCH:$ROOT_MANIFEST" 2>/dev/null)" ||
+    _sbp_yaml="$(git show "refs/remotes/origin/$SYNC_BRANCH:$MANIFEST" 2>/dev/null)" ||
         return 0
     awk '/^[[:space:]]*ref:/ {
         sub(/^[[:space:]]*ref:[[:space:]]*/, ""); sub(/[[:space:]#].*/, ""); print; exit
@@ -599,7 +563,7 @@ cmd_run() {
 
     _run_target="$(cmd_resolve "$_run_tag")"
     _run_current="$(cmd_pinned)"
-    _run_dest="$(manifest_field "$ROOT_MANIFEST" dest root)"
+    _run_dest="$(manifest_field "$MANIFEST" dest root)"
     assert_safe_dest "$_run_dest"
     _run_prov="$_run_dest/.SKILLS_PROVENANCE"
 
@@ -643,14 +607,12 @@ cmd_run() {
     # older open sync PR instead of stacking on top of it.
     git checkout -B "$SYNC_BRANCH" "$BASE_BRANCH" >/dev/null
 
-    set_pin "$ROOT_MANIFEST" "$_run_target"
-    set_pin "$TEMPLATE_MANIFEST" "$_run_target"
+    set_pin "$MANIFEST" "$_run_target"
     run_untrusted task sync:skills ||
         die "'task sync:skills' failed at $_run_target — nothing pushed"
     assert_expected_scope "$_run_dest"
 
-    _run_title="fix(template): sync harmon-devkit skills to $_run_target"
-    preflight_title "$_run_title"
+    _run_title="fix: sync harmon-devkit skills to $_run_target"
 
     git add -A
     if git diff --cached --quiet; then

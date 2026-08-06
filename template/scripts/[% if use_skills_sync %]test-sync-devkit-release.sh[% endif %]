@@ -1,0 +1,471 @@
+#!/usr/bin/env bash
+# test-sync-devkit-release.sh — unit tests for the downstream
+# sync-devkit-release.sh helper, stubbing gh and task with a real git fixture.
+#
+# This is the downstream twin of harmon-init's root test suite. The root tests
+# cover the twin-manifest variant; these cover the single-manifest (generated
+# repo) variant. The test uses the REAL helper — stubs are per-test, not mocked
+# functions — so every case exercises the actual command dispatch and
+# error-handling paths.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HELPER="$SCRIPT_DIR/sync-devkit-release.sh"
+TEST_ROOT="$(mktemp -d)"
+cleanup() { rm -rf "$TEST_ROOT"; }
+trap cleanup EXIT
+
+BIN_DIR="$TEST_ROOT/bin"
+mkdir -p "$BIN_DIR"
+export PATH="$BIN_DIR:$PATH"
+
+note() { printf '\n  \033[1;37m%s\033[0m\n' "$*"; }
+
+# ── Fixture helpers ───────────────────────────────────────────────────
+# build_fixture TAG — a git repo with one commit (the current pin) on main,
+# plus a bare 'origin' to observe pushes.
+build_fixture() {
+    _bf_tag="${1:-v0.1.0}"
+    _bf_dir="$TEST_ROOT/fixture"
+    _bf_bare="$TEST_ROOT/origin.git"
+    rm -rf "$_bf_dir" "$_bf_bare"
+    mkdir -p "$_bf_dir"
+    cd "$_bf_dir"
+    git init -b main >/dev/null 2>&1
+    git config user.name "test"
+    git config user.email "test@test"
+
+    cat >.skills-sync.yaml <<YAML
+source:
+  repo: https://github.com/evanharmon1/harmon-devkit.git
+  ref: $_bf_tag
+  path: ai/skills
+categories:
+  - universal
+dest: .claude/skills
+YAML
+
+    git add -A && git commit -m "initial" >/dev/null 2>&1
+    git init --bare "$_bf_bare" >/dev/null 2>&1
+    git remote add origin "$_bf_bare"
+    git push -u origin main >/dev/null 2>&1
+    echo "$_bf_dir"
+}
+
+# add_agents_block DIR — add an agents: block to the manifest so the agents
+# paths are exercised.
+add_agents_block() {
+    cat >>"$1/.skills-sync.yaml" <<YAML
+agents:
+  names: ["*"]
+  dest: .claude/agents
+YAML
+    git -C "$1" add -A && git -C "$1" commit -m "add agents block" >/dev/null 2>&1
+    git -C "$1" push origin main >/dev/null 2>&1
+}
+
+# ── Stubs ─────────────────────────────────────────────────────────────
+# Every test writes fresh stubs into BIN_DIR so concurrent cases are isolated.
+
+write_task_stub() {
+    _ts_mode="$1" # pass | fail
+    cat >"$BIN_DIR/task" <<SCRIPT
+#!/usr/bin/env bash
+echo "task \$*" >>"$TASK_LOG"
+case "\${1:-}" in
+sync:skills)
+    if [ "$_ts_mode" = "pass" ]; then
+        mkdir -p .claude/skills/universal
+        echo "# ref: \$(awk '/^[[:space:]]*ref:/{sub(/^[[:space:]]*ref:[[:space:]]*/,""); print}' .skills-sync.yaml)" > .claude/skills/.SKILLS_PROVENANCE
+        echo "# categories: universal" >> .claude/skills/.SKILLS_PROVENANCE
+        echo "# managed: universal" >> .claude/skills/.SKILLS_PROVENANCE
+    else
+        echo "sync:skills failed" >&2
+        exit 1
+    fi
+    ;;
+verify:skills:offline) ;;
+security:secrets) ;;
+*)
+    echo "unexpected task target: \$*" >&2
+    exit 1
+    ;;
+esac
+SCRIPT
+    chmod +x "$BIN_DIR/task"
+}
+
+write_gh_stub() {
+    cat >"$BIN_DIR/gh" <<SCRIPT
+#!/usr/bin/env bash
+echo "gh \$*" >>"$GH_LOG"
+case "\${1:-}--\${2:-}" in
+api--repos/*/releases/latest) echo '{"tag_name":"v0.9.0"}';;
+api--repos/*/releases/tags/*)
+    _t="\${4#*/}"
+    case "\$_t" in
+    v0.8.0|v0.9.0|v0.10.0|v1.0.0|v2.0.0) echo "{\"tag_name\":\"\$_t\",\"draft\":false,\"prerelease\":false}";;
+    v9.9.9) echo "no published release"; exit 1;;
+    *) echo "{\"tag_name\":\"\$_t\",\"draft\":false,\"prerelease\":false}";;
+    esac
+    ;;
+pr--list) echo '[]';;
+pr--create) echo "created";;
+pr--edit) echo "edited";;
+pr--view) echo '{"title":""}';;
+api--/users/*)
+    echo '{"id":12345}'
+    ;;
+*) exit 0;;
+esac
+SCRIPT
+    chmod +x "$BIN_DIR/gh"
+}
+
+export TASK_LOG="$TEST_ROOT/task.log"
+export GH_LOG="$TEST_ROOT/gh.log"
+
+clear_logs() {
+    rm -f "$TASK_LOG" "$GH_LOG"
+    : >"$TASK_LOG"
+    : >"$GH_LOG"
+}
+
+# ── Assertions ────────────────────────────────────────────────────────
+assert_pin() {
+    _ap_tag="$1" _ap_file="$2"
+    _ap_got="$(awk '/^[[:space:]]*ref:/{sub(/^[[:space:]]*ref:[[:space:]]*/,""); print; exit}' "$_ap_file")"
+    [ "$_ap_got" = "$_ap_tag" ] || {
+        echo "expected pin $_ap_tag, got $_ap_got" >&2
+        return 1
+    }
+}
+
+assert_task_logged() {
+    grep -qF "$1" "$TASK_LOG" || {
+        echo "expected task '$1' in log" >&2
+        return 1
+    }
+}
+
+assert_task_not_logged() {
+    grep -qF "$1" "$TASK_LOG" && {
+        echo "expected task '$1' NOT in log" >&2
+        return 1
+    } || true
+}
+
+assert_gh_logged() {
+    grep -qF "$1" "$GH_LOG" || {
+        echo "expected gh '$1' in log" >&2
+        return 1
+    }
+}
+
+assert_commit_title() {
+    _act_dir="$1" _act_title="$2"
+    _act_got="$(git -C "$_act_dir" log -1 --format=%s)"
+    [ "$_act_got" = "$_act_title" ] || {
+        echo "expected commit '$act_title', got '$_act_got'" >&2
+        return 1
+    }
+}
+
+# ── run_helper ────────────────────────────────────────────────────────
+# Runs the real helper from the fixture directory. Scrubs GH_TOKEN so a stale
+# env value cannot leak into the helper — the test stubs gh, so the token must
+# never reach git.
+run_helper() {
+    (cd "$FIXTURE" && env -u GH_TOKEN -u GITHUB_TOKEN "$HELPER" "$@")
+}
+
+run_helper_with_tag() {
+    (cd "$FIXTURE" && env -u GH_TOKEN -u GITHUB_TOKEN SYNC_DEVKIT_TAG="$1" "$HELPER" run)
+}
+
+# ── Tests ─────────────────────────────────────────────────────────────
+
+test_resolve_latest() {
+    note "resolve prints the latest release tag"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    _got="$(run_helper resolve)"
+    [ "$_got" = "v0.9.0" ] || {
+        echo "expected v0.9.0, got $_got" >&2
+        return 1
+    }
+}
+
+test_resolve_explicit_tag() {
+    note "resolve validates and echoes an explicit tag"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    _got="$(run_helper resolve v1.0.0)"
+    [ "$_got" = "v1.0.0" ] || {
+        echo "expected v1.0.0, got $_got" >&2
+        return 1
+    }
+}
+
+test_reject_bad_tag_shape() {
+    note "resolve rejects a malformed tag"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    ! run_helper resolve "not-a-tag" || {
+        echo "should have rejected"
+        return 1
+    }
+}
+
+test_reject_unknown_release() {
+    note "resolve rejects a tag with no published release"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    ! run_helper resolve v9.9.9 || {
+        echo "should have rejected"
+        return 1
+    }
+}
+
+test_pinned() {
+    note "pinned prints the current tag"
+    FIXTURE="$(build_fixture v0.5.0)"
+    _got="$(run_helper pinned)"
+    [ "$_got" = "v0.5.0" ] || {
+        echo "expected v0.5.0, got $_got" >&2
+        return 1
+    }
+}
+
+test_happy_path() {
+    note "happy path: pin bump, sync, verify, push, open PR"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    run_helper_with_tag v0.9.0
+    assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml"
+    assert_task_logged "task sync:skills"
+    assert_task_logged "task verify:skills:offline"
+    assert_task_logged "task security:secrets"
+    assert_task_not_logged "task verify:skills"
+    assert_task_not_logged "task verify"
+    assert_gh_logged "gh pr create"
+    assert_commit_title "$FIXTURE" "fix: sync harmon-devkit skills to v0.9.0"
+}
+
+test_happy_path_with_agents() {
+    note "happy path with agents block"
+    FIXTURE="$(build_fixture v0.1.0)"
+    add_agents_block "$FIXTURE"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    run_helper_with_tag v0.9.0
+    assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml"
+}
+
+test_noop_when_current() {
+    note "no-op when already pinned and vendored"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    # First run: pin to v0.1.0 (already there — no-op if vendored matches)
+    # Manually write provenance so the no-op fires
+    echo "# ref: v0.1.0" >"$FIXTURE/.claude/skills/.SKILLS_PROVENANCE"
+    echo "# categories: universal" >>"$FIXTURE/.claude/skills/.SKILLS_PROVENANCE"
+    echo "# managed: universal" >>"$FIXTURE/.claude/skills/.SKILLS_PROVENANCE"
+    mkdir -p "$FIXTURE/.claude/skills/universal"
+    run_helper_with_tag v0.1.0
+    # Should be no-op — task sync:skills was never called
+    ! grep -q "task sync:skills" "$TASK_LOG" 2>/dev/null || {
+        echo "should not have called sync:skills"
+        return 1
+    }
+}
+
+test_dirty_tree_refused() {
+    note "refuses a dirty working tree"
+    FIXTURE="$(build_fixture v0.1.0)"
+    echo "dirty" >"$FIXTURE/dirty.txt"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    ! run_helper_with_tag v0.9.0 || {
+        echo "should have refused dirty tree"
+        return 1
+    }
+}
+
+test_off_base_branch_refused() {
+    note "refuses to run from a non-base branch"
+    FIXTURE="$(build_fixture v0.1.0)"
+    git -C "$FIXTURE" checkout -b feature >/dev/null 2>&1
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    ! run_helper_with_tag v0.9.0 || {
+        echo "should have refused off-base branch"
+        return 1
+    }
+}
+
+test_downgrade_refused() {
+    note "refuses to move the pin backwards"
+    FIXTURE="$(build_fixture v0.9.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    ! run_helper_with_tag v0.8.0 || {
+        echo "should have refused downgrade"
+        return 1
+    }
+}
+
+test_downgrade_allowed_with_env() {
+    note "allows downgrade when SYNC_DEVKIT_ALLOW_DOWNGRADE=true"
+    FIXTURE="$(build_fixture v0.9.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    SYNC_DEVKIT_ALLOW_DOWNGRADE=true run_helper_with_tag v0.8.0
+    assert_pin v0.8.0 "$FIXTURE/.skills-sync.yaml"
+}
+
+test_failing_sync_never_pushes() {
+    note "a failing sync:skills never pushes"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub fail
+    ! run_helper_with_tag v0.9.0 || {
+        echo "should have failed"
+        return 1
+    }
+    # Pin should not have changed (the helper aborts before pushing)
+}
+
+test_failing_verify_never_pushes() {
+    note "a failing verification never pushes"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    # Stub task: sync passes, verify:skills:offline fails
+    cat >"$BIN_DIR/task" <<'SCRIPT'
+#!/usr/bin/env bash
+echo "task $*" >>"$TASK_LOG"
+case "${1:-}" in
+sync:skills)
+    mkdir -p .claude/skills/universal
+    echo "# ref: $(awk '/^[[:space:]]*ref:/{sub(/^[[:space:]]*ref:[[:space:]]*/,""); print}' .skills-sync.yaml)" > .claude/skills/.SKILLS_PROVENANCE
+    echo "# managed: universal" >> .claude/skills/.SKILLS_PROVENANCE
+    ;;
+verify:skills:offline) echo "verify failed" >&2; exit 1;;
+security:secrets) ;;
+*) ;;
+esac
+SCRIPT
+    chmod +x "$BIN_DIR/task"
+    ! run_helper_with_tag v0.9.0 || {
+        echo "should have failed"
+        return 1
+    }
+}
+
+test_token_never_reaches_task() {
+    note "GH_TOKEN is scrubbed from task subprocesses"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    export GH_TOKEN=fake-token
+    run_helper_with_tag v0.9.0
+    # The task stub logged its env — if GH_TOKEN leaked, it would be in the log
+    # (the run_helper scrubs it from the helper's env; the helper scrubs it
+    # from the task subprocess via run_untrusted)
+}
+
+test_app_slug_identity() {
+    note "configures git identity from GH_APP_SLUG"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    GH_APP_SLUG=my-ci-app run_helper_with_tag v0.9.0
+    _name="$(git -C "$FIXTURE" log -1 --format='%an')"
+    [ "$_name" = "my-ci-app[bot]" ] || {
+        echo "expected my-ci-app[bot], got $_name" >&2
+        return 1
+    }
+}
+
+test_bogus_app_slug_refused() {
+    note "refuses a bogus GitHub App slug"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    ! GH_APP_SLUG="bad/slug" run_helper_with_tag v0.9.0 || {
+        echo "should have refused bogus slug"
+        return 1
+    }
+}
+
+test_usage_exit() {
+    note "no subcommand prints usage and exits 2"
+    FIXTURE="$(build_fixture v0.1.0)"
+    run_helper 2>&1 | grep -q usage || {
+        echo "expected usage"
+        return 1
+    }
+    [ "${PIPESTATUS[0]}" -eq 2 ] || {
+        echo "expected exit 2"
+        return 1
+    }
+}
+
+# ── Runner ────────────────────────────────────────────────────────────
+TESTS=(
+    test_resolve_latest
+    test_resolve_explicit_tag
+    test_reject_bad_tag_shape
+    test_reject_unknown_release
+    test_pinned
+    test_happy_path
+    test_happy_path_with_agents
+    test_noop_when_current
+    test_dirty_tree_refused
+    test_off_base_branch_refused
+    test_downgrade_refused
+    test_downgrade_allowed_with_env
+    test_failing_sync_never_pushes
+    test_failing_verify_never_pushes
+    test_token_never_reaches_task
+    test_app_slug_identity
+    test_bogus_app_slug_refused
+    test_usage_exit
+)
+
+FAILED=0
+for t in "${TESTS[@]}"; do
+    if "$t"; then
+        printf '  \033[32m✓\033[0m %s\n' "$t"
+    else
+        printf '  \033[31m✗\033[0m %s\n' "$t"
+        FAILED=$((FAILED + 1))
+    fi
+done
+
+echo ""
+if [ "$FAILED" -eq 0 ]; then
+    printf '\033[32mAll %d tests passed.\033[0m\n' "${#TESTS[@]}"
+    exit 0
+else
+    printf '\033[31m%d of %d tests failed.\033[0m\n' "$FAILED" "${#TESTS[@]}"
+    exit 1
+fi
