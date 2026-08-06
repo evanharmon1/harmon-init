@@ -160,53 +160,60 @@ while IFS= read -r hit; do
     fail=1
 done < <(grep -rn "${ANSWER}" template 2>/dev/null || true)
 
-# ── 2b. Conditionals INSIDE a loop over the answer ──────────────────────────
-# The allowlist exempts a LINE, but a `[% for cat in skill_categories %]` binds
-# the answer's values to a loop variable that other lines can then gate on —
-# and those lines never name the answer, so check 2 cannot see them:
+# ── 2b. The seed loop must be EXACTLY the known block ───────────────────────
+# Check 2 exempts the loop's opening LINE, and that is where every remaining
+# hole lived. `[% for cat in skill_categories %]` binds the answer to a loop
+# variable, so lines gating on THAT never name the answer and check 2 cannot
+# see them — and an earlier scanner that walked the loop body still missed
+# conditionals sharing the `for` or `endfor` line itself.
 #
-#   [% for cat in skill_categories %]      <- allowlisted, subtracted
-#   [% if cat == 'universal' %]            <- no `skill_categories` anywhere
-#     - [[ cat ]]
-#   [% endif %]
-#   [% endfor %]
+# Both were symptoms of the same thing: hand-parsing Jinja. Every round of
+# review found another syntax the scanner did not model — a whitespace-control
+# modifier, a parenthesised expression, an inline ternary, a boundary line.
+# Jinja's grammar is not something a regex should be trying to follow.
 #
-# That renders content conditionally on the stale answer while the guard exits
-# 0, which is the invariant failing inside the one file the exemption protects.
-# Nothing else could reach it: the exemption is exactly where the hole is.
+# So this does not parse the loop; it PINS it. The block below is the entire
+# legitimate use of the answer in template content, all three lines of it. If
+# the file does not contain those bytes exactly, the guard fails — whether the
+# change is a nested conditional, a same-line one, a boundary-line one, an
+# inline ternary, or a form nobody has thought of yet. There is no grammar left
+# to outsmart.
 #
-# ANY conditional inside such a loop fails, not only one naming the loop
-# variable. A conditional there decides which categories reach the output, so
-# whatever it tests, the emitted list is no longer simply the answer — and the
-# exemption exists on the premise that this loop is a faithful seed. Being
-# strict costs nothing today (the loop is three lines and holds no conditional)
-# and removes a judgement call from the next reader.
-while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    echo "FAIL: ${hit%%:*}:${hit#*:}" >&2
-    echo "      conditional inside a loop over ${ANSWER} — the loop variable" >&2
-    echo "      carries the stale answer, so this gates on it indirectly" >&2
-    fail=1
-done < <(
-    find template -type f -print 2>/dev/null | while IFS= read -r f; do
-        [ -n "$f" ] || continue
-        awk -v F="$f" -v A="${ANSWER}" '
-            # depth counts nested [% for %] once we are inside a loop over the
-            # answer; the opening line itself is never scanned for a conditional.
-            index($0, "for ") && index($0, " in " A) && depth == 0 { depth = 1; next }
-            depth > 0 {
-                if (index($0, "[% for ") || index($0, "[%- for ") || index($0, "[%+ for ")) depth++
-                if (index($0, "endfor")) { depth--; if (depth <= 0) { depth = 0; next } }
-                # Statement form `[% if %]` AND expression form
-                # `[[ x if cond else y ]]` — inside a loop over the answer both
-                # decide what the emitted list contains, and the second slipped
-                # a statement-only pattern in testing.
-                if ($0 ~ /\[%[-+]?[[:space:]]*(el)?if[[:space:](]/ ||
-                    $0 ~ /\[\[[^]]*[[:space:]]if[[:space:]]/) print F ":" NR ":" $0
-            }
-        ' "$f"
-    done
-)
+# Reformatting the loop is a deliberate act that costs one edit here, and that
+# is the point: the loop's exact shape is what the exemption in check 2 is
+# vouching for, so the two must be changed together.
+SEED_FILE='template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja'
+SEED_BLOCK='[% for cat in skill_categories %]
+  - [[ cat ]]
+[% endfor %]'
+
+if [ -f "$SEED_FILE" ]; then
+    # Compared as ONE flattened string, with newlines mapped to \001 on both
+    # sides, then matched with a quoted shell `case` — a literal substring test.
+    #
+    # NOT `grep -F`: it treats newlines in the PATTERN as pattern separators,
+    # so a multi-line -F pattern means "any one of these lines", which matches
+    # a tampered block just as happily as the real one. That version of this
+    # check was silently inert — it reported OK on every attack below — which
+    # is precisely the failure this guard exists to catch, met for the third
+    # time inside the guard itself. `grep -z` only changes the INPUT record
+    # separator and does not fix it.
+    _seed_actual=$(tr '\n' '\001' <"$SEED_FILE")
+    _seed_want=$(printf '%s' "$SEED_BLOCK" | tr '\n' '\001')
+    case "$_seed_actual" in
+    *"$_seed_want"*) _seed_ok=1 ;;
+    *) _seed_ok=0 ;;
+    esac
+    if [ "$_seed_ok" -ne 1 ]; then
+        echo "FAIL: ${SEED_FILE}" >&2
+        echo "      the ${ANSWER} seed loop is not the exact expected block:" >&2
+        printf '        %s\n' "$SEED_BLOCK" | sed 's/^/      /' >&2
+        echo "      anything else there can gate output on the stale answer." >&2
+        echo "      If the loop was reformatted deliberately, update SEED_BLOCK" >&2
+        echo "      in scripts/test-category-gates.sh to match." >&2
+        fail=1
+    fi
+fi
 
 # ── 3. copier.yml: computed answers that GATE on it ─────────────────────────
 # A `default:` derives one answer from another, and a `when:` decides whether a
