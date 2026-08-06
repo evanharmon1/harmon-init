@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.17.0](https://github.com/evanharmon1/harmon-init/compare/v4.16.0...v4.17.0) (2026-08-06)
+
+
+### Features
+
+* **guard:** fail verify when a template file is gated on skill_categories ([#628](https://github.com/evanharmon1/harmon-init/issues/628)) ([5ff5172](https://github.com/evanharmon1/harmon-init/commit/5ff5172854cb948b22e523d7f4f85c95132ccdd6))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.21.1 ([#626](https://github.com/evanharmon1/harmon-init/issues/626)) ([f5dec8f](https://github.com/evanharmon1/harmon-init/commit/f5dec8f545384826acfd11475a043f29240c6507))
+
 ## [4.16.0](https://github.com/evanharmon1/harmon-init/compare/v4.15.2...v4.16.0) (2026-08-05)
 
 
