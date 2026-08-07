@@ -194,7 +194,12 @@ function resolveRef(ref) {
     .slice(2)
     .split('/')
     .map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~'))
-    .reduce((node, part) => node?.[part], schema)
+    .reduce((node, part) => {
+      if (node === null || typeof node !== 'object' || !Object.hasOwn(node, part)) {
+        return undefined
+      }
+      return node[part]
+    }, schema)
 }
 
 function validateSchema(value, rule, location) {
