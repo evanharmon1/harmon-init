@@ -34,6 +34,9 @@ ARG GEMINI_CLI_VERSION=0.53.0
 ARG AGENT_DECK_VERSION=1.10.11
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.28.0
+# renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
+# Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
+ARG HERDR_VERSION=0.8.0
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.10.0
 # renovate: datasource=pypi depName=semgrep
@@ -273,8 +276,10 @@ RUN case "${TARGETARCH}" in \
 
 # ---------- terminal / workflow tools ----------
 RUN case "${TARGETARCH}" in \
-        "amd64") export ZELLIJ_ARCH="x86_64" WORKMUX_ARCH="amd64" AOE_ARCH="amd64" AGENT_DECK_ARCH="amd64" SESH_ARCH="x86_64" ;; \
-        "arm64") export ZELLIJ_ARCH="aarch64" WORKMUX_ARCH="arm64" AOE_ARCH="arm64" AGENT_DECK_ARCH="arm64" SESH_ARCH="arm64" ;; \
+        "amd64") export ZELLIJ_ARCH="x86_64" WORKMUX_ARCH="amd64" AOE_ARCH="amd64" AGENT_DECK_ARCH="amd64" SESH_ARCH="x86_64" \
+            HERDR_ARCH="x86_64" ;; \
+        "arm64") export ZELLIJ_ARCH="aarch64" WORKMUX_ARCH="arm64" AOE_ARCH="arm64" AGENT_DECK_ARCH="arm64" SESH_ARCH="arm64" \
+            HERDR_ARCH="aarch64" ;; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL "https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/zellij-${ZELLIJ_ARCH}-unknown-linux-musl.tar.gz" \
@@ -288,7 +293,18 @@ RUN case "${TARGETARCH}" in \
     && curl -fsSL "https://github.com/asheshgoplani/agent-deck/releases/download/v${AGENT_DECK_VERSION}/agent-deck_${AGENT_DECK_VERSION}_linux_${AGENT_DECK_ARCH}.tar.gz" \
         | tar -xz -C /usr/local/bin agent-deck \
     && curl -fsSL "https://github.com/joshmedeski/sesh/releases/download/v${SESH_VERSION}/sesh_Linux_${SESH_ARCH}.tar.gz" \
-        | tar -xz -C /usr/local/bin sesh
+        | tar -xz -C /usr/local/bin sesh \
+    && curl -fsSL "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-${HERDR_ARCH}" \
+        -o /usr/local/bin/herdr \
+    && chmod +x /usr/local/bin/herdr
+
+# Keep Herdr's default-session server socket out of ~/.config/herdr — that
+# directory is volume-persisted across rebuilds and a stale socket must not
+# ride along. (Herdr derives the client socket from this too:
+# /tmp/herdr-client.sock. Named sessions ignore this override and keep their
+# sockets under ~/.config/herdr/sessions/<name>/, where a stale one may
+# persist — harmless but not covered.)
+ENV HERDR_SOCKET_PATH=/tmp/herdr.sock
 
 # ---------- Python and prompt tooling ----------
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR="${UV_INSTALL_DIR}" sh
@@ -348,6 +364,7 @@ RUN chmod 0755 \
         "gemini-cli=${GEMINI_CLI_VERSION}" \
         "agent-deck=${AGENT_DECK_VERSION}" \
         "sesh=${SESH_VERSION}" \
+        "herdr=${HERDR_VERSION}" \
         "dmux=${DMUX_VERSION}" \
         "semgrep=${SEMGREP_VERSION}" \
         "playwright=${PLAYWRIGHT_VERSION}" \
