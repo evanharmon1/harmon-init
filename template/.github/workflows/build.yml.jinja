@@ -49,6 +49,7 @@ jobs:
         run: task guard:codegen
 [% endif %]
       - run: task test:tasks
+      - run: task test:agent-registry
 [% if use_codex_review %]
       - run: task test:codex-review
 [% endif %]
