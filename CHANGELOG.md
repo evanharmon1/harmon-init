@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.18.0](https://github.com/evanharmon1/harmon-init/compare/v4.17.1...v4.18.0) (2026-08-07)
+
+
+### Features
+
+* **devcontainer:** add Herdr for persistent remote agent sessions in Coder workspaces ([#648](https://github.com/evanharmon1/harmon-init/issues/648)) ([dedd863](https://github.com/evanharmon1/harmon-init/commit/dedd863e6e06f98821db77f59e129c1da12ab42b))
+* **devcontainer:** default to claude-opus-4-8 instead of claude-opus-5 ([#654](https://github.com/evanharmon1/harmon-init/issues/654)) ([a0d3ad0](https://github.com/evanharmon1/harmon-init/commit/a0d3ad0252d565a9a184122d7a006cbfe87ea1cd))
+* **template:** ship scheduled skills-sync workflow to downstream repos ([#646](https://github.com/evanharmon1/harmon-init/issues/646)) ([e2db812](https://github.com/evanharmon1/harmon-init/commit/e2db812f3b30c16ef6ff20ed22ef9f14ffcbc125))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to dedd863e ([#651](https://github.com/evanharmon1/harmon-init/issues/651)) ([33740c1](https://github.com/evanharmon1/harmon-init/commit/33740c11f87dce25cdf118598d27709df3da4297))
+* **template:** change snyk weekly cron to Sunday and add ponderous-docs to fleet ([#645](https://github.com/evanharmon1/harmon-init/issues/645)) ([fd5b2a6](https://github.com/evanharmon1/harmon-init/commit/fd5b2a64bd47477f27b08937e7331c409fb1d338))
+
 ## [4.17.1](https://github.com/evanharmon1/harmon-init/compare/v4.17.0...v4.17.1) (2026-08-07)
 
 
