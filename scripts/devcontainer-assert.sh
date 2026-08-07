@@ -130,6 +130,11 @@ assert_unit() {
         grep -q "^${1}=" "$2"
     }
 
+    # These allow-list cases run init-env.sh with most vars unset, so its
+    # missing-var warning (asserted in 6 below) fires on every one. They assert
+    # on the ENV-FILE, not stderr, so the warning is discarded: a green run must
+    # not print "warning:" blocks a reader has to triage. `set -e` still catches
+    # a nonzero exit, and 6 is where stderr is captured and checked.
     local bot_allow=(GH_TOKEN FOREMAN_AGENT_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
     local dev_allow=(TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY)
 
@@ -137,7 +142,7 @@ assert_unit() {
     #    including the read-only agent token foreman requires for dispatch.
     env_file="${work_dir}/env-bot-strip"
     : >"$env_file"
-    TS_AUTHKEY=fake GH_TOKEN=fake FOREMAN_AGENT_GH_TOKEN=fake bash "$init_env" "$env_file" "${bot_allow[@]}"
+    TS_AUTHKEY=fake GH_TOKEN=fake FOREMAN_AGENT_GH_TOKEN=fake bash "$init_env" "$env_file" "${bot_allow[@]}" 2>/dev/null
     has_var GH_TOKEN "$env_file" || fail "bot profile dropped allowed GH_TOKEN"
     has_var FOREMAN_AGENT_GH_TOKEN "$env_file" || fail "bot profile dropped allowed FOREMAN_AGENT_GH_TOKEN (foreman dispatch needs it)"
     if has_var TS_AUTHKEY "$env_file"; then
@@ -148,7 +153,7 @@ assert_unit() {
     #    unset in the host env.
     env_file="${work_dir}/env-bot-evict"
     printf 'TS_AUTHKEY=stale\nGH_TOKEN=old\n' >"$env_file"
-    (unset TS_AUTHKEY && GH_TOKEN=new bash "$init_env" "$env_file" "${bot_allow[@]}")
+    (unset TS_AUTHKEY && GH_TOKEN=new bash "$init_env" "$env_file" "${bot_allow[@]}") 2>/dev/null
     if has_var TS_AUTHKEY "$env_file"; then
         fail "bot profile failed to evict a stale TS_AUTHKEY"
     fi
@@ -159,7 +164,7 @@ assert_unit() {
     #    login`) rather than carry the bot's PAT.
     env_file="${work_dir}/env-dev-keep"
     : >"$env_file"
-    TS_AUTHKEY=keep GH_TOKEN=fake FOREMAN_AGENT_GH_TOKEN=fake bash "$init_env" "$env_file" "${dev_allow[@]}"
+    TS_AUTHKEY=keep GH_TOKEN=fake FOREMAN_AGENT_GH_TOKEN=fake bash "$init_env" "$env_file" "${dev_allow[@]}" 2>/dev/null
     has_var TS_AUTHKEY "$env_file" || fail "dev profile dropped allowed TS_AUTHKEY"
     if has_var GH_TOKEN "$env_file"; then
         fail "dev profile injected GH_TOKEN — a human profile must carry no bot credential"
@@ -174,7 +179,7 @@ assert_unit() {
     #     allow-list alone would leave the old token sitting in the env-file.
     env_file="${work_dir}/env-dev-evict"
     printf 'GH_TOKEN=stale\nTS_AUTHKEY=old\n' >"$env_file"
-    (unset GH_TOKEN && TS_AUTHKEY=new bash "$init_env" "$env_file" "${dev_allow[@]}")
+    (unset GH_TOKEN && TS_AUTHKEY=new bash "$init_env" "$env_file" "${dev_allow[@]}") 2>/dev/null
     if has_var GH_TOKEN "$env_file"; then
         fail "dev profile failed to evict a stale GH_TOKEN"
     fi
@@ -183,7 +188,7 @@ assert_unit() {
     #    (it silently overrides CLAUDE_CODE_OAUTH_TOKEN).
     env_file="${work_dir}/env-anthropic"
     : >"$env_file"
-    ANTHROPIC_API_KEY=secret GH_TOKEN=fake bash "$init_env" "$env_file" GH_TOKEN ANTHROPIC_API_KEY
+    ANTHROPIC_API_KEY=secret GH_TOKEN=fake bash "$init_env" "$env_file" GH_TOKEN ANTHROPIC_API_KEY 2>/dev/null
     if has_var ANTHROPIC_API_KEY "$env_file"; then
         fail "ANTHROPIC_API_KEY was allowed into the env-file"
     fi
@@ -191,7 +196,7 @@ assert_unit() {
     # 5. An unknown var passed in the allow-list cannot be smuggled in.
     env_file="${work_dir}/env-smuggle"
     : >"$env_file"
-    HARMON_SMUGGLE=evil bash "$init_env" "$env_file" GH_TOKEN HARMON_SMUGGLE
+    HARMON_SMUGGLE=evil bash "$init_env" "$env_file" GH_TOKEN HARMON_SMUGGLE 2>/dev/null
     if has_var HARMON_SMUGGLE "$env_file"; then
         fail "an unknown var was smuggled into the env-file via the allow-list"
     fi
