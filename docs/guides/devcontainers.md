@@ -171,6 +171,63 @@ a `TERM=… docker exec` prefix changes only the client's environment. Ask for t
 terminal you want with `-e`:
 `docker exec -e TERM=xterm-256color -it <container> bash`.
 
+## Persistent agent sessions (Herdr)
+
+**Herdr** is the agent-session runtime in both profiles: it owns the panes your
+coding agents run in and tracks each one's state (working / blocked / idle) so
+you can see at a glance which agent is waiting on you. `zellij` and `tmux` are
+still installed and still the right tool for general terminal multiplexing —
+Herdr is not a replacement for them, it is the layer that knows what an *agent*
+pane is doing.
+
+The server **auto-starts on the first `herdr` invocation**. There is no `herdr
+server start` subcommand to run first, and looking for one is the usual way to
+waste ten minutes; to check whether a server is already live, run `herdr
+status`.
+
+To attach from a laptop, either SSH in and run it there:
+
+```bash
+coder ssh <workspace>
+herdr
+```
+
+or let Herdr do the SSH itself — this form runs a **local** Herdr thin client,
+so install Herdr on the laptop first (`brew install herdr`, or the installer
+at [herdr.dev](https://herdr.dev/)):
+
+```bash
+herdr --remote coder.<workspace>
+```
+
+`coder config-ssh` is what writes those `coder.<workspace>` host aliases into
+your SSH config, so run it once before the `--remote` form. Both forms work
+because Coder's agent executes **inside** the workspace container, where Herdr
+and its socket live; an SSH route that terminates on a Docker host instead
+would attach to a host-side Herdr or nothing.
+
+`~/.config/herdr` is a **named volume** (`herdr-config-…`, per profile; on
+Coder it is symlinked into the `~/.persistent` volume instead), so Herdr's own
+state survives a rebuild: snapshot restore brings the workspace shape back —
+tabs, panes, cwds, layout — as fresh shells. Whether an agent *conversation*
+resumes inside its restored pane is a separate mechanism:
+`resume_agents_on_restore` only works for agents whose Herdr integration has
+recorded a native session reference. post-create installs the Claude Code and
+Codex integrations automatically (`herdr integration install`, idempotent) —
+Gemini has no resume integration in v0.8. The
+conversations themselves persist regardless, in the `~/.claude`, `~/.codex`,
+and `~/.gemini` volumes, so a pane that restores as a plain shell can still
+resume its agent by hand (e.g. `claude --resume`).
+
+The default session's server socket deliberately does **not** live in that
+volume. The image sets `HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a
+socket left behind by a dead server cannot ride along in the persisted config
+directory into the next container. (Herdr derives the client socket from the
+same variable — `/tmp/herdr-client.sock`.) Named sessions (`herdr --session`)
+ignore that override and keep sockets under `~/.config/herdr/sessions/<name>/`,
+so a stale named-session socket can survive a rebuild — harmless, but if a
+named session misbehaves after a rebuild, delete its `herdr.sock` and reattach.
+
 ## Secrets — 1Password Environments (the standard)
 
 Don't hand-write or copy `devcontainer.env`. The standard is **1Password
