@@ -149,4 +149,21 @@ case "$output" in
 esac
 echo "PASS: rejects unsupported schema keywords"
 
+node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const schema = JSON.parse(await readFile(inputPath, 'utf8'))
+schema.properties.families.items = false
+await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+if output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
+    fail "validator accepted a boolean items schema"
+fi
+case "$output" in
+*'boolean and non-object schemas are not supported'*) ;;
+*) fail "boolean items schema failed for the wrong reason: $output" ;;
+esac
+echo "PASS: rejects boolean items schemas"
+
 echo "agent registry mutation tests OK"

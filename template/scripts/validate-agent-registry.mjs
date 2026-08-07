@@ -67,7 +67,7 @@ function assertSupportedSchema(rule, location = '$schema') {
   for (const [name, child] of Object.entries(rule.properties ?? {})) {
     assertSupportedSchema(child, `${location}.properties.${name}`)
   }
-  if (rule.items) assertSupportedSchema(rule.items, `${location}.items`)
+  if (Object.hasOwn(rule, 'items')) assertSupportedSchema(rule.items, `${location}.items`)
 }
 
 try {
