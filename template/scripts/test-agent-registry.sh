@@ -154,6 +154,23 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 const [inputPath, outputPath] = process.argv.slice(2)
 const schema = JSON.parse(await readFile(inputPath, 'utf8'))
+schema.$defs.model.properties.display_name.minLength = 'one'
+await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+if output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
+    fail "validator accepted a malformed minLength value"
+fi
+case "$output" in
+*'minLength: must be a non-negative integer'*) ;;
+*) fail "malformed minLength failed for the wrong reason: $output" ;;
+esac
+echo "PASS: rejects malformed supported schema keyword values"
+
+node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const schema = JSON.parse(await readFile(inputPath, 'utf8'))
 schema.properties.families.items = false
 await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
 NODE

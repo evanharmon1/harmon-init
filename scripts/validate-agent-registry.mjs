@@ -43,6 +43,99 @@ const supportedSchemaKeywords = new Set([
   'additionalProperties'
 ])
 
+const supportedInstanceTypes = new Set([
+  'array',
+  'boolean',
+  'integer',
+  'null',
+  'number',
+  'object',
+  'string'
+])
+
+function schemaError(location, keyword, expectation) {
+  throw new Error(`${location}.${keyword}: ${expectation}`)
+}
+
+function assertSchemaKeywordValues(rule, location) {
+  for (const keyword of ['$schema', '$id', '$ref', 'title', 'description', '$comment']) {
+    if (Object.hasOwn(rule, keyword) && typeof rule[keyword] !== 'string') {
+      schemaError(location, keyword, 'must be a string')
+    }
+  }
+  for (const keyword of ['$schema', '$id', '$ref']) {
+    if (Object.hasOwn(rule, keyword) && rule[keyword].length === 0) {
+      schemaError(location, keyword, 'must not be empty')
+    }
+  }
+
+  if (Object.hasOwn(rule, 'type')) {
+    const types = Array.isArray(rule.type) ? rule.type : [rule.type]
+    if (
+      types.length === 0 ||
+      types.some((type) => typeof type !== 'string' || !supportedInstanceTypes.has(type)) ||
+      new Set(types).size !== types.length
+    ) {
+      schemaError(location, 'type', 'must name one or more unique supported instance types')
+    }
+  }
+
+  if (Object.hasOwn(rule, 'enum')) {
+    if (!Array.isArray(rule.enum) || rule.enum.length === 0) {
+      schemaError(location, 'enum', 'must be a non-empty array')
+    }
+    if (
+      rule.enum.some((candidate, index) =>
+        rule.enum.slice(0, index).some((earlier) => jsonEqual(candidate, earlier))
+      )
+    ) {
+      schemaError(location, 'enum', 'must contain unique values')
+    }
+  }
+
+  for (const keyword of ['minLength', 'minItems']) {
+    if (Object.hasOwn(rule, keyword) && (!Number.isInteger(rule[keyword]) || rule[keyword] < 0)) {
+      schemaError(location, keyword, 'must be a non-negative integer')
+    }
+  }
+
+  if (Object.hasOwn(rule, 'pattern')) {
+    if (typeof rule.pattern !== 'string') schemaError(location, 'pattern', 'must be a string')
+    try {
+      new RegExp(rule.pattern, 'u')
+    } catch {
+      schemaError(location, 'pattern', 'must be a valid regular expression')
+    }
+  }
+
+  if (Object.hasOwn(rule, 'uniqueItems') && typeof rule.uniqueItems !== 'boolean') {
+    schemaError(location, 'uniqueItems', 'must be a boolean')
+  }
+  if (Object.hasOwn(rule, 'required')) {
+    if (
+      !Array.isArray(rule.required) ||
+      rule.required.some((name) => typeof name !== 'string') ||
+      new Set(rule.required).size !== rule.required.length
+    ) {
+      schemaError(location, 'required', 'must be an array of unique strings')
+    }
+  }
+  for (const keyword of ['$defs', 'properties']) {
+    if (
+      Object.hasOwn(rule, keyword) &&
+      (rule[keyword] === null || typeof rule[keyword] !== 'object' || Array.isArray(rule[keyword]))
+    ) {
+      schemaError(location, keyword, 'must be an object')
+    }
+  }
+  if (
+    Object.hasOwn(rule, 'additionalProperties') &&
+    typeof rule.additionalProperties !== 'boolean'
+  ) {
+    schemaError(location, 'additionalProperties', 'must be a boolean')
+  }
+}
+
 function assertSupportedSchema(rule, location = '$schema') {
   if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) {
     throw new Error(`${location}: boolean and non-object schemas are not supported`)
@@ -52,14 +145,9 @@ function assertSupportedSchema(rule, location = '$schema') {
       throw new Error(`${location}: unsupported schema keyword ${keyword}`)
     }
   }
-  if (rule.$ref && Object.keys(rule).some((keyword) => keyword !== '$ref')) {
+  assertSchemaKeywordValues(rule, location)
+  if (Object.hasOwn(rule, '$ref') && Object.keys(rule).some((keyword) => keyword !== '$ref')) {
     throw new Error(`${location}: schema keywords alongside $ref are not supported`)
-  }
-  if (
-    Object.hasOwn(rule, 'additionalProperties') &&
-    typeof rule.additionalProperties !== 'boolean'
-  ) {
-    throw new Error(`${location}: schema-valued additionalProperties is not supported`)
   }
   for (const [name, child] of Object.entries(rule.$defs ?? {})) {
     assertSupportedSchema(child, `${location}.$defs.${name}`)
@@ -73,7 +161,7 @@ function assertSupportedSchema(rule, location = '$schema') {
 try {
   assertSupportedSchema(schema)
 } catch (error) {
-  console.error(`agent registry: unsupported schema: ${error.message}`)
+  console.error(`agent registry: invalid or unsupported schema: ${error.message}`)
   process.exit(1)
 }
 
