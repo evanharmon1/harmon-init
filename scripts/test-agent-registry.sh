@@ -245,6 +245,19 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 const [inputPath, outputPath] = process.argv.slice(2)
 const schema = JSON.parse(await readFile(inputPath, 'utf8'))
+schema.properties.schema_version = { type: 'number' }
+await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+if ! output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
+    fail "validator rejected an integer instance under a number schema: $output"
+fi
+echo "PASS: accepts integer instances under number schemas"
+
+node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const schema = JSON.parse(await readFile(inputPath, 'utf8'))
 schema.properties.families.items = false
 await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
 NODE

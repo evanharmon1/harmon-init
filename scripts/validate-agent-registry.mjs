@@ -236,7 +236,8 @@ function validateSchema(value, rule, location) {
   if (rule.type) {
     const allowed = Array.isArray(rule.type) ? rule.type : [rule.type]
     const actual = instanceType(value)
-    if (!allowed.includes(actual)) {
+    const integerSatisfiesNumber = actual === 'integer' && allowed.includes('number')
+    if (!allowed.includes(actual) && !integerSatisfiesNumber) {
       errors.push(`${location}: expected ${allowed.join(' or ')}, found ${actual}`)
       return
     }
