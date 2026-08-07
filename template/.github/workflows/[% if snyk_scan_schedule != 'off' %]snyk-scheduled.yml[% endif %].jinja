@@ -7,7 +7,7 @@ on:
 [% if snyk_scan_schedule == 'daily' %]
     - cron: "23 6 * * *"
 [% else %]
-    - cron: "23 6 * * 1"
+    - cron: "23 6 * * 0"
 [% endif %]
 
 # Advisory defense in depth only: intentionally no pull_request/push trigger and

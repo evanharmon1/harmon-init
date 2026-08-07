@@ -352,7 +352,7 @@ fi
 case "$profile" in
 full)
     [ -f .github/workflows/snyk-scheduled.yml ] || err "weekly Snyk workflow did not render"
-    grep -q '23 6 \* \* 1' .github/workflows/snyk-scheduled.yml || err "weekly Snyk cron is incorrect"
+    grep -q '23 6 \* \* 0' .github/workflows/snyk-scheduled.yml || err "weekly Snyk cron is incorrect"
     ;;
 meta)
     [ -f .github/workflows/snyk-scheduled.yml ] || err "daily Snyk workflow did not render"
