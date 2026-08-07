@@ -119,6 +119,9 @@ tasks:
 [% if project_management == 'github' and github_org != author_git_provider_username %]
       - task: test:setup-github-issue-fields
 [% endif %]
+[% if use_skills_sync %]
+      - task: test:sync-devkit-release
+[% endif %]
 [% if devcontainer %]
       - task: test:hooks
       - task: test:statusline
@@ -464,6 +467,16 @@ tasks:
     desc: "Fast offline check that the vendored ref matches the manifest (no network)"
     cmds:
       - ./scripts/sync-skills.sh verify-offline
+
+  # Entry point for .github/workflows/sync-harmon-devkit.yml: resolves the
+  # latest harmon-devkit release, bumps .skills-sync.yaml, vendors, verifies
+  # offline, and opens/updates ONE rolling bot/sync-harmon-devkit PR.
+  # Never merges anything. `{{.CLI_ARGS}}` passes an explicit tag for the
+  # manual recovery path (`task sync:devkit-release -- vX.Y.Z`).
+  sync:devkit-release:
+    desc: "Pin the latest harmon-devkit release, vendor it, verify, and open/update the sync PR"
+    cmds:
+      - ./scripts/sync-devkit-release.sh run {{.CLI_ARGS}}
 [% endif %]
 
   format:
@@ -657,6 +670,13 @@ tasks:
     desc: Unit-test the GitHub Project field reconciliation (stubbed gh, no network)
     cmds:
       - ./scripts/test-setup-github-project.sh
+[% endif %]
+[% if use_skills_sync %]
+
+  test:sync-devkit-release:
+    desc: "Unit-test the harmon-devkit release→sync-PR automation (offline, stubbed gh/task)"
+    cmds:
+      - ./scripts/test-sync-devkit-release.sh
 [% endif %]
 [% if project_management == 'github' and github_org != author_git_provider_username %]
 

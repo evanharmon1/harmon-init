@@ -48,6 +48,13 @@ docs/architecture/tests.md
 docs/guides/README.md
 docs/guides/bot-account.md
 .devcontainer/related-repos.txt
+# sync-harmon-devkit root/template twins: root variants are harmon-init-
+# specific supersets (twin manifests, repository_dispatch, copier verify);
+# the template renders simpler downstream twins (single manifest, schedule-
+# only, offline verify) that legitimately differ from root.
+.github/workflows/sync-harmon-devkit.yml
+scripts/sync-devkit-release.sh
+scripts/test-sync-devkit-release.sh
 "
 
 have() { command -v "$1" >/dev/null 2>&1; }

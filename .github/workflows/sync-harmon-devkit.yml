@@ -6,10 +6,12 @@ run-name: sync-harmon-devkit reconciling the vendored skills pin
 # harmon-init pin-and-sync PR without anyone editing a pin by hand — while the
 # two release-PR merges at either end stay intentional human gates.
 #
-# ROOT-ONLY. This is harmon-platform integration glue (the harmon-init <->
-# harmon-devkit edge) and is deliberately NOT rendered into generated repos:
-# there is no template/ twin, and none should be added. See
-# docs/architecture/ci-cd.md.
+# ROOT VARIANT. This is the harmon-init-specific twin-manifest variant (it
+# handles the root .skills-sync.yaml AND the template/ twin, validates both
+# pins agree, and verifies the copier template render). Generated repos render
+# a simpler pull-based twin from template/ (schedule-only, single manifest,
+# offline verify). Both share the same name and the same rolling-PR pattern;
+# neither merges. See docs/architecture/ci-cd.md.
 #
 # All the logic lives in scripts/sync-devkit-release.sh so it is shellcheck'd
 # and unit-tested (`task test:sync-devkit-release`) instead of hiding in an
