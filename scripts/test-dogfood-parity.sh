@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 #               generated repositories begin with an empty, consumer-owned list.
 #   (.claude/settings.json is a jinja twin now — root additionally grants the
 #   sibling-repo read permissions/sandbox dirs, reconciled by hand.)
-ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt"
+ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh"
 
 fail=0
 checked=0
