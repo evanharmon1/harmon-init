@@ -46,6 +46,7 @@ jobs:
       - name: Lint
         run: task check
       - run: task test:tasks
+      - run: task test:agent-registry
       - run: task test:codex-review
       - run: task test:ci-results
       - run: task test:status

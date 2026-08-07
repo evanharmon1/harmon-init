@@ -103,6 +103,7 @@ tasks:
       - task: build
 [% endif %]
       - task: validate
+      - task: test:agent-registry
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -630,6 +631,11 @@ tasks:
 [% else %]
       - 'echo "TODO: wire tests for this project (see docs/architecture/tests.md); test files live in tests/"'
 [% endif %]
+
+  test:agent-registry:
+    desc: Schema-check the machine-readable agent registry and its cross-record invariants
+    cmds:
+      - ./scripts/test-agent-registry.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

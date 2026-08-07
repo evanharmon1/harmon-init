@@ -232,6 +232,24 @@ else
     err "no Taskfile.yml generated"
 fi
 
+# ── 1a. Machine-readable agent vocabulary survives every render profile ──
+if [ ! -x scripts/test-agent-registry.sh ]; then
+    err "agent registry test is missing or not executable"
+elif ! ./scripts/test-agent-registry.sh; then
+    err "rendered agent registry fails its schema/semantic contract"
+fi
+if have task; then
+    grep -qF './scripts/test-agent-registry.sh' \
+        <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+        err "task verify does not reach test:agent-registry"
+else
+    required task "agent registry verify reachability" || fail=1
+fi
+if [ -f .github/workflows/build.yml ]; then
+    grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
+        err "required CI does not run test:agent-registry"
+fi
+
 # ── 1b. Free security policy renders as a coherent stack ───────────
 [ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"

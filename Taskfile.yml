@@ -75,6 +75,7 @@ tasks:
     desc: Local verification gate (check → guards → test:template)
     cmds:
       - task: check
+      - task: test:agent-registry
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -312,6 +313,11 @@ tasks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
     cmds:
       - ./scripts/test-hooks.sh
+
+  test:agent-registry:
+    desc: Schema-check the machine-readable agent registry and its cross-record invariants
+    cmds:
+      - ./scripts/test-agent-registry.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
