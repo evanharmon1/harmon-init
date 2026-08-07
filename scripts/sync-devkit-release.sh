@@ -648,7 +648,7 @@ cmd_run() {
     # Always branch from the base, never from whatever the branch held last
     # run: that is what makes a newer release deterministically supersede an
     # older open sync PR instead of stacking on top of it.
-    git checkout -B "$SYNC_BRANCH" "$BASE_BRANCH" >/dev/null
+    env -u GH_TOKEN -u GITHUB_TOKEN git checkout -B "$SYNC_BRANCH" "$BASE_BRANCH" >/dev/null
 
     set_pin "$ROOT_MANIFEST" "$_run_target"
     set_pin "$TEMPLATE_MANIFEST" "$_run_target"
