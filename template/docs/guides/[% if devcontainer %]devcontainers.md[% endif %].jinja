@@ -209,8 +209,9 @@ state survives a rebuild: snapshot restore brings the workspace shape back —
 tabs, panes, cwds, layout — as fresh shells. Whether an agent *conversation*
 resumes inside its restored pane is a separate mechanism:
 `resume_agents_on_restore` only works for agents whose Herdr integration has
-been installed (`herdr integration install <agent>`) and has recorded a native
-session reference — and Gemini has no resume integration in v0.8. The
+recorded a native session reference. post-create installs the Claude Code and
+Codex integrations automatically (`herdr integration install`, idempotent) —
+Gemini has no resume integration in v0.8. The
 conversations themselves persist regardless, in the `~/.claude`, `~/.codex`,
 and `~/.gemini` volumes, so a pane that restores as a plain shell can still
 resume its agent by hand (e.g. `claude --resume`).

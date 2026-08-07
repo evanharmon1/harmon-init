@@ -181,6 +181,21 @@ if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
     ln -sfn "/home/vscode/.persistent/herdr" "$HOME/.config/herdr"
 fi
 
+# --- Herdr agent integrations ---
+# resume_agents_on_restore only resumes agents whose Herdr integration has
+# recorded a native session reference, and the integration also reports
+# authoritative working/blocked state to the sidebar instead of Herdr
+# screen-scraping. The installer is version-aware and file-writing only (no
+# running server needed), so re-running on every create is safe. Guarded:
+# the pinned shared image may predate the herdr binary, and a failed install
+# only degrades resume back to fresh shells — never block the container on it.
+if command -v herdr >/dev/null 2>&1; then
+    for agent in claude codex; do
+        herdr integration install "$agent" ||
+            echo "WARN: herdr integration install $agent failed (non-fatal)" >&2
+    done
+fi
+
 # --- Agent-Deck config seeding ---
 # When a fresh volume mount shadows ~/.agent-deck, seed it from the image-baked
 # config. Source lives at /usr/local/share/ rather than /tmp/ because /tmp is a
