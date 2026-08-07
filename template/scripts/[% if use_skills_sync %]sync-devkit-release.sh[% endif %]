@@ -513,21 +513,25 @@ EOF
 #
 # The token is deliberately not persisted into .git/config (the repo-wide
 # `persist-credentials: false` hardening — see docs/architecture/security.md).
-# The token is expanded into the -c credential.helper value by the shell and
-# scrubbed from the git subprocess environment so hooks (which execute
-# repository-controlled Taskfile targets) cannot inherit it. GitHub App
-# installation tokens contain only [A-Za-z0-9_-], so double-quote expansion
-# is safe. The sync and verification subprocesses run with GH_TOKEN scrubbed
-# separately (see run_untrusted); git commit is also wrapped with env -u
-# (line 622). The empty first helper clears any inherited helper list so ours
-# answers.
+# The token is written to a temp file and the credential helper reads from it
+# so the token lands in neither argv nor the environment — hooks and any other
+# process inspecting /proc/*/cmdline cannot recover it. The file is chmod 600
+# and removed immediately after the git command completes. The sync and
+# verification subprocesses run with GH_TOKEN scrubbed separately (see
+# run_untrusted); git commit is also wrapped with env -u (line 622). The empty
+# first helper clears any inherited helper list so ours answers.
 git_remote() {
     if [ -n "${GH_TOKEN:-}" ]; then
-        _gt_token="${GH_TOKEN}"
+        _gt_tmp="$(mktemp)"
+        printf 'username=x-access-token\npassword=%s\n' "$GH_TOKEN" >"$_gt_tmp"
+        chmod 600 "$_gt_tmp"
         env -u GH_TOKEN -u GITHUB_TOKEN \
             git -c credential.helper= \
-            -c credential.helper="!f() { echo username=x-access-token; echo \"password=${_gt_token}\"; }; f" \
+            -c credential.helper="!f() { cat \"$_gt_tmp\"; }; f" \
             "$@"
+        _gt_rc=$?
+        rm -f "$_gt_tmp"
+        return $_gt_rc
     else
         # Local/manual run: rely on whatever credentials the operator's git has.
         git "$@"
