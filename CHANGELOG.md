@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.17.1](https://github.com/evanharmon1/harmon-init/compare/v4.17.0...v4.17.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **devcontainer:** warn when an allow-listed secret is missing everywhere ([#640](https://github.com/evanharmon1/harmon-init/issues/640)) ([7837fbd](https://github.com/evanharmon1/harmon-init/commit/7837fbd63495d8a7a3884a4bc414ba49cb8bb07f)), closes [#639](https://github.com/evanharmon1/harmon-init/issues/639)
+* **template:** sync harmon-devkit skills to v0.22.0 ([#641](https://github.com/evanharmon1/harmon-init/issues/641)) ([136c1a3](https://github.com/evanharmon1/harmon-init/commit/136c1a378d2248cbdbed156f9a0c17fc75e189bc))
+
 ## [4.17.0](https://github.com/evanharmon1/harmon-init/compare/v4.16.0...v4.17.0) (2026-08-06)
 
 
