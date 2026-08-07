@@ -209,6 +209,42 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 const [inputPath, outputPath] = process.argv.slice(2)
 const schema = JSON.parse(await readFile(inputPath, 'utf8'))
+schema.$defs.model.properties.display_name = {
+  $ref: '#/$defs/model/properties'
+}
+await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+if output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
+    fail "validator accepted a reference to a schema-container object"
+fi
+case "$output" in
+*'unsupported schema keyword slug'*) ;;
+*) fail "schema-container reference failed for the wrong reason: $output" ;;
+esac
+echo "PASS: audits resolved reference targets as schemas"
+
+node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const schema = JSON.parse(await readFile(inputPath, 'utf8'))
+schema.$defs.cycle = { $ref: '#/$defs/cycle' }
+await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+if output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
+    fail "validator accepted a cyclic schema reference"
+fi
+case "$output" in
+*'cyclic schema references are not supported'*) ;;
+*) fail "cyclic schema reference failed for the wrong reason: $output" ;;
+esac
+echo "PASS: rejects cyclic schema references without recursing forever"
+
+node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const schema = JSON.parse(await readFile(inputPath, 'utf8'))
 schema.properties.families.items = false
 await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
 NODE

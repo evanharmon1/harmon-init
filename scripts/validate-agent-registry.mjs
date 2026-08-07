@@ -140,10 +140,20 @@ function assertSchemaKeywordValues(rule, location) {
   }
 }
 
-function assertSupportedSchema(rule, location = '$schema') {
+function assertSupportedSchema(
+  rule,
+  location = '$schema',
+  audit = { active: new Set(), complete: new Set() }
+) {
   if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) {
     throw new Error(`${location}: boolean and non-object schemas are not supported`)
   }
+  if (audit.active.has(rule)) {
+    throw new Error(`${location}: cyclic schema references are not supported`)
+  }
+  if (audit.complete.has(rule)) return
+
+  audit.active.add(rule)
   for (const keyword of Object.keys(rule)) {
     if (!supportedSchemaKeywords.has(keyword)) {
       throw new Error(`${location}: unsupported schema keyword ${keyword}`)
@@ -160,14 +170,17 @@ function assertSupportedSchema(rule, location = '$schema') {
         `${location}: schema reference ${rule.$ref} does not resolve to an object schema`
       )
     }
+    assertSupportedSchema(target, `${location}.$ref(${rule.$ref})`, audit)
   }
   for (const [name, child] of Object.entries(rule.$defs ?? {})) {
-    assertSupportedSchema(child, `${location}.$defs.${name}`)
+    assertSupportedSchema(child, `${location}.$defs.${name}`, audit)
   }
   for (const [name, child] of Object.entries(rule.properties ?? {})) {
-    assertSupportedSchema(child, `${location}.properties.${name}`)
+    assertSupportedSchema(child, `${location}.properties.${name}`, audit)
   }
-  if (Object.hasOwn(rule, 'items')) assertSupportedSchema(rule.items, `${location}.items`)
+  if (Object.hasOwn(rule, 'items')) assertSupportedSchema(rule.items, `${location}.items`, audit)
+  audit.active.delete(rule)
+  audit.complete.add(rule)
 }
 
 try {
