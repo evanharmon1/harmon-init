@@ -320,9 +320,12 @@ test_noop_when_current() {
     git -C "$FIXTURE" commit -m "add provenance" >/dev/null 2>&1
     git -C "$FIXTURE" push origin main >/dev/null 2>&1
     run_helper_with_tag v0.1.0 || return 1
-    # Should be no-op — task sync:skills was never called
-    ! grep -q "task sync:skills" "$TASK_LOG" 2>/dev/null || {
-        echo "should not have called sync:skills"
+    # The sync always runs now (the early no-op return was removed); when the
+    # pin and vendored output are already current, task sync:skills still
+    # executes but produces no diff, so no commit is made and no PR is opened.
+    assert_task_logged "task sync:skills" || return 1
+    ! grep -qF "gh pr create" "$GH_LOG" 2>/dev/null || {
+        echo "should not have opened a PR" >&2
         return 1
     }
 }
