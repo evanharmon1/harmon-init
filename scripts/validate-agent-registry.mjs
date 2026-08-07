@@ -57,6 +57,10 @@ function schemaError(location, keyword, expectation) {
   throw new Error(`${location}.${keyword}: ${expectation}`)
 }
 
+function isSchemaObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 function assertSchemaKeywordValues(rule, location) {
   for (const keyword of ['$schema', '$id', '$ref', 'title', 'description', '$comment']) {
     if (Object.hasOwn(rule, keyword) && typeof rule[keyword] !== 'string') {
@@ -149,6 +153,14 @@ function assertSupportedSchema(rule, location = '$schema') {
   if (Object.hasOwn(rule, '$ref') && Object.keys(rule).some((keyword) => keyword !== '$ref')) {
     throw new Error(`${location}: schema keywords alongside $ref are not supported`)
   }
+  if (Object.hasOwn(rule, '$ref')) {
+    const target = resolveRef(rule.$ref)
+    if (!isSchemaObject(target)) {
+      throw new Error(
+        `${location}: schema reference ${rule.$ref} does not resolve to an object schema`
+      )
+    }
+  }
   for (const [name, child] of Object.entries(rule.$defs ?? {})) {
     assertSupportedSchema(child, `${location}.$defs.${name}`)
   }
@@ -186,10 +198,10 @@ function resolveRef(ref) {
 }
 
 function validateSchema(value, rule, location) {
-  if (rule.$ref) {
+  if (Object.hasOwn(rule, '$ref')) {
     const target = resolveRef(rule.$ref)
-    if (!target) {
-      errors.push(`${location}: schema reference ${rule.$ref} does not resolve`)
+    if (!isSchemaObject(target)) {
+      errors.push(`${location}: schema reference ${rule.$ref} does not resolve to an object schema`)
       return
     }
     validateSchema(value, target, location)

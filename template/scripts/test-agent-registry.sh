@@ -171,6 +171,25 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 const [inputPath, outputPath] = process.argv.slice(2)
 const schema = JSON.parse(await readFile(inputPath, 'utf8'))
+schema.$defs.model.properties.display_name = {
+  $ref: '#/properties/schema_version/const'
+}
+await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+if output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
+    fail "validator accepted a reference to a primitive schema node"
+fi
+case "$output" in
+*'does not resolve to an object schema'*) ;;
+*) fail "primitive schema reference failed for the wrong reason: $output" ;;
+esac
+echo "PASS: rejects references to primitive schema nodes"
+
+node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const schema = JSON.parse(await readFile(inputPath, 'utf8'))
 schema.properties.families.items = false
 await writeFile(outputPath, `${JSON.stringify(schema, null, 2)}\n`)
 NODE
