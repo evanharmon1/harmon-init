@@ -1,10 +1,10 @@
 # VENDORED from harmon-devkit — DO NOT EDIT the managed skills here.
 # source: https://github.com/evanharmon1/harmon-devkit.git
-# ref: v0.21.1 (7bd95901c66719458e31b89c67d9264fb5652016)
+# ref: v0.22.0 (c0d5cc7a242e6373e2f1d9f4f4eb8714713c3e95)
 # path: ai/skills
 # categories: universal, repo
 # agents-dest: .claude/agents
-# managed: claim, implement, kickoff, retro, shepherd, standardize-repo, track-work, wrap
+# managed: breakdown, claim, implement, kickoff, retro, shepherd, standardize-repo, track-work, wrap
 # update: edit .skills-sync.yaml, then run 'task sync:skills' and commit.
 # Any directory NOT listed on '# managed:' is a local skill owned by this
 # repo — the sync never touches it.
