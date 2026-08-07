@@ -363,6 +363,32 @@ captures the same variables from the **host environment**, where they arrive as
 workspace/template parameters. It does **not** call `op` itself — 1Password
 Environments is what supplies the values locally.
 
+A variable already in the env-file but absent from the host env is **left
+alone** — that is how a 1Password-managed value survives a rebuild when you
+haven't also exported it in your shell.
+
+If a variable is missing from **both** places, though, nothing will supply it,
+and `init-env.sh` prints a warning to stderr naming the variables (never their
+values) in the container-build log:
+
+```text
+init-env.sh: warning: allow-listed but unset in the host env and absent from .devcontainer/dev/devcontainer.env:
+init-env.sh:   TS_AUTHKEY
+init-env.sh: the container will start without them. On Coder/Codespaces set them as
+init-env.sh: workspace/repo secrets; locally populate the env-file from 1Password.
+```
+
+The build still succeeds — a missing optional secret must not block a rebuild,
+and `initializeCommand` runs on the host, where a non-zero exit aborts the whole
+build. So this is a signal to read, not a failure. Without it the container comes
+up clean and only the dependent step fails later, far from the cause: a missing
+`TS_AUTHKEY` went unnoticed for hours in a Coder workspace that way.
+
+The warning covers **only** the vars this profile's allow-list permits, so the
+bot profile never reports `TS_AUTHKEY` missing. Its absence there is correct —
+that profile has no tailnet path at all — and naming it would advertise a
+credential the bot container must never hold.
+
 ## Run it in Coder
 
 The devcontainers are Coder-ready: the `CODER` env is passed through, the
@@ -386,6 +412,16 @@ repo** (one template serves every repo). To stand this repo up in Coder:
      (+ `TS_AUTHKEY` if you want Tailscale)[% if use_alternative_claude_providers %]; `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
      `DEEPSEEK_API_KEY`, `ZAI_API_KEY` for the alt-model wrappers[% endif %]. Coder passes these
      into the workspace's host environment, where `init-env.sh` picks them up.
+
+   Coder is the case where this matters most: there is no 1Password app in the
+   workspace, so a **workspace parameter is the only way a secret arrives**. A
+   parameter you forget to set is not backfilled from anywhere — the env-file
+   starts empty on a fresh workspace, so the variable is simply absent. Check
+   the build log for the `init-env.sh: warning:` lines above before assuming a
+   workspace is fully provisioned; they name exactly what did not arrive. On a
+   **rebuild** of an existing workspace the env-file may still hold a value from
+   an earlier build, which is why the warning fires only when both sources are
+   empty.
 3. The build pulls `[[ devcontainer_image ]]` from GHCR as a cache. If that
    package is private, give the Coder builder a read token (or make the package
    public); a cache miss only makes the first build slower.
