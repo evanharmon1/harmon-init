@@ -22,10 +22,8 @@ strip_ansi() { sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g'; }
 # on the PR/run probes it launches in parallel — 10s worst case, so 12 here.
 # status:git makes no network calls at all.
 remote_url="$(git config --get remote.origin.url 2>/dev/null || echo '')"
-if [[ "$remote_url" != *"evanharmon1"* && "$remote_url" != *"evanharmon1"* && "$remote_url" != *"harmonops"* && "$remote_url" != *"ponderousdev"* ]]; then
-    git_status="(task status:git skipped - untrusted repository)"
-    gh_status="(task status:gh skipped - untrusted repository)"
-else
+case "$remote_url" in
+*"evanharmon1"* | *"harmonops"* | *"ponderousdev"*)
     git_out="$(mktemp)"
     gh_out="$(mktemp)"
     timeout 5 task status:git >"$git_out" 2>/dev/null &
@@ -50,7 +48,12 @@ else
         gh_status="$(cat "$gh_out" | strip_ansi)"
     fi
     rm -f "$git_out" "$gh_out"
-fi
+    ;;
+*)
+    git_status="(task status:git skipped - untrusted repository)"
+    gh_status="(task status:gh skipped - untrusted repository)"
+    ;;
+esac
 
 branch="$(git branch --show-current 2>/dev/null || echo 'unknown')"
 
