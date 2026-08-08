@@ -14,25 +14,59 @@ command="$(printf '%s' "$input" | jq -r '.tool_input.command // ""')"
 # Only police `git commit` invocations.
 printf '%s' "$command" | grep -qE 'git[[:space:]]+commit\b' || exit 0
 
-# Extract the -m / --message argument. Supports single and double quotes,
-# and the heredoc form `git commit -m "$(cat <<'EOF' ... EOF)"`.
-# We grep for the first plausible message body.
 msg=""
 
-# Heredoc form: capture first line after the heredoc opener.
-if printf '%s' "$command" | grep -q "<<'EOF'"; then
-    msg="$(printf '%s' "$command" | awk "/<<'EOF'/{flag=1; next} /^EOF\$/{flag=0} flag" | head -n1)"
-fi
-
-# Plain -m "..." or -m '...' form.
-if [[ -z "$msg" ]]; then
-    msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+\"[^\"]+\"" | head -n1 | sed -E 's/^-m[[:space:]]+"(.*)"$/\1/' || true)"
-fi
-if [[ -z "$msg" ]]; then
-    msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+'[^']+'" | head -n1 | sed -E "s/^-m[[:space:]]+'(.*)'\$/\1/" || true)"
-fi
-if [[ -z "$msg" ]]; then
-    msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+[^[:space:]'\"]+" | head -n1 | sed -E 's/^-m[[:space:]]+(.*)$/\1/' || true)"
+if command -v python3 >/dev/null 2>&1; then
+    msg="$(python3 -c '
+import sys, shlex
+try:
+    lexer = shlex.shlex(sys.argv[1], posix=True, punctuation_chars=True)
+    args = list(lexer)
+except ValueError:
+    sys.exit(0)
+segments = []
+current = []
+for a in args:
+    if a in (";", "&&", "||", "|", "&"):
+        segments.append(current)
+        current = []
+    else:
+        current.append(a)
+if current: segments.append(current)
+for seg in segments:
+    if not seg or seg[0] != "git": continue
+    is_commit = "commit" in seg
+    found_msg = None
+    for i, a in enumerate(seg):
+        if is_commit and (a == "-m" or a == "--message") and i + 1 < len(seg):
+            found_msg = seg[i+1]
+        elif is_commit and (a.startswith("-m") and len(a) > 2):
+            found_msg = a[2:]
+        elif is_commit and a.startswith("--message="):
+            found_msg = a[10:]
+    if is_commit and not found_msg:
+        for a in seg:
+            if not a.startswith("-") and a != "git" and a != "commit":
+                found_msg = a
+                break
+    if found_msg:
+        print(found_msg)
+        sys.exit(0)
+' "$command")"
+else
+    # Fallback if Python is unavailable
+    if printf '%s' "$command" | grep -q "<<'EOF'"; then
+        msg="$(printf '%s' "$command" | awk "/<<'\''?EOF'\''?/{flag=1; next} /^EOF\$/{flag=0} flag" | head -n1)"
+    fi
+    if [[ -z "$msg" ]]; then
+        msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+\"[^\"]+\"" | head -n1 | sed -E 's/^-m[[:space:]]+"(.*)"$/\1/' || true)"
+    fi
+    if [[ -z "$msg" ]]; then
+        msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+'[^']+'" | head -n1 | sed -E "s/^-m[[:space:]]+'(.*)'\$/\1/" || true)"
+    fi
+    if [[ -z "$msg" ]]; then
+        msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+[^[:space:]'\"]+" | head -n1 | sed -E 's/^-m[[:space:]]+(.*)$/\1/' || true)"
+    fi
 fi
 
 # If we couldn't parse a message, don't block — let git itself error out.

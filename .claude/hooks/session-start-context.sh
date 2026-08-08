@@ -21,17 +21,36 @@ strip_ansi() { sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g'; }
 # spends up to NETWORK_TIMEOUT (5s) on the auth probe and then up to another 5s
 # on the PR/run probes it launches in parallel — 10s worst case, so 12 here.
 # status:git makes no network calls at all.
-git_out="$(mktemp)"
-gh_out="$(mktemp)"
-timeout 5 task status:git >"$git_out" 2>/dev/null &
-git_pid=$!
-timeout 12 task status:gh >"$gh_out" 2>/dev/null &
-gh_pid=$!
-wait $git_pid || true
-wait $gh_pid || true
-git_status="$(cat "$git_out" | strip_ansi || echo '(task status:git unavailable)')"
-gh_status="$(cat "$gh_out" | strip_ansi || echo '(task status:gh unavailable)')"
-rm -f "$git_out" "$gh_out"
+remote_url="$(git config --get remote.origin.url 2>/dev/null || echo '')"
+if [[ "$remote_url" != *"evanharmon1"* && "$remote_url" != *"harmonops"* && "$remote_url" != *"ponderousdev"* ]]; then
+    git_status="(task status:git skipped - untrusted repository)"
+    gh_status="(task status:gh skipped - untrusted repository)"
+else
+    git_out="$(mktemp)"
+    gh_out="$(mktemp)"
+    timeout 5 task status:git >"$git_out" 2>/dev/null &
+    git_pid=$!
+    timeout 12 task status:gh >"$gh_out" 2>/dev/null &
+    gh_pid=$!
+
+    git_rc=0
+    wait $git_pid || git_rc=$?
+    gh_rc=0
+    wait $gh_pid || gh_rc=$?
+
+    if [ $git_rc -ne 0 ] || [ ! -s "$git_out" ]; then
+        git_status="(task status:git unavailable or failed)"
+    else
+        git_status="$(cat "$git_out" | strip_ansi)"
+    fi
+
+    if [ $gh_rc -ne 0 ] || [ ! -s "$gh_out" ]; then
+        gh_status="(task status:gh unavailable or failed)"
+    else
+        gh_status="$(cat "$gh_out" | strip_ansi)"
+    fi
+    rm -f "$git_out" "$gh_out"
+fi
 
 branch="$(git branch --show-current 2>/dev/null || echo 'unknown')"
 

@@ -16,10 +16,12 @@ case "$command" in
 *) exit 0 ;;
 esac
 
-if ! python3 -c '
+if command -v python3 >/dev/null 2>&1; then
+    if ! python3 -c '
 import sys, shlex
 try:
-    args = shlex.split(sys.argv[1])
+    lexer = shlex.shlex(sys.argv[1], posix=True, punctuation_chars=True)
+    args = list(lexer)
 except ValueError:
     sys.exit(0)
 segments = []
@@ -37,13 +39,14 @@ for seg in segments:
     for a in seg:
         if a.startswith("--no-verify") or a == "--no-gpg-sign" or a == "--no-verify-signatures":
             sys.exit(1)
-        if is_commit and a.startswith("-") and not a.startswith("--") and "n" in a:
+        if is_commit and a in ("-n", "-an", "-na"):
             sys.exit(1)
 sys.exit(0)
 ' "$command"; then
-    echo "block-no-verify: refusing to bypass git hooks (--no-verify / --no-gpg-sign / -n)." >&2
-    echo "If a hook is failing, fix the underlying issue rather than skipping it." >&2
-    exit 2
+        echo "block-no-verify: refusing to bypass git hooks (--no-verify / --no-gpg-sign / -n)." >&2
+        echo "If a hook is failing, fix the underlying issue rather than skipping it." >&2
+        exit 2
+    fi
 fi
 
 exit 0
