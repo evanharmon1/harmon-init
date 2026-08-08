@@ -30,7 +30,7 @@ if [ -n "$cwd" ] && [ "$cwd" != "null" ]; then
 fi
 
 set +e
-stderr_log="$(mktemp /tmp/agy-adapter-stderr-XXXXXX.log)"
+stderr_log="$(mktemp /tmp/agy-adapter-stderr.XXXXXX)"
 trap 'rm -f "$stderr_log"' EXIT
 output="$(echo "$claude_input" | bash "$script_path" 2>"$stderr_log")"
 exit_code=$?

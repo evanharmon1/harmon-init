@@ -36,13 +36,13 @@ for seg in segments:
     if "git" not in seg: continue
     is_commit = "commit" in seg
     for a in seg:
-        if a.startswith("--no-verify") or a == "--no-gpg-sign" or a == "--no-verify-signatures":
+        if a.startswith("--no-verify") or a == "--no-verify-signatures":
             sys.exit(1)
         if is_commit and a.startswith("-") and not a.startswith("--") and "n" in a:
             sys.exit(1)
 sys.exit(0)
 ' "$command"; then
-        echo "block-no-verify: refusing to bypass git hooks (--no-verify / --no-gpg-sign / -n)." >&2
+        echo "block-no-verify: refusing to bypass git hooks (--no-verify / -n)." >&2
         echo "If a hook is failing, fix the underlying issue rather than skipping it." >&2
         exit 2
     fi
