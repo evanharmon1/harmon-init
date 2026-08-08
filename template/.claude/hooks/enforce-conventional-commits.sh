@@ -78,9 +78,9 @@ esac
 # expression by go-task.
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-# Fail open if the toolchain is unavailable — a missing `task` must not block
-# every commit (lefthook's commit-msg hook still enforces this for real commits).
+# Fail open if the toolchain is unavailable or the target doesn't exist in the local Taskfile.
 command -v task >/dev/null 2>&1 || exit 0
+task lint:commit-msg:text --summary >/dev/null 2>&1 || exit 0
 
 if ! output="$(printf '%s' "$msg" | task lint:commit-msg:text 2>&1)"; then
     {
