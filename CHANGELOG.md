@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.21.0](https://github.com/evanharmon1/harmon-init/compare/v4.20.0...v4.21.0) (2026-08-08)
+
+
+### Features
+
+* **agents:** port agy-adapter and claude hooks ([#682](https://github.com/evanharmon1/harmon-init/issues/682)) ([afaf092](https://github.com/evanharmon1/harmon-init/commit/afaf092a51d64066e194bd6201c3584a5ac36587))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 2704ac66 ([#688](https://github.com/evanharmon1/harmon-init/issues/688)) ([2d2533e](https://github.com/evanharmon1/harmon-init/commit/2d2533eacc4d5e44627f5d671145afdf93a414e4))
+
 ## [4.20.0](https://github.com/evanharmon1/harmon-init/compare/v4.19.1...v4.20.0) (2026-08-08)
 
 
