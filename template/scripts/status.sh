@@ -892,6 +892,13 @@ if [[ "${SECTION}" == "setup" ]]; then
                     # renders them from the agent registry — so parse the same
                     # renderer here too, or this check would silently ignore
                     # every registry-driven label and call an unsynced repo green.
+                    # If the registry ships but node is missing we CANNOT enumerate
+                    # those labels, so the inventory is incomplete: report unknown
+                    # rather than grading the reduced set as "all seeded".
+                    registry_incomplete=0
+                    if [ -f scripts/agent-registry-labels.mjs ] && ! command -v node >/dev/null 2>&1; then
+                        registry_incomplete=1
+                    fi
                     want_labels="$(
                         sed -n -E 's/^([A-Za-z0-9:._-]+)\|[0-9A-Fa-f]{6}\|.*/\1/p' scripts/setup-github-labels.sh
                         if [ -f scripts/agent-registry-labels.mjs ] && command -v node >/dev/null 2>&1; then
@@ -910,7 +917,9 @@ if [[ "${SECTION}" == "setup" ]]; then
                         printf '%s\n' "${have_labels}" | grep -qxF "${want}" ||
                             missing_count=$((missing_count + 1))
                     done
-                    if [ -z "${have_labels}" ] || [ "${want_count}" -eq 0 ]; then
+                    if [ "${registry_incomplete}" -eq 1 ]; then
+                        checkline unknown "Starter labels" "node unavailable — registry labels unchecked"
+                    elif [ -z "${have_labels}" ] || [ "${want_count}" -eq 0 ]; then
                         checkline no "Starter labels" "run task setup:github-labels"
                     elif [ "${missing_count}" -eq 0 ]; then
                         checkline ok "Starter labels" "all ${want_count} seeded"
