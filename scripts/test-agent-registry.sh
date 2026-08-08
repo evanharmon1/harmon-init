@@ -98,6 +98,78 @@ NODE
     echo "PASS: rejects $description"
 }
 
+build_schema_case() {
+    local mutation="$1"
+
+    node --input-type=module - \
+        "$registry" "$schema" "$mutated" "$mutated_schema" "$mutation" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [registryInput, schemaInput, registryOutput, schemaOutput, mutation] =
+  process.argv.slice(2)
+const registry = JSON.parse(await readFile(registryInput, 'utf8'))
+const schema = JSON.parse(await readFile(schemaInput, 'utf8'))
+const instanceObject = { alpha: 1, beta: 2 }
+const reorderedObject = { beta: 2, alpha: 1 }
+
+switch (mutation) {
+  case 'reordered-const':
+    registry.schema_version = instanceObject
+    schema.properties.schema_version = { const: reorderedObject }
+    break
+  case 'reordered-enum':
+    registry.schema_version = instanceObject
+    schema.properties.schema_version = { enum: [reorderedObject] }
+    break
+  case 'reordered-enum-duplicates':
+    schema.properties.schema_version = { enum: [instanceObject, reorderedObject] }
+    break
+  case 'reordered-unique-items':
+    registry.schema_version = [instanceObject, reorderedObject]
+    schema.properties.schema_version = { type: 'array', uniqueItems: true }
+    break
+  case 'unicode-min-length':
+    registry.schema_version = '😀'
+    schema.properties.schema_version = { type: 'string', minLength: 2 }
+    break
+  default:
+    throw new Error(`unknown schema mutation: ${mutation}`)
+}
+
+await writeFile(registryOutput, `${JSON.stringify(registry, null, 2)}\n`)
+await writeFile(schemaOutput, `${JSON.stringify(schema, null, 2)}\n`)
+NODE
+}
+
+accepts_schema_case() {
+    local description="$1"
+    local mutation="$2"
+    local output
+
+    build_schema_case "$mutation"
+    if ! output="$(node "$validator" "$mutated" "$mutated_schema" 2>&1)"; then
+        fail "validator rejected $description: $output"
+    fi
+    echo "PASS: accepts $description"
+}
+
+rejects_schema_case() {
+    local description="$1"
+    local mutation="$2"
+    local expected="$3"
+    local output
+
+    build_schema_case "$mutation"
+    if output="$(node "$validator" "$mutated" "$mutated_schema" 2>&1)"; then
+        fail "validator accepted $description"
+    fi
+    case "$output" in
+    *"$expected"*) ;;
+    *) fail "$description failed for the wrong reason: $output" ;;
+    esac
+    echo "PASS: rejects $description"
+}
+
 rejects "duplicate family slugs" \
     'duplicate-family' \
     'duplicate family slug'
@@ -252,6 +324,25 @@ if ! output="$(node "$validator" "$registry" "$mutated_schema" 2>&1)"; then
     fail "validator rejected an integer instance under a number schema: $output"
 fi
 echo "PASS: accepts integer instances under number schemas"
+
+accepts_schema_case \
+    "structurally equal const objects with reordered properties" \
+    'reordered-const'
+accepts_schema_case \
+    "structurally equal enum objects with reordered properties" \
+    'reordered-enum'
+rejects_schema_case \
+    "structurally duplicate enum objects with reordered properties" \
+    'reordered-enum-duplicates' \
+    'enum: must contain unique values'
+rejects_schema_case \
+    "structurally duplicate uniqueItems objects with reordered properties" \
+    'reordered-unique-items' \
+    'items must be unique'
+rejects_schema_case \
+    "one Unicode code point under minLength 2" \
+    'unicode-min-length' \
+    'must contain at least 2 character(s)'
 
 node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
 import { readFile, writeFile } from 'node:fs/promises'

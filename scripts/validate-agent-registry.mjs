@@ -191,7 +191,25 @@ try {
 }
 
 function jsonEqual(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right)
+  if (left === right) return true
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false
+  }
+
+  const leftIsArray = Array.isArray(left)
+  if (leftIsArray !== Array.isArray(right)) return false
+  if (leftIsArray) {
+    return (
+      left.length === right.length && left.every((item, index) => jsonEqual(item, right[index]))
+    )
+  }
+
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]))
+  )
 }
 
 function instanceType(value) {
@@ -244,7 +262,7 @@ function validateSchema(value, rule, location) {
   }
 
   if (typeof value === 'string') {
-    if (rule.minLength !== undefined && value.length < rule.minLength) {
+    if (rule.minLength !== undefined && [...value].length < rule.minLength) {
       errors.push(`${location}: must contain at least ${rule.minLength} character(s)`)
     }
     if (rule.pattern && !new RegExp(rule.pattern, 'u').test(value)) {
@@ -257,8 +275,10 @@ function validateSchema(value, rule, location) {
       errors.push(`${location}: must contain at least ${rule.minItems} item(s)`)
     }
     if (rule.uniqueItems) {
-      const serialized = value.map((item) => JSON.stringify(item))
-      if (new Set(serialized).size !== serialized.length) {
+      const hasDuplicate = value.some((candidate, index) =>
+        value.slice(0, index).some((earlier) => jsonEqual(candidate, earlier))
+      )
+      if (hasDuplicate) {
         errors.push(`${location}: items must be unique`)
       }
     }
