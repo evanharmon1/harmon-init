@@ -30,10 +30,12 @@ if [ -n "$cwd" ] && [ "$cwd" != "null" ]; then
 fi
 
 set +e
-output="$(echo "$claude_input" | bash "$script_path" 2>/tmp/agy-adapter-stderr.log)"
+stderr_log="$(mktemp /tmp/agy-adapter-stderr-XXXXXX.log)"
+trap 'rm -f "$stderr_log"' EXIT
+output="$(echo "$claude_input" | bash "$script_path" 2>"$stderr_log")"
 exit_code=$?
 set -e
-stderr_out="$(cat /tmp/agy-adapter-stderr.log)"
+stderr_out="$(cat "$stderr_log")"
 
 if [ "$event_type" = "PreToolUse" ]; then
     if [ $exit_code -ne 0 ]; then

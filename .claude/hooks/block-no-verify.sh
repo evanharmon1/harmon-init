@@ -22,14 +22,23 @@ try:
     args = shlex.split(sys.argv[1])
 except ValueError:
     sys.exit(0)
-if "git" not in args:
-    sys.exit(0)
-is_commit = "commit" in args
+segments = []
+current = []
 for a in args:
-    if a.startswith("--no-verify") or a == "--no-gpg-sign" or a == "--no-verify-signatures":
-        sys.exit(1)
-    if is_commit and a.startswith("-") and not a.startswith("--") and "n" in a:
-        sys.exit(1)
+    if a in (";", "&&", "||", "|", "&"):
+        segments.append(current)
+        current = []
+    else:
+        current.append(a)
+if current: segments.append(current)
+for seg in segments:
+    if "git" not in seg: continue
+    is_commit = "commit" in seg
+    for a in seg:
+        if a.startswith("--no-verify") or a == "--no-gpg-sign" or a == "--no-verify-signatures":
+            sys.exit(1)
+        if is_commit and a.startswith("-") and not a.startswith("--") and "n" in a:
+            sys.exit(1)
 sys.exit(0)
 ' "$command"; then
     echo "block-no-verify: refusing to bypass git hooks (--no-verify / --no-gpg-sign / -n)." >&2
