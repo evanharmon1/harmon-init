@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.19.0](https://github.com/evanharmon1/harmon-init/compare/v4.18.0...v4.19.0) (2026-08-08)
+
+
+### Features
+
+* define the machine-readable agent registry ([#667](https://github.com/evanharmon1/harmon-init/issues/667)) ([cc5b735](https://github.com/evanharmon1/harmon-init/commit/cc5b735b6c512738cf8689df393df8a20d409cee))
+
+
+### Bug Fixes
+
+* conform agent registry validation ([#671](https://github.com/evanharmon1/harmon-init/issues/671)) ([7f52693](https://github.com/evanharmon1/harmon-init/commit/7f52693e81c405b2c6ea38f275ca0b4d491970c1))
+
 ## [4.18.0](https://github.com/evanharmon1/harmon-init/compare/v4.17.1...v4.18.0) (2026-08-07)
 
 
