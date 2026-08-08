@@ -39,7 +39,7 @@ for seg in segments:
     for a in seg:
         if a.startswith("--no-verify") or a == "--no-gpg-sign" or a == "--no-verify-signatures":
             sys.exit(1)
-        if is_commit and a in ("-n", "-an", "-na"):
+        if is_commit and a.startswith("-") and not a.startswith("--") and "n" in a:
             sys.exit(1)
 sys.exit(0)
 ' "$command"; then

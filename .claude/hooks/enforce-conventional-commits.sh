@@ -36,21 +36,21 @@ if current: segments.append(current)
 for seg in segments:
     if not seg or seg[0] != "git": continue
     is_commit = "commit" in seg
-    found_msg = None
+    messages = []
     for i, a in enumerate(seg):
         if is_commit and (a == "-m" or a == "--message") and i + 1 < len(seg):
-            found_msg = seg[i+1]
+            messages.append(seg[i+1])
         elif is_commit and (a.startswith("-m") and len(a) > 2):
-            found_msg = a[2:]
+            messages.append(a[2:])
         elif is_commit and a.startswith("--message="):
-            found_msg = a[10:]
-    if is_commit and not found_msg:
+            messages.append(a[10:])
+    if is_commit and not messages:
         for a in seg:
             if not a.startswith("-") and a != "git" and a != "commit":
-                found_msg = a
+                messages.append(a)
                 break
-    if found_msg:
-        print(found_msg)
+    if messages:
+        print("\\n\\n".join(messages))
         sys.exit(0)
 ' "$command")"
 else
