@@ -84,6 +84,12 @@ for tool in workmux dmux; do
     esac
 done
 
+# Claude Code's global install is root-owned while containers run as vscode, so
+# its auto-updater can only ever fail; the Dockerfile disables it. Assert the
+# env var survives, otherwise the warning silently returns to every consumer.
+[ "${DISABLE_AUTOUPDATER:-}" = "1" ] ||
+    fail "DISABLE_AUTOUPDATER is not set to 1 in the image environment"
+
 task_version="$(task --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [ "$task_version" = "$(jq -r '.tools.task' "$manifest")" ] ||
     fail "task $task_version does not match the manifest"
