@@ -22,8 +22,10 @@ strip_ansi() { sed -E 's/\x1B\[''[0-9;]*[A-Za-z]//g'; }
 # on the PR/run probes it launches in parallel — 10s worst case, so 12 here.
 # status:git makes no network calls at all.
 remote_url="$(git config --get remote.origin.url 2>/dev/null || echo '')"
-case "$remote_url" in
-*"evanharmon1"* | *"harmonops"* | *"ponderousdev"*)
+owner="$(echo "$remote_url" | sed -E 's/.*[:\/]([^\/]+)\/[^\/]+(\.git)?$/\1/')"
+
+case "$owner" in
+"evanharmon1" | "harmonops" | "ponderousdev")
     git_out="$(mktemp)"
     gh_out="$(mktemp)"
     timeout 5 task status:git >"$git_out" 2>/dev/null &

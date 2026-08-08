@@ -44,11 +44,6 @@ for seg in segments:
             messages.append(a[2:])
         elif is_commit and a.startswith("--message="):
             messages.append(a[10:])
-    if is_commit and not messages:
-        for a in seg:
-            if not a.startswith("-") and a != "git" and a != "commit":
-                messages.append(a)
-                break
     if messages:
         print("\\n\\n".join(messages))
         sys.exit(0)
