@@ -28,9 +28,13 @@ case "$owner" in
 "evanharmon1" | "harmonops" | "ponderousdev")
     git_out="$(mktemp)"
     gh_out="$(mktemp)"
-    timeout 5 task status:git >"$git_out" 2>/dev/null &
+    timeout_cmd="timeout"
+    if command -v gtimeout >/dev/null 2>&1; then
+        timeout_cmd="gtimeout"
+    fi
+    "$timeout_cmd" 5 task status:git >"$git_out" 2>/dev/null &
     git_pid=$!
-    timeout 12 task status:gh >"$gh_out" 2>/dev/null &
+    "$timeout_cmd" 12 task status:gh >"$gh_out" 2>/dev/null &
     gh_pid=$!
 
     git_rc=0
