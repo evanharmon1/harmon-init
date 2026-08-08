@@ -13,7 +13,7 @@ set -euo pipefail
 cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 # Strip ANSI color codes so the additionalContext payload renders cleanly.
-strip_ansi() { sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g'; }
+strip_ansi() { sed -E 's/\x1B\[''[0-9;]*[A-Za-z]//g'; }
 
 # The outer deadlines must exceed what the sections themselves allow, or the
 # inner bounds are pointless: whatever the section was about to report is lost
