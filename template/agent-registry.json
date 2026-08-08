@@ -204,8 +204,8 @@
       "source_file": "claude-code-deepseek.sh",
       "harness": "claude-code-deepseek",
       "classification": "production",
-      "production_dispatchable": true,
-      "provision_label": true
+      "production_dispatchable": false,
+      "provision_label": false
     },
     {
       "slug": "mock",
