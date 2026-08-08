@@ -69,11 +69,13 @@ const field = (value, where) => {
   return value
 }
 
-// GitHub caps label names at 50 characters. A schema-valid slug can render a
-// longer `<prefix>:<slug>` label, and `gh label create` fails ONLY on that
-// label — after earlier ones were already provisioned (a partial run). Fail
-// closed here so the whole set is rejected before any of it reaches GitHub.
+// GitHub caps label NAMES at 50 and DESCRIPTIONS at 100 characters. A schema-
+// valid slug/display_name can render a longer name or description, and
+// `gh label create` then fails ONLY on that label — after earlier ones were
+// already provisioned (a partial run). Fail closed on BOTH limits here so the
+// whole set is rejected before any of it reaches GitHub.
 const GH_LABEL_NAME_MAX = 50
+const GH_LABEL_DESC_MAX = 100
 const labelName = (prefix, slug) => {
   const name = `${prefix}:${slug}`
   if (name.length > GH_LABEL_NAME_MAX) {
@@ -85,6 +87,16 @@ const labelName = (prefix, slug) => {
   }
   return name
 }
+const record = (name, color, description) => {
+  if (description.length > GH_LABEL_DESC_MAX) {
+    console.error(
+      `agent-registry-labels: label '${name}' description is ${description.length} chars, over ` +
+        `GitHub's ${GH_LABEL_DESC_MAX}-char limit — shorten the display_name in agent-registry.json`
+    )
+    process.exit(1)
+  }
+  return `${name}|${color}|${description}`
+}
 
 const lines = []
 
@@ -93,9 +105,13 @@ if (mode === 'suggest-claim' || mode === 'all') {
     const slug = field(family.slug, `family slug`)
     const name = field(family.display_name, `family '${slug}' display_name`)
     lines.push(
-      `${labelName('suggest', slug)}|${COLOR_SUGGEST}|Suggested for the ${name} family (advisory)`
+      record(
+        labelName('suggest', slug),
+        COLOR_SUGGEST,
+        `Suggested for the ${name} family (advisory)`
+      )
     )
-    lines.push(`${labelName('claim', slug)}|${COLOR_CLAIM}|Claimed by ${name}`)
+    lines.push(record(labelName('claim', slug), COLOR_CLAIM, `Claimed by ${name}`))
   }
 }
 
@@ -105,7 +121,11 @@ if (mode === 'foreman-adapters' || mode === 'all') {
     const slug = field(adapter.slug, `foreman adapter slug`)
     const name = field(adapter.display_name, `foreman adapter '${slug}' display_name`)
     lines.push(
-      `${labelName('foreman', slug)}|${COLOR_FOREMAN}|Arm this issue for foreman dispatch with the ${name} backend`
+      record(
+        labelName('foreman', slug),
+        COLOR_FOREMAN,
+        `Arm this issue for foreman dispatch with the ${name} backend`
+      )
     )
   }
 }
