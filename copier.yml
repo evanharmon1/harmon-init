@@ -147,7 +147,14 @@ release_content_paths:
 
 use_skills_sync:
   type: bool
-  help: "SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned, drift-checked)?"
+  help: >-
+    SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned,
+    drift-checked)? Local vendoring and drift checks require no paid service.
+    The generated GitHub sync workflow stays inert until you explicitly
+    configure its CI GitHub App credentials. When enabled, that automation
+    opens draft PRs; GitHub restricts drafts on private repositories to paid
+    plans, so private free-plan repos must leave the automation unconfigured,
+    become public, or upgrade. See docs/CHECKLIST.md.
   default: yes
 
 skill_categories:
