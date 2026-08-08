@@ -64,12 +64,6 @@ err() {
 # from the field they actually belong to rather than from anywhere in the file.
 # Any non-quote name matches: a name this misses would be silently absent from
 # the set comparison below, turning a drift failure into a false pass.
-# Field option name -> label suffix: lowercase, spaces to hyphens. Keeps the
-# sets sorted after the rewrite so an exact comparison stays valid.
-slugify() {
-    tr '[:upper:] ' '[:lower:]-' | sort -u
-}
-
 opt_names() {
     awk -v start="$2" '
         $0 ~ start { inblock = 1; next }
@@ -248,6 +242,27 @@ fi
 if [ -f .github/workflows/build.yml ]; then
     grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
         err "required CI does not run test:agent-registry"
+fi
+
+# The offline registry-drift gate binds label provisioning, provider wrappers,
+# and Foreman adapter selectors to the registry. It ships unconditionally and
+# must pass on EVERY profile — including ones with no setup-github-labels.sh or
+# claude-providers.sh, which it skips loudly rather than failing on.
+if [ ! -x scripts/test-registry-drift.sh ]; then
+    err "registry-drift gate is missing or not executable"
+elif ! ./scripts/test-registry-drift.sh; then
+    err "rendered registry drifts from agent-registry.json (labels/wrappers/adapters)"
+fi
+if have task; then
+    grep -qF './scripts/test-registry-drift.sh' \
+        <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+        err "task verify does not reach test:registry-drift"
+else
+    required task "registry-drift verify reachability" || fail=1
+fi
+if [ -f .github/workflows/build.yml ]; then
+    grep -qF 'task test:registry-drift' .github/workflows/build.yml ||
+        err "required CI does not run test:registry-drift"
 fi
 
 # ── 1b. Free security policy renders as a coherent stack ───────────
@@ -732,7 +747,11 @@ full) # project_management=github; github_org=test-org (an org repo)
     # somewhere in the file: `auth` living under Domain must not satisfy a
     # `layer:auth` label) and in both directions (a field option with no label is
     # drift too).
-    for pair in layer:Layer domain:Domain agent:Agent; do
+    # The agent vocabulary is no longer a label/field pair here: it moved to
+    # registry-driven suggest:/claim: labels (checked by test:registry-drift),
+    # and removal of the `Agent` field is tracked separately (#662). Only the
+    # Layer/Domain taxonomy is cross-checked across labels + fields now.
+    for pair in layer:Layer domain:Domain; do
         fam="${pair%%:*}"
         field="${pair##*:}"
         # Each source's option set for this family, one name per line, sorted.
@@ -745,14 +764,8 @@ full) # project_management=github; github_org=test-org (an org repo)
         # Layer and Domain are compared EXACTLY: their option names and label
         # suffixes are meant to be character-identical, and normalizing would
         # let `Domain: Auth` pass against `domain:auth` — drift this guard has
-        # always caught. Only Agent is slugged, because its options are
-        # multi-word display names ("Claude Code") whose labels are kebab-case
-        # by convention (`agent:claude-code`); there the mapping, not the
-        # string, is the invariant.
-        case "$fam" in
-        agent) normalize=slugify ;;
-        *) normalize=cat ;;
-        esac
+        # always caught.
+        normalize=cat
         fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='" | "$normalize")"
         prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '" | "$normalize")"
         [ -n "$lbl_set" ] || err "no ${fam}: labels found in setup-github-labels.sh"
@@ -903,9 +916,17 @@ iac | full)
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
     ! grep -q '^verify_command' .foreman.toml || err ".foreman.toml still ships the v1 verify_command key"
     # Arming labels are human inputs foreman never auto-creates: the label
-    # script must render and the Taskfile must pass it --foreman.
+    # script must render and the Taskfile must pass it --foreman. The protocol
+    # selectors (approved/hold/satisfied/external) are literal in the script; the
+    # foreman:<adapter> selectors are rendered from the agent registry (only for
+    # adapters the pinned Foreman release ships), so check both the literal
+    # family and that the registry still renders the production `claude` adapter.
     [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing for use_foreman=true"
-    grep -q '^foreman:claude|' scripts/setup-github-labels.sh || err "label script lacks the foreman arming-label family"
+    grep -q '^foreman:approved|' scripts/setup-github-labels.sh || err "label script lacks the foreman protocol arming labels"
+    grep -q 'agent-registry-labels.mjs' scripts/setup-github-labels.sh ||
+        err "label script does not render foreman:<adapter> selectors from the registry"
+    node scripts/agent-registry-labels.mjs foreman-adapters | grep -q '^foreman:claude|' ||
+        err "registry no longer renders the foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"

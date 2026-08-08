@@ -50,6 +50,7 @@ jobs:
 [% endif %]
       - run: task test:tasks
       - run: task test:agent-registry
+      - run: task test:registry-drift
 [% if use_codex_review %]
       - run: task test:codex-review
 [% endif %]

@@ -886,7 +886,26 @@ if [[ "${SECTION}" == "setup" ]]; then
                     # only when the repo uses foreman — the wrapper taskfile is
                     # its render-time marker), so expect it only there or a
                     # non-foreman repo reports 11 permanently-missing labels.
-                    want_labels="$(sed -n -E 's/^([A-Za-z0-9:._-]+)\|[0-9A-Fa-f]{6}\|.*/\1/p' scripts/setup-github-labels.sh)"
+                    #
+                    # The suggest:/claim:/foreman:<adapter> families are NOT
+                    # literal `name|color|desc` lines in the setup script — it
+                    # renders them from the agent registry — so parse the same
+                    # renderer here too, or this check would silently ignore
+                    # every registry-driven label and call an unsynced repo green.
+                    # If the registry ships but node is missing we CANNOT enumerate
+                    # those labels, so the inventory is incomplete: report unknown
+                    # rather than grading the reduced set as "all seeded".
+                    registry_incomplete=0
+                    if [ -f scripts/agent-registry-labels.mjs ] && ! command -v node >/dev/null 2>&1; then
+                        registry_incomplete=1
+                    fi
+                    want_labels="$(
+                        sed -n -E 's/^([A-Za-z0-9:._-]+)\|[0-9A-Fa-f]{6}\|.*/\1/p' scripts/setup-github-labels.sh
+                        if [ -f scripts/agent-registry-labels.mjs ] && command -v node >/dev/null 2>&1; then
+                            node scripts/agent-registry-labels.mjs all 2>/dev/null |
+                                sed -n -E 's/^([A-Za-z0-9:._-]+)\|[0-9A-Fa-f]{6}\|.*/\1/p'
+                        fi
+                    )"
                     if [ ! -f taskfiles/foreman.yml ]; then
                         want_labels="$(printf '%s\n' "${want_labels}" | grep -v '^foreman:')"
                     fi
@@ -898,7 +917,9 @@ if [[ "${SECTION}" == "setup" ]]; then
                         printf '%s\n' "${have_labels}" | grep -qxF "${want}" ||
                             missing_count=$((missing_count + 1))
                     done
-                    if [ -z "${have_labels}" ] || [ "${want_count}" -eq 0 ]; then
+                    if [ "${registry_incomplete}" -eq 1 ]; then
+                        checkline unknown "Starter labels" "node unavailable — registry labels unchecked"
+                    elif [ -z "${have_labels}" ] || [ "${want_count}" -eq 0 ]; then
                         checkline no "Starter labels" "run task setup:github-labels"
                     elif [ "${missing_count}" -eq 0 ]; then
                         checkline ok "Starter labels" "all ${want_count} seeded"
