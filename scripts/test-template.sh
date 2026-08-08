@@ -947,9 +947,15 @@ iac | full)
             err ".foreman.toml [reviewer] login is not the Codex connector bot"
         grep -Fq 'request = "@codex review"' .foreman.toml ||
             err ".foreman.toml [reviewer] request is not the documented @codex review trigger"
+        # The required reviewer's content must be embeddable, or shepherding
+        # wedges on findings the agent is never shown.
+        grep -Eq '^trusted_actors = .*"chatgpt-codex-connector\[bot\]"' .foreman.toml ||
+            err ".foreman.toml [reviewer] login is missing from trusted_actors"
     else
         ! grep -q '^\[reviewer\]' .foreman.toml ||
             err ".foreman.toml renders the [reviewer] gate but use_codex_cloud_review is off"
+        ! grep -q 'chatgpt-codex-connector' .foreman.toml ||
+            err ".foreman.toml names the Codex connector but use_codex_cloud_review is off"
     fi
     # Preflight's D14 probes need both tag rulesets; their bypass actor is
     # owner-shaped (org repos: OrganizationAdmin; personal: repo admin role 5).

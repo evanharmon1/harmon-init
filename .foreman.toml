@@ -26,8 +26,10 @@ expected_login = "evanharmon1-bot"
 # Accounts (humans and apps) whose content and arming events are trusted:
 # who may arm an issue, and whose review/comment content may be embedded in
 # agent prompts. Empty = nobody is trusted (fail closed). App accounts are
-# spelled with the `[bot]` suffix.
-trusted_actors = ["evanharmon1", "evanharmon1-bot", "Copilot"]
+# spelled with the `[bot]` suffix. A configured `[reviewer]` login belongs in
+# this list — requiring review evidence whose content cannot be embedded
+# would wedge shepherding on unadjudicatable findings.
+trusted_actors = ["evanharmon1", "evanharmon1-bot", "Copilot", "chatgpt-codex-connector[bot]"]
 
 # Hard capability requirements: the baseline gate cannot run without these;
 # a mismatch is refused before dispatch.
