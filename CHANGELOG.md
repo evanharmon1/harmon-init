@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.19.1](https://github.com/evanharmon1/harmon-init/compare/v4.19.0...v4.19.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* make skills-sync PR lifecycle draft-first ([#672](https://github.com/evanharmon1/harmon-init/issues/672)) ([201ea5c](https://github.com/evanharmon1/harmon-init/commit/201ea5c7ae257df0e56ea4b09c50c5496228ddbc))
+
 ## [4.19.0](https://github.com/evanharmon1/harmon-init/compare/v4.18.0...v4.19.0) (2026-08-08)
 
 
