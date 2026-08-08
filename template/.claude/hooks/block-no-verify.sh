@@ -34,7 +34,7 @@ for seg in segments:
     if "git" not in seg: continue
     is_commit = "commit" in seg
     for a in seg:
-        if a.startswith("--no-verify") or a == "--no-verify-signatures":
+        if a.startswith("--no-veri"):
             sys.exit(1)
         if is_commit and a.startswith("-") and not a.startswith("--"):
             if a.startswith(("-m", "-F", "-c", "-C", "-t", "-u")):
