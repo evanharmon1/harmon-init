@@ -52,7 +52,7 @@ for seg in segments:
                 m = re.sub(r"^\$\(cat\s+<<['\"]?[A-Za-z0-9_]+['\"]?\s*\n", "", m)
                 m = re.sub(r"\n[A-Za-z0-9_]+\s*\)$", "", m)
             parsed_messages.append(m)
-        print("\\n\\n".join(parsed_messages))
+        print("\n\n".join(parsed_messages))
         sys.exit(0)
 ' "$command")"
 else
