@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.20.0](https://github.com/evanharmon1/harmon-init/compare/v4.19.1...v4.20.0) (2026-08-08)
+
+
+### Features
+
+* drive label provisioning from the agent registry with a drift gate ([#676](https://github.com/evanharmon1/harmon-init/issues/676)) ([1ecfa3f](https://github.com/evanharmon1/harmon-init/commit/1ecfa3f2a347e0b593d8be19c2e0c3dfbe126d9f))
+
+
+### Bug Fixes
+
+* **devcontainer:** disable the Claude Code auto-updater in the shared image ([#684](https://github.com/evanharmon1/harmon-init/issues/684)) ([2704ac6](https://github.com/evanharmon1/harmon-init/commit/2704ac669ee918f07dda97cf7c3214c6f7c53482))
+* **template:** sync harmon-devkit skills to v0.23.0 ([#675](https://github.com/evanharmon1/harmon-init/issues/675)) ([6563cd3](https://github.com/evanharmon1/harmon-init/commit/6563cd320b3076c1cc36aac2bd2e5ea336ec5810))
+
 ## [4.19.1](https://github.com/evanharmon1/harmon-init/compare/v4.19.0...v4.19.1) (2026-08-08)
 
 
