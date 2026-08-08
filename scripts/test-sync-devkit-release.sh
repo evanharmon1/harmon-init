@@ -172,8 +172,40 @@ pr)
 ${STUB_PR_LIST:-}
 EOF
         ;;
-    view) printf '%s\n' "${STUB_PR_TITLE:-}" ;;
-    create | edit) printf 'https://example.invalid/pr\n' ;;
+    view)
+        case "$*" in
+        *"--json title"*)
+            [ -z "${STUB_FAIL_PR_TITLE_VIEW:-}" ] || exit 1
+            printf '%s\n' "${STUB_PR_TITLE:-}"
+            ;;
+        *"--json number"*)
+            [ -z "${STUB_FAIL_PR_NUMBER_VIEW:-}" ] || exit 1
+            printf '%s\n' "${STUB_PR_NUMBER:-42}"
+            ;;
+        *"--json headRefOid,isDraft"*)
+            [ -z "${STUB_FAIL_PR_DRAFT_VIEW:-}" ] || exit 1
+            _stub_head="${STUB_PR_HEAD:-$(git rev-parse HEAD)}"
+            if [ -f "${STUB_PR_DRAFT_MARKER:-/nonexistent}" ]; then
+                printf '%s %s\n' "$_stub_head" true
+            else
+                printf '%s %s\n' "$_stub_head" "${STUB_PR_IS_DRAFT:-true}"
+            fi
+            ;;
+        *) echo "stub gh: unhandled pr view: $*" >&2; exit 1 ;;
+        esac
+        ;;
+    create) printf 'https://example.invalid/pr/%s\n' "${STUB_PR_NUMBER:-42}" ;;
+    edit)
+        if [ -n "${STUB_EDIT_MAKES_READY:-}" ]; then
+            rm -f "${STUB_PR_DRAFT_MARKER:-/nonexistent}"
+        fi
+        printf 'https://example.invalid/pr/%s\n' "${3:-42}"
+        ;;
+    ready)
+        [ "${3:-}" = "--undo" ] || exit 1
+        [ -z "${STUB_FAIL_READY_UNDO:-}" ] || exit 1
+        : >"$STUB_PR_DRAFT_MARKER"
+        ;;
     *)
         echo "stub gh: unhandled pr subcommand ${2:-}" >&2
         exit 1
@@ -271,6 +303,15 @@ run_helper() {
             STUB_RELEASES="${STUB_RELEASES:-}" \
             STUB_PR_LIST="${STUB_PR_LIST:-}" \
             STUB_PR_TITLE="${STUB_PR_TITLE:-}" \
+            STUB_FAIL_PR_TITLE_VIEW="${STUB_FAIL_PR_TITLE_VIEW:-}" \
+            STUB_PR_NUMBER="${STUB_PR_NUMBER:-}" \
+            STUB_PR_HEAD="${STUB_PR_HEAD:-}" \
+            STUB_PR_IS_DRAFT="${STUB_PR_IS_DRAFT:-}" \
+            STUB_PR_DRAFT_MARKER="${STUB_PR_DRAFT_MARKER:-}" \
+            STUB_FAIL_PR_NUMBER_VIEW="${STUB_FAIL_PR_NUMBER_VIEW:-}" \
+            STUB_FAIL_PR_DRAFT_VIEW="${STUB_FAIL_PR_DRAFT_VIEW:-}" \
+            STUB_FAIL_READY_UNDO="${STUB_FAIL_READY_UNDO:-}" \
+            STUB_EDIT_MAKES_READY="${STUB_EDIT_MAKES_READY:-}" \
             STUB_BOT_UID="${STUB_BOT_UID:-12345}" \
             STUB_FAIL_TASKS="${STUB_FAIL_TASKS:-}" \
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
@@ -300,6 +341,16 @@ v0.9.2-rc.1 false true
 v1.0.0 true false"
     STUB_PR_LIST=""
     STUB_PR_TITLE=""
+    STUB_FAIL_PR_TITLE_VIEW=""
+    STUB_PR_NUMBER="42"
+    STUB_PR_HEAD=""
+    STUB_PR_IS_DRAFT="true"
+    STUB_PR_DRAFT_MARKER="$TMPROOT/pr-draft.$cases"
+    rm -f "$STUB_PR_DRAFT_MARKER"
+    STUB_FAIL_PR_NUMBER_VIEW=""
+    STUB_FAIL_PR_DRAFT_VIEW=""
+    STUB_FAIL_READY_UNDO=""
+    STUB_EDIT_MAKES_READY=""
     STUB_FAIL_TASKS=""
     STUB_SYNC_ADD_AGENT=""
     STUB_SYNC_DELETE_LOCAL_AGENT=""
@@ -324,6 +375,7 @@ start() {
 }
 
 logged() { grep -qF -- "$1" "$STUB_LOG"; }
+log_count() { grep -cF -- "$1" "$STUB_LOG" || true; }
 # A PR was created or updated — as opposed to merely queried, which the
 # no-churn check does before verification runs.
 pr_written() { grep -qE '^gh pr (create|edit)' "$STUB_LOG"; }
@@ -343,6 +395,9 @@ grep -q '^# ref: v0.9.0 ' "$fix/.claude/skills/.SKILLS_PROVENANCE" || fail "prov
 [ -f "$fix/.claude/skills/local-only/SKILL.md" ] || fail "local skill was disturbed"
 pushed "$fix" || fail "sync branch was never pushed"
 logged "gh pr create" || fail "no PR was opened"
+logged "gh pr create --draft" || fail "the sync PR was not created as draft"
+logged "gh pr view 42 --json headRefOid,isDraft" ||
+    fail "the created PR's head and draft state were not confirmed"
 logged "fix(template): sync harmon-devkit skills to v0.9.0" || fail "PR title is not releasing"
 logged "task verify" || fail "verification never ran"
 [ "$(git -C "$fix" rev-parse main)" = "$main_before" ] || fail "main was modified"
@@ -350,6 +405,51 @@ logged "task verify" || fail "verification never ran"
 changed="$(git -C "$fix" diff --no-renames --name-only main "$SYNC_BRANCH" | sort | tr '\n' '|')"
 [ "$changed" = ".claude/skills/.SKILLS_PROVENANCE|.claude/skills/standardize-repo/SKILL.md|.skills-sync.yaml|template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|" ] ||
     fail "unexpected commit contents: $changed"
+
+start "a created PR that lands ready is returned to draft and re-confirmed"
+fix="$(new_fixture created_ready)"
+STUB_PR_IS_DRAFT="false"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "ready-created remediation exited $rc: $(cat "$LAST_OUT")"
+logged "gh pr ready --undo 42" || fail "the ready-created PR was not returned to draft"
+[ "$(log_count "gh pr view 42 --json headRefOid,isDraft")" -ge 2 ] ||
+    fail "the draft conversion was not re-confirmed"
+
+start "an unresolvable created PR fails closed"
+fix="$(new_fixture created_unknown)"
+STUB_FAIL_PR_NUMBER_VIEW="true"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "an unresolvable created PR was reported as success"
+grep -q "could not resolve the newly created sync PR" "$LAST_OUT" ||
+    fail "the unresolved PR failure was not explicit: $(cat "$LAST_OUT")"
+
+start "a created PR on a different head fails closed"
+fix="$(new_fixture created_wrong_head)"
+STUB_PR_HEAD="0000000000000000000000000000000000000000"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "a created PR on an unverified head was reported as success"
+grep -q "not the verified head" "$LAST_OUT" ||
+    fail "the head mismatch was not explicit: $(cat "$LAST_OUT")"
+
+start "a ready existing PR must become draft before its branch is replaced"
+fix="$(new_fixture existing_ready_refused)"
+STUB_PR_LIST="42 false"
+STUB_PR_IS_DRAFT="false"
+STUB_FAIL_READY_UNDO="true"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "a ready existing PR was overwritten without draft conversion"
+! pushed "$fix" || fail "the branch was pushed before draft conversion succeeded"
+! logged "gh pr edit 42" || fail "the PR was edited after pre-push draft conversion failed"
+
+start "an updated PR is re-converted if metadata editing publishes it ready"
+fix="$(new_fixture existing_edit_ready)"
+STUB_PR_LIST="42 false"
+STUB_PR_IS_DRAFT="false"
+STUB_EDIT_MAKES_READY="true"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "post-edit draft remediation exited $rc: $(cat "$LAST_OUT")"
+[ "$(log_count "gh pr ready --undo 42")" -eq 2 ] ||
+    fail "the PR was not converted both before push and after edit"
 
 start "an event replayed after the sync PR merged is a clean no-op"
 fix="$(new_fixture replay_merged v0.9.0)"
@@ -378,6 +478,24 @@ grep -q "already carries this exact sync" "$LAST_OUT" || fail "reconciliation di
     fail "reconciliation force-pushed an identical tree"
 ! logged "gh pr edit" || fail "reconciliation churned the open PR"
 ! logged "task verify" || fail "reconciliation re-ran the expensive verification"
+
+start "an indeterminate title read leaves an unchanged handed-off PR untouched"
+fix="$(new_fixture title_read_failure)"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "first run exited $rc: $(cat "$LAST_OUT")"
+pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
+git -C "$fix" checkout --quiet main
+STUB_PR_LIST="42 false"
+STUB_PR_IS_DRAFT="false"
+STUB_FAIL_PR_TITLE_VIEW="true"
+: >"$STUB_LOG"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" -ne 0 ] || fail "an unreadable title was treated as stale metadata"
+[ "$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")" = "$pushed_before" ] ||
+    fail "an unreadable title churned the remote branch"
+! logged "gh pr edit" || fail "an unreadable title triggered metadata repair"
+! logged "gh pr ready --undo" || fail "an unreadable title revoked the human handoff"
+! logged "task verify" || fail "an unreadable title re-ran verification"
 
 start "a pushed branch whose PR metadata went stale is repaired, not skipped"
 fix="$(new_fixture stale_meta)"
