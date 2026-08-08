@@ -72,10 +72,14 @@ if [ "$(printf '%s' "$tree_json" | jq -r '.truncated')" = "true" ]; then
     exit 2
 fi
 
+# Foreman's loader globs backends/*.sh NON-recursively, so nested helpers
+# (e.g. lib/claude-common.sh) are shared code, not adapters — exclude any
+# path that still contains a slash after the prefix strip.
 shipped="$(printf '%s' "$tree_json" |
     jq -r '.tree[].path
            | select(startswith("src/foreman/backends/") and endswith(".sh"))
-           | ltrimstr("src/foreman/backends/")' | sort -u)"
+           | ltrimstr("src/foreman/backends/")
+           | select(contains("/") | not)' | sort -u)"
 
 if [ -z "$shipped" ]; then
     echo "no *.sh adapters found under src/foreman/backends/ at ${ref} — the path may have moved upstream (indeterminate, not a pass)" >&2

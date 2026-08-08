@@ -199,6 +199,15 @@
       "provision_label": true
     },
     {
+      "slug": "claude-code-deepseek",
+      "display_name": "Claude Code with DeepSeek",
+      "source_file": "claude-code-deepseek.sh",
+      "harness": "claude-code-deepseek",
+      "classification": "production",
+      "production_dispatchable": true,
+      "provision_label": true
+    },
+    {
       "slug": "mock",
       "display_name": "Mock (tests only)",
       "source_file": "mock.sh",

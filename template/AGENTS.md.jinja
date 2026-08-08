@@ -52,14 +52,15 @@ task foreman:plan -- --milestone <n>  # foreman: dry-run the dispatch graph
 [% if use_foreman %]
 
 **Foreman** (`task foreman:*`) is the deterministic supervisor that dispatches
-armed issues to headless agents, verifies their output, opens PRs, and
-shepherds them to mergeable — merging is always a human decision. Foreman's
-own PRs follow foreman's lifecycle, not the Dev Loop below: it opens
-non-draft PRs under its own verify gate and marks green ones with a
-`ready-to-merge` label asserting green CI + resolved threads[% if use_codex_cloud_review %] — NOT a Codex
-verdict (foreman v2 has no cloud-review gate yet:
-[ponderousdev/foreman#104](https://github.com/ponderousdev/foreman/issues/104));
-check the current head's Codex result yourself before merging a foreman PR[% endif %].
+armed issues to headless agents, verifies their output, opens draft PRs, and
+shepherds them to ready-for-review — merging is always a human decision.
+Foreman's own PRs follow the same draft-first lifecycle as the Dev Loop
+below: it opens draft PRs (labelled `foreman:dispatched`) under its own
+verify gate and promotes them only through its readiness gate — checks
+green, review threads resolved[% if use_codex_cloud_review %], and the `[reviewer]` current-head Codex gate
+configured in `.foreman.toml` (the same `@codex review` contract the
+shepherd stage uses — fail-closed, bounded attempts)[% endif %] — to
+`foreman:ready-for-review`, the hand-off to human review.
 The CLI is pinned in `taskfiles/foreman.yml` and fetched via `uvx`;
 configuration is `.foreman.toml`. See
 https://github.com/ponderousdev/foreman.

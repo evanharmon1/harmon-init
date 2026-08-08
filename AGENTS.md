@@ -206,13 +206,13 @@ and architecture docs there); this repo pins a released tag via
 `FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 0002
 records the v1 in-repo design this superseded). The wrapper and config ship
 to generated repos, so they are two-layer twins. Foreman's own PRs follow
-foreman's lifecycle, not the Dev Loop below: it opens non-draft PRs under
-its own verify gate and marks green ones with a `ready-to-merge` label —
-humans still do every merge. Foreman v2 currently has no cloud-review gate
-(v1's `require_codex_cloud_review` was dropped —
-[ponderousdev/foreman#104](https://github.com/ponderousdev/foreman/issues/104)
-tracks restoring one), so its `ready-to-merge` label asserts green CI +
-resolved threads, not a Codex verdict. On this public repo, D4 classifies
+the same draft-first lifecycle as the Dev Loop below: it opens draft PRs
+(labelled `foreman:dispatched`) under its own verify gate and promotes them
+only through its readiness gate — checks green, review threads resolved, and
+the `[reviewer]` current-head gate configured in `.foreman.toml`, wired to
+the same `@codex review` contract the shepherd stage uses (fail-closed,
+bounded attempts) — to `foreman:ready-for-review`, the hand-off to human
+review. Humans still do every merge. On this public repo, D4 classifies
 every unit `untrusted-input`, so **dispatch refuses under the local runner
 by design** (plan / vet / status / preflight all work) until an isolated
 runner ships.

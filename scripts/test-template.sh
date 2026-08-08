@@ -930,6 +930,27 @@ iac | full)
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
+    # Foreman >= 2.2.0 is draft-first with namespaced PR labels; the rendered
+    # guidance must describe that single lifecycle, with no legacy-label
+    # carve-out.
+    grep -Fq 'foreman:ready-for-review' AGENTS.md ||
+        err "AGENTS.md missing the namespaced foreman:ready-for-review lifecycle (use_foreman=true)"
+    ! grep -Fq 'ready-to-merge' AGENTS.md ||
+        err "AGENTS.md still names the legacy ready-to-merge foreman label"
+    # The [reviewer] current-head gate renders only where cloud review is
+    # opted in; foreman validates login+request as a pair, so a half-rendered
+    # table would refuse every run.
+    if [ "$profile" = "full" ]; then
+        grep -q '^\[reviewer\]' .foreman.toml ||
+            err ".foreman.toml missing the [reviewer] gate (use_codex_cloud_review=true)"
+        grep -Fq 'login = "chatgpt-codex-connector[bot]"' .foreman.toml ||
+            err ".foreman.toml [reviewer] login is not the Codex connector bot"
+        grep -Fq 'request = "@codex review"' .foreman.toml ||
+            err ".foreman.toml [reviewer] request is not the documented @codex review trigger"
+    else
+        ! grep -q '^\[reviewer\]' .foreman.toml ||
+            err ".foreman.toml renders the [reviewer] gate but use_codex_cloud_review is off"
+    fi
     # Preflight's D14 probes need both tag rulesets; their bypass actor is
     # owner-shaped (org repos: OrganizationAdmin; personal: repo admin role 5).
     [ -f ".github/Tag Protection Ruleset - Version Tag Creation.json" ] ||
