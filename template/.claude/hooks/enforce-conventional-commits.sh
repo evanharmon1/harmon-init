@@ -31,6 +31,9 @@ fi
 if [[ -z "$msg" ]]; then
     msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+'[^']+'" | head -n1 | sed -E "s/^-m[[:space:]]+'(.*)'\$/\1/" || true)"
 fi
+if [[ -z "$msg" ]]; then
+    msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+[^[:space:]'\"]+" | head -n1 | sed -E 's/^-m[[:space:]]+(.*)$/\1/' || true)"
+fi
 
 # If we couldn't parse a message, don't block — let git itself error out.
 [[ -n "$msg" ]] || exit 0
