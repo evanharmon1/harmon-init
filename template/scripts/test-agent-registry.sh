@@ -128,8 +128,16 @@ switch (mutation) {
     registry.schema_version = [instanceObject, reorderedObject]
     schema.properties.schema_version = { type: 'array', uniqueItems: true }
     break
+  case 'distinct-unique-items':
+    registry.schema_version = [{ value: 1 }, { value: '1' }]
+    schema.properties.schema_version = { type: 'array', uniqueItems: true }
+    break
   case 'unicode-min-length':
     registry.schema_version = '😀'
+    schema.properties.schema_version = { type: 'string', minLength: 2 }
+    break
+  case 'unicode-min-length-exact':
+    registry.schema_version = '😀x'
     schema.properties.schema_version = { type: 'string', minLength: 2 }
     break
   default:
@@ -339,10 +347,16 @@ rejects_schema_case \
     "structurally duplicate uniqueItems objects with reordered properties" \
     'reordered-unique-items' \
     'items must be unique'
+accepts_schema_case \
+    "structurally distinct uniqueItems values" \
+    'distinct-unique-items'
 rejects_schema_case \
     "one Unicode code point under minLength 2" \
     'unicode-min-length' \
     'must contain at least 2 character(s)'
+accepts_schema_case \
+    "two Unicode code points at minLength 2" \
+    'unicode-min-length-exact'
 
 node --input-type=module - "$schema" "$mutated_schema" <<'NODE'
 import { readFile, writeFile } from 'node:fs/promises'
