@@ -190,8 +190,27 @@ try {
   process.exit(1)
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+    .join(',')}}`
+}
+
 function jsonEqual(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right)
+  return canonicalJson(left) === canonicalJson(right)
+}
+
+function satisfiesMinLength(value, minimum) {
+  let length = 0
+  const codePoints = value[Symbol.iterator]()
+  while (length < minimum && !codePoints.next().done) {
+    length += 1
+  }
+  return length >= minimum
 }
 
 function instanceType(value) {
@@ -244,7 +263,7 @@ function validateSchema(value, rule, location) {
   }
 
   if (typeof value === 'string') {
-    if (rule.minLength !== undefined && value.length < rule.minLength) {
+    if (rule.minLength !== undefined && !satisfiesMinLength(value, rule.minLength)) {
       errors.push(`${location}: must contain at least ${rule.minLength} character(s)`)
     }
     if (rule.pattern && !new RegExp(rule.pattern, 'u').test(value)) {
@@ -257,8 +276,8 @@ function validateSchema(value, rule, location) {
       errors.push(`${location}: must contain at least ${rule.minItems} item(s)`)
     }
     if (rule.uniqueItems) {
-      const serialized = value.map((item) => JSON.stringify(item))
-      if (new Set(serialized).size !== serialized.length) {
+      const canonicalItems = value.map(canonicalJson)
+      if (new Set(canonicalItems).size !== canonicalItems.length) {
         errors.push(`${location}: items must be unique`)
       }
     }
