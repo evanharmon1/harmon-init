@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup-github-issue-fields.sh — idempotently add the org ISSUE FIELDS that are
-# NOT GitHub built-ins: Product, Agent, Domain, and Layer. GitHub already ships
+# NOT GitHub built-ins: Product, Domain, and Layer. GitHub already ships
 # Priority, Effort, Start date, and Target date as built-in issue fields, and we
 # never recreate or modify those (leave them at their defaults).
 # Additive only; it never renames or deletes a field or an option — so the
@@ -67,20 +67,14 @@ done
 # Preview REST API version for issue fields; bump if GitHub moves the endpoint.
 api_version="2026-03-10"
 
-# Agent single-select options. Colors are GitHub's palette: gray, blue, green,
-# yellow, orange, red, pink, purple. `priority` (1-based) is REQUIRED per option
-# on this preview endpoint and sets the display order (1 shows first).
-agent_opts='[
-  {"name":"Claude Code","color":"orange","description":"","priority":1},
-  {"name":"Codex","color":"blue","description":"","priority":2},
-  {"name":"Gemini CLI","color":"purple","description":"","priority":3},
-  {"name":"Qwen Code","color":"green","description":"","priority":4},
-  {"name":"DeepSeek","color":"red","description":"","priority":5},
-  {"name":"Kimi K2","color":"yellow","description":"","priority":6},
-  {"name":"GLM","color":"pink","description":"","priority":7},
-  {"name":"GitHub Copilot","color":"gray","description":"","priority":8}
-]'
-
+# There is deliberately no Agent field: advisory agent routing is the
+# `suggest:*` label family plus the `Status: Agent Queue` lane, and the live
+# claim is a `claim:*` label (docs/project-management.md, ADR 0005 D4).
+#
+# Colors are GitHub's palette: gray, blue, green, yellow, orange, red, pink,
+# purple. `priority` (1-based) is REQUIRED per option on this preview endpoint
+# and sets the display order (1 shows first).
+#
 # Domain (what part of the product) and Layer (which slice of the stack) are
 # orthogonal to each other and to Type/Status — an issue normally carries one of
 # each. Both mirror the `domain:` / `layer:` label families in
@@ -256,7 +250,6 @@ create_field() {
 }
 
 create_field "Product" "text" "Which product/area it belongs to"
-create_field "Agent" "single_select" "Which agent should implement it" "$agent_opts"
 create_field "Domain" "single_select" "Which part of the product it belongs to" "$domain_opts"
 create_field "Layer" "single_select" "Which slice of the stack it changes" "$layer_opts"
 
@@ -273,5 +266,5 @@ if [ -n "$incompatible" ] || [ -n "$missing_options" ]; then
         echo "    Add each one by hand in the org's issue-field settings (Settings -> Planning -> Issue fields)." >&2
     fi
 else
-    echo "==> Done — added issue fields on '$org': Product, Agent, Domain, Layer (Priority/Effort/dates are GitHub built-ins)"
+    echo "==> Done — added issue fields on '$org': Product, Domain, Layer (Priority/Effort/dates are GitHub built-ins)"
 fi
