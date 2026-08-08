@@ -10,10 +10,8 @@ input="$(cat)"
 command="$(printf '%s' "$input" | jq -r '.tool_input.command // ""')"
 [[ -n "$command" ]] || exit 0
 
-# Only police `git commit` and `git push` invocations.
-if ! printf '%s' "$command" | grep -qE 'git[[:space:]]+(commit|push)\b'; then
-    exit 0
-fi
+# Only police git invocations.
+printf '%s' "$command" | grep -qE '\bgit\b' || exit 0
 
 if command -v python3 >/dev/null 2>&1; then
     if ! python3 -c '
