@@ -342,6 +342,18 @@ RUN npm install -g \
         "dmux@${DMUX_VERSION}" \
     && npm cache clean --force
 
+# Claude Code is installed globally as root above, but containers run as
+# `vscode`, so its in-place auto-updater can never write to
+# /usr/lib/node_modules/@anthropic-ai/claude-code and fails every attempt with
+# `no_permissions` -- surfacing a warning in `claude doctor` that no consumer
+# can act on. Self-update is also unwanted here: the version is pinned by
+# CLAUDE_CODE_VERSION above (Renovate-managed) and rolled out by rebuilding
+# this image and bumping the digest consumers pin, so a container that updated
+# itself would silently drift off the tested, reviewed version. Disabling it
+# makes `claude doctor` report an accurate "disabled by env" status instead.
+# Set after the npm layer so toggling it does not bust that cache.
+ENV DISABLE_AUTOUPDATER=1
+
 # ---------- image/overlay contract ----------
 COPY generate-manifest.sh smoke.sh /usr/local/sbin/
 COPY install-repo-config.sh /usr/local/sbin/install-harmon-repo-config
