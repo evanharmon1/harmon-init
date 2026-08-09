@@ -85,15 +85,19 @@ assert_unit() {
     # Resolve the repo root from the script's own location BEFORE we cd away,
     # so init-env.sh's "only pull on a clean main" guard short-circuits when we
     # run it from a throwaway, non-repo working directory.
-    local script_dir repo_root init_env ts_connect bash_bin
+    local script_dir repo_root init_env ts_connect bash_bin codex_config codex_bot_mode
     script_dir="$(cd "$(dirname "$0")" && pwd)"
     repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
     init_env="${repo_root}/.devcontainer/scripts/init-env.sh"
     ts_connect="${repo_root}/.devcontainer/scripts/tailscale-connect.sh"
+    codex_config="${repo_root}/.devcontainer/config/codex-managed-config.toml"
+    codex_bot_mode="${repo_root}/.devcontainer/scripts/enable-codex-bypass.sh"
     bash_bin="$(command -v bash)"
 
     [ -f "$init_env" ] || fail "init-env.sh not found at ${init_env}"
     [ -f "$ts_connect" ] || fail "tailscale-connect.sh not found at ${ts_connect}"
+    [ -f "$codex_config" ] || fail "Codex managed config not found at ${codex_config}"
+    [ -f "$codex_bot_mode" ] || fail "Codex bot-mode helper not found at ${codex_bot_mode}"
 
     local bot_config dev_config
     bot_config="${repo_root}/.devcontainer/devcontainer.json"
@@ -121,9 +125,35 @@ assert_unit() {
 
     # Run from a non-repo temp dir so `git rev-parse --is-inside-work-tree`
     # inside init-env.sh is false and the rebuild `git pull` never fires.
-    local work_dir env_file
+    local work_dir env_file codex_fixture
     work_dir="$(mktemp -d)"
     cd "$work_dir"
+
+    # The shared managed layer is the balanced human default. Bot post-create
+    # must switch only that profile to the Docker-boundary autonomy preset.
+    [ "$(yq '.model' "$codex_config")" = "gpt-5.6-sol" ] ||
+        fail "Codex devcontainer model is not gpt-5.6-sol"
+    [ "$(yq '.model_reasoning_effort' "$codex_config")" = "medium" ] ||
+        fail "Codex devcontainer reasoning is not medium"
+    [ "$(yq '.sandbox_mode' "$codex_config")" = "workspace-write" ] ||
+        fail "human Codex baseline does not enable workspace-write"
+    [ "$(yq '.approval_policy' "$codex_config")" = "on-request" ] ||
+        fail "human Codex baseline does not use on-request approvals"
+    if grep -Eq 'session-start-context|post-edit-format|enforce-conventional-commits' "$codex_config"; then
+        fail "system-managed Codex hooks delegate into checkout-controlled tasks"
+    fi
+    codex_fixture="${work_dir}/codex-managed.toml"
+    cp "$codex_config" "$codex_fixture"
+    CODEX_MANAGED_CONFIG="$codex_fixture" bash "$codex_bot_mode" >/dev/null
+    [ "$(yq '.sandbox_mode' "$codex_fixture")" = "danger-full-access" ] ||
+        fail "bot Codex helper did not remove the nested sandbox"
+    [ "$(yq '.approval_policy' "$codex_fixture")" = "never" ] ||
+        fail "bot Codex helper did not disable approval prompts"
+    grep -q 'enable-codex-bypass.sh' "${repo_root}/.devcontainer/post-create.sh" ||
+        fail "bot post-create does not enable Codex bot mode"
+    if grep -q 'enable-codex-bypass.sh' "${repo_root}/.devcontainer/dev/post-create.sh"; then
+        fail "human post-create enables bot-only Codex autonomy"
+    fi
 
     # has_var <var> <env-file>  → true if the file sets VAR= on its own line.
     has_var() {
@@ -519,11 +549,21 @@ assert_container() {
     local config="$1" container_id="$2" profile="$3"
     [ -n "$container_id" ] || fail "container mode requires a container id"
 
-    local git_name git_email
+    local git_name git_email codex_sandbox codex_approval codex_model codex_effort
     git_name="$(docker exec -u vscode "$container_id" git config --global user.name)" ||
         fail "could not read git user.name in container"
     git_email="$(docker exec -u vscode "$container_id" git config --global user.email)" ||
         fail "could not read git user.email in container"
+    codex_model="$(docker exec -u vscode "$container_id" yq '.model' /etc/codex/managed_config.toml)" ||
+        fail "could not read the managed Codex model"
+    codex_effort="$(docker exec -u vscode "$container_id" yq '.model_reasoning_effort' /etc/codex/managed_config.toml)" ||
+        fail "could not read the managed Codex reasoning effort"
+    codex_sandbox="$(docker exec -u vscode "$container_id" yq '.sandbox_mode' /etc/codex/managed_config.toml)" ||
+        fail "could not read the managed Codex sandbox mode"
+    codex_approval="$(docker exec -u vscode "$container_id" yq '.approval_policy' /etc/codex/managed_config.toml)" ||
+        fail "could not read the managed Codex approval policy"
+    [ "$codex_model" = "gpt-5.6-sol" ] || fail "Codex model is '${codex_model}', expected gpt-5.6-sol"
+    [ "$codex_effort" = "medium" ] || fail "Codex reasoning is '${codex_effort}', expected medium"
 
     # `task` ships from the pinned shared image, NOT a devcontainer Feature
     # (harmon-init#427 history). The expected version comes from the image's
@@ -558,6 +598,8 @@ assert_container() {
         fail "task version '${actual_version}' in the ${profile} container does not match the pin '${pinned_task}'"
 
     if [ "$profile" = "bot" ]; then
+        [ "$codex_sandbox" = "danger-full-access" ] || fail "bot Codex sandbox is '${codex_sandbox}'"
+        [ "$codex_approval" = "never" ] || fail "bot Codex approval policy is '${codex_approval}'"
         # Assert the bot identity RELATIONSHIP, not literal values, so the
         # script stays valid verbatim in generated projects.
         case "$git_email" in
@@ -583,6 +625,8 @@ assert_container() {
         ts_authkey="$(docker exec -u vscode "$container_id" printenv TS_AUTHKEY 2>/dev/null || true)"
         [ -z "$ts_authkey" ] || fail "TS_AUTHKEY is set in the bot container"
     else
+        [ "$codex_sandbox" = "workspace-write" ] || fail "human Codex sandbox is '${codex_sandbox}'"
+        [ "$codex_approval" = "on-request" ] || fail "human Codex approval policy is '${codex_approval}'"
         case "$git_email" in
         *-bot@*) fail "dev git email '${git_email}' unexpectedly contains '-bot@'" ;;
         esac

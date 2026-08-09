@@ -76,6 +76,15 @@ docker run --rm "$overlay" sh -eu -c '
     [ "$(id -un)" = vscode ]
     [ -f /etc/claude-code/managed-settings.json ]
     [ -x /etc/claude-code/hooks/protect-files.sh ]
+    [ -f /etc/codex/managed_config.toml ]
+    [ -x /etc/codex/hooks/claude-compat.sh ]
+    [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
+    [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
+    ! grep -Eq "session-start-context|post-edit-format|enforce-conventional-commits" /etc/codex/managed_config.toml
+    [ -f /etc/codex/managed_config.toml ]
+    [ -x /etc/codex/hooks/claude-compat.sh ]
+    [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
+    [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
     infocmp -1 xterm-ghostty >/dev/null

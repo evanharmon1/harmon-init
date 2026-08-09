@@ -17,6 +17,8 @@ agent-deck.toml
 claude-settings.json
 claude-statusline.sh
 claude-user-defaults.json
+codex-managed-config.toml
+codex-managed-config.toml
 ghostty.terminfo
 gitconfig
 micro-bindings.json
@@ -31,6 +33,10 @@ claude-hooks/enforce-conventional-commits.sh
 claude-hooks/post-edit-format.sh
 claude-hooks/protect-files.sh
 claude-hooks/session-start-context.sh
+codex-hooks/claude-compat.sh
+codex-hooks/file-payload.sh
+codex-hooks/claude-compat.sh
+codex-hooks/file-payload.sh
 "
 while IFS= read -r file; do
     [ -n "$file" ] || continue
@@ -43,6 +49,8 @@ tic -x "${config_dir}/ghostty.terminfo"
 
 install -d -m 0755 \
     /etc/claude-code/hooks \
+    /etc/codex/hooks \
+    /etc/codex/hooks \
     /home/vscode/.agent-deck \
     /home/vscode/.config/git \
     /home/vscode/.config/micro \
@@ -62,6 +70,8 @@ install -m 0644 "${config_dir}/zshrc" /home/vscode/.zshrc
 
 install -m 0644 "${config_dir}/claude-settings.json" /etc/claude-code/managed-settings.json
 install -m 0755 "${config_dir}/claude-statusline.sh" /etc/claude-code/statusline.sh
+install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
+install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
 for hook in \
     block-no-verify.sh \
     enforce-conventional-commits.sh \
@@ -69,6 +79,12 @@ for hook in \
     protect-files.sh \
     session-start-context.sh; do
     install -m 0755 "${config_dir}/claude-hooks/${hook}" "/etc/claude-code/hooks/${hook}"
+done
+for hook in claude-compat.sh file-payload.sh; do
+    install -m 0755 "${config_dir}/codex-hooks/${hook}" "/etc/codex/hooks/${hook}"
+done
+for hook in claude-compat.sh file-payload.sh; do
+    install -m 0755 "${config_dir}/codex-hooks/${hook}" "/etc/codex/hooks/${hook}"
 done
 
 chown -R vscode:vscode \

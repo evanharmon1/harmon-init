@@ -22,6 +22,24 @@ default so a human stays in the loop. The shared managed settings
 at create time via `scripts/enable-claude-bypass.sh`. `bypassPermissions` is only
 safe because it is container-scoped — it is never set on the host.
 
+**Codex follows the same split.** Both profiles default to `gpt-5.6-sol` with
+medium reasoning and a 64 KiB project-instruction budget. The **dev** profile
+uses `workspace-write`, `on-request`, and Auto-review: the sandbox defines the
+writable boundary, while eligible exits from it are reviewed automatically.
+The **bot** changes the managed config to `danger-full-access` plus `never`, so
+there is no nested sandbox or interactive prompt inside Docker. Repository
+instructions, hooks, GitHub token scope, mounted volumes, and Docker itself
+remain the bot's boundaries.
+
+**Codex follows the same split.** Both profiles default to `gpt-5.6-sol` with
+medium reasoning and a 64 KiB project-instruction budget. The **dev** profile
+uses `workspace-write`, `on-request`, and Auto-review: the sandbox defines the
+writable boundary, while eligible exits from it are reviewed automatically.
+The **bot** changes the managed config to `danger-full-access` plus `never`, so
+there is no nested sandbox or interactive prompt inside Docker. Repository
+instructions, hooks, GitHub token scope, mounted volumes, and Docker itself
+remain the bot's boundaries.
+
 **Antigravity autonomy is an explicit opt-in.** This repo enables
 `use_antigravity_cli`, so its bot profile applies `always-proceed`, always
 accepts artifact reviews, allows non-workspace access, disables Antigravity's
@@ -96,6 +114,18 @@ directly, worktrees included — and nothing written to disk.
 
 To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
 at it — the seed merge will not overwrite it.
+
+## Codex CLI settings in the container
+
+Codex policy is baked at `/etc/codex/managed_config.toml` from
+`config/codex-managed-config.toml`; its shared hook adapters are installed under
+`/etc/codex/hooks/`. The config pins Sol/medium, loads the standard project
+skills from `.agents/skills`, and renders a compact built-in footer with project,
+branch, model/effort, context, quota, token, and run-state fields. Unlike
+Claude's renderer, Codex's supported status line is a single ordered list rather
+than an external multi-line command. System-managed Codex hooks are limited to
+image-owned policy scripts; checkout-controlled status and formatter tasks stay
+behind Claude/project trust instead of executing automatically at Codex startup.
 
 ## Terminal type and Ghostty terminfo
 
