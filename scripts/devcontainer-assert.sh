@@ -20,6 +20,31 @@ fail() {
     exit 1
 }
 
+# Read a scalar from the document root without depending on yq's TOML parser.
+# The yq build available on GitHub's Ubuntu runner interprets TOML arrays of
+# tables differently from the Homebrew build, even for an unrelated root key.
+toml_root_scalar() {
+    local key="$1" file="$2"
+    awk -v key="$key" '
+        BEGIN { in_root = 1 }
+        /^[[:space:]]*\[/ { in_root = 0 }
+        in_root {
+            line = $0
+            sub(/[[:space:]]*#.*/, "", line)
+            if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
+                sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", line)
+                sub(/[[:space:]]*$/, "", line)
+                if (line ~ /^\".*\"$/) {
+                    sub(/^\"/, "", line)
+                    sub(/\"$/, "", line)
+                }
+                print line
+                exit
+            }
+        }
+    ' "$file"
+}
+
 # renovate: datasource=npm depName=@devcontainers/cli
 DEVCONTAINER_CLI_VERSION=0.88.0
 
@@ -131,13 +156,13 @@ assert_unit() {
 
     # The shared managed layer is the balanced human default. Bot post-create
     # must switch only that profile to the Docker-boundary autonomy preset.
-    [ "$(yq '.model' "$codex_config")" = "gpt-5.6-sol" ] ||
+    [ "$(toml_root_scalar model "$codex_config")" = "gpt-5.6-sol" ] ||
         fail "Codex devcontainer model is not gpt-5.6-sol"
-    [ "$(yq '.model_reasoning_effort' "$codex_config")" = "medium" ] ||
+    [ "$(toml_root_scalar model_reasoning_effort "$codex_config")" = "medium" ] ||
         fail "Codex devcontainer reasoning is not medium"
-    [ "$(yq '.sandbox_mode' "$codex_config")" = "workspace-write" ] ||
+    [ "$(toml_root_scalar sandbox_mode "$codex_config")" = "workspace-write" ] ||
         fail "human Codex baseline does not enable workspace-write"
-    [ "$(yq '.approval_policy' "$codex_config")" = "on-request" ] ||
+    [ "$(toml_root_scalar approval_policy "$codex_config")" = "on-request" ] ||
         fail "human Codex baseline does not use on-request approvals"
     if grep -Eq 'session-start-context|post-edit-format|enforce-conventional-commits' "$codex_config"; then
         fail "system-managed Codex hooks delegate into checkout-controlled tasks"
@@ -145,9 +170,9 @@ assert_unit() {
     codex_fixture="${work_dir}/codex-managed.toml"
     cp "$codex_config" "$codex_fixture"
     CODEX_MANAGED_CONFIG="$codex_fixture" bash "$codex_bot_mode" >/dev/null
-    [ "$(yq '.sandbox_mode' "$codex_fixture")" = "danger-full-access" ] ||
+    [ "$(toml_root_scalar sandbox_mode "$codex_fixture")" = "danger-full-access" ] ||
         fail "bot Codex helper did not remove the nested sandbox"
-    [ "$(yq '.approval_policy' "$codex_fixture")" = "never" ] ||
+    [ "$(toml_root_scalar approval_policy "$codex_fixture")" = "never" ] ||
         fail "bot Codex helper did not disable approval prompts"
     grep -q 'enable-codex-bypass.sh' "${repo_root}/.devcontainer/post-create.sh" ||
         fail "bot post-create does not enable Codex bot mode"
@@ -554,13 +579,13 @@ assert_container() {
         fail "could not read git user.name in container"
     git_email="$(docker exec -u vscode "$container_id" git config --global user.email)" ||
         fail "could not read git user.email in container"
-    codex_model="$(docker exec -u vscode "$container_id" yq '.model' /etc/codex/managed_config.toml)" ||
+    codex_model="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar model -)" ||
         fail "could not read the managed Codex model"
-    codex_effort="$(docker exec -u vscode "$container_id" yq '.model_reasoning_effort' /etc/codex/managed_config.toml)" ||
+    codex_effort="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar model_reasoning_effort -)" ||
         fail "could not read the managed Codex reasoning effort"
-    codex_sandbox="$(docker exec -u vscode "$container_id" yq '.sandbox_mode' /etc/codex/managed_config.toml)" ||
+    codex_sandbox="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar sandbox_mode -)" ||
         fail "could not read the managed Codex sandbox mode"
-    codex_approval="$(docker exec -u vscode "$container_id" yq '.approval_policy' /etc/codex/managed_config.toml)" ||
+    codex_approval="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar approval_policy -)" ||
         fail "could not read the managed Codex approval policy"
     [ "$codex_model" = "gpt-5.6-sol" ] || fail "Codex model is '${codex_model}', expected gpt-5.6-sol"
     [ "$codex_effort" = "medium" ] || fail "Codex reasoning is '${codex_effort}', expected medium"
