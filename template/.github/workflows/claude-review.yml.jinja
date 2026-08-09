@@ -57,13 +57,27 @@ jobs:
           esac
           echo "::error::$SENDER is not an authorized sender"
           exit 1
-      # Claim lifecycle: the run owns the PR while it works, so a human or
-      # another agent can see the work is taken. Written with GITHUB_TOKEN
-      # under the job permissions above — it stays valid for the whole job (an
-      # App token expires in an hour, well inside this timeout) and its writes
-      # never trigger another workflow run. Fail-soft on purpose: the claim is
-      # advisory, so a transient API error must not cost an authorized request
-      # its run.
+      # Claim lifecycle: the run owns the PR while it works, so a
+      # human or another agent can see the work is taken. Written with
+      # GITHUB_TOKEN under the job permissions above — it stays valid for the
+      # whole job (an App token expires in an hour, well inside this timeout)
+      # and its writes never trigger another workflow run.
+      #
+      # The label is CREATED when the repo lacks it: the add-label endpoint
+      # does not create one, and a default rendered repo has no
+      # `setup:github-labels` task (that task is gated on project_management /
+      # foreman), so claim:claude is a tool-owned, auto-created label in the
+      # D10 taxonomy sense. Color and description are the registry's verbatim
+      # (`agent-registry.json` → `claim:claude`), so a later provisioning run
+      # reconciles the label instead of fighting this one.
+      #
+      # Ownership hygiene, NOT locking: a target that is already claimed —
+      # typically an interactive Claude session working the same issue — keeps
+      # its claim, and this run neither re-adds nor releases it. Claims are
+      # documented as signals rather than locks, so two runs starting in the
+      # same instant can still both read "unclaimed" and race; that residual is
+      # accepted. Every step is fail-soft: the claim is advisory, so a
+      # transient API error must not cost an authorized request its run.
       - name: Claim the target with claim:claude
         id: claim
         env:
@@ -71,12 +85,24 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
         run: |
+          acquired=false
           if [ -z "$TARGET" ]; then
             echo "No pull request number; nothing to claim"
-            exit 0
+          elif ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels" --jq '.[].name'); then
+            echo "::warning::could not read the labels on #$TARGET; not claiming"
+          elif printf '%s\n' "$existing" | grep -qx 'claim:claude'; then
+            echo "::notice::#$TARGET is already claimed; leaving the existing claim in place"
+          else
+            gh api "repos/$GH_REPO/labels" -f name='claim:claude' -f color='006B75' \
+              -f description='Claimed by Claude' >/dev/null 2>&1 ||
+              echo "claim:claude already exists in this repository"
+            if gh api "repos/$GH_REPO/issues/$TARGET/labels" -f 'labels[]=claim:claude' >/dev/null; then
+              acquired=true
+            else
+              echo "::warning::could not apply claim:claude to #$TARGET"
+            fi
           fi
-          gh api "repos/$GH_REPO/issues/$TARGET/labels" -f "labels[]=claim:claude" >/dev/null ||
-            echo "::warning::could not apply claim:claude to #$TARGET"
+          echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
@@ -91,6 +117,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+        # Step-level cap, 10 minutes under the job budget. A JOB timeout
+        # kills the runner outright and the always() release below never
+        # runs; a STEP timeout fails only this step and lets the cleanup
+        # run, so the claim is still released. Losing the runner itself
+        # (or a force-cancel) can still strand the advisory label —
+        # accepted, rather than a reconciliation workflow of its own.
+        timeout-minutes: 50
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
@@ -102,18 +135,20 @@ jobs:
           branch_prefix: claude/
           # --max-budget-usd caps API-key spend; likely a no-op under
           # CLAUDE_CODE_OAUTH_TOKEN (subscription) billing. Real runaway guards
-          # are timeout-minutes (job-level) and --max-turns.
+          # are timeout-minutes (job- and step-level) and --max-turns.
           claude_args: "--model opus --effort max --max-budget-usd 6 --disallowedTools Edit Write Bash --max-turns 60"
           prompt: |
             Review the PR diff and post a code review comment. Flag security,
             correctness, and convention concerns (see AGENTS.md). Do not write
             code or modify files.
-      # Release the claim on EVERY terminal path — success, failure, and
-      # cancellation alike — so a spent run never leaves a stale claim behind.
-      # Gated on the claim step having run, which only happens once the sender
-      # allowlist has passed: an unauthorized event must reach no write at all.
+      # Release the claim on EVERY terminal path — success, failure, step
+      # timeout, and cancellation alike — so a spent run never leaves a stale
+      # claim behind. Gated on this run having ACQUIRED the claim: a claim that
+      # was already on the target belongs to whoever made it, and an
+      # unauthorized event never reaches the claim step at all, so neither is
+      # released here.
       - name: Release the claim
-        if: always() && steps.claim.outcome == 'success'
+        if: always() && steps.claim.outputs.acquired == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

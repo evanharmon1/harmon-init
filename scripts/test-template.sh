@@ -1174,8 +1174,20 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
         err "$claude_wf still consumes a retired claude-* workflow label"
     grep -Fq 'labels[]=claim:claude' "$claude_wf_path" ||
         err "$claude_wf does not apply claim:claude when the run starts"
-    grep -Fq "if: always() && steps.claim.outcome == 'success'" "$claude_wf_path" ||
-        err "$claude_wf does not release claim:claude on every terminal path"
+    # The label has to be created where it is missing: a default rendered repo
+    # provisions no labels at all, and the add-label endpoint does not create
+    # one, so without this the claim silently never lands.
+    grep -Fq "repos/\$GH_REPO/labels" "$claude_wf_path" ||
+        err "$claude_wf never creates claim:claude, so an unprovisioned repo can never be claimed"
+    # Release only what this run acquired: an issue already carrying
+    # claim:claude belongs to whoever claimed it (often a live interactive
+    # session), and releasing on step outcome alone would delete their claim.
+    grep -Fq "if: always() && steps.claim.outputs.acquired == 'true'" "$claude_wf_path" ||
+        err "$claude_wf does not release claim:claude on every terminal path, or releases a claim it never acquired"
+    # A JOB timeout kills the runner and the always() cleanup with it, so the
+    # long-running Claude step carries its own, shorter cap.
+    grep -Eq '^ {8}timeout-minutes: [0-9]+$' "$claude_wf_path" ||
+        err "$claude_wf has no step-level timeout — a job timeout would strand the claim"
 done
 
 # Required checks must run on the draft, or the gate has nothing to read. A
