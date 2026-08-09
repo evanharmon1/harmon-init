@@ -288,7 +288,9 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `node scripts/agent-registry-labels.mjs suggest-claim`. A rename whose
       target already exists is rejected by GitHub: re-label those issues by hand
       and delete the empty legacy label instead. Check for in-flight claims first
-      (`gh issue list --label agent:… --state all`): a claim record naming the old
+      (`gh issue list --label agent:… --state all --limit 200` — the default
+      returns only 30, which would hide exactly the claims you are looking for):
+      a claim record naming the old
       label will not release the renamed one, so settle or amend those records in
       the same sitting. Re-read `gh label list` afterwards — no `agent:*` should
       remain.
