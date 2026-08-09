@@ -20,10 +20,22 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   readiness gate that promotes one reads these check results. Narrowing the
   trigger, or gating a job on `github.event.pull_request.draft`, would leave the
   gate with nothing to read until after the handoff it is supposed to authorize.
-- `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
-  `claude-implement` opens a **draft** PR as its normal deliverable and never
-  promotes it: it cannot complete the readiness gate, so the handoff belongs to
-  a shepherd session.
+- `claude-plan` / `claude-implement` / `claude-review` — **mention-only**: an
+  explicit `@claude plan` / `@claude implement` / `@claude review` comment or
+  review from a sender on the `claude_authorized_members` allowlist. There is no
+  label trigger and no open/assign trigger; the retired `claude-plan`,
+  `claude-implement`, and `claude-review` labels are gone, because a label or an
+  assignment carries no actor the allowlist can check on every path. Each run
+  applies `claim:claude` to the target once the sender gate passes and removes it
+  in an `always()` cleanup step, which covers the failure, step-timeout and
+  cancellation paths. It is not a guarantee: a release whose DELETE fails leaves
+  the marker in place and turns the job **red** on purpose (a masked failure
+  would be permanent, since the next run reads the surviving claim and refuses),
+  and runner loss, a force-cancel, or the job cap firing can strand the label
+  with no cleanup at all. A stranded `claim:claude` blocks further mentions on
+  that target until someone removes it by hand. `claude-implement` opens a **draft** PR as its normal deliverable
+  and never promotes it: it cannot complete the readiness gate, so the handoff
+  belongs to a shepherd session.
 - The `build.yml` security job runs gitleaks + dependency audit + Semgrep CE
   (this repo has no CodeQL workflow — no first-party CodeQL-supported
   language). Generated repos with `use_codeql=true` add `codeql.yml`, and

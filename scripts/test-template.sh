@@ -1154,6 +1154,66 @@ grep -Fq 'gh pr create --draft' .github/workflows/claude-implement.yml ||
 grep -Fq 'NEVER run `gh pr ready`' .github/workflows/claude-implement.yml ||
     err "claude-implement.yml does not forbid promoting the draft it cannot gate"
 
+# The Claude workflows are mention-only and claim-aware. A `labeled` trigger or
+# a surviving `label_trigger:` input would reintroduce a start path with no
+# actor for the sender allowlist to check, and the claude-plan/implement/review
+# labels those paths used are retired (never provisioned by the registry). A
+# claim without an `always()` release strands claim:claude on the issue every
+# time a run fails or is cancelled, which is exactly when nobody is watching.
+for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
+    claude_wf_path=".github/workflows/$claude_wf"
+    [ -f "$claude_wf_path" ] || {
+        err "$claude_wf is missing"
+        continue
+    }
+    ! awk '/^on:/,/^jobs:/' "$claude_wf_path" | grep -q 'labeled' ||
+        err "$claude_wf still accepts a labeled event trigger"
+    ! grep -q 'label_trigger:' "$claude_wf_path" ||
+        err "$claude_wf still passes label_trigger to claude-code-action"
+    ! grep -Eq 'claude-(plan|implement|review)['\''"]' "$claude_wf_path" ||
+        err "$claude_wf still consumes a retired claude-* workflow label"
+    grep -Fq 'labels[]=claim:claude' "$claude_wf_path" ||
+        err "$claude_wf does not apply claim:claude when the run starts"
+    # The label has to be created where it is missing: a default rendered repo
+    # provisions no labels at all, and the add-label endpoint does not create
+    # one, so without this the claim silently never lands.
+    grep -Fq "repos/\$GH_REPO/labels" "$claude_wf_path" ||
+        err "$claude_wf never creates claim:claude, so an unprovisioned repo can never be claimed"
+    # Release only what this run acquired: a target already carrying an
+    # ownership marker belongs to whoever claimed it (often a live interactive
+    # session), and releasing on step outcome alone would delete their claim.
+    grep -Fq "if: always() && steps.claim.outputs.acquired == 'true'" "$claude_wf_path" ||
+        err "$claude_wf does not release claim:claude on every terminal path, or releases a claim it never acquired"
+    # The pre-claim test is a prefix, not an exact name: claim:claude:opus,
+    # claim:codex, and transitional agent:* are all live ownership too, and an
+    # exact match would add a second marker beside them.
+    grep -Fq "grep -E '^(claim|agent):'" "$claude_wf_path" ||
+        err "$claude_wf tests for an exact claim label, so a model-pinned or foreign claim reads as unclaimed"
+    # A held or unprovable target is a blocker, not a note: proceeding would
+    # put a second worker on the issue with nothing marking it as taken.
+    grep -Fq '::error::#$TARGET is already claimed' "$claude_wf_path" ||
+        err "$claude_wf proceeds past a claim held by someone else instead of refusing"
+    grep -Fq '::error::could not read the labels' "$claude_wf_path" ||
+        err "$claude_wf runs unclaimed when it cannot prove the target is free"
+    grep -Fq '::error::could not apply claim:claude' "$claude_wf_path" ||
+        err "$claude_wf runs unmarked when the claim label will not apply"
+    # One repo-scoped group per target serializes the read-then-add, so two
+    # mention runs cannot both read "unclaimed" and both proceed.
+    grep -Fq 'group: claude-claim-' "$claude_wf_path" ||
+        err "$claude_wf has no claim concurrency group — two runs could claim the same target at once"
+    # A masked release failure is permanent — the next run sees the surviving
+    # label, acquires nothing, and cleans nothing — so only a confirmed
+    # not-found is benign and everything else has to go red.
+    grep -Fq '::error::could not release claim:claude' "$claude_wf_path" ||
+        err "$claude_wf never fails on an unreleased claim, so a stale marker would go unnoticed"
+    grep -Fq '::notice::claim:claude was already gone' "$claude_wf_path" ||
+        err "$claude_wf does not treat an already-absent claim label as a benign release"
+    # A JOB timeout kills the runner and the always() cleanup with it, so the
+    # long-running Claude step carries its own, shorter cap.
+    grep -Eq '^ {8}timeout-minutes: [0-9]+$' "$claude_wf_path" ||
+        err "$claude_wf has no step-level timeout — a job timeout would strand the claim"
+done
+
 # Required checks must run on the draft, or the gate has nothing to read. A
 # bare `pull_request:` trigger already covers draft opened/synchronize; what
 # would break it is an explicit draft filter or a narrowed types: list.
