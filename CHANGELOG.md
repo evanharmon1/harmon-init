@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.24.0](https://github.com/evanharmon1/harmon-init/compare/v4.23.1...v4.24.0) (2026-08-09)
+
+
+### Features
+
+* pair Claude and Codex configuration ([#708](https://github.com/evanharmon1/harmon-init/issues/708)) ([6c71438](https://github.com/evanharmon1/harmon-init/commit/6c71438a339fe842b97bcab95ac9addd04d3eef5))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 6c71438a ([#711](https://github.com/evanharmon1/harmon-init/issues/711)) ([29d389e](https://github.com/evanharmon1/harmon-init/commit/29d389e40c2d57e13922dd77970292f59c1be471))
+* **devcontainer:** update shared image to e09f420b ([#706](https://github.com/evanharmon1/harmon-init/issues/706)) ([9baf8e7](https://github.com/evanharmon1/harmon-init/commit/9baf8e7f461c77a14fa0b3edac5eaa973af09bc9))
+* **template:** sync harmon-devkit skills to v0.24.0 ([#713](https://github.com/evanharmon1/harmon-init/issues/713)) ([d0bb9d1](https://github.com/evanharmon1/harmon-init/commit/d0bb9d172b2d1c4b32e82909639e19526dd2021b))
+
 ## [4.23.1](https://github.com/evanharmon1/harmon-init/compare/v4.23.0...v4.23.1) (2026-08-09)
 
 
