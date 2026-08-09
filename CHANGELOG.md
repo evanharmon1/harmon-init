@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.22.0](https://github.com/evanharmon1/harmon-init/compare/v4.21.0...v4.22.0) (2026-08-09)
+
+
+### Features
+
+* adopt draft-first Foreman and the current-head reviewer gate ([#689](https://github.com/evanharmon1/harmon-init/issues/689)) ([54c4f39](https://github.com/evanharmon1/harmon-init/commit/54c4f3971be10aa6501fa906209c7c5913435fc3))
+
 ## [4.21.0](https://github.com/evanharmon1/harmon-init/compare/v4.20.0...v4.21.0) (2026-08-08)
 
 
