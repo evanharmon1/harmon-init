@@ -303,8 +303,9 @@ destroys every value on it, unrecoverably.
    on a personal project. On an organization the field is **org-wide**:
    deleting it under **Settings → Planning → Issue fields** removes the value
    from every issue in every repository and project the org owns, not just
-   this board — repeat steps 2–3 across the whole organization before
-   deleting.
+   this board — repeat steps 2–4 across the whole organization before
+   deleting, including step 4 for **every** Project whose saved views filter
+   on the field, not just the board being migrated.
 
 On a personal account there are no issue fields, so `task setup:github-project`
 creates **Priority, Product, Domain, Layer, and Size** as project fields.
