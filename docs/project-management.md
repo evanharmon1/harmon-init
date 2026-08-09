@@ -451,8 +451,13 @@ in the vendored `track-work` skill.
 > check rather than assume:
 >
 > ```sh
-> grep -rl 'agent:claude-code' .claude/skills/claim/ .claude/skills/wrap/
+> grep -rlE 'claim:claude|agent:claude-code' .claude/skills/claim/ .claude/skills/wrap/
 > ```
+>
+> Both vocabularies are matched on purpose: the skills moved from the retired
+> `agent:*` family to `claim:*` in harmon-devkit v0.23.0, and a pin older than
+> that automates claiming just as well under the old name — so probing for one
+> name alone reports half the supported pins as un-automated.
 >
 > A match means claiming is automated end to end. No match means the claim
 > labels above are applied by hand, and no *skill* will move the card. On an
