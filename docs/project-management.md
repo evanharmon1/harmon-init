@@ -332,7 +332,10 @@ families, color-coded by family; the starter set is created by
 - **Suggest** — `suggest:claude`, `suggest:codex`, … (registry-driven; see
   `agent-registry.json`) — which agent family *should* implement the issue,
   set at triage. Advisory only: it routes nothing by itself and must never be
-  read as Foreman arming (that is the `foreman:*` family)
+  read as Foreman arming (that is the `foreman:*` family). A model-level
+  label (`suggest:claude:opus`, created on demand) **refines** the family
+  label, never replaces it — apply both, so views filtered on the family
+  labels keep seeing the issue
 
 > **Transition — the retired `agent:*` family.** Repos seeded before the
 > registry-driven vocabulary carry `agent:claude-code`-style labels instead of
