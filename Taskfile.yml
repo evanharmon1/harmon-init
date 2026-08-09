@@ -80,6 +80,7 @@ tasks:
       - task: test:agent-skill-links
       - task: test:agent-registry
       - task: test:registry-drift
+      - task: test:registry-docs
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -337,6 +338,11 @@ tasks:
     desc: Bind label provisioning, provider wrappers, and Foreman adapters to the agent registry (offline drift gate)
     cmds:
       - ./scripts/test-registry-drift.sh
+
+  test:registry-docs:
+    desc: Bind the published family/harness tables in docs/project-management.md to the agent registry
+    cmds:
+      - ./scripts/test-registry-docs.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

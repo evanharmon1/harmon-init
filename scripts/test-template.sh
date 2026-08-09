@@ -276,6 +276,27 @@ if [ -f .github/workflows/build.yml ]; then
         err "required CI does not run test:registry-drift"
 fi
 
+# The published family/harness tables are generated from the registry and gated
+# against it (ADR 0005 D10). Like the drift gate it ships unconditionally and
+# passes on every profile — it skips loudly where the profile generates no
+# docs/project-management.md.
+if [ ! -x scripts/test-registry-docs.sh ]; then
+    err "registry documentation gate is missing or not executable"
+elif ! ./scripts/test-registry-docs.sh; then
+    err "rendered registry documentation drifts from agent-registry.json"
+fi
+if have task; then
+    grep -qF './scripts/test-registry-docs.sh' \
+        <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+        err "task verify does not reach test:registry-docs"
+else
+    required task "registry-docs verify reachability" || fail=1
+fi
+if [ -f .github/workflows/build.yml ]; then
+    grep -qF 'task test:registry-docs' .github/workflows/build.yml ||
+        err "required CI does not run test:registry-docs"
+fi
+
 # ── 1b. Free security policy renders as a coherent stack ───────────
 [ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"
