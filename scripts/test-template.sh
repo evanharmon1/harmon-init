@@ -1179,11 +1179,23 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
     # one, so without this the claim silently never lands.
     grep -Fq "repos/\$GH_REPO/labels" "$claude_wf_path" ||
         err "$claude_wf never creates claim:claude, so an unprovisioned repo can never be claimed"
-    # Release only what this run acquired: an issue already carrying
-    # claim:claude belongs to whoever claimed it (often a live interactive
+    # Release only what this run acquired: a target already carrying an
+    # ownership marker belongs to whoever claimed it (often a live interactive
     # session), and releasing on step outcome alone would delete their claim.
     grep -Fq "if: always() && steps.claim.outputs.acquired == 'true'" "$claude_wf_path" ||
         err "$claude_wf does not release claim:claude on every terminal path, or releases a claim it never acquired"
+    # The pre-claim test is a prefix, not an exact name: claim:claude:opus,
+    # claim:codex, and transitional agent:* are all live ownership too, and an
+    # exact match would add a second marker beside them.
+    grep -Fq "grep -E '^(claim|agent):'" "$claude_wf_path" ||
+        err "$claude_wf tests for an exact claim label, so a model-pinned or foreign claim reads as unclaimed"
+    # A masked release failure is permanent — the next run sees the surviving
+    # label, acquires nothing, and cleans nothing — so only a confirmed
+    # not-found is benign and everything else has to go red.
+    grep -Fq '::error::could not release claim:claude' "$claude_wf_path" ||
+        err "$claude_wf never fails on an unreleased claim, so a stale marker would go unnoticed"
+    grep -Fq '::notice::claim:claude was already gone' "$claude_wf_path" ||
+        err "$claude_wf does not treat an already-absent claim label as a benign release"
     # A JOB timeout kills the runner and the always() cleanup with it, so the
     # long-running Claude step carries its own, shorter cap.
     grep -Eq '^ {8}timeout-minutes: [0-9]+$' "$claude_wf_path" ||

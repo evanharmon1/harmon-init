@@ -61,13 +61,23 @@ jobs:
       # (`agent-registry.json` → `claim:claude`), so a later provisioning run
       # reconciles the label instead of fighting this one.
       #
-      # Ownership hygiene, NOT locking: a target that is already claimed —
-      # typically an interactive Claude session working the same issue — keeps
-      # its claim, and this run neither re-adds nor releases it. Claims are
-      # documented as signals rather than locks, so two runs starting in the
-      # same instant can still both read "unclaimed" and race; that residual is
-      # accepted. Every step is fail-soft: the claim is advisory, so a
-      # transient API error must not cost an authorized request its run.
+      # Ownership hygiene, NOT locking: a target already carrying ANY live
+      # ownership marker keeps it, and this run neither adds a second one nor
+      # releases the first. The test is a `claim:`/`agent:` PREFIX, not the
+      # exact `claim:claude` string, because both cases the claim contract
+      # distinguishes — a claude-family claim already held (add nothing) and
+      # another agent's claim (a blocker to leave untouched) — collapse here to
+      # the same action, and an exact match would miss the model-pinned
+      # `claim:claude:opus` form, another family's `claim:codex`, and the
+      # `agent:*` labels generated repos still carry through the rolling
+      # transition. `suggest:*` is deliberately NOT matched: it is advice about
+      # who should do the work, never ownership of it.
+      #
+      # Claims are documented as signals rather than locks, so two runs
+      # starting in the same instant can still both read "unclaimed" and race;
+      # that residual is accepted. Acquiring is fail-soft — the claim is
+      # advisory, so a transient API error must not cost an authorized request
+      # its run — but releasing is not; see the cleanup step.
       - name: Claim the target with claim:claude
         id: claim
         env:
@@ -80,16 +90,19 @@ jobs:
             echo "No issue or pull request number; nothing to claim"
           elif ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels" --jq '.[].name'); then
             echo "::warning::could not read the labels on #$TARGET; not claiming"
-          elif printf '%s\n' "$existing" | grep -qx 'claim:claude'; then
-            echo "::notice::#$TARGET is already claimed; leaving the existing claim in place"
           else
-            gh api "repos/$GH_REPO/labels" -f name='claim:claude' -f color='006B75' \
-              -f description='Claimed by Claude' >/dev/null 2>&1 ||
-              echo "claim:claude already exists in this repository"
-            if gh api "repos/$GH_REPO/issues/$TARGET/labels" -f 'labels[]=claim:claude' >/dev/null; then
-              acquired=true
+            held=$(printf '%s\n' "$existing" | grep -E '^(claim|agent):' | tr '\n' ' ' || true)
+            if [ -n "$held" ]; then
+              echo "::notice::#$TARGET already carries ${held}— leaving that claim in place"
             else
-              echo "::warning::could not apply claim:claude to #$TARGET"
+              gh api "repos/$GH_REPO/labels" -f name='claim:claude' -f color='006B75' \
+                -f description='Claimed by Claude' >/dev/null 2>&1 ||
+                echo "claim:claude already exists in this repository"
+              if gh api "repos/$GH_REPO/issues/$TARGET/labels" -f 'labels[]=claim:claude' >/dev/null; then
+                acquired=true
+              else
+                echo "::warning::could not apply claim:claude to #$TARGET"
+              fi
             fi
           fi
           echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
@@ -237,6 +250,14 @@ jobs:
       # was already on the target belongs to whoever made it, and an
       # unauthorized event never reaches the claim step at all, so neither is
       # released here.
+      #
+      # Unlike acquiring, this step FAILS LOUDLY. A release that reports
+      # success over a surviving marker is permanent: the next run reads the
+      # claim, records acquired=false, and never cleans it either. The
+      # lifecycle contract keeps a partial release red and retriable, so only a
+      # confirmed 404 (the label is already gone — the state we wanted) passes
+      # quietly; anything else is retried once and then turns the job red with
+      # the marker still searchable.
       - name: Release the claim
         if: always() && steps.claim.outputs.acquired == 'true'
         env:
@@ -244,8 +265,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
         run: |
-          if [ -z "$TARGET" ]; then
-            exit 0
-          fi
-          gh api -X DELETE "repos/$GH_REPO/issues/$TARGET/labels/claim:claude" >/dev/null 2>&1 ||
-            echo "::notice::claim:claude was already absent from #$TARGET"
+          for attempt in 1 2; do
+            if result=$(gh api -X DELETE "repos/$GH_REPO/issues/$TARGET/labels/claim:claude" 2>&1); then
+              echo "released claim:claude from #$TARGET"
+              exit 0
+            fi
+            case "$result" in
+            *404* | *"Not Found"* | *"does not exist"*)
+              echo "::notice::claim:claude was already gone from #$TARGET"
+              exit 0
+              ;;
+            esac
+            if [ "$attempt" = 1 ]; then
+              echo "release attempt $attempt failed, retrying: $result"
+              sleep 10
+            fi
+          done
+          echo "::error::could not release claim:claude from #$TARGET — the marker is still on it: $result"
+          exit 1
