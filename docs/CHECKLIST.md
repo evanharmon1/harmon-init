@@ -218,9 +218,13 @@ this comment. -->
       it in each repo; org default labels (org Settings → Repository, UI-only) only
       seed new repos.
 - [ ] **[human-only] Retire any legacy `agent:*` claim labels** — needed only
-      where `gh label list` still shows the harness-named family
+      where `gh label list --limit 200` still shows the harness-named family
       (`agent:claude-code`, `agent:gemini-cli`, …) a pre-registry harmon-init
-      seeded. `setup-github-labels` never deletes a label, so the old family
+      seeded. **Pass an explicit `--limit` to every `gh label list` and
+      `gh issue list` in this step**: both default to 30, the starter set alone
+      is over 40 labels, and an unbounded read reports a clean repo — or a
+      finished migration — while legacy labels and in-flight claims remain.
+      `setup-github-labels` never deletes a label, so the old family
       survives beside the registry-rendered `claim:*` one, and every reader
       tolerates both — this is cleanup, not a fix for something broken.
       **Rename, never re-create**: `gh label edit agent:claude-code --name
@@ -233,12 +237,10 @@ this comment. -->
       `node scripts/agent-registry-labels.mjs suggest-claim`. A rename whose
       target already exists is rejected by GitHub: re-label those issues by hand
       and delete the empty legacy label instead. Check for in-flight claims first
-      (`gh issue list --label agent:… --state all --limit 200` — the default
-      returns only 30, which would hide exactly the claims you are looking for):
-      a claim record naming the old
-      label will not release the renamed one, so settle or amend those records in
-      the same sitting. Re-read `gh label list` afterwards — no `agent:*` should
-      remain.
+      (`gh issue list --label agent:… --state all --limit 200`): a claim record
+      naming the old label will not release the renamed one, so settle or amend
+      those records in the same sitting. Re-read `gh label list --limit 200`
+      afterwards — no `agent:*` should remain.
 - [ ] Project views: create the starter views (Board / Triage / Agent queue /
       Planning / Mine) in the Project UI — Projects V2 has no view API,
       so this is a one-time manual step. Filters/layouts are in
