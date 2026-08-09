@@ -80,6 +80,9 @@
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "CLAUDE_CODE_EFFORT_LEVEL": "max",
+[% if use_antigravity_cli %]
+    "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
+[% endif %]
     "FOREMAN_DEVCONTAINER": "bot"
   },
 [% if include_ansible %]

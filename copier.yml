@@ -268,6 +268,23 @@ devcontainer:
   # the forbidden combination through.
   validator: "[% if use_foreman and not devcontainer %]Foreman runs only inside the bot devcontainer (its D2 tripwire refuses any other environment) — enable devcontainer or disable use_foreman.[% endif %]"
 
+use_antigravity_cli:
+  type: bool
+  help: >-
+    ANTIGRAVITY CLI: Configure Google's account-backed Antigravity CLI for
+    prompt-free operation in the bot devcontainer? Defaults off. Requires one
+    interactive Google sign-in. Google's $0 Individual plan has basic weekly
+    limits; paid plans raise them. Google documents no public-vs-private repo
+    feature restriction: the CLI operates on the mounted local workspace, so
+    review its terms/data handling before using proprietary code. The bot then
+    trusts its workspace, always proceeds with tools/artifacts, allows
+    non-workspace access, and disables Antigravity's inner terminal sandbox
+    because the container is the isolation boundary. The human dev profile
+    keeps Antigravity's normal prompts.
+  default: no
+  when: "[[ devcontainer ]]"
+  validator: "[% if use_antigravity_cli and not devcontainer %]Enable DEVCONTAINER before ANTIGRAVITY CLI.[% endif %]"
+
 use_alternative_claude_providers:
   type: bool
   help: >-

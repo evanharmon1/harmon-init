@@ -141,6 +141,7 @@ full)
         --data use_codex_review=true
         --data use_codex_cloud_review=true
         --data use_coderabbit=true
+        --data use_antigravity_cli=true
         --data use_alternative_claude_providers=true
         --data use_foreman=true
     )
@@ -1156,6 +1157,39 @@ else
         err "rendered .devcontainer/Dockerfile does not invoke the image overlay installer"
     ! grep -q '^ARG TASK_VERSION=' .devcontainer/Dockerfile ||
         err "rendered .devcontainer/Dockerfile still carries a consumer-side TASK_VERSION pin"
+fi
+
+# ── 9e1. Antigravity autonomy is a default-off bot-only opt-in ──────
+if [ -d .devcontainer ]; then
+    [ -x .devcontainer/config/apply-antigravity-settings.sh ] ||
+        err "Antigravity settings helper missing from devcontainer output"
+    [ -x .devcontainer/config/ensure-antigravity-cli.sh ] ||
+        err "Antigravity compatibility installer missing from devcontainer output"
+    [ -f .devcontainer/config/antigravity-settings.json ] ||
+        err "Antigravity policy defaults missing from devcontainer output"
+    if [ "$profile" = "full" ]; then
+        grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/post-create.sh ||
+            err "bot post-create does not enable opted-in Antigravity autonomy"
+        grep -Fq 'ensure-antigravity-cli.sh' .devcontainer/post-create.sh ||
+            err "bot post-create cannot bridge the shared-image rollout"
+        grep -Fq '"AGY_CLI_DISABLE_AUTO_UPDATE": "true"' .devcontainer/devcontainer.json ||
+            err "bot runtime does not disable fallback Antigravity auto-updates"
+        grep -Fq 'Antigravity autonomy is enabled' docs/guides/devcontainers.md ||
+            err "devcontainer guide omits opted-in Antigravity account/policy guidance"
+    else
+        grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/post-create.sh ||
+            err "default-off Antigravity path does not restore an earlier opt-in"
+        ! grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/post-create.sh ||
+            err "Antigravity autonomy rendered without explicit opt-in"
+        ! grep -Fq 'ensure-antigravity-cli.sh' .devcontainer/post-create.sh ||
+            err "Antigravity CLI downloads without explicit opt-in"
+        ! grep -Fq 'AGY_CLI_DISABLE_AUTO_UPDATE' .devcontainer/devcontainer.json ||
+            err "Antigravity runtime policy rendered without explicit opt-in"
+        grep -Fq 'Antigravity autonomy is off by default' docs/guides/devcontainers.md ||
+            err "devcontainer guide omits default-off Antigravity posture"
+    fi
+    ! grep -Fq 'apply-antigravity-settings.sh' .devcontainer/dev/post-create.sh ||
+        err "human dev profile changes Antigravity autonomy policy"
 fi
 
 # ── 9e2. alt-model providers render per use_alternative_claude_providers ──

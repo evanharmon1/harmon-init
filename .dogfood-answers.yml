@@ -53,6 +53,10 @@ use_coderabbit: false
 
 devcontainer: true
 
+# Dogfoods prompt-free Antigravity in the bot profile. The generated-template
+# default stays off because Antigravity requires a Google account.
+use_antigravity_cli: true
+
 # Dogfoods the alternative-model provider wrappers (claude-kimi/deepseek/glm)
 # in both devcontainer profiles. Keys come from 1Password Environments locally.
 use_alternative_claude_providers: true
