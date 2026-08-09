@@ -142,10 +142,20 @@ if (mode === 'docs-tables') {
   // would split a label record, silently rewriting the published table.
   const cell = (value, where) => field(value, where)
   const code = (value) => '`' + value + '`'
-  const adapterByHarness = new Map()
+  // Adapters ACCUMULATE per harness rather than overwriting. Nothing in the
+  // schema or in ADR 0005 D11 says one harness has at most one adapter — two
+  // backends can legitimately drive the same executable — so a `set()` here
+  // would silently publish only the last one, and the doc would understate what
+  // can dispatch that harness. Rejecting the second instead would fail a
+  // registry the contract permits, and registry invariants belong to
+  // validate-agent-registry.mjs, not to this renderer. The registry is 1:1
+  // today, so this changes no current output.
+  const adaptersByHarness = new Map()
   for (const adapter of registry.foreman_adapters ?? []) {
     if (adapter.harness == null) continue
-    adapterByHarness.set(adapter.harness, adapter)
+    const found = adaptersByHarness.get(adapter.harness)
+    if (found) found.push(adapter)
+    else adaptersByHarness.set(adapter.harness, [adapter])
   }
 
   lines.push(
@@ -180,15 +190,16 @@ if (mode === 'docs-tables') {
       constraint.kind === 'fixed'
         ? code(cell(constraint.family, `harness '${slug}' family_constraint.family`))
         : 'any (multi-provider)'
-    const adapter = adapterByHarness.get(harness.slug)
-    let adapterCell = '—'
-    if (adapter) {
-      const aslug = cell(adapter.slug, 'foreman adapter slug')
-      adapterCell =
-        adapter.provision_label === true
-          ? `${code('foreman:' + aslug)} — production, dispatchable`
-          : `${code(aslug)} — ${cell(adapter.classification, `adapter '${aslug}' classification`)}, not dispatchable, no label`
-    }
+    const adapters = adaptersByHarness.get(harness.slug) ?? []
+    const adapterCell =
+      adapters
+        .map((adapter) => {
+          const aslug = cell(adapter.slug, 'foreman adapter slug')
+          return adapter.provision_label === true
+            ? `${code('foreman:' + aslug)} — production, dispatchable`
+            : `${code(aslug)} — ${cell(adapter.classification, `adapter '${aslug}' classification`)}, not dispatchable, no label`
+        })
+        .join('; ') || '—'
     const resolution = harness.model_resolution ?? {}
     const owner = code(cell(resolution.owner, `harness '${slug}' model_resolution.owner`))
     const details = cell(resolution.details, `harness '${slug}' model_resolution.details`)

@@ -340,10 +340,11 @@ tasks:
       - ./scripts/test-registry-drift.sh
 
   test:registry-docs:
-    # No --answers-file here: harmon-init is the template, so it has no copier
-    # operation and no answers file of its own. The script sees template/docs/
-    # and checks BOTH layers instead (the generated Taskfile passes the
-    # configured answers-file name; see its twin).
+    # No COPIER_ANSWERS_FILE here: harmon-init is the template, so it has no
+    # copier operation and no answers file of its own. That absence, plus the
+    # project-management jinja twins it ships, is exactly how the script knows
+    # to check BOTH layers (the generated Taskfile sets the variable; see its
+    # twin).
     desc: Bind the published family/harness tables in docs/project-management.md to the agent registry
     cmds:
       - ./scripts/test-registry-docs.sh

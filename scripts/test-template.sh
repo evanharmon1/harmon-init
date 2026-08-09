@@ -293,16 +293,26 @@ if [ ! -x scripts/test-registry-docs.sh ]; then
 elif ! ./scripts/test-registry-docs.sh; then
     err "rendered registry documentation drifts from agent-registry.json"
 fi
-# ...and the generated task must pass the CONFIGURED answers-file name, not
+# ...and the generated task must supply the CONFIGURED answers-file name, not
 # rely on that default: a repo copied with `--answers-file custom.yml` has no
 # `.copier-answers.yml`, and the check would then misread which document was
-# rendered at docs/project-management.md.
+# rendered at docs/project-management.md. It travels as an ENV value so an
+# apostrophe in the name cannot break out of a shell argument, and `tojson`
+# keeps it a valid YAML scalar — assert the rendered value round-trips to the
+# answers file that actually exists.
+grep -qE '^ *COPIER_ANSWERS_FILE: ' Taskfile.yml ||
+    err "test:registry-docs does not supply the configured Copier answers-file name"
+rendered_answers="$(sed -n 's/^ *COPIER_ANSWERS_FILE: //p' Taskfile.yml | head -n1 | tr -d '"')"
+[ -f "$rendered_answers" ] ||
+    err "test:registry-docs names a Copier answers file that does not exist: '${rendered_answers}'"
 if have task; then
     verify_dry="$(task --color=false --dry verify 2>&1 || true)"
     grep -qF './scripts/test-registry-docs.sh' <<<"$verify_dry" ||
         err "task verify does not reach test:registry-docs"
-    grep -qF './scripts/test-registry-docs.sh --answers-file' <<<"$verify_dry" ||
-        err "test:registry-docs does not pass the configured Copier answers-file name"
+    # End-to-end: run the task itself, so the env plumbing is exercised rather
+    # than just asserted.
+    task --color=false test:registry-docs >/dev/null 2>&1 ||
+        err "task test:registry-docs fails in the rendered repo"
 else
     required task "registry-docs verify reachability" || fail=1
 fi

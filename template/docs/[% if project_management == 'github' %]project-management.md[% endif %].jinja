@@ -809,13 +809,20 @@ work, never ownership of it. The label is created if the repository does not
 have it, with the registry's own color and description, so a later
 `task setup:github-labels` reconciles that label instead of fighting it.
 
-Release is symmetric and loud. An `always()` step releases the claim on every
-terminal path — success, failure, step timeout, cancellation — but only when
-*this* run acquired it, so a claim that was already there is never stolen. A
-release that cannot be confirmed retries once and then turns the job **red**
-with the marker still on the issue: a release reported as successful over a
-surviving label would be permanent, because the next run would read the claim,
-record that it did not acquire it, and never clean it either.
+Release is loud, and bounded. An `always()` step releases the claim — but only
+when *this* run acquired it, so a claim that was already there is never stolen.
+It covers the failure, step-timeout and cancellation paths, which is why the
+model step carries a cap well inside the job's: a job-level timeout kills the
+runner outright and the cleanup never runs at all. A release that cannot be
+confirmed retries once and then turns the job **red** with the marker still on
+the issue, because a release reported as successful over a surviving label
+would be permanent — the next run reads the claim, records that it did not
+acquire it, and never cleans it either.
+
+It is not a guarantee. Runner loss, a force-cancel, or the job cap firing can
+strand `claim:claude` with no cleanup at all, and a stranded claim blocks
+further mentions on that target until somebody removes the label by hand. That
+residual is accepted rather than reconciled by a workflow of its own.
 
 Because acquiring is a read-then-add, the three workflows share one job-level
 `concurrency` group keyed on the target number, so two runs on the same issue

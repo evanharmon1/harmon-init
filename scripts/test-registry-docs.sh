@@ -13,7 +13,9 @@
 #   ...generated tables...
 #   <!-- registry-tables:end -->
 #
-# Two modes, decided by whether `template/docs/` exists:
+# Two modes, decided by whether this repository is a COPY of a template (it has
+# a Copier answers file) or the template itself (no answers file, but it ships
+# the project-management jinja twins):
 #
 #   TEMPLATE repository — both layers are REQUIRED: the root dogfood copy
 #     docs/project-management.md and the jinja twin that ships it. The twin is
@@ -33,13 +35,17 @@
 # the gate is that the published tables cannot silently stop existing.
 #
 # Usage: test-registry-docs.sh [--answers-file <name>] [registry-path]
+#        COPIER_ANSWERS_FILE=<name> test-registry-docs.sh
 #
-# --answers-file names Copier's answers file, whose name is configurable
-# (`_copier_conf.answers_file`) — the generated Taskfile passes the configured
-# one so a repository copied with `--answers-file custom.yml` still resolves
-# its tracker. It is a flag rather than a jinja variable because this script is
-# a verbatim root<->template twin: it must be byte-identical in both layers,
-# so the layer-specific value has to arrive at runtime.
+# Both name Copier's answers file, whose name is configurable
+# (`_copier_conf.answers_file`) — the generated Taskfile sets the environment
+# variable so a repository copied with `--answers-file custom.yml` still
+# resolves its tracker. It arrives at runtime rather than being templated in
+# because this script is a verbatim root<->template twin: it must be
+# byte-identical in both layers. The environment variable is what the Taskfile
+# uses because a Taskfile carries it through YAML and then a shell word — a
+# name containing an apostrophe would break out of a quoted command argument,
+# while an env value is passed to the process untouched.
 #
 # To fix a drift failure: regenerate and paste the block, keeping the markers.
 set -euo pipefail
@@ -93,20 +99,49 @@ command -v node >/dev/null 2>&1 || {
 
 expected="$(node "$renderer" docs-tables "$registry")"
 
-# The jinja twin, matched on the `github` in its conditional filename so the
-# `linear` variant — a different tracker, with no label taxonomy and no
-# registry tables — is never swept in.
+# Copier's answers file: the artifact that says "this repository is a COPY of
+# some template". Its presence is what separates a generated repository from
+# the template itself, and it also records which project-management document
+# was rendered. Prefer the name the caller passes (Copier's is configurable),
+# then the environment, then Copier's own defaults.
+answers=""
+for candidate in "$answers_file" "${COPIER_ANSWERS_FILE:-}" .copier-answers.yml .copier-answers.yaml; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate" ]; then
+        answers="$candidate"
+        break
+    fi
+done
+
+# The project-management jinja twins. `any_twin` matches either tracker variant
+# and is the shape only the harmon-init template has; `twin` is the GitHub one
+# specifically, so the `linear` variant — a different tracker, with no label
+# taxonomy and no registry tables — is never checked for registry tables.
 twin=""
+any_twin=""
 for candidate in template/docs/*project-management.md*.jinja; do
     [ -f "$candidate" ] || continue
+    any_twin="$candidate"
     case "$candidate" in
     *github*) twin="$candidate" ;;
     esac
 done
 
 targets=""
-if [ -d template/docs ]; then
+# Template mode needs BOTH signals. A bare `template/` directory is not enough:
+# adopting this toolchain into an existing repository that is ITSELF a Copier
+# template is supported, and such a repo has a `template/docs/` of its own —
+# flipping it into dogfood mode would demand a jinja twin it will never have
+# and fail its `task verify` forever. An answers file settles it: a copy has
+# one, the template does not.
+if [ -z "$answers" ] && [ -n "$any_twin" ]; then
     # ── template repository ────────────────────────────────────────────
+    # Matching on `any_twin` rather than on `twin` keeps DELETING the GitHub
+    # twin a loud failure. Keying the whole mode on the GitHub twin's presence
+    # would make its removal fall through to generated mode, where
+    # scripts/setup-github-project.sh (which the template repo also carries)
+    # infers `github` and only the root copy gets checked — a silent pass for
+    # exactly the deletion this branch exists to catch.
     if [ -z "$twin" ]; then
         echo "TEST FAIL: no GitHub project-management twin under template/docs/ — the document that ships the generated registry tables is gone" >&2
         exit 1
@@ -122,18 +157,13 @@ else
     # ── generated repository ───────────────────────────────────────────
     # Which document Copier rendered at $doc is decided by the
     # project_management answer, so read the answer rather than sniffing the
-    # document's prose. Prefer the configured answers-file name, then Copier's
-    # defaults; if the answer cannot be read either way, fall back to the
-    # scripts/setup-github-project.sh file, which is generated by exactly the
-    # same condition.
+    # document's prose. If the answer cannot be read at all, fall back to
+    # scripts/setup-github-project.sh, generated by exactly the same condition.
     tracker=""
-    for candidate in "$answers_file" .copier-answers.yml .copier-answers.yaml; do
-        [ -n "$candidate" ] || continue
-        [ -f "$candidate" ] || continue
-        tracker="$(sed -n 's/^project_management:[[:space:]]*//p' "$candidate" |
+    if [ -n "$answers" ]; then
+        tracker="$(sed -n 's/^project_management:[[:space:]]*//p' "$answers" |
             tr -d "\"'" | head -n1)"
-        if [ -n "$tracker" ]; then break; fi
-    done
+    fi
     if [ -z "$tracker" ]; then
         if [ -f scripts/setup-github-project.sh ]; then
             tracker="github"
