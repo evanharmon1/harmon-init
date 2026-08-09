@@ -883,7 +883,8 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     ! grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task rendered but use_skills_sync=false"
     ! grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule rendered but use_skills_sync=false"
     [ ! -f .codex/agents/implementer.toml ] || err "Codex implementer rendered without shared agents"
-    [ ! -f .codex/agents/implementer.toml ] || err "Codex implementer rendered without shared agents"
+    ! grep -q '^\[agents\.implementer\]$' .codex/config.toml ||
+        err "Codex implementer registered without shared agents"
     ;;
 *) # use_skills_sync defaults on -> manifest, engine, and tasks all present
     [ -f .skills-sync.yaml ] || err ".skills-sync.yaml missing (use_skills_sync default on)"
@@ -899,11 +900,10 @@ minimal) # use_skills_sync=false -> none of the machinery renders
         err "Codex implementer is not pinned to gpt-5.6-terra"
     grep -q '^model_reasoning_effort = "high"$' .codex/agents/implementer.toml ||
         err "Codex implementer is not pinned to high reasoning"
-    [ -f .codex/agents/implementer.toml ] || err "Codex implementer missing with shared agents enabled"
-    grep -q '^model = "gpt-5.6-terra"$' .codex/agents/implementer.toml ||
-        err "Codex implementer is not pinned to gpt-5.6-terra"
-    grep -q '^model_reasoning_effort = "high"$' .codex/agents/implementer.toml ||
-        err "Codex implementer is not pinned to high reasoning"
+    grep -q '^\[agents\.implementer\]$' .codex/config.toml ||
+        err "Codex implementer is not registered"
+    grep -q '^config_file = "agents/implementer.toml"$' .codex/config.toml ||
+        err "Codex implementer registration does not point at its config"
     ;;
 esac
 [ -d .claude/skills ] || err ".claude/skills managed skill directory is missing"
@@ -1036,6 +1036,10 @@ esac
 [ -f .codex/config.toml ] || err ".codex/config.toml missing from baseline Codex support"
 grep -q '^project_doc_max_bytes = 65536$' .codex/config.toml ||
     err ".codex/config.toml does not raise the project instruction budget"
+grep -q '^\[agents\.reviewer\]$' .codex/config.toml ||
+    err "Codex reviewer is not registered"
+grep -q '^config_file = "agents/reviewer.toml"$' .codex/config.toml ||
+    err "Codex reviewer registration does not point at its config"
 [ -f .codex/agents/reviewer.toml ] || err "Codex reviewer agent is missing"
 grep -q '^model = "gpt-5.6-sol"$' .codex/agents/reviewer.toml ||
     err "Codex reviewer is not pinned to gpt-5.6-sol"
