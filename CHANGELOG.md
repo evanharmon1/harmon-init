@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.23.0](https://github.com/evanharmon1/harmon-init/compare/v4.22.0...v4.23.0) (2026-08-09)
+
+
+### Features
+
+* **devcontainer:** configure autonomous Antigravity CLI ([#701](https://github.com/evanharmon1/harmon-init/issues/701)) ([e09f420](https://github.com/evanharmon1/harmon-init/commit/e09f420b36b8113bc3e3d7f5d567a0985c1d0bea))
+* remove the Agent field and re-key agent-queue planning on suggest:* labels ([#697](https://github.com/evanharmon1/harmon-init/issues/697)) ([d0025c4](https://github.com/evanharmon1/harmon-init/commit/d0025c453e49a211dd4b99c4a3e29773c1be4f02))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.23.1 ([#704](https://github.com/evanharmon1/harmon-init/issues/704)) ([206db31](https://github.com/evanharmon1/harmon-init/commit/206db31d3ca6f0508f439a40cbe695ea46d34fb8))
+
 ## [4.22.0](https://github.com/evanharmon1/harmon-init/compare/v4.21.0...v4.22.0) (2026-08-09)
 
 
