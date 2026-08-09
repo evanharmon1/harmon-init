@@ -399,14 +399,12 @@ families, color-coded by family; the starter set is created by
 > **Transition — the retired `agent:*` family.** Repos seeded before the
 > registry-driven vocabulary carry `agent:claude-code`-style labels instead of
 > `claim:*`. Setup never deletes labels, and the vendored claim/release skills
-> still read and write `agent:*` until the devkit migration lands
-> (harmon-init#663) — so where `agent:*` already exists it stays the live
-> claim vocabulary, and everything below about the claim label applies to it
-> unchanged. Do not seed `agent:*` into new repos. A repo generated fresh
-> before that migration sits in between: its labels are `claim:*` but its
-> vendored skills still look for `agent:*` and skip the label when the family
-> is absent — a claim there rests on the assignee and the claim comment until
-> the skill pin moves.
+> (harmon-devkit v0.23.0+) prefer `claim:*` and fall back to `agent:*` where
+> only the legacy family exists — so existing claims keep working while live
+> labels migrate (harmon-init#663), and everything below about the claim
+> label applies to whichever family a repo carries. Do not seed `agent:*`
+> into new repos; a repo carrying neither family tracks a claim by assignee
+> and claim comment alone.
 
 The `layer:` and `domain:` families offer the same options as the **Layer** and
 **Domain** fields above — same names, same meanings, but no per-issue sync (see
