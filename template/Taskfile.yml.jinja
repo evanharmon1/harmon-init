@@ -666,9 +666,14 @@ tasks:
       - ./scripts/test-registry-drift.sh
 
   test:registry-docs:
+    # The answers-file name is configurable (`copier copy --answers-file …`),
+    # and the check reads project_management out of it to know whether this
+    # repo renders the GitHub Projects document at all. The script is a
+    # verbatim twin of harmon-init's own, so the name is passed in rather than
+    # templated into it.
     desc: Bind the published family/harness tables in docs/project-management.md to the agent registry
     cmds:
-      - ./scripts/test-registry-docs.sh
+      - ./scripts/test-registry-docs.sh --answers-file '[[ _copier_conf.answers_file ]]'
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

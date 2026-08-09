@@ -610,6 +610,15 @@ provisioning actually creates. Model-level labels are created on demand rather
 than seeded.[% if use_foreman %] A `foreman:` selector is provisioned only for an adapter that
 exists and is production-dispatchable in the pinned Foreman release: a selector
 with no adapter behind it is a false capability that can strand armed work.[% endif %]
+[% if not use_foreman %]
+
+**Foreman is not enabled in this repository.** The harness table below still
+carries a *Foreman adapter* column because it is rendered from the shared
+registry, which describes the platform's agent vocabulary rather than any one
+repository's capabilities. Nothing here provisions or reads a `foreman:` label;
+read that column as "what the registry records", not "what this repo can
+dispatch".
+[% endif %]
 
 <!-- registry-tables:begin -->
 <!-- Generated from agent-registry.json by `node scripts/agent-registry-labels.mjs docs-tables`. Do not edit by hand — `task test:registry-docs` fails on drift. -->

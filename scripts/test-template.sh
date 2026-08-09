@@ -108,6 +108,13 @@ minimal)
     # Exercise the devcontainer OFF branch (default on -> every other profile
     # covers the ON branch; full also sets it explicitly).
     data_args+=(--data devcontainer=false)
+    # The GitHub project-management doc on a PERSONAL account with foreman,
+    # release-please, skills-sync and devcontainer all OFF. `full` is the only
+    # other profile that renders that document and it turns every one of those
+    # ON, so without this the doc's OFF branches — the foreman label rows, the
+    # autorelease row, the claim-release references, the bot-account
+    # paragraph — would never be rendered by anything.
+    data_args+=(--data project_management=github)
     ;;
 web)
     data_args+=(--data project_type=web-astro)
@@ -278,17 +285,24 @@ fi
 
 # The published family/harness tables are generated from the registry and gated
 # against it (ADR 0005 D10). Like the drift gate it ships unconditionally and
-# passes on every profile — it skips loudly where the profile generates no
-# docs/project-management.md.
+# passes on every profile — it says so and skips where the profile's
+# project_management answer renders no GitHub Projects document. Called bare
+# here, so the answers-file DEFAULT path is exercised too.
 if [ ! -x scripts/test-registry-docs.sh ]; then
     err "registry documentation gate is missing or not executable"
 elif ! ./scripts/test-registry-docs.sh; then
     err "rendered registry documentation drifts from agent-registry.json"
 fi
+# ...and the generated task must pass the CONFIGURED answers-file name, not
+# rely on that default: a repo copied with `--answers-file custom.yml` has no
+# `.copier-answers.yml`, and the check would then misread which document was
+# rendered at docs/project-management.md.
 if have task; then
-    grep -qF './scripts/test-registry-docs.sh' \
-        <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+    verify_dry="$(task --color=false --dry verify 2>&1 || true)"
+    grep -qF './scripts/test-registry-docs.sh' <<<"$verify_dry" ||
         err "task verify does not reach test:registry-docs"
+    grep -qF './scripts/test-registry-docs.sh --answers-file' <<<"$verify_dry" ||
+        err "test:registry-docs does not pass the configured Copier answers-file name"
 else
     required task "registry-docs verify reachability" || fail=1
 fi
@@ -762,6 +776,13 @@ full) # project_management=github; github_org=test-org (an org repo)
     [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
     # project_management=github → the repo label-setup script renders
     [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
+    # use_foreman=true → the arming/lifecycle label rows ARE documented, and the
+    # foreman-off caveat about the generated harness table is absent (the
+    # `minimal` profile asserts the mirror image of both).
+    grep -q '^| `foreman:' docs/project-management.md ||
+        err "project-management.md omits the foreman:* label rows with use_foreman=true"
+    ! grep -q 'Foreman is not enabled in this repository' docs/project-management.md ||
+        err "project-management.md carries the foreman-off caveat with use_foreman=true"
     # org + github → the org issue-fields + issue-types scripts render too
     [ -f scripts/setup-github-issue-fields.sh ] || err "scripts/setup-github-issue-fields.sh did not render for github+org"
     # The org issue-field reconciliation talks to a public-preview REST API, so
@@ -811,6 +832,26 @@ full) # project_management=github; github_org=test-org (an org repo)
         [ "$lbl_set" = "$prj_set" ] ||
             err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != project-field options [$(echo "$prj_set" | tr '\n' ' ')]"
     done
+    ;;
+minimal) # project_management=github on a PERSONAL account, use_foreman=false
+    [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
+    grep -q 'Not planned' docs/project-management.md || err "GitHub project-management.md missing expected content"
+    [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
+    [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
+    # Personal account -> the org-only scripts must stay out.
+    [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered for a personal-account profile"
+    [ ! -f scripts/setup-github-issue-types.sh ] || err "org-gated setup-github-issue-types.sh rendered for personal-repo profile '$profile'"
+    # use_foreman=false -> the doc must not document arming labels this repo
+    # never provisions, and must say why the GENERATED harness table still has
+    # a Foreman adapter column (that table is registry-rendered and identical
+    # in every profile by design — test:registry-docs depends on it).
+    ! grep -q '^| `foreman:' docs/project-management.md ||
+        err "project-management.md documents foreman:* labels with use_foreman=false"
+    grep -q 'Foreman is not enabled in this repository' docs/project-management.md ||
+        err "project-management.md does not explain the registry's Foreman adapter column with use_foreman=false"
+    # use_release_please=false -> no autorelease:* row either.
+    ! grep -q '^| `autorelease: ' docs/project-management.md ||
+        err "project-management.md documents autorelease:* labels with use_release_please=false"
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"

@@ -13,26 +13,68 @@
 #   ...generated tables...
 #   <!-- registry-tables:end -->
 #
-# Checked in BOTH layers when both are present: the root/generated
-# docs/project-management.md, and — in the template repository only — the
-# jinja twin that ships it. The twin is deliberately covered here rather than
-# by the dogfood checks: test-dogfood-parity.sh skips it (it is a .jinja file)
-# and test-dogfood-structure.sh SKIPs docs/project-management.md outright
-# (its root copy is not a render of the template copy), so without this the
-# generated tables could ship stale to every consumer while the root copy
-# stayed current. The registry itself is a verbatim twin, so the two layers
-# render byte-identical tables and one expected value serves both.
+# Two modes, decided by whether `template/docs/` exists:
 #
-# The document is generated only for `project_management: github`; a profile
-# without it is skipped loudly rather than failed.
+#   TEMPLATE repository — both layers are REQUIRED: the root dogfood copy
+#     docs/project-management.md and the jinja twin that ships it. The twin is
+#     deliberately covered here rather than by the dogfood checks:
+#     test-dogfood-parity.sh skips it (it is a .jinja file) and
+#     test-dogfood-structure.sh SKIPs docs/project-management.md outright (its
+#     root copy is not a render of the template copy), so without this the
+#     generated tables could ship stale to every consumer while the root copy
+#     stayed current. The registry itself is a verbatim twin, so both layers
+#     render byte-identical tables and one expected value serves both.
 #
-# To fix a failure: regenerate and paste the block, keeping the markers.
+#   GENERATED repository — the document is required when the repo was rendered
+#     with `project_management: github`, and only then. The `linear` and `none`
+#     answers render a different document at the same path, or none at all.
+#
+# A MISSING expected document is a failure, never a skip: the whole point of
+# the gate is that the published tables cannot silently stop existing.
+#
+# Usage: test-registry-docs.sh [--answers-file <name>] [registry-path]
+#
+# --answers-file names Copier's answers file, whose name is configurable
+# (`_copier_conf.answers_file`) — the generated Taskfile passes the configured
+# one so a repository copied with `--answers-file custom.yml` still resolves
+# its tracker. It is a flag rather than a jinja variable because this script is
+# a verbatim root<->template twin: it must be byte-identical in both layers,
+# so the layer-specific value has to arrive at runtime.
+#
+# To fix a drift failure: regenerate and paste the block, keeping the markers.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
 
-registry="${1:-agent-registry.json}"
+answers_file=""
+registry=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --answers-file)
+        if [ "$#" -lt 2 ]; then
+            echo "TEST FAIL: --answers-file needs a value" >&2
+            exit 2
+        fi
+        answers_file="$2"
+        shift 2
+        ;;
+    --answers-file=*)
+        answers_file="${1#*=}"
+        shift
+        ;;
+    -*)
+        echo "TEST FAIL: unknown argument: $1" >&2
+        exit 2
+        ;;
+    *)
+        registry="$1"
+        shift
+        ;;
+    esac
+done
+
+registry="${registry:-agent-registry.json}"
 renderer="scripts/agent-registry-labels.mjs"
 doc="docs/project-management.md"
 begin='<!-- registry-tables:begin -->'
@@ -51,45 +93,66 @@ command -v node >/dev/null 2>&1 || {
 
 expected="$(node "$renderer" docs-tables "$registry")"
 
-# `docs/project-management.md` is the GitHub Projects document — but a repository
-# generated for a different tracker renders a DIFFERENT document at the same
-# path (the Linear one), which carries no GitHub label taxonomy and no registry
-# tables. Read the answer Copier used to pick the file rather than sniffing its
-# prose; a template repository has no answers file of its own, so it falls
-# through and both layers below are checked.
-for candidate in .copier-answers.yml .copier-answers.yaml; do
+# The jinja twin, matched on the `github` in its conditional filename so the
+# `linear` variant — a different tracker, with no label taxonomy and no
+# registry tables — is never swept in.
+twin=""
+for candidate in template/docs/*project-management.md*.jinja; do
     [ -f "$candidate" ] || continue
-    tracker="$(sed -n 's/^project_management:[[:space:]]*//p' "$candidate" |
-        tr -d "\"'" | head -n1)"
-    if [ -n "$tracker" ] && [ "$tracker" != "github" ]; then
-        echo "note: project_management=$tracker — $doc is not the GitHub Projects document; skipping it" >&2
-        doc=""
-    fi
-    break
-done
-
-# The files that MUST carry the generated block. The template twin is matched
-# on the `github` in its jinja-conditional filename so the `linear` variant is
-# not swept in either.
-targets=""
-if [ -n "$doc" ] && [ -f "$doc" ]; then
-    targets="$doc
-"
-fi
-for twin in template/docs/*project-management.md*.jinja; do
-    [ -f "$twin" ] || continue
-    case "$twin" in
-    *github*)
-        targets="$targets$twin
-"
-        ;;
+    case "$candidate" in
+    *github*) twin="$candidate" ;;
     esac
 done
 
-if [ -z "$targets" ]; then
-    echo "note: no project-management document in this profile — skipping the registry documentation check" >&2
-    echo "test-registry-docs: nothing to check."
-    exit 0
+targets=""
+if [ -d template/docs ]; then
+    # ── template repository ────────────────────────────────────────────
+    if [ -z "$twin" ]; then
+        echo "TEST FAIL: no GitHub project-management twin under template/docs/ — the document that ships the generated registry tables is gone" >&2
+        exit 1
+    fi
+    if [ ! -f "$doc" ]; then
+        echo "TEST FAIL: $doc is missing — the root layer must dogfood the document it ships" >&2
+        exit 1
+    fi
+    targets="$doc
+$twin
+"
+else
+    # ── generated repository ───────────────────────────────────────────
+    # Which document Copier rendered at $doc is decided by the
+    # project_management answer, so read the answer rather than sniffing the
+    # document's prose. Prefer the configured answers-file name, then Copier's
+    # defaults; if the answer cannot be read either way, fall back to the
+    # scripts/setup-github-project.sh file, which is generated by exactly the
+    # same condition.
+    tracker=""
+    for candidate in "$answers_file" .copier-answers.yml .copier-answers.yaml; do
+        [ -n "$candidate" ] || continue
+        [ -f "$candidate" ] || continue
+        tracker="$(sed -n 's/^project_management:[[:space:]]*//p' "$candidate" |
+            tr -d "\"'" | head -n1)"
+        if [ -n "$tracker" ]; then break; fi
+    done
+    if [ -z "$tracker" ]; then
+        if [ -f scripts/setup-github-project.sh ]; then
+            tracker="github"
+        else
+            tracker="none"
+        fi
+        echo "note: no project_management answer found; inferred '$tracker' from scripts/setup-github-project.sh" >&2
+    fi
+
+    if [ "$tracker" != "github" ]; then
+        echo "test-registry-docs: skipping — project_management=$tracker renders no GitHub Projects document."
+        exit 0
+    fi
+    if [ ! -f "$doc" ]; then
+        echo "TEST FAIL: $doc is missing but project_management=github — the published registry tables are gone" >&2
+        exit 1
+    fi
+    targets="$doc
+"
 fi
 
 fails=0
