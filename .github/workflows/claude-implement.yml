@@ -3,6 +3,10 @@ run-name: ${{ github.actor }} is running Claude Implement
 # Requires: CLAUDE_CODE_OAUTH_TOKEN secret, plus the CI GitHub App
 # (CI_APP_CLIENT_ID variable + CI_APP_PRIVATE_KEY secret). See docs/CHECKLIST.md
 # and docs/architecture/security.md.
+# Mention-only: an explicit `@claude implement` comment or review from an
+# authorized sender is the ONLY way this workflow starts work. There is no
+# label trigger and no `issues: [opened, assigned]` trigger — a label or an
+# assignment carries no actor the sender allowlist can check on every path.
 on:
   issue_comment:
     types: [created]
@@ -10,8 +14,6 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
-  issues:
-    types: [opened, assigned, labeled]
 jobs:
   implement:
     # Authorized senders — an explicit allowlist (claude_authorized_members),
@@ -20,10 +22,7 @@ jobs:
     if: >-
       (github.event.sender.login == 'evanharmon1') &&
       (contains(github.event.comment.body, '@claude implement') ||
-       contains(github.event.review.body, '@claude implement') ||
-       contains(github.event.issue.body, '@claude implement') ||
-       (github.event.action == 'labeled' &&
-        github.event.label.name == 'claude-implement'))
+       contains(github.event.review.body, '@claude implement'))
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
@@ -48,6 +47,26 @@ jobs:
           esac
           echo "::error::$SENDER is not an authorized sender"
           exit 1
+      # Claim lifecycle: the run owns the issue or PR while it works, so a
+      # human or another agent can see the work is taken. Written with
+      # GITHUB_TOKEN under the job permissions above — it stays valid for the
+      # whole job (an App token expires in an hour, well inside this timeout)
+      # and its writes never trigger another workflow run. Fail-soft on
+      # purpose: the claim is advisory, so a transient API error must not cost
+      # an authorized request its run.
+      - name: Claim the target with claim:claude
+        id: claim
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          if [ -z "$TARGET" ]; then
+            echo "No issue or pull request number; nothing to claim"
+            exit 0
+          fi
+          gh api "repos/$GH_REPO/issues/$TARGET/labels" -f "labels[]=claim:claude" >/dev/null ||
+            echo "::warning::could not apply claim:claude to #$TARGET"
       # The narrow token Claude reaches via git/gh: push commits (contents), open
       # PRs (pull-requests), comment (issues) — nothing more, and minted only
       # AFTER the sender is authorized. It lacks workflows:write, so a push that
@@ -96,7 +115,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@claude implement"
-          label_trigger: "claude-implement"
           track_progress: true
           base_branch: main
           branch_prefix: claude/
@@ -180,3 +198,19 @@ jobs:
 
             Follow the conventions documented in AGENTS.md, including the
             commit-message style and the draft-PR lifecycle.
+      # Release the claim on EVERY terminal path — success, failure, and
+      # cancellation alike — so a spent run never leaves a stale claim behind.
+      # Gated on the claim step having run, which only happens once the sender
+      # allowlist has passed: an unauthorized event must reach no write at all.
+      - name: Release the claim
+        if: always() && steps.claim.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          if [ -z "$TARGET" ]; then
+            exit 0
+          fi
+          gh api -X DELETE "repos/$GH_REPO/issues/$TARGET/labels/claim:claude" >/dev/null 2>&1 ||
+            echo "::notice::claim:claude was already absent from #$TARGET"

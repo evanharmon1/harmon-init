@@ -1154,6 +1154,30 @@ grep -Fq 'gh pr create --draft' .github/workflows/claude-implement.yml ||
 grep -Fq 'NEVER run `gh pr ready`' .github/workflows/claude-implement.yml ||
     err "claude-implement.yml does not forbid promoting the draft it cannot gate"
 
+# The Claude workflows are mention-only and claim-aware. A `labeled` trigger or
+# a surviving `label_trigger:` input would reintroduce a start path with no
+# actor for the sender allowlist to check, and the claude-plan/implement/review
+# labels those paths used are retired (never provisioned by the registry). A
+# claim without an `always()` release strands claim:claude on the issue every
+# time a run fails or is cancelled, which is exactly when nobody is watching.
+for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
+    claude_wf_path=".github/workflows/$claude_wf"
+    [ -f "$claude_wf_path" ] || {
+        err "$claude_wf is missing"
+        continue
+    }
+    ! awk '/^on:/,/^jobs:/' "$claude_wf_path" | grep -q 'labeled' ||
+        err "$claude_wf still accepts a labeled event trigger"
+    ! grep -q 'label_trigger:' "$claude_wf_path" ||
+        err "$claude_wf still passes label_trigger to claude-code-action"
+    ! grep -Eq 'claude-(plan|implement|review)['\''"]' "$claude_wf_path" ||
+        err "$claude_wf still consumes a retired claude-* workflow label"
+    grep -Fq 'labels[]=claim:claude' "$claude_wf_path" ||
+        err "$claude_wf does not apply claim:claude when the run starts"
+    grep -Fq "if: always() && steps.claim.outcome == 'success'" "$claude_wf_path" ||
+        err "$claude_wf does not release claim:claude on every terminal path"
+done
+
 # Required checks must run on the draft, or the gate has nothing to read. A
 # bare `pull_request:` trigger already covers draft opened/synchronize; what
 # would break it is an explicit draft filter or a narrowed types: list.

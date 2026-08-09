@@ -145,7 +145,7 @@ same `task` targets as local hooks.
 [% if devcontainer %]
 | `devcontainer-build.yml` | Prebuilds devcontainer images to GHCR on merge to main |
 [% endif %]
-| `claude-plan/implement/review.yml` | `@claude plan` / `@claude implement` / `@claude review` on issues & PRs |
+| `claude-plan/implement/review.yml` | Mention-only: `@claude plan` / `@claude implement` / `@claude review` from an authorized sender; each run holds `claim:claude` |
 [% if use_release_please %]
 | `release.yml` | release-please maintains a release PR; merging it cuts the release |
 [% endif %]

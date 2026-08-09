@@ -22,7 +22,15 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   cleanly until the app ships a `playwright.config.*`. See
   [tests.md](tests.md).
 [% endif %]
-- `claude-plan` / `claude-implement` / `claude-review` — `@claude …` on issues and PRs.
+- `claude-plan` / `claude-implement` / `claude-review` — **mention-only**: an
+  explicit `@claude plan` / `@claude implement` / `@claude review` comment or
+  review from a sender on the `claude_authorized_members` allowlist. There is no
+  label trigger and no open/assign trigger; the retired `claude-plan`,
+  `claude-implement`, and `claude-review` labels are gone, because a label or an
+  assignment carries no actor the allowlist can check on every path. Each run
+  applies `claim:claude` to the target once the sender gate passes and removes it
+  in an `always()` cleanup step, so a run that fails or is cancelled leaves no
+  stale claim.
 [% if use_codeql %]
 - `codeql.yml` — CodeQL SAST runs automatically and for free on public
   repositories. Private/internal repositories require paid GitHub Code Security
