@@ -30,8 +30,11 @@ This repo is part of **harmon-platform** — my custom development platform with
 | [**harmon-init**](https://github.com/evanharmon1/harmon-init) **(this repo)** | Copier template that bootstraps & standardizes new repos (CI/CD, devcontainers, AI steering, tooling). |
 | [harmon-devkit](https://github.com/evanharmon1/harmon-devkit) | Reusable boilerplates & code templates, standalone scripts, and AI assets (skills, prompts, agents). |
 | [harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles) | Shell & app dotfiles, managed declaratively with chezmoi. |
-| [harmon-ops](https://github.com/evanharmon1/harmon-ops) | Personal machine bootstrapping, package management & dev-environment setup across macOS/Windows/Linux. |
 | [harmon-infra](https://github.com/harmonops/harmon-infra) | Homelab infrastructure as code — Terraform, Ansible, and Docker Compose services. |
+
+> [harmon-ops](https://github.com/evanharmon1/harmon-ops) was deprecated in
+> August 2026 and is no longer part of the platform — its responsibilities moved
+> to harmon-dotfiles, harmon-infra, and harmon-devkit (see its README banner).
 
 The production repositories intentionally kept current with this template are
 listed in [`managed-repositories.yml`](./managed-repositories.yml). The inventory
