@@ -97,7 +97,13 @@ command -v node >/dev/null 2>&1 || {
     exit 1
 }
 
-expected="$(node "$renderer" docs-tables "$registry")"
+# Compare through FILES, never through `$(…)` capture. Command substitution
+# strips trailing newlines from what it captures, so blank lines added just
+# inside the end marker would vanish from both sides and an "exact" comparison
+# would pass over real edits to the generated block.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+node "$renderer" docs-tables "$registry" >"$work/expected"
 
 # Copier's answers file: the artifact that says "this repository is a COPY of
 # some template". Its presence is what separates a generated repository from
@@ -202,14 +208,14 @@ while IFS= read -r target; do
         continue
     fi
 
-    actual="$(awk -v b="$begin" -v e="$end" '
+    awk -v b="$begin" -v e="$end" '
         $0 == b { inside = 1; next }
         $0 == e { inside = 0 }
-        inside' "$target")"
+        inside' "$target" >"$work/actual"
 
-    if [ "$actual" != "$expected" ]; then
+    if ! diff -u "$work/actual" "$work/expected" >"$work/diff"; then
         echo "FAIL: the registry tables in $target do not match agent-registry.json:" >&2
-        diff -u <(printf '%s\n' "$actual") <(printf '%s\n' "$expected") >&2 || true
+        cat "$work/diff" >&2
         fails=$((fails + 1))
     fi
 done <<EOF

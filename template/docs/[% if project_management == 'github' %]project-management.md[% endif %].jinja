@@ -184,7 +184,10 @@ closed, so closing something as Not planned or Duplicate would paint it **Done**
 on the board — wrong. Gate it:
 
 - Drive Done off **"PR merged → Done"** for the success path.
-- On a raw close event, check `state_reason == completed` before setting Done.
+- Leave the built-in **"item closed → Done"** rule **off**. Only a custom
+  Action can read `state_reason`, and none ships here — so the built-in is the
+  whole of what that rule would do, and it cannot tell a shipped issue from an
+  abandoned one.
 
 Items closed as not-planned/duplicate just stay closed and fall off the board;
 their `Status` value goes vestigial, which is fine — nothing open-filtered shows
@@ -258,13 +261,24 @@ What is automated, and by which of the three:
 | Review requested on a PR | **In Review** | built-in workflow |
 | PR merged | **Done** | built-in workflow |
 [% endif %]
-| Issue closed as completed | **Done** | built-in workflow, gated on `state_reason` |
+| Issue closed, for any reason | *(nothing)* | not automated — see below |
 | PR closed unmerged | *(nothing)* | deliberately not automated |
 | 90 days in Done | **auto-archived** off the board | built-in auto-archive (not a `Status`) |
 
 `In Progress` is deliberately **not** automated: it means a human or an agent
 picked the work up, which happens before any artifact exists to trigger on. It
 is written by the [claim lifecycle](#claiming--making-an-agents-work-visible-while-it-happens).
+
+**Closing an issue moves nothing, on purpose.** Nothing shipped here listens for
+`issues: closed`, and GitHub's built-in "item closed → Done" rule cannot read
+the close reason — so leave that built-in **off**. Turned on, it paints every
+issue closed as *Not planned* or *Duplicate* **Done**, which is exactly the
+misfiling the [close-reason axis](#canceled-and-duplicate-are-close-reasons-not-statuses)
+exists to prevent, and every one of them needs correcting by hand. Left off,
+`Done` keeps meaning shipped: it arrives from the merge path above, and the
+occasional issue that completes without a merged PR is moved by hand. An issue
+closed as not-planned simply keeps whatever `Status` it had — vestigial, and
+invisible to every open-filtered view.
 [% if github_org != author_git_provider_username %]
 
 The Actions half is `.github/workflows/project-automation.yml`. It resolves the
