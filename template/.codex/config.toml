@@ -6,6 +6,3 @@
 # advisory warning at that cross-client portability threshold while allowing
 # Codex to read the complete repository policy.
 project_doc_max_bytes = 65536
-
-[agents]
-max_concurrent_threads_per_session = 4
