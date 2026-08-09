@@ -1189,6 +1189,14 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
     # exact match would add a second marker beside them.
     grep -Fq "grep -E '^(claim|agent):'" "$claude_wf_path" ||
         err "$claude_wf tests for an exact claim label, so a model-pinned or foreign claim reads as unclaimed"
+    # A held or unprovable target is a blocker, not a note: proceeding would
+    # put a second worker on the issue with nothing marking it as taken.
+    grep -Fq '::error::#$TARGET is already claimed' "$claude_wf_path" ||
+        err "$claude_wf proceeds past a claim held by someone else instead of refusing"
+    grep -Fq '::error::could not read the labels' "$claude_wf_path" ||
+        err "$claude_wf runs unclaimed when it cannot prove the target is free"
+    grep -Fq '::error::could not apply claim:claude' "$claude_wf_path" ||
+        err "$claude_wf runs unmarked when the claim label will not apply"
     # A masked release failure is permanent — the next run sees the surviving
     # label, acquires nothing, and cleans nothing — so only a confirmed
     # not-found is benign and everything else has to go red.

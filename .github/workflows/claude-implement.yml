@@ -61,23 +61,37 @@ jobs:
       # (`agent-registry.json` → `claim:claude`), so a later provisioning run
       # reconciles the label instead of fighting this one.
       #
-      # Ownership hygiene, NOT locking: a target already carrying ANY live
-      # ownership marker keeps it, and this run neither adds a second one nor
-      # releases the first. The test is a `claim:`/`agent:` PREFIX, not the
-      # exact `claim:claude` string, because both cases the claim contract
-      # distinguishes — a claude-family claim already held (add nothing) and
-      # another agent's claim (a blocker to leave untouched) — collapse here to
-      # the same action, and an exact match would miss the model-pinned
+      # Four branches, and Claude runs on a target it marked or not at all:
+      #   free, and the label lands → run;
+      #   no target                 → run unclaimed;
+      #   held / unreadable / the label would not land
+      #                             → refuse loudly (::error:: + exit 1).
+      # The refusals happen HERE, before the App token is minted and long
+      # before the model step, so a refused run costs nothing and writes
+      # nothing.
+      #
+      # A held target is a blocker, not a note. The claim contract stops on
+      # another agent's live claim, and D3 says each run acquires the claim —
+      # so logging a notice and proceeding would put a second worker on the
+      # issue with no marker saying so, which is the failure both rules exist
+      # to prevent. The test is a `claim:`/`agent:` PREFIX, not the exact
+      # `claim:claude` string: an exact match would miss the model-pinned
       # `claim:claude:opus` form, another family's `claim:codex`, and the
       # `agent:*` labels generated repos still carry through the rolling
-      # transition. `suggest:*` is deliberately NOT matched: it is advice about
-      # who should do the work, never ownership of it.
+      # transition. `suggest:*` is deliberately NOT matched — it is advice
+      # about who should do the work, never ownership of it.
       #
-      # Claims are documented as signals rather than locks, so two runs
-      # starting in the same instant can still both read "unclaimed" and race;
-      # that residual is accepted. Acquiring is fail-soft — the claim is
-      # advisory, so a transient API error must not cost an authorized request
-      # its run — but releasing is not; see the cleanup step.
+      # An unreadable label list refuses for the same reason: we cannot prove
+      # the target is free, and claiming blind or running unmarked are both
+      # worse than making the operator re-post the mention. A label that will
+      # not apply refuses on the far side of the same rule — the target is
+      # free, but the run would be working it with nothing saying so. An event
+      # with no issue or PR number is the one benign case: there is nothing to
+      # claim on it and nothing to collide with.
+      #
+      # Claims are signals rather than locks, so two runs starting in the same
+      # instant can still both read "unclaimed" and race; that residual is
+      # accepted. Releasing is fail-loud too; see the cleanup step.
       - name: Claim the target with claim:claude
         id: claim
         env:
@@ -87,24 +101,36 @@ jobs:
         run: |
           acquired=false
           if [ -z "$TARGET" ]; then
-            echo "No issue or pull request number; nothing to claim"
-          elif ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels" --jq '.[].name'); then
-            echo "::warning::could not read the labels on #$TARGET; not claiming"
-          else
-            held=$(printf '%s\n' "$existing" | grep -E '^(claim|agent):' | tr '\n' ' ' || true)
-            if [ -n "$held" ]; then
-              echo "::notice::#$TARGET already carries ${held}— leaving that claim in place"
-            else
-              gh api "repos/$GH_REPO/labels" -f name='claim:claude' -f color='006B75' \
-                -f description='Claimed by Claude' >/dev/null 2>&1 ||
-                echo "claim:claude already exists in this repository"
-              if gh api "repos/$GH_REPO/issues/$TARGET/labels" -f 'labels[]=claim:claude' >/dev/null; then
-                acquired=true
-              else
-                echo "::warning::could not apply claim:claude to #$TARGET"
-              fi
-            fi
+            echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
+            echo "No issue or pull request number; nothing to claim, running unclaimed"
+            exit 0
           fi
+          if ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels" --jq '.[].name'); then
+            echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
+            echo "::error::could not read the labels on #$TARGET, so this run cannot prove" \
+              "the target is unclaimed. Refusing to start; re-post the mention once the API" \
+              "is reachable."
+            exit 1
+          fi
+          held=$(printf '%s\n' "$existing" | grep -E '^(claim|agent):' | tr '\n' ' ' || true)
+          held="${held% }"
+          if [ -n "$held" ]; then
+            echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
+            echo "::error::#$TARGET is already claimed (${held})." \
+              "Refusing to start a second run on it. If that claim is stale, or you intend" \
+              "parallel work, remove the claim label and re-post the @claude mention."
+            exit 1
+          fi
+          gh api "repos/$GH_REPO/labels" -f name='claim:claude' -f color='006B75' \
+            -f description='Claimed by Claude' >/dev/null 2>&1 ||
+            echo "claim:claude already exists in this repository"
+          if ! gh api "repos/$GH_REPO/issues/$TARGET/labels" -f 'labels[]=claim:claude' >/dev/null; then
+            echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
+            echo "::error::could not apply claim:claude to #$TARGET, so this run would work it" \
+              "unmarked. Refusing to start; re-post the mention once the label can be written."
+            exit 1
+          fi
+          acquired=true
           echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
       # The narrow token Claude reaches via git/gh: push commits (contents), open
       # PRs (pull-requests), comment (issues) — nothing more, and minted only
