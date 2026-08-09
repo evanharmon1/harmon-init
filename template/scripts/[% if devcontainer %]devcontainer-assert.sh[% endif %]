@@ -313,6 +313,15 @@ assert_unit() {
     printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.1.11"' >"$agy_system_binary"
     printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.0.0"' >"${agy_roll_home}/.local/bin/agy"
     chmod 0755 "$agy_system_binary" "${agy_roll_home}/.local/bin/agy"
+
+    local agy_image_home
+    agy_image_home="${work_dir}/agy-image-home"
+    mkdir -p "$agy_image_home"
+    HOME="$agy_image_home" HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" \
+        bash "$agy_ensure" >/dev/null
+    [ ! -e "${agy_image_home}/.local/bin/agy" ] ||
+        fail "current shared-image Antigravity binary created a persistent shadow copy"
+
     HOME="$agy_roll_home" HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" \
         bash "$agy_ensure" >/dev/null
     [ "$("${agy_roll_home}/.local/bin/agy" --version)" = "1.1.11" ] ||

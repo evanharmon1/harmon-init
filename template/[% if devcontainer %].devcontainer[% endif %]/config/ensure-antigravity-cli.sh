@@ -16,11 +16,13 @@ fi
 
 system_binary="${HARMON_ANTIGRAVITY_SYSTEM_BINARY:-/usr/local/bin/agy}"
 if [ -x "$system_binary" ] && [ "$("$system_binary" --version | head -1)" = "$version" ]; then
-    # Reconcile a compatibility copy left in the persistent volume. Interactive
-    # shells put ~/.local/bin first, so leaving an older copy would shadow the
-    # newly pinned and smoke-tested shared-image binary.
-    install -d -m 0755 "$HOME/.local/bin"
-    install -m 0755 "$system_binary" "$HOME/.local/bin/agy"
+    # Reconcile only a compatibility copy already left in the persistent
+    # volume. Interactive shells put ~/.local/bin first, so an older executable
+    # would shadow the newly pinned and smoke-tested shared-image binary. Do not
+    # create a new shadow copy when the image binary is already sufficient.
+    if [ -x "$HOME/.local/bin/agy" ]; then
+        install -m 0755 "$system_binary" "$HOME/.local/bin/agy"
+    fi
     exit 0
 fi
 
