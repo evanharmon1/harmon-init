@@ -235,12 +235,16 @@ this comment. -->
       `agent:qwen-code` → `claim:qwen`, `agent:github-copilot` →
       `claim:copilot` — taking the target names from
       `node scripts/agent-registry-labels.mjs suggest-claim`. A rename whose
-      target already exists is rejected by GitHub: re-label those issues by hand
-      and delete the empty legacy label instead. Check for in-flight claims first
-      (`gh issue list --label agent:… --state all --limit 200`): a claim record
-      naming the old label will not release the renamed one, so settle or amend
-      those records in the same sitting. Re-read `gh label list --limit 200`
-      afterwards — no `agent:*` should remain.
+      target already exists is rejected by GitHub — migrate that one by hand,
+      and enumerate **`gh pr list` as well as `gh issue list`**: labels apply to
+      pull requests too and `gh issue list` never returns them, so deleting the
+      legacy label afterwards would drop exactly the associations the re-labelling
+      missed — the loss this whole item exists to avoid. Check for in-flight
+      claims first (`gh issue list --label agent:… --state all --limit 200`,
+      plus the `gh pr list` equivalent): a claim record naming the old label will
+      not release the renamed one, so settle or amend those records in the same
+      sitting. Re-read `gh label list --limit 200` afterwards — no `agent:*`
+      should remain.
 - [ ] Project views: create the starter views (Board / Triage / Agent queue /
       Planning / Mine) in the Project UI — Projects V2 has no view API,
       so this is a one-time manual step. Filters/layouts are in
