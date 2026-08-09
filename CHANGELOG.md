@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.23.1](https://github.com/evanharmon1/harmon-init/compare/v4.23.0...v4.23.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* complete the claim vocabulary transition and prepare the live agent label migration ([#699](https://github.com/evanharmon1/harmon-init/issues/699)) ([e5c9141](https://github.com/evanharmon1/harmon-init/commit/e5c91414b55a14b9847bb77fdd10a4510bd383ee))
+
 ## [4.23.0](https://github.com/evanharmon1/harmon-init/compare/v4.22.0...v4.23.0) (2026-08-09)
 
 
