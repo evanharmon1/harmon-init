@@ -142,6 +142,14 @@ this comment. -->
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
       the security controls before any dispatch.
+- [ ] **[human-only] Foreman reviewer-gate check** — `.foreman.toml`'s
+      `[reviewer]` table is foreman's current-head review gate for the PRs it
+      shepherds. Before the first dispatch (and again after any Foreman bump),
+      confirm the configured `login` still matches the live Codex connector
+      identity (actor ID `199175422`), that its terminal results — an APPROVED
+      review at the head, or a 👍 from that login on foreman's own request
+      comment — still mean what the readiness gate assumes, and that required
+      checks run on draft PRs (foreman promotes only after they conclude).
 - [ ] **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
       first-party source is shell/config; foreman is a pinned external CLI), so
       Semgrep CE runs in `build.yml` at both visibilities. Generated supported
@@ -195,7 +203,7 @@ this comment. -->
       `evanharmon1 Project`) and idempotently sync its `Status` pipeline and
       `Size` number field — see
       [project-management.md](project-management.md).
-      On a personal account it also creates Priority/Product/Agent/Domain/Layer/
+      On a personal account it also creates Priority/Product/Domain/Layer/
       Size as project fields (issue fields are org-only); status automation is a
       separate follow-up — the board is set up, but issue/PR status isn't
       auto-synced yet. `Domain` is seeded with `auth`/`billing`/`platform` only —

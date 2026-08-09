@@ -72,19 +72,10 @@ run_with() {
 
 patches() { grep -c . "$PATCHES" || true; }
 
-agent_full='{"id":9,"name":"Claude Code","color":"orange","description":"","priority":1},
- {"id":10,"name":"Codex","color":"blue","description":"","priority":2},
- {"id":11,"name":"Gemini CLI","color":"purple","description":"","priority":3},
- {"id":12,"name":"Qwen Code","color":"green","description":"","priority":4},
- {"id":13,"name":"DeepSeek","color":"red","description":"","priority":5},
- {"id":14,"name":"Kimi K2","color":"yellow","description":"","priority":6},
- {"id":15,"name":"GLM","color":"pink","description":"","priority":7},
- {"id":16,"name":"GitHub Copilot","color":"gray","description":"","priority":8}'
-
-# Every field present and complete.
+# Every field present and complete. Deliberately no Agent field: it is retired
+# (advisory routing is suggest:* labels + Status: Agent Queue; ADR 0005 D4).
 complete='[
  {"id":1,"name":"Product","data_type":"text"},
- {"id":2,"name":"Agent","data_type":"single_select","options":['"$agent_full"']},
  {"id":3,"name":"Domain","data_type":"single_select","options":[
    {"id":20,"name":"auth","color":"purple","description":"","priority":1},
    {"id":21,"name":"billing","color":"green","description":"","priority":2},
@@ -100,6 +91,13 @@ echo "==> a re-run against an already-synced org writes nothing"
 run_with "$complete"
 [ "$(patches)" = 0 ] || fail "expected no PATCH on an unchanged org, got $(patches)"
 [ ! -s "$POSTS" ] || fail "expected no field creation on an unchanged org"
+
+echo "==> the retired Agent field is never created"
+# The fixture has no Agent field, so a POST naming one is the script recreating
+# it. Also covered by the empty-POSTS check above, but this names the intent so
+# a reintroduction fails with the right message.
+grep -q '"name":"Agent"' "$POSTS" &&
+    fail "the retired Agent field was created — routing lives in suggest:*/claim:* labels"
 
 echo "==> a field missing a starter option is PATCHed with the full merged list"
 # Domain lacks `billing` but carries an owner-added `crm`.

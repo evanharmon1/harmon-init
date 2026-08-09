@@ -11,7 +11,7 @@ version: "3"
 
 vars:
   # renovate: datasource=github-tags depName=ponderousdev/foreman extractVersion=^v(?<version>.*)$
-  FOREMAN_VERSION: 2.1.0
+  FOREMAN_VERSION: 2.3.0
   FOREMAN: uvx --from git+https://github.com/ponderousdev/foreman@v{{.FOREMAN_VERSION}} foreman
 
 tasks:
@@ -31,7 +31,7 @@ tasks:
       - "{{.FOREMAN}} preflight {{.CLI_ARGS}}"
 
   dispatch:
-    desc: "Dispatch ready units to agents in worktrees, verify, open PRs (idempotent)"
+    desc: "Dispatch ready units to agents in worktrees, verify, open draft PRs (idempotent)"
     cmds:
       - "{{.FOREMAN}} dispatch {{.CLI_ARGS}}"
 

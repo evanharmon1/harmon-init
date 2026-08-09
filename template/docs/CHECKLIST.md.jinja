@@ -139,6 +139,16 @@ config, toolchain, devcontainer, and dev environment — against the items below
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
       the security controls before any dispatch.
+[% if use_codex_cloud_review %]
+- [ ] **[human-only] Foreman reviewer-gate check** — `.foreman.toml`'s
+      `[reviewer]` table is foreman's current-head review gate for the PRs it
+      shepherds. Before the first dispatch (and again after any Foreman bump),
+      confirm the configured `login` still matches the live Codex connector
+      identity (actor ID `199175422`), that its terminal results — an APPROVED
+      review at the head, or a 👍 from that login on foreman's own request
+      comment — still mean what the readiness gate assumes, and that required
+      checks run on draft PRs (foreman promotes only after they conclude).
+[% endif %]
 [% endif %]
 [% if use_codeql %]
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
@@ -228,7 +238,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
 - [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
-      `admin:org` scope) to add the org's **Product**, **Agent**, **Domain**, and
+      `admin:org` scope) to add the org's **Product**, **Domain**, and
       **Layer** issue fields.
       Priority/Effort (and the date fields) are GitHub built-in issue fields, left
       at their defaults — tune options in the org's issue-field settings if you
@@ -247,7 +257,7 @@ config, toolchain, devcontainer, and dev environment — against the items below
       `integration`) is product-independent and normally needs no edits. See
       [project-management.md](project-management.md).
 [% else %]
-      On a personal account it also creates Priority/Product/Agent/Domain/Layer/
+      On a personal account it also creates Priority/Product/Domain/Layer/
       Size as project fields (issue fields are org-only); status automation is a
       separate follow-up — the board is set up, but issue/PR status isn't
       auto-synced yet. `Domain` is seeded with `auth`/`billing`/`platform` only —

@@ -8,6 +8,38 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.22.0](https://github.com/evanharmon1/harmon-init/compare/v4.21.0...v4.22.0) (2026-08-09)
+
+
+### Features
+
+* adopt draft-first Foreman and the current-head reviewer gate ([#689](https://github.com/evanharmon1/harmon-init/issues/689)) ([54c4f39](https://github.com/evanharmon1/harmon-init/commit/54c4f3971be10aa6501fa906209c7c5913435fc3))
+
+## [4.21.0](https://github.com/evanharmon1/harmon-init/compare/v4.20.0...v4.21.0) (2026-08-08)
+
+
+### Features
+
+* **agents:** port agy-adapter and claude hooks ([#682](https://github.com/evanharmon1/harmon-init/issues/682)) ([afaf092](https://github.com/evanharmon1/harmon-init/commit/afaf092a51d64066e194bd6201c3584a5ac36587))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 2704ac66 ([#688](https://github.com/evanharmon1/harmon-init/issues/688)) ([2d2533e](https://github.com/evanharmon1/harmon-init/commit/2d2533eacc4d5e44627f5d671145afdf93a414e4))
+
+## [4.20.0](https://github.com/evanharmon1/harmon-init/compare/v4.19.1...v4.20.0) (2026-08-08)
+
+
+### Features
+
+* drive label provisioning from the agent registry with a drift gate ([#676](https://github.com/evanharmon1/harmon-init/issues/676)) ([1ecfa3f](https://github.com/evanharmon1/harmon-init/commit/1ecfa3f2a347e0b593d8be19c2e0c3dfbe126d9f))
+
+
+### Bug Fixes
+
+* **devcontainer:** disable the Claude Code auto-updater in the shared image ([#684](https://github.com/evanharmon1/harmon-init/issues/684)) ([2704ac6](https://github.com/evanharmon1/harmon-init/commit/2704ac669ee918f07dda97cf7c3214c6f7c53482))
+* **template:** sync harmon-devkit skills to v0.23.0 ([#675](https://github.com/evanharmon1/harmon-init/issues/675)) ([6563cd3](https://github.com/evanharmon1/harmon-init/commit/6563cd320b3076c1cc36aac2bd2e5ea336ec5810))
+
 ## [4.19.1](https://github.com/evanharmon1/harmon-init/compare/v4.19.0...v4.19.1) (2026-08-08)
 
 
