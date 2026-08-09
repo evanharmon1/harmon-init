@@ -286,19 +286,25 @@ the setup scripts are additive-only by design, so deleting the live field is an
 explicit operator step, and reviewing its values comes first — deleting a field
 destroys every value on it, unrecoverably.
 
-1. List what it holds: every issue or board item with `Agent` set — including
-   **draft items**, which can carry the project field but can never carry a
-   label. Convert any draft whose assignment you want to keep into an issue
-   first; a draft you leave as-is loses its assignment with the field.
-2. Carry each assignment you still want over as the matching `suggest:*` label
+1. Provision the replacement vocabulary first: run `task setup:github-labels`
+   in every repository whose issues carry the field — a `suggest:*` label must
+   exist in a repo before an assignment can be copied onto its issues.
+2. List what the field holds: every issue or board item with `Agent` set —
+   including **draft items**, which can carry the project field but can never
+   carry a label. Convert any draft whose assignment you want to keep into an
+   issue first; a draft you leave as-is loses its assignment with the field.
+3. Carry each assignment you still want over as the matching `suggest:*` label
    on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
-3. Re-point the saved **Agent queue** view (below) at the new predicate —
+4. Re-point the saved **Agent queue** view (below) at the new predicate —
    filter on the `suggest:*` labels instead of the `Agent` field. A view still
    filtered on the field loses its routing predicate the moment the field is
    deleted.
-4. Only then delete the field — Project settings → the field → *Delete field*
-   on a personal project; org **Settings → Planning → Issue fields** on an
-   organization.
+5. Only then delete the field — Project settings → the field → *Delete field*
+   on a personal project. On an organization the field is **org-wide**:
+   deleting it under **Settings → Planning → Issue fields** removes the value
+   from every issue in every repository and project the org owns, not just
+   this board — repeat steps 2–3 across the whole organization before
+   deleting.
 
 On a personal account there are no issue fields, so `task setup:github-project`
 creates **Priority, Product, Domain, Layer, and Size** as project fields.
@@ -335,7 +341,10 @@ families, color-coded by family; the starter set is created by
 > ([#663](https://github.com/evanharmon1/harmon-init/issues/663)) — so where
 > `agent:*` already exists it stays the live claim vocabulary, and everything
 > below about the claim label applies to it unchanged. Do not seed `agent:*`
-> into new repos.
+> into new repos. A repo generated fresh before that migration sits in
+> between: its labels are `claim:*` but its vendored skills still look for
+> `agent:*` and skip the label when the family is absent — a claim there
+> rests on the assignee and the claim comment until the skill pin moves.
 
 The `layer:` and `domain:` families offer the same options as the **Layer** and
 **Domain** fields above — same names, same meanings, but no per-issue sync (see
@@ -646,9 +655,12 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   **`needs-triage`**, grouped by **Type** (Bug / Feature / Task / Research) so you
   see the shape of the inbox. This is your grooming session — it exists so
   untriaged work can't hide; empty it regularly and it stays useful.
-- **Agent queue** — board, filtered to issues carrying a **`suggest:*`** label,
-  showing only the in-flight `Status` columns (**Ready, Agent Queue, In Progress,
-  Verifying, In Review, Ready to Merge**), sorted by `Priority`.
+- **Agent queue** — board, filtered to issues carrying a **`suggest:*`** label
+  (Projects label filters match **concrete** values, not prefixes — enumerate
+  the seeded family labels in the filter, and extend it when the registry
+  gains a family), showing only the in-flight `Status` columns (**Ready, Agent
+  Queue, In Progress, Verifying, In Review, Ready to Merge**), sorted by
+  `Priority`.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
   `Priority`, with the **`Size` field summed in each group header**. The "how
   big is the pile, and what's the plan" view, and a **dates-free roadmap
