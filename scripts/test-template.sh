@@ -749,8 +749,13 @@ full) # project_management=github; github_org=test-org (an org repo)
     # drift too).
     # The agent vocabulary is no longer a label/field pair here: it moved to
     # registry-driven suggest:/claim: labels (checked by test:registry-drift),
-    # and removal of the `Agent` field is tracked separately (#662). Only the
-    # Layer/Domain taxonomy is cross-checked across labels + fields now.
+    # and the Agent field is retired (#662) — the rendered scripts must not
+    # recreate it. Only the Layer/Domain taxonomy is cross-checked across
+    # labels + fields now.
+    ! grep -q 'create_field "Agent"' scripts/setup-github-issue-fields.sh ||
+        err "rendered setup-github-issue-fields.sh recreates the retired Agent field (#662)"
+    ! grep -q 'create_single_select "Agent"' scripts/setup-github-project.sh ||
+        err "rendered setup-github-project.sh recreates the retired Agent field (#662)"
     for pair in layer:Layer domain:Domain; do
         fam="${pair%%:*}"
         field="${pair##*:}"

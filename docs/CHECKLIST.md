@@ -203,7 +203,7 @@ this comment. -->
       `evanharmon1 Project`) and idempotently sync its `Status` pipeline and
       `Size` number field — see
       [project-management.md](project-management.md).
-      On a personal account it also creates Priority/Product/Agent/Domain/Layer/
+      On a personal account it also creates Priority/Product/Domain/Layer/
       Size as project fields (issue fields are org-only); status automation is a
       separate follow-up — the board is set up, but issue/PR status isn't
       auto-synced yet. `Domain` is seeded with `auth`/`billing`/`platform` only —
