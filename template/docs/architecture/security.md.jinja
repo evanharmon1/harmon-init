@@ -329,6 +329,13 @@ GitHub org (and personal account) gets its own App**, named **`<owner>-ci`** —
 for this repo, **`[[ github_org ]]-ci`**. One App per org keeps a leaked key
 contained to a single org (no cross-org reach).
 
+One deliberate exception inside the `claude-*` workflows: the claim-lifecycle
+label writes (`claim:claude` on and off the target) use the built-in
+`GITHUB_TOKEN` under the job's own `issues: write` permission, not the App
+token — it stays valid for the whole job (an App token expires in an hour, and
+the release runs at the very end) and its writes never trigger another workflow
+run. Everything the model does, and every PR it opens, still uses the App token.
+
 Each job mints a short-lived (1h) installation token at runtime via
 `actions/create-github-app-token`, reading:
 

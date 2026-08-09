@@ -27,7 +27,7 @@ jobs:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
-    timeout-minutes: 180
+    timeout-minutes: 200
     permissions:
       contents: write
       issues: write
@@ -82,7 +82,9 @@ jobs:
       # `claim:claude:opus` form, another family's `claim:codex`, and the
       # `agent:*` labels generated repos still carry through the rolling
       # transition. `suggest:*` is deliberately NOT matched — it is advice
-      # about who should do the work, never ownership of it.
+      # about who should do the work, never ownership of it. The read asks for
+      # 100 labels rather than the API's default 30, so a marker sitting past
+      # the first page cannot read as "unclaimed".
       #
       # An unreadable label list refuses for the same reason: we cannot prove
       # the target is free, and claiming blind or running unmarked are both
@@ -108,7 +110,7 @@ jobs:
             echo "No issue or pull request number; nothing to claim, running unclaimed"
             exit 0
           fi
-          if ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels" --jq '.[].name'); then
+          if ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels?per_page=100" --jq '.[].name'); then
             echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
             echo "::error::could not read the labels on #$TARGET, so this run cannot prove" \
               "the target is unclaimed. Refusing to start; re-post the mention once the API" \
@@ -252,12 +254,15 @@ jobs:
           echo "Set issue #$ISSUE_NUMBER to In Progress"
 [% endif %]
       - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
-        # Step-level cap, 10 minutes under the job budget. A JOB timeout
-        # kills the runner outright and the always() release below never
-        # runs; a STEP timeout fails only this step and lets the cleanup
-        # run, so the claim is still released. Losing the runner itself
-        # (or a force-cancel) can still strand the advisory label —
-        # accepted, rather than a reconciliation workflow of its own.
+        # Step-level cap. A JOB timeout kills the runner outright and the
+        # always() release below never runs; a STEP timeout fails only this
+        # step and lets the cleanup run, so the claim is still released. The
+        # arithmetic keeps it that way: job cap 200 = this step's 170 + 30
+        # minutes of headroom for the sender gate, claim, token mint, checkout
+        # and setup, so the step timeout always fires first however slow the
+        # preamble is. Losing the runner itself (or a force-cancel) can still
+        # strand the advisory label — accepted, rather than a reconciliation
+        # workflow of its own.
         timeout-minutes: 170
         # GH_TOKEN lets Claude's own `gh` calls (e.g. `gh pr create`)
         # authenticate as the CI app bot with the narrow token, matching the git
