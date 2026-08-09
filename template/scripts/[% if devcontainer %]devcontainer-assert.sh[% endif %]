@@ -34,9 +34,9 @@ toml_root_scalar() {
             if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
                 sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", line)
                 sub(/[[:space:]]*$/, "", line)
-                if (line ~ /^\".*\"$/) {
-                    sub(/^\"/, "", line)
-                    sub(/\"$/, "", line)
+                if (line ~ /^".*"$/) {
+                    sub(/^"/, "", line)
+                    sub(/"$/, "", line)
                 }
                 print line
                 exit
@@ -123,6 +123,9 @@ assert_unit() {
     [ -f "$ts_connect" ] || fail "tailscale-connect.sh not found at ${ts_connect}"
     [ -f "$codex_config" ] || fail "Codex managed config not found at ${codex_config}"
     [ -f "$codex_bot_mode" ] || fail "Codex bot-mode helper not found at ${codex_bot_mode}"
+    if grep -Eq '(^|[^[:alnum:]_])yq([^[:alnum:]_]|$)' "$codex_bot_mode"; then
+        fail "Codex bot-mode helper depends on yq for TOML mutation"
+    fi
 
     local bot_config dev_config
     bot_config="${repo_root}/.devcontainer/devcontainer.json"
