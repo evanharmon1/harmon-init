@@ -100,8 +100,8 @@ jobs:
       # `agent:*` labels generated repos still carry through the rolling
       # transition. `suggest:*` is deliberately NOT matched — it is advice
       # about who should do the work, never ownership of it. The read asks for
-      # 100 labels rather than the API's default 30, so a marker sitting past
-      # the first page cannot read as "unclaimed".
+      # 100-label pages and paginates, so a marker on any page cannot read as
+      # "unclaimed" however many labels the target carries.
       #
       # An unreadable label list refuses for the same reason: we cannot prove
       # the target is free, and claiming blind or running unmarked are both
@@ -130,7 +130,7 @@ jobs:
             echo "No issue or pull request number; nothing to claim, running unclaimed"
             exit 0
           fi
-          if ! existing=$(gh api "repos/$GH_REPO/issues/$TARGET/labels?per_page=100" --jq '.[].name'); then
+          if ! existing=$(gh api --paginate "repos/$GH_REPO/issues/$TARGET/labels?per_page=100" --jq '.[].name'); then
             echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
             echo "::error::could not read the labels on #$TARGET, so this run cannot prove" \
               "the target is unclaimed. Refusing to start; re-post the mention once the API" \
