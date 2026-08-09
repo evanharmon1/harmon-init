@@ -10,7 +10,9 @@ project_doc_max_bytes = 65536
 [agents.reviewer]
 description = "Review changes for correctness, security, regressions, and missing tests without editing."
 config_file = "agents/reviewer.toml"
+[% if use_skills_sync and use_shared_agents %]
 
 [agents.implementer]
 description = "Implement a self-contained plan or confirmed defect and verify the result."
 config_file = "agents/implementer.toml"
+[% endif %]

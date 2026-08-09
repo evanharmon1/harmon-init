@@ -154,7 +154,10 @@ write_twins() {
             die "injected failure after the first twin write"
         fi
         if [ "${SYNC_DEVCONTAINER_TEST_SIGNAL_AFTER_ROOT_WRITE:-}" = "true" ]; then
-            kill -TERM "$BASHPID"
+            # macOS still ships Bash 3.2, which has no BASHPID. Ask a tiny
+            # child shell to signal its parent (this transactional subshell)
+            # so the rollback trap is exercised portably.
+            sh -c 'kill -TERM "$PPID"'
         fi
         mv "${TEMPLATE_DOCKERFILE}.tmp.$$" "$TEMPLATE_DOCKERFILE"
         _wt_done=1

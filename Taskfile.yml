@@ -75,6 +75,9 @@ tasks:
     desc: Local verification gate (check → guards → test:template)
     cmds:
       - task: check
+      - task: audit:agent-instructions
+      - task: test:agent-instructions-size
+      - task: test:agent-skill-links
       - task: test:agent-registry
       - task: test:registry-drift
       - task: test:tasks
@@ -103,6 +106,11 @@ tasks:
   check:
     desc: Run all linters (parallel)
     deps: [lint]
+
+  audit:agent-instructions:
+    desc: Warn when AGENTS.md exceeds Codex's default 32 KiB discovery budget
+    cmds:
+      - ./scripts/check-agent-instructions-size.sh AGENTS.md
 
   lint:
     desc: Run all linters in parallel
@@ -315,6 +323,11 @@ tasks:
     cmds:
       - ./scripts/test-hooks.sh
 
+  test:agent-instructions-size:
+    desc: Unit-test the non-blocking AGENTS.md size advisory
+    cmds:
+      - ./scripts/test-agent-instructions-size.sh
+
   test:agent-registry:
     desc: Schema-check the machine-readable agent registry and its cross-record invariants
     cmds:
@@ -456,16 +469,24 @@ tasks:
     desc: Vendor the pinned skill categories from harmon-devkit into .claude/skills
     cmds:
       - ./scripts/sync-skills.sh sync
+      - ./scripts/link-agent-skills.sh sync
 
   verify:skills:
     desc: "Skill drift check (network): fail if vendored skills differ from the pinned ref"
     cmds:
+      - ./scripts/link-agent-skills.sh verify
       - ./scripts/sync-skills.sh verify
 
   verify:skills:offline:
     desc: "Fast offline check that the vendored ref matches the manifest (no network)"
     cmds:
+      - ./scripts/link-agent-skills.sh verify
       - ./scripts/sync-skills.sh verify-offline
+
+  test:agent-skill-links:
+    desc: Unit-test migration-safe Claude-to-.agents skill compatibility links
+    cmds:
+      - ./scripts/test-agent-skill-links.sh
 
   # ROOT VARIANT (the template ships a simpler twin for generated repos): the
   # harmon-init <-> harmon-devkit release edge, driven by the root workflow

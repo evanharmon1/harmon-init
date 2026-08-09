@@ -215,6 +215,16 @@ if [ ! -L .github/copilot-instructions.md ] ||
     [ "$(readlink .github/copilot-instructions.md)" != "../AGENTS.md" ]; then
     err ".github/copilot-instructions.md should be a symlink to ../AGENTS.md"
 fi
+[ -x scripts/check-agent-instructions-size.sh ] ||
+    err "AGENTS.md size advisory is missing or not executable"
+[ -x scripts/test-agent-instructions-size.sh ] ||
+    err "AGENTS.md size advisory tests are missing or not executable"
+grep -q 'audit:agent-instructions:' Taskfile.yml ||
+    err "Taskfile does not expose the AGENTS.md size advisory"
+grep -q 'test:agent-instructions-size:' Taskfile.yml ||
+    err "Taskfile does not test the AGENTS.md size advisory"
+./scripts/test-agent-instructions-size.sh >/dev/null ||
+    err "AGENTS.md size advisory regression tests failed"
 
 # ── 1. Generated Taskfile parses ────────────────────────────────────
 if [ -f Taskfile.yml ]; then
@@ -872,6 +882,9 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     [ ! -f scripts/sync-skills.sh ] || err "scripts/sync-skills.sh rendered but use_skills_sync=false"
     ! grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task rendered but use_skills_sync=false"
     ! grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule rendered but use_skills_sync=false"
+    [ ! -f .codex/agents/implementer.toml ] || err "Codex implementer rendered without shared agents"
+    ! grep -q '^\[agents\.implementer\]$' .codex/config.toml ||
+        err "Codex implementer registered without shared agents"
     ;;
 *) # use_skills_sync defaults on -> manifest, engine, and tasks all present
     [ -f .skills-sync.yaml ] || err ".skills-sync.yaml missing (use_skills_sync default on)"
@@ -882,8 +895,28 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule missing"
     grep -q 'dependencyDashboardApproval' renovate.json || err "skills-sync Renovate rule is not approval-gated"
     grep -q 'task sync:skills' renovate.json || err "skills-sync Renovate PR instructions missing"
+    [ -f .codex/agents/implementer.toml ] || err "Codex implementer missing with shared agents enabled"
+    grep -q '^model = "gpt-5.6-terra"$' .codex/agents/implementer.toml ||
+        err "Codex implementer is not pinned to gpt-5.6-terra"
+    grep -q '^model_reasoning_effort = "high"$' .codex/agents/implementer.toml ||
+        err "Codex implementer is not pinned to high reasoning"
+    grep -q '^\[agents\.implementer\]$' .codex/config.toml ||
+        err "Codex implementer is not registered"
+    grep -q '^config_file = "agents/implementer.toml"$' .codex/config.toml ||
+        err "Codex implementer registration does not point at its config"
     ;;
 esac
+[ -d .claude/skills ] || err ".claude/skills managed skill directory is missing"
+[ -d .agents/skills ] && [ ! -L .agents/skills ] ||
+    err ".agents/skills is not a migration-safe portable skill directory"
+[ -x scripts/link-agent-skills.sh ] || err "portable skill-link helper is missing"
+[ -x scripts/test-agent-skill-links.sh ] || err "portable skill-link test is missing"
+if [ -f .skills-sync.yaml ]; then
+    grep -q 'link-agent-skills.sh sync' Taskfile.yml ||
+        err "sync:skills does not refresh portable skill links"
+    grep -q '^dest: \.claude/skills$' .skills-sync.yaml ||
+        err ".skills-sync.yaml does not vendor into .claude/skills"
+fi
 
 # ── 9d2. foreman renders per use_foreman (default off) ──────────────
 # `iac` (defaults + foreman) and `full` (foreman + coderabbit + cloud
@@ -996,16 +1029,31 @@ esac
 # its own rules instead of shipping vendored agent prompts.
 [ ! -d .claude/agents ] || err ".claude/agents rendered — agents arrive via skills sync, not the template"
 
-# ── 9d3. local/cloud Codex review render independently (both default off) ────
+# ── 9d3. baseline Codex config always renders; review assets remain optional ──
 # `meta` opts into local review only; `full` opts into local + cloud review.
 # Every other profile leaves both off. This covers the legacy local-only
 # behavior as well as the stricter explicit cloud-review contract.
+[ -f .codex/config.toml ] || err ".codex/config.toml missing from baseline Codex support"
+grep -q '^project_doc_max_bytes = 65536$' .codex/config.toml ||
+    err ".codex/config.toml does not raise the project instruction budget"
+grep -q '^\[agents\.reviewer\]$' .codex/config.toml ||
+    err "Codex reviewer is not registered"
+grep -q '^config_file = "agents/reviewer.toml"$' .codex/config.toml ||
+    err "Codex reviewer registration does not point at its config"
+[ -f .codex/agents/reviewer.toml ] || err "Codex reviewer agent is missing"
+grep -q '^model = "gpt-5.6-sol"$' .codex/agents/reviewer.toml ||
+    err "Codex reviewer is not pinned to gpt-5.6-sol"
+grep -q '^model_reasoning_effort = "high"$' .codex/agents/reviewer.toml ||
+    err "Codex reviewer is not pinned to high reasoning"
+grep -q '^sandbox_mode = "read-only"$' .codex/agents/reviewer.toml ||
+    err "Codex reviewer does not enforce its read-only contract"
+grep -q '^approval_policy = "never"$' .codex/agents/reviewer.toml ||
+    err "Codex reviewer can escalate out of its read-only sandbox"
 if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
     [ -x scripts/codex-review.sh ] || err "scripts/codex-review.sh missing or not executable (use_codex_review=true)"
     [ -x scripts/codex-gate.sh ] || err "scripts/codex-gate.sh missing or not executable (use_codex_review=true)"
     [ -x scripts/test-codex-review.sh ] || err "scripts/test-codex-review.sh missing or not executable (use_codex_review=true)"
     grep -q 'test:codex-review:' Taskfile.yml || err "test:codex-review task missing (use_codex_review=true)"
-    [ -f .codex/config.toml ] || err ".codex/config.toml missing (use_codex_review=true)"
     [ -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md missing (use_codex_review=true)"
     grep -Fq 'use_codex_cloud_review' docs/guides/codex-review.md ||
         err "Codex guide missing optional cloud review setup (use_codex_review=true)"
@@ -1015,7 +1063,6 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
 else
     [ ! -f scripts/codex-review.sh ] || err "scripts/codex-review.sh rendered but use_codex_review is off"
     [ ! -f scripts/codex-gate.sh ] || err "scripts/codex-gate.sh rendered but use_codex_review is off"
-    [ ! -d .codex ] || err ".codex/ rendered but use_codex_review is off"
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
@@ -1131,6 +1178,27 @@ else
     [ -d .devcontainer ] || err ".devcontainer/ missing (devcontainer on for profile '$profile')"
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
+    [ -f .devcontainer/config/codex-managed-config.toml ] ||
+        err "Codex managed baseline missing from devcontainer output"
+    [ -x .devcontainer/config/codex-hooks/claude-compat.sh ] ||
+        err "Codex Claude-hook adapter missing from devcontainer output"
+    [ -x .devcontainer/config/codex-hooks/file-payload.sh ] ||
+        err "Codex file-payload adapter missing from devcontainer output"
+    [ -x .devcontainer/scripts/enable-codex-bypass.sh ] ||
+        err "Codex bot-mode helper missing from devcontainer output"
+    grep -q '^model = "gpt-5.6-sol"$' .devcontainer/config/codex-managed-config.toml ||
+        err "Codex devcontainer baseline is not pinned to gpt-5.6-sol"
+    grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-managed-config.toml ||
+        err "Codex devcontainer baseline is not pinned to medium reasoning"
+    grep -q '^sandbox_mode = "workspace-write"$' .devcontainer/config/codex-managed-config.toml ||
+        err "Codex human devcontainer baseline does not enable workspace-write"
+    ! grep -Eq 'session-start-context|post-edit-format|enforce-conventional-commits' \
+        .devcontainer/config/codex-managed-config.toml ||
+        err "system-managed Codex hooks delegate into checkout-controlled tasks"
+    grep -Fq 'enable-codex-bypass.sh' .devcontainer/post-create.sh ||
+        err "bot post-create does not enable high-autonomy Codex mode"
+    ! grep -Fq 'enable-codex-bypass.sh' .devcontainer/dev/post-create.sh ||
+        err "human dev profile disables the Codex sandbox"
     grep -q -- '- task: test:devcontainer:permissions' Taskfile.yml || err "ci task is missing the devcontainer permission assertion"
 
     # `task` must reach the RENDERED repo from a pinned release, never from the

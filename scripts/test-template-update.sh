@@ -126,6 +126,15 @@ gitq "$gen" add -A
 gitq "$gen" commit -qm customize
 before="$(git -C "$gen" rev-list --count HEAD)"
 
+# A consumer may already use the cross-industry .agents standard. Adding
+# portable compatibility support must merge into that directory, never ask
+# Copier to replace the directory with a symlink.
+mkdir -p "$gen/.agents/skills/consumer-local"
+printf '%s\n' consumer-owned >"$gen/.agents/skills/consumer-local/SKILL.md"
+gitq "$gen" add -A
+gitq "$gen" commit -qm "add portable consumer skill"
+before="$(git -C "$gen" rev-list --count HEAD)"
+
 # 4. Replace the source with the current working tree and ship it as v0.0.2.
 #    devcontainer.env is local-only; __pycache__/.foreman are runtime artifacts.
 #    Then improve a template-owned file, ADD a README section (should flow in
@@ -158,6 +167,8 @@ grep -q 'update-test marker' "$gen/scripts/lint-hygiene.sh" || err "template imp
 grep -q 'project-specific task added in the repo' "$gen/Taskfile.yml" || err "repo's own edit to Taskfile.yml was lost on update"
 grep -q 'Template Added Section' "$gen/README.md" || err "new template README section did not merge into the repo"
 grep -q 'repo-owned changelog entry' "$gen/CHANGELOG.md" || err "CHANGELOG.md lost the repo's content"
+grep -q '^consumer-owned$' "$gen/.agents/skills/consumer-local/SKILL.md" ||
+    err "Copier update replaced or lost an existing .agents/skills directory"
 grep -q 'template-changed-changelog' "$gen/CHANGELOG.md" && err "CHANGELOG.md received a template change despite _skip_if_exists"
 [ ! -f "$gen/.coderabbit.yaml" ] || err ".coderabbit.yaml remained after use_coderabbit=false update"
 ! grep -Fq 'Install the [CodeRabbit app]' "$gen/docs/CHECKLIST.md" ||
