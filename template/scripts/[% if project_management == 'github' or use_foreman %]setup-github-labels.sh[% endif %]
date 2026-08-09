@@ -97,14 +97,17 @@ domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
 # are seeded (model-level `suggest:/claim:<family>:<model>` are created on demand).
 #
 # TRANSITION: this stops SEEDING agent:* but never deletes existing labels, so a
-# repo that already has agent:claude-code keeps it (claims still work there). Two
-# follow-ups complete the cutover and are the reason this stays additive: the
-# vendored /claim skill still adds agent:claude-code until harmon-devkit ships the
-# claim:* vocabulary (harmon-init #663, harmon-devkit #321), and live agent:*/stale
-# foreman:* selectors on existing repos are retired by the migration unit (#663),
-# not by a permanent migration here. Do not release this to consumers ahead of the
-# devkit skill migration, or a freshly generated repo will provision claim:* while
-# its /claim skill still looks for agent:claude-code.
+# repo that already has agent:claude-code keeps it and its claims keep working.
+# The skill half of the cutover has shipped: the vendored /claim adds a claim:*
+# label where the repo has that family and falls back to a live agent:* one only
+# where provisioning has not migrated, while /wrap and release-claim.sh recognize
+# BOTH families. That is exactly why this stays additive — seeding claim:* beside
+# a surviving agent:* label strands no in-flight claim either way.
+# What is left is a one-time, per-repo rename of the LIVE labels
+# (`gh label edit agent:<harness> --name claim:<family>`, which preserves issue
+# associations) — a human operator step in docs/CHECKLIST.md, deliberately not a
+# permanent migration in this script. Until an operator runs it, a repo simply
+# carries both families, which the readers above already tolerate.
 labels="$labels
 $(node "$labels_helper" suggest-claim)"
 
