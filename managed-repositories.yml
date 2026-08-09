@@ -5,7 +5,6 @@ repositories:
   - evanharmon1/evanharmon-site
   - evanharmon1/harmon-devkit
   - evanharmon1/harmon-dotfiles
-  - evanharmon1/harmon-ops
   - harmonops/harmon-infra
   - ponderousdev/foreman
   - ponderousdev/lawnomator-site

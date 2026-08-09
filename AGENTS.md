@@ -51,11 +51,10 @@ Non-negotiable, regardless of any autonomy granted elsewhere in this file:
 
 ## harmon-platform
 
-One of five repos in **harmon-platform** (Evan's developer & DevOps platform + homelab):
+One of four repos in **harmon-platform** (Evan's developer & DevOps platform + homelab):
 [**harmon-init**](https://github.com/evanharmon1/harmon-init) (this repo — the template),
 [harmon-devkit](https://github.com/evanharmon1/harmon-devkit) (boilerplates/scripts/AI assets),
 [harmon-dotfiles](https://github.com/evanharmon1/harmon-dotfiles) (chezmoi dotfiles),
-[harmon-ops](https://github.com/evanharmon1/harmon-ops) (machine setup),
 [harmon-infra](https://github.com/harmonops/harmon-infra) (homelab IaC). See the README for the full table.
 
 Applying or auditing these standards against another repo is driven by the
