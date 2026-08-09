@@ -33,6 +33,23 @@ jobs:
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     timeout-minutes: 80
+    # Serialize every claim-bearing run on one target. Acquiring a claim is a
+    # read-then-add, so two runs that read "unclaimed" in the same instant
+    # would both proceed; this group makes the second wait for the first.
+    # JOB-level, not workflow-level: these workflows fire on EVERY
+    # issue_comment/review event and filter in the job `if:`, so at workflow
+    # level each skipped run of an ordinary comment would enter the group and
+    # displace a legitimately queued one. A job-level group is only claimed
+    # once the mention gate has passed. The name is deliberately IDENTICAL in
+    # all three claude-* workflows — concurrency groups are repo-scoped, so a
+    # plan run and an implement run on the same target serialize too, which is
+    # correct: they share one claim:claude label. cancel-in-progress: false
+    # never kills a running job. Known residual: GitHub keeps only the newest
+    # PENDING run per group, so a third rapid mention visibly cancels the
+    # second's queued run.
+    concurrency:
+      group: claude-claim-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       # issues: write is the claim label only — PR labels are written through
@@ -101,9 +118,12 @@ jobs:
       # with no issue or PR number is the one benign case: there is nothing to
       # claim on it and nothing to collide with.
       #
-      # Claims are signals rather than locks, so two runs starting in the same
-      # instant can still both read "unclaimed" and race; that residual is
-      # accepted. Releasing is fail-loud too; see the cleanup step.
+      # The job-level concurrency group above closes the read-then-add window
+      # between two mention runs on the same target — they serialize, so the
+      # second reads the first's claim rather than racing it. Claims are still
+      # signals rather than locks: an interactive session claiming mid-run is
+      # serialized by nothing here, and that residual is accepted. Releasing
+      # is fail-loud too; see the cleanup step.
       - name: Claim the target with claim:claude
         id: claim
         env:

@@ -1197,6 +1197,10 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
         err "$claude_wf runs unclaimed when it cannot prove the target is free"
     grep -Fq '::error::could not apply claim:claude' "$claude_wf_path" ||
         err "$claude_wf runs unmarked when the claim label will not apply"
+    # One repo-scoped group per target serializes the read-then-add, so two
+    # mention runs cannot both read "unclaimed" and both proceed.
+    grep -Fq 'group: claude-claim-' "$claude_wf_path" ||
+        err "$claude_wf has no claim concurrency group — two runs could claim the same target at once"
     # A masked release failure is permanent — the next run sees the surviving
     # label, acquires nothing, and cleans nothing — so only a confirmed
     # not-found is benign and everything else has to go red.
