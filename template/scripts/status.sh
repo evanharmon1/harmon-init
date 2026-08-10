@@ -589,6 +589,107 @@ if [[ "${SECTION}" == "setup" ]]; then
         fi
     } | section_box
 
+    # ── Local credentials ───────────────────────────────────────────────────
+    # The logins the Dev Loop gates on, read from LOCAL state only — no API call
+    # and no network — so this renders in any auth state and costs nothing.
+    #
+    # Deliberately placed BEFORE the gh gate below rather than inside it. That
+    # gate skips the ENTIRE remaining audit when gh is logged out, so a
+    # credentials group living there would surface a missing codex login only
+    # after the reader had fixed gh and re-run: two round trips to learn what one
+    # run can say, which is the interruption this group exists to remove.
+    #
+    # Its own { } group means its own copy of the SETUP_* counters: checkline
+    # mutates them inside the subshell that `| section_box` creates, so they
+    # cannot reach the summary at the end of this section through a variable.
+    # They are handed across that boundary in a file instead (written at the end
+    # of the group, folded in at the summary), the same way the fan-out phase
+    # below returns its results. The plumbing is worth it — a summary reading
+    # "100% · 0 missing" directly under a red ✗ Codex CLI line on the same screen
+    # is a worse defect than the file is.
+    {
+        subhead "Local credentials"
+
+        # Reuses the single bounded probe from the top of this script instead of
+        # calling `gh auth status` again, and inherits its distinction between a
+        # deadline and a missing login — telling an authenticated reader to run
+        # `gh auth login` because GitHub was slow sends them to fix the wrong
+        # thing. The skip line below stays as it is: it explains the absence of
+        # everything after it, which this line does not.
+        # Not-installed is tested FIRST because it makes the other three
+        # meaningless: with no gh on PATH the shared probe above exits 127, which
+        # lands in the same "not authenticated" bucket as a real logout and would
+        # prescribe `gh auth login` — a command the reader does not have. Same
+        # distinction the Codex check below draws, and the same remedy style as
+        # the 1Password and direnv lines further down.
+        if ! command -v gh >/dev/null 2>&1; then
+            checkline no "GitHub CLI (gh)" "brew install gh"
+        elif [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
+            checkline unknown "GitHub CLI (gh)" \
+                "auth probe timed out after ${NETWORK_TIMEOUT}s"
+        elif [[ "${GH_AUTHED}" == true ]]; then
+            checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
+        else
+            checkline no "GitHub CLI (gh)" "gh auth login"
+        fi
+
+        # Codex gates `task challenge` and `task review` only where the repo
+        # opted into second-model review, and scripts/codex-review.sh is that
+        # opt-in's marker on disk — the template renders it only under
+        # `use_codex_review`. Same each-script-is-its-own-marker rule the GitHub
+        # configuration checks below use, and read off the filesystem rather than
+        # .copier-answers.yml: nothing else in this script reads that file, and a
+        # generated repo may keep it somewhere else. `codex login status` reads
+        # local credential state, so the bound here is the short local one (as
+        # with `op account list`), never NETWORK_TIMEOUT.
+        if [ -f scripts/codex-review.sh ]; then
+            if command -v codex >/dev/null 2>&1; then
+                # The exit code is the primary signal, but it cannot tell "no
+                # credentials" from "the CLI could not run": a malformed
+                # config.toml also exits non-zero, and `codex login` cannot
+                # repair that. So keep the documented logged-out phrase as the
+                # only thing that earns the login remedy, and report every other
+                # failure as unknown rather than sending the reader to
+                # re-authenticate a session that was never the problem.
+                #
+                # Captured with 2>&1 because the shipped CLI writes BOTH verdicts
+                # to stderr and leaves stdout empty — reading stdout alone would
+                # silently demote every genuine logout to "unknown". Folding the
+                # streams also picks up unrelated stderr chatter (a models-cache
+                # ERROR line appears on some installs while the command still
+                # exits 0), which is exactly why the match is on the phrase and
+                # the verdict on the exit code, never on stderr being non-empty.
+                # The captured text is only ever matched, never printed.
+                codex_rc=0
+                codex_out="$(run_timeout 3 codex login status 2>&1)" || codex_rc=$?
+                case "${codex_rc}" in
+                0) checkline ok "Codex CLI" "logged in" ;;
+                124) checkline unknown "Codex CLI" "login status timed out" ;;
+                *)
+                    case "${codex_out}" in
+                    *"Not logged in"*) checkline no "Codex CLI" "codex login" ;;
+                    *) checkline unknown "Codex CLI" \
+                        "login status failed (exit ${codex_rc}) — check the codex CLI's config" ;;
+                    esac
+                    ;;
+                esac
+            else
+                checkline no "Codex CLI" \
+                    "brew install --cask codex, or npm install -g @openai/codex"
+            fi
+        else
+            checkline na "Codex CLI" "no second-model review configured"
+        fi
+
+        # Hand this group's tallies to the summary (see the header comment).
+        # Guarded, and deliberately last: with `pipefail` set, a failed write
+        # here would become the whole pipeline's status and `set -e` would take
+        # the script down over a status board's bookkeeping.
+        printf '%s %s %s %s\n' \
+            "${SETUP_OK}" "${SETUP_NO}" "${SETUP_UNKNOWN}" "${SETUP_NA}" \
+            >"${TMPDIR_STATUS}/cred-counts" 2>/dev/null || true
+    } | section_box
+
     # Reuses the single bounded probe above rather than making a second,
     # unbounded `gh auth status` call to learn the same thing. Sharing that probe
     # means sharing its distinctions too: bounding it made a slow network look
@@ -1031,6 +1132,35 @@ if [[ "${SECTION}" == "setup" ]]; then
 
             # Summary — MUST stay in this { } group so the counters are in scope
             # (the surrounding pipe to section_box runs a subshell).
+            #
+            # Fold in the local-credentials group first. It tallied in a
+            # different subshell, so its counts arrive through a file rather than
+            # through these variables. Anything other than four plain integers —
+            # absent, truncated, unreadable — means "no counts to add", which
+            # leaves the summary reading exactly as it did before this existed
+            # rather than corrupting it with a partial read.
+            cred_ok=0
+            cred_no=0
+            cred_unknown=0
+            cred_na=0
+            read -r cred_ok cred_no cred_unknown cred_na \
+                <"${TMPDIR_STATUS}/cred-counts" 2>/dev/null || true
+            for cred_n in "${cred_ok}" "${cred_no}" "${cred_unknown}" "${cred_na}"; do
+                case "${cred_n}" in
+                "" | *[!0-9]*)
+                    cred_ok=0
+                    cred_no=0
+                    cred_unknown=0
+                    cred_na=0
+                    break
+                    ;;
+                esac
+            done
+            SETUP_OK=$((SETUP_OK + cred_ok))
+            SETUP_NO=$((SETUP_NO + cred_no))
+            SETUP_UNKNOWN=$((SETUP_UNKNOWN + cred_unknown))
+            SETUP_NA=$((SETUP_NA + cred_na))
+
             echo ""
             setup_total=$((SETUP_OK + SETUP_NO + SETUP_UNKNOWN))
             setup_pct=0

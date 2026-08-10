@@ -189,4 +189,4 @@ and canonical AGENTS.md. Projects generated from v2 should be re-templated
 | `task install` | Brewfile deps + lefthook hooks |
 | `task release:patch` | Tag + GitHub release (also `:minor`/`:major`) |
 | `task status` | Project dashboard (also `status:git`/`:gh`/`:code`/`:env`) |
-| `task status:setup` | Setup audit: GitHub config, toolchain, devcontainer, dev env |
+| `task status:setup` | Setup audit: local credentials, GitHub config, toolchain, devcontainer, dev env |
