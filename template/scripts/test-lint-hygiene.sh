@@ -42,11 +42,15 @@ expect "same-line adjacency" 1 'post an @claude plan comment'
 expect "fold/paragraph boundary" 1 'post an @claude' 'plan comment'
 expect "backtick-separated tokens" 1 'post an `@claude` `plan` comment'
 expect "backticked phrase" 1 'post an `@claude implement` comment'
+expect "case variant" 1 'post an @Claude Review comment'
+expect "bold subcommand" 1 'post an @claude **plan** comment'
+expect "linked subcommand" 1 'post an @claude [plan](docs/x.md) comment'
 
 echo "==> safe forms pass"
 expect "prose-separated tokens" 0 'an @claude mention naming plan, implement, or review'
 expect "mention alone" 0 'mention @claude and nothing else'
 expect "subcommand alone" 0 'the plan is reviewed'
+expect "prose word inside a wide gap" 0 'the @claude commands naming plan, implement, or review'
 
 echo "==> functional workflow definitions are exempt"
 # The real workflow file carries the literal trigger phrase by design; the

@@ -111,26 +111,27 @@ for f in "${files[@]}"; do
     # --- Claude trigger-phrase adjacency (issue #725) ---
     # Doc text gets quoted into issues, PR bodies, and comments, where the
     # claude-* workflows' contains() gates match the literal mention+subcommand
-    # string and start a real run. The scan checks the RENDERED-COPY form, not
-    # the source: backticks are deleted first (inline code disappears when
-    # rendered text is copied, so `@claude` `plan` reconstructs the trigger),
-    # then whitespace runs are squeezed (YAML folded scalars and rendered
-    # markdown paragraphs JOIN lines — "@claude\nplan" reconstructs it too).
-    # Only prose between the tokens survives both transforms. Excluded: the
-    # workflow files themselves (the phrases are the functional trigger
-    # definitions there) and vendored skills (fixed upstream in harmon-devkit,
-    # never edited in place). The scan and its fixtures are exempt for the
-    # same reason as the workflows: the phrases there are functional — the
-    # detector's pattern-adjacent comments and the regression fixtures that
-    # must contain the forms they prove are caught.
+    # string (case-insensitively) and start a real run. Rendered copy is what
+    # gets pasted, and rendering strips markup — backticks, bold markers, link
+    # brackets — and joins folded/wrapped lines, so any decoration between the
+    # tokens can reconstruct the trigger. Rather than enumerate markdown
+    # transforms (an unbounded tail), the scan over-approximates: squeeze
+    # whitespace, then flag the mention followed by a subcommand across any
+    # short NON-ALPHANUMERIC gap, case-insensitively. Prose separation — real
+    # words between the tokens — is the one form that never reconstructs, and
+    # the only form the scan accepts. A rare safe-but-flagged phrasing (e.g.
+    # a comma right between the tokens) is rewritten, not exempted. Excluded
+    # paths carry the phrases FUNCTIONALLY: the workflow trigger definitions,
+    # vendored skills (fixed upstream in harmon-devkit), and this scan plus
+    # its regression fixtures.
     case "$f" in
     .github/workflows/* | template/.github/workflows/* | .claude/skills/* | CHANGELOG.md | \
         scripts/lint-hygiene.sh | template/scripts/lint-hygiene.sh | \
         scripts/test-lint-hygiene.sh | template/scripts/test-lint-hygiene.sh) ;;
     *)
-        if tr -d '`' <"$f" | tr -s '[:space:]' ' ' |
-            grep -qE '@claude (plan|implement|review)'; then
-            warn "$f: literal Claude trigger phrase (mention adjacent to subcommand after backtick/whitespace normalization) — quoted into a comment this starts a workflow; separate the tokens with prose"
+        if tr -s '[:space:]' ' ' <"$f" |
+            grep -qiE '@claude[^a-zA-Z0-9]{1,20}(plan|implement|review)'; then
+            warn "$f: Claude trigger phrase reconstructable from rendered copy (mention + subcommand across markup/whitespace, any case) — quoted into a comment this starts a workflow; put prose words between the tokens"
         fi
         ;;
     esac
