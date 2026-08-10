@@ -105,20 +105,6 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 node "$renderer" docs-tables "$registry" >"$work/expected"
 
-# Copier's answers file: the artifact that says "this repository is a COPY of
-# some template". Its presence is what separates a generated repository from
-# the template itself, and it also records which project-management document
-# was rendered. Prefer the name the caller passes (Copier's is configurable),
-# then the environment, then Copier's own defaults.
-answers=""
-for candidate in "$answers_file" "${COPIER_ANSWERS_FILE:-}" .copier-answers.yml .copier-answers.yaml; do
-    [ -n "$candidate" ] || continue
-    if [ -f "$candidate" ]; then
-        answers="$candidate"
-        break
-    fi
-done
-
 # The project-management jinja twins. `any_twin` matches either tracker variant
 # and is the shape only the harmon-init template has; `twin` is the GitHub one
 # specifically, so the `linear` variant — a different tracker, with no label
@@ -132,6 +118,37 @@ for candidate in template/docs/*project-management.md*.jinja; do
     *github*) twin="$candidate" ;;
     esac
 done
+
+# Copier's answers file: the artifact that says "this repository is a COPY of
+# some template". Its presence is what separates a generated repository from
+# the template itself, and it also records which project-management document
+# was rendered. Prefer the name the caller passes (Copier's is configurable),
+# then the environment, then Copier's own defaults.
+#
+# The AMBIENT environment is consulted only where the twin sentinel is absent.
+# In the template repository an exported COPIER_ANSWERS_FILE — pointing at, say,
+# `.dogfood-answers.yml`, which does exist there — would otherwise flip it into
+# generated mode and quietly check one layer instead of two. An explicit
+# --answers-file flag still wins everywhere: that is a caller stating intent,
+# not an inherited shell.
+answers=""
+answers_candidates="$answers_file"
+if [ -z "$any_twin" ]; then
+    answers_candidates="$answers_candidates
+${COPIER_ANSWERS_FILE:-}"
+fi
+answers_candidates="$answers_candidates
+.copier-answers.yml
+.copier-answers.yaml"
+while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate" ]; then
+        answers="$candidate"
+        break
+    fi
+done <<EOF
+$answers_candidates
+EOF
 
 targets=""
 # Template mode needs BOTH signals. A bare `template/` directory is not enough:
@@ -208,10 +225,28 @@ while IFS= read -r target; do
         continue
     fi
 
+    # Ordering. One of each is not yet a well-formed region: reversed markers
+    # would make the awk below extract everything OUTSIDE the block, and an
+    # extraction that never meets its closing marker has swallowed the rest of
+    # the file. Both are structural breakage, not drift, so they get their own
+    # errors instead of an enormous confusing diff.
+    begin_line="$(grep -nxF "$begin" "$target" | cut -d: -f1)"
+    end_line="$(grep -nxF "$end" "$target" | cut -d: -f1)"
+    if [ "$begin_line" -ge "$end_line" ]; then
+        echo "FAIL: $target has its registry-table markers reversed — '$begin' is on line $begin_line, after '$end' on line $end_line" >&2
+        fails=$((fails + 1))
+        continue
+    fi
+
     awk -v b="$begin" -v e="$end" '
         $0 == b { inside = 1; next }
-        $0 == e { inside = 0 }
-        inside' "$target" >"$work/actual"
+        $0 == e { inside = 0; closed = 1 }
+        inside
+        END { exit(closed ? 0 : 1) }' "$target" >"$work/actual" || {
+        echo "FAIL: $target has an unclosed registry-table region — extraction from '$begin' never reached '$end'" >&2
+        fails=$((fails + 1))
+        continue
+    }
 
     if ! diff -u "$work/actual" "$work/expected" >"$work/diff"; then
         echo "FAIL: the registry tables in $target do not match agent-registry.json:" >&2

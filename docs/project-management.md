@@ -237,8 +237,8 @@ What is automated, and by which of the three:
 |---|---|---|
 | Item added to the project | **Inbox** | built-in workflow |
 | PR opened / pushed to / reopened | **Verifying** | Actions (`project-automation.yml`) |
-| Required CI concludes green | **In Review** | Actions (`project-automation.yml`) |
-| Required CI concludes red | **Verifying** (stays) | Actions (`project-automation.yml`) |
+| Build run completes without failing | **In Review** | Actions (`project-automation.yml`) — any conclusion outside `failure`/`cancelled`/`timed_out`/`action_required` counts, so `skipped`, `neutral` and `startup_failure` advance the card too |
+| Build run concludes `failure`, `cancelled`, `timed_out` or `action_required` | **Verifying** (stays) | Actions (`project-automation.yml`) |
 | Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) |
 | PR merged | **Done** | Actions (`project-automation.yml`) + built-in |
 | Issue closed, for any reason | *(nothing)* | not automated — see below |
@@ -265,8 +265,19 @@ generated **for organization repos only** — a personal-account board has no
 org project for the CI App to write, so there the built-ins plus the claim
 lifecycle are the whole story. It resolves the issue from the PR's
 `claude/issue-N` branch name or a `Closes` / `Fixes` / `Resolves` reference in
-the PR body, skips fork PRs, and is `continue-on-error` throughout: a board
-that cannot be written must never fail a build.
+the PR body.
+
+**Only this repository's own branches move the board.** The branch name is the
+routing key and its author chooses it, so a fork pushing `claude/issue-N` would
+otherwise steer issue N's card. Trust comes from the head *repository*
+instead: a `pull_request` or `workflow_run` event whose head repo is not this
+repository is not acted on.
+
+The status write itself is `continue-on-error`, so a board that cannot be
+written never fails a build. That tolerance starts *after* the App token is
+minted, though — missing `CI_APP_CLIENT_ID` / `CI_APP_PRIVATE_KEY`, or an App
+without **Projects: Read and write**, fails the token step, and
+`project-automation-verify` fails with it.
 
 ## Fields
 
