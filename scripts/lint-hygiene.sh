@@ -132,7 +132,7 @@ for f in "${files[@]}"; do
     # vendored skills (fixed upstream in harmon-devkit), and this scan plus
     # its regression fixtures.
     case "$f" in
-    .github/workflows/* | template/.github/workflows/* | .claude/skills/* | CHANGELOG.md | \
+    .github/workflows/* | template/.github/workflows/* | .claude/skills/* | \
         scripts/lint-hygiene.sh | template/scripts/lint-hygiene.sh | \
         scripts/test-lint-hygiene.sh | template/scripts/test-lint-hygiene.sh) ;;
     *)
