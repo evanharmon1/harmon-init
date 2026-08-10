@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.25.0](https://github.com/evanharmon1/harmon-init/compare/v4.24.1...v4.25.0) (2026-08-10)
+
+
+### Features
+
+* make Claude workflows mention-only and claim-aware ([#718](https://github.com/evanharmon1/harmon-init/issues/718)) ([509358e](https://github.com/evanharmon1/harmon-init/commit/509358e15455eeb9774a1bb6f5db5dc2c81824fe))
+* publish the complete label taxonomy and agent registry documentation ([#727](https://github.com/evanharmon1/harmon-init/issues/727)) ([b6b38d7](https://github.com/evanharmon1/harmon-init/commit/b6b38d73d1c1de9de7030d7b7680f4008dcd8285))
+
+
+### Bug Fixes
+
+* **template:** stop forcing CLAUDE_CODE_EFFORT_LEVEL=max in devcontainers ([#724](https://github.com/evanharmon1/harmon-init/issues/724)) ([ae12ab9](https://github.com/evanharmon1/harmon-init/commit/ae12ab95bdeec6d4e42786cbcc2093935b2e436e))
+
 ## [4.24.1](https://github.com/evanharmon1/harmon-init/compare/v4.24.0...v4.24.1) (2026-08-09)
 
 
