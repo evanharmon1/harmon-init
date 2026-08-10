@@ -19,7 +19,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 
 - **Hub** — every `README.md`. Routes to where facts live; never duplicates them.
 - **Typed** — holds one kind of content (a vision, an ADR, a guide…).
-- **Flat lookup** (root) — [conventions.md](conventions.md), [glossary.md](glossary.md): grep them, don't read them.
+- **Flat lookup** (root) — [conventions.md](conventions.md), [glossary.md](glossary.md), [copier-options.md](copier-options.md): grep them, don't read them.
 - **Procedural, run-once** — [CHECKLIST.md](CHECKLIST.md): tick through once when the repo is created, then ignore.
 
 ## Where things are
@@ -28,6 +28,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 |---|---|
 | Conventions (enforced rules) | [conventions.md](conventions.md) |
 | Glossary (term → definition) | [glossary.md](glossary.md) |
+| Copier inputs (questions, hidden answers, fleet answers) | [copier-options.md](copier-options.md) |
 | Product — vision, roadmap, domain | [product/](product/) |
 | Architecture (subject hubs) | [architecture/](architecture/) — ci-cd, security, branch-protection, tests |
 | Decisions (ADRs) | [decisions/](decisions/) |
