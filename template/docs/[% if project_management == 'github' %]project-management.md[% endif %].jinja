@@ -255,7 +255,7 @@ What is automated, and by which of the three:
 | PR opened / pushed to / reopened | **Verifying** | Actions (`project-automation.yml`) |
 | Build run completes without failing | **In Review** | Actions (`project-automation.yml`) — any conclusion outside `failure`/`cancelled`/`timed_out`/`action_required` counts, so `skipped`, `neutral` and `startup_failure` advance the card too |
 | Build run concludes `failure`, `cancelled`, `timed_out` or `action_required` | **Verifying** (stays) | Actions (`project-automation.yml`) |
-| Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) |
+| Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) — only when the PR's `reviewDecision` is `APPROVED`; head repo and reviewer association are pre-filters |
 | PR merged | **Done** | Actions (`project-automation.yml`) + built-in |
 [% else %]
 | Review requested on a PR | **In Review** | built-in workflow |
@@ -288,8 +288,23 @@ issue from the PR's `claude/issue-N` branch name or a `Closes` / `Fixes` /
 **Only this repository's own branches move the board.** The branch name is the
 routing key and its author chooses it, so a fork pushing `claude/issue-N` would
 otherwise steer issue N's card. Trust comes from the head *repository*
-instead: a `pull_request` or `workflow_run` event whose head repo is not this
-repository is not acted on.
+instead: a `pull_request`, `workflow_run` or `pull_request_review` event whose
+head repo is not this repository is not acted on. On the review path that test — plus a reviewer
+`author_association` of `OWNER`, `MEMBER` or `COLLABORATOR` — is only a
+pre-filter, keeping fork events and drive-by approvals from consuming a runner
+and minting the App token. It is not the authorization: association is not a
+permission, and `MEMBER` / `COLLABORATOR` include read-only and triage access.
+
+**Ready to Merge is written only when the PR's `reviewDecision` is `APPROVED`.**
+The event says somebody approved; `reviewDecision` is GitHub's own computation
+of whether the PR *is* approved — required reviewers honoured, dismissals and
+stale reviews accounted for — which is exactly what the status means. Any other
+value logs and writes nothing. That includes an **empty** decision, which is
+what GitHub returns when no required-review rule exists at all, even after a
+genuine approval: this repository's ruleset requires code-owner review, so an
+empty value means the rule is missing rather than the PR being approved. The
+board write is advisory state and merging stays ruleset-protected either way;
+this keeps the card honest, it is not the merge security.
 
 The status write itself is `continue-on-error`, so a board that cannot be
 written never fails a build. That tolerance starts *after* the App token is

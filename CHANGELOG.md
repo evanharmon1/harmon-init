@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.25.2](https://github.com/evanharmon1/harmon-init/compare/v4.25.1...v4.25.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 72bafab6 ([#740](https://github.com/evanharmon1/harmon-init/issues/740)) ([a800292](https://github.com/evanharmon1/harmon-init/commit/a800292bfeb52b419a49dc9815ff6145a8bb0c1e))
+* gate project-automation board writes on head repository and reviewDecision ([#741](https://github.com/evanharmon1/harmon-init/issues/741)) ([fc9af2e](https://github.com/evanharmon1/harmon-init/commit/fc9af2ec14091b0ffc7e7c5e071f193096643d05))
+* **template:** sync harmon-devkit skills to v0.25.1 ([#730](https://github.com/evanharmon1/harmon-init/issues/730)) ([a9b0e14](https://github.com/evanharmon1/harmon-init/commit/a9b0e14c6a669ad4dc95d20fbd8f68ba851b67e8))
+
 ## [4.25.1](https://github.com/evanharmon1/harmon-init/compare/v4.25.0...v4.25.1) (2026-08-10)
 
 
