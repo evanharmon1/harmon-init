@@ -15,8 +15,14 @@ on:
 jobs:
   sync-status:
     name: Sync project status
+    # Trust boundary. `workflow_run` fires for fork-backed runs too, and this job
+    # derives the issue from the head BRANCH NAME — which the fork author picks.
+    # Without the head-repository test, a fork pushing `claude/issue-N` moves
+    # issue N's card using the App token. The head repo is what establishes
+    # trust; the branch name never can. (Deliberate tightening, approved.)
     if: >-
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) &&
       ((github.event_name == 'pull_request') ||
        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
        (github.event_name == 'workflow_run'))

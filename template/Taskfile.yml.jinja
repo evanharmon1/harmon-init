@@ -108,6 +108,7 @@ tasks:
       - task: validate
       - task: test:agent-registry
       - task: test:registry-drift
+      - task: test:registry-docs
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -663,6 +664,23 @@ tasks:
     desc: Bind label provisioning, provider wrappers, and Foreman adapters to the agent registry (offline drift gate)
     cmds:
       - ./scripts/test-registry-drift.sh
+
+  test:registry-docs:
+    # The answers-file name is configurable (`copier copy --answers-file …`),
+    # and the check reads project_management out of it to know whether this
+    # repo renders the GitHub Projects document at all. The script is a
+    # verbatim twin of harmon-init's own, so the name is passed in rather than
+    # templated into it — as an ENV value, not a command argument: a filename
+    # containing an apostrophe would terminate a quoted shell argument early.
+    # `tojson` emits a JSON string, which is also a valid YAML double-quoted
+    # scalar, so quotes and backslashes in the name survive both layers. The
+    # `string` filter first because copier hands this over as a PurePosixPath,
+    # which `tojson` cannot serialize.
+    desc: Bind the published family/harness tables in docs/project-management.md to the agent registry
+    env:
+      COPIER_ANSWERS_FILE: [[ _copier_conf.answers_file | string | tojson ]]
+    cmds:
+      - ./scripts/test-registry-docs.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

@@ -115,20 +115,25 @@ of sitting in an "Archived" column.
 **Agent Queue is the hand-off lane to AI coding agents.** An item lands there once
 it's shaped and ready for an *agent* rather than a human to implement — a
 **`suggest:*`** label says which family (and optionally model) should take it.
-Today the hand-off is manual: suggest the agent and trigger it (a `claude-*`
-workflow, or point Claude Code at the item). The lane is built for future
-automation, though — an agent can watch *Agent Queue + suggest-labelled +
-priority* (the Agent-queue view below) and pull the top item on its own — and
-either way the item moves to **In Progress** once work starts.
+The hand-off itself is manual: suggest the agent, then trigger it — an
+`@claude` mention naming `implement` (see
+[The Claude Actions workflows](#the-claude-actions-workflows)), or point Claude
+Code at the item. The lane is built for automation, though — an agent can watch
+*Agent Queue + suggest-labelled + priority* (the Agent-queue view below) and
+pull the top item on its own — and either way the item moves to **In Progress**
+once work starts.
 
 > **Foreman is that automation** for issue-driven delivery: arm the issue with
-> a `foreman:*` label (label arming is the supported mode — issue-field arming
-> is refused because GitHub exposes no actor for field changes, so the trust
-> gate cannot attribute it) and
-> `task foreman:dispatch` / `foreman:watch` pulls ready items, opens verified
-> PRs, and shepherds them to a human merge. The Project stays the human
-> dashboard — foreman neither reads nor writes it (issue state, labels/fields,
-> and PRs are its interface). See https://github.com/ponderousdev/foreman.
+> a `foreman:*` label — label arming is the only supported mode, because
+> Foreman requires a trusted, timeline-attributable arming actor and GitHub
+> exposes no actor for an issue-field change — and `task foreman:dispatch` /
+> `foreman:watch` pulls ready items and delivers them **draft-first**: it opens
+> a **draft** PR labelled `foreman:dispatched`, runs its own verify gate,
+> shepherds CI and reviews on the draft, and promotes it to
+> `foreman:ready-for-review` only through its readiness gate. Merging is always
+> a human decision. The Project stays the human dashboard — foreman neither
+> reads nor writes it (issue state, labels, and PRs are its interface). See
+> https://github.com/ponderousdev/foreman.
 
 ## Status is not issue state
 
@@ -168,7 +173,10 @@ closed, so closing something as Not planned or Duplicate would paint it **Done**
 on the board — wrong. Gate it:
 
 - Drive Done off **"PR merged → Done"** for the success path.
-- On a raw close event, check `state_reason == completed` before setting Done.
+- Leave the built-in **"item closed → Done"** rule **off**. Only a custom
+  Action can read `state_reason`, and none ships here — so the built-in is the
+  whole of what that rule would do, and it cannot tell a shipped issue from an
+  abandoned one.
 
 Items closed as not-planned/duplicate just stay closed and fall off the board;
 their `Status` value goes vestigial, which is fine — nothing open-filtered shows
@@ -223,14 +231,53 @@ Backlog on add, In Review on review-requested, Done on merge, Done on close,
 auto-close, auto-archive. Drop to Actions only for the gaps built-ins don't
 cover.
 
-TODO: finalize exactly what to automate. The intended event → status shape:
+What is automated, and by which of the three:
 
-- New issue → **Inbox**
-- Branch/PR started → **In Progress**
-- PR opened → **In Review**
-- Deployment complete → verification (if applicable)
-- Issue closed (`state_reason == completed`) → **Done**
-- 90 days in Done → **auto-archived** off the board (native built-in, not a Status)
+| Event | Sets `Status` to | Mechanism |
+|---|---|---|
+| Item added to the project | **Inbox** | built-in workflow |
+| PR opened / pushed to / reopened | **Verifying** | Actions (`project-automation.yml`) |
+| Build run completes without failing | **In Review** | Actions (`project-automation.yml`) — any conclusion outside `failure`/`cancelled`/`timed_out`/`action_required` counts, so `skipped`, `neutral` and `startup_failure` advance the card too |
+| Build run concludes `failure`, `cancelled`, `timed_out` or `action_required` | **Verifying** (stays) | Actions (`project-automation.yml`) |
+| Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) |
+| PR merged | **Done** | Actions (`project-automation.yml`) + built-in |
+| Issue closed, for any reason | *(nothing)* | not automated — see below |
+| PR closed unmerged | *(nothing)* | deliberately not automated |
+| 90 days in Done | **auto-archived** off the board | built-in auto-archive (not a `Status`) |
+
+`In Progress` is deliberately **not** automated: it means a human or an agent
+picked the work up, which happens before any artifact exists to trigger on. It
+is written by the [claim lifecycle](#claiming--making-an-agents-work-visible-while-it-happens).
+
+**Closing an issue moves nothing, on purpose.** Nothing shipped here listens for
+`issues: closed`, and GitHub's built-in "item closed → Done" rule cannot read
+the close reason — so leave that built-in **off**. Turned on, it paints every
+issue closed as *Not planned* or *Duplicate* **Done**, which is exactly the
+misfiling the [close-reason axis](#canceled-and-duplicate-are-close-reasons-not-statuses)
+exists to prevent, and every one of them needs correcting by hand. Left off,
+`Done` keeps meaning shipped: it arrives from the merge path above, and the
+occasional issue that completes without a merged PR is moved by hand. An issue
+closed as not-planned simply keeps whatever `Status` it had — vestigial, and
+invisible to every open-filtered view.
+
+The Actions half is `.github/workflows/project-automation.yml`, which is
+generated **for organization repos only** — a personal-account board has no
+org project for the CI App to write, so there the built-ins plus the claim
+lifecycle are the whole story. It resolves the issue from the PR's
+`claude/issue-N` branch name or a `Closes` / `Fixes` / `Resolves` reference in
+the PR body.
+
+**Only this repository's own branches move the board.** The branch name is the
+routing key and its author chooses it, so a fork pushing `claude/issue-N` would
+otherwise steer issue N's card. Trust comes from the head *repository*
+instead: a `pull_request` or `workflow_run` event whose head repo is not this
+repository is not acted on.
+
+The status write itself is `continue-on-error`, so a board that cannot be
+written never fails a build. That tolerance starts *after* the App token is
+minted, though — missing `CI_APP_CLIENT_ID` / `CI_APP_PRIVATE_KEY`, or an App
+without **Projects: Read and write**, fails the token step, and
+`project-automation-verify` fails with it.
 
 ## Fields
 
@@ -279,7 +326,9 @@ There is deliberately **no `Agent` field**. Which agent *should* take an issue
 is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
 *is* working it is the claim label (see **Claiming** below). A field could carry
 neither answer without duplicating the label vocabulary, and on an organization
-the Projects V2 API could not even write it (ADR 0005, D4).
+the Projects V2 API could not even write it — see
+[Label or field?](#label-or-field) and
+[ADR 0005](decisions/0005-unified-agent-vocabulary.md).
 
 **Migrating a board that still has one** (set up before the field was retired):
 the setup scripts are additive-only by design, so deleting the live field is an
@@ -310,7 +359,29 @@ destroys every value on it, unrecoverably.
 On a personal account there are no issue fields, so `task setup:github-project`
 creates **Priority, Product, Domain, Layer, and Size** as project fields.
 
-TODO: finalize each field's options/values.
+### The provisioned field values
+
+What the setup scripts actually create. Every single-select is a **starter
+set**: re-runs append missing options and never rename, reorder, or delete, so
+options you add in the UI survive and a value added by a later harmon-init
+release lands on the next run.
+
+| Field | Type | Values | Provisioned by |
+|---|---|---|---|
+| **Status** | project single-select | Inbox, Icebox, Next, Todo, Shaping, Ready, Agent Queue, In Progress, Verifying, In Review, Ready to Merge, Done, Deployed, Accepted | `setup:github-project` |
+| **Size** | project number | free numeric entry; the Fibonacci ladder (1, 2, 3, 5, 8, 13, 21) is a convention, not an option list | `setup:github-project` |
+| **Priority** | single-select | Urgent, High, Medium, Low | `setup:github-project`, personal accounts only |
+| **Product** | text | free text | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
+| **Domain** | single-select | `auth`, `billing`, `platform` | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
+| **Layer** | single-select | `ui`, `logic`, `data`, `integration` | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
+
+Two org-only notes. GitHub ships **Priority** and **Effort** (plus **Start
+date** and **Target date**) as built-in *issue* fields, and both setup scripts
+leave them at their defaults — so on an organization `Priority` is GitHub's own
+field with GitHub's own options, and the Urgent/High/Medium/Low list above is
+the personal-account project field. And `Effort` cannot hold the estimate:
+an issue field's type is fixed at creation, and only project **number** fields
+can be summed in a view's group header, which is `Size`'s whole job.
 
 ## Labels
 
@@ -327,16 +398,21 @@ families, color-coded by family; the starter set is created by
 - **Layer** — `layer:ui`, `layer:logic`, `layer:data`, `layer:integration`
 - **Domain** — start with `domain:auth`, `domain:billing`, `domain:platform`;
   grow from your ERD entities
-- **Claim** — `claim:claude`, `claim:codex`, … (registry-driven; see
-  `agent-registry.json`) — which agent family is working the issue *right
-  now*, written by the agent itself (see **Claiming** below)
-- **Suggest** — `suggest:claude`, `suggest:codex`, … (registry-driven; see
-  `agent-registry.json`) — which agent family *should* implement the issue,
-  set at triage. Advisory only: it routes nothing by itself and must never be
-  read as Foreman arming (that is the `foreman:*` family). A model-level
-  label (`suggest:claude:opus`, created on demand) **refines** the family
-  label, never replaces it — apply both, so views filtered on the family
-  labels keep seeing the issue
+
+Two more families name **model intelligence** rather than a facet of the work,
+and their vocabulary is not hand-listed anywhere: it is rendered from
+`agent-registry.json` (see [Agent families and harnesses](#agent-families-and-harnesses)),
+so provisioning and documentation cannot fork from each other.
+
+- **Suggest** — `suggest:claude`, `suggest:codex`, … — which agent family
+  *should* implement the issue, set at triage. Advisory only: it routes
+  nothing by itself and must never be read as Foreman arming (that is the
+  `foreman:*` family). A model-level label (`suggest:claude:opus`, created on
+  demand) **refines** the family label, never replaces it — apply both, so
+  views filtered on the family labels keep seeing the issue
+- **Claim** — `claim:claude`, `claim:codex`, … — which agent family is working
+  the issue *right now*, written by the agent itself (see **Claiming** below).
+  Model-level (`claim:claude:opus`) refines it the same way
 
 > **Transition — the retired `agent:*` family.** Repos seeded before the
 > registry-driven vocabulary carry `agent:claude-code`-style labels instead of
@@ -367,6 +443,148 @@ org's **default labels** (org Settings → Repository, UI-only) to seed *new* re
 remain until you prune them — including a pre-`ui`/`logic`/`data`/`integration`
 repo's `layer:frontend`, `layer:backend`, and `layer:infra`, which you re-map and
 delete by hand.
+
+### Labels carry no permissions
+
+**GitHub has no per-label permission.** Anyone with triage access to the repo
+can apply or remove any label, and the label itself records nothing about who
+did — a label is a string on an issue, not a capability. So a label can never
+be the security boundary. The boundary is always in the **consumer**: whatever
+reads a label to start work must independently establish who applied it, and
+refuse when it cannot.
+
+That rule has a hard form: **any label that triggers automation must have an
+actor-verifying consumer.** Today that class is exactly the Foreman arming
+labels. Every other family either triggers nothing, or is read by a consumer
+that can only stop work:
+
+| Family | Triggers execution? | How the consumer establishes trust |
+|---|---|---|
+| `foreman:<adapter>`, `foreman:approved` | **yes** — arms an issue for dispatch | Foreman reads the `labeled` **timeline event**, takes the actor from it, and requires that login in `trusted_actors` (`.foreman.toml`). Unattributable arming is a fail-closed refusal, never a dispatch — which is also why issue-field arming is refused outright: GitHub exposes no actor for a field change |
+| the Claude Actions workflows | **no** — labels trigger nothing at all | Execution starts only on an explicit `@claude` mention naming `plan`, `implement`, or `review`, from a login on the workflow's sender allowlist. The allowlist is enforced in the job `if:` and re-asserted in a token-free step *before* any credential is minted |
+| `claim:*` (and legacy `agent:*`) | **no** — read as a gate, not a trigger | Those workflows refuse to start on a target that already carries one. No actor check is needed for a signal that can only *withhold* execution: the worst outcome is a visible, reversible refusal |
+| `autorelease: *` | **no** | release-please writes them on its own release PRs and reads only what it wrote; nothing dispatches from one |
+| everything else | **no** | human-facing facets, read by people and saved views |
+
+There are no `claude-plan` / `claude-implement` / `claude-review` **trigger**
+labels, for exactly this reason: a `labeled` event carries an actor, but the
+label sitting on the issue afterwards does not, so half the paths a
+label-triggered workflow can start from have nobody to check. Label setup is
+additive, so a repository standardized before those labels were retired may
+still carry them live-but-inert — delete them by hand.
+
+### Label or field?
+
+Both surfaces can hold the same-looking datum, so the choice is made on
+mechanics, not taste. Use a **label** when the datum must be any of:
+
+- **multi-valued** — an issue can legitimately carry two at once;
+- **visible without project scope** — readable from `gh issue list` and the
+  issue page, with no Projects API token;
+- **writable with plain repo scope** — no `project` scope, no org permission;
+- **timeline-attributable** — the `labeled` event records who applied it and
+  when;
+- **available on personal repos** — org issue fields do not exist there.
+
+Use a **field** when it is **single-valued planning metadata you slice the
+board by**: `Status`, `Priority`, `Size`, `Product`, `Domain`, `Layer`.
+
+The consequences are not stylistic. Foreman arming is labels because only the
+label timeline names an arming actor. Claims are labels because a claim must be
+writable and visible to an agent holding nothing but repo scope, on personal
+and org repos alike. And there is deliberately no `Agent` field: advisory
+routing and live ownership are two different facts, a single-select could carry
+neither without duplicating the label vocabulary, and on an organization the
+Projects V2 API could not write it at all.
+
+### The complete label taxonomy
+
+Every label family this repository knows about. **Provisioned** means
+`task setup:github-labels` creates it; **tool-owned** means the tool that uses
+it creates it on demand, and provisioning deliberately leaves it alone.
+
+| Label / family | Writer | Reader | Trust class | Lifecycle |
+|---|---|---|---|---|
+| `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
+| `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
+| `needs-triage`, `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
+| `layer:{ui,logic,data,integration}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Layer` field, with no sync between them |
+| `domain:{auth,billing,platform,…}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Domain` field, with no sync between them |
+| `suggest:<family>` | humans, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |
+| `suggest:<family>:<model>` | humans | humans | **tool-owned, created on demand** — seeding every model would be an unbounded roster | refines the family label; apply both |
+| `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate; `claim-release.yml` | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step, or by `claim-release.yml` on close |
+| `claim:<family>:<model>` | the agent itself | as above | **tool-owned, created on demand** | as above |
+| `claim:claude` in a repo with no label provisioning | the Claude Actions run | as above | **tool-owned, auto-created** with the registry's own color and description, so a later provisioning run reconciles it rather than fighting it | as above |
+| `agent:*` (**retired**) | nobody — never seeded into a new repo | claim skills and `claim-release.yml`, which still recognize it | legacy; inert | delete once live claims are re-mapped to `claim:*` |
+| `foreman:<adapter>` (today: `foreman:claude`) | a trusted human, to arm an issue | Foreman | provisioned from the registry, for production-dispatchable adapters only; **actor-verified arming** | applied to arm; stays on the issue |
+| `foreman:approved` | a trusted human | Foreman | provisioned; **actor-verified arming** with the repo default backend | as above |
+| `foreman:hold` | a human | Foreman | provisioned; non-arming and always wins | applied to exclude, removed to re-include |
+| `foreman:satisfied`, `foreman:external` | a human | Foreman's dependency graph | provisioned; non-arming dependency overrides | applied per dependency decision |
+| `foreman:dispatched` | Foreman, on the draft PR it opens | Foreman | **tool-owned, auto-created** | added when the draft PR opens |
+| `foreman:ready-for-review` | Foreman, on passing its readiness gate | Foreman, humans | **tool-owned, auto-created** | added at promotion; the hand-off to human review |
+| `type:<commit-type>` | a human, optionally | Foreman, to pick the unit's conventional-commit type | **not provisioned** — an optional override of the native issue `Type` | applied when the native type is absent or wrong |
+| `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
+| GitHub's own defaults (`bug`, `enhancement`, `question`, …) | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+
+Foreman's PR-side labels are namespaced on purpose: every label Foreman reads
+or writes lives under `foreman:`, so the arming inputs and the lifecycle
+outputs are one legible namespace. `foreman:ready-for-review` is the accurate
+name for what promotion means — the automated work is complete and a human is
+now being asked to review it. Approval stays GitHub's native review decision,
+and merging stays human-only.
+
+### Agent families and harnesses
+
+The `suggest:` / `claim:` vocabulary and the Foreman adapter selectors come
+from one machine-readable source, `agent-registry.json`, validated against
+`agent-registry.schema.json`. The two axes are deliberately distinct: a
+**family** is the model intelligence doing the reasoning, a **harness** is the
+executable that runs it. `suggest:` and `claim:` name families;
+`foreman:<adapter>` names harness machinery. The reasoning, and the rules for
+naming a family or a harness slug, are in
+[ADR 0005](decisions/0005-unified-agent-vocabulary.md).
+
+The tables below are **generated** from that file — `task test:registry-docs`
+regenerates them and fails on any difference, so they cannot drift from what
+provisioning actually creates. Model-level labels are created on demand rather
+than seeded, and a `foreman:` selector is provisioned only for an adapter that
+exists and is production-dispatchable in the pinned Foreman release: a selector
+with no adapter behind it is a false capability that can strand armed work.
+
+<!-- registry-tables:begin -->
+<!-- Generated from agent-registry.json by `node scripts/agent-registry-labels.mjs docs-tables`. Do not edit by hand — `task test:registry-docs` fails on drift. -->
+
+#### Model families
+
+| Family | Name | Models |
+| --- | --- | --- |
+| `claude` | Claude | `opus`, `sonnet`, `haiku` |
+| `codex` | OpenAI Codex | `sol`, `terra`, `luna` |
+| `copilot` | GitHub Copilot | — |
+| `qwen` | Qwen | `coder` |
+| `deepseek` | DeepSeek | — |
+| `glm` | GLM | `5-2` |
+| `kimi` | Kimi | `k3` |
+| `minimax` | MiniMax | — |
+| `gemini` | Gemini | — |
+
+#### Harnesses
+
+| Harness | Product | Family | Foreman adapter | Model selected by |
+| --- | --- | --- | --- | --- |
+| `claude-code` | Claude Code CLI | `claude` | `foreman:claude` — production, dispatchable | `runner-config` — The runner or repository configuration selects the Claude model; labels do not. |
+| `claude-code-action` | claude-code-action | `claude` | — | `workflow-config` — The GitHub Actions workflow input selects the Claude model. |
+| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
+| `claude-code-glm` | Claude Code provider wrapper | `glm` | — | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
+| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | — | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
+| `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
+| `codex-cli` | OpenAI Codex CLI | `codex` | — | `runner-config` — The runner or CLI invocation selects the Codex model. |
+| `copilot-cli` | GitHub Copilot CLI | `copilot` | — | `runner-config` — The runner or Copilot configuration selects the model. |
+| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` — The runner or Qwen Code configuration selects the Qwen model. |
+| `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` — The Antigravity session selects the Gemini model. |
+| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` — The multi-provider harness selects both provider family and model at runtime. |
+| `pi` | Pi | any (multi-provider) | — | `harness-runtime` — The multi-provider harness selects both provider family and model at runtime. |
+<!-- registry-tables:end -->
 
 ## Claiming — making an agent's work visible while it happens
 
@@ -419,10 +637,22 @@ tracking agent work in **both** directions until a human happens to notice it
 has gone stale. Check the scope at session start (`task status:gh`), not after
 the claim.
 
-**A claim is a signal, not a lock.** None of these writes is atomic, and two
-sessions running as the same GitHub user are invisible to each other — the
-assignee converges, the label is idempotent, and the field is last-writer-wins.
-It makes concurrent work discoverable by a human; it does not prevent it.
+**How much a claim prevents depends on who is reading it.** The label is one
+string, but it has two very different consumers:
+
+- **Interactive sessions — a signal, not a lock.** None of these writes is
+  atomic, and two sessions running as the same GitHub user are invisible to
+  each other: the assignee converges, the label is idempotent, and the field is
+  last-writer-wins. A claim makes concurrent work discoverable by a human; it
+  does not prevent it.
+- **The Claude Actions workflows — a fail-closed gate.** A run refuses to
+  start on a target that already carries any `claim:*` or `agent:*` label, and
+  says which one. That is enforcement, not advice, and it is why a stale claim
+  blocks mentions on that issue until somebody removes the label.
+
+The gap between the two is deliberate rather than unfinished: a workflow run
+has one entry point to gate, while an interactive session can start anywhere,
+so promising a lock there would be a promise the mechanism cannot keep.
 
 **A claim must be released.** `In Progress` left on finished or abandoned work
 is worse than no signal, because the next reader believes it. The lifecycle
@@ -464,6 +694,65 @@ in the vendored `track-work` skill.
 > organization `project-automation.yml` still syncs `Status` from PR and CI
 > events, so that is not the same as nothing moving it — check what the
 > workflow already does before setting the field manually.
+
+### The Claude Actions workflows
+
+`claude-plan.yml`, `claude-implement.yml`, and `claude-review.yml` run Claude
+Code on an issue or PR from inside GitHub Actions. Three properties define how
+they start, and all three exist because of the label boundary above.
+
+**Mention-only.** The single way a run starts is a comment or review body that
+carries an `@claude` mention followed by `plan`, `implement`, or `review`.
+There is no label trigger, no `issues: opened`, and no `issues: assigned`
+trigger. Every one of those was retired: they carry no actor the workflow can
+check on every path, and the labels that used to drive them are gone.
+
+**Sender-gated.** The mention only counts from a login on the workflow's
+authorized-sender allowlist. The allowlist answer is not the whole list: the
+review workflow additionally authorizes `renovate[bot]` and `dependabot[bot]`
+as senders, so their update PRs can request their own reviews — treat those
+fixed bot principals as part of the trust surface when auditing. The allowlist
+is checked twice — in the job `if:`, and again in a token-free step that
+re-asserts it *before* any App token is minted — so a gap in the expression can
+never mint a credential.
+
+**Claim-aware, fail-closed.** After the sender gate passes and before the token
+is minted, the run acquires `claim:claude` on the target:
+
+| Situation | What the run does |
+|---|---|
+| Target is unclaimed and the label lands | claims it and runs |
+| Event has no issue or PR number | runs unclaimed — there is nothing to collide with |
+| Target already carries any `claim:*` or `agent:*` label | **refuses**, naming the held label and the remedy |
+| The label list cannot be read | **refuses** — it cannot prove the target is free |
+| The label will not apply | **refuses** — it would work the target unmarked |
+
+`suggest:*` is deliberately not matched: it is advice about who *should* do the
+work, never ownership of it. The label is created if the repository does not
+have it, with the registry's own color and description, so a later
+`task setup:github-labels` reconciles that label instead of fighting it.
+
+Release is loud, and bounded. An `always()` step releases the claim — but only
+when *this* run acquired it, so a claim that was already there is never stolen.
+It covers the failure, step-timeout and cancellation paths, which is why the
+model step carries a cap well inside the job's: a job-level timeout kills the
+runner outright and the cleanup never runs at all. A release that cannot be
+confirmed retries once and then turns the job **red** with the marker still on
+the issue, because a release reported as successful over a surviving label
+would be permanent — the next run reads the claim, records that it did not
+acquire it, and never cleans it either.
+
+It is not a guarantee. Runner loss, a force-cancel, or the job cap firing can
+strand `claim:claude` with no cleanup at all, and a stranded claim blocks
+further mentions on that target until somebody removes the label by hand. That
+residual is accepted rather than reconciled by a workflow of its own.
+
+Because acquiring is a read-then-add, the three workflows share one job-level
+`concurrency` group keyed on the target number, so two runs on the same issue
+serialize instead of both reading "unclaimed". The group is job-level rather
+than workflow-level on purpose: these workflows fire on every comment event and
+filter in the job `if:`, so a workflow-level group would let ordinary comments
+queue up and displace legitimate runs.
 
 ## Milestones
 
