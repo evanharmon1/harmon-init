@@ -73,9 +73,10 @@ code_owner:
 claude_authorized_members:
   type: str
   help: >-
-    CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger @claude
-    plan/implement/review. This is an explicit allowlist (not org membership);
-    the review workflow additionally allows Renovate and Dependabot, plus
+    CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger the
+    @claude commands (plan/implement/review). This is an explicit allowlist
+    (not org membership); the review workflow additionally allows Renovate
+    and Dependabot, plus
     CodeRabbit when opted in. Add more with `user-a,user-b`.
   default: "[[ author_git_provider_username ]]"
 
