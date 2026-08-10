@@ -449,6 +449,22 @@ full)
     grep -q "workflow_run.head_repository.full_name == github.repository" \
         .github/workflows/project-automation.yml ||
         err "project-automation.yml lost the workflow_run head-repository fork guard"
+    # Same boundary on the review path: a fork PR's review must not move the card.
+    review_clause=$(grep -A1 "github.event_name != 'pull_request_review' ||" \
+        .github/workflows/project-automation.yml || true)
+    case "$review_clause" in
+    *"pull_request.head.repo.full_name == github.repository"*) ;;
+    *) err "project-automation.yml lost the pull_request_review head-repository fork guard" ;;
+    esac
+    # Approving is not a repo permission, so Ready to Merge also needs a trusted reviewer.
+    grep -q "github.event.review.author_association" \
+        .github/workflows/project-automation.yml ||
+        err "project-automation.yml lost the review author_association pre-filter"
+    # The real authorization: association is not permission, so the write itself
+    # requires GitHub's own reviewDecision to say the PR is approved.
+    grep -q 'REVIEW_DECISION" != "APPROVED"' \
+        .github/workflows/project-automation.yml ||
+        err "project-automation.yml lost the reviewDecision==APPROVED authorization check"
     ;;
 meta)
     [ -f .github/workflows/snyk-scheduled.yml ] || err "daily Snyk workflow did not render"
