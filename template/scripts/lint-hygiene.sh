@@ -108,6 +108,25 @@ for f in "${files[@]}"; do
         warn "$f: merge conflict markers detected"
     fi
 
+    # --- Claude trigger-phrase adjacency (issue #725) ---
+    # Doc text gets quoted into issues, PR bodies, and comments, where the
+    # claude-* workflows' contains() gates match the literal mention+subcommand
+    # string and start a real run. The scan normalizes whitespace runs first
+    # because both YAML folded scalars and rendered markdown paragraphs JOIN
+    # lines — "@claude\nplan" reconstructs the trigger even though no raw line
+    # carries it. Excluded: the workflow files themselves (the phrases are the
+    # functional trigger definitions there) and vendored skills (fixed
+    # upstream in harmon-devkit, never edited in place).
+    case "$f" in
+    .github/workflows/* | template/.github/workflows/* | .claude/skills/* | CHANGELOG.md) ;;
+    *)
+        if tr -s '[:space:]' ' ' <"$f" |
+            grep -qE '@claude (plan|implement|review)'; then
+            warn "$f: literal Claude trigger phrase (mention adjacent to subcommand) — quoted into a comment this starts a workflow; separate the tokens with prose"
+        fi
+        ;;
+    esac
+
     # --- Private key detection ---
     # Skip self (any copy of this script) to avoid matching the pattern string.
     case "$f" in
