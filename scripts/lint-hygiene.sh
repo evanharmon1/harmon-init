@@ -111,18 +111,26 @@ for f in "${files[@]}"; do
     # --- Claude trigger-phrase adjacency (issue #725) ---
     # Doc text gets quoted into issues, PR bodies, and comments, where the
     # claude-* workflows' contains() gates match the literal mention+subcommand
-    # string and start a real run. The scan normalizes whitespace runs first
-    # because both YAML folded scalars and rendered markdown paragraphs JOIN
-    # lines — "@claude\nplan" reconstructs the trigger even though no raw line
-    # carries it. Excluded: the workflow files themselves (the phrases are the
-    # functional trigger definitions there) and vendored skills (fixed
-    # upstream in harmon-devkit, never edited in place).
+    # string and start a real run. The scan checks the RENDERED-COPY form, not
+    # the source: backticks are deleted first (inline code disappears when
+    # rendered text is copied, so `@claude` `plan` reconstructs the trigger),
+    # then whitespace runs are squeezed (YAML folded scalars and rendered
+    # markdown paragraphs JOIN lines — "@claude\nplan" reconstructs it too).
+    # Only prose between the tokens survives both transforms. Excluded: the
+    # workflow files themselves (the phrases are the functional trigger
+    # definitions there) and vendored skills (fixed upstream in harmon-devkit,
+    # never edited in place). The scan and its fixtures are exempt for the
+    # same reason as the workflows: the phrases there are functional — the
+    # detector's pattern-adjacent comments and the regression fixtures that
+    # must contain the forms they prove are caught.
     case "$f" in
-    .github/workflows/* | template/.github/workflows/* | .claude/skills/* | CHANGELOG.md) ;;
+    .github/workflows/* | template/.github/workflows/* | .claude/skills/* | CHANGELOG.md | \
+        scripts/lint-hygiene.sh | template/scripts/lint-hygiene.sh | \
+        scripts/test-lint-hygiene.sh | template/scripts/test-lint-hygiene.sh) ;;
     *)
-        if tr -s '[:space:]' ' ' <"$f" |
+        if tr -d '`' <"$f" | tr -s '[:space:]' ' ' |
             grep -qE '@claude (plan|implement|review)'; then
-            warn "$f: literal Claude trigger phrase (mention adjacent to subcommand) — quoted into a comment this starts a workflow; separate the tokens with prose"
+            warn "$f: literal Claude trigger phrase (mention adjacent to subcommand after backtick/whitespace normalization) — quoted into a comment this starts a workflow; separate the tokens with prose"
         fi
         ;;
     esac

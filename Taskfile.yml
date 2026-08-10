@@ -87,6 +87,7 @@ tasks:
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
+      - task: test:lint-hygiene
       - task: test:release-title
       - task: test:setup-github-project
       - task: test:sync-devkit-release
@@ -378,6 +379,11 @@ tasks:
     desc: Check every annotated shell version pin is extractable by Renovate
     cmds:
       - ./scripts/test-renovate-pins.sh
+
+  test:lint-hygiene:
+    desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
+    cmds:
+      - ./scripts/test-lint-hygiene.sh
 
   test:release-title:
     desc: Unit-test the release-content title guard (require-release-title.sh)
