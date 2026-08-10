@@ -262,11 +262,14 @@ rounds may come back empty, all-P2 as labeled, or P1-labeled and adjudicated
 down to
 P2; what counts is the **adjudicated** column of your adjudication table, not
 the label Codex attached. The second such round *is* the confirmation, so no
-extra run is owed after it. One case exits faster still: a **first** round with
-no findings at all ends the stage on the spot, because a single empty round
-already says more than two adjudicated-clean ones and a trivial change should
-not pay for a second pass. Nothing here takes more rounds than the older
-"clean re-run" rule did — it is a relaxation in every direction.
+extra run is owed after it. Two cases exit faster still. A round with **no
+findings at all** ends the stage on the spot, whenever it comes — an empty
+round is exactly the older "clean re-run" exit, so neither a trivial change
+nor a clean post-fix re-run pays for a confirmation pass. And a **capped
+final round** that adjudicates to zero P0/P1 ends the stage by itself: the
+confirmation it would otherwise owe is a run the cap forbids, and escalation
+at the cap is reserved for P0/P1 findings that persist — a clean last round
+is convergence, not disagreement.
 
 The old rule charged for three things it never delivered. A confirmation run
 after an all-P2 round: `harmon-init#725` ran roughly ten gate iterations for a

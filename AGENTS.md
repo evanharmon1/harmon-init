@@ -257,11 +257,11 @@ non-draft PR must always mean the automated work is done.
   P2. Severity is read off the **adjudicated** column of your adjudication
   table, not off the reviewer's label, and nothing further is owed after the
   second such round: the second round *is* the confirmation, so there is no
-  extra clean run to buy. A first round that returns **no findings at all**
-  still ends the stage on its own — one empty round is a stronger signal than
-  two adjudicated-clean ones, and a trivial change should never pay for a
-  second pass. Fixing the findings is still not the exit condition; two
-  consecutive adjudicated-clean rounds are. The exit carries one
+  extra clean run to buy. A round that returns **no findings at all** ends
+  the stage on its own, whenever it comes — an empty round is the old rule's
+  clean re-run, so neither a trivial change nor a clean post-fix re-run pays
+  for a confirmation pass. Fixing the findings is still not the exit
+  condition; adjudicated-clean rounds are. The exit carries one
   precondition: every P2 you deferred during the stage must already be in the
   deferred-findings sidecar (see "Deferring P2s" below) — an exit that drops
   a P2 is not an exit, because nothing downstream will ever see it again.
@@ -270,7 +270,10 @@ non-draft PR must always mean the automated work is done.
   **self-referential** — the fixes you make in response to a round become the
   next round's input, so it can generate its own work indefinitely — and that
   is what the cap defends against: max **4** challenge → fix → re-challenge
-  rounds; if P0/P1 findings persist, stop and escalate to Evan.
+  rounds; if P0/P1 findings persist, stop and escalate to Evan. A capped
+  final round that adjudicates to zero P0/P1 ends the stage by itself — its
+  confirmation would be a run the cap forbids, and a clean last round is
+  convergence, not the persisting disagreement escalation exists for.
   "Between rounds, check what the findings are about" below is how you catch
   the loop feeding on itself before the cap does, and round 2 is where that
   check is owed rather than optional.
@@ -360,12 +363,13 @@ non-draft PR must always mean the automated work is done.
   inline findings, and reactions never count for a newer head. A 👀 is pending,
   not success; if it disappears without a terminal result, the attempt is
   incomplete.
-  Give each attempt a full 10–15 minute window. If the first attempt is
-  incomplete — the script's exit 12 — post `@codex review` once more for the
-  same head and run one more full window as attempt 2, recording and using the
-  new trigger comment ID. If both attempts
-  are incomplete, stop and escalate without reporting green; that is what the
-  script's exit 13 means. Waiting and the
+  Give each attempt a full 10–15 minute window. An attempt is **incomplete**
+  when its window elapses with no terminal result for the captured head
+  (the script's exit 12). After an incomplete first attempt, post
+  `@codex review` once more for the same head and run one more full window as
+  attempt 2, recording and using the new trigger comment ID. If both attempts
+  are incomplete, stop and escalate without reporting green (the script's
+  exit 13). Waiting and the
   one allowed re-trigger do not consume a shepherd fix round. Immediately
   before accepting the result or reporting green, re-`check` the cycle and
   re-read `headRefOid`; a changed head invalidates the result and starts
@@ -666,18 +670,25 @@ ends when **two consecutive rounds adjudicate to zero P0 and zero P1
 findings**, and never on "findings fixed" alone. Those rounds may be empty,
 all-P2 as labeled, or P1-labeled and adjudicated down to P2; what counts is
 the **adjudicated** column of the table, not the reviewer's label, and the
-second such round is itself the confirmation, so no further run is owed. The
-single exception runs the other way: a **first** round with no findings at all
-ends the stage immediately, because one empty round already says more than two
-adjudicated-clean ones and a trivial change should not pay for a second pass.
-This is a strict relaxation — no path now takes more rounds than it did under
-the old clean-re-run rule. Two things ride along with the exit: every P2
+second such round is itself the confirmation, so no further run is owed. Two
+exits are faster still. A round with **no findings at all** ends the stage by
+itself, whenever it comes — an empty round is exactly the old rule's clean
+re-run, so neither a trivial change nor a clean post-fix re-run pays for a
+confirmation pass. And a **capped final round** that adjudicates to zero
+P0/P1 also ends the stage by itself: the confirmation it would otherwise owe
+is a run the cap forbids, and a rule that strands a stage holding a clean
+last round and no valid exit would be wrong — the cap bounds work, it does
+not manufacture escalation. What the rule spends is bounded the other way
+too: a stage pays at most one round confirming convergence, where the old
+practice could spend every remaining round re-proving a change nobody still
+disputed. Two things ride along with the exit: every P2
 deferred during the stage must already be recorded in the sidecar (an exit
 that drops a P2 is not an exit), and round 2 owes the scaffolding checkpoint
 above. The caps are unchanged at **4** challenge iterations and **4** review
 iterations (challenge → fix → re-challenge, and likewise for review); if
-P0/P1 disagreement persists at the cap, stop and surface it to Evan instead of
-iterating further. Evan may always ask for more rounds — convergence is a
+P0/P1 disagreement persists at the cap, stop and surface it to Evan instead
+of iterating further — escalation at the cap is for P0/P1 that **persist**,
+nothing else. Evan may always ask for more rounds — convergence is a
 floor on when you may stop, not a ceiling on what he can order.
 
 One caveat on the automatic stop-gate: the codex plugin's Stop hook applies
