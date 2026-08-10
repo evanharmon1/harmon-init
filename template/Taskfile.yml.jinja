@@ -338,7 +338,7 @@ tasks:
     desc: Checkov IaC security scan
     vars:
       # renovate: datasource=pypi depName=checkov
-      CHECKOV_VERSION: 3.3.8
+      CHECKOV_VERSION: 3.3.9
     cmds:
       - uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov -d terraform --quiet --compact
 

@@ -192,7 +192,7 @@ jobs:
         with:
           lint-tools: "true"
           gitleaks: "true"
-      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+      - uses: anthropics/claude-code-action@6b082c41935b4c8a3b8b0ef85ba4ba4d9eeb8975 # v1.0.189
         # Step-level cap. A JOB timeout kills the runner outright and the
         # always() release below never runs; a STEP timeout fails only this
         # step and lets the cleanup run, so the claim is still released. The
