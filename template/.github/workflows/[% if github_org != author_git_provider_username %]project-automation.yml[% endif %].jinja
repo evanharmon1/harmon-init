@@ -15,14 +15,30 @@ on:
 jobs:
   sync-status:
     name: Sync project status
-    # Trust boundary. `workflow_run` fires for fork-backed runs too, and this job
-    # derives the issue from the head BRANCH NAME — which the fork author picks.
-    # Without the head-repository test, a fork pushing `claude/issue-N` moves
-    # issue N's card using the App token. The head repo is what establishes
-    # trust; the branch name never can. (Deliberate tightening, approved.)
+    # Trust boundary. `workflow_run` and `pull_request_review` fire for
+    # fork-backed PRs too, and this job derives the issue from the head BRANCH
+    # NAME — which the fork author picks. Without the head-repository test, a
+    # fork pushing `claude/issue-N` moves issue N's card using the App token.
+    # Trust comes from the head repository, never from the event alone; the
+    # branch name can never establish it. (Deliberate tightening, approved.)
+    #
+    # These are cheap PRE-FILTERS, not the authorization. They keep fork events
+    # and drive-by approvals from consuming a runner and minting the App token
+    # at all. `author_association` in particular is NOT a permission —
+    # MEMBER/COLLABORATOR includes read-only org members and triage
+    # collaborators — so the review path's real authorization lives in the
+    # resolve step, which requires the PR's `reviewDecision` to be APPROVED
+    # before writing Ready to Merge.
+    #
+    # The board write is advisory state and the merge itself stays
+    # ruleset-protected either way — these guards make the card honest, they
+    # are not the merge security.
     if: >-
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) &&
+      (github.event_name != 'pull_request_review' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))) &&
       ((github.event_name == 'pull_request') ||
        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
        (github.event_name == 'workflow_run'))
@@ -55,6 +71,7 @@ jobs:
           ACTION: ${{ github.event.action }}
           MERGED: ${{ github.event.pull_request.merged }}
           REVIEW_STATE: ${{ github.event.review.state }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           BRANCH_PR: ${{ github.event.pull_request.head.ref }}
           BRANCH_WF: ${{ github.event.workflow_run.head_branch }}
           SHA_WF: ${{ github.event.workflow_run.head_sha }}
@@ -76,6 +93,28 @@ jobs:
               ;;
             pull_request_review)
               BRANCH="$BRANCH_PR"
+              # Authorization for this path. The event only says SOMEBODY
+              # approved; `reviewDecision` is GitHub's own computation of
+              # whether the PR *is* approved — required reviewers honoured,
+              # dismissals and stale reviews accounted for — which is exactly
+              # what Ready to Merge ("approved, awaiting merge") means. The
+              # job-level association filter cannot stand in for it: MEMBER and
+              # COLLABORATOR include read-only and triage access, whose
+              # approvals never satisfy reviewDecision. Readable with the App
+              # token minted above: reviewDecision is a field of the PR object,
+              # covered by permission-pull-requests: read.
+              REVIEW_DECISION=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+                --json reviewDecision --jq '.reviewDecision' 2>/dev/null || true)
+              if [ "$REVIEW_DECISION" != "APPROVED" ]; then
+                # Empty is the residual case: with no required-review rule,
+                # GitHub computes no decision at all, even after an approval.
+                # Generated repos' ruleset requires code-owner review, so an
+                # empty value means the rule is missing rather than the PR
+                # being approved — deliberately no write, so Ready to Merge
+                # keeps meaning ruleset-approved.
+                echo "reviewDecision=${REVIEW_DECISION:-<none: required reviews not configured>} is not APPROVED, skipping"
+                exit 0
+              fi
               # Approved but not yet merged — Done is reserved for the merge event
               TARGET_STATUS="Ready to Merge"
               ;;
