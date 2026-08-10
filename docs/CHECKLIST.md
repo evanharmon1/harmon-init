@@ -163,7 +163,9 @@ this comment. -->
       quota. Do not install the Snyk GitHub App for this posture; its PR checks
       are not required by the branch ruleset.
 - [ ] **Activate scheduled Snyk (weekly)** — set the Actions secret `SNYK_TOKEN`
-      (`task secret:set:gh NAME=SNYK_TOKEN REPO=evanharmon1/harmon-init`) and run
+      (the value must be piped on stdin, e.g.
+      `op read "op://<vault>/<item>/<field>" | task secret:set:gh NAME=SNYK_TOKEN REPO=evanharmon1/harmon-init`)
+      and run
       `snyk-scheduled.yml` once with **Run workflow**. It runs SAST + SCA only on
       its schedule/manual dispatch—never on PR or push—and remains advisory, so
       it is never added to the branch ruleset. Confirm Snyk recognizes the public
