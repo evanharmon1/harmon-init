@@ -261,8 +261,9 @@ The required checks are the build gates (see [ci-cd.md](ci-cd.md)):
 | `verify`   | Aggregate build gate — rolls up root lint/template validation |
 | `security` | gitleaks + dependency audit + Semgrep CE (this repo's SAST engine — it has no CodeQL workflow) |
 
-Snyk PR/App checks are absent by default. An optional generated scheduled Snyk
-workflow is advisory and never a required check; it has no PR or push trigger.
+Snyk PR/App checks are absent by default. This repo's weekly
+`snyk-scheduled.yml` — like the one a generated repo opts into — is advisory and
+never a required check; it has no PR or push trigger.
 Only a high-consequence repository that deliberately adopts paid Snyk should
 consider per-PR scans and decide whether to make them merge requirements.
 Generated Node/Python repos with `use_codeql=true` additionally gate on
