@@ -298,21 +298,46 @@ omit it, use `false`. When true, `use_codex_review` must also be true and the
 repository must set `use_skills_sync=true` with `universal` in
 `skill_categories` — **unless the repo is the skills source itself**, i.e. it
 ships the classifier natively as a git-tracked, non-symlink executable regular
-file at `ai/skills/universal/shepherd/assets/check-codex-cloud-review.sh`
-(harmon-devkit, which may keep `use_skills_sync=false`). For such a repo the
-sync/`universal` requirement is waived, matching the update-mode guard in
-`mode-update.md` — which applies exactly that tracked/non-symlink/executable
-test, so an ignored, untracked, or symlinked helper does **not** qualify here
-either. Do not report its `use_skills_sync=false` as G4 drift when that native
+file at `ai/skills/universal/shepherd/assets/check-codex-cloud-review.sh`,
+*and* tracks the shepherd skill's entry point
+`ai/skills/universal/shepherd/SKILL.md` as a regular file — index mode `100644`
+or `100755`, so a `120000` symlink does not qualify however valid its target,
+the same `-type f` stance `verify-skills.sh` takes — with valid frontmatter: the
+opening `---` block must **close** (checked statically, since a parser given an
+unclosed block whose body is valid YAML reads it happily), and its values are
+then resolved by **yq**, the same hard prerequisite the rest of the guarded
+update already carries. `name` must resolve to the string `shepherd` and
+`description` to a non-empty string, so quoting, block scalars, comments, and
+the null spellings are the parser's problem rather than a pattern's. A
+`description` that resolves to null, a collection, a number, or a boolean is
+not a description. Unparseable YAML answers "not a valid skills source" rather
+than "cannot tell". `scripts/verify-skills.sh` remains canonical for layout —
+*and* that helper's
+**executable body** carries the dispatch `case` arms for all five verbs
+(`reserve)`, `attach)`, `check)`, `show)`, `reap)`) together with the exit-code
+contract the shepherd stage reads — `emit pending` with `exit 11` and
+`emit escalate` with `exit 13` (harmon-devkit, which may keep
+`use_skills_sync=false`). For such a repo the sync/`universal` requirement is
+waived, matching the update-mode guard in `mode-update.md` — which applies
+exactly that tracked/non-symlink/executable test plus those two, so an ignored,
+untracked, or symlinked helper does **not** qualify here, and neither does a
+`100755` stub, a tree whose `SKILL.md` is missing, untracked, or frontmatter-less,
+or a no-op helper whose **comments merely print** the usage forms. That last case
+is why the anchors are structural: the guard strips comment lines before matching,
+so a printed banner cannot stand in for a dispatch table. All of these probes are
+**static**: they establish that the interface is shipped, never that it runs
+correctly — audit is a read-only stage and must not execute the repo to find out,
+and a helper deliberately shaped to match the anchors would still pass. Do not report its `use_skills_sync=false` as G4 drift when that native
 classifier is present. The rendered `AGENTS.md` plus shepherd skill must require a terminal result
 attributable to every current PR head, preserve exact trigger-attempt state,
 and escalate after two unavailable attempts without a CI-only fallback. The
 repository cannot prove external connector access or plan/quota availability,
 so record those as human-verifiable `?` items (including explicit connector
 permission for private repositories). Also require a human-confirmed disabled
-state for Codex Automatic reviews: explicit draft-time requests are the
-authoritative cycles, and ready-for-review promotion must not trigger another
-untracked review. When false, the required Codex cloud
+state for Codex Automatic reviews — review **Trigger** knob included; the
+post-generation checklist states the full knob list: explicit draft-time
+requests are the authoritative cycles, and ready-for-review promotion must not
+trigger another untracked review. When false, the required Codex cloud
 signal and its setup instructions must be absent. Stale policy or an
 unreviewed legacy opt-in is a **should** finding; an unsatisfiable required
 signal is a blocker.
@@ -492,6 +517,51 @@ standards; re-adding the template's seed is wrong. The recurring ones:
   `copier update` correctly leaves it alone — the file is unchanged between template
   versions, so nothing is added and no dead second config results. Confirm the repo
   actually has a `.prettierrc*`/`prettier` package.json key, then leave it.
+
+**Everything that survives that list is a PERMANENT non-adoption candidate.**
+Audit mode has a single render, at the repo's own `_commit`, so it cannot split
+`MISSING` into "the template just added this" and "the template has shipped this
+all along" — that baseline-versus-target classification exists only in update
+mode ([`mode-update.md`](./mode-update.md) §1). What audit mode *can* say is the
+part that matters, and it can say it precisely: this render **is** the repo's
+baseline, so every path it reports `MISSING` is by definition one the template
+already shipped at that baseline — which is exactly the condition under which
+`copier update` will never restore a file. The three-way merge reads the absence
+as the repo's own deletion and preserves it, and each update resets the baseline
+so the file is never offered again
+([`copier-gotchas.md`](./copier-gotchas.md) §9). The absence **is** the opt-out,
+whether or not anyone chose it. That is why a `MISSING` finding must be
+dispositioned — restored, or declined with a reason on the record — and not
+shrugged at as something the next update will pick up. There is no next update
+that will.
+
+**Check BOTH re-creation carve-outs before dispositioning any of them**
+([`copier-gotchas.md`](./copier-gotchas.md) §9): a path listed under
+`_skip_if_exists`, and any path the template's own `.gitignore` covers — copier
+builds its comparison tree with `git add -A`, so a render-ignored path is
+invisible to the deleted-path scan and is re-rendered every update however
+deliberately it was removed. A path in either group is not preserved-absent: `copier update` renders it fresh
+whenever the repo lacks it, so its `MISSING` is temporary and resolves itself on
+the next update. harmon-init lists `CHANGELOG.md`, `*.code-workspace`,
+`.github/CODEOWNERS`, `.release-please-manifest.json`, and
+`.devcontainer/related-repos.txt`. Reading that list is a **fallback**, and an
+imperfect one — the pattern semantics are copier's, not git's, and matching them
+by hand is exactly the guesswork that
+[`mode-update.md`](./mode-update.md) §1 stopped doing when it started rehearsing
+the apply against a scratch copy and simply watching which files came back.
+Audit mode has one render and no update to rehearse, so it has no such
+observation available; read the list, set those paths aside, and keep the
+warning attached, because `.github/CODEOWNERS` returning means access-control
+rules returning. Where it matters, run the guarded update and read its report
+instead of deciding from the pattern list.
+
+**One `MISSING` line is outside that population**, and it says so in its own
+note: `tracked in HEAD but staged for removal`. That path is still in `HEAD` and
+its worktree copy is still on disk, so nothing is absent for an update to
+restore and there is no non-adoption to disposition — the finding is a pending
+index state, and the answer is to reconcile the staged deletion. Commit it and
+the path becomes genuinely absent, at which point the paragraph above applies
+to it like any other.
 
 **L. Workflow ↔ Taskfile/runtime contract.** Every `task <target>` referenced in
 `.github/workflows/*.yml` must exist in `Taskfile.yml`. CI's `lint`/`build` jobs
