@@ -234,10 +234,12 @@ claude-qwen() {
 # QWEN_LOCAL_BASE_URL directly; it always overrides either default. On native
 # Linux the DNS mapping alone is not enough: stock Ollama binds
 # 127.0.0.1:11434, which is loopback-only and unreachable from the container
-# even once host.docker.internal resolves — set OLLAMA_HOST=0.0.0.0 (a
-# systemd override for the `ollama` service, or the env var before `ollama
-# serve`) so it listens on every interface, or point QWEN_LOCAL_BASE_URL at a
-# reachable one.
+# even once host.docker.internal resolves. Do NOT bind 0.0.0.0 — Ollama has no
+# auth, so that exposes it to the whole LAN. Instead set
+# OLLAMA_HOST=<docker0-bridge-IP> (`ip addr show docker0`, typically
+# 172.17.0.1) to scope it to the Docker bridge, or firewall 11434 to that
+# bridge if it must stay on 0.0.0.0 for other reasons — or point
+# QWEN_LOCAL_BASE_URL at an already-reachable endpoint.
 #
 # No /anthropic (or other) path suffix on the default: unlike the hosted
 # wrappers below, Ollama's and LM Studio's Anthropic-compatible servers expose

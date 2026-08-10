@@ -396,9 +396,12 @@ host gateway via `runArgs`, so it resolves even on native Linux) and falls
 back to `localhost` when that name doesn't resolve — set `QWEN_LOCAL_BASE_URL`
 to override either guess. **On native Linux, the DNS mapping alone is not
 enough**: stock Ollama binds `127.0.0.1:11434` (loopback-only), so it refuses
-the container's connection regardless — set `OLLAMA_HOST=0.0.0.0` (env var or
-a systemd override for the `ollama` service) so it listens on every interface,
-or point `QWEN_LOCAL_BASE_URL` at an endpoint that already does.
+the container's connection regardless. Do **not** bind `0.0.0.0` — Ollama has
+no auth, so that exposes it to the whole LAN. Instead set
+`OLLAMA_HOST=<docker0-bridge-IP>` (`ip addr show docker0`, typically
+`172.17.0.1`) to scope it to the Docker bridge, firewall port `11434` to that
+bridge if it must stay on `0.0.0.0` for other reasons, or point
+`QWEN_LOCAL_BASE_URL` at an endpoint that's already reachable.
 
 The provider API keys flow through the same env-file pipeline as everything else
 (`init-env.sh` allow-list → `devcontainer.env` → `--env-file`), so add them to your
