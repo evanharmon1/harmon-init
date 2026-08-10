@@ -175,7 +175,21 @@ if (mode === 'docs-tables') {
     lines.push(`| ${code(slug)} | ${name} | ${models || '—'} |`)
   }
 
+  // `Model selected by` values are defined ONCE here rather than repeating a
+  // sentence per harness row: every harness's model_resolution.owner is one of
+  // these four enum values (agent-registry.schema.json), so the meaning is
+  // fixed regardless of which harness carries it. Per-harness `details` text
+  // still lives in the registry for tooling/validation but is not rendered
+  // per row — it would just restate one of these four sentences with a
+  // harness name spliced in.
   lines.push(
+    '',
+    '`Model selected by` values:',
+    '',
+    '- `runner-config` — the runner or repository/CLI configuration selects the model; labels do not.',
+    '- `workflow-config` — the GitHub Actions workflow input selects the model.',
+    '- `provider-wrapper` — the provider-rewired wrapper fixes the family; its runtime configuration selects the model.',
+    '- `harness-runtime` — the harness selects both provider family and model at runtime.',
     '',
     '#### Harnesses',
     '',
@@ -186,10 +200,15 @@ if (mode === 'docs-tables') {
     const slug = cell(harness.slug, 'harness slug')
     const product = cell(harness.product, `harness '${slug}' product`)
     const constraint = harness.family_constraint ?? {}
-    const family =
-      constraint.kind === 'fixed'
-        ? code(cell(constraint.family, `harness '${slug}' family_constraint.family`))
-        : 'any (multi-provider)'
+    let family = 'any (multi-provider)'
+    if (constraint.kind === 'fixed') {
+      family = code(cell(constraint.family, `harness '${slug}' family_constraint.family`))
+    } else if (constraint.kind === 'broker' && constraint.default_family) {
+      const defaultFamily = code(
+        cell(constraint.default_family, `harness '${slug}' family_constraint.default_family`)
+      )
+      family = `any (multi-provider; default ${defaultFamily})`
+    }
     const adapters = adaptersByHarness.get(harness.slug) ?? []
     const adapterCell =
       adapters
@@ -202,10 +221,7 @@ if (mode === 'docs-tables') {
         .join('; ') || '—'
     const resolution = harness.model_resolution ?? {}
     const owner = code(cell(resolution.owner, `harness '${slug}' model_resolution.owner`))
-    const details = cell(resolution.details, `harness '${slug}' model_resolution.details`)
-    lines.push(
-      `| ${code(slug)} | ${product} | ${family} | ${adapterCell} | ${owner} — ${details} |`
-    )
+    lines.push(`| ${code(slug)} | ${product} | ${family} | ${adapterCell} | ${owner} |`)
   }
 }
 
