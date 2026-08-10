@@ -35,9 +35,10 @@ trap 'rm -rf "${TMP}"' EXIT
 #   skills-only — the DEFAULT generated profile: `project_management: none` with
 #                 `use_skills_sync: true`, so the vendored universal skill set
 #                 (track-work included) is present but there is no board
-#   with-codex  — opted into second-model review, so the Codex login is a gate.
-#                 The other three have no codex-review.sh, which is what makes
-#                 them the not-opted-in case for that check.
+#   with-codex  — opted into BOTH assistant credentials: second-model review
+#                 (codex-review.sh) and Claude Code (a claude-* workflow), so
+#                 those two checks apply. The other three have neither, which is
+#                 what makes them the not-opted-in case for both.
 for fixture in with-board no-board skills-only with-codex; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
@@ -45,6 +46,8 @@ done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
 : >"${TMP}/with-codex/scripts/codex-review.sh"
+mkdir -p "${TMP}/with-codex/.github/workflows"
+: >"${TMP}/with-codex/.github/workflows/claude-review.yml"
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
@@ -312,7 +315,18 @@ make_isolated_bin() {
             cp "${TMP}/bin/${tool}" "${TMP}/bin-iso/${tool}"
         fi
     done
-    [ ! -e "${TMP}/bin-iso/${missing}" ] || fail "isolated PATH still holds ${missing}"
+    # A degraded isolated PATH does not fail loudly — it fails as a PASS. Lose
+    # grep and the claude-* workflow probe silently reports "not applicable";
+    # lose jq and every claude login state reads "unknown". Both would satisfy an
+    # assertion written for a different reason, so check the load-bearing tools
+    # resolved (a broken symlink fails -x) rather than trusting the loop above.
+    for tool in bash find grep jq git sed; do
+        [ -x "${TMP}/bin-iso/${tool}" ] ||
+            fail "isolated PATH lacks a working ${tool} — the cases using it would assert against a degraded run"
+    done
+    if [ -n "${missing}" ]; then
+        [ ! -e "${TMP}/bin-iso/${missing}" ] || fail "isolated PATH still holds ${missing}"
+    fi
 }
 
 # run_setup_section GH_SCENARIO [SCRIPT] — status.sh's setup section with the
@@ -332,6 +346,25 @@ run_setup_without() {
     local missing="$1" script="${2:-${WITH_CODEX}}"
     make_isolated_bin "${missing}"
     PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
+}
+
+# run_setup_isolated GH_SCENARIO [SCRIPT] — the setup section PAST the gh gate,
+# on the isolated PATH so every check beyond it reads the same on any machine:
+# no op, no direnv, no brew, no node. The summary cases below compare counts
+# between two runs, and a tool that merely happens to be installed here would
+# move both numbers.
+run_setup_isolated() {
+    make_stub "$1"
+    make_isolated_bin ""
+    local script="${2:-${WITH_CODEX}}"
+    PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
+}
+
+# summary_field OUTPUT NAME — the count NAME carries on status.sh's Summary line
+# (`2 ok · 3 missing · 0 unknown · 4 n/a`). Empty when there is no such line,
+# which is how a case detects that the gh gate stopped the run short.
+summary_field() {
+    printf '%s\n' "$1" | sed -n -E "s#.*Summary:.*[^0-9]([0-9]+) $2.*#\1#p" | head -1
 }
 
 echo "==> a token with 'project' reports the board as writable"
@@ -676,6 +709,63 @@ case "$out" in
 *"[ ] Claude Code"*"npm install -g @anthropic-ai/claude-code"*) ;;
 *) fail "expected an install remedy for a missing claude, got: ${out}" ;;
 esac
+
+echo "==> a repo with no claude-* workflows reports Claude n/a, not missing"
+# Claude Code needs a paid Anthropic account, and generated output may not depend
+# on paid SaaS its owner never opted into. Ungated — keyed on .claude/, which
+# ships to everyone — this line would be a permanent red mark in every repo
+# driven by another assistant, for a service it does not use. Mirrors the codex
+# n/a case above; the stub is set to logged-out so a broken gate shows up as a
+# missing line rather than passing on a coincidence.
+make_claude_stub out
+make_codex_stub in
+out="$(run_setup_section unauthenticated "${WITH_BOARD}")"
+case "$out" in
+*"[ ] Claude Code"*) fail "no claude-* workflows must not read as a missing login: ${out}" ;;
+*"claude auth login"*) fail "no claude-* workflows must not prescribe a login: ${out}" ;;
+*"@anthropic-ai/claude-code"*) fail "no claude-* workflows must not prescribe an install: ${out}" ;;
+*"[-] Claude Code — no claude-* workflows"*) ;;
+*) fail "expected Claude to read n/a without claude-* workflows, got: ${out}" ;;
+esac
+
+echo "==> a missing credential is counted in the setup summary"
+# The regression behind the counters file. The credentials group tallies inside
+# the subshell `| section_box` creates, so unless those counts cross the
+# boundary the summary can print "0 missing" directly beneath a red ✗ Codex CLI
+# line on the same screen.
+#
+# Reachable hermetically: past the gh gate the stubbed `gh repo view` leaves
+# HAS_REMOTE false, which reduces the audit to local checks. Asserted as the
+# DIFFERENCE between two otherwise identical runs — an absolute number would
+# encode this machine's git-hook and devcontainer state, and the isolated PATH
+# pins the rest.
+make_codex_stub in
+make_claude_stub in
+in_out="$(run_setup_isolated project)"
+make_codex_stub out
+out_out="$(run_setup_isolated project)"
+in_ok="$(summary_field "${in_out}" ok)"
+in_no="$(summary_field "${in_out}" missing)"
+out_ok="$(summary_field "${out_out}" ok)"
+out_no="$(summary_field "${out_out}" missing)"
+{ [ -n "${in_ok}" ] && [ -n "${in_no}" ] && [ -n "${out_ok}" ] && [ -n "${out_no}" ]; } ||
+    fail "no Summary line to read — the run did not get past the gh gate: ${out_out}"
+[ "${out_no}" -eq "$((in_no + 1))" ] ||
+    fail "a logged-out codex must add 1 to the summary's missing count (${in_no} -> ${out_no}): ${out_out}"
+[ "${out_ok}" -eq "$((in_ok - 1))" ] ||
+    fail "a logged-out codex must drop 1 from the summary's ok count (${in_ok} -> ${out_ok}): ${out_out}"
+
+echo "==> an n/a credential lands in the summary's n/a tally, not its total"
+# The counters cross as four separate numbers, so a fold that mixed them up
+# would show here: n/a is excluded from setup_total by design, so switching one
+# check from ok to n/a must move the n/a tally without adding to the total.
+in_na="$(summary_field "${in_out}" 'n/a')"
+na_out="$(run_setup_isolated project "${WITH_BOARD}")"
+na_na="$(summary_field "${na_out}" 'n/a')"
+[ -n "${in_na}" ] && [ -n "${na_na}" ] ||
+    fail "no n/a tally to read: ${na_out}"
+[ "${na_na}" -gt "${in_na}" ] ||
+    fail "opting out of codex and Claude must raise the n/a tally (${in_na} -> ${na_na}): ${na_out}"
 
 echo "==> a gh auth timeout reads as unknown in the credentials group too"
 # The group shares the section's one bounded probe, so it inherits the probe's

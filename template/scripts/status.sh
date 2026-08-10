@@ -599,12 +599,14 @@ if [[ "${SECTION}" == "setup" ]]; then
     # after the reader had fixed gh and re-run: two round trips to learn what one
     # run can say, which is the interruption this group exists to remove.
     #
-    # Its own { } group means its own counters, and they are discarded —
-    # checkline mutates SETUP_* inside the subshell that `| section_box` creates,
-    # so these lines do not feed the "(N/M)" summary at the end. That is accepted
-    # rather than overlooked: the summary must stay in the same group as the
-    # checks it counts, so the only way to fold these in is to move them back
-    # behind the gate and lose the property above.
+    # Its own { } group means its own copy of the SETUP_* counters: checkline
+    # mutates them inside the subshell that `| section_box` creates, so they
+    # cannot reach the summary at the end of this section through a variable.
+    # They are handed across that boundary in a file instead (written at the end
+    # of the group, folded in at the summary), the same way the fan-out phase
+    # below returns its results. The plumbing is worth it — a summary reading
+    # "100% · 0 missing" directly under a red ✗ Codex CLI line on the same screen
+    # is a worse defect than the file is.
     {
         subhead "Local credentials"
 
@@ -649,16 +651,36 @@ if [[ "${SECTION}" == "setup" ]]; then
             checkline na "Codex CLI" "no second-model review configured"
         fi
 
-        # No applicability marker for this one: .claude/ ships unconditionally,
-        # so every generated repo carries Claude assets. `--json` is the CLI's
-        # documented machine-readable form; output that does not parse into a
-        # `loggedIn` boolean is reported unknown rather than logged out, because
-        # a CLI whose shape changed must not send the reader to re-authenticate a
-        # session that is fine. Only the state and the auth method are ever
-        # printed — the same payload also carries the account email, org, and
-        # plan — and the method is stripped to printable text so a third-party
-        # CLI cannot write escape sequences into the board.
-        if command -v claude >/dev/null 2>&1; then
+        # Gated on the repo's claude-* workflows, NOT on .claude/ — which ships
+        # unconditionally, and would therefore make this line unconditional too.
+        # Shipping Claude *assets* is not the same as requiring a Claude
+        # *account*: Claude Code needs a paid Anthropic subscription, and a
+        # generated repo may not depend on paid SaaS its owner never opted into.
+        # Ungated, a developer driving the repo with Codex or Gemini gets a
+        # permanent red line for a service they do not use — and a board that
+        # cries wolf in every opted-out repo stops being read where it matters.
+        # Same marker, and the same match-both-extensions rule, as the
+        # CLAUDE_CODE_OAUTH_TOKEN check further down; computed again here because
+        # that one is derived inside the gh-gated region below and so is not in
+        # scope for this group.
+        #
+        # Deliberately under-inclusive: someone running Claude Code locally in a
+        # repo with no claude-* workflows now reads n/a instead of a login state.
+        # That is the safe direction to err — a false "not applicable" costs that
+        # reader nothing, while a false "missing" bills every other reader for a
+        # subscription they were never asked to buy.
+        cred_claude_wf=0
+        find .github/workflows -maxdepth 1 \( -name 'claude-*.yml' -o -name 'claude-*.yaml' \) 2>/dev/null | grep -q . && cred_claude_wf=1
+        # `--json` is the CLI's documented machine-readable form; output that
+        # does not parse into a `loggedIn` boolean is reported unknown rather
+        # than logged out, because a CLI whose shape changed must not send the
+        # reader to re-authenticate a session that is fine. Only the state and
+        # the auth method are ever printed — the same payload also carries the
+        # account email, org, and plan — and the method is stripped to printable
+        # text so a third-party CLI cannot write escape sequences into the board.
+        if [ "${cred_claude_wf}" = 0 ]; then
+            checkline na "Claude Code" "no claude-* workflows"
+        elif command -v claude >/dev/null 2>&1; then
             claude_json="$(run_timeout 3 claude auth status --json 2>/dev/null || true)"
             claude_in="$(printf '%s' "${claude_json}" | jq -r 'if (.loggedIn | type) == "boolean" then (.loggedIn | tostring) else "?" end' 2>/dev/null || true)"
             claude_how="$(printf '%s' "${claude_json}" | jq -r '.authMethod // empty' 2>/dev/null | tr -cd '[:alnum:]._ -' | cut -c1-40 || true)"
@@ -670,6 +692,14 @@ if [[ "${SECTION}" == "setup" ]]; then
         else
             checkline no "Claude Code" "npm install -g @anthropic-ai/claude-code"
         fi
+
+        # Hand this group's tallies to the summary (see the header comment).
+        # Guarded, and deliberately last: with `pipefail` set, a failed write
+        # here would become the whole pipeline's status and `set -e` would take
+        # the script down over a status board's bookkeeping.
+        printf '%s %s %s %s\n' \
+            "${SETUP_OK}" "${SETUP_NO}" "${SETUP_UNKNOWN}" "${SETUP_NA}" \
+            >"${TMPDIR_STATUS}/cred-counts" 2>/dev/null || true
     } | section_box
 
     # Reuses the single bounded probe above rather than making a second,
@@ -1114,6 +1144,35 @@ if [[ "${SECTION}" == "setup" ]]; then
 
             # Summary — MUST stay in this { } group so the counters are in scope
             # (the surrounding pipe to section_box runs a subshell).
+            #
+            # Fold in the local-credentials group first. It tallied in a
+            # different subshell, so its counts arrive through a file rather than
+            # through these variables. Anything other than four plain integers —
+            # absent, truncated, unreadable — means "no counts to add", which
+            # leaves the summary reading exactly as it did before this existed
+            # rather than corrupting it with a partial read.
+            cred_ok=0
+            cred_no=0
+            cred_unknown=0
+            cred_na=0
+            read -r cred_ok cred_no cred_unknown cred_na \
+                <"${TMPDIR_STATUS}/cred-counts" 2>/dev/null || true
+            for cred_n in "${cred_ok}" "${cred_no}" "${cred_unknown}" "${cred_na}"; do
+                case "${cred_n}" in
+                "" | *[!0-9]*)
+                    cred_ok=0
+                    cred_no=0
+                    cred_unknown=0
+                    cred_na=0
+                    break
+                    ;;
+                esac
+            done
+            SETUP_OK=$((SETUP_OK + cred_ok))
+            SETUP_NO=$((SETUP_NO + cred_no))
+            SETUP_UNKNOWN=$((SETUP_UNKNOWN + cred_unknown))
+            SETUP_NA=$((SETUP_NA + cred_na))
+
             echo ""
             setup_total=$((SETUP_OK + SETUP_NO + SETUP_UNKNOWN))
             setup_pct=0
