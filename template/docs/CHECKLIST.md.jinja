@@ -288,8 +288,19 @@ config, toolchain, devcontainer, and dev environment — against the items below
       issue and PR carrying it keeps it, where create-then-delete would silently
       drop those associations. Map by **model family, not harness** —
       `agent:gemini-cli` → `claim:gemini`, `agent:kimi-k2` → `claim:kimi`,
-      `agent:qwen-code` → `claim:qwen`, `agent:github-copilot` →
-      `claim:mai` — taking the target names from
+      `agent:qwen-code` → `claim:qwen` — these three are fixed-family
+      harnesses, so the mapping is unconditional. `agent:github-copilot` is
+      **not**: Copilot is a broker (registry `family_constraint.kind:
+      "broker"`, default `mai`), so an old claim under that label may
+      actually have run GPT, Claude, or another brokered family — check the
+      claim/session record for which one before renaming, and rename to
+      `claim:<actual-family>` (only `claim:mai` when the record confirms
+      MAI). When the actual family can't be recovered: for a live claim,
+      settle it with its owner first rather than guess; for a
+      released/historical one, just delete the stale `agent:github-copilot`
+      label off that issue/PR instead of renaming it — a guessed family is
+      worse than none, since the claim label's whole meaning is the family.
+      Target names otherwise come from
       `node scripts/agent-registry-labels.mjs suggest-claim`.
       **Destination-collision procedure**: a rename whose target already
       exists is rejected by GitHub (`gh label edit` errors: the destination
