@@ -365,7 +365,10 @@ if (errors.length === 0) {
           `harness ${harness.slug} has family ${constraint.family} on a broker constraint — did you mean default_family?`
         )
       }
-      if (Object.hasOwn(constraint, 'default_family') && !familySlugs.has(constraint.default_family)) {
+      if (
+        Object.hasOwn(constraint, 'default_family') &&
+        !familySlugs.has(constraint.default_family)
+      ) {
         semanticError(
           `harness ${harness.slug} broker default_family references unknown family ${constraint.default_family}`
         )
