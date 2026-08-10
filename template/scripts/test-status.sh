@@ -202,11 +202,15 @@ run_gh_section() {
 }
 
 # make_codex_stub STATE — write $TMP/bin/codex answering `login status`.
-#   in  — logged in (exit 0, as the real CLI's "Logged in using ChatGPT")
-#   out — not logged in (exit 1, as its "Not logged in")
-# Any other call fails loudly: the credentials group must read local login state
-# and nothing else, so a probe that grew a second codex call — or a network one —
-# shows up here instead of passing silently.
+#   in     — logged in (exit 0, as the real CLI's "Logged in using ChatGPT")
+#   out    — not logged in (exit 1, as its "Not logged in")
+#   broken — the CLI could not run at all: a malformed config.toml exits non-zero
+#            like a logout does, but says nothing about credentials
+# All three write their verdict to STDERR with an empty stdout, which is what the
+# shipped CLI does — a probe that read stdout alone would see nothing from any of
+# them. Any other call fails loudly: the credentials group must read local login
+# state and nothing else, so a probe that grew a second codex call — or a network
+# one — shows up here instead of passing silently.
 make_codex_stub() {
     local state="$1"
     mkdir -p "${TMP}/bin"
@@ -215,11 +219,22 @@ make_codex_stub() {
         echo 'if [ "$1" = "login" ] && [ "$2" = "status" ]; then'
         case "$state" in
         in)
-            echo '    echo "Logged in using ChatGPT"'
+            # Unrelated stderr chatter alongside a SUCCESSFUL probe: some
+            # installs emit this while still exiting 0, so a check that read
+            # stderr being non-empty as failure would report a logged-in reader
+            # as broken.
+            echo '    echo "ERROR codex_models_manager::cache: failed to load models cache" >&2'
+            echo '    echo "Logged in using ChatGPT" >&2'
             echo '    exit 0'
             ;;
         out)
-            echo '    echo "Not logged in"'
+            echo '    echo "Not logged in" >&2'
+            echo '    exit 1'
+            ;;
+        broken)
+            # Deliberately does NOT carry the logged-out phrase — that is the
+            # whole distinction under test.
+            echo '    echo "Error: failed to parse config.toml: invalid TOML at line 3" >&2'
             echo '    exit 1'
             ;;
         *) fail "unknown codex stub state: ${state}" ;;
@@ -604,14 +619,51 @@ case "$out" in
 *) fail "expected codex to read n/a without scripts/codex-review.sh, got: ${out}" ;;
 esac
 
+echo "==> a codex probe that fails for another reason reads unknown, not logged out"
+# Non-zero is not the same as logged out. A malformed config.toml exits non-zero
+# too, and `codex login` cannot repair it — the reader would be sent to fix the
+# wrong thing, which is the failure the gh timeout branch already guards against.
+# Only the documented logged-out phrase earns the login remedy.
+make_codex_stub broken
+out="$(run_setup_section unauthenticated)"
+case "$out" in
+*"[ ] Codex CLI"*) fail "a configuration failure must not read as a missing login: ${out}" ;;
+*"codex login"*) fail "a configuration failure must not prescribe re-authentication: ${out}" ;;
+*"[?] Codex CLI"*) ;;
+*) fail "expected an unknown codex line, got: ${out}" ;;
+esac
+
 echo "==> codex missing from PATH is reported with the install remedy"
 # Deterministic on a machine that HAS the real CLI: the run is pinned to an
 # isolated PATH this script builds, not to the developer's.
 make_stub unauthenticated
+make_codex_stub in
 out="$(run_setup_without codex)"
 case "$out" in
 *"[ ] Codex CLI"*"npm install -g @openai/codex"*) ;;
 *) fail "expected an install remedy for a missing codex, got: ${out}" ;;
+esac
+
+echo "==> gh missing from PATH names an install remedy, not a login"
+# The shared auth probe exits 127 when there is no gh to run, which lands in the
+# same "not authenticated" bucket as a real logout — so without an explicit
+# not-installed branch the line prescribes `gh auth login` to a reader who has no
+# gh. Asserted against the whole credential line: the gate's own skip message
+# below legitimately still names `gh auth login`, so a bare substring test for it
+# would fail no matter what this line says.
+make_stub unauthenticated
+make_codex_stub in
+out="$(run_setup_without gh)"
+case "$out" in
+*"GitHub CLI (gh) — gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
+*"[ ] GitHub CLI (gh) — brew install gh"*) ;;
+*) fail "expected an install remedy for a missing gh, got: ${out}" ;;
+esac
+# The rest of the run must still behave: an absent gh is not an authenticated
+# one, so the audit past the gate stays skipped rather than erroring.
+case "$out" in
+*"(gh not authenticated"*) ;;
+*) fail "an absent gh must still take the unauthenticated path: ${out}" ;;
 esac
 
 echo "==> a missing credential is counted in the setup summary"

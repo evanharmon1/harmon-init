@@ -616,7 +616,15 @@ if [[ "${SECTION}" == "setup" ]]; then
         # `gh auth login` because GitHub was slow sends them to fix the wrong
         # thing. The skip line below stays as it is: it explains the absence of
         # everything after it, which this line does not.
-        if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
+        # Not-installed is tested FIRST because it makes the other three
+        # meaningless: with no gh on PATH the shared probe above exits 127, which
+        # lands in the same "not authenticated" bucket as a real logout and would
+        # prescribe `gh auth login` — a command the reader does not have. Same
+        # distinction the Codex check below draws, and the same remedy style as
+        # the 1Password and direnv lines further down.
+        if ! command -v gh >/dev/null 2>&1; then
+            checkline no "GitHub CLI (gh)" "brew install gh"
+        elif [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
             checkline unknown "GitHub CLI (gh)" \
                 "auth probe timed out after ${NETWORK_TIMEOUT}s"
         elif [[ "${GH_AUTHED}" == true ]]; then
@@ -636,12 +644,34 @@ if [[ "${SECTION}" == "setup" ]]; then
         # with `op account list`), never NETWORK_TIMEOUT.
         if [ -f scripts/codex-review.sh ]; then
             if command -v codex >/dev/null 2>&1; then
+                # The exit code is the primary signal, but it cannot tell "no
+                # credentials" from "the CLI could not run": a malformed
+                # config.toml also exits non-zero, and `codex login` cannot
+                # repair that. So keep the documented logged-out phrase as the
+                # only thing that earns the login remedy, and report every other
+                # failure as unknown rather than sending the reader to
+                # re-authenticate a session that was never the problem.
+                #
+                # Captured with 2>&1 because the shipped CLI writes BOTH verdicts
+                # to stderr and leaves stdout empty — reading stdout alone would
+                # silently demote every genuine logout to "unknown". Folding the
+                # streams also picks up unrelated stderr chatter (a models-cache
+                # ERROR line appears on some installs while the command still
+                # exits 0), which is exactly why the match is on the phrase and
+                # the verdict on the exit code, never on stderr being non-empty.
+                # The captured text is only ever matched, never printed.
                 codex_rc=0
-                run_timeout 3 codex login status >/dev/null 2>&1 || codex_rc=$?
+                codex_out="$(run_timeout 3 codex login status 2>&1)" || codex_rc=$?
                 case "${codex_rc}" in
                 0) checkline ok "Codex CLI" "logged in" ;;
                 124) checkline unknown "Codex CLI" "login status timed out" ;;
-                *) checkline no "Codex CLI" "codex login" ;;
+                *)
+                    case "${codex_out}" in
+                    *"Not logged in"*) checkline no "Codex CLI" "codex login" ;;
+                    *) checkline unknown "Codex CLI" \
+                        "login status failed (exit ${codex_rc}) — check the codex CLI's config" ;;
+                    esac
+                    ;;
                 esac
             else
                 checkline no "Codex CLI" \
