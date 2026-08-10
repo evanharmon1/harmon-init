@@ -30,9 +30,22 @@ merge.
 This skill may be re-entered on a non-draft PR. Treat that as an idempotent
 audit of an existing human handoff: if the unchanged head is still green, do
 not call `gh pr ready` again. If new work or a blocker appears, convert it back
-to draft with `gh pr ready --undo` before posting fixes or starting another
-review cycle, and verify `isDraft == true`. If that transition is unavailable,
-stop as blocked rather than doing active agent work on a ready PR.
+to draft before posting fixes or starting another review cycle — but through
+[§2](#2-watch)'s unexplained-promotion procedure, not a bare `gh pr ready
+--undo`: entry is exactly where a promotion no session of yours made turns up,
+so the same timeline guard, the same prior-conversion escalation, and the same
+unknown-does-not-license-an-undo rule apply here. Verify `isDraft == true`. If
+that transition is unavailable, stop as blocked rather than doing active agent
+work on a ready PR.
+
+One case is not that: a promotion **this session itself made** through step 6's
+gate is a known handoff, not an unexplained one — its detection clause ("no
+`gh pr ready` issued by this session") is simply false. If a human then requests
+changes and the new work must be done on a draft, reverse your own promotion
+directly with a single `gh pr ready --undo`, confirm `isDraft == true`, and
+carry on; that is the own-mutation act §6 already carves out of §2's bound.
+The unexplained-promotion procedure governs only flips no session command
+accounts for.
 
 **The repository's own policy outranks this file.** Where its `AGENTS.md`
 states a different shepherd cap or exit condition, follow `AGENTS.md` — it is
@@ -80,8 +93,8 @@ and compare against the local branch and HEAD. Requirements, all hard:
 
 - The PR `state` is `OPEN` — never shepherd a closed or merged PR.
 - Record `isDraft`. A draft is the normal active-work state. A non-draft PR
-  follows the idempotent re-entry rule above and must return to draft before
-  any new fix or review cycle.
+  follows the idempotent re-entry rule above — which routes its return to
+  draft through §2's guard — before any new fix or review cycle.
 - The local branch and HEAD match the PR's head repo/branch/OID; if not,
   stop and switch to (or ask for) the matching checkout — inspecting,
   gating, or pushing from an unrelated checkout is how the wrong code gets
@@ -96,15 +109,20 @@ and compare against the local branch and HEAD. Requirements, all hard:
   the only vector: `git commit` and `git push` fire repo-configured hooks
   (here, lefthook delegates them to the checked-out Taskfile), so *any*
   local mutation of the checkout can execute contributor code — and
-  bypassing hooks is forbidden anyway. On an untrusted fork, do inspection
-  and gating only inside a sandbox/container **with no credentials in it**,
-  and never perform an authenticated push from the fork checkout at all —
-  even sandboxed, the contributor's pre-push hook runs during the push and
-  can reuse whatever SSH agent, credential helper, or token the push
-  needed. Deliver the fix as a patch/branch from a trusted checkout for
-  the maintainer to apply instead. If no isolation is available, don't
-  work on the fork checkout at all: stop, report what the remote CI shows,
-  and hand the fix decision to the maintainer.
+  bypassing hooks is forbidden anyway. "Trusted checkout" is about
+  credentials, not content: a branch based on the untrusted head carries the
+  contributor's Taskfile and lefthook config, so committing or pushing it
+  runs their code wherever it happens. Everything you do locally with that
+  content — inspection, gating, committing a candidate fix — therefore
+  happens inside a sandbox/container **with no credentials in it**, and you
+  never perform an authenticated push of it at all: even sandboxed, the
+  contributor's pre-push hook runs during the push and can reuse whatever
+  SSH agent, credential helper, or token the push needed. Deliver the fix as
+  a plain patch with your verification evidence and hand the decision to the
+  maintainer — how they land it in their own environment is theirs, not this
+  skill's to prescribe. If no isolation is available, don't work on the fork
+  checkout at all: stop, report what the remote CI shows, and hand the fix
+  decision to the maintainer.
 
 Once the PR is confirmed `OPEN` and the checkout matches, move the claimed
 issue's card to `Verifying` while checks run — see
@@ -113,10 +131,104 @@ issue may be moved at all.
 
 ## 2. Watch
 
-- Start every watch round by re-fetching the PR head
-  (`gh pr view <n> --repo "$repo" --json headRefOid,state`) and confirming
-  it still matches local HEAD — after a push, run/log lookups keyed to a
-  stale SHA diagnose the wrong run.
+- Start every watch round by re-fetching the PR head and draft state
+  (`gh pr view <n> --repo "$repo" --json headRefOid,state,isDraft`) and
+  confirming the head still matches local HEAD — after a push, run/log lookups
+  keyed to a stale SHA diagnose the wrong run. `isDraft` rides along because
+  the next bullet owes a detection every round, and a field the round never
+  fetches is a check that never runs.
+- **Re-read draft state immediately before every write to the PR** — push,
+  inline reply, top-level comment, `@codex review` trigger, body edit:
+  `gh pr view <n> --repo "$repo" --json state,isDraft,headRefOid`, fresh. One
+  rule rather than a check bolted onto each call site. Three conditions come
+  off that one read, and their remedies differ. `state` must be `OPEN`:
+  anything else stops the stage outright — step 1's rule that a closed or
+  merged PR is never shepherded holds mid-round too, and no round can continue
+  on one, so this is neither a route nor a retry. A false `isDraft` means
+  the write would land on a PR already requesting human review, so route it
+  through the unexplained-promotion procedure below **before** writing; that
+  procedure's reconcile branch may then authorize it, since replying to
+  threads, ticking deferred findings, and auditing the handoff are exactly what
+  a legitimately ready PR still needs. Routing rule, not prohibition. Third,
+  `headRefOid` must still equal the head the write was prepared against. A
+  mismatch means someone pushed since this round began, so the disposition
+  you are about to post — a reply claiming a fix, a tick settling a
+  finding — was derived from premises that no longer exist; do not write,
+  return to the
+  round-start fetch above and re-derive against the new head. Writes to the
+  *issue* and its project card (claim labels, card moves, §7) are not
+  PR writes and are not gated here; §6's ready stop releases the claim label
+  after promotion by design. One PR write is exempt: the single blocker
+  comment the escalate branch below posts to name a standing unexplained
+  promotion. It *is* that procedure's output, so routing it through the
+  procedure would deadlock — the guard has already spent the undo and cannot
+  reconcile an unverified head. That one comment only; every other write
+  still routes.
+- **Unexplained promotion — `isDraft` flips to false with no `gh pr ready`
+  issued by this session.** Read the `isDraft` from the round-start fetch every
+  poll, not only at the gate: a flip caught late looks exactly like a PR that
+  was never draft. Do not assume you forgot the call — check this session's
+  own command record first, then treat the flip as external. In this skill's
+  home platform the identified mechanism is the ChatGPT Codex Connector's
+  user-to-server authorization: its actions are attributed to the account
+  owner, and the observed signature is a flip minutes after Codex review
+  activity on an actively-worked PR (harmon-devkit#276) — the actor field
+  cannot separate that from the owner's own click. Elsewhere treat the writer
+  as unidentified; the recovery below is deliberately actor-agnostic. Branch
+  on the current head's gate status, freshly audited:
+  - **The head independently passes the full readiness gate** — checks
+    concluded green, current-head Codex terminal-clean, every thread answered,
+    deferred findings settled, `mergeStateStatus` acceptable: **reconcile**.
+    Accept the promotion and audit the existing handoff exactly as step 6's
+    already-non-draft path prescribes; do **not** call `gh pr ready` again.
+    Reverting a promotion the gate would itself have made un-notifies nobody
+    and can override a genuine human click.
+  - **Otherwise** — the promotion sits on an unverified head or open findings.
+    **The undo is its own record, so read the PR's timeline before making
+    another one**: `gh api --paginate repos/"$repo"/issues/<n>/timeline`
+    filtered to `convert_to_draft` — unpaginated, an older conversion falls
+    off page one of a busy PR and the guard fail-opens. Any such event — a
+    prior session's undo or a human's own conversion, and there is no need to
+    tell which — means this PR was
+    already returned to draft once and promoted again: do not undo, stop the
+    stage, and escalate with the timeline. That stop is
+    **blocked-with-report and necessarily leaves the PR non-draft** — the one
+    sanctioned exception to a stop leaving the PR draft. Name the standing
+    unexplained promotion in the report: the timeline evidence, the head it
+    sits on, and what about that head is still unverified — posting it is the
+    one write exempt from the pre-write gate above. For this PR the
+    draft-means-workbench reading is suspended until a human intervenes, which
+    is why the stop is loud rather than quiet. That is deliberately
+    conservative,
+    and a legitimate earlier human conversion trips it too: a PR with draft
+    churn behind it is exactly one a human should look at rather than an agent
+    re-fight. If the read fails, that is **unknown**, and unknown does not
+    license an undo — escalate. Otherwise run
+    `gh pr ready --undo <n> --repo "$repo"` **once**, confirm
+    `isDraft == true`, and resume the stage; GitHub writes the
+    `convert_to_draft` event atomically with the mutation, so the next
+    session's guard is armed with no bookkeeping of yours to forget. The read
+    and the undo are adjacent by construction, so a concurrent conversion and
+    re-promotion can slip through the seconds between them at most once, and
+    the next guard read — any session, any entry path — catches it: bounded
+    drift, accepted rather than locked against. Where the repo has a tracking
+    issue (harmon-devkit#276 here), also record the event — timestamp,
+    nearest preceding Codex activity, head SHA — as evidence for that
+    investigation; it is not part of the bound, so a repo without one loses
+    nothing.
+  - **Never loop the undo — the bound is per PR, across sessions.** It counts
+    only undos of promotions this session did not make: reversing a
+    `gh pr ready` of your own — step 6's lost confirmation or changed
+    head/content snapshot, or a completed handoff a human has sent back for
+    more work (preamble) — is a different act, and stays under the
+    once-then-stop logic of the step that made it without spending this
+    budget. Those conversions still land on the timeline, which is a
+    further reason a tripped guard escalates rather than assuming who wrote
+    what. A session's own command record resets at every resume; the PR's
+    timeline is the memory that survives, which is why the guard reads it. An
+    undo war against a writer you cannot attribute has no bounded exit, and a
+    standing promotion is recoverable by a human in a way a corrupted audit
+    trail is not.
 - Checks: poll `gh pr checks <n> --repo "$repo"` on an interval (or run
   `--watch` only under an external timeout) so the wait has a real
   deadline — an unbounded `--watch` on a hung runner stalls the loop
@@ -344,7 +456,17 @@ issue may be moved at all.
   to the **exact current head**. Use
   `assets/check-codex-cloud-review.sh`; it is deliberately read-only toward
   GitHub and classifies all paginated evidence from the immutable Codex bot
-  actor ID `199175422`. A clean result is exactly one of:
+  actor ID `199175422`. **Run it; never hand-roll the evidence collection or
+  its classification** — `check` reads all four surfaces (trigger reactions,
+  top-level comments, reviews, inline comments), and a substitute that drops
+  one false-negatives: a poller watching only reviews and reactions missed a
+  clean terminal verdict that arrived as a top-level `Reviewed commit:`
+  comment, and reported an already-green attempt "incomplete"
+  (`harmon-devkit#334`). `check` is one-shot and implements no loop of its own;
+  while it reports pending, re-run it within the bounded window below rather
+  than standing up a poller of your own. A clean result from Codex itself is
+exactly one of (adjudication, below, is the one clean path that comes from
+you rather than the bot):
 
   - an authenticated review for the full current commit;
   - an authenticated top-level result whose `Reviewed commit` value is an
@@ -354,7 +476,12 @@ issue may be moved at all.
 
   An authenticated inline comment is attributed by its immutable
   `original_commit_id` (GitHub rewrites `commit_id` as the diff advances); a
-  current-head inline comment or non-clean review is a finding. A 👀 is
+  current-head inline comment **without a trusted in-thread reply** — one from
+  the PR author or an OWNER/MEMBER/COLLABORATOR, posted after it and after any
+  edit to it — is a finding, as is a non-clean review. Once every current-head
+  finding carries that reply (fixed, or declined with reasoning), the helper
+  reports the cycle clean as adjudicated rather than re-blocking on findings
+  that are already settled. A 👀 is
   pending, never clean. PR-level reactions, timestamps,
   previous-head verdicts, and reactions on any other comment do not count.
   Actor ambiguity, malformed or incomplete API data, a changed head, and an
@@ -397,7 +524,10 @@ issue may be moved at all.
 
   Do not reserve or post the trigger until every required check has settled.
   The attempt window starts when the trigger is created, so posting during CI
-  would consume the reviewer's promised post-CI response window.
+  would consume the reviewer's promised post-CI response window. The trigger
+  is a PR write, so it takes §2's pre-write read first — the snippet below
+  does exactly that, and reserves against the verified round head rather than
+  whatever SHA the read happens to return.
 
   ```bash
   helper="$skill_dir/assets/check-codex-cloud-review.sh"
@@ -405,7 +535,19 @@ issue may be moved at all.
   # run unconditionally — it removes nothing whose PR is still open.
   "$helper" reap --root "$(git rev-parse --git-path shepherd-codex)"
   state="$(git rev-parse --git-path "shepherd-codex/$repo/<n>.json")"
-  head="$(gh pr view <n> --repo "$repo" --json headRefOid --jq .headRefOid)"
+  # the SHA from §2's round-start fetch, whose checks you just watched settle
+  round_head="<this round's headRefOid>"
+  # §2's pre-write read: the trigger below is a PR write.
+  pre="$(gh pr view <n> --repo "$repo" --json state,isDraft,headRefOid)"
+  [ "$(jq -r '.state == "OPEN" and .isDraft' <<<"$pre")" = true ] || {
+    echo 'not an open draft — see §2: CLOSED stops, promoted routes'
+    exit 1
+  }
+  [ "$(jq -r .headRefOid <<<"$pre")" = "$round_head" ] || {
+    echo 'head moved since the round began — restart the round'
+    exit 1
+  }
+  head="$round_head"
   "$helper" reserve --state "$state" --repo "$repo" --pr <n> \
     --head "$head" --attempt 1
   trigger_id="$(
@@ -435,7 +577,10 @@ issue may be moved at all.
   they return pending, then retry after attempt 1 or escalate after attempt 2.
   Exit 2 is reserved for invalid state, identity, metadata, or a changed head;
   stop and reconcile that condition rather than spending another trigger.
-  Poll pending within a bounded 10–15-minute window after checks settle. On
+  Poll pending within a bounded 10–15-minute window after checks settle. Each
+  re-run of `check` is an ordinary watch round and starts with §2's round-start
+  fetch — the helper never reads `isDraft`, so a promotion landing mid-window
+  is invisible without it. On
   retry, repeat reserve/write/attach once with `--attempt 2`; on escalate or
   indeterminate, stop for the maintainer. Every push creates a new head and
   resets this procedure to attempt 1. There is no CI-only fallback when this
@@ -681,11 +826,13 @@ is optional in addition, never a substitute for per-thread replies.
       count and the comparison against that variable, and print only the
       verdict. Never paste a raw push URL into a thread reply, PR comment,
       or issue either.
-  - Re-fetch `state` and `headRefOid` **immediately before** pushing and
-    bind the push to what you saw
+  - Take §2's pre-write read **immediately before** pushing and bind the push
+    to the `headRefOid` it returned
     (`--force-with-lease=<headRefName>:<headRefOid>`) — if someone
     force-pushed or deleted the branch since your watch round, an ordinary
-    push can silently resurrect removed commits.
+    push can silently resurrect removed commits. That read gates the push and
+    nothing else — the queued replies and body ticks each take their own §2
+    pre-write read as they are posted.
   - `headRefName` is contributor-controlled data on fork PRs and valid ref
     names may contain shell metacharacters — carry it in a quoted variable
     straight from the API (`ref="$(gh pr view … -q .headRefName)"`;
@@ -698,10 +845,21 @@ is optional in addition, never a substitute for per-thread replies.
     `gh pr view <n> --repo "$repo" --json headRefOid` and confirm it now
     equals the SHA you pushed — the provider is the authority on whether
     the PR moved. Only once that matches, post the queued
-    "fixed in `<sha>`" thread replies (step 4) **before** re-watching —
+    "fixed in `<sha>`" thread replies (step 4), each under its own §2
+    pre-write read, **before** re-watching —
     the green path stops in step 2 and must not strand unanswered threads.
     A push that "succeeded" against some other destination leaves the head
     unmoved, and replying first would claim a fix the PR never received.
+
+    A stale read is a different failure from a misdelivered push, and one
+    sample cannot tell them apart. When git itself reported the update
+    (`1bc2844..77f79b3`), a `headRefOid` still showing the old SHA is
+    eventual-consistency lag on GitHub's read path — observed exactly that way,
+    with a re-read seconds later returning the new SHA. So re-poll on a bounded
+    settle window, roughly 30–60s, before concluding the head is unmoved. Only
+    a head still unmoved when that window expires is the wrong-destination case
+    above and feeds reconciliation; treating the first racing read as
+    authoritative opens a reconciliation for a push that landed.
 
     **Re-read each thread as you post its reply**, because the gate and push
     put minutes between composing the reply and sending it: an edit or
@@ -781,13 +939,28 @@ loops indefinitely:
    decline reasoning belongs in the ticked entry itself (and, when it
    deserves more than one line, a PR comment it points to). `UNKNOWN` means
    GitHub is still computing mergeability — re-poll briefly rather than
-   classifying it.
+   classifying it. `BLOCKED` is not a blocker: on a repo whose ruleset
+   requires review, it is the *expected* pre-promotion state, because the
+   review it waits on is exactly what `gh pr ready` requests — and
+   `reviewDecision: REVIEW_REQUIRED` is expected for the same reason. Both are
+   promotable; only `CHANGES_REQUESTED` gates. **Never encode this as "must be
+   `CLEAN`"**: that reading deadlocks precisely on the repos that comply, as on
+   `evanharmon1/harmon-init#714`, where a fully green, fully adjudicated draft
+   read `BLOCKED` by construction and a must-be-`CLEAN` gate refused to promote
+   it.
 
    Before promotion, fetch `state,isDraft,headRefOid,reviewDecision,
    mergeStateStatus,statusCheckRollup` again and repeat every readiness check
    against that one snapshot. The `headRefOid` must equal the head whose CI,
    Codex result, comments, and deferred findings were just adjudicated. A
-   changed head invalidates the gate and returns to step 2.
+   changed head invalidates the gate and returns to step 2 — immediately, on
+   the first mismatch. Step 5's settle window does **not** generalize here:
+   there you had just pushed and the remote confirmed it, so a stale read
+   contradicted a known local fact. Here nothing of yours moved, and a
+   mismatch is as easily a *fresh* replica showing someone else's newer push —
+   re-polling until it returns the SHA you adjudicated would discard that
+   evidence and promote an unverified head. Never wait out a pre-promotion
+   mismatch hoping it converges back.
 
    Freeze a stable content fingerprint from fresh, paginated reads of the PR
    body, reviews, top-level comments, inline comments (including replies), and
@@ -893,7 +1066,10 @@ loops indefinitely:
    cannot establish the remote state, attempt the undo once because this session
    initiated the transition, then stop as indeterminate without claiming either
    a handoff or a confirmed draft—the report must name that unresolved
-   remote-state risk.
+   remote-state risk. Every undo in this paragraph reverses a promotion *this
+   session just attempted*, so it is governed by the once-then-stop logic here
+   and not by §2's unexplained-promotion guard; a promotion somebody else made
+   is that procedure's, not this one's.
    This confirmation is the final lifecycle transition: ready-for-review is the
    human handoff, not another automated workbench. After it, perform only this
    stop condition's coordination cleanup (project-card state, guarded
@@ -902,12 +1078,21 @@ loops indefinitely:
 
    If the snapshot was already non-draft, promotion is idempotently complete
    and `gh pr ready` must not be called again. Audit the existing handoff on the
-   current head, but do not manufacture another ready event.
+   current head, but do not manufacture another ready event. This audit is also
+   what step 2's unexplained-promotion procedure points at: where that
+   procedure's first branch applies — a promotion this session did not make, on
+   a head that independently passes the gate — reconciling *is* this paragraph,
+   and the choice between reconciling and a single undo is made there, not here.
 
    When current-head Codex cloud review is enabled, **Codex Automatic reviews
    must be disabled in the external integration before the first promotion**.
    Otherwise `gh pr ready` can start a new asynchronous review after the gate
-   that supposedly completed automated work. GitHub does not expose a reliable
+   that supposedly completed automated work. Three knobs, all of them:
+   personal **Auto review** off, the repository's **Auto code review**
+   preference on **Follow personal**, and the repository's review **Trigger**
+   on Follow personal — an "On every push" trigger is dormant while Auto
+   review is off and arms the moment that toggle changes. GitHub does not
+   expose a reliable
    repository API for this setting, so treat it honestly as a human-configured
    prerequisite: use the repository setup record or maintainer confirmation,
    never claim it was mechanically verified. If its state is unknown, stop
@@ -962,6 +1147,11 @@ loops indefinitely:
 4. **Blocked on the maintainer** — the remaining failure needs secrets,
    permissions, external-service action, or a decision only the maintainer
    can make: stop immediately, whatever the round count.
+
+One stop cannot leave the PR draft: §2's timeline guard blocking a second undo
+stops on a PR somebody else promoted, and undoing it is the very act the guard
+forbids. That is the single sanctioned exception below — blocked-with-report,
+with the standing promotion named in the report.
 
 For every stop except Ready for human review, leave the PR draft and post a
 summary comment on the PR for the maintainer: what was fixed, what remains

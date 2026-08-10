@@ -116,6 +116,7 @@ tasks:
 [% if use_codex_review %]
       - task: test:codex-review
 [% endif %]
+      - task: test:lint-hygiene
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
@@ -338,7 +339,7 @@ tasks:
     desc: Checkov IaC security scan
     vars:
       # renovate: datasource=pypi depName=checkov
-      CHECKOV_VERSION: 3.3.8
+      CHECKOV_VERSION: 3.3.9
     cmds:
       - uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov -d terraform --quiet --compact
 
@@ -708,6 +709,11 @@ tasks:
     cmds:
       - ./scripts/test-codex-review.sh
 [% endif %]
+
+  test:lint-hygiene:
+    desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
+    cmds:
+      - ./scripts/test-lint-hygiene.sh
 [% if use_release_please %]
 
   test:release-title:

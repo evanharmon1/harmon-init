@@ -70,6 +70,8 @@ trigger_id=
 actor_id=
 actor_login='chatgpt-codex-connector[bot]'
 timeout_min=15
+timeout_min_set=0
+timeout_min_adopted=0
 now=
 lock_dir=
 reap_entries=
@@ -91,7 +93,10 @@ while [ "$#" -gt 0 ]; do
         --trigger-id) trigger_id=$2 ;;
         --actor-id) actor_id=$2 ;;
         --actor-login) actor_login=$2 ;;
-        --timeout-min) timeout_min=$2 ;;
+        --timeout-min)
+            timeout_min=$2
+            timeout_min_set=1
+            ;;
         --budget-sec) reap_budget_sec=$2 ;;
         --now) now=$2 ;;
         esac
@@ -124,6 +129,95 @@ valid_sha() {
 valid_time() {
     printf '%s' "$1" |
         grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+}
+
+# harmon-devkit#223: the timeout governing an attempt cycle used to live only
+# in whatever `--timeout-min` a caller happened to pass, so `check
+# --timeout-min 10` could return `retry` after ten minutes while the
+# documented attempt-2 `reserve` — which takes no timeout of its own — was
+# still enforcing the 15-minute default window for another five. The fix
+# distinguishes ABSENCE (no command has ever chosen a timeout for this cycle)
+# from a PERSISTED CHOICE (one has), and only the latter is authoritative:
+#
+#   - persisted is a number: that value governs. An explicit --timeout-min
+#     that disagrees is a usage error (a second vote), not a silent switch.
+#   - persisted is absent/null and --timeout-min was NOT passed: fall back to
+#     the unmodified 15-minute default, unpersisted — still no choice made.
+#   - persisted is absent/null and --timeout-min WAS passed: ADOPT it. This
+#     is the documented convention itself — `reserve` (no flag) followed by
+#     `check --timeout-min 10` must keep working, so the first explicit value
+#     any command supplies for an otherwise-undecided cycle becomes that
+#     cycle's timeout from here on. The caller persists the adoption
+#     (`timeout_min_adopted=1` signals it must write `.timeout_min` back)
+#     rather than this function, because writing state requires the caller's
+#     already-held lock and read state file.
+#
+# Adopting is safe to do retroactively (not just before any `check` has run)
+# because nothing about a `check` verdict is durable: every command
+# re-derives `elapsed` from `reserved_at` and `timeout_min` fresh, on its own
+# invocation, against the real clock. There is no cached "attempt 1 timed
+# out" decision anywhere in state for a later adoption to contradict — only
+# `reserved_at` (fixed at reservation) and `timeout_min` (this cycle's
+# budget) are persisted, and adoption keeps those two mutually consistent for
+# every command that reads them afterward. The one case that DOES get a
+# second vote is two conflicting EXPLICIT flags — that is not absence
+# resolving, it is genuine disagreement about the cycle's timeout, so it
+# stays a `die`.
+#
+# `$1` is the raw `.timeout_min` from the state file: empty both for state
+# written before this field existed (no key at all) and for a cycle that has
+# never had an explicit choice adopted into it (the key is present as JSON
+# `null`) — `jq -r '.timeout_min // empty'` collapses both to the empty
+# string, and this function treats them identically, which is the point:
+# neither has made a durable choice yet.
+resolve_timeout_min() {
+    persisted=$1
+    timeout_min_adopted=0
+    if [ -n "$persisted" ]; then
+        valid_uint "$persisted" ||
+            die "state has an invalid timeout_min: $persisted"
+        # harmon-devkit#223: canonicalize both sides to base-10 before
+        # comparing or persisting. `valid_uint`'s `[1-9][0-9]*` pattern
+        # already forbids a leading zero on the EXPLICIT flag, and jq already
+        # normalizes one out of a value it reads back from JSON, so neither
+        # side can carry one into this function today — but a string
+        # equality test comparing "10" against a differently-spelled-but-equal
+        # value would falsely conflict if that ever changed (a looser regex,
+        # a different jq, a hand-edited state file), and forcing `$((10#x))`
+        # is cheap insurance against relying on that staying true. `10#` (not
+        # a bare `-eq`) matters here specifically because bash arithmetic
+        # treats an actual leading zero as OCTAL — `[ 010 -eq 8 ]` is true —
+        # so an unguarded `-eq` would silently compare the wrong canonical
+        # number instead of failing safe.
+        persisted=$((10#$persisted))
+        if [ "$timeout_min_set" = 1 ]; then
+            explicit=$((10#$timeout_min))
+            [ "$explicit" -eq "$persisted" ] ||
+                die "--timeout-min $timeout_min conflicts with the ${persisted}-minute timeout already persisted for this attempt cycle"
+        fi
+        timeout_min=$persisted
+    elif [ "$timeout_min_set" = 1 ]; then
+        # $timeout_min already holds the explicit flag's value from arg
+        # parsing; canonicalize it for the same reason as above before the
+        # caller persists it.
+        timeout_min=$((10#$timeout_min))
+        timeout_min_adopted=1
+    else
+        timeout_min=15
+    fi
+}
+
+# Persists an adoption `resolve_timeout_min` flagged via `timeout_min_adopted`.
+# Must run inside the caller's existing state lock, after `resolve_timeout_min`
+# and before any command relying on `timeout_min` returns — an adoption that
+# is never written back would silently revert to "undecided" on the next
+# invocation, reopening the inconsistent-windows bug this whole change exists
+# to close.
+persist_adopted_timeout() {
+    [ "$timeout_min_adopted" = 1 ] || return 0
+    payload=$(jq --argjson timeout_min "$timeout_min" \
+        '.timeout_min = $timeout_min' "$state_file")
+    write_state "$state_file" "$payload"
 }
 
 provider_head() {
@@ -187,7 +281,8 @@ read_state() {
       (.cycle_requested_at == null or
         (.cycle_requested_at | type == "string")) and
       (.previous_trigger_comment_id == null or
-        (.previous_trigger_comment_id | type == "number"))
+        (.previous_trigger_comment_id | type == "number")) and
+      (.timeout_min == null or (.timeout_min | type == "number"))
     ' "$state_file" >/dev/null || die "malformed state file: $state_file"
 }
 
@@ -308,16 +403,24 @@ codex_verdict_defs=$(
               gsub("^[[:space:]]+|[[:space:]]+$"; "") | ascii_downcase);
           def has_severity_marker:
             (body_text | ascii_downcase | test("\\bp[0-2]\\b"));
+          # Factored out of `rest_is_boilerplate` so the carrier defs below can
+          # reuse the exact same removal and the exact same metadata pattern
+          # instead of restating them. Same regexes, same flags, same order —
+          # `rest_is_boilerplate` behaves identically to before the split.
+          def strip_about_block:
+            gsub("<details.*?<summary>.*?about codex.*?</summary>.*?</details>";
+                 ""; "im");
+          def is_reviewed_commit_line:
+            test(
+              "^\\*\\*reviewed commit:\\*\\*[[:space:]]*`[0-9a-f]{7,40}`[[:space:]]*$"
+            );
           def rest_is_boilerplate:
             (body_text | split("\n") | .[1:] | join("\n") |
-              gsub("<details.*?<summary>.*?about codex.*?</summary>.*?</details>";
-                   ""; "im") |
+              strip_about_block |
               ascii_downcase | split("\n") |
               map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
               map(select(. != "")) |
-              all(test(
-                "^\\*\\*reviewed commit:\\*\\*[[:space:]]*`[0-9a-f]{7,40}`[[:space:]]*$"
-              )));
+              all(is_reviewed_commit_line));
           # The verdict line must OPEN with the clean sentence; whatever
           # Codex appends after it is stripped and plays no part in the
           # decision.
@@ -351,6 +454,59 @@ codex_verdict_defs=$(
           # draft to ready-for-review rather than merging, so a human still
           # reads the PR. That is a better trade than a parser that has been
           # wrong three times.
+          # Used only by the review-settlement gate in `check`, but defined
+          # here so they share `body_text`, the About-block removal, and the
+          # Reviewed-commit pattern with `verdict_class` instead of growing a
+          # parallel set of regexes that could drift apart. A findings review's
+          # body is a CARRIER: a heading, one fixed sentence, and Codex's own
+          # metadata, with the findings themselves in the inline comments.
+          # Anything else in it is prose nobody has answered.
+          #
+          # These defs work off `carrier_lines`, NOT `first_line`, because a
+          # real findings-review body begins with a BLANK LINE:
+          # "\n### 💡 Codex Review\n\n…" is what #355 and #273 actually posted.
+          # `first_line` is therefore empty for every genuine findings review,
+          # and a heading test built on it can never match one — the gate would
+          # be permanently inert, re-blocking every PR and reproducing the #275
+          # deadlock from the fail-closed side.
+          #
+          # `first_line` itself is deliberately LEFT ALONE. It serves
+          # `verdict_class`'s clean-verdict prefix test, and clean results are
+          # top-level comments that open directly with the verdict sentence —
+          # a different payload shape from these review bodies, with no leading
+          # blank observed. Loosening the shared def to fix a review-body
+          # problem would change what counts as a clean verdict too, for no
+          # evidence that the clean path needs it.
+          #
+          # The heading match is loose about what sits between the hashes and
+          # the words — "### Codex Review" and "### 💡 Codex Review" have both
+          # been observed — and strict about the words themselves.
+          #
+          # The sentence is pinned as the literal observed on
+          # evanharmon1/harmon-devkit#355. Pinning cuts the other way from the
+          # verdict-line clause deliberately: this is the SETTLED path, so a
+          # reworded sentence fails to match, the review is not settled, and
+          # the check re-blocks. Drift in Codex's format costs a false block,
+          # never a false green.
+          def carrier_sentence:
+            "here are some automated review suggestions for this pull request.";
+          def drop_leading_blanks:
+            if (length > 0) and (.[0] == "") then .[1:] | drop_leading_blanks
+            else . end;
+          def carrier_lines:
+            (body_text | ascii_downcase | split("\n") |
+              map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
+              drop_leading_blanks);
+          def carrier_heading:
+            ((carrier_lines | first) // "" |
+              test("^#{1,6}[^a-z0-9]*codex review$"));
+          def is_carrier_only:
+            carrier_heading and
+            (carrier_lines | .[1:] | join("\n") |
+              strip_about_block | split("\n") |
+              map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
+              map(select(. != "")) |
+              all(is_reviewed_commit_line or (. == carrier_sentence)));
           def verdict_class:
             if (first_line | startswith(clean_sentence) | not) then "findings"
             elif has_severity_marker then "findings"
@@ -413,10 +569,41 @@ reserve)
         previous_reserved_epoch=$(jq -nr \
             --arg value "$previous_reserved_at" '$value | fromdateiso8601') ||
             die "cannot parse attempt 1 reservation time"
+        # harmon-devkit#223: attempt 2 has no --timeout-min of its own in the
+        # documented flow, and even when one is passed it must not silently
+        # open a second window — a timeout already persisted on the attempt-1
+        # state is authoritative, and an explicit flag may only restate it
+        # (resolve_timeout_min dies on a mismatch). If attempt 1 never had a
+        # timeout chosen for it, this reserve's own flag (or the 15-minute
+        # default, if none) decides the cycle's timeout from here.
+        persisted_timeout_min=$(jq -r '.timeout_min // empty' "$state_file")
+        resolve_timeout_min "$persisted_timeout_min"
+        # harmon-devkit#223: persist an adoption BEFORE the window check can
+        # `die` and exit this process. An early attempt-2 that supplies the
+        # cycle's first explicit --timeout-min still decided that timeout —
+        # refusing the reservation for arriving too soon must not also
+        # discard the choice, or a later flagless retry falls back to the
+        # 15-minute default and gets refused again for the wrong reason.
+        persist_adopted_timeout
         current_epoch=$(date -u '+%s')
         [ "$current_epoch" -ge \
             "$((previous_reserved_epoch + timeout_min * 60))" ] ||
             die "attempt 1 window has not elapsed"
+    fi
+    # harmon-devkit#223: attempt 1 of a fresh cycle persists a CHOICE only
+    # when one was actually made (`--timeout-min` passed) — writing the
+    # runtime default here would make it indistinguishable from a real
+    # choice, and a later `check --timeout-min 10` on an unmodified default
+    # would then read as a conflict instead of the adoption the documented
+    # `reserve` (no flag) -> `check --timeout-min N` convention depends on.
+    # Attempt 2 always has a concrete decided value by this point (either
+    # read back from attempt 1 above, or just adopted/defaulted into
+    # `timeout_min` by resolve_timeout_min) and locks it in explicitly, since
+    # there is no attempt 3 left to adopt anything later.
+    if [ "$attempt" = "1" ] && [ "$timeout_min_set" != 1 ]; then
+        payload_timeout_min=null
+    else
+        payload_timeout_min=$timeout_min
     fi
     payload=$(jq -cn \
         --arg repo "$repo" \
@@ -426,13 +613,15 @@ reserve)
         --arg reserved_at "$reserved_at" \
         --arg cycle_requested_at "$cycle_requested_at" \
         --argjson previous_trigger_id "$previous_trigger_id" \
+        --argjson timeout_min "$payload_timeout_min" \
         '{
           version:1,repo:$repo,pr:$pr,head:$head,attempt:$attempt,
           phase:"reserved",reserved_at:$reserved_at,
           trigger_comment_id:null,requested_at:null,
           cycle_requested_at:
             (if $cycle_requested_at == "" then null else $cycle_requested_at end),
-          previous_trigger_comment_id:$previous_trigger_id
+          previous_trigger_comment_id:$previous_trigger_id,
+          timeout_min:$timeout_min
         }')
     write_state "$state_file" "$payload"
     release_state_lock
@@ -442,8 +631,18 @@ reserve)
 attach)
     [ -n "$trigger_id" ] || usage
     valid_uint "$trigger_id" || die "invalid trigger comment ID"
+    valid_uint "$timeout_min" || die "timeout must be a positive integer"
     acquire_state_lock
     read_state
+    # harmon-devkit#223: every `run_gh` call below (the head re-check and the
+    # trigger-comment fetch) is budgeted off `$timeout_min` via the
+    # `state_reserved` arithmetic in `run_gh` itself — it is not just the
+    # commands that reference the flag by name. A persisted non-default
+    # timeout has to reach that arithmetic here exactly as it does in
+    # `check`, or attach's own GitHub calls run on the wrong window.
+    persisted_timeout_min=$(jq -r '.timeout_min // empty' "$state_file")
+    resolve_timeout_min "$persisted_timeout_min"
+    persist_adopted_timeout
     phase=$(jq -r '.phase' "$state_file")
     if [ "$phase" = "attached" ]; then
         existing_id=$(jq -r '.trigger_comment_id' "$state_file")
@@ -716,6 +915,15 @@ check)
     valid_time "$cycle_requested" || die "state has an invalid cycle request time"
     [ -z "$previous_trigger" ] || valid_uint "$previous_trigger" ||
         die "state has an invalid previous trigger ID"
+    # harmon-devkit#223: the window `bounded_wait` and `run_gh`'s per-call
+    # budget measure against `state_reserved` must be the one this cycle was
+    # actually reserved under, not whatever `--timeout-min` this particular
+    # invocation happened to pass — otherwise a shorter flag here and the
+    # unmodified 15-minute default in attempt-2 `reserve` disagree about when
+    # the window closes.
+    persisted_timeout_min=$(jq -r '.timeout_min // empty' "$state_file")
+    resolve_timeout_min "$persisted_timeout_min"
+    persist_adopted_timeout
 
     first_head=$(provider_head "$state_pr" "$state_repo") || {
         bounded_wait "cannot fetch the current open PR head"
@@ -803,7 +1011,70 @@ check)
         }
     done
 
-    inline_findings=$(jq \
+    # Current-head inline findings are PARTITIONED, not counted
+    # (evanharmon1/harmon-devkit#275). Counting them made the two-attempt
+    # contract unfinishable for any head carrying a declined P2: the settled
+    # finding re-blocked every later check until a new commit moved the head,
+    # which is the opposite of what the shepherd stage asks for — a finding is
+    # settled by fixing it OR by declining it with reasoning in its thread.
+    #
+    # A bot inline comment on this head is ADJUDICATED when its own thread
+    # carries a trusted reply posted after it. The replies come from the SAME
+    # `pulls/<n>/comments` listing already fetched, because a reply to a review
+    # comment IS an inline comment — it is the same resource with
+    # `in_reply_to_id` set to the comment it answers. There is no second
+    # endpoint to fetch and no GraphQL thread walk needed.
+    #
+    # Trust is `author_association` in {OWNER, MEMBER, COLLABORATOR} OR the
+    # reply's immutable numeric user ID equalling the PR author's. The
+    # association alone is not enough: a shepherd driving a fork PR replies as
+    # the PR author with association CONTRIBUTOR, and refusing that would make
+    # the contract unfinishable again for exactly the sessions this helper
+    # exists to serve. The bot may never adjudicate itself.
+    #
+    # What a reply SAYS is deliberately not examined, and that is a knowingly
+    # accepted residual: a content-free trusted reply — "looking into it" —
+    # adjudicates the finding just as a reasoned decline does. Requiring an
+    # explicit disposition would mean parsing reply prose for intent, which is
+    # the exact failure family documented at length above `verdict_class`, and
+    # issue #275's acceptance criterion is reply-from-a-trusted-actor, not
+    # reply-content. It also matches what SKILL.md §2 already says about the
+    # main thread check: it measures whether a thread has been answered, never
+    # who thought about it. The cost is bounded because this gate promotes a
+    # draft to ready-for-review rather than merging, so a human still reads the
+    # disposition that now stands on the PR.
+    #
+    # Malformed or missing fields on a would-be trusted reply — no numeric user
+    # ID, no association, an unparseable timestamp — make that reply untrusted,
+    # so the comment stays UNADJUDICATED and the check reports `findings`. That
+    # is the opposite of `verdict_class`, where unparseable means indeterminate,
+    # and deliberately so: an unreadable verdict says nothing about whether the
+    # PR is clean, but an unreadable reply is simply not proof that a human
+    # answered the finding. Fail-closed here points at `findings`.
+    #
+    # The edited-since-reply rule compares the bot comment's `updated_at`
+    # against the LATEST trusted reply's `created_at`. Codex edits a finding in
+    # place when it revises it, and a reply that predates the edit answered
+    # different text — so an edited comment whose replies are all older is
+    # unresolved again. `updated_at` absent means never edited and falls back to
+    # `created_at`; present but unparseable fails closed, like every other
+    # malformed field here.
+    #
+    # That comparison is STRICT. GitHub timestamps are second-precision, so a
+    # reply stamped the same second as an edit cannot prove it came after the
+    # edit — and a tie resolved in the reply's favour would silently adjudicate
+    # text the replier may never have seen. The never-edited case is unaffected:
+    # `updated_at` then equals `created_at`, and a trusted reply is already
+    # required to be strictly later than that.
+    #
+    # The partition also records which REVIEW each finding belongs to, via the
+    # inline comment's `pull_request_review_id`. A review is settled only by its
+    # OWN findings — see the correlation comment above the review gate below.
+    # A current-head bot inline comment carrying no numeric
+    # `pull_request_review_id` cannot be attributed to anything, so it settles
+    # nothing at all: the whole settled set collapses to empty rather than
+    # letting an unattributable finding be counted against some other review.
+    inline_head_findings=$(jq \
         --argjson id "$actor_id" \
         --arg head "$state_head" '
           [.[] | select(
@@ -811,9 +1082,141 @@ check)
             (.original_commit_id? == $head)
           )] | length
         ' "$workdir/inline.json")
-    if [ "$inline_findings" -gt 0 ]; then
-        emit findings "authenticated current-head inline review findings require adjudication"
-        exit 10
+
+    adjudicated_findings=0
+    settled_reviews='[]'
+    attributed_reviews='[]'
+    unattributed_findings=0
+    if [ "$inline_head_findings" -gt 0 ]; then
+        # Fetched lazily and only once: the PR author identity is needed solely
+        # to judge replies, so a head with no inline findings — the ordinary
+        # case — spends no call on it. `gh pr view`'s author `id` is a GraphQL
+        # node ID and could never compare against the REST `user.id` on a
+        # comment, hence the REST pull object rather than the payload
+        # `provider_head` already reads.
+        #
+        # This call lands AFTER the evidence snapshot and after the head check
+        # that closes it, so it is also the last chance to notice a push that
+        # arrived in between — and the payload already carries `head.sha`, so
+        # noticing costs nothing. Without it, the window in which the snapshot
+        # is believed would be longer than the window it was verified over,
+        # which is exactly the failure the second head check exists to prevent.
+        #
+        # Accepted residual, unchanged by any of this: a NEW finding arriving on
+        # the SAME head after the evidence was fetched is invisible to any
+        # single-snapshot design. Only the next check sees it, which is why the
+        # caller re-reads the four surfaces immediately before accepting a
+        # result.
+        pr_payload=$(run_gh api "repos/$state_repo/pulls/$state_pr") || {
+            bounded_wait "cannot fetch the pull request author identity"
+        }
+        pr_author_id=$(printf '%s' "$pr_payload" |
+            jq -er 'select(.user.id | type == "number") | .user.id') || {
+            emit indeterminate "pull request payload carries no usable author identity"
+            exit 2
+        }
+        pr_head=$(printf '%s' "$pr_payload" |
+            jq -er 'select(.head.sha | type == "string") | .head.sha') || {
+            emit indeterminate "pull request payload carries no usable head commit"
+            exit 2
+        }
+        valid_sha "$pr_head" || {
+            emit indeterminate "pull request payload reports a malformed head commit"
+            exit 2
+        }
+        [ "$pr_head" = "$state_head" ] || {
+            emit head-changed "PR head changed while findings were being adjudicated"
+            exit 2
+        }
+
+        inline_partition=$(jq -c \
+            --argjson id "$actor_id" \
+            --argjson author "$pr_author_id" \
+            --arg head "$state_head" '
+              def ts($value):
+                if ($value | type) == "string" and
+                   ($value | test(
+                     "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+                   ))
+                then $value else null end;
+              def edited_at:
+                if (.updated_at // null) == null then ts(.created_at)
+                else ts(.updated_at) end;
+              . as $all |
+              [$all[] | select(
+                .user.id? == $id and (.original_commit_id? == $head)
+              )] as $bot |
+              [$bot[] |
+                . as $comment |
+                ts($comment.created_at) as $posted |
+                ($comment | edited_at) as $edited |
+                [$all[] | select(
+                  (($comment.id? | type) == "number") and
+                  (.in_reply_to_id? == $comment.id) and
+                  ((.user.id? | type) == "number") and
+                  (.user.id != $id) and
+                  ((((.author_association? // "") |
+                      (. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR"))) or
+                    (.user.id == $author)) and
+                  ($posted != null) and
+                  (ts(.created_at) != null) and
+                  (ts(.created_at) > $posted)
+                ) | ts(.created_at)] as $replies |
+                {
+                  review: (
+                    if ($comment.pull_request_review_id? | type) == "number"
+                    then $comment.pull_request_review_id else null end
+                  ),
+                  adjudicated: (
+                    ($replies | length) > 0 and $edited != null and
+                    (($replies | max) > $edited)
+                  )
+                }
+              ] as $classified |
+              {
+                unadjudicated:
+                  ([$classified[] | select(.adjudicated | not)] | length),
+                unattributed:
+                  ([$classified[] | select(.review == null)] | length),
+                attributed:
+                  ([$classified[] | select(.review != null) | .review] | unique),
+                settled: (
+                  if ([$classified[] | select(.review == null)] | length) > 0
+                  then []
+                  else
+                    [$classified[] | .review] | unique |
+                    map(select(. as $review |
+                      [$classified[] | select(.review == $review)] |
+                      all(.adjudicated)))
+                  end
+                )
+              }
+            ' "$workdir/inline.json")
+        inline_unadjudicated=$(printf '%s' "$inline_partition" |
+            jq -er '.unadjudicated | select(type == "number")') || {
+            emit indeterminate "current-head inline findings could not be partitioned"
+            exit 2
+        }
+        settled_reviews=$(printf '%s' "$inline_partition" |
+            jq -ce '.settled | select(type == "array")') || {
+            emit indeterminate "current-head inline findings could not be partitioned"
+            exit 2
+        }
+        unattributed_findings=$(printf '%s' "$inline_partition" |
+            jq -er '.unattributed | select(type == "number")') || {
+            emit indeterminate "current-head inline findings could not be partitioned"
+            exit 2
+        }
+        attributed_reviews=$(printf '%s' "$inline_partition" |
+            jq -ce '.attributed | select(type == "array")') || {
+            emit indeterminate "current-head inline findings could not be partitioned"
+            exit 2
+        }
+        if [ "$inline_unadjudicated" -gt 0 ]; then
+            emit findings "authenticated current-head inline review findings are unanswered by a trusted in-thread reply"
+            exit 10
+        fi
+        adjudicated_findings=1
     fi
 
     # Classifying a current-head result is three-way, not binary, because
@@ -883,19 +1286,94 @@ check)
     # And the metadata line is matched WHOLE. `startswith` on the label
     # accepted "**Reviewed commit:** `sha` However a race remains.", which is
     # the same trailing-text hole as the verdict line had, one line lower.
+    # A Codex findings review is a body opening "### Codex Review" whose actual
+    # findings ARE the inline comments partitioned above — `verdict_class` calls
+    # that body `findings` because it does not open with the clean sentence. So
+    # once a review's own findings are adjudicated, re-blocking on the review
+    # that carried them would make the relaxation pointless: the same settled
+    # findings, counted a second time from the other side.
+    #
+    # The correlation is PER REVIEW, via the `pull_request_review_id` each
+    # inline comment carries. Same-head aggregation is not enough, and the
+    # two-attempt contract makes the counterexample routine rather than exotic:
+    # two findings reviews on one head, the first with adjudicated inline
+    # comments and the second stating its finding in the review body alone. A
+    # global "something was adjudicated" flag suppresses BOTH, and the check
+    # reports adjudicated-clean over an unanswered finding.
+    #
+    # So a findings-classified current-head review is settled only when it has
+    # at least one current-head bot inline comment attributed to it AND every
+    # such comment is adjudicated. A findings review with nothing attributed to
+    # it is never in the settled set, which subsumes the earlier rule about a
+    # findings review with no inline comments at all. A settled review
+    # contributes neither `findings` nor `clean` to the aggregate below — it is
+    # answered, not a verdict — so an `unrecognized` sibling is still seen.
+    #
+    # One more condition, and it is not optional: a review whose BODY carries a
+    # P0/P1/P2 badge is never settled by its inline comments, however well
+    # adjudicated those are. Codex states some findings in the review body
+    # itself, and attribution cannot reach them — there is no inline comment to
+    # reply to — so reclassifying the whole review on the strength of its
+    # attributed comments would discard the badged one in silence.
+    #
+    # That test is `has_severity_marker`, the same whole-body scan
+    # `verdict_class` uses, and it is deliberately content-NEGATIVE: it asks
+    # whether a stable, machine-emitted badge is ABSENT, never what the prose
+    # means. It therefore does not reopen the free-text failure family
+    # documented above `verdict_class` — nothing here reads a clause, ranks a
+    # phrasing, or maintains a corpus of observed wording.
+    #
+    # The badge test alone is not enough, for the reason the residual above
+    # `verdict_class` records: an UNBADGED concern carries no marker. So a
+    # settled review's body must additionally be CARRIER-ONLY — heading, the
+    # pinned boilerplate sentence, whole-line Reviewed-commit metadata, the
+    # About block, and nothing else non-blank (`is_carrier_only`). Between the
+    # two tests the settled path has no free-text surface at all: a badge makes
+    # it `findings`, and any other prose makes it not-settled, which is also
+    # `findings`.
+    #
+    # Both failure directions therefore RE-BLOCK. If Codex rewords its
+    # boilerplate or restyles its heading, settlement stops matching and the
+    # check gates a PR it could have released; it never releases one it should
+    # have gated. That is the opposite trade from the verdict line, where
+    # pinning the tail deadlocked real PRs — there the strict reading was
+    # fail-closed toward *blocking clean work*, here it is fail-closed toward
+    # blocking work that still has an open finding.
     review_result=$(jq -r \
         --argjson id "$actor_id" \
         --arg head "$state_head" \
+        --argjson settled "$settled_reviews" \
         "$codex_verdict_defs"'
           [.[] | select(
             .user.id? == $id and
             (.commit_id? == $head)
-          ) | verdict_class
+          ) |
+          . as $review | verdict_class as $class |
+          if $class == "findings" then
+            (if (($review.id? | type) == "number") and
+                ($settled | index($review.id)) and
+                ((has_severity_marker) | not) and
+                is_carrier_only
+             then "settled" else "findings" end)
+          else $class end
           ] |
           if index("findings") then "findings"
           elif index("unrecognized") then "unrecognized"
           elif index("clean") then "clean"
           else "none" end
+        ' "$workdir/reviews.json")
+    # The reviews this check actually saw for the current head, by ID. The
+    # adjudicated-clean fallback below reconciles the two endpoints against
+    # each other with it: an inline comment naming a review nobody fetched is
+    # incomplete evidence, not a settled finding.
+    fetched_reviews=$(jq -c \
+        --argjson id "$actor_id" \
+        --arg head "$state_head" '
+          [.[] | select(
+            .user.id? == $id and
+            (.commit_id? == $head) and
+            ((.id? | type) == "number")
+          ) | .id] | unique
         ' "$workdir/reviews.json")
     if [ "$review_result" = "findings" ]; then
         emit findings "authenticated current-head review requires adjudication"
@@ -984,6 +1462,46 @@ check)
         ' "$workdir/reactions.json")
     if [ "$exact_like" -gt 0 ]; then
         emit clean "authenticated bot reacted +1 on the exact current-head trigger"
+        exit 0
+    fi
+
+    # Last of the clean paths, deliberately after the three above: a verdict
+    # Codex itself posted for this head is stronger evidence than findings the
+    # session answered, so it is reported as such. The detail differs from the
+    # others on purpose — the caller must be able to tell "Codex said clean"
+    # from "the findings were all answered", because only the second one means
+    # a human wrote the rationale that now stands on the PR.
+    #
+    # Reaching it requires the two endpoints to AGREE, not merely for the
+    # replies to check out. `unadjudicated == 0` is a statement about inline
+    # comments alone, and on its own it can be true while the attribution that
+    # justifies suppressing the findings review is missing: a comment with no
+    # `pull_request_review_id` belongs to a review this check cannot name, and
+    # an attributed ID absent from the fetched current-head reviews names one
+    # it never saw. Either way the settled-review reasoning above rests on
+    # evidence that is not there.
+    #
+    # That is `indeterminate`, deliberately — not `findings` and not `clean`.
+    # Nothing here says the findings are open (every reply checked out) and
+    # nothing says they are settled (the review side is unaccounted for). It is
+    # the same three-way discipline `verdict_class` uses: incomplete evidence
+    # is its own answer, and the caller escalates rather than acting on a
+    # verdict this check cannot support.
+    if [ "$adjudicated_findings" = "1" ]; then
+        jq -ne \
+            --argjson unattributed "$unattributed_findings" \
+            --argjson attributed "$attributed_reviews" \
+            --argjson settled "$settled_reviews" \
+            --argjson fetched "$fetched_reviews" '
+              ($unattributed == 0) and
+              (($attributed | length) > 0) and
+              all($attributed[]; . as $review | $settled | index($review)) and
+              all($settled[]; . as $review | $fetched | index($review))
+            ' >/dev/null || {
+            emit indeterminate "current-head findings are adjudicated but their review attribution is incomplete across the comment and review endpoints"
+            exit 2
+        }
+        emit clean "current-head findings are all adjudicated by trusted in-thread replies"
         exit 0
     fi
 

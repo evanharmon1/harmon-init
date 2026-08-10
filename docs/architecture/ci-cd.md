@@ -21,8 +21,8 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   trigger, or gating a job on `github.event.pull_request.draft`, would leave the
   gate with nothing to read until after the handoff it is supposed to authorize.
 - `claude-plan` / `claude-implement` / `claude-review` — **mention-only**: an
-  explicit `@claude plan` / `@claude implement` / `@claude review` comment or
-  review from a sender on the `claude_authorized_members` allowlist. There is no
+  explicit `@claude` mention naming `plan`, `implement`, or `review` in a
+  comment or review from a sender on the `claude_authorized_members` allowlist. There is no
   label trigger and no open/assign trigger; the retired `claude-plan`,
   `claude-implement`, and `claude-review` labels are gone, because a label or an
   assignment carries no actor the allowlist can check on every path. Each run
@@ -41,9 +41,11 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   language). Generated repos with `use_codeql=true` add `codeql.yml`, and
   their security job runs Semgrep CE only when the repository is private
   without the paid CodeQL opt-in.
-- Generated repositories may explicitly opt into `snyk-scheduled.yml` at a
-  weekly or daily cadence. It has only schedule/manual triggers, runs Snyk SAST
-  and SCA as advisory second-opinion scans, and is never a required PR check.
+- `snyk-scheduled.yml` — this repo's **weekly** (Sunday 06:23 UTC) Snyk Code +
+  Open Source second-opinion scans. It has only schedule/manual triggers,
+  consumes no PR checks, and is not part of branch protection. Generated
+  repositories opt into the same workflow explicitly via `snyk_scan_schedule`
+  (`weekly` or `daily`). See [security.md](security.md) for quota guidance.
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 - `publish-harmon-devcontainer.yml` — **root-only**: validates and publishes the
   shared amd64/arm64 toolchain image, then maintains its reviewed pin PR.

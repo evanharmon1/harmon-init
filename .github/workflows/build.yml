@@ -53,6 +53,7 @@ jobs:
       - run: task test:ci-results
       - run: task test:status
       - run: task test:renovate-pins
+      - run: task test:lint-hygiene
       - run: task test:release-title
       - run: task test:setup-github-project
       - run: task test:sync-devkit-release

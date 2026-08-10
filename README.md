@@ -183,7 +183,7 @@ and canonical AGENTS.md. Projects generated from v2 should be re-templated
 | `task check` | Root linters (template/ excluded — jinja isn't valid YAML) |
 | `task security` | Free local baseline: Semgrep CE + gitleaks + dependency audit |
 | `task security:sast` / `security:sca` | Semgrep CE / package-manager dependency audit |
-| `task security:sast:snyk` / `security:sca:snyk` | Optional Snyk second-opinion scans (manual or explicitly scheduled) |
+| `task security:sast:snyk` / `security:sca:snyk` | Optional Snyk second-opinion scans (manual; also run weekly by `snyk-scheduled.yml`) |
 | `task challenge` / `task review` | Optional Codex second-model reviews: adversarial / verification checkpoint (advisory, local-only) |
 | `task codex:gate:enable` | Automatic Claude → Codex stop-gate for this repo + machine (also `:disable` / `:status`) |
 | `task install` | Brewfile deps + lefthook hooks |

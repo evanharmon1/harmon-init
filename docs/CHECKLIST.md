@@ -156,20 +156,24 @@ this comment. -->
       Semgrep CE runs in `build.yml` at both visibilities. Generated supported
       public stacks run CodeQL automatically; free private repos use Semgrep CE
       unless paid private CodeQL is explicitly enabled.
-- [ ] **Choose the Snyk posture** — Harmon Init currently uses the free
-      baseline (Semgrep CE + Dependabot alerts/Renovate + gitleaks), so Snyk
-      remains off. Free private repos keep Snyk manual/local via
-      `task security:sast:snyk` and `task security:sca:snyk`; local tests consume
-      the same Snyk Organization quota. Do not install the Snyk GitHub App for
-      this posture; its PR checks are not required by the branch ruleset.
-- [ ] **Optional scheduled Snyk** — for a selected important public repository,
-      choose `snyk_scan_schedule=weekly` (conservative) or `daily` (public or
-      accepted unlimited OSS), commit the generated `snyk-scheduled.yml`, set the
-      Actions secret `SNYK_TOKEN`, and run it once with **Run workflow**. It runs
-      SAST + SCA only on its schedule/manual dispatch—never on PR or push—and
-      remains advisory. Confirm Snyk recognizes the public Git remote and does
-      not debit private-test usage; if it does, run `snyk monitor` once and set
-      the Project's Git remote URL in Snyk. Prefer weekly for any deliberately
+- [ ] **Choose the Snyk posture** — Harmon Init runs the free baseline
+      (Semgrep CE + Dependabot alerts/Renovate + gitleaks) and adds Snyk as an
+      advisory second opinion at `snyk_scan_schedule=weekly`. Free private repos
+      keep Snyk manual/local via `task security:sast:snyk` and
+      `task security:sca:snyk`; local tests consume the same Snyk Organization
+      quota. Do not install the Snyk GitHub App for this posture; its PR checks
+      are not required by the branch ruleset.
+- [ ] **Activate scheduled Snyk (weekly)** — set the Actions secret `SNYK_TOKEN`
+      (the value must be piped on stdin, e.g.
+      `op read "op://<vault>/<item>/<field>" | task secret:set:gh NAME=SNYK_TOKEN REPO=evanharmon1/harmon-init`)
+      and run
+      `snyk-scheduled.yml` once with **Run workflow**. It runs SAST + SCA only on
+      its schedule/manual dispatch—never on PR or push—and remains advisory, so
+      it is never added to the branch ruleset. Confirm Snyk recognizes the public
+      Git remote and does not debit private-test usage; if it does, run
+      `snyk monitor` once and set the Project's Git remote URL in Snyk. A repo
+      generated from this template chooses `weekly` (conservative) or `daily`
+      (public or accepted unlimited OSS); prefer weekly for any deliberately
       budgeted private repo and check Organization Usage before enabling it.
 - [ ] **Create** the CI GitHub App `evanharmon1-ci` by hand (one App per org;
       **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.

@@ -117,6 +117,11 @@ The Copier answer `snyk_scan_schedule` controls the optional generated workflow:
 - `daily` — intended for public repositories or an accepted unlimited OSS
   project, not the ordinary private Free-plan posture.
 
+harmon-init itself is set to **weekly**, so this repository generates
+`snyk-scheduled.yml` (Sunday 06:23 UTC). It is a public repository, so the
+private-test allocation below does not apply to it; the scan stays advisory and
+is never a required PR check.
+
 When enabled, `snyk-scheduled.yml` installs a pinned CLI and runs Snyk Code
 (SAST) plus Snyk Open Source (SCA) as separate matrix jobs. It triggers only on
 its schedule or manual dispatch—not on pull requests or pushes—and is excluded
@@ -424,7 +429,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 |---|---|---|---|
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-*, sync-harmon-devkit | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
-| `SNYK_TOKEN` | optional Snyk CLI scans; also `snyk-scheduled.yml` when explicitly generated | local env / 1Password by default; Actions secret only for scheduled/paid CI | manual |
+| `SNYK_TOKEN` | optional Snyk CLI scans; also the weekly `snyk-scheduled.yml` | local env / 1Password locally; repo Actions secret for the weekly schedule | manual |
 | `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 | `FOREMAN_AGENT_GH_TOKEN` (read-only PAT) | handed by foreman to dispatched agents as their `GH_TOKEN`; bot profile only, required before any dispatch | 1Password Environment → devcontainer `--env-file` | manual; rotate with the bot PAT |
 | TODO | TODO | TODO | TODO |
