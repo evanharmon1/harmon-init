@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.26.0](https://github.com/evanharmon1/harmon-init/compare/v4.25.3...v4.26.0) (2026-08-10)
+
+
+### Features
+
+* refresh agent registry for 2026 model lineups, gpt/mai renames, qwen wrappers, broker harnesses ([#758](https://github.com/evanharmon1/harmon-init/issues/758)) ([76fdbb8](https://github.com/evanharmon1/harmon-init/commit/76fdbb8c4fc7ae65547230c6a2d55bbc4e6719a6))
+* **status:** assert local credential readiness in task status:setup ([#735](https://github.com/evanharmon1/harmon-init/issues/735)) ([ba0bee1](https://github.com/evanharmon1/harmon-init/commit/ba0bee1085708d5f9a4249f85b39de2f417b8ce0))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.26.0 ([#760](https://github.com/evanharmon1/harmon-init/issues/760)) ([fd3e1c6](https://github.com/evanharmon1/harmon-init/commit/fd3e1c68ae3f047453ff032dab9f03e8ad7c4b4b))
+
 ## [4.25.3](https://github.com/evanharmon1/harmon-init/compare/v4.25.2...v4.25.3) (2026-08-10)
 
 
