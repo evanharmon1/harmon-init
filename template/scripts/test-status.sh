@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# test-status.sh — unit-test status.sh's "Project board writes" check: the token
-# scope the claim lifecycle needs is reported from the section that session-start
-# orientation actually runs (`task status:gh`), in every scope state. Run via
-# `task test:status`.
+# test-status.sh — unit-test the two things status.sh reports about credentials:
+#
+#   * "Project board writes" (`task status:gh`) — the token scope the claim
+#     lifecycle needs, reported from the section session-start orientation
+#     actually runs, in every scope state.
+#   * "Local credentials" (`task status:setup`) — the gh and Codex logins the
+#     Dev Loop gates on, in every state including not-installed, rendering
+#     BEFORE the gate that skips the rest of that audit, and counted by the
+#     summary at the end of it.
+#
+# Run via `task test:status`.
 #
 # Hermetic in two directions:
 #
@@ -23,18 +30,22 @@ status="./scripts/status.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
-# Three fixture roots, each holding a copy of the script under test:
+# Four fixture roots, each holding a copy of the script under test:
 #   with-board  — has the board tooling, so the check applies
 #   no-board    — has none of it, so the check must not render at all
 #   skills-only — the DEFAULT generated profile: `project_management: none` with
 #                 `use_skills_sync: true`, so the vendored universal skill set
 #                 (track-work included) is present but there is no board
-for fixture in with-board no-board skills-only; do
+#   with-codex  — opted into second-model review, so the Codex login is a gate.
+#                 The other three have no codex-review.sh, which is what makes
+#                 them the not-opted-in case for that check.
+for fixture in with-board no-board skills-only with-codex; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
 done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
+: >"${TMP}/with-codex/scripts/codex-review.sh"
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
@@ -50,6 +61,7 @@ WITH_BOARD="${TMP}/with-board/scripts/status.sh"
 NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
+WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -187,6 +199,142 @@ run_gh_section() {
     make_stub "$1"
     local script="${2:-${WITH_BOARD}}"
     PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" gh 2>&1
+}
+
+# make_codex_stub STATE — write $TMP/bin/codex answering `login status`.
+#   in     — logged in (exit 0, as the real CLI's "Logged in using ChatGPT")
+#   out    — not logged in (exit 1, as its "Not logged in")
+#   broken — the CLI could not run at all: a malformed config.toml exits non-zero
+#            like a logout does, but says nothing about credentials
+# All three write their verdict to STDERR with an empty stdout, which is what the
+# shipped CLI does — a probe that read stdout alone would see nothing from any of
+# them. Any other call fails loudly: the credentials group must read local login
+# state and nothing else, so a probe that grew a second codex call — or a network
+# one — shows up here instead of passing silently.
+make_codex_stub() {
+    local state="$1"
+    mkdir -p "${TMP}/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'if [ "$1" = "login" ] && [ "$2" = "status" ]; then'
+        case "$state" in
+        in)
+            # Unrelated stderr chatter alongside a SUCCESSFUL probe: some
+            # installs emit this while still exiting 0, so a check that read
+            # stderr being non-empty as failure would report a logged-in reader
+            # as broken.
+            echo '    echo "ERROR codex_models_manager::cache: failed to load models cache" >&2'
+            echo '    echo "Logged in using ChatGPT" >&2'
+            echo '    exit 0'
+            ;;
+        out)
+            echo '    echo "Not logged in" >&2'
+            echo '    exit 1'
+            ;;
+        broken)
+            # Deliberately does NOT carry the logged-out phrase — that is the
+            # whole distinction under test.
+            echo '    echo "Error: failed to parse config.toml: invalid TOML at line 3" >&2'
+            echo '    exit 1'
+            ;;
+        *) fail "unknown codex stub state: ${state}" ;;
+        esac
+        echo 'fi'
+        echo 'echo "stub: unexpected codex call: $*" >&2'
+        echo 'exit 1'
+    } >"${TMP}/bin/codex"
+    chmod +x "${TMP}/bin/codex"
+}
+
+# The setup section probes codex on every invocation now, so stub it before the
+# first case runs — a case that reached the real CLI would pass or fail on
+# whether the developer happens to be logged in, which is worse than no test at
+# all.
+make_codex_stub in
+
+# ISOLATED_TOOLS — the external commands status.sh needs, both to reach the
+# credentials group and to run the audit past the gh gate. The not-installed case
+# pins PATH to a single directory built from this list, because filtering the
+# real PATH is not enough: the devcontainer installs codex into /usr/bin,
+# alongside git, grep, and jq, so dropping the directory that holds it would take
+# the toolbox with it. `bash` is on the list because status.sh and the stubs both
+# start with `#!/usr/bin/env bash`, which resolves bash through the PATH set here.
+ISOLATED_TOOLS="bash awk basename cat cut dirname find git grep head jq mktemp rm sed sort tr uniq wc timeout gtimeout"
+
+# make_isolated_bin MISSING — a bin directory holding a symlink to each tool
+# above that exists here, plus the stubs written so far, minus MISSING. Whatever
+# is not in it is genuinely unreachable for the run: a not-installed case that
+# passed only because this machine happens to lack the CLI would prove nothing.
+make_isolated_bin() {
+    local missing="$1" tool="" resolved=""
+    rm -rf "${TMP}/bin-iso"
+    mkdir -p "${TMP}/bin-iso"
+    for tool in ${ISOLATED_TOOLS}; do
+        resolved="$(command -v "${tool}" 2>/dev/null || true)"
+        if [ -n "${resolved}" ]; then
+            ln -s "${resolved}" "${TMP}/bin-iso/${tool}"
+        fi
+    done
+    for tool in gh codex; do
+        if [ "${tool}" != "${missing}" ] && [ -f "${TMP}/bin/${tool}" ]; then
+            cp "${TMP}/bin/${tool}" "${TMP}/bin-iso/${tool}"
+        fi
+    done
+    # A degraded isolated PATH does not fail loudly — it fails as a PASS. Lose
+    # grep and the gh auth probe never finds its scope line, so an authenticated
+    # stub reads as logged out and the summary cases never reach the gate; lose
+    # jq and the run past the gate dies at the first unguarded `jq -r` (127 under
+    # set -e), taking the Summary line those cases assert on with it. Either
+    # would satisfy an assertion written for a different reason, so check that
+    # the load-bearing tools actually resolved — a broken symlink fails -x —
+    # rather than trusting the loop above. Not hypothetical: an earlier revision
+    # of this helper built a broken grep symlink and a case passed for the wrong
+    # reason.
+    for tool in bash find grep jq git; do
+        [ -x "${TMP}/bin-iso/${tool}" ] ||
+            fail "isolated PATH lacks a working ${tool} — the cases using it would assert against a degraded run"
+    done
+    if [ -n "${missing}" ]; then
+        [ ! -e "${TMP}/bin-iso/${missing}" ] || fail "isolated PATH still holds ${missing}"
+    fi
+}
+
+# run_setup_section GH_SCENARIO [SCRIPT] — status.sh's setup section with the
+# stubs on PATH. Every case drives it with `unauthenticated`: the credentials
+# group renders BEFORE the gh gate, so stopping at that gate keeps the case
+# hermetic — every check past it needs live GitHub data — while proving the group
+# is outside it.
+run_setup_section() {
+    make_stub "$1"
+    local script="${2:-${WITH_CODEX}}"
+    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" setup 2>&1
+}
+
+# run_setup_without MISSING [SCRIPT] — the same, with MISSING genuinely absent
+# from PATH. Callers write the stubs they want first.
+run_setup_without() {
+    local missing="$1" script="${2:-${WITH_CODEX}}"
+    make_isolated_bin "${missing}"
+    PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
+}
+
+# run_setup_isolated GH_SCENARIO [SCRIPT] — the setup section PAST the gh gate,
+# on the isolated PATH so every check beyond it reads the same on any machine:
+# no op, no direnv, no brew, no node. The summary cases below compare counts
+# between two runs, and a tool that merely happens to be installed here would
+# move both numbers.
+run_setup_isolated() {
+    make_stub "$1"
+    make_isolated_bin ""
+    local script="${2:-${WITH_CODEX}}"
+    PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
+}
+
+# summary_field OUTPUT NAME — the count NAME carries on status.sh's Summary line
+# (`2 ok · 3 missing · 0 unknown · 4 n/a`). Empty when there is no such line,
+# which is how a case detects that the gh gate stopped the run short.
+summary_field() {
+    printf '%s\n' "$1" | sed -n -E "s#.*Summary:.*[^0-9]([0-9]+) $2.*#\1#p" | head -1
 }
 
 echo "==> a token with 'project' reports the board as writable"
@@ -416,5 +564,161 @@ out="$(run_gh_section project)"
 case "$out" in
 *"stub: unexpected gh call"*) fail "the gh section made an unstubbed call: ${out}" ;;
 esac
+
+echo "==> the credentials group renders even when gh is unauthenticated"
+# The regression that matters most. The gate below it skips the ENTIRE remaining
+# audit when gh is logged out, so credentials checked inside that gate would
+# surface a missing codex login only on the round trip AFTER the reader fixed gh
+# — the interruption this group exists to remove.
+make_codex_stub out
+out="$(run_setup_section unauthenticated)"
+case "$out" in
+*"(gh not authenticated"*) ;;
+*) fail "expected the gh skip line, got: ${out}" ;;
+esac
+case "$out" in
+*"Codex CLI"*"codex login"*) ;;
+*) fail "the credentials group must render before the gh gate: ${out}" ;;
+esac
+
+echo "==> gh's own credential line reports the state the section already probed"
+# From the one bounded probe at the top of the script — no second `gh auth
+# status` call, which is why this line survives a logged-out gh at all.
+case "$out" in
+*"[ ] GitHub CLI (gh) — gh auth login"*) ;;
+*) fail "expected the gh credential line to name its remedy, got: ${out}" ;;
+esac
+
+echo "==> an authenticated codex reports ok"
+make_codex_stub in
+out="$(run_setup_section unauthenticated)"
+case "$out" in
+*"[x] Codex CLI"*) ;;
+*) fail "expected codex to read as logged in, got: ${out}" ;;
+esac
+
+echo "==> a logged-out codex is missing, and names 'codex login'"
+make_codex_stub out
+out="$(run_setup_section unauthenticated)"
+case "$out" in
+*"[x] Codex CLI"*) fail "a logged-out codex must not read as ok: ${out}" ;;
+*"[ ] Codex CLI — codex login"*) ;;
+*) fail "expected a logged-out codex to name its remedy, got: ${out}" ;;
+esac
+
+echo "==> a repo without codex-review.sh reports codex n/a, not missing"
+# `use_codex_review: false` renders no challenge/review tasks, so there is no
+# stage a missing login can block — and a red line the reader cannot act on is
+# how a board stops being read at all.
+make_codex_stub out
+out="$(run_setup_section unauthenticated "${WITH_BOARD}")"
+case "$out" in
+*"[ ] Codex CLI"*) fail "an opted-out repo must not report codex as missing: ${out}" ;;
+*"codex login"*) fail "an opted-out repo must not prescribe a codex remedy: ${out}" ;;
+*"[-] Codex CLI"*) ;;
+*) fail "expected codex to read n/a without scripts/codex-review.sh, got: ${out}" ;;
+esac
+
+echo "==> a codex probe that fails for another reason reads unknown, not logged out"
+# Non-zero is not the same as logged out. A malformed config.toml exits non-zero
+# too, and `codex login` cannot repair it — the reader would be sent to fix the
+# wrong thing, which is the failure the gh timeout branch already guards against.
+# Only the documented logged-out phrase earns the login remedy.
+make_codex_stub broken
+out="$(run_setup_section unauthenticated)"
+case "$out" in
+*"[ ] Codex CLI"*) fail "a configuration failure must not read as a missing login: ${out}" ;;
+*"codex login"*) fail "a configuration failure must not prescribe re-authentication: ${out}" ;;
+*"[?] Codex CLI"*) ;;
+*) fail "expected an unknown codex line, got: ${out}" ;;
+esac
+
+echo "==> codex missing from PATH is reported with the install remedy"
+# Deterministic on a machine that HAS the real CLI: the run is pinned to an
+# isolated PATH this script builds, not to the developer's.
+make_stub unauthenticated
+make_codex_stub in
+out="$(run_setup_without codex)"
+case "$out" in
+*"[ ] Codex CLI"*"npm install -g @openai/codex"*) ;;
+*) fail "expected an install remedy for a missing codex, got: ${out}" ;;
+esac
+
+echo "==> gh missing from PATH names an install remedy, not a login"
+# The shared auth probe exits 127 when there is no gh to run, which lands in the
+# same "not authenticated" bucket as a real logout — so without an explicit
+# not-installed branch the line prescribes `gh auth login` to a reader who has no
+# gh. Asserted against the whole credential line: the gate's own skip message
+# below legitimately still names `gh auth login`, so a bare substring test for it
+# would fail no matter what this line says.
+make_stub unauthenticated
+make_codex_stub in
+out="$(run_setup_without gh)"
+case "$out" in
+*"GitHub CLI (gh) — gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
+*"[ ] GitHub CLI (gh) — brew install gh"*) ;;
+*) fail "expected an install remedy for a missing gh, got: ${out}" ;;
+esac
+# The rest of the run must still behave: an absent gh is not an authenticated
+# one, so the audit past the gate stays skipped rather than erroring.
+case "$out" in
+*"(gh not authenticated"*) ;;
+*) fail "an absent gh must still take the unauthenticated path: ${out}" ;;
+esac
+
+echo "==> a missing credential is counted in the setup summary"
+# The regression behind the counters file. The credentials group tallies inside
+# the subshell `| section_box` creates, so unless those counts cross the
+# boundary the summary can print "0 missing" directly beneath a red ✗ Codex CLI
+# line on the same screen.
+#
+# Reachable hermetically: past the gh gate the stubbed `gh repo view` leaves
+# HAS_REMOTE false, which reduces the audit to local checks. Asserted as the
+# DIFFERENCE between two otherwise identical runs — an absolute number would
+# encode this machine's git-hook and devcontainer state, and the isolated PATH
+# pins the rest.
+make_codex_stub in
+in_out="$(run_setup_isolated project)"
+make_codex_stub out
+out_out="$(run_setup_isolated project)"
+in_ok="$(summary_field "${in_out}" ok)"
+in_no="$(summary_field "${in_out}" missing)"
+out_ok="$(summary_field "${out_out}" ok)"
+out_no="$(summary_field "${out_out}" missing)"
+{ [ -n "${in_ok}" ] && [ -n "${in_no}" ] && [ -n "${out_ok}" ] && [ -n "${out_no}" ]; } ||
+    fail "no Summary line to read — the run did not get past the gh gate: ${out_out}"
+[ "${out_no}" -eq "$((in_no + 1))" ] ||
+    fail "a logged-out codex must add 1 to the summary's missing count (${in_no} -> ${out_no}): ${out_out}"
+[ "${out_ok}" -eq "$((in_ok - 1))" ] ||
+    fail "a logged-out codex must drop 1 from the summary's ok count (${in_ok} -> ${out_ok}): ${out_out}"
+
+echo "==> an n/a credential lands in the summary's n/a tally, not its total"
+# The counters cross as four separate numbers, so a fold that mixed them up
+# would show here: n/a is excluded from setup_total by design, so switching one
+# check from ok to n/a must move the n/a tally without adding to the total.
+in_na="$(summary_field "${in_out}" 'n/a')"
+na_out="$(run_setup_isolated project "${WITH_BOARD}")"
+na_na="$(summary_field "${na_out}" 'n/a')"
+{ [ -n "${in_na}" ] && [ -n "${na_na}" ]; } ||
+    fail "no n/a tally to read: ${na_out}"
+[ "${na_na}" -gt "${in_na}" ] ||
+    fail "opting out of codex must raise the n/a tally (${in_na} -> ${na_na}): ${na_out}"
+
+echo "==> a gh auth timeout reads as unknown in the credentials group too"
+# The group shares the section's one bounded probe, so it inherits the probe's
+# distinctions or silently loses them: on a deadline it must not tell an
+# authenticated reader to run `gh auth login`.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+    make_codex_stub in
+    make_stub hangs
+    out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 NETWORK_TIMEOUT=1 "${WITH_CODEX}" setup 2>&1)"
+    case "$out" in
+    *"[ ] GitHub CLI (gh)"*) fail "a timeout must not read as a missing gh login: ${out}" ;;
+    *"[?] GitHub CLI (gh)"*"timed out"*) ;;
+    *) fail "expected an unknown gh credential line, got: ${out}" ;;
+    esac
+else
+    echo "    (skipped: no timeout binary — the probe is unbounded here)"
+fi
 
 echo "status.sh tests passed"
