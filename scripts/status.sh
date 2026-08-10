@@ -589,6 +589,89 @@ if [[ "${SECTION}" == "setup" ]]; then
         fi
     } | section_box
 
+    # ── Local credentials ───────────────────────────────────────────────────
+    # The logins the Dev Loop gates on, read from LOCAL state only — no API call
+    # and no network — so this renders in any auth state and costs nothing.
+    #
+    # Deliberately placed BEFORE the gh gate below rather than inside it. That
+    # gate skips the ENTIRE remaining audit when gh is logged out, so a
+    # credentials group living there would surface a missing codex login only
+    # after the reader had fixed gh and re-run: two round trips to learn what one
+    # run can say, which is the interruption this group exists to remove.
+    #
+    # Its own { } group means its own counters, and they are discarded —
+    # checkline mutates SETUP_* inside the subshell that `| section_box` creates,
+    # so these lines do not feed the "(N/M)" summary at the end. That is accepted
+    # rather than overlooked: the summary must stay in the same group as the
+    # checks it counts, so the only way to fold these in is to move them back
+    # behind the gate and lose the property above.
+    {
+        subhead "Local credentials"
+
+        # Reuses the single bounded probe from the top of this script instead of
+        # calling `gh auth status` again, and inherits its distinction between a
+        # deadline and a missing login — telling an authenticated reader to run
+        # `gh auth login` because GitHub was slow sends them to fix the wrong
+        # thing. The skip line below stays as it is: it explains the absence of
+        # everything after it, which this line does not.
+        if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
+            checkline unknown "GitHub CLI (gh)" \
+                "auth probe timed out after ${NETWORK_TIMEOUT}s"
+        elif [[ "${GH_AUTHED}" == true ]]; then
+            checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
+        else
+            checkline no "GitHub CLI (gh)" "gh auth login"
+        fi
+
+        # Codex gates `task challenge` and `task review` only where the repo
+        # opted into second-model review, and scripts/codex-review.sh is that
+        # opt-in's marker on disk — the template renders it only under
+        # `use_codex_review`. Same each-script-is-its-own-marker rule the GitHub
+        # configuration checks below use, and read off the filesystem rather than
+        # .copier-answers.yml: nothing else in this script reads that file, and a
+        # generated repo may keep it somewhere else. `codex login status` reads
+        # local credential state, so the bound here is the short local one (as
+        # with `op account list`), never NETWORK_TIMEOUT.
+        if [ -f scripts/codex-review.sh ]; then
+            if command -v codex >/dev/null 2>&1; then
+                codex_rc=0
+                run_timeout 3 codex login status >/dev/null 2>&1 || codex_rc=$?
+                case "${codex_rc}" in
+                0) checkline ok "Codex CLI" "logged in" ;;
+                124) checkline unknown "Codex CLI" "login status timed out" ;;
+                *) checkline no "Codex CLI" "codex login" ;;
+                esac
+            else
+                checkline no "Codex CLI" \
+                    "brew install --cask codex, or npm install -g @openai/codex"
+            fi
+        else
+            checkline na "Codex CLI" "no second-model review configured"
+        fi
+
+        # No applicability marker for this one: .claude/ ships unconditionally,
+        # so every generated repo carries Claude assets. `--json` is the CLI's
+        # documented machine-readable form; output that does not parse into a
+        # `loggedIn` boolean is reported unknown rather than logged out, because
+        # a CLI whose shape changed must not send the reader to re-authenticate a
+        # session that is fine. Only the state and the auth method are ever
+        # printed — the same payload also carries the account email, org, and
+        # plan — and the method is stripped to printable text so a third-party
+        # CLI cannot write escape sequences into the board.
+        if command -v claude >/dev/null 2>&1; then
+            claude_json="$(run_timeout 3 claude auth status --json 2>/dev/null || true)"
+            claude_in="$(printf '%s' "${claude_json}" | jq -r 'if (.loggedIn | type) == "boolean" then (.loggedIn | tostring) else "?" end' 2>/dev/null || true)"
+            claude_how="$(printf '%s' "${claude_json}" | jq -r '.authMethod // empty' 2>/dev/null | tr -cd '[:alnum:]._ -' | cut -c1-40 || true)"
+            case "${claude_in}" in
+            true) checkline ok "Claude Code" "logged in${claude_how:+ (${claude_how})}" ;;
+            false) checkline no "Claude Code" "claude auth login" ;;
+            *) checkline unknown "Claude Code" "could not read claude auth status" ;;
+            esac
+        else
+            checkline no "Claude Code" "npm install -g @anthropic-ai/claude-code"
+        fi
+    } | section_box
+
     # Reuses the single bounded probe above rather than making a second,
     # unbounded `gh auth status` call to learn the same thing. Sharing that probe
     # means sharing its distinctions too: bounding it made a slow network look
