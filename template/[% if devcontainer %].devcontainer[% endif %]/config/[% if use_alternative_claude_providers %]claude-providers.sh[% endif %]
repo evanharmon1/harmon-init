@@ -224,12 +224,14 @@ claude-qwen() {
 # resolves to the container itself, not the developer's machine, where Ollama/
 # LM Studio actually listen — but this file also sources un-containerized (the
 # host wrappers), where "localhost" IS correct. So the default probes for
-# host.docker.internal (Docker Desktop resolves it out of the box; a Linux
-# container needs `--add-host=host.docker.internal:host-gateway` on the
-# container run, which the devcontainer JSON would need to set) and only falls
-# back to "localhost" when that name does not resolve. QWEN_LOCAL_BASE_URL
-# always overrides either default — set it directly if neither guess reaches
-# your endpoint.
+# host.docker.internal and only falls back to "localhost" when that name does
+# not resolve. Both shipped devcontainer profiles
+# (.devcontainer/devcontainer.json, .devcontainer/dev/devcontainer.json) add
+# `--add-host=host.docker.internal:host-gateway` to runArgs, so the probe's
+# primary path resolves there even on native Linux (Docker Desktop resolves it
+# without any mapping). Outside those profiles — a hand-rolled `docker run`, a
+# different devcontainer config — add the same --add-host yourself, or just set
+# QWEN_LOCAL_BASE_URL directly; it always overrides either default.
 claude-qwen-local() {
     local default_host="localhost"
     if command -v getent >/dev/null 2>&1 && getent hosts host.docker.internal >/dev/null 2>&1; then
