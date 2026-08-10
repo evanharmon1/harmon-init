@@ -231,7 +231,7 @@ task check      # fast inner loop while editing
 task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate, fix, re-challenge
                 # until TWO CONSECUTIVE rounds adjudicate to zero P0/P1
-                # (a first round with no findings at all ends it), ≤4 rounds
+                # (any round with no findings at all ends it), ≤4 rounds
 task review     # verification checkpoint — same convergence rule, ≤4 rounds
 task ci         # full CI mirror
 # → open a DRAFT PR, then shepherd it: watch CI + reviews, settle the deferred
