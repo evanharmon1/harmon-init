@@ -218,11 +218,24 @@ claude-qwen() {
 # environment. No provider secret is required — this is a local-only lane —
 # but ANTHROPIC_AUTH_TOKEN must still be non-empty for the SDK, so a
 # placeholder value is sent; it is meaningless to a local endpoint, and no
-# real secret is ever read or exported by this function. Set
-# QWEN_LOCAL_BASE_URL to point at a non-default host/port (defaults to
-# Ollama's local Anthropic-compatible route).
+# real secret is ever read or exported by this function.
+#
+# The default HOST is chosen, not hardcoded: "localhost" inside a container
+# resolves to the container itself, not the developer's machine, where Ollama/
+# LM Studio actually listen — but this file also sources un-containerized (the
+# host wrappers), where "localhost" IS correct. So the default probes for
+# host.docker.internal (Docker Desktop resolves it out of the box; a Linux
+# container needs `--add-host=host.docker.internal:host-gateway` on the
+# container run, which the devcontainer JSON would need to set) and only falls
+# back to "localhost" when that name does not resolve. QWEN_LOCAL_BASE_URL
+# always overrides either default — set it directly if neither guess reaches
+# your endpoint.
 claude-qwen-local() {
-    local base_url="${QWEN_LOCAL_BASE_URL:-http://localhost:11434/anthropic}"
+    local default_host="localhost"
+    if command -v getent >/dev/null 2>&1 && getent hosts host.docker.internal >/dev/null 2>&1; then
+        default_host="host.docker.internal"
+    fi
+    local base_url="${QWEN_LOCAL_BASE_URL:-http://${default_host}:11434/anthropic}"
 
     (
         unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY
