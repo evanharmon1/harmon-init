@@ -459,7 +459,12 @@ full)
     # Approving is not a repo permission, so Ready to Merge also needs a trusted reviewer.
     grep -q "github.event.review.author_association" \
         .github/workflows/project-automation.yml ||
-        err "project-automation.yml lost the review author_association trust check"
+        err "project-automation.yml lost the review author_association pre-filter"
+    # The real authorization: association is not permission, so the write itself
+    # requires GitHub's own reviewDecision to say the PR is approved.
+    grep -q 'REVIEW_DECISION" != "APPROVED"' \
+        .github/workflows/project-automation.yml ||
+        err "project-automation.yml lost the reviewDecision==APPROVED authorization check"
     ;;
 meta)
     [ -f .github/workflows/snyk-scheduled.yml ] || err "daily Snyk workflow did not render"
