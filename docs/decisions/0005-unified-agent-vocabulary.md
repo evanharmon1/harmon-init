@@ -39,7 +39,7 @@ The following decisions are adopted together:
    `foreman:ready-for-review`, not `ready-to-merge`; approval remains GitHub's
    native review decision and merging remains human-only.
 3. **D3 — Claude Actions are mention-triggered and claim-aware.** The
-   `@claude plan|implement|review` commands run behind sender checks. Label-event
+   `@claude` `plan`/`implement`/`review` commands run behind sender checks. Label-event
    triggers are retired. A run acquires and always releases the relevant live
    claim, including on failure.
 4. **D4 — The `Agent` project field is retired.** Advisory routing moves to
