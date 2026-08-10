@@ -27,12 +27,14 @@
   "runArgs": [
     "--init",
     "--shm-size=2g",
+[% if use_alternative_claude_providers %]
     // Linux hosts don't resolve host.docker.internal by default (unlike Docker
     // Desktop on mac/win/WSL2); this mapping makes it resolve everywhere,
     // which claude-qwen-local() (.devcontainer/config/claude-providers.sh)
     // relies on to reach an Ollama/LM Studio endpoint on the host. Supported
     // since Docker 20.10, harmless where the platform already resolves it.
     "--add-host=host.docker.internal:host-gateway",
+[% endif %]
     "--env-file",
     ".devcontainer/devcontainer.env"
   ],
