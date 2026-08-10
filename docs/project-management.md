@@ -589,7 +589,7 @@ with no adapter behind it is a false capability that can strand armed work.
 - `runner-config` — the runner or repository/CLI configuration selects the model; labels do not.
 - `workflow-config` — the GitHub Actions workflow input selects the model.
 - `provider-wrapper` — the provider-rewired wrapper fixes the family; its runtime configuration selects the model.
-- `harness-runtime` — the harness selects both provider family and model at runtime.
+- `harness-runtime` — the harness selects the model at runtime; for broker harnesses it selects the provider family too.
 
 #### Harnesses
 
