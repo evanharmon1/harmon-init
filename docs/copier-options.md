@@ -230,27 +230,31 @@ A generated repo's behavior also depends on state no answer captures.
 |---|---|
 | `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON: `"ubuntu-latest"` or `["self-hosted","linux"]`) — a downed runner box is a variable flip, not a template update |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
-| `FULL_SECURITY_SCAN` | Opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, turns the Semgrep CE step in `build.yml` **off**. Compared as the string `'true'`. **Only set it on a repo rendered with `use_codeql: true`** — see the caveat below |
+| `FULL_SECURITY_SCAN` | On a repo rendered with `use_codeql: true`, opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, suppresses the Semgrep CE step in `build.yml` — a swap, not an addition. Compared as the string `'true'`. **Inert on a `use_codeql: false` repo** — see the note below |
 | `ORG_PROJECT_ID` | Org Projects V2 board the automation writes to |
 | `TERRAFORM_CI_ENABLED` | Enables the terraform CI job |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers deploy target |
 
-**`FULL_SECURITY_SCAN` is not safe to set unconditionally.** The two workflows
-that read it are gated differently: `codeql.yml` exists only when the repo was
-rendered with `use_codeql: true` (it is a gated path — see the derived-switch
-table), while the Semgrep CE step in `build.yml` is *always* rendered and
-suppresses itself whenever the repo is private and the variable is `'true'`
-(`template/.github/workflows/build.yml.jinja`). So on a private repo:
+**`FULL_SECURITY_SCAN` only means anything on a `use_codeql: true` repo.** Both
+reads of the variable are gated on that answer. `codeql.yml` exists only when
+the repo was rendered with `use_codeql: true` (it is a gated path — see the
+derived-switch table). The Semgrep CE step in `build.yml` is always rendered,
+but the `if:` that suppresses it is *itself* wrapped in `[% if use_codeql %]`
+(`template/.github/workflows/build.yml.jinja`, the `SAST (Semgrep Community
+Edition)` step) — so a `use_codeql: false` render emits the step with **no
+`if:` at all** and Semgrep runs regardless of the variable. On a private repo:
 
 | Rendered with | `FULL_SECURITY_SCAN` unset | `FULL_SECURITY_SCAN=true` |
 |---|---|---|
 | `use_codeql: true` | Semgrep CE | CodeQL — a swap, not an addition |
-| `use_codeql: false` | Semgrep CE | **no SAST at all** — the variable turns Semgrep off and there is no `codeql.yml` to turn on |
+| `use_codeql: false` | Semgrep CE | Semgrep CE — the variable is inert: nothing suppresses the step and there is no `codeql.yml` to turn on |
 
-Setting it on a repo that has no `codeql.yml` therefore disables its only
-generated SAST scan rather than upgrading it. Check for the workflow before
-setting the variable; to move a `use_codeql: false` repo onto CodeQL, re-render
-with the answer flipped first.
+So the variable never leaves a repo without SAST; it also cannot add CodeQL to
+a repo that was not rendered with it. To move a `use_codeql: false` repo onto
+CodeQL, re-render with the answer flipped — setting the variable alone changes
+nothing. (On a *public* repo rendered with `use_codeql: true` the variable is
+likewise redundant: `codeql.yml` runs because the repo is public, and the
+Semgrep step's `if:` is false either way.)
 
 ### Secrets (6 consumed + 1 built-in + 1 commented example)
 
