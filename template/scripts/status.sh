@@ -651,48 +651,6 @@ if [[ "${SECTION}" == "setup" ]]; then
             checkline na "Codex CLI" "no second-model review configured"
         fi
 
-        # Gated on the repo's claude-* workflows, NOT on .claude/ — which ships
-        # unconditionally, and would therefore make this line unconditional too.
-        # Shipping Claude *assets* is not the same as requiring a Claude
-        # *account*: Claude Code needs a paid Anthropic subscription, and a
-        # generated repo may not depend on paid SaaS its owner never opted into.
-        # Ungated, a developer driving the repo with Codex or Gemini gets a
-        # permanent red line for a service they do not use — and a board that
-        # cries wolf in every opted-out repo stops being read where it matters.
-        # Same marker, and the same match-both-extensions rule, as the
-        # CLAUDE_CODE_OAUTH_TOKEN check further down; computed again here because
-        # that one is derived inside the gh-gated region below and so is not in
-        # scope for this group.
-        #
-        # Deliberately under-inclusive: someone running Claude Code locally in a
-        # repo with no claude-* workflows now reads n/a instead of a login state.
-        # That is the safe direction to err — a false "not applicable" costs that
-        # reader nothing, while a false "missing" bills every other reader for a
-        # subscription they were never asked to buy.
-        cred_claude_wf=0
-        find .github/workflows -maxdepth 1 \( -name 'claude-*.yml' -o -name 'claude-*.yaml' \) 2>/dev/null | grep -q . && cred_claude_wf=1
-        # `--json` is the CLI's documented machine-readable form; output that
-        # does not parse into a `loggedIn` boolean is reported unknown rather
-        # than logged out, because a CLI whose shape changed must not send the
-        # reader to re-authenticate a session that is fine. Only the state and
-        # the auth method are ever printed — the same payload also carries the
-        # account email, org, and plan — and the method is stripped to printable
-        # text so a third-party CLI cannot write escape sequences into the board.
-        if [ "${cred_claude_wf}" = 0 ]; then
-            checkline na "Claude Code" "no claude-* workflows"
-        elif command -v claude >/dev/null 2>&1; then
-            claude_json="$(run_timeout 3 claude auth status --json 2>/dev/null || true)"
-            claude_in="$(printf '%s' "${claude_json}" | jq -r 'if (.loggedIn | type) == "boolean" then (.loggedIn | tostring) else "?" end' 2>/dev/null || true)"
-            claude_how="$(printf '%s' "${claude_json}" | jq -r '.authMethod // empty' 2>/dev/null | tr -cd '[:alnum:]._ -' | cut -c1-40 || true)"
-            case "${claude_in}" in
-            true) checkline ok "Claude Code" "logged in${claude_how:+ (${claude_how})}" ;;
-            false) checkline no "Claude Code" "claude auth login" ;;
-            *) checkline unknown "Claude Code" "could not read claude auth status" ;;
-            esac
-        else
-            checkline no "Claude Code" "npm install -g @anthropic-ai/claude-code"
-        fi
-
         # Hand this group's tallies to the summary (see the header comment).
         # Guarded, and deliberately last: with `pipefail` set, a failed write
         # here would become the whole pipeline's status and `set -e` would take

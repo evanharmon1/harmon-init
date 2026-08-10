@@ -4,9 +4,10 @@
 #   * "Project board writes" (`task status:gh`) — the token scope the claim
 #     lifecycle needs, reported from the section session-start orientation
 #     actually runs, in every scope state.
-#   * "Local credentials" (`task status:setup`) — the gh, Codex, and Claude
-#     logins the Dev Loop gates on, in every state including not-installed, and
-#     rendering BEFORE the gate that skips the rest of that audit.
+#   * "Local credentials" (`task status:setup`) — the gh and Codex logins the
+#     Dev Loop gates on, in every state including not-installed, rendering
+#     BEFORE the gate that skips the rest of that audit, and counted by the
+#     summary at the end of it.
 #
 # Run via `task test:status`.
 #
@@ -35,10 +36,9 @@ trap 'rm -rf "${TMP}"' EXIT
 #   skills-only — the DEFAULT generated profile: `project_management: none` with
 #                 `use_skills_sync: true`, so the vendored universal skill set
 #                 (track-work included) is present but there is no board
-#   with-codex  — opted into BOTH assistant credentials: second-model review
-#                 (codex-review.sh) and Claude Code (a claude-* workflow), so
-#                 those two checks apply. The other three have neither, which is
-#                 what makes them the not-opted-in case for both.
+#   with-codex  — opted into second-model review, so the Codex login is a gate.
+#                 The other three have no codex-review.sh, which is what makes
+#                 them the not-opted-in case for that check.
 for fixture in with-board no-board skills-only with-codex; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
@@ -46,8 +46,6 @@ done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
 : >"${TMP}/with-codex/scripts/codex-review.sh"
-mkdir -p "${TMP}/with-codex/.github/workflows"
-: >"${TMP}/with-codex/.github/workflows/claude-review.yml"
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
@@ -64,14 +62,6 @@ NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
 WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
-
-# Sentinel account values carried by the logged-in `claude auth status` payload.
-# The board may print the auth method; it must never print any of these, and the
-# assertions below check for them by name.
-CLAUDE_EMAIL="nobody@sentinel.invalid"
-CLAUDE_ORG_ID="sentinel-org-id"
-CLAUDE_ORG_NAME="Sentinel Org"
-CLAUDE_PLAN="sentinel-plan"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -241,59 +231,19 @@ make_codex_stub() {
     chmod +x "${TMP}/bin/codex"
 }
 
-# claude_payload — the logged-in JSON the real CLI returns, sentinel values in
-# every account field so a leak is identifiable rather than merely plausible.
-claude_payload() {
-    printf '{"loggedIn": true, "authMethod": "claude.ai", "email": "%s", "orgId": "%s", "orgName": "%s", "subscriptionType": "%s"}' \
-        "${CLAUDE_EMAIL}" "${CLAUDE_ORG_ID}" "${CLAUDE_ORG_NAME}" "${CLAUDE_PLAN}"
-}
-
-# make_claude_stub STATE — write $TMP/bin/claude answering `auth status --json`.
-#   in      — logged in, with the full account payload
-#   out     — logged out (still exit 0; the state is in the JSON, not the code)
-#   garbage — a future CLI whose output shape changed
-make_claude_stub() {
-    local state="$1"
-    mkdir -p "${TMP}/bin"
-    {
-        echo '#!/usr/bin/env bash'
-        echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
-        case "$state" in
-        in)
-            echo "    echo '$(claude_payload)'"
-            echo '    exit 0'
-            ;;
-        out)
-            echo "    echo '{\"loggedIn\": false}'"
-            echo '    exit 0'
-            ;;
-        garbage)
-            echo '    echo "Authentication status: signed in"'
-            echo '    exit 0'
-            ;;
-        *) fail "unknown claude stub state: ${state}" ;;
-        esac
-        echo 'fi'
-        echo 'echo "stub: unexpected claude call: $*" >&2'
-        echo 'exit 1'
-    } >"${TMP}/bin/claude"
-    chmod +x "${TMP}/bin/claude"
-}
-
-# The setup section probes codex and claude on every invocation now, so stub both
-# before the first case runs — a case that reached the real CLIs would pass or
-# fail on whether the developer happens to be logged in, which is worse than no
-# test at all.
+# The setup section probes codex on every invocation now, so stub it before the
+# first case runs — a case that reached the real CLI would pass or fail on
+# whether the developer happens to be logged in, which is worse than no test at
+# all.
 make_codex_stub in
-make_claude_stub in
 
-# ISOLATED_TOOLS — the external commands status.sh needs in order to reach the
-# credentials group. The two "not installed" cases pin PATH to a single directory
-# built from this list, because filtering the real PATH is not enough: the
-# devcontainer installs codex and claude into /usr/bin, alongside git, grep, and
-# jq, so dropping the directory that holds them would take the toolbox with it.
-# `bash` is on the list because status.sh and the stubs both start with
-# `#!/usr/bin/env bash`, which resolves bash through the PATH set here.
+# ISOLATED_TOOLS — the external commands status.sh needs, both to reach the
+# credentials group and to run the audit past the gh gate. The not-installed case
+# pins PATH to a single directory built from this list, because filtering the
+# real PATH is not enough: the devcontainer installs codex into /usr/bin,
+# alongside git, grep, and jq, so dropping the directory that holds it would take
+# the toolbox with it. `bash` is on the list because status.sh and the stubs both
+# start with `#!/usr/bin/env bash`, which resolves bash through the PATH set here.
 ISOLATED_TOOLS="bash awk basename cat cut dirname find git grep head jq mktemp rm sed sort tr uniq wc timeout gtimeout"
 
 # make_isolated_bin MISSING — a bin directory holding a symlink to each tool
@@ -310,17 +260,22 @@ make_isolated_bin() {
             ln -s "${resolved}" "${TMP}/bin-iso/${tool}"
         fi
     done
-    for tool in gh codex claude; do
+    for tool in gh codex; do
         if [ "${tool}" != "${missing}" ] && [ -f "${TMP}/bin/${tool}" ]; then
             cp "${TMP}/bin/${tool}" "${TMP}/bin-iso/${tool}"
         fi
     done
     # A degraded isolated PATH does not fail loudly — it fails as a PASS. Lose
-    # grep and the claude-* workflow probe silently reports "not applicable";
-    # lose jq and every claude login state reads "unknown". Both would satisfy an
-    # assertion written for a different reason, so check the load-bearing tools
-    # resolved (a broken symlink fails -x) rather than trusting the loop above.
-    for tool in bash find grep jq git sed; do
+    # grep and the gh auth probe never finds its scope line, so an authenticated
+    # stub reads as logged out and the summary cases never reach the gate; lose
+    # jq and the run past the gate dies at the first unguarded `jq -r` (127 under
+    # set -e), taking the Summary line those cases assert on with it. Either
+    # would satisfy an assertion written for a different reason, so check that
+    # the load-bearing tools actually resolved — a broken symlink fails -x —
+    # rather than trusting the loop above. Not hypothetical: an earlier revision
+    # of this helper built a broken grep symlink and a case passed for the wrong
+    # reason.
+    for tool in bash find grep jq git; do
         [ -x "${TMP}/bin-iso/${tool}" ] ||
             fail "isolated PATH lacks a working ${tool} — the cases using it would assert against a degraded run"
     done
@@ -601,7 +556,6 @@ echo "==> the credentials group renders even when gh is unauthenticated"
 # surface a missing codex login only on the round trip AFTER the reader fixed gh
 # — the interruption this group exists to remove.
 make_codex_stub out
-make_claude_stub in
 out="$(run_setup_section unauthenticated)"
 case "$out" in
 *"(gh not authenticated"*) ;;
@@ -622,7 +576,6 @@ esac
 
 echo "==> an authenticated codex reports ok"
 make_codex_stub in
-make_claude_stub in
 out="$(run_setup_section unauthenticated)"
 case "$out" in
 *"[x] Codex CLI"*) ;;
@@ -655,77 +608,10 @@ echo "==> codex missing from PATH is reported with the install remedy"
 # Deterministic on a machine that HAS the real CLI: the run is pinned to an
 # isolated PATH this script builds, not to the developer's.
 make_stub unauthenticated
-make_claude_stub in
 out="$(run_setup_without codex)"
 case "$out" in
 *"[ ] Codex CLI"*"npm install -g @openai/codex"*) ;;
 *) fail "expected an install remedy for a missing codex, got: ${out}" ;;
-esac
-
-echo "==> an authenticated claude reports ok, naming only the auth method"
-make_codex_stub in
-make_claude_stub in
-out="$(run_setup_section unauthenticated)"
-case "$out" in
-*"[x] Claude Code"*"claude.ai"*) ;;
-*) fail "expected claude to read as logged in, got: ${out}" ;;
-esac
-
-echo "==> the credentials group never prints the account email, org, or plan"
-# `claude auth status --json` returns all of them alongside the login state. The
-# board is read in shared terminals, screenshots, and agent transcripts; the
-# login state is what the reader needs and the rest is not the board's to print.
-for secret in "${CLAUDE_EMAIL}" "${CLAUDE_ORG_ID}" "${CLAUDE_ORG_NAME}" "${CLAUDE_PLAN}"; do
-    case "$out" in
-    *"${secret}"*) fail "the board leaked '${secret}' out of claude auth status: ${out}" ;;
-    esac
-done
-
-echo "==> a logged-out claude is missing, and names 'claude auth login'"
-make_claude_stub out
-out="$(run_setup_section unauthenticated)"
-case "$out" in
-*"[x] Claude Code"*) fail "a logged-out claude must not read as ok: ${out}" ;;
-*"[ ] Claude Code — claude auth login"*) ;;
-*) fail "expected a logged-out claude to name its remedy, got: ${out}" ;;
-esac
-
-echo "==> unreadable claude auth output reads as unknown, not as logged out"
-# A CLI whose output shape changed must not send the reader to re-authenticate a
-# session that is fine.
-make_claude_stub garbage
-out="$(run_setup_section unauthenticated)"
-case "$out" in
-*"claude auth login"*) fail "unparseable output must not read as logged out: ${out}" ;;
-*"[?] Claude Code"*) ;;
-*) fail "expected an unknown claude line, got: ${out}" ;;
-esac
-
-echo "==> claude missing from PATH is reported with the install remedy"
-make_stub unauthenticated
-make_codex_stub in
-out="$(run_setup_without claude)"
-case "$out" in
-*"[ ] Claude Code"*"npm install -g @anthropic-ai/claude-code"*) ;;
-*) fail "expected an install remedy for a missing claude, got: ${out}" ;;
-esac
-
-echo "==> a repo with no claude-* workflows reports Claude n/a, not missing"
-# Claude Code needs a paid Anthropic account, and generated output may not depend
-# on paid SaaS its owner never opted into. Ungated — keyed on .claude/, which
-# ships to everyone — this line would be a permanent red mark in every repo
-# driven by another assistant, for a service it does not use. Mirrors the codex
-# n/a case above; the stub is set to logged-out so a broken gate shows up as a
-# missing line rather than passing on a coincidence.
-make_claude_stub out
-make_codex_stub in
-out="$(run_setup_section unauthenticated "${WITH_BOARD}")"
-case "$out" in
-*"[ ] Claude Code"*) fail "no claude-* workflows must not read as a missing login: ${out}" ;;
-*"claude auth login"*) fail "no claude-* workflows must not prescribe a login: ${out}" ;;
-*"@anthropic-ai/claude-code"*) fail "no claude-* workflows must not prescribe an install: ${out}" ;;
-*"[-] Claude Code — no claude-* workflows"*) ;;
-*) fail "expected Claude to read n/a without claude-* workflows, got: ${out}" ;;
 esac
 
 echo "==> a missing credential is counted in the setup summary"
@@ -740,7 +626,6 @@ echo "==> a missing credential is counted in the setup summary"
 # encode this machine's git-hook and devcontainer state, and the isolated PATH
 # pins the rest.
 make_codex_stub in
-make_claude_stub in
 in_out="$(run_setup_isolated project)"
 make_codex_stub out
 out_out="$(run_setup_isolated project)"
@@ -762,10 +647,10 @@ echo "==> an n/a credential lands in the summary's n/a tally, not its total"
 in_na="$(summary_field "${in_out}" 'n/a')"
 na_out="$(run_setup_isolated project "${WITH_BOARD}")"
 na_na="$(summary_field "${na_out}" 'n/a')"
-[ -n "${in_na}" ] && [ -n "${na_na}" ] ||
+{ [ -n "${in_na}" ] && [ -n "${na_na}" ]; } ||
     fail "no n/a tally to read: ${na_out}"
 [ "${na_na}" -gt "${in_na}" ] ||
-    fail "opting out of codex and Claude must raise the n/a tally (${in_na} -> ${na_na}): ${na_out}"
+    fail "opting out of codex must raise the n/a tally (${in_na} -> ${na_na}): ${na_out}"
 
 echo "==> a gh auth timeout reads as unknown in the credentials group too"
 # The group shares the section's one bounded probe, so it inherits the probe's
@@ -773,7 +658,6 @@ echo "==> a gh auth timeout reads as unknown in the credentials group too"
 # authenticated reader to run `gh auth login`.
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
     make_codex_stub in
-    make_claude_stub in
     make_stub hangs
     out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 NETWORK_TIMEOUT=1 "${WITH_CODEX}" setup 2>&1)"
     case "$out" in

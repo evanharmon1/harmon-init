@@ -14,8 +14,8 @@ Work through this after generating the repo from harmon-init. Delete items
 that don't apply, then keep this file as a record of what was configured.
 
 Run **`task status:setup`** at any point to audit setup completeness — local
-credentials (gh, Codex, Claude), GitHub config, toolchain, devcontainer, and
-dev environment — against the items below
+credentials (gh, Codex), GitHub config, toolchain, devcontainer, and dev
+environment — against the items below
 (✓ done · ✗ missing · ? unknown · – n/a).
 
 ## 1. Local setup
