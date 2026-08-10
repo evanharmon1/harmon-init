@@ -230,16 +230,41 @@ A generated repo's behavior also depends on state no answer captures.
 |---|---|
 | `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON: `"ubuntu-latest"` or `["self-hosted","linux"]`) — a downed runner box is a variable flip, not a template update |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
-| `FULL_SECURITY_SCAN` | Opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, turns the Semgrep CE step in `build.yml` **off** — the two are alternatives, not additive. Compared as the string `'true'` |
+| `FULL_SECURITY_SCAN` | Opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, turns the Semgrep CE step in `build.yml` **off**. Compared as the string `'true'`. **Only set it on a repo rendered with `use_codeql: true`** — see the caveat below |
 | `ORG_PROJECT_ID` | Org Projects V2 board the automation writes to |
 | `TERRAFORM_CI_ENABLED` | Enables the terraform CI job |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers deploy target |
 
-### Secrets (7 + 1 built-in)
+**`FULL_SECURITY_SCAN` is not safe to set unconditionally.** The two workflows
+that read it are gated differently: `codeql.yml` exists only when the repo was
+rendered with `use_codeql: true` (it is a gated path — see the derived-switch
+table), while the Semgrep CE step in `build.yml` is *always* rendered and
+suppresses itself whenever the repo is private and the variable is `'true'`
+(`template/.github/workflows/build.yml.jinja`). So on a private repo:
 
-`CI_APP_PRIVATE_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `SNYK_TOKEN`,
-`CLOUDFLARE_API_TOKEN`, `TF_VAR_CLOUDFLARE_API_TOKEN`, `R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY`, plus the built-in `GITHUB_TOKEN`.
+| Rendered with | `FULL_SECURITY_SCAN` unset | `FULL_SECURITY_SCAN=true` |
+|---|---|---|
+| `use_codeql: true` | Semgrep CE | CodeQL — a swap, not an addition |
+| `use_codeql: false` | Semgrep CE | **no SAST at all** — the variable turns Semgrep off and there is no `codeql.yml` to turn on |
+
+Setting it on a repo that has no `codeql.yml` therefore disables its only
+generated SAST scan rather than upgrading it. Check for the workflow before
+setting the variable; to move a `use_codeql: false` repo onto CodeQL, re-render
+with the answer flipped first.
+
+### Secrets (6 consumed + 1 built-in + 1 commented example)
+
+Consumed by generated workflows: `CI_APP_PRIVATE_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `SNYK_TOKEN`, `CLOUDFLARE_API_TOKEN`,
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, plus the built-in `GITHUB_TOKEN`
+that Actions supplies.
+
+`TF_VAR_CLOUDFLARE_API_TOKEN` is **an example, not a requirement**: its only
+occurrence is a commented-out `env:` line in
+`template/.github/workflows/…terraform.yml….jinja`, shown as the pattern for
+passing a Terraform variable through. Do not provision it unless you have
+uncommented that line. The regeneration recipe below greps text and cannot see
+that it is commented, so it reports 8 names — this is the one to discount.
 
 ### Consumer-owned files
 
@@ -420,7 +445,10 @@ find template -name '*[%*' -type d | wc -l              # 4
 # without it `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` both truncate to
 # `secrets.R` and collapse into one line, silently dropping two secrets.
 grep -rhoE 'vars\.[A-Z0-9_]+' template | sort -u        # 6
-grep -rhoE 'secrets\.[A-Z0-9_]+' template | sort -u     # 8, incl. GITHUB_TOKEN
+# 8 lines = 6 consumed + built-in GITHUB_TOKEN + TF_VAR_CLOUDFLARE_API_TOKEN,
+# which only appears on a commented-out example line. grep cannot see that, so
+# discount it by hand rather than provisioning an unused credential.
+grep -rhoE 'secrets\.[A-Z0-9_]+' template | sort -u     # 8
 
 # this doc is routed from the hub
 grep -n copier-options docs/README.md
