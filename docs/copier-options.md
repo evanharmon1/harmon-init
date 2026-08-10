@@ -38,7 +38,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 4 | `github_org` | str | `[[ author_git_provider_username ]]` | always | Repo URL, GHCR namespace; **≠ author ⇒ org-only files render** |
 | 5 | `code_owner` | str | `[[ author_git_provider_username ]]` | always | `.github/CODEOWNERS` (frozen after first render — see `_skip_if_exists`) |
 | 6 | `claude_authorized_members` | str (CSV) | `[[ author_git_provider_username ]]` | always | `@claude` plan/implement/review allowlist |
-| 7 | `project_type` | choice `general`/`web-astro`/`web-app`/`iac`/`docs` | `general` | always | Taskfile, CI jobs, devcontainer tooling; **seeds 6 other answers** |
+| 7 | `project_type` | choice `general`/`web-astro`/`web-app`/`iac`/`docs` | `general` | always | Taskfile, CI jobs, devcontainer tooling; **seeds 6 asked answers** (+ hidden `use_node`/`use_python`, and it gates `deploy_cloudflare_workers`'s `when:`) |
 | 8 | `snyk_scan_schedule` | choice `off`/`weekly`/`daily` | `off` | always | `snyk-scheduled.yml` + its cron (`weekly` = Sunday `23 6 * * 0`) |
 | 9 | `include_terraform` | bool | `project_type == 'iac'` | always | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |
 | 10 | `include_ansible` | bool | `project_type == 'iac'` | always | `ansible/`, `.ansible-lint`; seeds `use_python` |
@@ -230,7 +230,7 @@ A generated repo's behavior also depends on state no answer captures.
 |---|---|
 | `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON: `"ubuntu-latest"` or `["self-hosted","linux"]`) — a downed runner box is a variable flip, not a template update |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
-| `FULL_SECURITY_SCAN` | Opts a private repo into CodeQL (requires GitHub Code Security) |
+| `FULL_SECURITY_SCAN` | Opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, turns the Semgrep CE step in `build.yml` **off** — the two are alternatives, not additive. Compared as the string `'true'` |
 | `ORG_PROJECT_ID` | Org Projects V2 board the automation writes to |
 | `TERRAFORM_CI_ENABLED` | Enables the terraform CI job |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers deploy target |
@@ -244,7 +244,8 @@ A generated repo's behavior also depends on state no answer captures.
 ### Consumer-owned files
 
 Seeded once, then frozen by `_skip_if_exists` so `copier update` never
-regenerates them. Reasons are recorded inline at `copier.yml:543-568`:
+regenerates them. Reasons are recorded inline in `copier.yml`, in the comment
+block introducing `_skip_if_exists` and beside each entry:
 
 | Path | Why frozen |
 |---|---|
@@ -315,19 +316,28 @@ question.
   everywhere (cloud review requires it) — so the `AGENTS.md` readiness gate
   includes the current-head Codex cycle for every fleet repo, not just this one.
 - **`use_codeql`** is on only where the repo has first-party source CodeQL can
-  analyze — the `web-astro` / `web-app` / `iac` seeds, plus `foreman` (a
-  first-party Python CLI). On a private repo the workflow self-skips via its
-  `github.event.repository.private == false || vars.FULL_SECURITY_SCAN == true`
-  guard, so it costs nothing and lights up without a re-render if the repo goes
-  public or gets Code Security.
+  analyze. Only `web-astro` / `web-app` **seed** it — `copier.yml`'s
+  `use_codeql` default is `project_type in ['web-astro','web-app']`. The `iac`
+  rows (harmon-infra, sommerlawn-infra, ponderous-infra) and `foreman` are
+  therefore **deliberate overrides of the default**, not seeds; so is the
+  `python` entry on the four `web-astro` rows, since `codeql_languages` seeds
+  `python` from `include_ansible or project_type == 'iac'` and that whole
+  default is itself gated on `use_codeql` (an `iac` repo left at its defaults
+  gets `use_codeql: false`, `codeql_languages: []`). On a private repo the
+  workflow self-skips via its
+  ``github.event.repository.private == false || vars.FULL_SECURITY_SCAN == 'true'``
+  guard — the quotes matter, `vars.*` is always a string and the unquoted form
+  compares as a number and is always false — so it costs nothing and lights up
+  without a re-render if the repo goes public or gets Code Security.
 - **`devcontainer` everywhere except harmon-dotfiles**, where it does not make
   sense; `use_alternative_claude_providers` is therefore `n/a` there.
 - **`snyk: weekly`** everywhere except harmon-dotfiles. The cron is Sunday
   (`23 6 * * 0`).
-- **`skill_categories`** follows the template seeds: `general` → universal
-  (+ `repo` for dev-tooling repos); `web-astro` → universal, frontend;
-  `web-app` → universal, frontend, backend; `iac` → universal, infra;
-  `docs` → universal.
+- **`skill_categories`** follows the template seeds: `general` → universal;
+  `web-astro` → universal, frontend; `web-app` → universal, frontend, backend;
+  `iac` → universal, infra; `docs` → universal. **`repo` is never seeded** — no
+  `project_type` produces it — so every `universal, repo` row above is manually
+  added for a dev-tooling repo.
 - **Absent answers.** A question that postdates a repo's pin takes the
   **current default** on the next `copier update`, not the previous behavior.
   This table is the deliberate record that replaces that default —
@@ -337,8 +347,13 @@ question.
 
 [`.dogfood-answers.yml`](../.dogfood-answers.yml) is the live, checked-in,
 drift-gated record of harmon-init's answers — it is what `task audit:dogfood`
-and `task test:dogfood-structure` read. The row above is derived from it. **If
-the two disagree, the file wins**; fix the row rather than the file.
+and `task test:dogfood-structure` read. The row above is derived from it.
+
+The two answer different questions, so a disagreement is not automatically an
+error in either: **the file wins on what this repo renders today**, and the
+table states the target. Reconcile in whichever direction the decision points —
+correct the row when it merely transcribed the file wrong, change the file when
+the target is the deliberate one — but never leave a disagreement unrecorded.
 
 Two entries are worth naming explicitly:
 
@@ -385,21 +400,27 @@ grep -cE '^[[:space:]]+when: false' copier.yml          # 20
 grep -cE '^_[a-z_]*:' copier.yml                        # 7
 
 # asked-only question names, so "asked" is never re-derived by subtraction alone
+hidden="$(mktemp)"
 awk '/^[a-z][a-z_]*:/{n=$1} /^[[:space:]]+when: false/{print n}' copier.yml \
-  | sort > /tmp/hidden
-grep -oE '^[a-z][a-z_]*:' copier.yml | sort | comm -23 - /tmp/hidden   # 36
+  | sort > "$hidden"
+grep -oE '^[a-z][a-z_]*:' copier.yml | sort | comm -23 - "$hidden"     # 36 names
+rm -f "$hidden"
 
 # distinct Jinja path-gate conditions, with a count of the paths each gates
-find template -name '*[%*' -printf '%P\n' \
+# (no `find -printf` — that is GNU-only; plain `find` already prints the paths
+# and the grep does not care about the `template/` prefix)
+find template -name '*[%*' \
   | grep -oE '\[% if [^%]*%\]' | sort | uniq -c | sort -rn             # 28 lines
 
 # gated paths (4 of them directories)
 find template -name '*[%*' | wc -l                      # 82
 find template -name '*[%*' -type d | wc -l              # 4
 
-# runtime inputs Copier does not own
-grep -rhoE 'vars\.[A-Z_]+' template | sort -u           # 6
-grep -rhoE 'secrets\.[A-Z_]+' template | sort -u        # 7 + GITHUB_TOKEN
+# runtime inputs Copier does not own. The `0-9` in the class is load-bearing:
+# without it `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` both truncate to
+# `secrets.R` and collapse into one line, silently dropping two secrets.
+grep -rhoE 'vars\.[A-Z0-9_]+' template | sort -u        # 6
+grep -rhoE 'secrets\.[A-Z0-9_]+' template | sort -u     # 8, incl. GITHUB_TOKEN
 
 # this doc is routed from the hub
 grep -n copier-options docs/README.md
