@@ -442,6 +442,13 @@ case "$profile" in
 full)
     [ -f .github/workflows/snyk-scheduled.yml ] || err "weekly Snyk workflow did not render"
     grep -q '23 6 \* \* 0' .github/workflows/snyk-scheduled.yml || err "weekly Snyk cron is incorrect"
+    # The workflow_run fork guard is an App-token trust boundary: the branch
+    # name routes board writes and is attacker-chosen on forks, so only the
+    # head repository establishes trust. Without this pin, removing the guard
+    # would leave verify green.
+    grep -q "workflow_run.head_repository.full_name == github.repository" \
+        .github/workflows/project-automation.yml ||
+        err "project-automation.yml lost the workflow_run head-repository fork guard"
     ;;
 meta)
     [ -f .github/workflows/snyk-scheduled.yml ] || err "daily Snyk workflow did not render"

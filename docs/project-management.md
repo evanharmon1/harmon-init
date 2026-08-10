@@ -708,9 +708,13 @@ trigger. Every one of those was retired: they carry no actor the workflow can
 check on every path, and the labels that used to drive them are gone.
 
 **Sender-gated.** The mention only counts from a login on the workflow's
-authorized-sender allowlist. It is checked twice — in the job `if:`, and again
-in a token-free step that re-asserts it *before* any App token is minted — so a
-gap in the expression can never mint a credential.
+authorized-sender allowlist. The allowlist answer is not the whole list: the
+review workflow additionally authorizes `renovate[bot]` and `dependabot[bot]`
+as senders, so their update PRs can request their own reviews — treat those
+fixed bot principals as part of the trust surface when auditing. The allowlist
+is checked twice — in the job `if:`, and again in a token-free step that
+re-asserts it *before* any App token is minted — so a gap in the expression can
+never mint a credential.
 
 **Claim-aware, fail-closed.** After the sender gate passes and before the token
 is minted, the run acquires `claim:claude` on the target:

@@ -812,10 +812,14 @@ trigger. Every one of those carries no actor the workflow can check on every
 path.
 
 **Sender-gated.** The mention only counts from a login on the workflow's
-authorized-sender allowlist (the `claude_authorized_members` answer). It is
-checked twice — in the job `if:`, and again in a token-free step that
-re-asserts it *before* any App token is minted — so a gap in the expression can
-never mint a credential.
+authorized-sender allowlist (the `claude_authorized_members` answer). The
+answer is not the whole list: the review workflow additionally authorizes
+`renovate[bot]` and `dependabot[bot]`[% if use_coderabbit %] and
+`coderabbitai[bot]`[% endif %] as senders, so their update PRs can request
+their own reviews — treat those fixed bot principals as part of the trust
+surface when auditing. The allowlist is checked twice — in the job `if:`, and
+again in a token-free step that re-asserts it *before* any App token is
+minted — so a gap in the expression can never mint a credential.
 
 **Claim-aware, fail-closed.** After the sender gate passes and before the token
 is minted, the run acquires `claim:claude` on the target:
