@@ -15,14 +15,25 @@ on:
 jobs:
   sync-status:
     name: Sync project status
-    # Trust boundary. `workflow_run` fires for fork-backed runs too, and this job
-    # derives the issue from the head BRANCH NAME — which the fork author picks.
-    # Without the head-repository test, a fork pushing `claude/issue-N` moves
-    # issue N's card using the App token. The head repo is what establishes
-    # trust; the branch name never can. (Deliberate tightening, approved.)
+    # Trust boundary. `workflow_run` and `pull_request_review` fire for
+    # fork-backed PRs too, and this job derives the issue from the head BRANCH
+    # NAME — which the fork author picks. Without the head-repository test, a
+    # fork pushing `claude/issue-N` moves issue N's card using the App token.
+    # Trust comes from the head repository — and, on the review path, the
+    # reviewer's association — never from the event alone; the branch name can
+    # never establish it. The review path also needs the association test
+    # because it advances the card to Ready to Merge on ANY approving review,
+    # while GitHub's own `reviewDecision` honours only required reviewers: a
+    # drive-by approval from an unrelated account must not move the board.
+    # The board write is advisory state and the merge itself stays
+    # ruleset-protected — this guard makes the card honest, it is not the
+    # merge security. (Deliberate tightening, approved.)
     if: >-
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) &&
+      (github.event_name != 'pull_request_review' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))) &&
       ((github.event_name == 'pull_request') ||
        (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
        (github.event_name == 'workflow_run'))

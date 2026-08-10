@@ -239,7 +239,7 @@ What is automated, and by which of the three:
 | PR opened / pushed to / reopened | **Verifying** | Actions (`project-automation.yml`) |
 | Build run completes without failing | **In Review** | Actions (`project-automation.yml`) — any conclusion outside `failure`/`cancelled`/`timed_out`/`action_required` counts, so `skipped`, `neutral` and `startup_failure` advance the card too |
 | Build run concludes `failure`, `cancelled`, `timed_out` or `action_required` | **Verifying** (stays) | Actions (`project-automation.yml`) |
-| Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) |
+| Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) — only when the PR's head repo is this repository *and* the reviewer's association is `OWNER`, `MEMBER` or `COLLABORATOR` |
 | PR merged | **Done** | Actions (`project-automation.yml`) + built-in |
 | Issue closed, for any reason | *(nothing)* | not automated — see below |
 | PR closed unmerged | *(nothing)* | deliberately not automated |
@@ -270,8 +270,14 @@ the PR body.
 **Only this repository's own branches move the board.** The branch name is the
 routing key and its author chooses it, so a fork pushing `claude/issue-N` would
 otherwise steer issue N's card. Trust comes from the head *repository*
-instead: a `pull_request` or `workflow_run` event whose head repo is not this
-repository is not acted on.
+instead: a `pull_request`, `workflow_run` or `pull_request_review` event whose
+head repo is not this repository is not acted on. The review path carries a
+second condition, because approving is not a repository permission — anyone can
+approve a public PR, while GitHub's own `reviewDecision` counts only required
+reviewers. So an approving review moves the card only when the reviewer's
+`author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. The board write is
+advisory state and merging stays ruleset-protected either way; this keeps the
+card honest, it is not the merge security.
 
 The status write itself is `continue-on-error`, so a board that cannot be
 written never fails a build. That tolerance starts *after* the App token is
