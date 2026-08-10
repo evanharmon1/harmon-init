@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.25.3](https://github.com/evanharmon1/harmon-init/compare/v4.25.2...v4.25.3) (2026-08-10)
+
+
+### Bug Fixes
+
+* keep shipped docs from reconstructing Claude trigger phrases, with a lint guard ([#744](https://github.com/evanharmon1/harmon-init/issues/744)) ([b30107a](https://github.com/evanharmon1/harmon-init/commit/b30107a2d843a09bd75aec52aec5231f3ca66d9a))
+
 ## [4.25.2](https://github.com/evanharmon1/harmon-init/compare/v4.25.1...v4.25.2) (2026-08-10)
 
 
