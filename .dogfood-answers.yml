@@ -64,8 +64,11 @@ use_alternative_claude_providers: true
 # Root ships docs/project-management.md plus setup:github-project / -labels.
 project_management: github
 
-# Snyk stays manual/local (public-repo posture: CodeQL + Dependabot + gitleaks).
-snyk_scan_schedule: "off"
+# Advisory second opinion on the free security baseline (Semgrep CE + gitleaks
+# + dependency audit). Weekly, not daily: the schedule is quota-aware by
+# default, and an advisory scan that is never a required check gains nothing
+# from running six more times a week. Renders .github/workflows/snyk-scheduled.yml.
+snyk_scan_schedule: weekly
 
 # The root's .meta sidecars are installed, and the root Taskfile renders these
 # two destinations. They match the copier defaults today; recording them means a
