@@ -231,13 +231,25 @@ claude-qwen() {
 # primary path resolves there even on native Linux (Docker Desktop resolves it
 # without any mapping). Outside those profiles — a hand-rolled `docker run`, a
 # different devcontainer config — add the same --add-host yourself, or just set
-# QWEN_LOCAL_BASE_URL directly; it always overrides either default.
+# QWEN_LOCAL_BASE_URL directly; it always overrides either default. On native
+# Linux the DNS mapping alone is not enough: stock Ollama binds
+# 127.0.0.1:11434, which is loopback-only and unreachable from the container
+# even once host.docker.internal resolves — set OLLAMA_HOST=0.0.0.0 (a
+# systemd override for the `ollama` service, or the env var before `ollama
+# serve`) so it listens on every interface, or point QWEN_LOCAL_BASE_URL at a
+# reachable one.
+#
+# No /anthropic (or other) path suffix on the default: unlike the hosted
+# wrappers below, Ollama's and LM Studio's Anthropic-compatible servers expose
+# /v1/messages etc. from the SERVER ROOT, and the Claude Code SDK appends that
+# API path to ANTHROPIC_BASE_URL itself — a base URL ending in /anthropic here
+# would double up to /anthropic/v1/messages and 404.
 claude-qwen-local() {
     local default_host="localhost"
     if command -v getent >/dev/null 2>&1 && getent hosts host.docker.internal >/dev/null 2>&1; then
         default_host="host.docker.internal"
     fi
-    local base_url="${QWEN_LOCAL_BASE_URL:-http://${default_host}:11434/anthropic}"
+    local base_url="${QWEN_LOCAL_BASE_URL:-http://${default_host}:11434}"
 
     (
         unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY
