@@ -1431,7 +1431,7 @@ fi
 
 # ── 9e2. alt-model providers render per use_alternative_claude_providers ──
 # Only `full` opts in; every other devcontainer-on profile uses the default
-# (off). The provider launcher file is jinja-gated by filename, and the four
+# (off). The provider launcher file is jinja-gated by filename, and the five
 # API keys are gated inside each devcontainer.json initializeCommand — assert
 # both appear/disappear together so a broken gate can't ship paid-provider
 # wiring into opted-out repos, where the bypassPermissions bot would then read
@@ -1443,7 +1443,7 @@ if [ -d .devcontainer ]; then
             err ".devcontainer/config/claude-providers.sh missing (use_alternative_claude_providers=true)"
         for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
             [ -f "$dc_cfg" ] || continue
-            grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY' "$dc_cfg" ||
+            grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY' "$dc_cfg" ||
                 err "$dc_cfg initializeCommand omits the provider keys (use_alternative_claude_providers=true)"
         done
     else
@@ -1451,8 +1451,14 @@ if [ -d .devcontainer ]; then
             err ".devcontainer/config/claude-providers.sh rendered but use_alternative_claude_providers is off"
         for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
             [ -f "$dc_cfg" ] || continue
-            ! grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY' "$dc_cfg" ||
-                err "$dc_cfg initializeCommand includes provider keys but use_alternative_claude_providers is off"
+            # Each key checked independently, not as one contiguous string: a
+            # whole-sequence grep only catches all five keys leaking together,
+            # so a single leaked key (e.g. only QWEN_API_KEY, if a future edit
+            # ever regressed just its own gate) would pass silently.
+            for leaked_key in KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY; do
+                ! grep -q "$leaked_key" "$dc_cfg" ||
+                    err "$dc_cfg initializeCommand includes $leaked_key but use_alternative_claude_providers is off"
+            done
         done
     fi
 fi

@@ -301,7 +301,7 @@ Variables per profile:
 | `AGENT_DECK_TELEGRAM_KEY` | ✅ | ✅ | agent-deck bridge (optional) |
 | `TS_AUTHKEY` | — | ✅ | Tailscale (dev only) |
 [% if use_alternative_claude_providers %]
-| `KIMI_API_KEY` / `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY` | ✅ | ✅ | alt-model wrappers (opt-in: `use_alternative_claude_providers`) |
+| `KIMI_API_KEY` / `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `QWEN_API_KEY` | ✅ | ✅ | alt-model wrappers (opt-in: `use_alternative_claude_providers`) |
 [% endif %]
 
 `ANTHROPIC_API_KEY` is deliberately **forbidden** — it silently overrides
@@ -370,16 +370,38 @@ fine-grained one. A fine-grained PAT has exactly one resource owner, so using on
 here would reintroduce the single-org ceiling this arrangement exists to remove.
 [% if use_alternative_claude_providers %]
 
-### Alternative model providers (`claude-kimi` / `claude-deepseek` / `claude-glm`)
+### Alternative model providers (`claude-kimi` / `claude-deepseek` / `claude-glm` / `claude-qwen` / `claude-qwen-local`)
 
 Opt in with the `use_alternative_claude_providers` Copier answer (default off;
 asked only when `devcontainer=true`) to ship the `claude-kimi`, `claude-deepseek`,
-and `claude-glm` shell functions. They mirror the equivalent host wrappers:
-each launches `claude` in a subshell with `ANTHROPIC_BASE_URL` +
-`ANTHROPIC_AUTH_TOKEN` pointed at a provider's native Anthropic-compatible
-`/anthropic` endpoint (Moonshot Kimi K3, DeepSeek V4, Z.AI GLM-5.2 — no proxy),
-plus the per-tier `ANTHROPIC_*_MODEL` vars. The functions live in
+`claude-glm`, `claude-qwen`, and `claude-qwen-local` shell functions. The hosted
+four mirror the equivalent host wrappers: each launches `claude` in a subshell
+with `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` pointed at a provider's
+native Anthropic-compatible endpoint under a vendor-documented path prefix
+(Moonshot Kimi K3, DeepSeek V4, Z.AI GLM-5.2, Alibaba DashScope Qwen3.7-Max /
+Qwen3-Coder-Plus — no proxy), plus the per-tier `ANTHROPIC_*_MODEL` vars
+(`claude-qwen` uses Qwen3.7-Max for the main/reasoning roles and
+Qwen3-Coder-Plus for coding/subagent roles). The functions live in
 `.devcontainer/config/claude-providers.sh` and are sourced from `shell-aliases.sh`.
+
+`claude-qwen-local` is different: it targets your **own** Ollama/LM Studio
+endpoint serving `qwen3-coder:30b`, so it needs no API key and no
+1Password entry — `ANTHROPIC_AUTH_TOKEN` is a meaningless placeholder value.
+Its default `ANTHROPIC_BASE_URL` has **no** path suffix (`http://<host>:11434`,
+not `.../anthropic`) — unlike the hosted providers, Ollama and LM Studio serve
+their Anthropic-compatible API from the server root, and the client already
+appends the API path itself. The default host is chosen at launch: it probes
+`host.docker.internal` (which both shipped devcontainer profiles map to the
+host gateway via `runArgs`, so it resolves even on native Linux) and falls
+back to `localhost` when that name doesn't resolve — set `QWEN_LOCAL_BASE_URL`
+to override either guess. **On native Linux, the DNS mapping alone is not
+enough**: stock Ollama binds `127.0.0.1:11434` (loopback-only), so it refuses
+the container's connection regardless. Do **not** bind `0.0.0.0` — Ollama has
+no auth, so that exposes it to the whole LAN. Instead set
+`OLLAMA_HOST=<docker0-bridge-IP>` (`ip addr show docker0`, typically
+`172.17.0.1`) to scope it to the Docker bridge, firewall port `11434` to that
+bridge if it must stay on `0.0.0.0` for other reasons, or point
+`QWEN_LOCAL_BASE_URL` at an endpoint that's already reachable.
 
 The provider API keys flow through the same env-file pipeline as everything else
 (`init-env.sh` allow-list → `devcontainer.env` → `--env-file`), so add them to your
@@ -460,7 +482,8 @@ repo** (one template serves every repo). To stand this repo up in Coder:
      `GH_TOKEN` **for a bot workspace only** — a dev workspace runs
      `gh auth login` instead
      (+ `TS_AUTHKEY` if you want Tailscale)[% if use_alternative_claude_providers %]; `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
-     `DEEPSEEK_API_KEY`, `ZAI_API_KEY` for the alt-model wrappers[% endif %]. Coder passes these
+     `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `QWEN_API_KEY` for the alt-model wrappers
+     (`claude-qwen-local` needs no key — see below)[% endif %]. Coder passes these
      into the workspace's host environment, where `init-env.sh` picks them up.
 
    Coder is the case where this matters most: there is no 1Password app in the

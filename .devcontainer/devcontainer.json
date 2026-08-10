@@ -23,10 +23,16 @@
   // Alternative-model provider keys (KIMI/DEEPSEEK/ZAI) are opt-in via
   // use_alternative_claude_providers; when on they land in this env-file too,
   // so a headless/bypass bot can read them — a deliberate posture extension.
-  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/devcontainer.env GH_TOKEN FOREMAN_AGENT_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY",
+  "initializeCommand": "bash .devcontainer/scripts/init-env.sh .devcontainer/devcontainer.env GH_TOKEN FOREMAN_AGENT_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AGENT_DECK_TELEGRAM_KEY KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY",
   "runArgs": [
     "--init",
     "--shm-size=2g",
+    // Linux hosts don't resolve host.docker.internal by default (unlike Docker
+    // Desktop on mac/win/WSL2); this mapping makes it resolve everywhere,
+    // which claude-qwen-local() (.devcontainer/config/claude-providers.sh)
+    // relies on to reach an Ollama/LM Studio endpoint on the host. Supported
+    // since Docker 20.10, harmless where the platform already resolves it.
+    "--add-host=host.docker.internal:host-gateway",
     "--env-file",
     ".devcontainer/devcontainer.env"
   ],

@@ -56,16 +56,39 @@ The following decisions are adopted together:
 7. **D7 — Foreman selectors name harness adapters.** `foreman:<adapter>` selects
    executable machinery. The registry maps that adapter to a harness and states
    who selects the model. The family and harness axes are intentionally distinct.
-8. **D8 — Codex's family slug is `codex`.** Model segments, such as `sol` or
-   `luna`, live below that stable family slug.
-9. **D9 — Harness slugs follow product and collision rules.** Product names are
-   lowercase slugs (`antigravity`, `opencode`, `pi`). A product qualifier avoids
-   a family collision (`claude-code`, `codex-cli`, `copilot-cli`, `qwen-code`).
-   Provider-rewired variants use `<harness>-<family>`, including
-   `claude-code-deepseek`, `claude-code-glm`, `claude-code-kimi`, and
-   `claude-code-minimax`. MiniMax's family is `minimax`; `minimax` is never a
-   harness slug. A venue is not a harness, so the GitHub Action is
-   `claude-code-action`, not `gh-action`.
+8. **D8 — Family slugs name vendor intelligence, never the harness product.**
+   OpenAI's family slug is `gpt`; model segments, such as `sol` or `luna`, live
+   below that stable family slug, and `codex-cli` is the *harness* that runs
+   it. Microsoft AI's family slug is `mai`; `copilot-cli` is a *harness* — a
+   broker (D9 amendment below) whose picker defaults to `mai` but can route
+   to other families. **Amended 2026-08-10**: the family slug was originally
+   `codex`, and `copilot` was originally recorded as a family with no models.
+   Both were the exact product-vs-family mistake D9 already fixed for
+   `codex-cli` itself — Codex and Copilot are products/harnesses, GPT and MAI
+   are the vendor intelligence underneath them. Renaming families is a
+   registry-and-label change, not a live-data migration: existing
+   `suggest:codex*`/`claim:codex*` and `suggest:copilot*`/`claim:copilot*`
+   labels are not deleted or auto-renamed (`setup-github-labels` is additive,
+   same as the `agent:*` → `claim:*` cutover D4 already established), so a
+   repo carrying pre-refresh labels does a one-time human rename —
+   documented as a CHECKLIST.md item next to the equivalent `agent:*` step —
+   rather than a scripted live-data rewrite.
+9. **D9 — Harness slugs follow product, collision, and endpoint-variant
+   rules.** Product names are lowercase slugs (`antigravity`, `opencode`,
+   `pi`). A product qualifier avoids a family collision (`claude-code`,
+   `codex-cli`, `copilot-cli`, `qwen-code`). Provider-rewired variants use
+   `<harness>-<family>`, including `claude-code-deepseek`, `claude-code-glm`,
+   `claude-code-kimi`, `claude-code-minimax`, and `claude-code-qwen`.
+   MiniMax's family is `minimax`; `minimax` is never a harness slug. A venue
+   is not a harness, so the GitHub Action is `claude-code-action`, not
+   `gh-action`. **Amended 2026-08-10 — sanction the `-local` endpoint-variant
+   suffix**: a provider-rewired harness may append `-local` to mark a variant
+   that talks to a local endpoint instead of the family's hosted one, while
+   staying fixed to the *same* family — `claude-code-qwen-local` is family
+   `qwen`, not a separate `qwen-local` family. The suffix names an endpoint,
+   not intelligence, so it never appears in a family slug or as a
+   `family_constraint.family` value; the next local-lane wrapper reuses this
+   rule rather than improvising a new one.
 10. **D10 — Project-management documentation is the human authority.** It must
     explain the label security boundary, the label-versus-field rule, Claude
     workflow behavior, the full label taxonomy, and registry-derived family and
@@ -80,6 +103,47 @@ The following decisions are adopted together:
     model labels on the harness axis, and production-dispatchable adapters without
     a harness mapping. Later drift checks bind provisioning, wrappers, and the
     pinned upstream adapter roster to the same contract.
+12. **D12 — `family_constraint` has an explicit `broker` kind (added
+    2026-08-10).** A harness whose model picker routes across families
+    (`opencode`, `pi`, `goose`, `cline`, `copilot-cli`) declares
+    `{ "kind": "broker" }`, optionally with a `default_family` naming which
+    family it picks absent other input (`copilot-cli`'s is `mai`). This
+    replaces overloading the `none` kind — schema v1's "unconstrained" escape
+    hatch — for the same meaning: a `none` constraint could not name a
+    default, so `copilot-cli` could only be recorded `runner-config`-owned
+    with no way to say *which* family it defaults to, which undersold what
+    the picker actually does. `kind: "broker"` is a distinct, self-describing
+    value rather than "`fixed` with nothing fixed", and `default_family`,
+    when present, is validated against the family roster like any other
+    family reference. Schema `schema_version` moved to `2` for the shape
+    change; the validator and its mutation tests cover the new kind
+    (rejecting a plain `family` on a broker, an unknown `default_family`, and
+    a `default_family` on a `fixed` constraint).
+13. **D13 — `Model selected by` renders as one definition list, not a
+    per-row sentence (added 2026-08-10).** The harness table's last column
+    used to repeat a full sentence per row for what is structurally a
+    4-value enum (`agent-registry.schema.json`'s `modelResolution.owner`:
+    `runner-config`, `workflow-config`, `provider-wrapper`,
+    `harness-runtime`). `agent-registry-labels.mjs`'s `docs-tables` mode now
+    renders each harness's bare `owner` code in the column and prints the
+    four definitions once, above the table. The registry's per-harness
+    `model_resolution.details` field is unchanged and still schema-validated
+    (tooling and future prose may still want it) — it is simply not spliced
+    into the generated table anymore, since every occurrence was restating
+    one of the four fixed sentences with a harness name attached.
+14. **D14 — Model-slug conventions (recorded 2026-08-10).** Family and tier
+    slugs are lowercase words. A version that gets its own slug is
+    hyphenated with a dotted display name (slug `5-2`, display `5.2`) —
+    dots are declined *in slugs* because registry slugs feed
+    `suggest:`/`claim:` label segments, and a `.` there would either break
+    label-name syntax or need escaping every consumer would have to
+    remember. A model slug names either a durable capability *tier* the
+    vendor itself supports across versions (`claude`'s `opus`/`sonnet`/
+    `haiku`/`fable`, `gpt`'s `sol`/`terra`/`luna`) or a *version* where the
+    vendor does not offer that abstraction (`glm`'s `5-2`, `kimi`'s `k3`).
+    A provider-rewired local-endpoint variant's harness slug may append
+    `-local` per the D9 amendment above; it stays a harness-slug suffix, and
+    is never folded into a model or family slug.
 
 Foreman's legacy production adapter `claude.sh` maps to harness `claude-code`.
 Its `mock.sh` adapter is a hermetic test seam only: it has no harness mapping,
@@ -118,3 +182,11 @@ label.
 - Provisioning, workflow migration, vendored-skill migration, Foreman lifecycle
   changes, and final documentation remain separate rollout units. The registry
   establishes their shared contract without prematurely rewriting each consumer.
+- A family rename (D8 amendment) is additive at the registry/label-provisioning
+  level — no GitHub write runs automatically — so a repo seeded before
+  2026-08-10 keeps its pre-refresh `suggest:codex*`/`claim:codex*`/
+  `suggest:copilot*`/`claim:copilot*` labels until an operator runs the
+  documented rename (docs/CHECKLIST.md, next to the equivalent `agent:*` step).
+  `task test:registry-drift` only binds this repository's own provisioning
+  script and wrappers to the current registry; it has no visibility into any
+  other repository's live label set and cannot detect that a rename is owed.

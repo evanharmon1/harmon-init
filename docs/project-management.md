@@ -419,13 +419,13 @@ and their vocabulary is not hand-listed anywhere: it is rendered from
 `agent-registry.json` (see [Agent families and harnesses](#agent-families-and-harnesses)),
 so provisioning and documentation cannot fork from each other.
 
-- **Suggest** — `suggest:claude`, `suggest:codex`, … — which agent family
+- **Suggest** — `suggest:claude`, `suggest:gpt`, … — which agent family
   *should* implement the issue, set at triage. Advisory only: it routes
   nothing by itself and must never be read as Foreman arming (that is the
   `foreman:*` family). A model-level label (`suggest:claude:opus`, created on
   demand) **refines** the family label, never replaces it — apply both, so
   views filtered on the family labels keep seeing the issue
-- **Claim** — `claim:claude`, `claim:codex`, … — which agent family is working
+- **Claim** — `claim:claude`, `claim:gpt`, … — which agent family is working
   the issue *right now*, written by the agent itself (see **Claiming** below).
   Model-level (`claim:claude:opus`) refines it the same way
 
@@ -573,32 +573,44 @@ with no adapter behind it is a false capability that can strand armed work.
 
 | Family | Name | Models |
 | --- | --- | --- |
-| `claude` | Claude | `opus`, `sonnet`, `haiku` |
-| `codex` | OpenAI Codex | `sol`, `terra`, `luna` |
-| `copilot` | GitHub Copilot | — |
-| `qwen` | Qwen | `coder` |
-| `deepseek` | DeepSeek | — |
-| `glm` | GLM | `5-2` |
+| `claude` | Claude | `fable`, `opus`, `sonnet`, `haiku` |
+| `gpt` | GPT | `sol`, `terra`, `luna` |
+| `mai` | MAI | `code-1-flash`, `thinking-1` |
+| `qwen` | Qwen | `max`, `coder-plus`, `coder`, `coder-next`, `coder-30b` |
+| `deepseek` | DeepSeek | `v4-pro`, `v4-flash` |
+| `glm` | GLM | `5-2`, `4-7-flash` |
 | `kimi` | Kimi | `k3` |
-| `minimax` | MiniMax | — |
-| `gemini` | Gemini | — |
+| `minimax` | MiniMax | `m3` |
+| `gemini` | Gemini | `3-1-pro`, `3-6-flash`, `3-5-flash-lite` |
+| `mistral` | Mistral | `devstral-small-2` |
+
+`Model selected by` values:
+
+- `runner-config` — the runner or repository/CLI configuration selects the model; labels do not.
+- `workflow-config` — the GitHub Actions workflow input selects the model.
+- `provider-wrapper` — the provider-rewired wrapper fixes the family; its runtime configuration selects the model.
+- `harness-runtime` — the harness selects the model at runtime; for broker harnesses it selects the provider family too.
 
 #### Harnesses
 
 | Harness | Product | Family | Foreman adapter | Model selected by |
 | --- | --- | --- | --- | --- |
-| `claude-code` | Claude Code CLI | `claude` | `foreman:claude` — production, dispatchable | `runner-config` — The runner or repository configuration selects the Claude model; labels do not. |
-| `claude-code-action` | claude-code-action | `claude` | — | `workflow-config` — The GitHub Actions workflow input selects the Claude model. |
-| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
-| `claude-code-glm` | Claude Code provider wrapper | `glm` | — | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
-| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | — | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
-| `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` — The provider-rewired wrapper fixes the family and its runtime configuration selects the model. |
-| `codex-cli` | OpenAI Codex CLI | `codex` | — | `runner-config` — The runner or CLI invocation selects the Codex model. |
-| `copilot-cli` | GitHub Copilot CLI | `copilot` | — | `runner-config` — The runner or Copilot configuration selects the model. |
-| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` — The runner or Qwen Code configuration selects the Qwen model. |
-| `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` — The Antigravity session selects the Gemini model. |
-| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` — The multi-provider harness selects both provider family and model at runtime. |
-| `pi` | Pi | any (multi-provider) | — | `harness-runtime` — The multi-provider harness selects both provider family and model at runtime. |
+| `claude-code` | Claude Code CLI | `claude` | `foreman:claude` — production, dispatchable | `runner-config` |
+| `claude-code-action` | claude-code-action | `claude` | — | `workflow-config` |
+| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` |
+| `claude-code-glm` | Claude Code provider wrapper | `glm` | — | `provider-wrapper` |
+| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | — | `provider-wrapper` |
+| `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` |
+| `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` |
+| `claude-code-qwen-local` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` |
+| `codex-cli` | OpenAI Codex CLI | `gpt` | — | `runner-config` |
+| `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` |
+| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` |
+| `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` |
+| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` |
+| `pi` | Pi | any (multi-provider) | — | `harness-runtime` |
+| `goose` | Block Goose | any (multi-provider) | — | `harness-runtime` |
+| `cline` | Cline | any (multi-provider) | — | `harness-runtime` |
 <!-- registry-tables:end -->
 
 ## Claiming — making an agent's work visible while it happens

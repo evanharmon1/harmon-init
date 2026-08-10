@@ -16,7 +16,7 @@ current — it is the reference for "where do secrets live and who can do what".
   `AGENT_DECK_TELEGRAM_KEY` in both profiles, `GH_TOKEN` in the bot profile only,
   `TS_AUTHKEY` in the dev profile only, plus the
   alt-model provider keys (`KIMI_API_KEY`/`MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`,
-  `ZAI_API_KEY`) when opted in — see
+  `ZAI_API_KEY`, `QWEN_API_KEY`) when opted in — see
   [../guides/devcontainers.md](../guides/devcontainers.md).
   TODO: list the 1Password vault/items this project uses.
 - **Auditable changes.** `main` is protected; changes land via reviewed PRs
