@@ -289,18 +289,22 @@ use_antigravity_cli:
 use_alternative_claude_providers:
   type: bool
   help: >-
-    ALT MODELS: Add claude-kimi / claude-deepseek / claude-glm wrapper functions
-    that launch Claude Code against alternative Anthropic-compatible model
-    providers (Moonshot Kimi K3, DeepSeek V4, Z.AI GLM-5.2)? Each requires an
-    account + a PAID per-token API key (KIMI_API_KEY/MOONSHOT_API_KEY,
-    DEEPSEEK_API_KEY, ZAI_API_KEY) supplied via the devcontainer env-file — there
+    ALT MODELS: Add claude-kimi / claude-deepseek / claude-glm / claude-qwen
+    wrapper functions that launch Claude Code against alternative
+    Anthropic-compatible model providers (Moonshot Kimi K3, DeepSeek V4, Z.AI
+    GLM-5.2, Alibaba Qwen3.7-Max/Qwen3-Coder-Plus)? Each requires an account +
+    a PAID per-token API key (KIMI_API_KEY/MOONSHOT_API_KEY, DEEPSEEK_API_KEY,
+    ZAI_API_KEY, QWEN_API_KEY) supplied via the devcontainer env-file — there
     is no guaranteed free tier, only limited trial credit that may be offered at
     signup (verify current terms at each provider). DATA-HANDLING: each wrapper
-    sends your prompts and code to that third party (Moonshot, DeepSeek, or
-    Z.AI), so for private/proprietary repos review each provider's data-retention
-    and model-training policy before opting in. The wrappers are inert without
-    keys. Routes the keys into BOTH bot and dev env-files: the bot runs
-    bypassPermissions, so a headless agent there can read them.
+    sends your prompts and code to that third party (Moonshot, DeepSeek, Z.AI,
+    or Alibaba), so for private/proprietary repos review each provider's
+    data-retention and model-training policy before opting in. A local Qwen
+    lane (claude-qwen-local) is also included, targeting your own
+    Ollama/LM Studio endpoint — no third party or key involved there. The
+    wrappers are inert without keys. Routes the keys into BOTH bot and dev
+    env-files: the bot runs bypassPermissions, so a headless agent there can
+    read them.
   default: no
   when: "[[ devcontainer ]]"
 
