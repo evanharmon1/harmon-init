@@ -268,6 +268,24 @@ this comment. -->
       before renaming it out from under them. Re-read `gh label list --limit
       200` afterwards — no `suggest:codex`/`claim:codex`/`suggest:copilot`/
       `claim:copilot` should remain.
+      **Also check for model-level labels naming the old family** —
+      `suggest:codex:<model>` / `claim:codex:<model>` /
+      `suggest:copilot:<model>` / `claim:copilot:<model>` (`suggest:codex:sol`,
+      `claim:copilot:code-1-flash`, …). Those are created on demand rather than
+      seeded, so `gh label list --limit 200`'s default page can miss them
+      entirely if this repo has many labels — enumerate with the family prefix
+      instead of eyeballing the page: `gh label list --repo <owner/repo>
+      --limit 1000 --json name --jq '.[].name' | grep -E
+      '^(suggest|claim):(codex|copilot):'`. Rename each the same
+      rename-never-recreate way, **preserving its model suffix**
+      (`suggest:codex:sol` → `suggest:gpt:sol`, `claim:copilot:code-1-flash` →
+      `claim:mai:code-1-flash` — the model slugs are unchanged by the rename,
+      only the family segment moves), and run the same in-flight-claim check
+      per label before renaming it
+      (`gh issue list --label suggest:codex:sol --state all --limit 200` /
+      `gh pr list --label suggest:codex:sol --state all --limit 200`, one pair
+      per label found). Re-run the `grep` above afterwards — it should return
+      nothing.
 - [ ] Project views: create the starter views (Board / Triage / Agent queue /
       Planning / Mine) in the Project UI — Projects V2 has no view API,
       so this is a one-time manual step. Filters/layouts are in
