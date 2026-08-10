@@ -71,7 +71,6 @@ claude-kimi() {
         export ENABLE_CLAUDEAI_MCP_SERVERS="false"
         export ENABLE_TOOL_SEARCH="false"
         export CLAUDE_CODE_AUTO_COMPACT_WINDOW="1048576"
-        export CLAUDE_CODE_EFFORT_LEVEL="max"
         command claude "$@"
     )
 }
@@ -116,7 +115,6 @@ claude-deepseek() {
         export ANTHROPIC_DEFAULT_FABLE_MODEL="deepseek-v4-pro[1m]"
         export CLAUDE_CODE_SUBAGENT_MODEL="deepseek-v4-flash"
         export ENABLE_CLAUDEAI_MCP_SERVERS="false"
-        export CLAUDE_CODE_EFFORT_LEVEL="max"
         command claude "$@"
     )
 }
@@ -162,7 +160,6 @@ claude-glm() {
         export ENABLE_CLAUDEAI_MCP_SERVERS="false"
         export ENABLE_TOOL_SEARCH="false"
         export CLAUDE_CODE_AUTO_COMPACT_WINDOW="1048576"
-        export CLAUDE_CODE_EFFORT_LEVEL="max"
         export API_TIMEOUT_MS="3000000"
         command claude "$@"
     )

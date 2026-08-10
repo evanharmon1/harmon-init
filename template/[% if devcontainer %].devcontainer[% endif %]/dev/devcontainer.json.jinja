@@ -70,12 +70,6 @@
     "source=shell-history-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.shell-history,type=volume",
     "source=zoxide-data-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.local/share/zoxide,type=volume"
   ],
-  // CLAUDE_CODE_EFFORT_LEVEL: default Claude Code thinking effort. Set here
-  // (not in settings.json) because Claude Code's settings schema only accepts
-  // low|medium|high for the persisted effortLevel field, while the env var
-  // accepts low|medium|high|max. Resolution order at runtime: env var >
-  // settings.json effortLevel > model default.
-  //
   // GITHUB_TOKEN and the enterprise aliases are blanked because dropping
   // GH_TOKEN alone does not finish the job: gh's precedence is GH_TOKEN >
   // GITHUB_TOKEN > GH_ENTERPRISE_TOKEN > GITHUB_ENTERPRISE_TOKEN > the stored
@@ -103,7 +97,6 @@
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "DEVCONTAINER_TAILSCALE": "true",
-    "CLAUDE_CODE_EFFORT_LEVEL": "max",
     "GITHUB_TOKEN": "",
     "GH_ENTERPRISE_TOKEN": "",
     "GITHUB_ENTERPRISE_TOKEN": ""

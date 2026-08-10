@@ -1353,6 +1353,20 @@ else
         ! grep -q 'features/go-task' "$dc_cfg" ||
             err "rendered $dc_cfg installs task via a devcontainer Feature (harmon-init#427)"
     done
+    # No profile or provider wrapper may force CLAUDE_CODE_EFFORT_LEVEL: the
+    # env var outranks Claude Code's settings.json, so a pinned value silently
+    # overrides the user's saved effort and mid-session /model changes. The pin
+    # was removed deliberately; asserted on the rendered output for the same
+    # reason as the go-task Feature above — these twins are jinja, so the
+    # parity gates cannot stop template/ from reintroducing the override while
+    # the root copy stays correct. The providers wrapper renders only when
+    # use_alternative_claude_providers is on, hence the existence guard.
+    for dc_file in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json \
+        .devcontainer/config/claude-providers.sh; do
+        [ -f "$dc_file" ] || continue
+        ! grep -q 'CLAUDE_CODE_EFFORT_LEVEL' "$dc_file" ||
+            err "rendered $dc_file forces CLAUDE_CODE_EFFORT_LEVEL — effort selection belongs to Claude Code settings"
+    done
     # The rendered Dockerfile must be a thin consumer of the shared image:
     # exactly the approved immutable tag@digest reference, the overlay
     # installer, and no consumer-side toolchain pins (those live only in
