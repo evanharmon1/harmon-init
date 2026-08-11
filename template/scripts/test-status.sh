@@ -917,4 +917,50 @@ else
     echo "    (skipped: no devcontainer hook in this profile)"
 fi
 
+echo "==> the session-start hook fits inside its managed SessionStart deadline"
+# The deadline ABOVE the per-section ones: Claude Code applies the `timeout` on
+# the SessionStart entries to the whole hook, and overrunning it is worse than
+# overrunning a section bound — the hook is killed before `jq` emits anything,
+# so the entire payload is lost rather than one section of it. Adding a section
+# is exactly when that ceiling gets forgotten, so derive both sides from the
+# files: the sections run in parallel, which makes the hook's wall clock the
+# LONGEST section deadline rather than their sum.
+settings=".devcontainer/config/claude-settings.json"
+if [ -f "$hook" ] && [ -f "$settings" ]; then
+    managed="$(jq -r '
+        [.hooks.SessionStart[]?.hooks[]?
+         | select(.command | test("session-start-context"))
+         | .timeout // empty]
+        | min // empty
+    ' "$settings")"
+    [ -n "$managed" ] ||
+        fail "could not read the SessionStart hook timeout out of ${settings}"
+
+    # Every bounded section launch in the hook, and whether it was backgrounded.
+    section_bounds="$(sed -n -E 's/^[[:space:]]*timeout ([0-9]+) task status:[a-z]+ .*/\1/p' "$hook")"
+    backgrounded="$(sed -n -E 's/^[[:space:]]*timeout [0-9]+ task status:[a-z]+ .*&$/&/p' "$hook" | wc -l | tr -d ' ')"
+    n_sections="$(printf '%s\n' "$section_bounds" | grep -c '[0-9]' || true)"
+    [ "${n_sections:-0}" -ge 2 ] ||
+        fail "found ${n_sections:-0} bounded status sections in ${hook} — the ceiling below would assert nothing"
+
+    longest=0
+    total=0
+    for b in $section_bounds; do
+        total=$((total + b))
+        [ "$b" -gt "$longest" ] && longest="$b"
+    done
+
+    if [ "$backgrounded" -eq "$n_sections" ]; then
+        wall="$longest"
+        shape="in parallel"
+    else
+        wall="$total"
+        shape="sequentially"
+    fi
+    [ "$managed" -gt "$wall" ] ||
+        fail "the hook runs its ${n_sections} sections ${shape} (${wall}s worst case) but claude-settings.json kills it at ${managed}s — the whole payload is discarded, not one section"
+else
+    echo "    (skipped: no devcontainer hook/settings in this profile)"
+fi
+
 echo "status.sh tests passed"
