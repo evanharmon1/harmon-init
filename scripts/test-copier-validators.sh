@@ -28,6 +28,17 @@ fail() {
     failures=$((failures + 1))
 }
 
+# Name the real cause when a render dies on copier's dirty-tree wip commit
+# having swept in a registered git worktree (e.g. an agent worktree under
+# .claude/worktrees/). Such a directory is a gitlink with no `.gitmodules`
+# entry, so the nested clone reports a submodule error in a repo with no
+# submodules — and the operator's diff is usually nowhere near it.
+hint_stale_worktree() {
+    if grep -q 'No url found for submodule path' "$work/render.log"; then
+        echo "      hint: a registered git worktree inside this checkout was staged as a gitlink by copier's dirty-tree commit (this repo has no submodules). Gitignore it, or remove it with 'git worktree remove' / 'git worktree prune'." >&2
+    fi
+}
+
 # One render attempt. Echoes nothing; returns copier's exit status.
 render() {
     local answer="$1" out="$2"
@@ -52,6 +63,7 @@ for bad in "/tmp/Vault: Work" "~/Bob's Vault" '~/say "hi"' '~/a$b' '~/a#b' '~/a`
     else
         fail "rejected $bad, but not by the validator — copier failed for another reason"
         sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
     fi
 done
 
@@ -70,6 +82,7 @@ if render '~/Fine Vault' "$work/good"; then
 else
     fail "rejected a valid path containing a space"
     sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
 fi
 
 if [ "$failures" -gt 0 ]; then
