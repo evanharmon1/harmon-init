@@ -387,6 +387,28 @@ git -C "$fixture" show-ref --verify --quiet refs/heads/holder ||
 refute_exists "$fixture/.worktrees/borrower" "the failed create left its reservation behind"
 rm_wt holder >/dev/null || fail "cleanup of the holder tree failed"
 
+# ── rollback never deletes anything it did not create ────────────────
+# The ancestor/descendant race: a concurrent run can occupy this run's reserved
+# directory before `git worktree add` gets to it. Rollback must degrade to a
+# report, never a recursive delete. Simulated by planting a live worktree where
+# a reservation would be and driving a create that fails after reserving.
+echo "==> rollback refuses to delete a non-empty path it did not create"
+new occupant >/dev/null || fail "worktree-new.sh failed creating the occupant tree"
+printf 'precious\n' >"$fixture/.worktrees/occupant/PRECIOUS.md"
+mkdir -p "$fixture/.worktrees/victim"
+printf 'also precious\n' >"$fixture/.worktrees/victim/KEEP.md"
+# A create for `victim` reserves nothing (the path is taken) and must not touch
+# the contents; the pre-existing directory is reported, not deleted.
+if new victim >/dev/null 2>&1; then
+    fail "worktree-new.sh claimed a path that was already occupied"
+fi
+[ -f "$fixture/.worktrees/victim/KEEP.md" ] ||
+    fail "worktree-new.sh deleted files at an occupied path"
+[ -f "$fixture/.worktrees/occupant/PRECIOUS.md" ] ||
+    fail "worktree-new.sh disturbed a live neighbouring worktree"
+rm -rf "${fixture:?}/.worktrees/victim"
+rm_wt occupant --force >/dev/null || fail "cleanup of the occupant tree failed"
+
 # ── an abandoned empty reservation is recoverable ────────────────────
 # An interrupted create leaves `.worktrees/<name>` with nothing in it. Running
 # git inside it finds the ENCLOSING repo, so liveness has to come from the

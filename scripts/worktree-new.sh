@@ -200,7 +200,19 @@ cleanup() {
             git worktree list --porcelain | grep -qxF "worktree $tree"; then
             branch_is_ours=1
         fi
-        git worktree remove --force "$tree" >/dev/null 2>&1 || rm -rf "$tree"
+        # `rmdir`, never `rm -rf`. What this run created is either a worktree
+        # git can remove, or the EMPTY directory it reserved — and rmdir undoes
+        # exactly the latter. A recursive delete here is a data-loss primitive
+        # pointed at a path that another run may legitimately be occupying: with
+        # `parent` and `parent/child` created concurrently, the child can land
+        # inside the parent's reservation before the parent's `add` fails, and
+        # `rm -rf` would then destroy a tree whose own command reported success.
+        # Refusing to delete anything non-empty makes that impossible without a
+        # lock; the leftover is reported and `worktree:rm` clears it.
+        if ! git worktree remove --force "$tree" >/dev/null 2>&1; then
+            rmdir "$tree" 2>/dev/null ||
+                echo "worktree:new: left $tree in place — it is not empty and is not a registered worktree; inspect it, then 'task worktree:rm -- $name'" >&2
+        fi
         git worktree prune >/dev/null 2>&1 || true
         if [ "$branch_is_ours" -eq 1 ]; then
             git branch -D "$branch" >/dev/null 2>&1 || true
