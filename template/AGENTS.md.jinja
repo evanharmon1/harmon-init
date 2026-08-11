@@ -268,9 +268,12 @@ error silently reverts the lifecycle rather than fixing anything.
   when its window elapses with no terminal result for the captured head —
   with the checker, that is exit 12; without it, elapsed time plus the
   absence of terminal evidence is itself the signal. After an incomplete
-  first attempt, post `@codex review` once more for the same head and run one
-  more full window as attempt 2, recording and using the new trigger comment
-  ID. If both attempts
+  first attempt, run attempt 2 the same way as attempt 1: with the checker,
+  repeat the reserve-first sequence — `reserve --attempt 2` against the same
+  head, then post `@codex review` once more, then `attach` the comment ID
+  returned for that trigger — and without it, post the trigger and record the
+  request time and the comment ID returned for that trigger yourself; either
+  way run one more full window. If both attempts
   are incomplete, stop and escalate without reporting green (with the
   checker, exit 13). Waiting and the
   one allowed re-trigger do not consume a shepherd fix round. Immediately

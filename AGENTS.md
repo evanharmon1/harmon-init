@@ -369,9 +369,10 @@ non-draft PR must always mean the automated work is done.
   incomplete.
   Give each attempt a full 10–15 minute window. An attempt is **incomplete**
   when its window elapses with no terminal result for the captured head
-  (the script's exit 12). After an incomplete first attempt, post
-  `@codex review` once more for the same head and run one more full window as
-  attempt 2, recording and using the new trigger comment ID. If both attempts
+  (the script's exit 12). After an incomplete first attempt, repeat the
+  reserve-first sequence as attempt 2: `reserve --attempt 2` against the same
+  head, then post `@codex review` once more, then `attach` the comment ID
+  returned for that trigger, and run one more full window. If both attempts
   are incomplete, stop and escalate without reporting green (the script's
   exit 13). Waiting and the
   one allowed re-trigger do not consume a shepherd fix round. Immediately
