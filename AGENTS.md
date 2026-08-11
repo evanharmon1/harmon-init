@@ -390,7 +390,11 @@ non-draft PR must always mean the automated work is done.
   reply-based adjudication path cannot reach it and findings outrank a later
   clean result on the same head. Record its disposition with the checker's
   `settle` subcommand: answer the finding on the PR as usual (fix it, decline
-  it with evidence, or file it), then run the checker's `settle` with the
+  it with evidence, or file it) — and note that only two of those three end
+  here. **Fixing** it means a push, which moves the head and starts a fresh
+  cycle that reviews the fix on its own merits; `settle` neither applies nor
+  accepts that disposition. It records the two answers that leave the code
+  alone, and for those you run the checker's `settle` with the
   cycle's own state file — `.claude/skills/shepherd/assets/check-codex-cloud-review.sh
   settle --state "$state" --actor-id 199175422 --surface comment|review --id
   <id> --disposition declined|filed --note "<why, or the issue filed>"` —

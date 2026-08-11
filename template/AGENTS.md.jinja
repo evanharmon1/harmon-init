@@ -290,9 +290,13 @@ error silently reverts the lifecycle rather than fixing anything.
   comment or in a review's own body — has no reply linkage, so the
   reply-based adjudication path cannot reach it and findings outrank a later
   clean result on the same head. Where the vendored checker is present,
-  record its disposition with `settle`: answer the finding on the PR as usual
-  (fix it, decline it with evidence, or file it), then run the checker with
-  the cycle's own state file — `.claude/skills/shepherd/assets/check-codex-cloud-review.sh
+  record its disposition with `settle`. Answer the finding on the PR as usual
+  first — and note that only two of the three answers end here. **Fixing** it
+  means a push, which moves the head and starts a fresh cycle that reviews the
+  fix on its own merits; `settle` neither applies nor accepts that
+  disposition. For the two answers that leave the code alone — declining with
+  evidence, or filing it as follow-up work — run the checker with the cycle's
+  own state file: `.claude/skills/shepherd/assets/check-codex-cloud-review.sh
   settle --state "$state" --actor-id 199175422 --surface comment|review --id
   <id> --disposition declined|filed --note "<why, or the issue filed>"` —
   adding `--covers <n>` where the target states more than one finding.
