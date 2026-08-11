@@ -289,29 +289,22 @@ error silently reverts the lifecycle rather than fixing anything.
   A badged finding stated **outside an inline thread** — in a top-level
   comment or in a review's own body — has no reply linkage, so the
   reply-based adjudication path cannot reach it and findings outrank a later
-  clean result on the same head. Where the vendored checker is present,
-  record its disposition with `settle`. Answer the finding on the PR as usual
-  first — and note that only two of the three answers end here. **Fixing** it
-  means a push, which moves the head and starts a fresh cycle that reviews the
-  fix on its own merits; `settle` neither applies nor accepts that
-  disposition. For the two answers that leave the code alone — declining with
-  evidence, or filing it as follow-up work — run the checker with the cycle's
-  own state file: `.claude/skills/shepherd/assets/check-codex-cloud-review.sh
-  settle --state "$state" --actor-id 199175422 --surface comment|review --id
-  <id> --disposition declined|filed --note "<why, or the issue filed>"` —
-  adding `--covers <n>` where the target states more than one finding.
-  `--state` and `--actor-id` are both required; the invocation fails without
-  them, which is the whole point of the state being durable and the actor
-  pinned. `check` then
-  treats that finding as answered and the cycle reaches terminal-clean,
-  reported with a detail naming the disposition applied. The record is
-  durable and head-bound: it is fingerprinted against the body it settled, so
-  a finding Codex edits afterwards blocks again while the superseded entry
-  survives as the record of what was decided about the earlier text. Without
-  the checker, record each disposition as a PR comment instead and treat the
-  cycle as terminal with its findings settled. Either way a push starts a
-  fresh cycle, and settling is not a substitute for answering — it records an
-  adjudication a human wrote, which is why the note is required.
+  clean result on the same head. Where the vendored checker is present, its
+  `settle` subcommand records the disposition; the exact invocation lives with
+  the recipe in `.claude/skills/shepherd/SKILL.md`, which this file
+  deliberately does not restate. Without the checker, record each disposition
+  as a PR comment instead and treat the cycle as terminal with its findings
+  settled.
+  What belongs here is when it applies. Answer the finding on the PR as usual,
+  and note that only two of the three answers end with a disposition:
+  **fixing** it means a push, which moves the head and starts a fresh cycle
+  that reviews the fix on its own merits. A disposition records the two
+  answers that leave the code alone — declining with evidence, or filing it as
+  follow-up work — and carries a note for exactly that reason: it is a
+  human's adjudication, not a suppression. With the checker the record is
+  head-bound and fingerprinted against the body it settled, so a finding Codex
+  edits afterwards blocks again while the superseded entry survives as the
+  record of what was decided about the earlier text.
 [% endif %]
   Shepherd is **externally driven** — CI results and other people's comments
   are its input, so it cannot manufacture a round on its own. A round is one
