@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.27.1](https://github.com/evanharmon1/harmon-init/compare/v4.27.0...v4.27.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.28.0 ([#782](https://github.com/evanharmon1/harmon-init/issues/782)) ([39ea505](https://github.com/evanharmon1/harmon-init/commit/39ea5058a039bd2a07f4879f1f1a8bfa95dc0e7b))
+
 ## [4.27.0](https://github.com/evanharmon1/harmon-init/compare/v4.26.0...v4.27.0) (2026-08-11)
 
 
