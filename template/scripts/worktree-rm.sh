@@ -106,8 +106,14 @@ else
         # `for-each-ref`, not `branch --contains`: the latter lists the current
         # detached HEAD itself as a `(HEAD detached at ...)` pseudo-entry, so it
         # is never empty here and the guard would never fire.
+        #
+        # ALL refs, not just refs/heads. A tag or a remote-tracking ref keeps the
+        # commit just as reachable as a branch does, and narrowing the query
+        # would refuse a perfectly safe removal — pushing people toward --force
+        # for a tree that was never at risk, which is how a guard stops being
+        # believed.
         if ! git -C "$tree" symbolic-ref -q HEAD >/dev/null &&
-            [ -z "$(git -C "$tree" for-each-ref --contains HEAD --format='%(refname)' refs/heads 2>/dev/null)" ]; then
+            [ -z "$(git -C "$tree" for-each-ref --contains HEAD --format='%(refname)' 2>/dev/null)" ]; then
             die "$tree is on a detached HEAD no branch contains — the commits there would become unreachable; branch or note them, or re-run with --force"
         fi
     fi
@@ -160,6 +166,14 @@ fi
 # stale record (or a leftover directory holding only a .git gitlink file) makes
 # later tooling treat a dead path as a live checkout.
 git worktree prune
+
+# `git worktree prune` deliberately keeps LOCKED records, so it can succeed
+# while leaving this path registered — after which the branch still reads as
+# checked out and the next `worktree:new` for it fails. Reporting "removed"
+# there would be a lie, so re-query and name the lock instead.
+if git worktree list --porcelain | grep -qxF "worktree $tree"; then
+    die "$tree is still registered after pruning — its record is locked; run 'git worktree unlock \"$tree\"' and re-run, or 'git worktree remove --force \"$tree\"'"
+fi
 
 # `git worktree remove` leaves the directory in place when it failed or when the
 # registry record was already gone. Clear it only when nothing but git's own

@@ -70,7 +70,7 @@ else
 # generates — honouring LEFTHOOK=0 and LEFTHOOK_BIN — so the entrypoint's hook
 # probe exercises the real contract even where lefthook is not installed.
 set -euo pipefail
-git_hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge pre-push pre-receive update post-receive post-update push-to-checkout pre-auto-gc post-rewrite sendemail-validate post-index-change"
+git_hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge pre-push pre-receive update proc-receive post-receive post-update reference-transaction push-to-checkout pre-auto-gc post-rewrite sendemail-validate fsmonitor-watchman p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit post-index-change"
 case "${1:-}" in
 install)
     hooks="$(git rev-parse --path-format=absolute --git-path hooks)"
@@ -484,15 +484,22 @@ pre-push:
   commands:
     noop:
       run: "true"
+
+reference-transaction:
+  commands:
+    noop:
+      run: "true"
 EOF
 git -C "$fixture" add lefthook.yml
-git -C "$fixture" commit -qm "chore: configure three hooks" >"$test_tmp/commit.log" 2>&1 ||
+git -C "$fixture" commit -qm "chore: configure four hooks" >"$test_tmp/commit.log" 2>&1 ||
     fail "committing the multi-hook lefthook.yml failed"
 # A partial installation is the case that used to pass: pre-commit present,
-# the others missing.
-rm -f "$shared_hooks/commit-msg" "$shared_hooks/pre-push"
-hooks_out="$(new all-hooks)" || fail "worktree-new.sh failed with three hooks configured"
-for hook in pre-commit commit-msg pre-push; do
+# the others missing. `reference-transaction` is deliberately one of the
+# less-common git hooks — an incomplete name list would silently drop it and
+# report the tree ready without it.
+rm -f "$shared_hooks/commit-msg" "$shared_hooks/pre-push" "$shared_hooks/reference-transaction"
+hooks_out="$(new all-hooks)" || fail "worktree-new.sh failed with four hooks configured"
+for hook in pre-commit commit-msg pre-push reference-transaction; do
     [ -x "$shared_hooks/$hook" ] ||
         fail "worktree-new.sh reported ready without installing the $hook hook"
 done
@@ -501,6 +508,21 @@ case "$hooks_out" in
 *) fail "worktree-new.sh did not report verifying commit-msg" ;;
 esac
 rm_wt all-hooks >/dev/null || fail "cleanup of the all-hooks tree failed"
+# Back to the single-hook config: `reference-transaction` fires on every ref
+# update, so leaving it configured would have the rest of the suite running
+# lefthook on each git command for no added coverage.
+cat >"$fixture/lefthook.yml" <<'EOF'
+pre-commit:
+  commands:
+    noop:
+      run: "true"
+EOF
+git -C "$fixture" add lefthook.yml
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: back to one hook" >"$test_tmp/commit.log" 2>&1 ||
+    fail "restoring the single-hook lefthook.yml failed"
+# The installed shim outlives the config change (nothing re-runs `lefthook
+# install`), so drop it too.
+rm -f "$shared_hooks/reference-transaction"
 
 # ── name validation ──────────────────────────────────────────────────
 echo "==> path-escaping and empty names are rejected"

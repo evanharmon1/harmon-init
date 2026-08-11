@@ -133,6 +133,17 @@ tree="$main_root/.worktrees/$name"
 # parent then reads as dirty, and removing it with --force takes the child's
 # uncommitted work with it.
 registered="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}')"
+
+# Snapshot whether this path is ALREADY registered, before anything this run
+# does. Rollback's ownership test below compares against it, so a record that
+# predates this invocation can never be mistaken for one this run created.
+tree_registered_before=0
+case "
+$registered
+" in *"
+$tree
+"*) tree_registered_before=1 ;; esac
+
 ancestor="$(dirname "$tree")"
 while [ "$ancestor" != "$main_root/.worktrees" ] && [ "$ancestor" != "/" ]; do
     case "
@@ -188,15 +199,21 @@ cleanup() {
     if [ "$status" -ne 0 ] && [ "$tree_created" -eq 1 ]; then
         echo "worktree:new: rolling back the half-provisioned tree $tree" >&2
         # Decide branch ownership FIRST, while the registry still holds the
-        # record that answers it. Git having REGISTERED a worktree at this path
+        # record that answers it. A worktree registered at this path BY THIS RUN
         # is the unambiguous signal that `git worktree add -b` got far enough to
         # create the branch itself. The failure that must never delete anything
         # is `add` refusing because a concurrent run created the same branch —
-        # and in that case nothing was registered here. Comparing the branch tip
+        # and in that case this run registered nothing. Comparing the branch tip
         # against the base cannot separate the two: a concurrent creator working
         # from the same base produces an identical SHA.
+        #
+        # "By this run" is why the pre-add snapshot matters. A path can be
+        # registered yet missing on disk (a stale record someone deleted around
+        # git's back); the reservation still succeeds, `add` still fails, and a
+        # bare "is it registered now?" would read that PRE-EXISTING record as
+        # proof of ownership and delete a branch this run never made.
         branch_is_ours=0
-        if [ "$branch_created" -eq 1 ] &&
+        if [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
             git worktree list --porcelain | grep -qxF "worktree $tree"; then
             branch_is_ours=1
         fi
@@ -297,7 +314,7 @@ hooks_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-path hooks)"
 # The list comes from lefthook.yml's top-level keys filtered against real git
 # hook names, so a repo that adds a hook is covered without editing this script,
 # and config keys like `assert_lefthook_installed` drop out by not being hooks.
-git_hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge pre-push pre-receive update post-receive post-update push-to-checkout pre-auto-gc post-rewrite sendemail-validate post-index-change"
+git_hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge pre-push pre-receive update proc-receive post-receive post-update reference-transaction push-to-checkout pre-auto-gc post-rewrite sendemail-validate fsmonitor-watchman p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit post-index-change"
 configured_hooks=""
 if [ -f "$tree/lefthook.yml" ]; then
     for key in $(awk -F: '/^[a-z][a-z-]*:/ {print $1}' "$tree/lefthook.yml"); do
