@@ -371,6 +371,22 @@ refute_exists "$fixture/.worktrees/parent/child" "the nested worktree was create
 rm_wt parent >/dev/null || fail "cleanup of the parent tree failed"
 git -C "$fixture" branch -D alpha beta >/dev/null 2>&1 || true
 
+# ── rollback never deletes a branch this run did not create ──────────
+# The dangerous shape is a failed `git worktree add` while the branch exists but
+# nothing was registered at our path — the state a concurrent creator produces.
+# Reached deterministically here by pointing at a branch that is already checked
+# out in another worktree, which git refuses for exactly that reason.
+echo "==> a failed create never deletes a branch it did not make"
+new holder >/dev/null || fail "worktree-new.sh failed creating the holder tree"
+if new borrower --branch holder >/dev/null 2>&1; then
+    fail "worktree-new.sh attached a branch already checked out elsewhere"
+fi
+git -C "$fixture" show-ref --verify --quiet refs/heads/holder ||
+    fail "rollback deleted a branch this run did not create"
+[ -d "$fixture/.worktrees/holder" ] || fail "rollback removed another run's worktree"
+refute_exists "$fixture/.worktrees/borrower" "the failed create left its reservation behind"
+rm_wt holder >/dev/null || fail "cleanup of the holder tree failed"
+
 # ── an abandoned empty reservation is recoverable ────────────────────
 # An interrupted create leaves `.worktrees/<name>` with nothing in it. Running
 # git inside it finds the ENCLOSING repo, so liveness has to come from the

@@ -377,6 +377,28 @@ if have task; then
         err "task verify does not reach test:worktree"
     task --color=false test:worktree >/dev/null 2>&1 ||
         err "task test:worktree fails in the rendered repo"
+
+    # ...and the issue's own acceptance path, against THIS rendered repo rather
+    # than the test's hermetic fixture: create a real worktree and run a real
+    # task inside it. The fixture proves the scripts' logic; only this proves
+    # the GENERATED Taskfile and its includes resolve from a linked worktree,
+    # where `.git` is a file and the working directory is not the repo root.
+    # --no-install keeps it offline; lint:hygiene is the gate that needs only
+    # bash, git and `file`, which this job already has.
+    if ./scripts/worktree-new.sh smoke --no-install >/dev/null 2>&1; then
+        (cd .worktrees/smoke && task --color=false --dry check >/dev/null 2>&1) ||
+            err "task check does not resolve inside a worktree of the rendered repo"
+        (cd .worktrees/smoke && task --color=false lint:hygiene >/dev/null 2>&1) ||
+            err "task lint:hygiene fails inside a worktree of the rendered repo"
+        ./scripts/worktree-rm.sh smoke >/dev/null 2>&1 ||
+            err "worktree:rm failed to remove the smoke worktree in the rendered repo"
+        [ -e .worktrees/smoke ] && err "worktree:rm left the smoke worktree behind"
+    else
+        # A render whose _tasks were skipped has no commit for the worktree to
+        # check out; that is a property of the profile, not a failure.
+        git rev-parse HEAD >/dev/null 2>&1 &&
+            err "worktree:new failed in the rendered repo"
+    fi
 else
     required task "worktree entrypoint reachability" || fail=1
 fi

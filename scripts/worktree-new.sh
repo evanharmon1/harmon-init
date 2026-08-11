@@ -181,28 +181,31 @@ fi
 # directory: every exit path from here owns it and must clean it up.
 tree_created=1
 branch_created=0
-expected_branch_sha=""
 probe_dir=""
 cleanup() {
     status=$?
     [ -n "$probe_dir" ] && rm -rf "$probe_dir"
     if [ "$status" -ne 0 ] && [ "$tree_created" -eq 1 ]; then
         echo "worktree:new: rolling back the half-provisioned tree $tree" >&2
+        # Decide branch ownership FIRST, while the registry still holds the
+        # record that answers it. Git having REGISTERED a worktree at this path
+        # is the unambiguous signal that `git worktree add -b` got far enough to
+        # create the branch itself. The failure that must never delete anything
+        # is `add` refusing because a concurrent run created the same branch —
+        # and in that case nothing was registered here. Comparing the branch tip
+        # against the base cannot separate the two: a concurrent creator working
+        # from the same base produces an identical SHA.
+        branch_is_ours=0
+        if [ "$branch_created" -eq 1 ] &&
+            git worktree list --porcelain | grep -qxF "worktree $tree"; then
+            branch_is_ours=1
+        fi
         git worktree remove --force "$tree" >/dev/null 2>&1 || rm -rf "$tree"
         git worktree prune >/dev/null 2>&1 || true
-        # Delete the branch only on EVIDENCE that it is the one this run made.
-        # `git worktree add -b` can fail because another process created the
-        # same branch in the gap since the show-ref check, and deleting that
-        # would destroy someone else's work — the path reservation guards the
-        # directory, not the ref. A branch sitting exactly where we would have
-        # created it is ours; anything else is left alone.
-        if [ "$branch_created" -eq 1 ] && [ -n "$expected_branch_sha" ]; then
-            actual_sha="$(git rev-parse --verify --quiet "refs/heads/$branch" || true)"
-            if [ "$actual_sha" = "$expected_branch_sha" ]; then
-                git branch -D "$branch" >/dev/null 2>&1 || true
-            elif [ -n "$actual_sha" ]; then
-                echo "worktree:new: leaving branch '$branch' alone — it does not point where this run would have created it" >&2
-            fi
+        if [ "$branch_is_ours" -eq 1 ]; then
+            git branch -D "$branch" >/dev/null 2>&1 || true
+        elif [ "$branch_created" -eq 1 ]; then
+            echo "worktree:new: leaving branch '$branch' alone — this run did not create it" >&2
         fi
     fi
     exit "$status"
@@ -241,12 +244,10 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
 elif [ -n "$remote_ref" ]; then
     echo "==> Creating branch '$branch' tracking ${remote_ref#refs/remotes/}"
     branch_created=1
-    expected_branch_sha="$(git rev-parse --verify --quiet "$remote_ref^{commit}" || true)"
     git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
 else
     echo "==> Creating branch '$branch' from '$base'"
     branch_created=1
-    expected_branch_sha="$(git rev-parse --verify --quiet "$base^{commit}" || true)"
     git worktree add "$tree" -b "$branch" "$base"
 fi
 
