@@ -100,23 +100,44 @@ main_root="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 
 
 # The default base is the MAIN worktree's HEAD, not the caller's. Running this
 # from inside a feature worktree is supported, and a bare `HEAD` there would
-# silently stack the new branch on the caller's commits — the new tree would
-# look independent while carrying unrelated work into its PR. Pass
-# `--base HEAD` to stack deliberately.
+# stack the new branch on the caller's commits — the new tree would look
+# independent while carrying unrelated work into its PR. Pass `--base HEAD` to
+# stack deliberately, or `--base <ref>` for anything else.
+#
+# It stays HEAD-of-main rather than a guessed default branch: `main` is not
+# universal, `origin/HEAD` is often unset on a fresh clone, and inferring one
+# would silently branch from somewhere the caller never named. What that leaves
+# — a main checkout parked on someone else's branch — is answered by printing
+# the resolved base below rather than by guessing.
+base_origin="explicit"
 if [ -z "$base" ]; then
+    base_origin="the main worktree's HEAD"
+    base_label="$(git -C "$main_root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
     base="$(git -C "$main_root" rev-parse --verify --quiet HEAD || true)"
     [ -n "$base" ] ||
         die "the main worktree has no commits yet — make an initial commit, or pass --base <ref>"
+    echo "==> Base: ${base_origin} (${base_label} @ $(git rev-parse --short "$base")) — pass --base <ref> to branch elsewhere"
 fi
+
+# Validated here, before anything is created, so a bad --base fails without a
+# rollback message about a tree that never existed.
+git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
+    die "base ref '$base' does not resolve to a commit"
 
 tree="$main_root/.worktrees/$name"
 if [ -e "$tree" ]; then
     die "$tree already exists — remove it with 'task worktree:rm -- $name' first"
 fi
 
-# Roll back on any failure AFTER the tree exists. A half-provisioned worktree is
-# worse than none: the next run refuses because the path is taken, and the tool
-# that called this one sees a directory that looks ready and is not.
+# Roll back on any failure from here on. A half-provisioned worktree is worse
+# than none: the next run refuses because the path is taken, and the tool that
+# called this one sees a directory that looks ready and is not.
+#
+# The flags are armed BEFORE `git worktree add`, not after it returns. That
+# command is not atomic — a failing `post-checkout` hook makes it register the
+# worktree and create the branch and still exit non-zero — so arming afterwards
+# would skip cleanup in exactly the case that needs it. Cleanup is written to
+# tolerate a tree or branch that was never created.
 tree_created=0
 branch_created=0
 probe_dir=""
@@ -157,21 +178,19 @@ if ! git show-ref --verify --quiet "refs/heads/$branch"; then
     [ "$remote_count" -eq 1 ] && remote_ref="$remote_matches"
 fi
 
+tree_created=1
 if git show-ref --verify --quiet "refs/heads/$branch"; then
     echo "==> Attaching existing branch '$branch'"
     git worktree add "$tree" "$branch"
 elif [ -n "$remote_ref" ]; then
     echo "==> Creating branch '$branch' tracking ${remote_ref#refs/remotes/}"
+    branch_created=1
     git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
-    branch_created=1
 else
-    git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
-        die "base ref '$base' does not resolve to a commit"
     echo "==> Creating branch '$branch' from '$base'"
-    git worktree add "$tree" -b "$branch" "$base"
     branch_created=1
+    git worktree add "$tree" -b "$branch" "$base"
 fi
-tree_created=1
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -204,7 +223,10 @@ hooks_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-path hooks)"
 if [ ! -x "$hooks_dir/pre-commit" ] && [ -f "$tree/lefthook.yml" ]; then
     have lefthook || die "git hooks are not installed and lefthook is missing — install lefthook, run 'task install:hooks', and re-run"
     echo "==> Installing git hooks (lefthook)"
-    (cd "$tree" && lefthook install >/dev/null)
+    # Output is NOT swallowed: when lefthook refuses to install (a global
+    # core.hooksPath is the common case) its diagnosis names the fix, and
+    # discarding it would leave the user with nothing but a rollback notice.
+    (cd "$tree" && lefthook install)
     hooks_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-path hooks)"
 fi
 

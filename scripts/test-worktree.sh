@@ -235,6 +235,34 @@ new remote-only >/dev/null || fail "worktree-new.sh failed for a remote-only bra
 rm_wt remote-only >/dev/null || fail "cleanup of the remote-only tree failed"
 git -C "$fixture" branch -D remote-only >/dev/null 2>&1 || true
 
+# ── partial-failure rollback ─────────────────────────────────────────
+# `git worktree add` is not atomic: a failing post-checkout hook leaves the tree
+# registered and the branch created while the command still exits non-zero. The
+# rollback contract has to cover that, not just failures after it returns.
+echo "==> a partially successful 'git worktree add' is rolled back"
+cat >"$shared_hooks/post-checkout" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$shared_hooks/post-checkout"
+if new half-made >/dev/null 2>&1; then
+    fail "worktree-new.sh reported success despite a failing post-checkout hook"
+fi
+rm -f "$shared_hooks/post-checkout"
+refute_exists "$fixture/.worktrees/half-made" "a partially created worktree was not rolled back"
+if git -C "$fixture" worktree list --porcelain | grep -q "half-made"; then
+    fail "a partially created worktree stayed in the registry"
+fi
+if git -C "$fixture" show-ref --verify --quiet refs/heads/half-made; then
+    fail "the branch from a partially created worktree was not rolled back"
+fi
+
+# ── the resolved base is announced, never silent ─────────────────────
+echo "==> the defaulted base is printed so a surprising branch point is visible"
+base_out="$(new announced)" || fail "worktree-new.sh failed for the base-announcement case"
+case "$base_out" in *"==> Base: the main worktree's HEAD"*) : ;; *) fail "worktree-new.sh did not announce the defaulted base" ;; esac
+rm_wt announced >/dev/null || fail "cleanup of the announced tree failed"
+
 # ── name validation ──────────────────────────────────────────────────
 echo "==> path-escaping and empty names are rejected"
 for bad in "../evil" "/abs" ""; do
