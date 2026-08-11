@@ -25,8 +25,24 @@ export GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
 export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-work="$(mktemp -d -t harmon-init-update-XXXXXX)"
-trap 'rm -rf "$work"' EXIT
+
+# Per-job temp root. `task test:template:all` runs this test concurrently with
+# six profile renders, and every job's subprocesses — copier's own
+# `copier._vcs.clone.*` dirs above all — drop scratch directories straight into
+# the shared $TMPDIR. Owning a private root and pointing TMPDIR at it means no
+# sibling job can create, write, or remove a path this job holds: isolation by
+# construction rather than by unique naming, and one `rm -rf` reclaims all of
+# it. See issue #476.
+job_tmp="$(mktemp -d -t harmon-init-update-XXXXXX)"
+trap 'rm -rf "$job_tmp"' EXIT
+TMPDIR="$job_tmp/tmp"
+export TMPDIR
+mkdir -p "$TMPDIR"
+
+# Fixtures live beside $TMPDIR, not inside it, so tool scratch never lands in
+# the template source or the generated repo this test asserts over.
+work="$job_tmp/work"
+mkdir -p "$work"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 for t in copier git rsync; do
