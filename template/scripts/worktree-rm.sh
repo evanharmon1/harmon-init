@@ -90,6 +90,27 @@ else
     if [ "$force" -eq 0 ] && [ -n "$(git -C "$tree" status --porcelain)" ]; then
         die "$tree has uncommitted changes — commit or push them, or re-run with --force to discard them"
     fi
+    # An in-progress rebase/merge/cherry-pick leaves a CLEAN status once it
+    # stops at an edit, so the check above waves it through — while the
+    # per-worktree git dir still holds the sequencer state and, after a `commit
+    # --amend` at that stop, a commit reachable from nothing else. Removing the
+    # tree drops that state, and gc eventually collects the commit. Likewise a
+    # detached HEAD ahead of every branch: nothing else references it.
+    if [ "$force" -eq 0 ]; then
+        tree_git_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-dir)"
+        for op_state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+            if [ -e "$tree_git_dir/$op_state" ]; then
+                die "$tree has an in-progress git operation ($op_state) — finish or abort it, or re-run with --force to discard it"
+            fi
+        done
+        # `for-each-ref`, not `branch --contains`: the latter lists the current
+        # detached HEAD itself as a `(HEAD detached at ...)` pseudo-entry, so it
+        # is never empty here and the guard would never fire.
+        if ! git -C "$tree" symbolic-ref -q HEAD >/dev/null &&
+            [ -z "$(git -C "$tree" for-each-ref --contains HEAD --format='%(refname)' refs/heads 2>/dev/null)" ]; then
+            die "$tree is on a detached HEAD no branch contains — the commits there would become unreachable; branch or note them, or re-run with --force"
+        fi
+    fi
     # `git worktree remove` counts modified and untracked files, but NOT ignored
     # ones — so without this a plain remove silently deletes a `.env`, an
     # `.envrc.local`, or ignored notes, which is not what "--force to discard
@@ -122,6 +143,12 @@ else
             die "move or copy it out, or re-run with --force to discard it"
         fi
     fi
+    # Step out of the tree before deleting it. Finishing work inside the
+    # worktree and removing it from there is the natural gesture, and it would
+    # otherwise delete this process's own cwd — after which `git worktree prune`
+    # below dies with "Unable to read current working directory" and the task
+    # reports failure having already removed the tree.
+    cd "$main_root" || die "could not change to $main_root"
     if [ "$force" -eq 1 ]; then
         git worktree remove --force "$tree"
     else
@@ -137,11 +164,19 @@ git worktree prune
 # `git worktree remove` leaves the directory in place when it failed or when the
 # registry record was already gone. Clear it only when nothing but git's own
 # gitlink remains, and only under .worktrees/ — never guess at a wider path.
+#
+# A `.git` DIRECTORY is not that: a linked worktree's gitlink is a FILE, so a
+# directory there means a standalone repository or an interrupted clone lives at
+# this path, and its `.git` holds the only copy of that repository's objects.
+# Auto-cleaning the file shape is safe; the directory shape gets the same
+# refusal as any other unexpected content.
 if [ -d "$tree" ]; then
     leftovers="$(find "$tree" -mindepth 1 -maxdepth 1 ! -name .git | head -n 1)"
-    if [ -z "$leftovers" ]; then
+    if [ -z "$leftovers" ] && [ ! -d "$tree/.git" ]; then
         rm -rf "$tree"
         echo "==> Removed leftover gitlink directory $tree"
+    elif [ -d "$tree/.git" ]; then
+        die "$tree holds a .git DIRECTORY, so it is a repository of its own rather than worktree debris — inspect it and delete it by hand"
     else
         die "$tree still holds files after removal — inspect it and delete it by hand"
     fi

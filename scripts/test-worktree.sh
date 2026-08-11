@@ -243,6 +243,53 @@ rm_wt secrets-tree >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over a reinstallable node_modules/"
 refute_exists "$fixture/.worktrees/secrets-tree" "worktree-rm.sh left the tree behind"
 
+# ── in-progress git operations and unreferenced detached HEADs ───────
+# `git status --porcelain` is CLEAN at a rebase stop, so the dirty check alone
+# waves away sequencer state and any commit amended at that stop.
+echo "==> worktree:rm refuses a tree with an in-progress git operation"
+new midrebase >/dev/null || fail "worktree-new.sh failed for the rebase case"
+midrebase_git="$(git -C "$fixture/.worktrees/midrebase" rev-parse --path-format=absolute --git-dir)"
+mkdir -p "$midrebase_git/rebase-merge"
+if rm_wt midrebase >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an in-progress rebase"
+fi
+[ -d "$fixture/.worktrees/midrebase" ] || fail "the mid-rebase tree was removed despite the refusal"
+rm -rf "$midrebase_git/rebase-merge"
+rm_wt midrebase >/dev/null || fail "worktree-rm.sh failed once the rebase state was cleared"
+
+echo "==> worktree:rm refuses a detached HEAD no branch contains"
+new detached >/dev/null || fail "worktree-new.sh failed for the detached case"
+git -C "$fixture/.worktrees/detached" checkout -q --detach
+printf 'orphan\n' >"$fixture/.worktrees/detached/ORPHAN.md"
+git -C "$fixture/.worktrees/detached" add ORPHAN.md
+LEFTHOOK=0 git -C "$fixture/.worktrees/detached" commit -qm "chore: commit only this detached HEAD has"
+if rm_wt detached >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a detached HEAD whose commit no branch contains"
+fi
+[ -d "$fixture/.worktrees/detached" ] || fail "the detached tree was removed despite the refusal"
+rm_wt detached --force >/dev/null || fail "worktree-rm.sh --force failed on the detached tree"
+git -C "$fixture" branch -D detached >/dev/null 2>&1 || true
+
+# ── a standalone repo at the path is never auto-cleaned ──────────────
+# A linked worktree's gitlink is a FILE; a `.git` DIRECTORY means somebody's own
+# repository lives here and that directory holds its only objects.
+echo "==> worktree:rm refuses to delete a .git DIRECTORY as debris"
+mkdir -p "$fixture/.worktrees/standalone"
+git -C "$fixture/.worktrees/standalone" init -q
+if rm_wt standalone >/dev/null 2>&1; then
+    fail "worktree-rm.sh deleted a standalone repository as gitlink debris"
+fi
+[ -d "$fixture/.worktrees/standalone/.git" ] ||
+    fail "worktree-rm.sh destroyed a standalone repository's .git directory"
+rm -rf "${fixture:?}/.worktrees/standalone"
+
+# ── removal works from inside the tree being removed ─────────────────
+echo "==> worktree:rm works when run from inside the tree it removes"
+new selfremove >/dev/null || fail "worktree-new.sh failed for the self-removal case"
+(cd "$fixture/.worktrees/selfremove" && bash "$fixture/scripts/worktree-rm.sh" selfremove >/dev/null) ||
+    fail "worktree-rm.sh failed when run from inside the tree being removed"
+refute_exists "$fixture/.worktrees/selfremove" "the self-removed tree was left behind"
+
 # ── leftover gitlink debris (the #716 class) ─────────────────────────
 echo "==> worktree:rm clears a leftover gitlink directory"
 new debris >/dev/null || fail "worktree-new.sh failed for the debris case"
