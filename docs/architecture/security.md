@@ -106,8 +106,12 @@ Detection runs on two feeds with **different reach**, and the difference decides
 what each is good for:
 
 - `vulnerabilityAlerts` reacts to GitHub's Dependabot alerts, which read the
-  full resolved dependency graph and therefore cover **transitive** packages —
-  where nearly every advisory that actually bites a lockfile lives. It produces
+  dependency graph and therefore reach **transitive** packages — where nearly
+  every advisory that actually bites a lockfile lives — wherever GitHub's
+  dependency graph extracts transitive dependencies for that ecosystem, which
+  for a committed `pnpm-lock.yaml` / `uv.lock` it does. Ecosystems and manifests
+  outside that support resolve to direct dependencies only, so confirm the
+  graph before relying on the reach. It produces
   nothing when Dependabot alerts are switched off for the repository, and being
   switched off is invisible from the config, which still reads `enabled=true`.
   Verify the feature itself, not the config: `gh api

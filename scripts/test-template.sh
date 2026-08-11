@@ -459,6 +459,14 @@ fi
 grep -q 'task security:sast' .github/workflows/build.yml || err "build workflow is missing the Semgrep SAST route"
 jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
     err "Renovate vulnerability-alert remediation must be enabled"
+# Asserted separately from the field above because the two feeds have different
+# reach and neither substitutes for the other: the Dependabot feed carries
+# transitive advisories, OSV covers direct dependencies without depending on
+# GitHub Advanced Security. Its schema default is false, so a dropped field
+# silently disables the feed — and the jinja structure gate compares headings
+# and tasks, not JSON fields, so nothing else here would notice.
+jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
+    err "Renovate OSV vulnerability alerts must be enabled"
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
 grep -q 'task test:ci-results' .github/workflows/build.yml ||
