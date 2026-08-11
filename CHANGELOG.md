@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.27.0](https://github.com/evanharmon1/harmon-init/compare/v4.26.0...v4.27.0) (2026-08-11)
+
+
+### Features
+
+* converge review loops on adjudicated severity; route Codex polling to vendored checker ([#766](https://github.com/evanharmon1/harmon-init/issues/766)) ([4804d14](https://github.com/evanharmon1/harmon-init/commit/4804d14f69c36e1847599d374306a16c2e27335f))
+* **status:** surface local credential checks at session start ([#771](https://github.com/evanharmon1/harmon-init/issues/771)) ([922a3c6](https://github.com/evanharmon1/harmon-init/commit/922a3c6da0c21fcc39b95d3a091ae77b79142351))
+
+
+### Bug Fixes
+
+* gitignore .claude/worktrees so agent worktrees never break renders ([#769](https://github.com/evanharmon1/harmon-init/issues/769)) ([4ffc1ca](https://github.com/evanharmon1/harmon-init/commit/4ffc1ca8a25aff4ce4621f32c9a1c01d455cec68))
+* isolate each template-test job in its own temp root ([#775](https://github.com/evanharmon1/harmon-init/issues/775)) ([c5cdfa2](https://github.com/evanharmon1/harmon-init/commit/c5cdfa213a713b56faf9d023d3de584dc9de0a1c)), closes [#476](https://github.com/evanharmon1/harmon-init/issues/476)
+* **template:** sync harmon-devkit skills to v0.27.0 ([#773](https://github.com/evanharmon1/harmon-init/issues/773)) ([48b99ed](https://github.com/evanharmon1/harmon-init/commit/48b99edd02f23255a96c4155b8ce7f5f4617aa6d))
+
 ## [4.26.0](https://github.com/evanharmon1/harmon-init/compare/v4.25.3...v4.26.0) (2026-08-10)
 
 
