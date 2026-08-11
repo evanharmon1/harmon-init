@@ -154,6 +154,17 @@ $registered
 $tree
 "*) tree_registered_before=1 ;; esac
 
+# A path that is ALREADY registered is not ours to provision, even when the
+# directory is missing. Its `.git/worktrees/<name>` metadata can be the only
+# thing holding an unreferenced detached HEAD, and the rollback below removes
+# whatever worktree sits at this path — which for a pre-existing record means
+# deleting somebody else's metadata on our way out. Refusing here is both safer
+# and simpler than teaching rollback to tell the two apart, and it makes the
+# rollback's `git worktree remove` unambiguously ours.
+if [ "$tree_registered_before" -eq 1 ]; then
+    die "$tree is already a registered worktree (its directory may be missing) — clear it with 'task worktree:rm -- $name' first"
+fi
+
 ancestor="$(dirname "$tree")"
 while [ "$ancestor" != "$main_root/.worktrees" ] && [ "$ancestor" != "/" ]; do
     case "
@@ -222,6 +233,11 @@ cleanup() {
         # git's back); the reservation still succeeds, `add` still fails, and a
         # bare "is it registered now?" would read that PRE-EXISTING record as
         # proof of ownership and delete a branch this run never made.
+        # `tree_registered_before` is necessarily 0 here — creation refuses a
+        # pre-existing record outright — so a record at this path now can only be
+        # one this run made. It is still tested rather than assumed: the day that
+        # refusal is relaxed, this stays correct instead of silently deleting a
+        # stranger's branch.
         branch_is_ours=0
         if [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
             git worktree list --porcelain | grep -qxF "worktree $tree"; then
@@ -267,10 +283,26 @@ trap cleanup EXIT
 # would reject the very command that resolves the ambiguity. Git's own
 # branch.autoSetupMerge still sets up tracking when that base is a
 # remote-tracking ref.
+#
+# The remotes are ENUMERATED and each tracking ref tested exactly, rather than
+# globbed as `refs/remotes/*/<branch>`: a remote name may itself contain a
+# slash (`team/sub` is legal), and that pattern's `*` does not cross `/`, so a
+# remote-only branch under such a remote would read as absent and be recreated
+# at the base — the very silent-divergence this lookup exists to prevent.
 remote_ref=""
 if [ "$base_origin" != "explicit" ] && ! git show-ref --verify --quiet "refs/heads/$branch"; then
-    remote_matches="$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch")"
-    remote_count="$(printf '%s' "$remote_matches" | grep -c . || true)"
+    remote_matches=""
+    remote_count=0
+    while IFS= read -r remote_name; do
+        [ -n "$remote_name" ] || continue
+        candidate="refs/remotes/$remote_name/$branch"
+        if git show-ref --verify --quiet "$candidate"; then
+            remote_matches="$candidate"
+            remote_count=$((remote_count + 1))
+        fi
+    done <<EOF
+$(git remote)
+EOF
     if [ "$remote_count" -gt 1 ]; then
         die "branch '$branch' exists on more than one remote — pass --base <remote>/<branch> to choose one"
     fi

@@ -536,6 +536,46 @@ for bad in "../evil" "/abs" "" "./sneaky" "a/./b" "a//b" "."; do
     fi
 done
 
+echo "==> worktree:rm rejects the same dot-segment spellings"
+new dotlive >/dev/null || fail "worktree-new.sh failed creating the dot-live tree"
+if rm_wt ./dotlive >/dev/null 2>&1; then
+    fail "worktree-rm.sh accepted a './' spelling of a live worktree"
+fi
+[ -f "$fixture/.worktrees/dotlive/.git" ] ||
+    fail "worktree-rm.sh deleted the live worktree's gitlink via a './' spelling"
+rm_wt dotlive >/dev/null || fail "cleanup of the dot-live tree failed"
+
+echo "==> a pre-existing stale registry record is refused, not force-removed"
+new stalereg >/dev/null || fail "worktree-new.sh failed creating the stale-record tree"
+# Delete the directory behind git's back: the record survives, the tree does not.
+rm -rf "${fixture:?}/.worktrees/stalereg"
+stale_admin="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees/stalereg"
+[ -d "$stale_admin" ] || fail "fixture assumption broken: no admin dir for the stale record"
+if new stalereg >/dev/null 2>&1; then
+    fail "worktree-new.sh provisioned over a pre-existing registry record"
+fi
+[ -d "$stale_admin" ] ||
+    fail "the failed create destroyed pre-existing worktree metadata"
+rm_wt stalereg >/dev/null || fail "worktree-rm.sh could not clear the stale record"
+git -C "$fixture" branch -D stalereg >/dev/null 2>&1 || true
+
+echo "==> a remote whose NAME contains a slash is still matched"
+git init -q --bare "$test_tmp/upstream-team.git"
+git -C "$fixture" remote add team/sub "$test_tmp/upstream-team.git"
+git -C "$fixture" push -q team/sub HEAD:refs/heads/team-only
+git -C "$fixture" fetch -q team/sub
+team_tip="$(git -C "$fixture" rev-parse refs/remotes/team/sub/team-only)"
+printf 'ahead\n' >"$fixture/AHEAD.md"
+git -C "$fixture" add AHEAD.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: move main ahead of the slash-remote branch" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing ahead of the slash-remote branch failed"
+new team-only >/dev/null || fail "worktree-new.sh failed for a slash-named remote's branch"
+[ "$(git -C "$fixture/.worktrees/team-only" rev-parse HEAD)" = "$team_tip" ] ||
+    fail "worktree-new.sh recreated the branch at base instead of tracking the slash-named remote"
+rm_wt team-only >/dev/null || fail "cleanup of the slash-remote tree failed"
+git -C "$fixture" branch -D team-only >/dev/null 2>&1 || true
+git -C "$fixture" remote remove team/sub
+
 echo "==> a dot-segment name cannot smuggle a worktree inside another"
 new dotparent >/dev/null || fail "worktree-new.sh failed creating the dot-parent tree"
 if new ./dotparent/child --branch dotchild >/dev/null 2>&1; then

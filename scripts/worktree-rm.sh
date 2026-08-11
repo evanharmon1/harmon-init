@@ -56,6 +56,14 @@ case "$name" in
 /* | -*) die "invalid name '$name': must not start with '/' or '-'" ;;
 *..*) die "invalid name '$name': must not contain '..'" ;;
 esac
+# The same component rule creation enforces, and for the same reason: every
+# decision below compares `$tree` against git's CANONICAL registry paths as
+# text. `./live` would miss the record for the live worktree at `live`, and the
+# script would then classify a checked-out tree as debris and delete its
+# gitlink. Equivalent spellings must not reach the comparisons at all.
+case "/$name/" in
+*//* | */./*) die "invalid name '$name': path components must not be empty or '.'" ;;
+esac
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -172,7 +180,11 @@ git worktree prune
 # checked out and the next `worktree:new` for it fails. Reporting "removed"
 # there would be a lie, so re-query and name the lock instead.
 if git worktree list --porcelain | grep -qxF "worktree $tree"; then
-    die "$tree is still registered after pruning — its record is locked; run 'git worktree unlock \"$tree\"' and re-run, or 'git worktree remove --force \"$tree\"'"
+    # `remove --force` is NOT enough for a locked record — git answers a single
+    # force with "use 'remove -f -f' to override or unlock first" — so the
+    # instruction leads with the unlock, which is the path that also works when
+    # the directory is already gone.
+    die "$tree is still registered after pruning — its record is locked; run 'git worktree unlock \"$tree\"' then re-run, or force past the lock with 'git worktree remove -f -f \"$tree\"'"
 fi
 
 # `git worktree remove` leaves the directory in place when it failed or when the
