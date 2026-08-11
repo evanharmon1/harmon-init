@@ -823,8 +823,48 @@ rm_wt no-install-tree >/dev/null || fail "cleanup of the --no-install tree faile
 
 echo "==> a missing package manager fails loudly and rolls the tree back"
 rm -f "$stub_bin/pnpm"
+# `worktree-new.sh` gates on `have pnpm`, so this case needs pnpm genuinely
+# absent from PATH — a stub that fails would still be FOUND and would prove
+# something else. Naming system directories directly cannot deliver that: pnpm
+# is a corepack shim at /usr/bin/pnpm in this repo's own devcontainer, so
+# `PATH="$stub_bin:/usr/bin:/bin"` left pnpm reachable, the run succeeded, and
+# the assertion failed on every machine that installs it there — CI passed only
+# because its pnpm happens to live elsewhere (harmon-init#791). Dropping the
+# offending directory wholesale is not an option either: git and coreutils live
+# beside it.
+#
+# So mirror the system tools into a sandbox and omit exactly one. The mask then
+# holds wherever pnpm is installed, because it is defined by what the sandbox
+# CONTAINS rather than by what some directory is assumed not to.
+mask_bin="$test_tmp/mask-bin"
+rm -rf "$mask_bin"
+mkdir -p "$mask_bin"
+for mask_dir in /usr/local/bin /usr/bin /bin; do
+    [ -d "$mask_dir" ] || continue
+    for mask_src in "$mask_dir"/*; do
+        [ -x "$mask_src" ] || continue
+        mask_name=${mask_src##*/}
+        case "$mask_name" in
+        pnpm) continue ;;
+        esac
+        if [ -e "$mask_bin/$mask_name" ]; then
+            continue
+        fi
+        ln -s "$mask_src" "$mask_bin/$mask_name"
+    done
+done
+# The guard the sandbox exists to create — if pnpm is still reachable the case
+# below would pass for the wrong reason, and a mask that silently stops masking
+# is worse than no mask.
 if (
-    PATH="$stub_bin:/usr/bin:/bin"
+    PATH="$mask_bin"
+    export PATH
+    command -v pnpm >/dev/null 2>&1
+); then
+    fail "the pnpm mask did not take effect; the missing-pnpm case would prove nothing"
+fi
+if (
+    PATH="$mask_bin"
     export PATH
     new missing-pnpm >/dev/null 2>&1
 ); then
