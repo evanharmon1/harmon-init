@@ -332,6 +332,23 @@ if tmpl_off and resolve_group(tmpl_off, "scripts/run-semgrep.sh", "semgrep", "py
         "should be ungrouped when no Devcontainer rule is rendered"
     )
 
+# Both vulnerability feeds, asserted on BOTH layers. test-template.sh checks the
+# rendered project and so cannot see the root copy — exactly the root drift
+# AGENTS.md warns test:template will not catch — and this is a security setting
+# whose absence is silent: osvVulnerabilityAlerts defaults to false in
+# Renovate's schema, so dropping the field disables the feed with every gate
+# still green. The two feeds have different reach (Dependabot's carries
+# transitive advisories; OSV is direct-only), so neither substitutes for the
+# other and both are required.
+root_cfg = json.loads(pathlib.Path("renovate.json").read_text())
+for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
+    if cfg is None:
+        continue
+    if cfg.get("osvVulnerabilityAlerts") is not True:
+        errors.append(f"{label}: osvVulnerabilityAlerts must be true")
+    if cfg.get("vulnerabilityAlerts", {}).get("enabled") is not True:
+        errors.append(f"{label}: vulnerabilityAlerts.enabled must be true")
+
 if errors:
     for e in errors:
         print(f"FAIL: {e}", file=sys.stderr)

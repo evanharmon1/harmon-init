@@ -131,14 +131,22 @@ Renovate feed, whatever `renovate.json` says — nothing there will open a
 remediation PR for a transitive advisory. Enabling the Dependabot alert feed is
 what closes that gap; OSV narrows the direct-dependency window alongside it.
 
-Two other checks can catch a transitive advisory, and neither replaces the feed.
-The package-manager audit in CI is immediate but PR-triggered, so it reports
-when somebody next opens a PR rather than when the advisory is published — which
-is exactly how a batch of transitive advisories can surface inside an unrelated
-change. A scheduled Snyk SCA scan (`snyk_scan_schedule` set to `weekly` or
-`daily`, see below) does run on its own clock and does see transitive packages,
-so on those profiles it, not the audit, is usually the first signal — but it is
-off by default and needs `SNYK_TOKEN` configured to run at all.
+Two other checks can also surface a transitive advisory, and neither replaces
+the feed. The package-manager audit in CI is PR-triggered, so it reports when
+somebody next opens a PR rather than when the advisory is published — which is
+exactly how a batch of unrelated advisories turns up inside somebody's docs
+change. A scheduled Snyk SCA scan (`snyk_scan_schedule`, see below) runs on its
+own clock, but it is off by default and needs `SNYK_TOKEN` to run at all.
+
+**Do not assume any of these three reach your whole dependency tree.** Each
+one's depth is a property of the specific ecosystem, manifest, and vendor plan
+in play, not of the setting being switched on — GitHub's graph extracts
+transitive dependencies for some ecosystems and not others, and Snyk gates some
+of its own package-manager support behind plan tier and preview flags (its `uv`
+support, for one, requires an Enterprise plan with the uv Preview feature
+enabled, so a Python project on the free posture gets far less than the setting
+implies). Establish the real depth for the stack you actually ship, per tool,
+and treat a green run as evidence only for what you confirmed it inspects.
 
 ### Snyk second opinion and scheduling
 
