@@ -125,7 +125,10 @@ git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
     die "base ref '$base' does not resolve to a commit"
 
 tree="$main_root/.worktrees/$name"
-mkdir -p "$main_root/.worktrees"
+# Parents first: a branch-style name like `feat/foo` is explicitly allowed, and
+# the leaf mkdir below is deliberately NOT recursive, so `.worktrees/feat` has
+# to exist before it runs.
+mkdir -p "$(dirname "$tree")"
 
 # Claim the path with mkdir, which is atomic, rather than testing for it and
 # then creating it. This entrypoint exists FOR parallel use, and a test-then-act
@@ -157,6 +160,7 @@ fi
 # directory: every exit path from here owns it and must clean it up.
 tree_created=1
 branch_created=0
+expected_branch_sha=""
 probe_dir=""
 cleanup() {
     status=$?
@@ -165,8 +169,19 @@ cleanup() {
         echo "worktree:new: rolling back the half-provisioned tree $tree" >&2
         git worktree remove --force "$tree" >/dev/null 2>&1 || rm -rf "$tree"
         git worktree prune >/dev/null 2>&1 || true
-        if [ "$branch_created" -eq 1 ]; then
-            git branch -D "$branch" >/dev/null 2>&1 || true
+        # Delete the branch only on EVIDENCE that it is the one this run made.
+        # `git worktree add -b` can fail because another process created the
+        # same branch in the gap since the show-ref check, and deleting that
+        # would destroy someone else's work — the path reservation guards the
+        # directory, not the ref. A branch sitting exactly where we would have
+        # created it is ours; anything else is left alone.
+        if [ "$branch_created" -eq 1 ] && [ -n "$expected_branch_sha" ]; then
+            actual_sha="$(git rev-parse --verify --quiet "refs/heads/$branch" || true)"
+            if [ "$actual_sha" = "$expected_branch_sha" ]; then
+                git branch -D "$branch" >/dev/null 2>&1 || true
+            elif [ -n "$actual_sha" ]; then
+                echo "worktree:new: leaving branch '$branch' alone — it does not point where this run would have created it" >&2
+            fi
         fi
     fi
     exit "$status"
@@ -205,10 +220,12 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
 elif [ -n "$remote_ref" ]; then
     echo "==> Creating branch '$branch' tracking ${remote_ref#refs/remotes/}"
     branch_created=1
+    expected_branch_sha="$(git rev-parse --verify --quiet "$remote_ref^{commit}" || true)"
     git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
 else
     echo "==> Creating branch '$branch' from '$base'"
     branch_created=1
+    expected_branch_sha="$(git rev-parse --verify --quiet "$base^{commit}" || true)"
     git worktree add "$tree" -b "$branch" "$base"
 fi
 
@@ -240,9 +257,33 @@ fi
 # points at a FILE's child in a linked worktree and silently finds nothing.
 hooks_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-path hooks)"
 
-if [ ! -x "$hooks_dir/pre-commit" ] && [ -f "$tree/lefthook.yml" ]; then
+# EVERY hook lefthook.yml configures, not just pre-commit. A tree with
+# pre-commit installed but commit-msg missing looks ready and quietly skips
+# commit-message validation; the same gap on pre-push skips secret scanning.
+# The list comes from lefthook.yml's top-level keys filtered against real git
+# hook names, so a repo that adds a hook is covered without editing this script,
+# and config keys like `assert_lefthook_installed` drop out by not being hooks.
+git_hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge pre-push pre-receive update post-receive post-update push-to-checkout pre-auto-gc post-rewrite sendemail-validate post-index-change"
+configured_hooks=""
+if [ -f "$tree/lefthook.yml" ]; then
+    for key in $(awk -F: '/^[a-z][a-z-]*:/ {print $1}' "$tree/lefthook.yml"); do
+        case " $git_hook_names " in
+        *" $key "*) configured_hooks="$configured_hooks $key" ;;
+        esac
+    done
+fi
+
+missing_hooks() {
+    _missing=""
+    for _hook in $configured_hooks; do
+        [ -x "$hooks_dir/$_hook" ] || _missing="$_missing $_hook"
+    done
+    printf '%s' "$_missing"
+}
+
+if [ -n "$configured_hooks" ] && [ -n "$(missing_hooks)" ]; then
     have lefthook || die "git hooks are not installed and lefthook is missing — install lefthook, run 'task install:hooks', and re-run"
-    echo "==> Installing git hooks (lefthook)"
+    echo "==> Installing git hooks (lefthook) — missing:$(missing_hooks)"
     # Output is NOT swallowed: when lefthook refuses to install (a global
     # core.hooksPath is the common case) its diagnosis names the fix, and
     # discarding it would leave the user with nothing but a rollback notice.
@@ -250,15 +291,14 @@ if [ ! -x "$hooks_dir/pre-commit" ] && [ -f "$tree/lefthook.yml" ]; then
     hooks_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-path hooks)"
 fi
 
-if [ ! -x "$hooks_dir/pre-commit" ]; then
-    if [ -f "$tree/lefthook.yml" ]; then
-        die "no executable pre-commit hook at $hooks_dir — run 'task install:hooks' in $main_root and re-run"
-    fi
-    echo "==> Note: this repo has no lefthook.yml and no pre-commit hook; skipping the hook assertion"
+if [ -z "$configured_hooks" ]; then
+    echo "==> Note: this repo configures no git hooks; skipping the hook assertion"
+elif [ -n "$(missing_hooks)" ]; then
+    die "hooks still missing after install ($(missing_hooks) ) at $hooks_dir — run 'task install:hooks' in $main_root and re-run"
 else
-    # Prove the hook RUNS from inside the tree and delegates to lefthook, without
-    # running any actual lint. The lefthook-generated shim execs $LEFTHOOK_BIN
-    # when set, so a probe binary records the delegation.
+    # Prove each hook RUNS from inside the tree and delegates to lefthook,
+    # without running any actual lint. The lefthook-generated shim execs
+    # $LEFTHOOK_BIN when set, so a probe binary records the delegation.
     probe_dir="$(mktemp -d)"
     marker="$probe_dir/invoked"
     cat >"$probe_dir/probe" <<EOF
@@ -266,11 +306,17 @@ else
 printf '%s\n' "\$*" >>"$marker"
 EOF
     chmod +x "$probe_dir/probe"
-    (cd "$tree" && LEFTHOOK_BIN="$probe_dir/probe" "$hooks_dir/pre-commit") ||
-        die "the pre-commit hook at $hooks_dir failed to execute from $tree"
-    grep -q '^run pre-commit' "$marker" 2>/dev/null ||
-        die "the pre-commit hook did not delegate to lefthook from $tree — reinstall with 'task install:hooks'"
-    echo "==> Hooks verified: git resolves $hooks_dir and pre-commit fires in the new tree"
+    for hook in $configured_hooks; do
+        : >"$marker"
+        # commit-msg is handed a message file; pass a real one so the shim is
+        # exercised the way git would call it.
+        printf 'chore: worktree hook probe\n' >"$probe_dir/msg"
+        (cd "$tree" && LEFTHOOK_BIN="$probe_dir/probe" "$hooks_dir/$hook" "$probe_dir/msg") ||
+            die "the $hook hook at $hooks_dir failed to execute from $tree"
+        grep -q "^run $hook" "$marker" 2>/dev/null ||
+            die "the $hook hook did not delegate to lefthook from $tree — reinstall with 'task install:hooks'"
+    done
+    echo "==> Hooks verified: git resolves $hooks_dir and$configured_hooks fire in the new tree"
 fi
 
 echo

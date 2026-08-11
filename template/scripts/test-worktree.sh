@@ -196,9 +196,9 @@ refute_exists "$fixture/.worktrees/dirty" "worktree-rm.sh --force left the direc
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.
 echo "==> worktree:rm refuses to delete ignored local FILES without --force"
-printf '.env\nnode_modules/\n' >>"$fixture/.gitignore"
+printf '.env\nnode_modules/\nlocal-data/\n' >>"$fixture/.gitignore"
 git -C "$fixture" add .gitignore
-git -C "$fixture" commit -qm "chore: ignore .env and node_modules" >"$test_tmp/commit.log" 2>&1 ||
+git -C "$fixture" commit -qm "chore: ignore .env, node_modules and local-data" >"$test_tmp/commit.log" 2>&1 ||
     fail "committing the fixture .gitignore failed"
 new secrets-tree >/dev/null || fail "worktree-new.sh failed for the ignored-file case"
 printf 'TOKEN=keep-me\n' >"$fixture/.worktrees/secrets-tree/.env"
@@ -206,6 +206,17 @@ if rm_wt secrets-tree >/dev/null 2>&1; then
     fail "worktree-rm.sh deleted an ignored local file without --force"
 fi
 [ -f "$fixture/.worktrees/secrets-tree/.env" ] || fail "the ignored file was deleted despite the refusal"
+
+echo "==> an ignored STATE directory also blocks removal without --force"
+rm -f "$fixture/.worktrees/secrets-tree/.env"
+mkdir -p "$fixture/.worktrees/secrets-tree/local-data"
+printf 'rows\n' >"$fixture/.worktrees/secrets-tree/local-data/db.sqlite"
+if rm_wt secrets-tree >/dev/null 2>&1; then
+    fail "worktree-rm.sh deleted an ignored state directory without --force"
+fi
+[ -f "$fixture/.worktrees/secrets-tree/local-data/db.sqlite" ] ||
+    fail "the ignored state directory was deleted despite the refusal"
+rm -rf "$fixture/.worktrees/secrets-tree/local-data"
 
 echo "==> an ignored dependency DIRECTORY does not block an ordinary removal"
 rm -f "$fixture/.worktrees/secrets-tree/.env"
@@ -316,6 +327,54 @@ echo "==> the defaulted base is printed so a surprising branch point is visible"
 base_out="$(new announced)" || fail "worktree-new.sh failed for the base-announcement case"
 case "$base_out" in *"==> Base: the main worktree's HEAD"*) : ;; *) fail "worktree-new.sh did not announce the defaulted base" ;; esac
 rm_wt announced >/dev/null || fail "cleanup of the announced tree failed"
+
+# ── branch-style names with a slash ──────────────────────────────────
+echo "==> a branch-style name like feat/foo works end to end"
+new feat/nested >/dev/null || fail "worktree-new.sh failed on a slash-delimited name"
+[ -d "$fixture/.worktrees/feat/nested" ] ||
+    fail "worktree-new.sh did not create the nested worktree directory"
+git -C "$fixture" show-ref --verify --quiet refs/heads/feat/nested ||
+    fail "worktree-new.sh did not create the slash-delimited branch"
+rm_wt feat/nested >/dev/null || fail "worktree-rm.sh failed on a slash-delimited name"
+refute_exists "$fixture/.worktrees/feat/nested" "worktree-rm.sh left the nested tree behind"
+refute_exists "$fixture/.worktrees/feat" "worktree-rm.sh left an empty parent directory behind"
+
+# ── every configured hook is installed and verified ──────────────────
+echo "==> all hooks in lefthook.yml are installed and probed, not just pre-commit"
+cat >"$fixture/lefthook.yml" <<'EOF'
+assert_lefthook_installed: true
+
+pre-commit:
+  commands:
+    noop:
+      run: "true"
+
+commit-msg:
+  commands:
+    noop:
+      run: "true"
+
+pre-push:
+  commands:
+    noop:
+      run: "true"
+EOF
+git -C "$fixture" add lefthook.yml
+git -C "$fixture" commit -qm "chore: configure three hooks" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the multi-hook lefthook.yml failed"
+# A partial installation is the case that used to pass: pre-commit present,
+# the others missing.
+rm -f "$shared_hooks/commit-msg" "$shared_hooks/pre-push"
+hooks_out="$(new all-hooks)" || fail "worktree-new.sh failed with three hooks configured"
+for hook in pre-commit commit-msg pre-push; do
+    [ -x "$shared_hooks/$hook" ] ||
+        fail "worktree-new.sh reported ready without installing the $hook hook"
+done
+case "$hooks_out" in
+*"commit-msg"*) : ;;
+*) fail "worktree-new.sh did not report verifying commit-msg" ;;
+esac
+rm_wt all-hooks >/dev/null || fail "cleanup of the all-hooks tree failed"
 
 # ── name validation ──────────────────────────────────────────────────
 echo "==> path-escaping and empty names are rejected"

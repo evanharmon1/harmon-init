@@ -80,22 +80,27 @@ else
     # `.envrc.local`, or ignored notes, which is not what "--force to discard
     # uncommitted work" promises.
     #
-    # Ignored DIRECTORIES are let through deliberately: node_modules/, .venv/,
-    # dist/ are what worktree:new installs and can reinstall, and refusing on
-    # them would mean every removal needed --force, which trains people to pass
-    # it and defeats the guard. An ignored FILE is hand-made state instead, so
-    # that is what the refusal is keyed on. `--directory` collapses an ignored
-    # directory to one entry with a trailing slash, which is what distinguishes
-    # the two.
+    # The exemption is an ALLOWLIST of directories a tool can rebuild, not "any
+    # ignored directory": a repo that gitignores `local-data/` or `fixtures/`
+    # keeps its only copy there, and waving those through would be the same
+    # data-loss path one level up. Everything not on the list — files and
+    # directories alike — needs --force. The list is deliberately dull:
+    # package-manager and build output, which `worktree:new`, `task install`, or
+    # `task build` regenerate.
+    #
+    # `--directory` collapses an ignored directory into a single trailing-slash
+    # entry, so a whole node_modules/ costs one line to match rather than
+    # thousands.
     if [ "$force" -eq 0 ]; then
-        ignored_files="$(
+        reinstallable='^(node_modules|\.venv|venv|\.task|\.turbo|\.next|\.astro|\.nuxt|\.svelte-kit|\.parcel-cache|\.pytest_cache|\.mypy_cache|\.ruff_cache|__pycache__|dist|build|target|coverage|playwright-report|test-results|\.terraform)/$'
+        ignored_state="$(
             git -C "$tree" ls-files --others --ignored --exclude-standard \
-                --directory --no-empty-directory | grep -v '/$' || true
+                --directory --no-empty-directory | grep -Ev "$reinstallable" || true
         )"
-        if [ -n "$ignored_files" ]; then
-            echo "worktree:rm: $tree holds ignored local files that removal would delete:" >&2
-            printf '%s\n' "$ignored_files" | sed 's/^/  /' >&2
-            die "move or copy them out, or re-run with --force to discard them"
+        if [ -n "$ignored_state" ]; then
+            echo "worktree:rm: $tree holds ignored local state that removal would delete:" >&2
+            printf '%s\n' "$ignored_state" | sed 's/^/  /' >&2
+            die "move or copy it out, or re-run with --force to discard it"
         fi
     fi
     if [ "$force" -eq 1 ]; then
@@ -123,7 +128,14 @@ if [ -d "$tree" ]; then
     fi
 fi
 
-# An empty .worktrees/ is noise; remove it when this was the last tree.
-rmdir "$main_root/.worktrees" 2>/dev/null || true
+# Empty leftovers are noise. A slash-delimited name like `feat/foo` leaves an
+# empty `.worktrees/feat` behind, so walk up from the removed tree, stopping at
+# .worktrees/ itself (which is also removed when it was the last tree). rmdir
+# only ever removes an EMPTY directory, so this cannot take a live tree with it.
+parent="$(dirname "$tree")"
+while [ "$parent" != "$main_root" ] && [ "$parent" != "/" ]; do
+    rmdir "$parent" 2>/dev/null || break
+    parent="$(dirname "$parent")"
+done
 
 echo "Worktree removed: $tree"
