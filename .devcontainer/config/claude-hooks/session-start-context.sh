@@ -26,8 +26,8 @@ strip_ansi() { sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g'; }
 # status:creds is budgeted from its own probes rather than by copying a
 # neighbour's number: it makes NO network call (that is why it can be here at
 # all — status:gh already spends this startup's only auth round trip), and runs
-# two LOCAL probes back to back, each bounded at 3s inside status.sh — 6s worst
-# case, so 8 here for the `task` and shell startup around them.
+# three LOCAL probes back to back, each bounded at 3s inside status.sh — 9s
+# worst case, so 11 here for the `task` and shell startup around them.
 #
 # There is a SECOND deadline above all of these: the `timeout` on the
 # SessionStart entries in claude-settings.json, which Claude Code applies to this
@@ -45,7 +45,7 @@ timeout 5 task status:git >"$git_out" 2>/dev/null &
 git_pid=$!
 timeout 12 task status:gh >"$gh_out" 2>/dev/null &
 gh_pid=$!
-timeout 8 task status:creds >"$creds_out" 2>/dev/null &
+timeout 11 task status:creds >"$creds_out" 2>/dev/null &
 creds_pid=$!
 
 # `wait` on each, with the failure recorded rather than propagated: `set -e`

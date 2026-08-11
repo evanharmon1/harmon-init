@@ -287,11 +287,49 @@ make_codex_stub() {
     chmod +x "${TMP}/bin/codex"
 }
 
-# The setup section probes codex on every invocation now, so stub it before the
-# first case runs — a case that reached the real CLI would pass or fail on
+# make_claude_stub STATE — write $TMP/bin/claude answering `auth status --json`.
+#   in      — logged in
+#   out     — logged out: a NORMAL, successful report carrying loggedIn:false,
+#             which is why the check reads the field and not the exit code
+#   ancient — a `claude` predating `auth status`: a usage error with no field,
+#             which must read as unknown rather than as a logout
+# Any other call fails loudly: this probe must read local login state and nothing
+# else, so a second call — or a network one — shows up here instead of passing
+# silently.
+make_claude_stub() {
+    local state="$1"
+    mkdir -p "${TMP}/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
+        case "$state" in
+        in)
+            echo '    echo "{ \"loggedIn\": true, \"authMethod\": \"claude.ai\" }"'
+            echo '    exit 0'
+            ;;
+        out)
+            echo '    echo "{ \"loggedIn\": false }"'
+            echo '    exit 0'
+            ;;
+        ancient)
+            echo '    echo "error: unknown command auth" >&2'
+            echo '    exit 1'
+            ;;
+        *) fail "unknown claude stub state: ${state}" ;;
+        esac
+        echo 'fi'
+        echo 'echo "stub: unexpected claude call: $*" >&2'
+        echo 'exit 1'
+    } >"${TMP}/bin/claude"
+    chmod +x "${TMP}/bin/claude"
+}
+
+# The credentials group probes codex and claude on every invocation, so stub both
+# before the first case runs — a case that reached the real CLI would pass or fail on
 # whether the developer happens to be logged in, which is worse than no test at
 # all.
 make_codex_stub in
+make_claude_stub in
 
 # ISOLATED_TOOLS — the external commands status.sh needs, both to reach the
 # credentials group and to run the audit past the gh gate. The not-installed case
@@ -316,7 +354,7 @@ make_isolated_bin() {
             ln -s "${resolved}" "${TMP}/bin-iso/${tool}"
         fi
     done
-    for tool in gh codex; do
+    for tool in gh codex claude; do
         if [ "${tool}" != "${missing}" ] && [ -f "${TMP}/bin/${tool}" ]; then
             cp "${TMP}/bin/${tool}" "${TMP}/bin-iso/${tool}"
         fi
@@ -867,6 +905,46 @@ case "$out" in
 *"[x] Codex CLI"*) fail "a logged-out codex must not read as ok: ${out}" ;;
 *"[ ] Codex CLI — codex login"*) ;;
 *) fail "expected a logged-out codex line from status:creds, got: ${out}" ;;
+esac
+
+echo "==> a logged-out Claude Code CLI is reported, and names its remedy"
+# The third login #733 requires at session start. The field is the verdict, not
+# the exit code: a logged-out CLI reports it successfully.
+make_codex_stub in
+make_claude_stub out
+out="$(run_creds_section project)"
+case "$out" in
+*"[x] Claude Code CLI"*) fail "a logged-out claude must not read as ok: ${out}" ;;
+*"[ ] Claude Code CLI — claude auth login"*) ;;
+*) fail "expected a logged-out claude line, got: ${out}" ;;
+esac
+
+echo "==> a claude too old for 'auth status' reads unknown, not logged out"
+# No field at all is not the same as loggedIn:false, and `claude auth login`
+# cannot repair a CLI that has no such command.
+make_claude_stub ancient
+out="$(run_creds_section project)"
+case "$out" in
+*"[ ] Claude Code CLI"*) fail "an unreadable report must not read as a logout: ${out}" ;;
+*"claude auth login"*) fail "an unreadable report must not prescribe re-authentication: ${out}" ;;
+*"[?] Claude Code CLI"*) ;;
+*) fail "expected an unknown claude line, got: ${out}" ;;
+esac
+
+echo "==> claude missing from PATH reads n/a, not missing"
+# Unlike gh and Codex there is no marker on disk for "this repo expects Claude
+# Code" — the template ships .claude/ everywhere — so an absent CLI cannot be
+# told apart from an author who drives this repo with a different agent, and a
+# red line prescribing an install would be noise they cannot act on.
+make_stub project
+make_codex_stub in
+make_claude_stub in
+make_isolated_bin claude
+out="$(PATH="${TMP}/bin-iso" NO_COLOR=1 "${WITH_CODEX}" creds 2>&1)"
+case "$out" in
+*"[ ] Claude Code CLI"*) fail "an absent claude must not read as a missing login: ${out}" ;;
+*"[-] Claude Code CLI"*) ;;
+*) fail "expected an n/a claude line, got: ${out}" ;;
 esac
 
 echo "==> status:creds omits the setup audit it was carved out of"

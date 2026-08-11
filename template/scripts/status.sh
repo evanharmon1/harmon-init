@@ -707,6 +707,46 @@ render_local_credentials() {
         checkline na "Codex CLI" "no second-model review configured"
     fi
 
+    # Claude Code is the agent this repo's Dev Loop is written for, and a logged
+    # out CLI stops it at the first `claude` invocation. `claude auth status
+    # --json` reads STORED credential state: it answers identically with every
+    # egress pointed at a dead port, so it belongs in this group rather than
+    # behind NETWORK_TIMEOUT.
+    #
+    # Not-installed reads n/a rather than missing, which is the one place this
+    # group departs from the gh and Codex lines above. Those two have a marker on
+    # disk for "this repo expects it" — codex-review.sh is rendered only under
+    # `use_codex_review`, and gh backs the whole GitHub half of the template.
+    # There is no equivalent marker here: the template ships .claude/ to every
+    # repo whether or not its author drives it with Claude Code, so an absent CLI
+    # cannot be distinguished from a deliberate choice of a different agent, and
+    # a red ✗ prescribing an install to somebody who chose Codex is noise they
+    # cannot act on.
+    if ! command -v claude >/dev/null 2>&1; then
+        checkline na "Claude Code CLI" "claude CLI not installed"
+    else
+        # The verdict is the `loggedIn` field, not the exit code: a logged-out
+        # CLI is a normal, successful report, and a `claude` too old for
+        # `auth status` exits non-zero with no field at all — which is unknown,
+        # not logged out. Whitespace is stripped so the match survives either
+        # JSON formatting, and stderr is discarded because only the field is
+        # read. The captured text is only ever matched, never printed.
+        claude_rc=0
+        claude_out="$(run_timeout 3 claude auth status --json 2>/dev/null)" ||
+            claude_rc=$?
+        case "$(printf '%s' "${claude_out}" | tr -d ' \n\t')" in
+        *'"loggedIn":true'*) checkline ok "Claude Code CLI" "logged in" ;;
+        *'"loggedIn":false'*) checkline no "Claude Code CLI" "claude auth login" ;;
+        *)
+            case "${claude_rc}" in
+            124) checkline unknown "Claude Code CLI" "auth status timed out" ;;
+            *) checkline unknown "Claude Code CLI" \
+                "auth status reported nothing readable (exit ${claude_rc})" ;;
+            esac
+            ;;
+        esac
+    fi
+
     # Hand this group's tallies to the setup summary (see the caller there).
     # Guarded, and deliberately last: with `pipefail` set, a failed write here
     # would become the whole pipeline's status and `set -e` would take the script
