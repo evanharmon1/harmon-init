@@ -25,6 +25,37 @@ it points here.
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
 
+## Worktrees
+
+- **`.worktrees/` is THE location** for linked git worktrees, and it is
+  gitignored. Lint globs, security-scan excludes, and the copier-validator scans
+  already assume it; put a tree anywhere else and those excludes stop applying.
+- **Create them with `task worktree:new -- <name>`**, never a bare
+  `git worktree add`. The task (`scripts/worktree-new.sh`) creates or attaches
+  the branch, installs **this tree's** dependencies, proves the git hooks fire
+  inside it, prints the ready path, and rolls the tree back if any of that
+  fails. `--branch`, `--base`, and `--no-install` cover the variations.
+  One entrypoint means a second agent session, a terminal multiplexer, or a
+  human all get the same tree instead of each rediscovering the setup.
+- **Remove them with `task worktree:rm -- <name>`** (`--force` to discard
+  uncommitted work). It prunes the registry and clears leftover gitlink
+  directories — stale ones make later tooling treat a dead path as a live
+  checkout.
+- **A fresh worktree has no `node_modules`/`.venv`.** Working files are per-tree,
+  so dependency install is per-tree too; that is what `worktree:new` runs and
+  why "it worked in the main checkout" is not evidence.
+- **Never pass `-c core.hooksPath=.git/hooks` to git in a worktree.** In a
+  linked worktree `.git` is a **file**, not a directory, so that path resolves
+  to nothing and commits run **hook-less and silently**. Git's own defaults are
+  correct: hooks live in the shared `$GIT_COMMON_DIR/hooks` and
+  `git rev-parse --git-path hooks` resolves them from any tree. Plain
+  `git commit` is the right command.
+- **Devcontainer smoke tests are an explicit exclusion.** Only the workspace
+  folder is mounted, and a linked worktree's `.git` file points outside it, so
+  post-create sees no repository. `scripts/devcontainer-smoke.sh` detects this
+  and says so instead of failing opaquely. Run it from the main checkout, or
+  build the image and `docker run` it directly.
+
 ## Task runner (Taskfile)
 
 - Tasks are named **`group:action`** — the group/domain comes first, the action

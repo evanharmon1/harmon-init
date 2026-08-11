@@ -243,7 +243,13 @@ Creating the draft is a phase transition, not a terminal state, and every stop
 short of the readiness gate leaves the PR **draft** with a blocker report — a
 non-draft PR must always mean the automated work is done.
 
-- **Branch** — feature branch off `main`; never commit directly to `main`.
+- **Branch** — feature branch off `main`; never commit directly to `main`. For
+  parallel or isolated work, take the branch in its own worktree via
+  **`task worktree:new -- <name>`** (and `task worktree:rm -- <name>` when
+  done) rather than a hand-rolled `git worktree add` — it installs that tree's
+  dependencies and proves the hooks fire in it. See
+  [docs/conventions.md](docs/conventions.md) § Worktrees, including why
+  `-c core.hooksPath=.git/hooks` must never be passed inside one.
 - **Edit + `task check`** — the fast inner loop; run it constantly and fix
   lint immediately. (Remember dogfood parity: template twins in the same
   change.)

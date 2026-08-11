@@ -44,6 +44,27 @@ fi
 
 CONFIG_PATH="$1"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel)"
+
+# Documented exclusion: this smoke test does not run from a linked worktree.
+# Only the workspace folder is mounted, and in a linked worktree `.git` is a
+# FILE pointing at $GIT_COMMON_DIR/worktrees/<name> OUTSIDE that folder — so
+# every git command in post-create fails with "not a git repository". Mounting
+# the common dir would change the container's contract for everyone to
+# accommodate a host-side layout, so the test names the situation and the
+# workaround instead of pretending to cover it. See docs/conventions.md
+# § Worktrees.
+if [ -f "${WORKSPACE_ROOT}/.git" ]; then
+    cat >&2 <<EOF
+${WORKSPACE_ROOT} is a linked git worktree, where this smoke test cannot pass:
+its .git is a file pointing outside the mounted workspace, so post-create's git
+commands see no repository.
+
+Run it from the main checkout, or build and run the image directly:
+  docker build -f .devcontainer/Dockerfile .
+  docker run --rm <image> <command>
+EOF
+    exit 1
+fi
 USER_DATA_DIR="$(mktemp -d)"
 SESSION_DATA_DIR="$(mktemp -d)"
 LOG_FILE="$(mktemp)"

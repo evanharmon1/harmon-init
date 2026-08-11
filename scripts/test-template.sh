@@ -361,6 +361,30 @@ if [ -f .github/workflows/build.yml ]; then
         err "required CI does not run test:registry-docs"
 fi
 
+# ── 1a-bis. The worktree entrypoint is wired in the rendered repo ───
+# The scripts are byte-identical root<->template twins (dogfood parity gates
+# that), so what needs proving HERE is the rendered wiring: the tasks exist,
+# `verify` reaches the behavioral test, and CI runs it. The test itself is
+# executed end-to-end too, because the fixture it builds is hermetic.
+for wt_script in scripts/worktree-new.sh scripts/worktree-rm.sh scripts/test-worktree.sh; do
+    [ -x "$wt_script" ] || err "worktree entrypoint script missing or not executable: ${wt_script}"
+done
+grep -q '^  worktree:new:' Taskfile.yml || err "generated Taskfile is missing worktree:new"
+grep -q '^  worktree:rm:' Taskfile.yml || err "generated Taskfile is missing worktree:rm"
+if have task; then
+    verify_dry="$(task --color=false --dry verify 2>&1 || true)"
+    grep -qF './scripts/test-worktree.sh' <<<"$verify_dry" ||
+        err "task verify does not reach test:worktree"
+    task --color=false test:worktree >/dev/null 2>&1 ||
+        err "task test:worktree fails in the rendered repo"
+else
+    required task "worktree entrypoint reachability" || fail=1
+fi
+if [ -f .github/workflows/build.yml ]; then
+    grep -qF 'task test:worktree' .github/workflows/build.yml ||
+        err "required CI does not run test:worktree"
+fi
+
 # ── 1b. Free security policy renders as a coherent stack ───────────
 [ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"

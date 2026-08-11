@@ -100,6 +100,7 @@ tasks:
       - task: test:template-independence
       - task: test:category-gates
       - task: test:hooks
+      - task: test:worktree
       - task: test:statusline
       - task: test:codex-review
       - task: test:template
@@ -324,6 +325,11 @@ tasks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
     cmds:
       - ./scripts/test-hooks.sh
+
+  test:worktree:
+    desc: Behavioral test for worktree:new / worktree:rm (create → verify hooks → remove, in a throwaway fixture repo)
+    cmds:
+      - ./scripts/test-worktree.sh
 
   test:agent-instructions-size:
     desc: Unit-test the non-blocking AGENTS.md size advisory
@@ -569,16 +575,7 @@ tasks:
   security:secrets:
     desc: Scan for leaked secrets (gitleaks)
     cmds:
-      - |
-        if [ -z "$GITHUB_STEP_SUMMARY" ]; then
-          gitleaks detect --no-banner --redact --source .
-        else
-          rc=0
-          gitleaks detect --no-banner --redact --source . \
-            --report-format json --report-path /tmp/harmon-init-gitleaks.json || rc=$?
-          node scripts/summarize-gitleaks.mjs /tmp/harmon-init-gitleaks.json
-          exit $rc
-        fi
+      - ./scripts/gitleaks-scan.sh
 
   security:audit:
     desc: Dependency audit
@@ -737,6 +734,21 @@ tasks:
       TAG: '{{.TAG}}'
     cmds:
       - ./scripts/check-changelog-coverage.sh "$TAG"
+
+  # ── Worktrees ─────────────────────────────────────────────────
+  # One blessed entrypoint for parallel/isolated work, so every consumer (a
+  # second Claude session, Foreman, herdr, agent-deck, workmux, a human) gets
+  # the same ready tree instead of rediscovering the setup and the breakers.
+  # See docs/conventions.md § Worktrees.
+  worktree:new:
+    desc: "Create a ready linked worktree (usage: task worktree:new -- <name> [--branch b] [--base ref] [--no-install])"
+    cmds:
+      - ./scripts/worktree-new.sh {{.CLI_ARGS}}
+
+  worktree:rm:
+    desc: "Remove a linked worktree and prune its gitlink debris (usage: task worktree:rm -- <name> [--force])"
+    cmds:
+      - ./scripts/worktree-rm.sh {{.CLI_ARGS}}
 
   # ── Clean ─────────────────────────────────────────────────────
   clean:
