@@ -342,9 +342,10 @@ non-draft PR must always mean the automated work is done.
   `reserve` a cycle against the captured head **before** posting the
   trigger — the durable state must exist before the GitHub write, or an
   interruption between the two leaves an untracked trigger a resumed session
-  can double-spend — then post `@codex review`, `attach` the comment ID the
-  trigger returned, and `check`, acting on the exit code it returns (0 clean,
-  10 findings, 11 pending, 12 retry, 13 escalate, 2 indeterminate). The
+  can double-spend — then post `@codex review`, `attach` the comment ID
+  returned for that trigger, and `check`, acting on the exit code it returns
+  (0 clean, 10 findings, 11 pending, 12 retry, 13 escalate,
+  2 indeterminate). The
   script exists
   because ad-hoc pollers fail in one specific, repeatable way — they watch
   reviews and inline comments and miss the **top-level comment** surface, so a

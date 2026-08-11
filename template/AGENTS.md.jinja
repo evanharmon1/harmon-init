@@ -238,12 +238,13 @@ error silently reverts the lifecycle rather than fixing anything.
   `reserve` a cycle against the captured head **before** posting the
   trigger — the durable state must exist before the GitHub write, or an
   interruption between the two leaves an untracked trigger a resumed session
-  can double-spend — then post `@codex review`, `attach` the comment ID the
-  trigger returned, and `check`, acting on the exit code it returns (0 clean,
-  10 findings, 11 pending, 12 retry, 13 escalate, 2 indeterminate). It never
+  can double-spend — then post `@codex review`, `attach` the comment ID
+  returned for that trigger, and `check`, acting on the exit code it returns
+  (0 clean, 10 findings, 11 pending, 12 retry, 13 escalate,
+  2 indeterminate). It never
   writes to GitHub, so posting the trigger comment stays yours. Where the
-  checker is absent, post `@codex review` and record the request time and
-  returned comment ID yourself. Only where that file
+  checker is absent, post `@codex review` and record the request time and the
+  comment ID returned for that trigger yourself. Only where that file
   does not exist do you poll the four surfaces yourself — PR reactions,
   top-level comments, reviews, and inline review comments, fetching trigger
   reactions by that exact comment ID — and then watch the surface hand-rolled
