@@ -70,22 +70,33 @@ else
 # generates — honouring LEFTHOOK=0 and LEFTHOOK_BIN — so the entrypoint's hook
 # probe exercises the real contract even where lefthook is not installed.
 set -euo pipefail
+git_hook_names="applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge pre-push pre-receive update post-receive post-update push-to-checkout pre-auto-gc post-rewrite sendemail-validate post-index-change"
 case "${1:-}" in
 install)
     hooks="$(git rev-parse --path-format=absolute --git-path hooks)"
     mkdir -p "$hooks"
-    cat >"$hooks/pre-commit" <<'HOOK'
+    # EVERY hook lefthook.yml configures, exactly as the real `lefthook install`
+    # does. Writing only pre-commit would make this stub disagree with the real
+    # binary about what "installed" means, and the multi-hook assertions would
+    # then pass locally (real lefthook) and fail on any runner without it.
+    for key in $(awk -F: '/^[a-z][a-z-]*:/ {print $1}' lefthook.yml); do
+        case " $git_hook_names " in
+        *" $key "*) ;;
+        *) continue ;;
+        esac
+        sed "s/@HOOK@/$key/g" >"$hooks/$key" <<'HOOK'
 #!/bin/sh
 if [ "$LEFTHOOK" = "0" ]; then
   exit 0
 fi
 if test -n "$LEFTHOOK_BIN"; then
-  "$LEFTHOOK_BIN" run "pre-commit" "$@"
+  "$LEFTHOOK_BIN" run "@HOOK@" "$@"
 else
-  lefthook run "pre-commit" "$@"
+  lefthook run "@HOOK@" "$@"
 fi
 HOOK
-    chmod +x "$hooks/pre-commit"
+        chmod +x "$hooks/$key"
+    done
     ;;
 *) exit 0 ;;
 esac
@@ -196,7 +207,7 @@ refute_exists "$fixture/.worktrees/dirty" "worktree-rm.sh --force left the direc
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.
 echo "==> worktree:rm refuses to delete ignored local FILES without --force"
-printf '.env\nnode_modules/\nlocal-data/\n' >>"$fixture/.gitignore"
+printf '.env\nnode_modules/\nlocal-data/\n__pycache__/\n' >>"$fixture/.gitignore"
 git -C "$fixture" add .gitignore
 git -C "$fixture" commit -qm "chore: ignore .env, node_modules and local-data" >"$test_tmp/commit.log" 2>&1 ||
     fail "committing the fixture .gitignore failed"
@@ -222,6 +233,12 @@ echo "==> an ignored dependency DIRECTORY does not block an ordinary removal"
 rm -f "$fixture/.worktrees/secrets-tree/.env"
 mkdir -p "$fixture/.worktrees/secrets-tree/node_modules/pkg"
 printf '{}\n' >"$fixture/.worktrees/secrets-tree/node_modules/pkg/package.json"
+# Nested too: a monorepo package's node_modules and a __pycache__ beside a
+# module are just as reinstallable as the root-level ones.
+mkdir -p "$fixture/.worktrees/secrets-tree/packages/api/node_modules/dep"
+printf '{}\n' >"$fixture/.worktrees/secrets-tree/packages/api/node_modules/dep/package.json"
+mkdir -p "$fixture/.worktrees/secrets-tree/src/pkg/__pycache__"
+printf 'x\n' >"$fixture/.worktrees/secrets-tree/src/pkg/__pycache__/mod.pyc"
 rm_wt secrets-tree >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over a reinstallable node_modules/"
 refute_exists "$fixture/.worktrees/secrets-tree" "worktree-rm.sh left the tree behind"

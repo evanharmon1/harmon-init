@@ -88,14 +88,18 @@ else
     # package-manager and build output, which `worktree:new`, `task install`, or
     # `task build` regenerate.
     #
-    # `--directory` collapses an ignored directory into a single trailing-slash
-    # entry, so a whole node_modules/ costs one line to match rather than
-    # thousands.
+    # Matching is per FILE, on whether any path component is a reinstallable
+    # directory — `(^|/)name/` — rather than on collapsed directory entries.
+    # `git ls-files --directory` collapses at the highest wholly-untracked
+    # directory, so a monorepo's `packages/api/node_modules/...` arrives as
+    # plain `packages/`, which no allowlist of cache names can recognise. Per
+    # component it also handles depth for free: a `__pycache__` beside every
+    # module, node_modules under every package.
     if [ "$force" -eq 0 ]; then
-        reinstallable='^(node_modules|\.venv|venv|\.task|\.turbo|\.next|\.astro|\.nuxt|\.svelte-kit|\.parcel-cache|\.pytest_cache|\.mypy_cache|\.ruff_cache|__pycache__|dist|build|target|coverage|playwright-report|test-results|\.terraform)/$'
+        reinstallable='(^|/)(node_modules|\.venv|venv|\.task|\.turbo|\.next|\.astro|\.nuxt|\.svelte-kit|\.parcel-cache|\.pytest_cache|\.mypy_cache|\.ruff_cache|__pycache__|dist|build|target|coverage|playwright-report|test-results|\.terraform)/'
         ignored_state="$(
-            git -C "$tree" ls-files --others --ignored --exclude-standard \
-                --directory --no-empty-directory | grep -Ev "$reinstallable" || true
+            git -C "$tree" ls-files --others --ignored --exclude-standard |
+                grep -Ev "$reinstallable" | head -n 20 || true
         )"
         if [ -n "$ignored_state" ]; then
             echo "worktree:rm: $tree holds ignored local state that removal would delete:" >&2
