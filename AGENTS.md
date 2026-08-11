@@ -336,13 +336,16 @@ non-draft PR must always mean the automated work is done.
   this stage.
   **Require a current-head Codex result.** On initial shepherd entry and
   immediately after every fix push, capture the PR's current `headRefOid` and
-  the head's push time, then post `@codex review`. Record the request time and
-  the comment ID returned for that trigger.
+  the head's push time.
   **Do not hand-roll the polling.** Run the vendored
-  `.claude/skills/shepherd/assets/check-codex-cloud-review.sh`: `reserve` a
-  cycle against the captured head, `attach` the trigger comment ID, then
-  `check` it, and act on the exit code it returns (0 clean, 10 findings,
-  11 pending, 12 retry, 13 escalate, 2 indeterminate). The script exists
+  `.claude/skills/shepherd/assets/check-codex-cloud-review.sh`, in its order:
+  `reserve` a cycle against the captured head **before** posting the
+  trigger — the durable state must exist before the GitHub write, or an
+  interruption between the two leaves an untracked trigger a resumed session
+  can double-spend — then post `@codex review`, `attach` the comment ID the
+  trigger returned, and `check`, acting on the exit code it returns (0 clean,
+  10 findings, 11 pending, 12 retry, 13 escalate, 2 indeterminate). The
+  script exists
   because ad-hoc pollers fail in one specific, repeatable way — they watch
   reviews and inline comments and miss the **top-level comment** surface, so a
   clean `Reviewed commit:` verdict posted there reads as silence and a
@@ -374,6 +377,15 @@ non-draft PR must always mean the automated work is done.
   before accepting the result or reporting green, re-`check` the cycle and
   re-read `headRefOid`; a changed head invalidates the result and starts
   a new current-head cycle.
+  One disposition the script cannot express is settled in prose: a
+  **top-level** comment carrying a badged finding has no reply linkage, so
+  once it lands, no adjudication can make that head's `check` come back
+  clean — findings outrank a later clean result on the same head. When every
+  such finding is adjudicated without a code change (declined with evidence,
+  or filed as follow-up work), record each disposition as a PR comment and
+  treat the cycle as **terminal with findings settled** for that head; the
+  readiness gate reads those recorded adjudications where a checker exit 0 is
+  unreachable. Any push starts a fresh cycle as usual.
   Shepherd is **externally driven** — CI results and other people's comments
   are its input, so it cannot manufacture a round on its own. A round is one
   fix push, or one no-change cycle where everything is answered and nothing
@@ -425,7 +437,8 @@ review only when **all** of the following hold for its current `headRefOid`:
   *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
   taken moments after the push reports nothing having run rather than nothing
   to run.
-- The current-head Codex cycle above is terminal and clean (Codex review is
+- The current-head Codex cycle above is terminal and clean, or terminal with
+  every finding settled under the top-level disposition rule above (Codex review is
   enabled here; where it is off, this condition drops out).
 - Every review finding is fixed, declined with evidence, or filed as follow-up
   work.

@@ -298,8 +298,11 @@ exit that drops a P2 is not an exit.
 
 ## Finding priorities
 
-Both modes ask Codex to label every finding, and the local loops gate on that
-label:
+Both modes ask Codex to label every finding on this scale. The label is the
+reviewer's opening claim; what the local loops gate on is the **adjudicated**
+priority — your verdict after verifying the finding (see "Convergence: when a
+stage ends" above). Adjudication may downgrade a label with evidence, never
+silently drop one:
 
 | Priority | Meaning | Gates `challenge`/`review`? |
 | --- | --- | --- |
