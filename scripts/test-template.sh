@@ -22,10 +22,37 @@ set -euo pipefail
 # (actionlint then fails with "no project was found"). Sanitize unconditionally.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
+# git's auto-gc detaches and prunes loose objects. When it fires inside one of
+# the throwaway repos this script (and copier) creates, it can delete objects
+# out from under a concurrent reader — a local `git clone` hardlinking
+# objects/, or Python's rmtree of a temp clone. Disable it for every git this
+# script spawns; GIT_CONFIG_* env is inherited by copier's git subprocesses.
+# scripts/test-template-update.sh carries the same guard.
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
+export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
+
 profile="${1:-minimal}"
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-dest="$(mktemp -d -t harmon-init-test-XXXXXX)"
-trap 'rm -rf "$dest"' EXIT
+
+# Per-job temp root. `task test:template:all` runs six of these renders and the
+# update test concurrently, and every job's subprocesses — copier's own
+# `copier._vcs.clone.*` dirs above all — drop scratch directories straight into
+# the shared $TMPDIR. Owning a private root and pointing TMPDIR at it means no
+# sibling job can create, write, or remove a path this job holds: isolation by
+# construction rather than by unique naming, and one `rm -rf` reclaims all of
+# it. See issue #476.
+job_tmp="$(mktemp -d -t harmon-init-test-XXXXXX)"
+trap 'rm -rf "$job_tmp"' EXIT
+TMPDIR="$job_tmp/tmp"
+export TMPDIR
+mkdir -p "$TMPDIR"
+
+# The render target is a sibling of $TMPDIR, not $TMPDIR itself, so scratch
+# dirs created by the tools this script runs never land inside the rendered
+# project (where its own validators would see them).
+dest="$job_tmp/render"
+mkdir -p "$dest"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
