@@ -23,6 +23,41 @@ die() {
     exit 1
 }
 
+# Refs that would STILL reference a commit once this worktree is gone.
+#
+# `refs/worktree/*`, `refs/bisect/*` and `refs/rewritten/*` are PER-WORKTREE:
+# they live in the worktree's own administrative directory and are destroyed
+# along with it, so counting them makes the reachability guard vouch for the
+# very thing it is deciding about. Everything else — branches, tags,
+# remote-tracking refs, notes, replace, stash — is shared and survives.
+#
+# They are excluded wholesale rather than per-owner because the query cannot
+# tell whose per-worktree refs it is looking at: once a record is stale, its
+# `refs/worktree/*` is unreadable from here, and the main worktree's own is
+# indistinguishable in the output. Excluding all of them can only make the
+# guard refuse a removal that was safe, which is the survivable direction.
+shared_refs_containing() {
+    git for-each-ref --contains "$1" --format='%(refname)' 2>/dev/null |
+        grep -Ev '^refs/(worktree|bisect|rewritten)/' || true
+}
+
+# Locate the administrative directory backing the registry record for a
+# worktree path. git exposes no porcelain for this mapping; each record's
+# `gitdir` file holds the path of that worktree's `.git` file, which is the
+# link back. Prints nothing and returns 1 when no record matches.
+record_admin_dir() {
+    admin_common="$(git rev-parse --path-format=absolute --git-common-dir)"
+    [ -d "$admin_common/worktrees" ] || return 1
+    for admin_candidate in "$admin_common"/worktrees/*; do
+        [ -f "$admin_candidate/gitdir" ] || continue
+        if [ "$(cat "$admin_candidate/gitdir" 2>/dev/null || true)" = "$1/.git" ]; then
+            printf '%s\n' "$admin_candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 name=""
 force=0
 
@@ -87,6 +122,22 @@ $registered
 $tree
 "*) tree_is_registered=1 ;; esac
 
+# Snapshot the shape of the target ONCE, at entry, and drive every branch below
+# off that snapshot. The registry cleanup at the end used to re-derive "is
+# anything registered here?" at the moment it ran, which answers yes for a
+# worktree a CONCURRENT `worktree:new` created at the same name in between —
+# and removing it is then somebody else's tree deleted while this run reports
+# success. These entrypoints exist for parallel work, so the window is real.
+tree_exists=0
+[ -d "$tree" ] && tree_exists=1
+# The only case the final cleanup is ever allowed to act on: a record that
+# outlived its directory *at entry*. Everything else either had its record
+# removed by git during the removal below, or never had one.
+stale_record=0
+if [ "$tree_is_registered" -eq 1 ] && [ "$tree_exists" -eq 0 ]; then
+    stale_record=1
+fi
+
 # A worktree registered BELOW this path is a separate worktree, not this one's
 # disposable contents. `git worktree remove --force` would delete its
 # uncommitted work and the record cleanup below would drop its registry record,
@@ -112,7 +163,29 @@ if [ "$nested_found" -eq 1 ]; then
     die "remove those first (task worktree:rm -- <name> for each) — they are separate worktrees, not this one's contents, and --force does not override this"
 fi
 
-if [ ! -d "$tree" ]; then
+if [ "$tree_exists" -eq 0 ]; then
+    # A stale record is not automatically worthless. Its administrative
+    # directory holds the HEAD the worktree was on, and when that HEAD is a
+    # detached commit no shared ref contains, the record is the ONLY thing
+    # keeping it alive — dropping it silently is the same data-loss path the
+    # live branch below already refuses, just reached with the directory gone.
+    # (`git worktree prune` lost it too; scoping the cleanup narrowed the blast
+    # radius without giving this path the guard the live one has.)
+    if [ "$force" -eq 0 ] && [ "$stale_record" -eq 1 ]; then
+        stale_admin="$(record_admin_dir "$tree" || true)"
+        if [ -n "$stale_admin" ] && [ -f "$stale_admin/HEAD" ]; then
+            stale_head="$(cat "$stale_admin/HEAD" 2>/dev/null || true)"
+            case "$stale_head" in
+            ref:* | '') : ;; # attached to a branch: the branch keeps the commits
+            *)
+                if git rev-parse --quiet --verify "$stale_head^{commit}" >/dev/null 2>&1 &&
+                    [ -z "$(shared_refs_containing "$stale_head")" ]; then
+                    die "$tree is gone but its record still holds detached commit $stale_head, which no branch, tag or remote-tracking ref contains — branch or tag it ('git branch <name> $stale_head'), or re-run with --force to discard it"
+                fi
+                ;;
+            esac
+        fi
+    fi
     echo "==> $tree does not exist; clearing its registry record anyway"
 elif [ "$tree_is_registered" -eq 0 ]; then
     # The directory is not a registered worktree: either it outlived its record
@@ -141,13 +214,15 @@ else
         # detached HEAD itself as a `(HEAD detached at ...)` pseudo-entry, so it
         # is never empty here and the guard would never fire.
         #
-        # ALL refs, not just refs/heads. A tag or a remote-tracking ref keeps the
-        # commit just as reachable as a branch does, and narrowing the query
-        # would refuse a perfectly safe removal — pushing people toward --force
-        # for a tree that was never at risk, which is how a guard stops being
-        # believed.
+        # SHARED refs, which is wider than refs/heads and narrower than "all".
+        # A tag or a remote-tracking ref keeps the commit just as reachable as a
+        # branch does, so restricting to branches would refuse a perfectly safe
+        # removal — pushing people toward --force for a tree that was never at
+        # risk, which is how a guard stops being believed. But "all refs" counts
+        # this worktree's own `refs/worktree/*`, which dies with it; see
+        # shared_refs_containing.
         if ! git -C "$tree" symbolic-ref -q HEAD >/dev/null &&
-            [ -z "$(git -C "$tree" for-each-ref --contains HEAD --format='%(refname)' 2>/dev/null)" ]; then
+            [ -z "$(shared_refs_containing "$(git -C "$tree" rev-parse HEAD)")" ]; then
             die "$tree is on a detached HEAD no branch contains — the commits there would become unreachable; branch or note them, or re-run with --force"
         fi
     fi
@@ -210,8 +285,19 @@ fi
 # just that record, so it is the scoped form of the prune. It refuses a LOCKED
 # record, which the check below turns into an actionable message rather than a
 # false "removed".
+#
+# Gated on the ENTRY snapshot, not on "is anything registered here now". Only
+# the stale-record branch above leaves a record for this step to clear: a live
+# removal already dropped its own, and an unregistered path never had one. Re-
+# deriving it here would let a concurrent `worktree:new` that claimed this name
+# in the meantime have its brand-new worktree removed by this run. The
+# directory is re-checked immediately before acting for the same reason — a
+# recreated worktree has one, a genuinely stale record does not.
 prune_err=""
-if git worktree list --porcelain | grep -qxF "worktree $tree"; then
+if [ "$stale_record" -eq 1 ] && git worktree list --porcelain | grep -qxF "worktree $tree"; then
+    if [ -d "$tree" ]; then
+        die "$tree was recreated while this removal was running (another 'task worktree:new'?) — refusing to remove a worktree this run did not"
+    fi
     prune_err="$(git worktree remove "$tree" 2>&1 >/dev/null)" || true
     if git worktree list --porcelain | grep -qxF "worktree $tree"; then
         # `remove --force` is NOT enough for a locked record — git answers a

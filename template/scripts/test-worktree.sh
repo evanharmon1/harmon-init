@@ -468,12 +468,102 @@ git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.workt
 if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$held"; then
     fail "removing one worktree left another's commit unreachable"
 fi
-# The scoped cleanup still clears the record it IS asked about.
-rm_wt keeper >/dev/null || fail "worktree-rm.sh could not clear the keeper's own stale record"
+# The scoped cleanup still clears the record it IS asked about. `--force`
+# because the keeper's own HEAD is the unreferenced detached commit above, and
+# discarding the last reference to it is exactly what the stale-record guard
+# below makes deliberate.
+rm_wt keeper --force >/dev/null || fail "worktree-rm.sh could not clear the keeper's own stale record"
 if git -C "$fixture" worktree list --porcelain | grep -q "keeper"; then
     fail "worktree-rm.sh left the keeper's stale record behind"
 fi
 git -C "$fixture" branch -D keeper goer >/dev/null 2>&1 || true
+
+# ── the rollback path is scoped too ──────────────────────────────────
+# `worktree:new`'s rollback ran the same repository-wide prune, so a FAILED
+# create destroyed unrelated stale records — including one holding a commit
+# nothing else references.
+echo "==> a failed create leaves an unrelated stale record alone"
+new rbkeeper >/dev/null || fail "worktree-new.sh failed creating the rollback-keeper tree"
+git -C "$fixture/.worktrees/rbkeeper" checkout -q --detach
+printf 'held through a failed create\n' >"$fixture/.worktrees/rbkeeper/HELD.md"
+git -C "$fixture/.worktrees/rbkeeper" add HELD.md
+LEFTHOOK=0 git -C "$fixture/.worktrees/rbkeeper" commit -qm "chore: commit only the rbkeeper record references"
+rb_held="$(git -C "$fixture/.worktrees/rbkeeper" rev-parse HEAD)"
+rm -rf "${fixture:?}/.worktrees/rbkeeper"
+rb_admin="$common_dir/worktrees/rbkeeper"
+[ -d "$rb_admin" ] || fail "fixture assumption broken: no admin dir for the rollback-keeper record"
+# A create that fails AFTER reserving its path: git refuses a branch that is
+# already checked out in another worktree, which is the deterministic way there.
+new rbholder >/dev/null || fail "worktree-new.sh failed creating the rollback-holder tree"
+if new rbfail --branch rbholder >/dev/null 2>&1; then
+    fail "worktree-new.sh attached a branch already checked out elsewhere"
+fi
+[ -d "$rb_admin" ] || fail "a failed create pruned an unrelated worktree's stale record"
+if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$rb_held"; then
+    fail "a failed create left an unrelated worktree's commit unreachable"
+fi
+rm_wt rbholder >/dev/null || fail "cleanup of the rollback-holder tree failed"
+rm_wt rbkeeper --force >/dev/null || fail "cleanup of the rollback-keeper record failed"
+git -C "$fixture" branch -D rbkeeper rbholder >/dev/null 2>&1 || true
+
+# ── per-worktree refs do not vouch for the worktree ──────────────────
+# `refs/worktree/*` lives in the worktree's own admin dir and dies with it, so
+# counting it as reachability makes the guard vouch for what it is removing.
+echo "==> a detached HEAD held only by a per-worktree ref still needs --force"
+new wtref >/dev/null || fail "worktree-new.sh failed creating the per-worktree-ref tree"
+git -C "$fixture/.worktrees/wtref" checkout -q --detach
+printf 'only a per-worktree ref holds this\n' >"$fixture/.worktrees/wtref/PW.md"
+git -C "$fixture/.worktrees/wtref" add PW.md
+LEFTHOOK=0 git -C "$fixture/.worktrees/wtref" commit -qm "chore: commit held only by refs/worktree"
+git -C "$fixture/.worktrees/wtref" update-ref refs/worktree/keep HEAD
+if rm_wt wtref >/dev/null 2>&1; then
+    fail "worktree-rm.sh accepted refs/worktree/* as proof the detached commit survives"
+fi
+[ -d "$fixture/.worktrees/wtref" ] || fail "the per-worktree-ref tree was removed despite the refusal"
+rm_wt wtref --force >/dev/null || fail "worktree-rm.sh --force failed on the per-worktree-ref tree"
+git -C "$fixture" branch -D wtref >/dev/null 2>&1 || true
+
+# ── a stale record's own HEAD is guarded too ─────────────────────────
+# With the directory gone the live-tree guards are all skipped, yet the record
+# can still be the only reference to a detached commit.
+echo "==> a stale record holding an unreferenced detached commit needs --force"
+new stalehead >/dev/null || fail "worktree-new.sh failed creating the stale-head tree"
+git -C "$fixture/.worktrees/stalehead" checkout -q --detach
+printf 'only the stale record holds this\n' >"$fixture/.worktrees/stalehead/SH.md"
+git -C "$fixture/.worktrees/stalehead" add SH.md
+LEFTHOOK=0 git -C "$fixture/.worktrees/stalehead" commit -qm "chore: commit only the stale record references"
+stale_held="$(git -C "$fixture/.worktrees/stalehead" rev-parse HEAD)"
+rm -rf "${fixture:?}/.worktrees/stalehead"
+if rm_wt stalehead >/dev/null 2>&1; then
+    fail "worktree-rm.sh discarded a stale record holding an unreferenced detached commit"
+fi
+git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/stalehead" ||
+    fail "the stale record was dropped despite the refusal"
+if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$stale_held"; then
+    fail "the refused removal still left the commit unreachable"
+fi
+rm_wt stalehead --force >/dev/null || fail "worktree-rm.sh --force failed on the stale record"
+git -C "$fixture" branch -D stalehead >/dev/null 2>&1 || true
+
+# ── creation refuses a registered DESCENDANT ─────────────────────────
+# A missing-but-registered `<name>/child` does not block `git worktree add` at
+# `<name>`, and the result strands the removal guard: `worktree:rm <name>`
+# refuses (a descendant is registered) while `worktree:rm <name>/child` cannot
+# work either, the path being an ordinary directory inside a live checkout.
+echo "==> creating over a registered descendant record is refused"
+git -C "$fixture" worktree add -q "$fixture/.worktrees/dparent/kid" -b dkid ||
+    fail "could not plant the descendant worktree"
+rm -rf "${fixture:?}/.worktrees/dparent"
+git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/dparent/kid" ||
+    fail "fixture assumption broken: the descendant record did not survive"
+if new dparent >"$test_tmp/descendant.log" 2>&1; then
+    fail "worktree-new.sh provisioned over a registered descendant record"
+fi
+grep -qF "$fixture/.worktrees/dparent/kid" "$test_tmp/descendant.log" ||
+    fail "the refusal did not name the descendant: $(cat "$test_tmp/descendant.log")"
+refute_exists "$fixture/.worktrees/dparent/.git" "the refused create provisioned the parent anyway"
+rm_wt dparent/kid >/dev/null || fail "cleanup of the descendant record failed"
+git -C "$fixture" branch -D dkid >/dev/null 2>&1 || true
 
 # ── rollback never deletes a branch this run did not create ──────────
 # The dangerous shape is a failed `git worktree add` while the branch exists but

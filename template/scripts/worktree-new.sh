@@ -178,6 +178,23 @@ $ancestor
     ancestor="$(dirname "$ancestor")"
 done
 
+# ...and the mirror image: a worktree registered BELOW the candidate path. A
+# missing-but-registered `<name>/child` record does not stop `git worktree add`
+# at `<name>`, and the result is a trap rather than a mess — `worktree:rm
+# <name>` then correctly refuses because a descendant is registered, while the
+# recovery it prescribes, `worktree:rm <name>/child`, cannot work either: that
+# path is now an ordinary directory inside a live checkout with no gitlink of
+# its own. Refusing at creation is what keeps the removal guard recoverable.
+while IFS= read -r registered_tree; do
+    case "$registered_tree" in
+    "$tree"/*)
+        die "$registered_tree is already a registered worktree inside '$name' — clear it first ('task worktree:rm -- ${registered_tree#"$main_root"/.worktrees/}'), then retry"
+        ;;
+    esac
+done <<EOF
+$registered
+EOF
+
 # Parents first: a branch-style name like `feat/foo` is explicitly allowed, and
 # the leaf mkdir below is deliberately NOT recursive, so `.worktrees/feat` has
 # to exist before it runs.
@@ -256,7 +273,17 @@ cleanup() {
             rmdir "$tree" 2>/dev/null ||
                 echo "worktree:new: left $tree in place — it is not empty and is not a registered worktree; inspect it, then 'task worktree:rm -- $name'" >&2
         fi
-        git worktree prune >/dev/null 2>&1 || true
+        # Deliberately NOT `git worktree prune`. Prune takes no path and is
+        # repository-WIDE, so a failed create would also drop every OTHER stale
+        # record — and such a record can be the only reference to a detached
+        # commit, the very metadata this script refuses to provision over a few
+        # lines up. The `git worktree remove --force "$tree"` above is already
+        # the scoped form for the only record this run can have created, so a
+        # prune has nothing left to do that is ours to do. A record surviving
+        # both is reported, never swept.
+        if git worktree list --porcelain | grep -qxF "worktree $tree"; then
+            echo "worktree:new: $tree is still registered after rollback — clear it with 'task worktree:rm -- $name'" >&2
+        fi
         if [ "$branch_is_ours" -eq 1 ]; then
             git branch -D "$branch" >/dev/null 2>&1 || true
         elif [ "$branch_created" -eq 1 ]; then
