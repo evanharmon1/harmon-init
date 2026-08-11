@@ -46,9 +46,10 @@ Routine updates and vulnerability-remediation PRs are owned by **Renovate**
 (`renovate.json`, with `vulnerabilityAlerts.enabled=true` and
 `osvVulnerabilityAlerts=true`) — do not add a
 `dependabot.yml`, which would create competing update PRs. Dependabot still owns
-the GitHub-native advisory feed; `osvVulnerabilityAlerts` is the second,
-visibility-independent feed that keeps remediation PRs flowing when the settings
-below are off. Enable these in Settings → Advanced Security:
+the GitHub-native advisory feed, and it is the only one of the two that reaches
+**transitive** dependencies, so the alert setting below is load-bearing rather
+than optional — `osvVulnerabilityAlerts` covers direct dependencies only. Enable
+these in Settings → Advanced Security:
 
 - Dependabot alerts
 - Private vulnerability reporting (used by `.github/SECURITY.md`)

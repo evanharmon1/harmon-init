@@ -115,15 +115,28 @@ alert-remediation PRs (`vulnerabilityAlerts.enabled=true`). Do not add a
 `dependabot.yml`: Dependabot update PRs would compete with Renovate. The
 package-manager audit remains in CI as an immediate provider-independent check.
 
-Detection runs on **two** feeds, deliberately. `vulnerabilityAlerts` reacts to
-GitHub's Dependabot alerts, so it produces nothing on a repository where that
-feature is switched off — and being switched off is invisible in the config,
-which still reads `enabled=true`. `osvVulnerabilityAlerts=true` queries the OSV
-database directly, independent of repository visibility and of any GitHub
-Advanced Security setting, so a transitive advisory is surfaced as a Renovate PR
-even when the Dependabot feed is unavailable. Without it, the first signal is a
-red audit in CI, which arrives whenever someone next opens a PR rather than when
-the advisory is published.
+Detection runs on two feeds with **different reach**, and the difference decides
+what each is good for:
+
+- `vulnerabilityAlerts` reacts to GitHub's Dependabot alerts, which read the
+  full resolved dependency graph and therefore cover **transitive** packages —
+  where nearly every advisory that actually bites a lockfile lives. It produces
+  nothing when Dependabot alerts are switched off for the repository, and being
+  switched off is invisible from the config, which still reads `enabled=true`.
+  Verify the feature itself, not the config: `gh api
+  repos/<owner>/<repo>/vulnerability-alerts` returns `204` when enabled and
+  `404` when not.
+- `osvVulnerabilityAlerts=true` queries `osv.dev` independently of repository
+  visibility and of any GitHub Advanced Security setting, but Renovate
+  [surfaces OSV alerts for **direct dependencies only**](https://docs.renovatebot.com/configuration-options/#osvvulnerabilityalerts).
+  It is a second feed for first-party dependencies, **not** a fallback for
+  transitive ones.
+
+So a repository with Dependabot alerts disabled has no continuous transitive
+coverage at all, whatever `renovate.json` says. Its first signal is a red
+package-manager audit in CI, which arrives when somebody next opens a PR rather
+than when the advisory is published. Enabling the Dependabot alert feed is what
+closes that gap; OSV narrows the direct-dependency window alongside it.
 
 ### Snyk second opinion and scheduling
 
