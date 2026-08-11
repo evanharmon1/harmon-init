@@ -102,6 +102,16 @@ and alert-remediation PRs (`vulnerabilityAlerts.enabled=true`). Do not add a
 Renovate would create competing automation. Package-manager audits remain in CI
 as an immediate, provider-independent check.
 
+Detection runs on **two** feeds, deliberately. `vulnerabilityAlerts` reacts to
+GitHub's Dependabot alerts, so it produces nothing on a repository where that
+feature is switched off — and being switched off is invisible in the config,
+which still reads `enabled=true`. `osvVulnerabilityAlerts=true` queries the OSV
+database directly, independent of repository visibility and of any GitHub
+Advanced Security setting, so a transitive advisory is surfaced as a Renovate PR
+even when the Dependabot feed is unavailable. Without it, the first signal is a
+red `pnpm audit` in CI, which arrives whenever someone next opens a PR rather
+than when the advisory is published.
+
 ### Snyk second opinion and scheduling
 
 Snyk is not installed by default and is not part of `task security` or required
