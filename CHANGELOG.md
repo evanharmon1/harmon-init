@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.28.0](https://github.com/evanharmon1/harmon-init/compare/v4.27.1...v4.28.0) (2026-08-11)
+
+
+### Features
+
+* add task worktree:new/rm as the blessed worktree entrypoint ([#777](https://github.com/evanharmon1/harmon-init/issues/777)) ([a88636d](https://github.com/evanharmon1/harmon-init/commit/a88636dec032951a9f9493180a0b2241eaba9c97))
+
 ## [4.27.1](https://github.com/evanharmon1/harmon-init/compare/v4.27.0...v4.27.1) (2026-08-11)
 
 
