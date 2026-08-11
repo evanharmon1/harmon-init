@@ -385,17 +385,21 @@ non-draft PR must always mean the automated work is done.
   before accepting the result or reporting green, re-`check` the cycle and
   re-read `headRefOid`; a changed head invalidates the result and starts
   a new current-head cycle.
-  One disposition the script cannot express is settled in prose: a badged
-  finding stated **outside an inline thread** — in a top-level comment or in
-  a review's own body — has no reply linkage, so once it lands, no
-  adjudication can make that head's `check` come back clean: findings outrank
-  a later clean result on the same head, and the script's settled set reaches
-  only inline comments. When every
-  such finding is adjudicated without a code change (declined with evidence,
-  or filed as follow-up work), record each disposition as a PR comment and
-  treat the cycle as **terminal with findings settled** for that head; the
-  readiness gate reads those recorded adjudications where a checker exit 0 is
-  unreachable. Any push starts a fresh cycle as usual.
+  A badged finding stated **outside an inline thread** — in a top-level
+  comment or in a review's own body — has no reply linkage, so the
+  reply-based adjudication path cannot reach it and findings outrank a later
+  clean result on the same head. Record its disposition with the checker's
+  `settle` subcommand: answer the finding on the PR as usual (fix it, decline
+  it with evidence, or file it), then `settle --surface comment|review --id N
+  --disposition declined|filed --note …`, adding `--covers <n>` where the
+  target states more than one finding. `check` then treats that finding as
+  answered and the cycle reaches terminal-clean, reported with a detail
+  naming the disposition applied. The record is durable and head-bound: it is
+  fingerprinted against the body it settled, so a finding Codex edits
+  afterwards blocks again while the superseded entry survives as the record
+  of what was decided about the earlier text. Any push starts a fresh cycle
+  as usual. Settling is not a substitute for answering — it records an
+  adjudication a human wrote, which is why the note is required.
   Shepherd is **externally driven** — CI results and other people's comments
   are its input, so it cannot manufacture a round on its own. A round is one
   fix push, or one no-change cycle where everything is answered and nothing
@@ -447,8 +451,8 @@ review only when **all** of the following hold for its current `headRefOid`:
   *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
   taken moments after the push reports nothing having run rather than nothing
   to run.
-- The current-head Codex cycle above is terminal and clean, or terminal with
-  every finding settled under the no-thread disposition rule above (Codex review is
+- The current-head Codex cycle above is terminal and clean — including clean
+  by way of dispositions recorded with `settle` (Codex review is
   enabled here; where it is off, this condition drops out).
 - Every review finding is fixed, declined with evidence, or filed as follow-up
   work.
