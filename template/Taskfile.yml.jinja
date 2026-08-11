@@ -1114,10 +1114,16 @@ tasks:
 [% endif %]
 
   # ── Worktrees ──────────────────────────────────────────────────
-  # One blessed entrypoint for parallel/isolated work, so every consumer (a
-  # second agent session, Foreman, a terminal multiplexer, a human) gets the
-  # same ready tree instead of rediscovering the setup and the breakers.
+  # One blessed entrypoint for parallel/isolated work, so anything that calls it
+  # (a second agent session, a terminal multiplexer, a human) gets the same
+  # ready tree instead of rediscovering the setup and the breakers.
   # See docs/conventions.md § Worktrees.
+[% if use_foreman %]
+  #
+  # Foreman is NOT routed through this task: it creates worktrees itself, inside
+  # the pinned upstream CLI, and nothing here redirects that. This entrypoint
+  # only makes sure the two agree on `.worktrees/` as the location.
+[% endif %]
   worktree:new:
     desc: "Create a ready linked worktree (usage: task worktree:new -- <name> [--branch b] [--base ref] [--no-install])"
     cmds:

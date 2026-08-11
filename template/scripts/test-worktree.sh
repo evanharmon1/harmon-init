@@ -356,6 +356,30 @@ rm_wt feat/nested >/dev/null || fail "worktree-rm.sh failed on a slash-delimited
 refute_exists "$fixture/.worktrees/feat/nested" "worktree-rm.sh left the nested tree behind"
 refute_exists "$fixture/.worktrees/feat" "worktree-rm.sh left an empty parent directory behind"
 
+# ── never nest a worktree inside a registered worktree ───────────────
+# Git's own guard is on branch names, so a differing --branch walks straight
+# past it and the child lands inside the parent — where `rm parent --force`
+# would take the child's uncommitted work with it.
+echo "==> a name nested under an existing worktree is refused"
+new parent --branch alpha >/dev/null || fail "worktree-new.sh failed creating the parent tree"
+if new parent/child --branch beta >/dev/null 2>&1; then
+    fail "worktree-new.sh created a worktree nested inside a registered worktree"
+fi
+refute_exists "$fixture/.worktrees/parent/child" "the nested worktree was created despite the refusal"
+[ -z "$(git -C "$fixture/.worktrees/parent" status --porcelain)" ] ||
+    fail "the refused nested create left the parent worktree dirty"
+rm_wt parent >/dev/null || fail "cleanup of the parent tree failed"
+git -C "$fixture" branch -D alpha beta >/dev/null 2>&1 || true
+
+# ── an abandoned empty reservation is recoverable ────────────────────
+# An interrupted create leaves `.worktrees/<name>` with nothing in it. Running
+# git inside it finds the ENCLOSING repo, so liveness has to come from the
+# registry or the advertised recovery command cannot clean it up.
+echo "==> an abandoned empty reservation can be removed by the advertised command"
+mkdir -p "$fixture/.worktrees/abandoned"
+rm_wt abandoned >/dev/null || fail "worktree-rm.sh could not clear an abandoned reservation"
+refute_exists "$fixture/.worktrees/abandoned" "worktree-rm.sh left the abandoned reservation behind"
+
 # ── every configured hook is installed and verified ──────────────────
 echo "==> all hooks in lefthook.yml are installed and probed, not just pre-commit"
 cat >"$fixture/lefthook.yml" <<'EOF'

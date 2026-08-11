@@ -125,6 +125,27 @@ git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
     die "base ref '$base' does not resolve to a commit"
 
 tree="$main_root/.worktrees/$name"
+
+# Refuse to nest a worktree INSIDE another registered worktree. Git's own
+# guard is on branch names (it will not let `parent/child` coexist with
+# `parent`), so a differing --branch slips straight past it and the new tree
+# lands inside the old one. That is a data-loss path, not just untidy: the
+# parent then reads as dirty, and removing it with --force takes the child's
+# uncommitted work with it.
+registered="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}')"
+ancestor="$(dirname "$tree")"
+while [ "$ancestor" != "$main_root/.worktrees" ] && [ "$ancestor" != "/" ]; do
+    case "
+$registered
+" in *"
+$ancestor
+"*)
+        die "$ancestor is already a worktree — '$name' would nest inside it; pick a name that is not under an existing worktree"
+        ;;
+    esac
+    ancestor="$(dirname "$ancestor")"
+done
+
 # Parents first: a branch-style name like `feat/foo` is explicitly allowed, and
 # the leaf mkdir below is deliberately NOT recursive, so `.worktrees/feat` has
 # to exist before it runs.
