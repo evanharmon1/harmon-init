@@ -4,10 +4,12 @@
 #   * "Project board writes" (`task status:gh`) — the token scope the claim
 #     lifecycle needs, reported from the section session-start orientation
 #     actually runs, in every scope state.
-#   * "Local credentials" (`task status:setup`) — the gh and Codex logins the
-#     Dev Loop gates on, in every state including not-installed, rendering
-#     BEFORE the gate that skips the rest of that audit, and counted by the
-#     summary at the end of it.
+#   * "Local credentials" (`task status:creds` and `task status:setup`) — the gh
+#     and Codex logins the Dev Loop gates on, in every state including
+#     not-installed, rendered as its own section for the session-start hook AND
+#     inside the setup audit BEFORE the gate that skips the rest of it, counted
+#     by the summary at the end of that audit, and — standalone — making no
+#     network call at all.
 #
 # Run via `task test:status`.
 #
@@ -78,6 +80,11 @@ make_stub() {
     mkdir -p "${TMP}/bin"
     {
         echo '#!/usr/bin/env bash'
+        # A call log, so a case can assert on which gh calls a section made
+        # rather than only on what it printed. The standalone credentials
+        # section's contract is "no network call", and the only way to see a
+        # network call that a stub happily answers is to look at the log.
+        echo 'if [ -n "${STUB_CALLS:-}" ]; then echo "$*" >>"$STUB_CALLS"; fi'
         echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
         case "$scenario" in
         project)
@@ -182,6 +189,28 @@ make_stub() {
             echo '    exit 0'
             ;;
         *) fail "unknown stub scenario: ${scenario}" ;;
+        esac
+        echo 'fi'
+        # `gh auth token` is the standalone credentials section's LOCAL read: it
+        # prints the stored/environment credential without calling GitHub. The
+        # stub answers it from the same scenario as `auth status` so the two
+        # cannot disagree, and prints a placeholder rather than nothing because
+        # the real command's output IS the token — a probe that captured or
+        # echoed it would show up as this string in the assertions.
+        echo 'if [ "$1" = "auth" ] && [ "$2" = "token" ]; then'
+        case "$scenario" in
+        unauthenticated)
+            echo '    echo "no oauth token" >&2'
+            echo '    exit 1'
+            ;;
+        hangs)
+            echo '    sleep 30'
+            echo '    exit 0'
+            ;;
+        *)
+            echo '    echo "STUB-TOKEN-MUST-NEVER-BE-PRINTED"'
+            echo '    exit 0'
+            ;;
         esac
         echo 'fi'
         echo 'case "$*" in'
@@ -308,6 +337,16 @@ run_setup_section() {
     make_stub "$1"
     local script="${2:-${WITH_CODEX}}"
     PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" setup 2>&1
+}
+
+# run_creds_section GH_SCENARIO [SCRIPT] — status.sh's standalone credentials
+# section (`task status:creds`, the one the session-start hook runs) with the
+# stubs on PATH. SCRIPT defaults to the with-codex fixture, the profile in which
+# the Codex login is a gate.
+run_creds_section() {
+    make_stub "$1"
+    local script="${2:-${WITH_CODEX}}"
+    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" creds 2>&1
 }
 
 # run_setup_without MISSING [SCRIPT] — the same, with MISSING genuinely absent
@@ -719,6 +758,122 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
     esac
 else
     echo "    (skipped: no timeout binary — the probe is unbounded here)"
+fi
+
+echo "==> status:creds renders the credentials group on its own"
+# The gap this section exists to close: the group used to render only inside
+# status:setup, which the session-start hook does not run — so a missing login
+# surfaced only on the explicit audit a distracted session skips.
+make_codex_stub in
+out="$(run_creds_section project)"
+case "$out" in
+*"GitHub CLI (gh)"*) ;;
+*) fail "expected a gh credential line from status:creds, got: ${out}" ;;
+esac
+case "$out" in
+*"[x] Codex CLI"*) ;;
+*) fail "expected a Codex credential line from status:creds, got: ${out}" ;;
+esac
+
+echo "==> status:creds makes no network call"
+# The acceptance criterion the session-start budget rests on. `gh auth status`
+# validates the token against the API; `gh auth token` reads local config and
+# the environment. The hook already spends this startup's one auth round trip in
+# status:gh, so this section must add none — and a stub that answers `auth
+# status` perfectly well would hide a second one from every output assertion.
+STUB_CALLS="${TMP}/creds-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+make_codex_stub in
+out="$(run_creds_section project)"
+if grep -q 'auth status' "${STUB_CALLS}"; then
+    fail "status:creds called 'gh auth status' — that is a network probe: $(tr '\n' ' ' <"${STUB_CALLS}")"
+fi
+grep -q 'auth token' "${STUB_CALLS}" ||
+    fail "status:creds made no local credential read at all: $(tr '\n' ' ' <"${STUB_CALLS}")"
+unset STUB_CALLS
+
+echo "==> status:creds never prints the token it reads"
+# `gh auth token` writes the credential to stdout — the value is the output. The
+# probe reads its exit code only, so the stub's placeholder must not reach the
+# board (nor, by the same redirect, a log or the session-start payload).
+case "$out" in
+*STUB-TOKEN-MUST-NEVER-BE-PRINTED*) fail "the credential value reached the board: ${out}" ;;
+esac
+
+echo "==> status:creds does not claim an authentication it never checked"
+# It reports that a credential EXISTS. Whether GitHub still accepts it is
+# status:gh's answer, and wording this line as "authenticated" would assert
+# something no probe here established.
+case "$out" in
+*"authenticated to"*) fail "a local-only read must not claim authentication: ${out}" ;;
+*"not validated"*) ;;
+*) fail "expected the stored-credential wording, got: ${out}" ;;
+esac
+
+echo "==> status:creds reports a logged-out gh with the login remedy"
+make_codex_stub in
+out="$(run_creds_section unauthenticated)"
+case "$out" in
+*"[ ] GitHub CLI (gh) — gh auth login"*) ;;
+*) fail "expected a missing-login line from status:creds, got: ${out}" ;;
+esac
+
+echo "==> status:creds reports a logged-out codex too"
+make_codex_stub out
+out="$(run_creds_section project)"
+case "$out" in
+*"[x] Codex CLI"*) fail "a logged-out codex must not read as ok: ${out}" ;;
+*"[ ] Codex CLI — codex login"*) ;;
+*) fail "expected a logged-out codex line from status:creds, got: ${out}" ;;
+esac
+
+echo "==> status:creds omits the setup audit it was carved out of"
+# It is a section, not a shortcut into the network-heavy audit: a status:creds
+# that dragged the checklist bar or the GitHub configuration checks along would
+# put exactly the cost back into session start that this split removed.
+case "$out" in
+*"Setup Completeness"*) fail "status:creds rendered the setup audit: ${out}" ;;
+*"Checklist"*) fail "status:creds rendered the checklist progress: ${out}" ;;
+esac
+
+echo "==> gh missing from PATH still names an install remedy in status:creds"
+make_stub project
+make_codex_stub in
+make_isolated_bin gh
+out="$(PATH="${TMP}/bin-iso" NO_COLOR=1 "${WITH_CODEX}" creds 2>&1)"
+case "$out" in
+*"GitHub CLI (gh) — gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
+*"[ ] GitHub CLI (gh) — brew install gh"*) ;;
+*) fail "expected an install remedy for a missing gh, got: ${out}" ;;
+esac
+
+echo "==> the session-start hook allows more time than status:creds can spend"
+# The same coupling as the status:gh assertion above, and the same total failure
+# mode — but budgeted from THIS section's own probes rather than inherited from
+# its neighbour's. Both bounds are read out of the files, so adding a probe to
+# the credentials group without widening the hook fails here.
+if [ -f "$hook" ]; then
+    creds_budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:creds.*/\1/p' "$hook" | head -1)"
+    creds_worst="$(awk '
+        /^render_local_credentials\(\) \{/ { inf = 1 }
+        inf && /^\}/ { inf = 0 }
+        inf {
+            line = $0
+            while (match(line, /run_timeout [0-9]+ /)) {
+                total += substr(line, RSTART + 12, RLENGTH - 13) + 0
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+        END { print total + 0 }
+    ' "${status}")"
+    [ -n "$creds_budget" ] || fail "could not read the status:creds timeout out of ${hook}"
+    [ "$creds_worst" -gt 0 ] ||
+        fail "found no bounded probes in render_local_credentials — the budget below would assert nothing"
+    [ "$creds_budget" -gt "$creds_worst" ] ||
+        fail "hook allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone — the whole group is lost first"
+else
+    echo "    (skipped: no devcontainer hook in this profile)"
 fi
 
 echo "status.sh tests passed"
