@@ -526,11 +526,23 @@ rm -f "$shared_hooks/reference-transaction"
 
 # ── name validation ──────────────────────────────────────────────────
 echo "==> path-escaping and empty names are rejected"
-for bad in "../evil" "/abs" ""; do
+# `.` and empty components are rejected because the nesting guard compares the
+# candidate path against git's canonical registry paths as text: `./p/child`
+# would never match the registered `p`, so the guard would miss the nesting it
+# exists to catch.
+for bad in "../evil" "/abs" "" "./sneaky" "a/./b" "a//b" "."; do
     if new "$bad" >/dev/null 2>&1; then
         fail "worktree-new.sh accepted the invalid name '$bad'"
     fi
 done
+
+echo "==> a dot-segment name cannot smuggle a worktree inside another"
+new dotparent >/dev/null || fail "worktree-new.sh failed creating the dot-parent tree"
+if new ./dotparent/child --branch dotchild >/dev/null 2>&1; then
+    fail "worktree-new.sh nested a worktree via a './' path component"
+fi
+refute_exists "$fixture/.worktrees/dotparent/child" "the smuggled nested worktree was created"
+rm_wt dotparent >/dev/null || fail "cleanup of the dot-parent tree failed"
 refute_exists "$test_tmp/evil" "worktree-new.sh escaped the fixture directory"
 
 # ── per-tree dependency install ──────────────────────────────────────
@@ -553,6 +565,66 @@ new node-tree >/dev/null || fail "worktree-new.sh failed on a Node repo"
 grep -qx "install $fixture/.worktrees/node-tree" "$pnpm_marker" 2>/dev/null ||
     fail "worktree-new.sh did not run 'pnpm install' inside the new tree"
 rm_wt node-tree >/dev/null || fail "cleanup of the node tree failed"
+
+echo "==> a pnpm workspace without a root package.json still installs"
+: >"$pnpm_marker"
+git -C "$fixture" rm -q --cached package.json >/dev/null
+rm -f "$fixture/package.json"
+printf 'packages:\n  - "packages/*"\n' >"$fixture/pnpm-workspace.yaml"
+git -C "$fixture" add -A
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: workspace without a root manifest" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the workspace-only layout failed"
+new workspace-tree >/dev/null || fail "worktree-new.sh failed on a manifest-less pnpm workspace"
+grep -qx "install $fixture/.worktrees/workspace-tree" "$pnpm_marker" 2>/dev/null ||
+    fail "worktree-new.sh skipped pnpm install for a pnpm-workspace.yaml-only repo"
+rm_wt workspace-tree >/dev/null || fail "cleanup of the workspace tree failed"
+printf '{"name":"fixture","private":true}\n' >"$fixture/package.json"
+git -C "$fixture" add -A
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: restore the root manifest" >"$test_tmp/commit.log" 2>&1 ||
+    fail "restoring the root package.json failed"
+
+# ── post-checkout runs AFTER dependencies are installed ──────────────
+# `git worktree add` fires post-checkout itself, before anything is installed,
+# so a hook that needs project dependencies would fail in every fresh worktree.
+echo "==> post-checkout runs only after the dependency install"
+cat >"$fixture/lefthook.yml" <<'EOF'
+pre-commit:
+  commands:
+    noop:
+      run: "true"
+
+post-checkout:
+  commands:
+    noop:
+      run: "true"
+EOF
+git -C "$fixture" add lefthook.yml
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: configure post-checkout" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the post-checkout lefthook.yml failed"
+cat >"$shared_hooks/post-checkout" <<EOF
+#!/bin/sh
+# Shaped like a lefthook-installed shim: it honours LEFTHOOK=0 (which is what
+# lets the provisioning checkout suppress it) and delegates to LEFTHOOK_BIN
+# (which is what the entrypoint's hook probe uses). Only a real invocation —
+# neither suppressed nor probed — reaches the assertion, which fails unless the
+# per-tree dependency install has already happened.
+if [ "\$LEFTHOOK" = "0" ]; then
+  exit 0
+fi
+if [ -n "\$LEFTHOOK_BIN" ]; then
+  exec "\$LEFTHOOK_BIN" run "post-checkout" "\$@"
+fi
+[ -n "\$(cat "$pnpm_marker" 2>/dev/null)" ] || exit 1
+printf 'post-checkout %s\n' "\$PWD" >>"$test_tmp/post-checkout.log"
+EOF
+chmod +x "$shared_hooks/post-checkout"
+: >"$pnpm_marker"
+: >"$test_tmp/post-checkout.log"
+new ordered-tree >/dev/null || fail "worktree-new.sh failed with a dependency-using post-checkout hook"
+grep -qx "post-checkout $fixture/.worktrees/ordered-tree" "$test_tmp/post-checkout.log" 2>/dev/null ||
+    fail "post-checkout did not run in the new tree after provisioning"
+rm_wt ordered-tree >/dev/null || fail "cleanup of the ordered tree failed"
+rm -f "$shared_hooks/post-checkout"
 
 echo "==> --no-install skips the dependency install"
 : >"$pnpm_marker"

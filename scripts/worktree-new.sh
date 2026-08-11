@@ -85,6 +85,16 @@ esac
 case "$name" in
 *[!A-Za-z0-9._/-]*) die "invalid name '$name': use only A-Z a-z 0-9 . _ - /" ;;
 esac
+# Reject `.` and empty path components. They are harmless to the filesystem but
+# poisonous to the ancestry check below, which compares the candidate path
+# against git's CANONICAL registry paths as text: `./parent/child` yields
+# `.worktrees/./parent`, which never string-matches the registered
+# `.worktrees/parent`, so the nesting guard would wave through exactly the
+# layout it exists to prevent — and a later `worktree:rm parent --force` would
+# take the child's uncommitted work with it.
+case "/$name/" in
+*//* | */./*) die "invalid name '$name': path components must not be empty or '.'" ;;
+esac
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -269,15 +279,15 @@ fi
 
 if git show-ref --verify --quiet "refs/heads/$branch"; then
     echo "==> Attaching existing branch '$branch'"
-    git worktree add "$tree" "$branch"
+    LEFTHOOK=0 git worktree add "$tree" "$branch"
 elif [ -n "$remote_ref" ]; then
     echo "==> Creating branch '$branch' tracking ${remote_ref#refs/remotes/}"
     branch_created=1
-    git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
+    LEFTHOOK=0 git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
 else
     echo "==> Creating branch '$branch' from '$base'"
     branch_created=1
-    git worktree add "$tree" -b "$branch" "$base"
+    LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$base"
 fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -288,8 +298,12 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # tree rather than from a scaffold-time answer: the same script then works in
 # every generated repo and stays a byte-identical root<->template twin.
 if [ "$do_install" -eq 1 ]; then
-    if [ -f "$tree/package.json" ]; then
-        have pnpm || die "package.json is present but pnpm is not installed — run 'task bootstrap' (or install pnpm) and re-run"
+    # `pnpm-workspace.yaml` counts as a Node signal in its own right: a monorepo
+    # may define the workspace there and keep package.json only in members, so
+    # keying solely on a root package.json would report such a tree ready with
+    # none of its dependencies installed.
+    if [ -f "$tree/package.json" ] || [ -f "$tree/pnpm-workspace.yaml" ]; then
+        have pnpm || die "a Node manifest is present but pnpm is not installed — run 'task bootstrap' (or install pnpm) and re-run"
         echo "==> Installing Node dependencies (pnpm) in the new tree"
         (cd "$tree" && pnpm install)
     fi
@@ -368,6 +382,32 @@ EOF
             die "the $hook hook did not delegate to lefthook from $tree — reinstall with 'task install:hooks'"
     done
     echo "==> Hooks verified: git resolves $hooks_dir and$configured_hooks fire in the new tree"
+fi
+
+# ── post-checkout, deferred until the tree can actually satisfy it ───
+# `git worktree add` fires post-checkout itself, BEFORE this script has
+# installed anything — so a hook that uses project dependencies (a codegen step,
+# a version check running through the local toolchain) fails in every fresh
+# worktree and takes the whole creation down with it. The provisioning checkout
+# therefore runs with LEFTHOOK=0, and the hook runs here instead, once the tree
+# is provisioned. Git's own argument shape: previous HEAD, new HEAD, and 1 for a
+# branch checkout; the null OID stands in for "no previous HEAD", sized to the
+# repository's hash algorithm rather than assumed to be SHA-1.
+#
+# Gated on post-checkout being LEFTHOOK-CONFIGURED, not merely present. Only a
+# lefthook shim honours the LEFTHOOK=0 that suppressed it during the add; a
+# hand-written post-checkout ran already, and re-running it here would be a
+# second execution the repository never asked for.
+case " $configured_hooks " in
+*" post-checkout "*) run_post_checkout=1 ;;
+*) run_post_checkout=0 ;;
+esac
+if [ "$run_post_checkout" -eq 1 ] && [ -x "$hooks_dir/post-checkout" ]; then
+    new_head="$(git -C "$tree" rev-parse HEAD)"
+    null_oid="$(printf '%s' "$new_head" | tr '[:alnum:]' '0')"
+    echo "==> Running post-checkout now that the tree is provisioned"
+    (cd "$tree" && "$hooks_dir/post-checkout" "$null_oid" "$new_head" 1) ||
+        die "the repository's post-checkout hook failed in $tree"
 fi
 
 echo
