@@ -18,15 +18,26 @@ repo="$(git rev-parse --show-toplevel)"
 # scripts/test-template.sh.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
-# Neutralize the caller's global/system git config for everything below. Without
-# this the fixture is not hermetic: a developer with an absolute
-# `core.hooksPath` set globally makes `git rev-parse --git-path hooks` resolve
-# OUTSIDE the fixture, and installing hooks for the fixture would then write
-# into their real hooks directory — a test that runs inside `task verify` must
-# never be able to do that.
+# Neutralize every out-of-tree source of git config. Without this the fixture is
+# not hermetic: a `core.hooksPath` pointing at an absolute directory makes
+# `git rev-parse --git-path hooks` resolve OUTSIDE the fixture, and installing
+# hooks for the fixture would then write into that real directory — a test that
+# runs inside `task verify` must never be able to do that. Config arrives from
+# global and system files AND from the environment (`GIT_CONFIG_COUNT` with its
+# KEY/VALUE pairs, and `GIT_CONFIG_PARAMETERS`), so all of them go.
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
+git_config_count="${GIT_CONFIG_COUNT:-0}"
+case "$git_config_count" in
+'' | *[!0-9]*) git_config_count=0 ;;
+esac
+i=0
+while [ "$i" -lt "$git_config_count" ]; do
+    unset "GIT_CONFIG_KEY_$i" "GIT_CONFIG_VALUE_$i"
+    i=$((i + 1))
+done
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -104,12 +115,17 @@ git -C "$fixture" config user.email "worktree-test@example.invalid"
 git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm "chore: fixture"
-(cd "$fixture" && lefthook install >/dev/null 2>&1) || fail "could not install hooks in the fixture"
+# Containment is asserted BEFORE anything installs a hook, and it is asserted on
+# the path git itself resolves — so it holds whatever made the path escape
+# (global config, system config, GIT_CONFIG_* in the environment, a future
+# mechanism). Checking afterwards would report the escape only once the damage
+# was done.
 shared_hooks="$(cd "$fixture" && git rev-parse --path-format=absolute --git-path hooks)"
 case "$shared_hooks" in
 "$test_tmp"/*) : ;;
-*) fail "the fixture's hooks directory escaped the sandbox: $shared_hooks" ;;
+*) fail "refusing to install hooks: the fixture's hooks directory resolves outside the sandbox ($shared_hooks)" ;;
 esac
+(cd "$fixture" && lefthook install >/dev/null 2>&1) || fail "could not install hooks in the fixture"
 
 new() { (cd "$fixture" && bash scripts/worktree-new.sh "$@"); }
 rm_wt() { (cd "$fixture" && bash scripts/worktree-rm.sh "$@"); }
@@ -175,6 +191,29 @@ fi
 [ -d "$fixture/.worktrees/dirty" ] || fail "worktree-rm.sh removed the dirty tree despite refusing"
 rm_wt dirty --force >/dev/null || fail "worktree-rm.sh --force failed on a dirty tree"
 refute_exists "$fixture/.worktrees/dirty" "worktree-rm.sh --force left the directory behind"
+
+# ── ignored local files are not silently deleted ─────────────────────
+# `git worktree remove` counts modified and untracked files but not ignored
+# ones, so a plain remove would take a .env with it.
+echo "==> worktree:rm refuses to delete ignored local FILES without --force"
+printf '.env\nnode_modules/\n' >>"$fixture/.gitignore"
+git -C "$fixture" add .gitignore
+git -C "$fixture" commit -qm "chore: ignore .env and node_modules" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the fixture .gitignore failed"
+new secrets-tree >/dev/null || fail "worktree-new.sh failed for the ignored-file case"
+printf 'TOKEN=keep-me\n' >"$fixture/.worktrees/secrets-tree/.env"
+if rm_wt secrets-tree >/dev/null 2>&1; then
+    fail "worktree-rm.sh deleted an ignored local file without --force"
+fi
+[ -f "$fixture/.worktrees/secrets-tree/.env" ] || fail "the ignored file was deleted despite the refusal"
+
+echo "==> an ignored dependency DIRECTORY does not block an ordinary removal"
+rm -f "$fixture/.worktrees/secrets-tree/.env"
+mkdir -p "$fixture/.worktrees/secrets-tree/node_modules/pkg"
+printf '{}\n' >"$fixture/.worktrees/secrets-tree/node_modules/pkg/package.json"
+rm_wt secrets-tree >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over a reinstallable node_modules/"
+refute_exists "$fixture/.worktrees/secrets-tree" "worktree-rm.sh left the tree behind"
 
 # ── leftover gitlink debris (the #716 class) ─────────────────────────
 echo "==> worktree:rm clears a leftover gitlink directory"
@@ -256,6 +295,21 @@ fi
 if git -C "$fixture" show-ref --verify --quiet refs/heads/half-made; then
     fail "the branch from a partially created worktree was not rolled back"
 fi
+
+# ── a concurrent same-name run cannot destroy the winner's tree ──────
+echo "==> a second run that loses the path race does not roll back the winner"
+new raced >/dev/null || fail "worktree-new.sh failed creating the raced tree"
+raced_head="$(git -C "$fixture/.worktrees/raced" rev-parse HEAD)"
+if new raced >/dev/null 2>&1; then
+    fail "a second worktree-new.sh claimed an already-owned path"
+fi
+[ -d "$fixture/.worktrees/raced" ] ||
+    fail "the loser's rollback destroyed the winner's worktree"
+[ "$(git -C "$fixture/.worktrees/raced" rev-parse HEAD)" = "$raced_head" ] ||
+    fail "the winner's worktree was disturbed by the loser"
+git -C "$fixture" show-ref --verify --quiet refs/heads/raced ||
+    fail "the loser's rollback deleted the winner's branch"
+rm_wt raced >/dev/null || fail "cleanup of the raced tree failed"
 
 # ── the resolved base is announced, never silent ─────────────────────
 echo "==> the defaulted base is printed so a surprising branch point is visible"

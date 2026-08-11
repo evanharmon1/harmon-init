@@ -42,9 +42,14 @@ it points here.
   One entrypoint means a second agent session, a terminal multiplexer, or a
   human all get the same tree instead of each rediscovering the setup.
 - **Remove them with `task worktree:rm -- <name>`** (`--force` to discard
-  uncommitted work). It prunes the registry and clears leftover gitlink
-  directories — stale ones make later tooling treat a dead path as a live
-  checkout.
+  uncommitted work). It refuses on uncommitted changes **and** on ignored local
+  files such as a `.env` — `git worktree remove` counts modified and untracked
+  files but not ignored ones, so a plain remove would take those with it.
+  Ignored *directories* (`node_modules/`, `.venv/`, `dist/`) do not block it:
+  `worktree:new` reinstalls them, and refusing there would make `--force`
+  routine and so meaningless. It also prunes the registry and clears leftover
+  gitlink directories — stale ones make later tooling treat a dead path as a
+  live checkout.
 - **A fresh worktree has no `node_modules`/`.venv`.** Working files are per-tree,
   so dependency install is per-tree too; that is what `worktree:new` runs and
   why "it worked in the main checkout" is not evidence.

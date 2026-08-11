@@ -125,8 +125,22 @@ git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
     die "base ref '$base' does not resolve to a commit"
 
 tree="$main_root/.worktrees/$name"
-if [ -e "$tree" ]; then
-    die "$tree already exists — remove it with 'task worktree:rm -- $name' first"
+mkdir -p "$main_root/.worktrees"
+
+# Claim the path with mkdir, which is atomic, rather than testing for it and
+# then creating it. This entrypoint exists FOR parallel use, and a test-then-act
+# check lets two concurrent runs of the same name both believe they own the
+# path: whichever loses `git worktree add` would then roll back — force-removing
+# the winner's registered tree and deleting its branch. Losing the mkdir means
+# never arming the rollback at all.
+#
+# `git worktree add` accepts an existing EMPTY directory, so the reservation
+# costs nothing.
+if ! mkdir "$tree" 2>/dev/null; then
+    if [ -d "$tree" ]; then
+        die "$tree already exists (or another worktree:new is creating it) — remove it with 'task worktree:rm -- $name' first"
+    fi
+    die "could not create $tree"
 fi
 
 # Roll back on any failure from here on. A half-provisioned worktree is worse
@@ -138,7 +152,10 @@ fi
 # worktree and create the branch and still exit non-zero — so arming afterwards
 # would skip cleanup in exactly the case that needs it. Cleanup is written to
 # tolerate a tree or branch that was never created.
-tree_created=0
+#
+# tree_created starts at 1 because the reservation above already created the
+# directory: every exit path from here owns it and must clean it up.
+tree_created=1
 branch_created=0
 probe_dir=""
 cleanup() {
@@ -156,8 +173,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$main_root/.worktrees"
-
 # Attach to the branch when it already exists, create it otherwise. git itself
 # refuses (loudly) when the branch is already checked out in another worktree,
 # which is exactly the right failure.
@@ -168,17 +183,22 @@ mkdir -p "$main_root/.worktrees"
 # the remote branch's work — the push that follows diverges or is rejected.
 # `git worktree add <path> <name>` does this DWIM itself; passing -b opts out of
 # it, so the remote lookup has to be explicit.
+#
+# An EXPLICIT --base opts out of the lookup entirely: the caller named the start
+# point, so there is nothing to guess, and refusing an ambiguous remote name
+# would reject the very command that resolves the ambiguity. Git's own
+# branch.autoSetupMerge still sets up tracking when that base is a
+# remote-tracking ref.
 remote_ref=""
-if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+if [ "$base_origin" != "explicit" ] && ! git show-ref --verify --quiet "refs/heads/$branch"; then
     remote_matches="$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch")"
     remote_count="$(printf '%s' "$remote_matches" | grep -c . || true)"
     if [ "$remote_count" -gt 1 ]; then
-        die "branch '$branch' exists on more than one remote — pass --branch/--base to choose explicitly"
+        die "branch '$branch' exists on more than one remote — pass --base <remote>/<branch> to choose one"
     fi
     [ "$remote_count" -eq 1 ] && remote_ref="$remote_matches"
 fi
 
-tree_created=1
 if git show-ref --verify --quiet "refs/heads/$branch"; then
     echo "==> Attaching existing branch '$branch'"
     git worktree add "$tree" "$branch"

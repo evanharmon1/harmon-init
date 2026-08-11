@@ -75,6 +75,29 @@ else
     if [ "$force" -eq 0 ] && [ -n "$(git -C "$tree" status --porcelain)" ]; then
         die "$tree has uncommitted changes — commit or push them, or re-run with --force to discard them"
     fi
+    # `git worktree remove` counts modified and untracked files, but NOT ignored
+    # ones — so without this a plain remove silently deletes a `.env`, an
+    # `.envrc.local`, or ignored notes, which is not what "--force to discard
+    # uncommitted work" promises.
+    #
+    # Ignored DIRECTORIES are let through deliberately: node_modules/, .venv/,
+    # dist/ are what worktree:new installs and can reinstall, and refusing on
+    # them would mean every removal needed --force, which trains people to pass
+    # it and defeats the guard. An ignored FILE is hand-made state instead, so
+    # that is what the refusal is keyed on. `--directory` collapses an ignored
+    # directory to one entry with a trailing slash, which is what distinguishes
+    # the two.
+    if [ "$force" -eq 0 ]; then
+        ignored_files="$(
+            git -C "$tree" ls-files --others --ignored --exclude-standard \
+                --directory --no-empty-directory | grep -v '/$' || true
+        )"
+        if [ -n "$ignored_files" ]; then
+            echo "worktree:rm: $tree holds ignored local files that removal would delete:" >&2
+            printf '%s\n' "$ignored_files" | sed 's/^/  /' >&2
+            die "move or copy them out, or re-run with --force to discard them"
+        fi
+    fi
     if [ "$force" -eq 1 ]; then
         git worktree remove --force "$tree"
     else
