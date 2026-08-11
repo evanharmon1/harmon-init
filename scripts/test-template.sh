@@ -208,6 +208,19 @@ if [ -x scripts/lint-hygiene.sh ]; then
     ./scripts/lint-hygiene.sh || err "rendered output fails its own lint:hygiene gate"
 fi
 
+# ── 0b. Agent worktrees are ignored in BOTH layers ──────────────────
+# A registered git worktree under .claude/worktrees/ is a gitlink with no
+# `.gitmodules` entry. Left unignored it is swept into copier's dirty-tree wip
+# commit (`git add -A`), and the nested clone then dies on a submodule it cannot
+# resolve — the failure this ignore rule exists to prevent (#716). Nothing else
+# gates the rule: the jinja dogfood check compares structure, not lines. Global
+# excludes are switched off so a machine-level `.claude/` ignore cannot make a
+# missing rule look present.
+git -c core.excludesFile=/dev/null check-ignore -q .claude/worktrees/agent-x ||
+    err "rendered .gitignore does not ignore .claude/worktrees/ (see #716)"
+grep -qx '\.claude/worktrees/' "$repo_root/.gitignore" ||
+    err "root .gitignore does not ignore .claude/worktrees/ (see #716)"
+
 # ── 0. AGENTS.md is canonical; CLAUDE.md/GEMINI.md + copilot-instructions.md
 #       symlink to it (copilot's canonical file lives under .github/). ──
 if [ ! -f AGENTS.md ]; then
