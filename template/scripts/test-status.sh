@@ -188,6 +188,14 @@ make_stub() {
             echo '    sleep 30'
             echo '    exit 0'
             ;;
+        broken-token-store)
+            # Authenticated as far as the API is concerned, but the LOCAL
+            # credential read fails for a reason `gh auth login` cannot repair —
+            # a locked keychain, an unreadable hosts.yml. Deliberately does NOT
+            # carry gh's no-credential wording: that is the whole distinction.
+            echo "    echo \"  - Token scopes: 'gist', 'project', 'repo'\""
+            echo '    exit 0'
+            ;;
         *) fail "unknown stub scenario: ${scenario}" ;;
         esac
         echo 'fi'
@@ -206,6 +214,10 @@ make_stub() {
         hangs)
             echo '    sleep 30'
             echo '    exit 0'
+            ;;
+        broken-token-store)
+            echo '    echo "error: failed to read keyring: interaction denied" >&2'
+            echo '    exit 1'
             ;;
         *)
             echo '    echo "STUB-TOKEN-MUST-NEVER-BE-PRINTED"'
@@ -818,6 +830,35 @@ case "$out" in
 *"[ ] GitHub CLI (gh) — gh auth login"*) ;;
 *) fail "expected a missing-login line from status:creds, got: ${out}" ;;
 esac
+
+echo "==> a local token read that fails for another reason reads unknown"
+# Non-zero is not the same as logged out, exactly as for the Codex probe: a
+# locked keychain exits non-zero too, and `gh auth login` cannot repair it — the
+# reader would be sent to fix the wrong thing. Only gh's documented
+# no-credential wording earns that remedy.
+make_codex_stub in
+out="$(run_creds_section broken-token-store)"
+case "$out" in
+*"[ ] GitHub CLI (gh)"*) fail "a broken credential store must not read as logged out: ${out}" ;;
+*"gh auth login"*) fail "a broken credential store must not prescribe re-authentication: ${out}" ;;
+*"[?] GitHub CLI (gh)"*"credential probe failed"*) ;;
+*) fail "expected an unknown gh credential line, got: ${out}" ;;
+esac
+
+echo "==> a local token read that outlives its deadline reads unknown too"
+# The probe is bounded, which makes a wedged credential helper look exactly like
+# a missing login unless the deadline is classified apart from it.
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+    make_codex_stub in
+    out="$(run_creds_section hangs)"
+    case "$out" in
+    *"[ ] GitHub CLI (gh)"*) fail "a timeout must not read as a missing login: ${out}" ;;
+    *"[?] GitHub CLI (gh)"*"timed out"*) ;;
+    *) fail "expected a timeout notice from status:creds, got: ${out}" ;;
+    esac
+else
+    echo "    (skipped: no timeout binary — the probe is unbounded here)"
+fi
 
 echo "==> status:creds reports a logged-out codex too"
 make_codex_stub out

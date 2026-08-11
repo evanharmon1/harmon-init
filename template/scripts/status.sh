@@ -617,20 +617,46 @@ render_local_credentials() {
         else
             checkline no "GitHub CLI (gh)" "gh auth login"
         fi
-    elif run_timeout 3 gh auth token --hostname "$(gh_target_host)" \
-        >/dev/null 2>&1; then
+    else
         # Standalone `status:creds`: nothing probed the API, and this section is
         # not allowed to. `gh auth token` resolves the credential gh would use
         # from local config and the environment WITHOUT calling GitHub, which
         # answers the only question this line exists to answer — is there a login
-        # at all. Its validity is `status:gh`'s to report, and the wording says
-        # so rather than claiming an authentication that was never checked.
-        # Redirected to /dev/null because the token itself is the output: this
-        # reads the exit code only and never captures, prints, or logs the value.
-        checkline ok "GitHub CLI (gh)" \
-            "credential stored for $(gh_target_host) (not validated)"
-    else
-        checkline no "GitHub CLI (gh)" "gh auth login"
+        # at all. Its validity is `status:gh`'s to report, and the wording below
+        # says so rather than claiming an authentication that was never checked.
+        #
+        # `2>&1 >/dev/null` — in that order — captures STDERR while sending
+        # stdout to /dev/null. The order is load-bearing and not interchangeable
+        # with `>/dev/null 2>&1`: this command's stdout IS the token, so the
+        # value must never enter a variable, and only its diagnostic goes into
+        # one. Nothing captured here is ever printed either way.
+        #
+        # Non-zero is then classified rather than assumed to mean logged out,
+        # the same distinction the Codex probe below draws: a locked keychain or
+        # an unreadable hosts.yml also exits non-zero, and `gh auth login` cannot
+        # repair either. Only gh's documented no-credential wording earns that
+        # remedy; everything else is unknown.
+        gh_token_rc=0
+        gh_token_err="$(run_timeout 3 gh auth token \
+            --hostname "$(gh_target_host)" 2>&1 >/dev/null)" || gh_token_rc=$?
+        case "${gh_token_rc}" in
+        0)
+            checkline ok "GitHub CLI (gh)" \
+                "credential stored for $(gh_target_host) (not validated)"
+            ;;
+        124) checkline unknown "GitHub CLI (gh)" "credential probe timed out" ;;
+        *)
+            case "$(printf '%s' "${gh_token_err}" | tr '[:upper:]' '[:lower:]')" in
+            *"no oauth token"* | *"not logged in"*)
+                checkline no "GitHub CLI (gh)" "gh auth login"
+                ;;
+            *)
+                checkline unknown "GitHub CLI (gh)" \
+                    "credential probe failed (exit ${gh_token_rc}) — check the gh CLI's config"
+                ;;
+            esac
+            ;;
+        esac
     fi
 
     # Codex gates `task challenge` and `task review` only where the repo opted
