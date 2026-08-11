@@ -129,6 +129,7 @@ tasks:
 [% if use_skills_sync %]
       - task: test:sync-devkit-release
 [% endif %]
+      - task: test:worktree
 [% if devcontainer %]
       - task: test:hooks
       - task: test:statusline
@@ -656,6 +657,11 @@ tasks:
     cmds:
       - ./scripts/test-agent-registry.sh
 
+  test:worktree:
+    desc: Behavioral test for worktree:new / worktree:rm (create → verify hooks → remove, in a throwaway fixture repo)
+    cmds:
+      - ./scripts/test-worktree.sh
+
   test:agent-instructions-size:
     desc: Unit-test the non-blocking AGENTS.md size advisory
     cmds:
@@ -884,16 +890,7 @@ tasks:
   security:secrets:
     desc: Scan for leaked secrets (gitleaks)
     cmds:
-      - |
-        if [ -z "$GITHUB_STEP_SUMMARY" ]; then
-          gitleaks detect --no-banner --redact --source .
-        else
-          rc=0
-          gitleaks detect --no-banner --redact --source . \
-            --report-format json --report-path /tmp/[[ project_slug ]]-gitleaks.json || rc=$?
-          node scripts/summarize-gitleaks.mjs /tmp/[[ project_slug ]]-gitleaks.json
-          exit $rc
-        fi
+      - ./scripts/gitleaks-scan.sh
 
   security:audit:
     desc: Dependency audit
@@ -1115,6 +1112,27 @@ tasks:
     cmds:
       - ./scripts/check-changelog-coverage.sh "$TAG"
 [% endif %]
+
+  # ── Worktrees ──────────────────────────────────────────────────
+  # One blessed entrypoint for parallel/isolated work, so anything that calls it
+  # (a second agent session, a terminal multiplexer, a human) gets the same
+  # ready tree instead of rediscovering the setup and the breakers.
+  # See docs/conventions.md § Worktrees.
+[% if use_foreman %]
+  #
+  # Foreman is NOT routed through this task: it creates worktrees itself, inside
+  # the pinned upstream CLI, and nothing here redirects that. This entrypoint
+  # only makes sure the two agree on `.worktrees/` as the location.
+[% endif %]
+  worktree:new:
+    desc: "Create a ready linked worktree (usage: task worktree:new -- <name> [--branch b] [--base ref] [--no-install])"
+    cmds:
+      - ./scripts/worktree-new.sh {{.CLI_ARGS}}
+
+  worktree:rm:
+    desc: "Remove a linked worktree and prune its gitlink debris (usage: task worktree:rm -- <name> [--force])"
+    cmds:
+      - ./scripts/worktree-rm.sh {{.CLI_ARGS}}
 
   # ── Clean ──────────────────────────────────────────────────────
   clean:

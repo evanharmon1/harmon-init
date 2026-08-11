@@ -136,7 +136,13 @@ private repositories to paid plans (docs/CHECKLIST.md). If `gh pr create
 --draft` is rejected, stop and report it — dropping `--draft` to get past the
 error silently reverts the lifecycle rather than fixing anything.
 
-- **Branch** — feature branch off `main`; never commit directly to `main`.
+- **Branch** — feature branch off `main`; never commit directly to `main`. For
+  parallel or isolated work, take the branch in its own worktree via
+  **`task worktree:new -- <name>`** (and `task worktree:rm -- <name>` when
+  done) rather than a hand-rolled `git worktree add` — it installs that tree's
+  dependencies and proves the hooks fire in it. See
+  [docs/conventions.md](docs/conventions.md) § Worktrees, including why
+  `-c core.hooksPath=.git/hooks` must never be passed inside one.
 - **Edit + `task check`** — the fast inner loop; run it constantly and fix
   lint immediately.
 - **`task verify`** — when the change feels done, loop edit → verify until
