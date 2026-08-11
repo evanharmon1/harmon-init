@@ -418,6 +418,63 @@ refute_exists "$fixture/.worktrees/parent/child" "the nested worktree was create
 rm_wt parent >/dev/null || fail "cleanup of the parent tree failed"
 git -C "$fixture" branch -D alpha beta >/dev/null 2>&1 || true
 
+# ── a nested worktree is never the parent's disposable dirt ───────────
+# worktree:new refuses to create this shape, but a tree made by hand or before
+# this entrypoint existed can still be nested. `git worktree remove --force`
+# would delete the child's uncommitted work and the cleanup would drop its
+# record, so removal has to look for descendants — in BOTH modes, since --force
+# only ever promised to discard the target's own changes.
+echo "==> worktree:rm refuses a target that contains a registered worktree"
+new nestparent >/dev/null || fail "worktree-new.sh failed creating the nesting parent"
+git -C "$fixture" worktree add -q "$fixture/.worktrees/nestparent/kid" -b nestkid ||
+    fail "could not plant a nested worktree by hand"
+printf 'child work\n' >"$fixture/.worktrees/nestparent/kid/KID.md"
+for mode in "--force" ""; do
+    if rm_wt nestparent $mode >"$test_tmp/nested.log" 2>&1; then
+        fail "worktree-rm.sh ${mode:-(no --force)} removed a target containing a registered worktree"
+    fi
+    grep -qF "$fixture/.worktrees/nestparent/kid" "$test_tmp/nested.log" ||
+        fail "the refusal did not name the nested worktree: $(cat "$test_tmp/nested.log")"
+done
+[ -f "$fixture/.worktrees/nestparent/kid/KID.md" ] ||
+    fail "worktree-rm.sh deleted the nested worktree's uncommitted work"
+git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/nestparent/kid" ||
+    fail "worktree-rm.sh dropped the nested worktree's registry record"
+rm_wt nestparent/kid --force >/dev/null || fail "cleanup of the nested child failed"
+rm_wt nestparent >/dev/null || fail "cleanup of the nesting parent failed"
+git -C "$fixture" branch -D nestkid >/dev/null 2>&1 || true
+
+# ── cleanup is scoped to this record, never a repo-wide prune ─────────
+# `git worktree prune` takes no path: pruning here would drop every OTHER stale
+# record too, and such a record can be the only reference to a detached HEAD.
+echo "==> removing one worktree leaves an unrelated stale record alone"
+new keeper >/dev/null || fail "worktree-new.sh failed creating the keeper tree"
+git -C "$fixture/.worktrees/keeper" checkout -q --detach
+printf 'only the record holds this\n' >"$fixture/.worktrees/keeper/HELD.md"
+git -C "$fixture/.worktrees/keeper" add HELD.md
+LEFTHOOK=0 git -C "$fixture/.worktrees/keeper" commit -qm "chore: commit only the keeper record references"
+held="$(git -C "$fixture/.worktrees/keeper" rev-parse HEAD)"
+# The record outliving its directory is the ordinary shape here: an interrupted
+# job, a hand `rm -rf`, a deleted external drive.
+rm -rf "${fixture:?}/.worktrees/keeper"
+keeper_admin="$common_dir/worktrees/keeper"
+[ -d "$keeper_admin" ] || fail "fixture assumption broken: no admin dir for the keeper record"
+new goer >/dev/null || fail "worktree-new.sh failed creating the unrelated tree"
+rm_wt goer >/dev/null || fail "worktree-rm.sh failed removing the unrelated tree"
+[ -d "$keeper_admin" ] ||
+    fail "removing one worktree pruned an unrelated worktree's stale record"
+git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/keeper" ||
+    fail "removing one worktree deregistered an unrelated worktree"
+if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$held"; then
+    fail "removing one worktree left another's commit unreachable"
+fi
+# The scoped cleanup still clears the record it IS asked about.
+rm_wt keeper >/dev/null || fail "worktree-rm.sh could not clear the keeper's own stale record"
+if git -C "$fixture" worktree list --porcelain | grep -q "keeper"; then
+    fail "worktree-rm.sh left the keeper's stale record behind"
+fi
+git -C "$fixture" branch -D keeper goer >/dev/null 2>&1 || true
+
 # ── rollback never deletes a branch this run did not create ──────────
 # The dangerous shape is a failed `git worktree add` while the branch exists but
 # nothing was registered at our path — the state a concurrent creator produces.

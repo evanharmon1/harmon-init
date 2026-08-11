@@ -12,8 +12,9 @@ usage() {
     cat >&2 <<'EOF'
 Usage: task worktree:rm -- <name> [--force]
 
-Removes .worktrees/<name>, prunes the worktree registry, and clears any leftover
-gitlink directory. --force discards uncommitted changes in the tree.
+Removes .worktrees/<name>, clears that path's registry record, and deletes any
+leftover gitlink directory. --force discards uncommitted changes in the tree.
+Refuses when another registered worktree lives inside <name>.
 EOF
 }
 
@@ -86,8 +87,33 @@ $registered
 $tree
 "*) tree_is_registered=1 ;; esac
 
+# A worktree registered BELOW this path is a separate worktree, not this one's
+# disposable contents. `git worktree remove --force` would delete its
+# uncommitted work and the record cleanup below would drop its registry record,
+# yet --force only ever promised to discard *this* tree's changes — so the
+# refusal holds in both modes. `worktree:new` cannot create such a nesting; one
+# predates this entrypoint or was made by hand, which is exactly why removal has
+# to look for it rather than assume it away.
+nested_found=0
+while IFS= read -r registered_tree; do
+    case "$registered_tree" in
+    "$tree"/*) : ;;
+    *) continue ;;
+    esac
+    if [ "$nested_found" -eq 0 ]; then
+        echo "worktree:rm: $tree contains registered worktrees of its own:" >&2
+        nested_found=1
+    fi
+    echo "  $registered_tree" >&2
+done <<EOF
+$registered
+EOF
+if [ "$nested_found" -eq 1 ]; then
+    die "remove those first (task worktree:rm -- <name> for each) — they are separate worktrees, not this one's contents, and --force does not override this"
+fi
+
 if [ ! -d "$tree" ]; then
-    echo "==> $tree does not exist; pruning the registry anyway"
+    echo "==> $tree does not exist; clearing its registry record anyway"
 elif [ "$tree_is_registered" -eq 0 ]; then
     # The directory is not a registered worktree: either it outlived its record
     # (a stale gitlink) or it is an empty reservation an interrupted create left
@@ -170,21 +196,30 @@ else
     fi
 fi
 
-# Drop registry records whose working tree is gone. This is the #716 class: a
-# stale record (or a leftover directory holding only a .git gitlink file) makes
-# later tooling treat a dead path as a live checkout.
-git worktree prune
-
-# `git worktree prune` deliberately keeps LOCKED records, so it can succeed
-# while leaving this path registered — after which the branch still reads as
-# checked out and the next `worktree:new` for it fails. Reporting "removed"
-# there would be a lie, so re-query and name the lock instead.
+# Drop the registry record for THIS path when it outlived its directory. This is
+# the #716 class: a stale record (or a leftover directory holding only a .git
+# gitlink file) makes later tooling treat a dead path as a live checkout.
+#
+# Deliberately NOT `git worktree prune`: prune takes no path and is
+# repository-WIDE, so removing one worktree would also drop every OTHER stale
+# record — and such a record can be the only thing referencing a detached HEAD,
+# which is precisely the metadata `worktree:new` now refuses to provision over.
+# Removing one worktree must never reach into another's state.
+#
+# `git worktree remove` accepts a path whose directory is already gone and drops
+# just that record, so it is the scoped form of the prune. It refuses a LOCKED
+# record, which the check below turns into an actionable message rather than a
+# false "removed".
+prune_err=""
 if git worktree list --porcelain | grep -qxF "worktree $tree"; then
-    # `remove --force` is NOT enough for a locked record — git answers a single
-    # force with "use 'remove -f -f' to override or unlock first" — so the
-    # instruction leads with the unlock, which is the path that also works when
-    # the directory is already gone.
-    die "$tree is still registered after pruning — its record is locked; run 'git worktree unlock \"$tree\"' then re-run, or force past the lock with 'git worktree remove -f -f \"$tree\"'"
+    prune_err="$(git worktree remove "$tree" 2>&1 >/dev/null)" || true
+    if git worktree list --porcelain | grep -qxF "worktree $tree"; then
+        # `remove --force` is NOT enough for a locked record — git answers a
+        # single force with "use 'remove -f -f' to override or unlock first" —
+        # so the instruction leads with the unlock, which is the path that also
+        # works when the directory is already gone.
+        die "$tree is still registered after cleanup (${prune_err:-git reported no reason}) — if its record is locked, run 'git worktree unlock \"$tree\"' then re-run, or force past the lock with 'git worktree remove -f -f \"$tree\"'"
+    fi
 fi
 
 # `git worktree remove` leaves the directory in place when it failed or when the
