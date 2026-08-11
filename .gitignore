@@ -55,6 +55,14 @@ __pycache__/
 
 # Git worktrees
 .worktrees/
+# Agent-tool worktree isolation dir. A registered worktree is recorded as a
+# gitlink with no `.gitmodules` entry, and copier's dirty-tree wip commit stages
+# with `git add -A`, so an unignored one is swept into every local render — the
+# nested clone then dies with `fatal: No url found for submodule path …`, an
+# error naming submodules in a repo that has none. Anchored by its embedded
+# slash (git anchors any pattern containing a non-trailing `/`), so it matches
+# only the root `.claude/` and never `template/.claude/`.
+.claude/worktrees/
 
 # Design handoff bundles (Claude Design exports) live as specs/ subdirectories
 # while being implemented and are deleted at sign-off — never committed.
