@@ -125,7 +125,10 @@ what each is good for:
   switched off is invisible from the config, which still reads `enabled=true`.
   Verify the feature itself, not the config: `gh api
   repos/<owner>/<repo>/vulnerability-alerts` returns `204` when enabled and
-  `404` when not.
+  `404` when not. Read that `404` carefully — the endpoint needs
+  Administration-read, which the machine-user PAT deliberately omits, so an
+  under-privileged token returns `404` as well. Check it with an admin-capable
+  credential, or read the state from Settings → Advanced Security instead.
 - `osvVulnerabilityAlerts=true` queries `osv.dev` independently of repository
   visibility and of any GitHub Advanced Security setting, but Renovate
   [surfaces OSV alerts for **direct dependencies only**](https://docs.renovatebot.com/configuration-options/#osvvulnerabilityalerts).
@@ -133,10 +136,25 @@ what each is good for:
   transitive ones.
 
 So a repository with Dependabot alerts disabled has no continuous transitive
-coverage at all, whatever `renovate.json` says. Its first signal is a red
-package-manager audit in CI, which arrives when somebody next opens a PR rather
-than when the advisory is published. Enabling the Dependabot alert feed is what
-closes that gap; OSV narrows the direct-dependency window alongside it.
+Renovate feed, whatever `renovate.json` says — nothing there will open a
+remediation PR for a transitive advisory. Enabling the Dependabot alert feed is
+what closes that gap; OSV narrows the direct-dependency window alongside it.
+
+Two other checks can catch a transitive advisory, and neither replaces the feed.
+The package-manager audit in CI is immediate but PR-triggered, so it reports
+when somebody next opens a PR rather than when the advisory is published — which
+is exactly how a batch of transitive advisories can surface inside an unrelated
+change.
+[% if snyk_scan_schedule != 'off' %]
+A scheduled Snyk SCA scan (`snyk_scan_schedule` is `[[ snyk_scan_schedule ]]`
+here, see below) does run on its own clock and does see transitive packages, so
+it is usually the first signal — but it needs `SNYK_TOKEN` configured to run at
+all.
+[% else %]
+A scheduled Snyk SCA scan would run on its own clock and would see transitive
+packages, but `snyk_scan_schedule` is `off` for this project, so no such scan
+exists here.
+[% endif %]
 
 ### Snyk second opinion and scheduling
 
