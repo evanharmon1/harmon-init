@@ -18,6 +18,16 @@ repo="$(git rev-parse --show-toplevel)"
 # scripts/test-template.sh.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
+# Neutralize the caller's global/system git config for everything below. Without
+# this the fixture is not hermetic: a developer with an absolute
+# `core.hooksPath` set globally makes `git rev-parse --git-path hooks` resolve
+# OUTSIDE the fixture, and installing hooks for the fixture would then write
+# into their real hooks directory — a test that runs inside `task verify` must
+# never be able to do that.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 fail() {
     echo "TEST FAIL: $*" >&2
     exit 1
@@ -96,6 +106,10 @@ git -C "$fixture" add -A
 git -C "$fixture" commit -qm "chore: fixture"
 (cd "$fixture" && lefthook install >/dev/null 2>&1) || fail "could not install hooks in the fixture"
 shared_hooks="$(cd "$fixture" && git rev-parse --path-format=absolute --git-path hooks)"
+case "$shared_hooks" in
+"$test_tmp"/*) : ;;
+*) fail "the fixture's hooks directory escaped the sandbox: $shared_hooks" ;;
+esac
 
 new() { (cd "$fixture" && bash scripts/worktree-new.sh "$@"); }
 rm_wt() { (cd "$fixture" && bash scripts/worktree-rm.sh "$@"); }
@@ -180,8 +194,46 @@ new outer >/dev/null || fail "worktree-new.sh failed creating the outer tree"
 [ -d "$fixture/.worktrees/inner" ] ||
     fail "worktree-new.sh did not anchor .worktrees/ to the main worktree"
 refute_exists "$fixture/.worktrees/outer/.worktrees" "worktree-new.sh nested .worktrees/ inside a linked worktree"
+echo "==> a tree created from inside a worktree bases on the MAIN head, not the caller's"
+printf 'outer work\n' >"$fixture/.worktrees/outer/OUTER.md"
+git -C "$fixture/.worktrees/outer" add OUTER.md
+LEFTHOOK=0 git -C "$fixture/.worktrees/outer" commit -qm "chore: outer-only commit"
+(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh sibling >/dev/null) ||
+    fail "worktree-new.sh failed creating a sibling from inside a worktree"
+main_head="$(git -C "$fixture" rev-parse HEAD)"
+sibling_head="$(git -C "$fixture/.worktrees/sibling" rev-parse HEAD)"
+[ "$sibling_head" = "$main_head" ] ||
+    fail "the sibling tree stacked on the caller's branch instead of the main worktree's HEAD"
+
+echo "==> --base HEAD still stacks deliberately"
+(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh stacked --base HEAD >/dev/null) ||
+    fail "worktree-new.sh --base HEAD failed"
+outer_head="$(git -C "$fixture/.worktrees/outer" rev-parse HEAD)"
+[ "$(git -C "$fixture/.worktrees/stacked" rev-parse HEAD)" = "$outer_head" ] ||
+    fail "--base HEAD did not stack on the caller's HEAD"
+rm_wt stacked >/dev/null || fail "cleanup of the stacked tree failed"
+rm_wt sibling >/dev/null || fail "cleanup of the sibling tree failed"
 rm_wt inner >/dev/null || fail "cleanup of the inner tree failed"
-rm_wt outer >/dev/null || fail "cleanup of the outer tree failed"
+rm_wt outer --force >/dev/null || fail "cleanup of the outer tree failed"
+
+# ── remote-only branches are attached, not recreated ─────────────────
+echo "==> a branch that exists only on a remote is tracked, not recreated at base"
+upstream="$test_tmp/upstream.git"
+git init -q --bare "$upstream"
+git -C "$fixture" remote add origin "$upstream"
+git -C "$fixture" push -q origin HEAD:refs/heads/remote-only
+git -C "$fixture" fetch -q origin
+remote_tip="$(git -C "$fixture" rev-parse refs/remotes/origin/remote-only)"
+printf 'diverge\n' >"$fixture/DIVERGE.md"
+git -C "$fixture" add DIVERGE.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: move main ahead of the remote branch"
+new remote-only >/dev/null || fail "worktree-new.sh failed for a remote-only branch"
+[ "$(git -C "$fixture/.worktrees/remote-only" rev-parse HEAD)" = "$remote_tip" ] ||
+    fail "worktree-new.sh recreated the remote-only branch at the base instead of tracking it"
+[ "$(git -C "$fixture" rev-parse --abbrev-ref remote-only@{upstream} 2>/dev/null)" = "origin/remote-only" ] ||
+    fail "worktree-new.sh did not set up tracking for the remote-only branch"
+rm_wt remote-only >/dev/null || fail "cleanup of the remote-only tree failed"
+git -C "$fixture" branch -D remote-only >/dev/null 2>&1 || true
 
 # ── name validation ──────────────────────────────────────────────────
 echo "==> path-escaping and empty names are rejected"

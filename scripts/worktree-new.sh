@@ -89,7 +89,6 @@ esac
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
 [ -n "$branch" ] || branch="$name"
-[ -n "$base" ] || base="HEAD"
 
 # Anchor .worktrees/ to the MAIN worktree, never to whichever linked tree the
 # caller happens to be standing in — otherwise running this from inside a
@@ -98,6 +97,17 @@ git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 # record is always the main worktree.
 main_root="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10); exit}')"
 [ -n "$main_root" ] && [ -d "$main_root" ] || die "could not resolve the main worktree root"
+
+# The default base is the MAIN worktree's HEAD, not the caller's. Running this
+# from inside a feature worktree is supported, and a bare `HEAD` there would
+# silently stack the new branch on the caller's commits — the new tree would
+# look independent while carrying unrelated work into its PR. Pass
+# `--base HEAD` to stack deliberately.
+if [ -z "$base" ]; then
+    base="$(git -C "$main_root" rev-parse --verify --quiet HEAD || true)"
+    [ -n "$base" ] ||
+        die "the main worktree has no commits yet — make an initial commit, or pass --base <ref>"
+fi
 
 tree="$main_root/.worktrees/$name"
 if [ -e "$tree" ]; then
@@ -130,9 +140,30 @@ mkdir -p "$main_root/.worktrees"
 # Attach to the branch when it already exists, create it otherwise. git itself
 # refuses (loudly) when the branch is already checked out in another worktree,
 # which is exactly the right failure.
+#
+# A branch that exists only on a remote counts as existing. After a fresh clone
+# every branch but the default one is remote-only, so treating that as "new"
+# would create a same-named local branch at the base commit and silently drop
+# the remote branch's work — the push that follows diverges or is rejected.
+# `git worktree add <path> <name>` does this DWIM itself; passing -b opts out of
+# it, so the remote lookup has to be explicit.
+remote_ref=""
+if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+    remote_matches="$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch")"
+    remote_count="$(printf '%s' "$remote_matches" | grep -c . || true)"
+    if [ "$remote_count" -gt 1 ]; then
+        die "branch '$branch' exists on more than one remote — pass --branch/--base to choose explicitly"
+    fi
+    [ "$remote_count" -eq 1 ] && remote_ref="$remote_matches"
+fi
+
 if git show-ref --verify --quiet "refs/heads/$branch"; then
     echo "==> Attaching existing branch '$branch'"
     git worktree add "$tree" "$branch"
+elif [ -n "$remote_ref" ]; then
+    echo "==> Creating branch '$branch' tracking ${remote_ref#refs/remotes/}"
+    git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
+    branch_created=1
 else
     git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
         die "base ref '$base' does not resolve to a commit"

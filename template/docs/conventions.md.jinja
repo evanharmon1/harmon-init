@@ -34,9 +34,13 @@ it points here.
   tree anywhere else and those excludes stop applying.
 - **Create them with `task worktree:new -- <name>`**, never a bare
   `git worktree add`. The task (`scripts/worktree-new.sh`) creates or attaches
-  the branch, installs **this tree's** dependencies, proves the git hooks fire
-  inside it, prints the ready path, and rolls the tree back if any of that
-  fails. `--branch`, `--base`, and `--no-install` cover the variations.
+  the branch — including one that exists only on a remote, which it tracks
+  rather than recreating — installs **this tree's** dependencies, proves the
+  git hooks fire inside it, prints the ready path, and rolls the tree back if
+  any of that fails. A new branch is based on the **main worktree's HEAD**, not
+  the caller's, so running the task from inside a worktree does not silently
+  stack the new branch on that one; `--base HEAD` stacks deliberately.
+  `--branch` and `--no-install` cover the rest.
   One entrypoint means a second agent session, a terminal multiplexer, or a
   human all get the same tree instead of each rediscovering the setup.
 - **Remove them with `task worktree:rm -- <name>`** (`--force` to discard
