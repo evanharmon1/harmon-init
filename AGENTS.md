@@ -378,10 +378,12 @@ non-draft PR must always mean the automated work is done.
   before accepting the result or reporting green, re-`check` the cycle and
   re-read `headRefOid`; a changed head invalidates the result and starts
   a new current-head cycle.
-  One disposition the script cannot express is settled in prose: a
-  **top-level** comment carrying a badged finding has no reply linkage, so
-  once it lands, no adjudication can make that head's `check` come back
-  clean — findings outrank a later clean result on the same head. When every
+  One disposition the script cannot express is settled in prose: a badged
+  finding stated **outside an inline thread** — in a top-level comment or in
+  a review's own body — has no reply linkage, so once it lands, no
+  adjudication can make that head's `check` come back clean: findings outrank
+  a later clean result on the same head, and the script's settled set reaches
+  only inline comments. When every
   such finding is adjudicated without a code change (declined with evidence,
   or filed as follow-up work), record each disposition as a PR comment and
   treat the cycle as **terminal with findings settled** for that head; the
@@ -439,7 +441,7 @@ review only when **all** of the following hold for its current `headRefOid`:
   taken moments after the push reports nothing having run rather than nothing
   to run.
 - The current-head Codex cycle above is terminal and clean, or terminal with
-  every finding settled under the top-level disposition rule above (Codex review is
+  every finding settled under the no-thread disposition rule above (Codex review is
   enabled here; where it is off, this condition drops out).
 - Every review finding is fixed, declined with evidence, or filed as follow-up
   work.
