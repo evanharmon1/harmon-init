@@ -760,6 +760,11 @@ tasks:
     cmds:
       - ./scripts/status.sh gh
 
+  status:creds:
+    desc: Local credential section (gh, Codex, Claude Code logins — local probes, no network)
+    cmds:
+      - ./scripts/status.sh creds
+
   status:code:
     desc: Codebase stats section
     cmds:

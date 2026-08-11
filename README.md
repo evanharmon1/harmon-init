@@ -188,5 +188,6 @@ and canonical AGENTS.md. Projects generated from v2 should be re-templated
 | `task codex:gate:enable` | Automatic Claude → Codex stop-gate for this repo + machine (also `:disable` / `:status`) |
 | `task install` | Brewfile deps + lefthook hooks |
 | `task release:patch` | Tag + GitHub release (also `:minor`/`:major`) |
-| `task status` | Project dashboard (also `status:git`/`:gh`/`:code`/`:env`) |
+| `task status` | Project dashboard (also `status:git`/`:gh`/`:creds`/`:code`/`:env`) |
+| `task status:creds` | Local credential logins (gh, Codex, Claude Code) — local probes, no network; also run at session start |
 | `task status:setup` | Setup audit: local credentials, GitHub config, toolchain, devcontainer, dev env |
