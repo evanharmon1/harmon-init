@@ -601,9 +601,12 @@ in the abstract and wrong for the artifact. A documentation guide that has
 grown a hand-rolled process supervisor earns real, defensible P1s about per-run
 state, process-group supervision, and PID reuse; every one of them becomes moot
 when the recipe is deleted instead of hardened. That is not giving up on the
-findings: the stage exits on **rounds that adjudicate to zero P0/P1**, and an
-adjudication does not care whether a finding was answered or made
-inapplicable — a mooted finding adjudicates to nothing left. Name the mooted findings
+findings — and it is not a way to re-score the round that raised them. A
+confirmed P0/P1 keeps its adjudicated priority for its own round whether the
+remedy is a fix or a deletion; the remedy either way is input to the **next**
+round, and only that later round's review of the changed tree counts toward
+convergence. What deletion buys is that the next round finds nothing left to
+re-raise. Name the mooted findings
 in the adjudication table *and* in the message of the commit that removes the
 code — the table is scrollback, but the commit is why the code is gone, and it
 is the record a later round or a different session can still find.

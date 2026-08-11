@@ -284,10 +284,13 @@ The **scaffolding damper** is what replaces the cap as the first line of
 defense. At round 2 — the earliest round that can show the pattern — say on
 the table, for each finding, whether its subject exists only because an earlier
 round of the same stage added it. Where it does, adjudicate it with one of two
-dispositions written down: delete the scaffolding, which moots the finding and
-still counts toward convergence, or state that the code is in scope and why the
-change needs it. Reflexively hardening the previous round's fix is the failure
-mode; naming it on the table is the check.
+dispositions written down: delete the scaffolding, or state that the code is
+in scope and why the change needs it. A deletion does not re-score the round
+that flagged the code — the finding keeps its adjudicated priority there, and
+it is the **next** round, reviewing the tree without it, that finds nothing
+left to re-raise and counts toward convergence. Reflexively hardening the
+previous round's fix is the failure mode; naming it on the table is the
+check.
 
 Two things do not move. The **4-round cap** per stage stands, and persistent
 P0/P1 disagreement at the cap is escalated rather than iterated on. And the
