@@ -56,8 +56,8 @@ fi
 # (harmon-init#792) with nothing else in the path bounding the wait. Every
 # legitimate worktree operation here completes in single-digit seconds, so
 # 120s is far above the real ceiling while still bounding a hang.
-WORKTREE_OP_TIMEOUT=120
-WORKTREE_OP_KILL_GRACE=10
+WORKTREE_OP_TIMEOUT=${WORKTREE_OP_TIMEOUT:-120}
+WORKTREE_OP_KILL_GRACE=${WORKTREE_OP_KILL_GRACE:-10}
 
 refute_exists() {
     # Spelled out rather than `[ -e X ] && fail ...`: the negative case of an
@@ -913,5 +913,38 @@ refute_exists "$fixture/.worktrees/missing-pnpm" "worktree-new.sh left a half-pr
 if git -C "$fixture" show-ref --verify --quiet refs/heads/missing-pnpm; then
     fail "worktree-new.sh left the branch behind after rolling back"
 fi
+
+# The bound itself needs a test, or both protections above could regress in
+# silence: nothing else in this suite ever exceeds the deadline or ignores
+# TERM. The stub traps TERM and sleeps, so it can only die to the KILL that
+# `-k` schedules, and the assertions below check all three properties that
+# matter — it is killed promptly, it says why, and it is FATAL rather than
+# passing for the expected-failure assertion that follows a refusal.
+echo "==> a hung worktree operation is killed, explained, and fatal"
+cp "$fixture/scripts/worktree-new.sh" "$test_tmp/worktree-new.sh.bak"
+cat >"$fixture/scripts/worktree-new.sh" <<'HANGSTUB'
+#!/usr/bin/env bash
+trap '' TERM
+sleep 300
+HANGSTUB
+chmod +x "$fixture/scripts/worktree-new.sh"
+hang_log="$test_tmp/hang.log"
+hang_start=$(date +%s)
+if (
+    WORKTREE_OP_TIMEOUT=2
+    WORKTREE_OP_KILL_GRACE=1
+    new hang-tree
+) >"$hang_log" 2>&1; then
+    fail "a hung worktree:new reported success"
+fi
+hang_elapsed=$(($(date +%s) - hang_start))
+[ "$hang_elapsed" -lt 30 ] ||
+    fail "the hung operation was not killed promptly (${hang_elapsed}s) — is -k still passed?"
+grep -q 'timed out after' "$hang_log" ||
+    fail "the timeout emitted no diagnostic naming the operation"
+grep -q 'TEST FAIL' "$hang_log" ||
+    fail "a timeout must be fatal, not returned as an ordinary failure"
+cp "$test_tmp/worktree-new.sh.bak" "$fixture/scripts/worktree-new.sh"
+chmod +x "$fixture/scripts/worktree-new.sh"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
