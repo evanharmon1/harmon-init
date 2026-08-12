@@ -131,6 +131,14 @@ for dir in /home/vscode/.codex /home/vscode/.claude /home/vscode/.gemini \
     chmod 700 "$dir"
 done
 
+# --- Persist ~/.claude.json into the ~/.claude volume ---
+# MUST run before anything below that can spawn `claude` (the onboarding seed,
+# the herdr integration install, and the agent-deck conductor setup all can).
+# A `claude` launched with no symlink in place writes a fresh, near-empty REAL
+# file at ~/.claude.json, which post-start would then have moved OVER the
+# persisted 38 KB of account state. See link-claude-json.sh.
+bash .devcontainer/scripts/link-claude-json.sh
+
 # --- Claude Code onboarding seed ---
 # Pre-seed ~/.claude/.claude.json so fresh containers skip the onboarding
 # wizard (upstream issue: https://github.com/anthropics/claude-code/issues/8938).
@@ -255,9 +263,17 @@ fi
 # but the devcontainer Python feature (3.14) replaces python3 on the PATH.
 pip install --quiet toml aiogram 2>/dev/null || true
 
-# Set up conductor if not already present (named after this repo)
+# Set up conductor if not already present (named after this repo).
+#
+# agent-deck creates conductors under the XDG data dir
+# (~/.local/share/agent-deck/conductor/<name>), NOT under ~/.agent-deck — which
+# is why the legacy-only guard never matched and setup re-ran on EVERY create.
+# That re-run spawns a `claude` process, and before link-claude-json.sh above
+# it was the thing that clobbered the persisted ~/.claude.json. Check both
+# paths (XDG first, legacy second) so setup is skipped if either exists.
 REPO_NAME="$(basename "$PWD")"
-if [ ! -d "$HOME/.agent-deck/conductor/$REPO_NAME" ]; then
+if [ ! -d "$HOME/.local/share/agent-deck/conductor/$REPO_NAME" ] &&
+    [ ! -d "$HOME/.agent-deck/conductor/$REPO_NAME" ]; then
     echo "==> Setting up agent-deck conductor '$REPO_NAME'..."
     echo "n" | agent-deck conductor setup "$REPO_NAME" \
         --description "$REPO_NAME devcontainer conductor" \

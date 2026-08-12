@@ -341,6 +341,13 @@ rather than deleting it, which is why this is not done by evicting the names in
 [architecture/security.md](../architecture/security.md) explains why that is the
 trade rather than an oversight.
 
+If you find yourself logging in far more often than you rebuild, the problem is
+not the missing volume — it is that something is **recreating** the container
+behind your back. Chase that instead; see
+[Attach paths and container managers](#attach-paths-and-container-managers), and
+[decisions/0004](../decisions/0004-operator-gh-login-in-the-dev-devcontainer.md)
+for why a `gh-config-*` volume is not the fix.
+
 Nothing fails hard before you log in. `post-create` prints the commands above,
 sibling repos are skipped with a warning (re-run
 `bash .devcontainer/scripts/bootstrap-related-repos.sh` afterwards), and
@@ -495,6 +502,100 @@ repo** (one template serves every repo). To stand this repo up in Coder:
 > `ghcr.io/evanharmon1/harmon-devcontainer` toolchain image (pinned by
 > immutable `tag@digest`), so no registry credential is needed for the base —
 > only the repo's own `-devcontainer` cache image matters.
+
+## Attach paths and container managers
+
+**Two different managers can attach VS Code to the same dev container**, and
+they are not interchangeable:
+
+| Manager | How you start it | `REMOTE_CONTAINERS` | `devcontainer.json` `customizations.vscode` |
+|---|---|---|---|
+| **Dev Containers extension** | "Dev Containers: Reopen in Container" | `true` | applied |
+| **Coder devcontainer integration** | the Coder UI **VS Code** button, or the `coder` CLI | unset | **not** applied |
+
+That second row is the one that surprises people. A Coder-attached window is a
+perfectly good shell in the right container, but nothing in
+`customizations.vscode` reached it — settings, and the extension list, are
+whatever your Coder-side configuration provides. `post-create-common.sh` already
+branches on `REMOTE_CONTAINERS` for the git-credential handling, so the two
+paths differ in mechanism even where they agree on identity.
+
+Triage a suspect window with one line:
+
+```sh
+hostname; echo "RC=$REMOTE_CONTAINERS CODER=$CODER LANG=$LANG"; readlink -f ~/.claude.json
+```
+
+- `hostname` — which container you are actually in. A window attached to the
+  *wrong* target is the failure that looks like everything else.
+- `RC=` / `CODER=` — which manager attached you, per the table above.
+- `LANG=` — an empty or `POSIX` value is the usual cause of mangled glyphs and
+  sort order.
+- `readlink -f ~/.claude.json` — must resolve to `~/.claude/.claude.json`. If it
+  resolves to itself, the symlink is missing and Claude Code state is **not**
+  being persisted.
+
+### Silent recreation
+
+A "reattach" can silently **recreate** the container rather than reconnect to
+it: `postCreateCommand` runs again, and anything not on a named volume is gone.
+Two managers watching one workspace makes this more likely, and a config file
+whose mtime changes on every connect is enough to trigger it — Coder's
+integration reads a changed `devcontainer.env` as a dirty config. That is why
+`scripts/init-env.sh` is **idempotent**: it composes the new env-file content in
+a temp file, compares it, and skips the write entirely when nothing changed, so
+an unchanged file keeps its mtime.
+
+Recognizing a recreation after the fact:
+
+- fresh mtimes on `~/.zshrc` and `~/.bashrc` (post-create rewrote the source
+  lines);
+- exactly one log directory under `~/.vscode-server/data/logs/` — a
+  long-running container accumulates several;
+- `gh auth status` in the **dev** profile reporting no login. This is the most
+  visible symptom, and the easiest to misread: `~/.config/gh` is deliberately on
+  no volume, so re-authenticating after a *genuine* rebuild is the intended cost
+  — but re-authenticating when you did not rebuild anything is this bug, not that
+  trade;
+- anything under `~/` that is not on a named volume reverted to image defaults.
+
+Nothing here is data loss by design: agent state, shell history, and zoxide data
+all sit on named volumes precisely so a recreation is survivable, and
+`~/.claude.json` is symlinked onto one for the same reason (below). What is lost
+is container-local scratch — and, in `dev/`, the `gh` login, which is on no
+volume by decision rather than by omission
+([decisions/0004](../decisions/0004-operator-gh-login-in-the-dev-devcontainer.md)).
+That makes the login a useful **canary**: a re-auth prompt you did not expect is
+the cheapest signal that a recreation happened. The fix for re-authenticating too
+often is to stop the silent recreations, not to persist a plaintext token.
+
+If the prompt draws boxes or run-together segments in a Coder-attached window,
+that is the client-side Nerd Font issue in
+[troubleshooting.md](troubleshooting.md), not a container fault: the font must be
+set at **user** scope on the client, because a Coder window never applies the
+devcontainer's `customizations.vscode` and we deliberately do not ship
+`terminal.integrated.fontFamily` (harmon-init#535).
+
+### Why `~/.claude.json` is a symlink
+
+Claude Code keeps account and session state — the OAuth account, subscription
+linkage, remote-control registration, per-project history — in `~/.claude.json`,
+which sits in the home directory, **outside** the persisted `~/.claude/` volume.
+The lifecycle therefore symlinks `~/.claude.json` → `~/.claude/.claude.json` so
+that state lands on the volume.
+
+The migration is deliberately non-destructive
+(`.devcontainer/scripts/link-claude-json.sh`), and the failure it prevents is
+worth knowing. Anything that launches `claude` *before* the symlink exists makes
+Claude Code write a fresh, near-empty **real** file at `~/.claude.json` — little
+more than a trust-dialog acceptance. Post-start then used to `mv` that stub over
+the persisted copy, so a container recreation logged you out, dropped plan
+detection to usage credits, and broke remote-control session resume. The helper
+now runs **early** in post-create, before anything that can spawn `claude`, and
+the volume copy always wins: a stray file is deep-merged *into* it (contributing
+only keys the volume lacks), and if it cannot be merged safely it is parked
+beside the volume copy as a timestamped `.bak` rather than either side being
+lost. `readlink -f ~/.claude.json` above is the one-second check that it worked.
 
 ## Working on related repos
 

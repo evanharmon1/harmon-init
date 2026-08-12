@@ -17,13 +17,10 @@ done
 # Claude Code stores interactive session state in ~/.claude.json (in the home
 # dir, outside the ~/.claude/ volume). Without this, interactive `claude`
 # forces a full OAuth login after every rebuild even though credentials in
-# ~/.claude/.credentials.json are valid.
-if [ -d "$HOME/.claude" ] && [ ! -L "$HOME/.claude.json" ]; then
-    if [ -f "$HOME/.claude.json" ]; then
-        mv "$HOME/.claude.json" "$HOME/.claude/.claude.json"
-    fi
-    ln -sfn "$HOME/.claude/.claude.json" "$HOME/.claude.json"
-fi
+# ~/.claude/.credentials.json are valid. post-create runs the same helper
+# EARLY, before anything that can spawn `claude`; see the script for why a
+# stray real file is merged into the volume copy rather than moved over it.
+bash .devcontainer/scripts/link-claude-json.sh
 
 # --- Enable Claude Code Remote Control for every interactive session ---
 # Sets remoteControlAtStartup=true so agent-deck-spawned `claude` sessions
@@ -69,9 +66,14 @@ fi
 # Start the conductor session if it exists but is stopped.
 # Check for "stopped" specifically — the previous "! grep running" approach
 # was fooled by the bridge's status also appearing in conductor status output.
+#
+# Conductor location: agent-deck creates conductors under the XDG data dir
+# (~/.local/share/agent-deck/conductor/<name>); ~/.agent-deck/conductor is the
+# legacy location. Accept either, matching post-create-common.sh's setup guard.
 REPO_NAME="$(basename "$PWD")"
 if command -v agent-deck &>/dev/null &&
-    [ -d "$HOME/.agent-deck/conductor/$REPO_NAME" ] &&
+    { [ -d "$HOME/.local/share/agent-deck/conductor/$REPO_NAME" ] ||
+        [ -d "$HOME/.agent-deck/conductor/$REPO_NAME" ]; } &&
     agent-deck conductor status "$REPO_NAME" 2>/dev/null | grep -qi "stopped"; then
     agent-deck session start "conductor-$REPO_NAME" 2>/dev/null &
     echo "==> Conductor $REPO_NAME started"
