@@ -57,6 +57,7 @@ fi
 # legitimate worktree operation here completes in single-digit seconds, so
 # 120s is far above the real ceiling while still bounding a hang.
 WORKTREE_OP_TIMEOUT=120
+WORKTREE_OP_KILL_GRACE=10
 
 refute_exists() {
     # Spelled out rather than `[ -e X ] && fail ...`: the negative case of an
@@ -152,19 +153,29 @@ case "$shared_hooks" in
 esac
 (cd "$fixture" && lefthook install >/dev/null 2>&1) || fail "could not install hooks in the fixture"
 
+# `-k` is not optional: without it `timeout` sends TERM at the deadline and
+# then waits forever if the process ignores it — which is the very hang this
+# bound exists to stop. The grace period converts that into a KILL.
+#
+# A timeout is FATAL, never a return value. Many cases below assert that these
+# wrappers fail (`if new …; then fail …; fi`), usually with output redirected
+# to /dev/null, so a returned 124 would be indistinguishable from the expected
+# refusal: the hang would read as a pass, and the state assertions after it
+# would agree because the operation never ran. `fail` exits, so a deadlock can
+# only ever end the suite loudly.
 new() {
     status=0
-    (cd "$fixture" && "$TIMEOUT_BIN" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh "$@") || status=$?
+    (cd "$fixture" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh "$@") || status=$?
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-        echo "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)" >&2
+        fail "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
     fi
     return "$status"
 }
 rm_wt() {
     status=0
-    (cd "$fixture" && "$TIMEOUT_BIN" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh "$@") || status=$?
+    (cd "$fixture" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh "$@") || status=$?
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-        echo "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)" >&2
+        fail "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
     fi
     return "$status"
 }
