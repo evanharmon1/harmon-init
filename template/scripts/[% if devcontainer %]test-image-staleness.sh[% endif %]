@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# test-image-staleness.sh — unit-test the image-staleness warning.
+#
+# The helper's value is entirely in WHEN it speaks. A check that warns on a
+# fresh rebuild trains the operator to ignore it, and a check that stays quiet
+# on a six-week-old image is the bug the warning exists to fix — so every case
+# here asserts silence-or-noise plus a zero exit, never the exact wording.
+#
+# No container and no image: the helper compares two directories given to it by
+# env var, so each case is a pair of throwaway fixture trees. The real defaults
+# are exercised in a live container, not here. Run via `task test:image-staleness`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+helper=".devcontainer/scripts/check-image-staleness.sh"
+
+[ -r "$helper" ] || {
+    echo "TEST FAIL: $helper not found" >&2
+    exit 1
+}
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+tmp_root="$(mktemp -d -t harmon-image-staleness-XXXXXX)"
+trap 'rm -rf "$tmp_root"' EXIT
+
+# run_helper <baked> <checkout> — capture stdout+stderr and the exit code.
+# The exit code is captured explicitly because `set -e` here would otherwise
+# abort the suite on the very failure a case is trying to report.
+out=""
+rc=0
+run_helper() {
+    set +e
+    out="$(DEVCONTAINER_BAKED_CONFIG_DIR="$1" DEVCONTAINER_REPO_CONFIG_DIR="$2" bash "$helper" 2>&1)"
+    rc=$?
+    set -e
+}
+
+# fixture <label> — a baked/checkout pair holding the same three files, one of
+# them nested, so a case only has to describe how it diverges from clean.
+fixture() {
+    local root="${tmp_root}/$1"
+    if [ -e "$root" ]; then
+        echo "TEST BUG: fixture '$1' reused" >&2
+        exit 1
+    fi
+    mkdir -p "$root/baked/claude-hooks" "$root/checkout/claude-hooks"
+    local side
+    for side in baked checkout; do
+        printf 'palette = "x"\n' >"$root/$side/starship.toml"
+        printf 'alias k=kubectl\n' >"$root/$side/shell-aliases.sh"
+        printf 'echo hook\n' >"$root/$side/claude-hooks/session-start-context.sh"
+    done
+    printf '%s' "$root"
+}
+
+# ---- 1. identical trees: a freshly rebuilt image says nothing ----
+
+echo "==> identical trees produce no output"
+root="$(fixture identical)"
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "identical trees exited ${rc}, not 0"
+[ -z "$out" ] || fail "identical trees produced output: ${out}"
+
+# ---- 2. modified + added + removed: all three shapes are drift ----
+# A modified file is the obvious one. The other two matter because the config
+# set GROWS: a file added to the checkout after the build, and one deleted from
+# it, are both "this image was built from a different repo state" — and a
+# hardcoded file list would notice neither.
+
+echo "==> a modified, an added, and a removed file are all counted"
+root="$(fixture drift)"
+printf 'palette = "y"\n' >"$root/checkout/starship.toml"            # modified
+printf 'echo new\n' >"$root/checkout/claude-hooks/protect-files.sh" # added since the build
+rm "$root/checkout/shell-aliases.sh"                                # removed since the build
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "drift exited ${rc} — the warning must never break the lifecycle"
+[ -n "$out" ] || fail "drift produced no warning at all"
+printf '%s\n' "$out" | grep -q 'image is stale: 3 ' ||
+    fail "expected a count of 3 in the summary line, got: ${out}"
+printf '%s\n' "$out" | grep -q 'rebuild' ||
+    fail "the summary line does not name the remedy: ${out}"
+for name in starship.toml protect-files.sh shell-aliases.sh; do
+    printf '%s\n' "$out" | grep -q "$name" || fail "the drifted file ${name} is not named: ${out}"
+done
+# Names only, never contents — this output lands in a lifecycle log, and the
+# config it compares references tokens, hostnames, and machine paths.
+if printf '%s\n' "$out" | grep -q 'palette'; then
+    fail "the warning printed file CONTENTS: ${out}"
+fi
+
+# ---- 3. no baked directory: absence is not staleness ----
+# True outside the container and in an image built without this convention.
+# Warning there would be noise nobody can act on.
+
+echo "==> a missing baked directory is silent, not a warning"
+root="$(fixture nobaked)"
+rm -rf "$root/baked"
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "a missing baked directory exited ${rc}, not 0"
+[ -z "$out" ] || fail "a missing baked directory produced output: ${out}"
+
+echo "==> a missing checkout directory is silent too"
+root="$(fixture nocheckout)"
+rm -rf "$root/checkout"
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "a missing checkout directory exited ${rc}, not 0"
+[ -z "$out" ] || fail "a missing checkout directory produced output: ${out}"
+
+echo "image-staleness: all cases passed"

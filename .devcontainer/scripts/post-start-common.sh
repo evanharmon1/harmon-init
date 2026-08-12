@@ -86,6 +86,15 @@ if [ -f "$BRIDGE_PY" ] && ! pgrep -f "bridge.py" >/dev/null 2>&1; then
     echo "==> Agent-Deck Telegram bridge started (PID $!)"
 fi
 
+# --- Image staleness ---
+# Warn (only) when this container's image-baked config has drifted from the
+# checkout — the tell that the container predates the repo state and wants a
+# rebuild. Placed before the Tailscale block rather than at the very end so a
+# connect failure cannot skip it, and `|| true` because a diagnostic must never
+# be the thing that aborts the lifecycle it diagnoses (the helper exits 0 on its
+# own; this is the belt to that suspenders).
+bash .devcontainer/scripts/check-image-staleness.sh || true
+
 if [ "${DEVCONTAINER_TAILSCALE:-}" = "true" ]; then
     echo "==> Connecting to Tailscale..."
     if command -v tailscale &>/dev/null && sudo tailscale ip -4 >/dev/null 2>&1; then

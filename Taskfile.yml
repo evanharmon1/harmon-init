@@ -104,6 +104,7 @@ tasks:
       - task: test:worktree
       - task: test:statusline
       - task: test:link-claude-json
+      - task: test:image-staleness
       - task: test:codex-review
       - task: test:template
 
@@ -317,6 +318,11 @@ tasks:
     desc: Unit-test the ~/.claude.json persistence helper (no container needed)
     cmds:
       - ./scripts/test-link-claude-json.sh
+
+  test:image-staleness:
+    desc: Unit-test the image-staleness warning (no container needed)
+    cmds:
+      - ./scripts/test-image-staleness.sh
 
   test:devcontainer:image:
     desc: Build and smoke-test the canonical shared image and current repository overlay
@@ -803,6 +809,11 @@ tasks:
     desc: Environment info section
     cmds:
       - ./scripts/status.sh env
+
+  status:image:
+    desc: Warn if the container's image-baked config has drifted from the checkout (silent when fresh)
+    cmds:
+      - bash .devcontainer/scripts/check-image-staleness.sh
 
   status:setup:
     desc: Setup completeness audit (GitHub, toolchain, devcontainer, dev env)

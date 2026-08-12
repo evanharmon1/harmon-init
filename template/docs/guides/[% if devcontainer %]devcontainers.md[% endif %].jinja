@@ -526,6 +526,20 @@ whatever your Coder-side configuration provides. `post-create-common.sh` already
 branches on `REMOTE_CONTAINERS` for the git-credential handling, so the two
 paths differ in mechanism even where they agree on identity.
 
+**Standardize on the Dev Containers extension path.** It builds from the current
+checkout and applies `customizations.vscode`, so what you attach to matches what
+the repo says; the Coder button is a fallback that reattaches to whatever
+container already exists, however old the image it was built from. Alternating
+between the two flips you between a fresh container and a stale one, and the
+symptoms are content-level — an older starship prompt, a retired statusline —
+which read as client-side rendering faults and get diagnosed as such. The tell
+is the staleness warning: `post-start` and the `Environment` section of
+`task status` both run `.devcontainer/scripts/check-image-staleness.sh`, which
+diffs the image-baked `/usr/local/share/devcontainer-config/` against
+`.devcontainer/config/` and prints `image is stale: N baked configs differ from
+the checkout — rebuild the container` when they have drifted. It is warn-only
+and silent when clean, so seeing it at all means rebuild rather than debug.
+
 Triage a suspect window with one line:
 
 ```sh
