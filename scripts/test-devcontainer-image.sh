@@ -76,6 +76,7 @@ docker run --rm "$overlay" sh -eu -c '
     [ "$(id -un)" = vscode ]
     [ -f /etc/claude-code/managed-settings.json ]
     [ -x /etc/claude-code/hooks/protect-files.sh ]
+    [ -x /etc/claude-code/hooks/session-end-archive.sh ]
     [ -f /etc/codex/managed_config.toml ]
     [ -x /etc/codex/hooks/claude-compat.sh ]
     [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
