@@ -131,31 +131,18 @@ for dir in /home/vscode/.codex /home/vscode/.claude /home/vscode/.gemini \
     chmod 700 "$dir"
 done
 
-# --- Persist ~/.claude.json into the ~/.claude volume ---
-# MUST run before anything below that can spawn `claude` (the onboarding seed,
-# the herdr integration install, and the agent-deck conductor setup all can).
-# A `claude` launched with no symlink in place writes a fresh, near-empty REAL
-# file at ~/.claude.json, which post-start would then have moved OVER the
-# persisted 38 KB of account state. See link-claude-json.sh.
-bash .devcontainer/scripts/link-claude-json.sh
-
-# --- Claude Code onboarding seed ---
-# Pre-seed ~/.claude/.claude.json so fresh containers skip the onboarding
-# wizard (upstream issue: https://github.com/anthropics/claude-code/issues/8938).
-# post-start-common.sh creates ~/.claude.json → ~/.claude/.claude.json so
-# Claude Code finds this file on first launch. Guard: only seed on an empty
-# volume — existing session data (token, settings) must never be clobbered.
-CLAUDE_SESSION_FILE="$HOME/.claude/.claude.json"
-if [ -d "$HOME/.claude" ] && [ ! -f "$CLAUDE_SESSION_FILE" ]; then
-    echo '{"hasCompletedOnboarding":true}' >"$CLAUDE_SESSION_FILE"
-    chmod 0600 "$CLAUDE_SESSION_FILE"
-    echo "==> Seeded ~/.claude/.claude.json with hasCompletedOnboarding=true"
-fi
-
 # --- Coder persistent volume symlinks ---
 # Coder's envbuilder does not support devcontainer volume mounts, so on Coder
 # the template provides a single persistent volume at ~/.persistent/ and we
 # symlink the individual directories there.
+#
+# ORDERING IS LOAD-BEARING: this block must run BEFORE link-claude-json.sh and
+# the onboarding seed below. Until these symlinks exist, ~/.claude on Coder is
+# the container-local directory the ownership loop just created — the helper
+# and the seed would populate THAT, and this block's migration `cp -a` would
+# then copy the fresh stub over ~/.persistent/.claude/'s real account state:
+# the exact clobber this change exists to prevent, surviving on the one
+# platform whose persistence is wired by symlink instead of mount.
 if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
     echo "==> Coder detected — setting up persistent volume symlinks..."
     for dir in .claude .codex .gemini .agent-deck .shell-history; do
@@ -187,6 +174,31 @@ if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
         rm -rf "${HOME:?}/.config/herdr"
     fi
     ln -sfn "/home/vscode/.persistent/herdr" "$HOME/.config/herdr"
+fi
+
+# --- Persist ~/.claude.json into the ~/.claude volume ---
+# MUST run before anything below that can spawn `claude` (the onboarding seed,
+# the herdr integration install, and the agent-deck conductor setup all can) —
+# a `claude` launched with no symlink in place writes a fresh, near-empty REAL
+# file at ~/.claude.json, which post-start would then have moved OVER the
+# persisted 38 KB of account state. And it must run AFTER the Coder persistence
+# block above, so that on Coder ~/.claude already points into ~/.persistent
+# rather than at the container-local directory. See link-claude-json.sh.
+bash .devcontainer/scripts/link-claude-json.sh
+
+# --- Claude Code onboarding seed ---
+# Pre-seed ~/.claude/.claude.json so fresh containers skip the onboarding
+# wizard (upstream issue: https://github.com/anthropics/claude-code/issues/8938).
+# post-start-common.sh creates ~/.claude.json → ~/.claude/.claude.json so
+# Claude Code finds this file on first launch. Guard: only seed on an empty
+# volume — existing session data (token, settings) must never be clobbered.
+# Same ordering constraint as the helper: on Coder this must see the
+# persistent ~/.claude, not the pre-symlink local one.
+CLAUDE_SESSION_FILE="$HOME/.claude/.claude.json"
+if [ -d "$HOME/.claude" ] && [ ! -f "$CLAUDE_SESSION_FILE" ]; then
+    echo '{"hasCompletedOnboarding":true}' >"$CLAUDE_SESSION_FILE"
+    chmod 0600 "$CLAUDE_SESSION_FILE"
+    echo "==> Seeded ~/.claude/.claude.json with hasCompletedOnboarding=true"
 fi
 
 # --- Herdr agent integrations ---

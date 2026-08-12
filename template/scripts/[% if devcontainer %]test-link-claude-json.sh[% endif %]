@@ -172,4 +172,25 @@ if [ ! -f "$home/.claude.json" ] || [ -L "$home/.claude.json" ]; then
 fi
 [ ! -e "$home/.claude" ] || fail "the helper created ~/.claude — that would strand state outside the volume"
 
+# ---- 6. post-create ordering: Coder persistence before helper before seed ----
+# On Coder, persistence is wired by SYMLINK inside post-create itself, not by a
+# mount that predates it. If the helper or the onboarding seed runs before the
+# Coder block, they populate the container-local ~/.claude and the block's
+# migration `cp -a` copies that stub over ~/.persistent/.claude/'s real account
+# state — the clobber this helper exists to prevent, reintroduced by line
+# order alone. Static assertion, since the ordering is the entire guarantee.
+
+echo "==> post-create wires Coder persistence before the helper and the seed"
+post_create=".devcontainer/scripts/post-create-common.sh"
+line_of() { grep -n "$1" "$post_create" | head -1 | cut -d: -f1; }
+coder_line="$(line_of 'Coder persistent volume symlinks')"
+helper_line="$(line_of 'link-claude-json\.sh$')"
+seed_line="$(line_of 'hasCompletedOnboarding')"
+[ -n "$coder_line" ] && [ -n "$helper_line" ] && [ -n "$seed_line" ] ||
+    fail "could not locate the Coder block, helper call, or onboarding seed in $post_create"
+[ "$coder_line" -lt "$helper_line" ] ||
+    fail "post-create runs link-claude-json.sh (line $helper_line) before the Coder persistence symlinks (line $coder_line) — on Coder the helper would populate the container-local ~/.claude"
+[ "$helper_line" -lt "$seed_line" ] ||
+    fail "post-create seeds onboarding (line $seed_line) before link-claude-json.sh (line $helper_line)"
+
 echo "link-claude-json: all cases passed"
