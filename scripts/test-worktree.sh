@@ -70,7 +70,33 @@ refute_exists() {
 # `pwd -P` because macOS mktemp hands back /var/... while git reports the
 # physical /private/var/... — the two must agree for the path assertions below.
 test_tmp="$(cd "$(mktemp -d -t harmon-init-worktree-XXXXXX)" && pwd -P)"
-trap 'rm -rf "$test_tmp"' EXIT
+# The sentinel lives OUTSIDE $test_tmp because the cleanup below removes that
+# directory, and this file has to outlive it to be read on the way out.
+WORKTREE_TIMEOUT_SENTINEL="$(mktemp -t harmon-init-worktree-timeout-XXXXXX)"
+rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+
+# A timeout must fail the SUITE, and `fail` alone cannot guarantee that: the
+# expected-failure cases run these wrappers inside `if ( … ); then` subshells,
+# where `exit 1` ends only the subshell and the `if` reads the non-zero status
+# as the refusal it was asserting. A hang would be accepted as a pass. The
+# sentinel escapes every subshell — it is a file, not an exit status — so
+# however the status is swallowed, the suite still ends non-zero and says why.
+worktree_exit() {
+    exit_status=$?
+    if [ -e "$WORKTREE_TIMEOUT_SENTINEL" ]; then
+        # Print what the sentinel HOLDS, not where it lives: it is removed
+        # immediately below, so a path would point at nothing by the time
+        # anyone read the message.
+        echo "TEST FAIL: $(cat "$WORKTREE_TIMEOUT_SENTINEL") — the operation was killed, not merely slow (harmon-init#792)" >&2
+        rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+        rm -rf "$test_tmp"
+        exit 1
+    fi
+    rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+    rm -rf "$test_tmp"
+    exit "$exit_status"
+}
+trap worktree_exit EXIT
 
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
@@ -167,6 +193,7 @@ new() {
     status=0
     (cd "$fixture" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh "$@") || status=$?
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+        echo "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $*" >"$WORKTREE_TIMEOUT_SENTINEL"
         fail "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
     fi
     return "$status"
@@ -175,6 +202,7 @@ rm_wt() {
     status=0
     (cd "$fixture" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh "$@") || status=$?
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+        echo "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $*" >"$WORKTREE_TIMEOUT_SENTINEL"
         fail "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
     fi
     return "$status"
@@ -944,6 +972,13 @@ grep -q 'timed out after' "$hang_log" ||
     fail "the timeout emitted no diagnostic naming the operation"
 grep -q 'TEST FAIL' "$hang_log" ||
     fail "a timeout must be fatal, not returned as an ordinary failure"
+# The property the subshell construct above would otherwise hide: the negative
+# cases run these wrappers exactly this way, so `fail` alone ends only the
+# subshell and the `if` accepts the non-zero status as the refusal it asserts.
+# The sentinel is what survives that, and it is what the EXIT trap reads.
+[ -e "$WORKTREE_TIMEOUT_SENTINEL" ] ||
+    fail "a timeout inside a subshell left no sentinel, so the suite could still exit 0"
+rm -f "$WORKTREE_TIMEOUT_SENTINEL"
 cp "$test_tmp/worktree-new.sh.bak" "$fixture/scripts/worktree-new.sh"
 chmod +x "$fixture/scripts/worktree-new.sh"
 
