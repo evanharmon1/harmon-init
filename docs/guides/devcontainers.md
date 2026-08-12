@@ -566,9 +566,14 @@ about which layer makes the *container* hop. The extension path, concretely:
 
    ```sh
    mkdir -p ~/bin
-   curl -fsSL https://raw.githubusercontent.com/evanharmon1/harmon-init/main/scripts/open-devcontainer.sh -o ~/bin/open-devcontainer
+   scp <workspace-host>:/workspaces/harmon-init/scripts/open-devcontainer.sh ~/bin/open-devcontainer
    chmod +x ~/bin/open-devcontainer
    ```
+
+   Copying from your own checkout — not `curl`ing a branch — is deliberate:
+   it installs exactly the reviewed version sitting next to the docs you are
+   reading, where a download from `main` would fetch whatever that branch
+   has become since.
 
    Then wrap the installed copy in whatever your fingers already reach for —
    `alias devbox='~/bin/open-devcontainer harmon-init'`, a Raycast script
