@@ -243,6 +243,22 @@ Creating the draft is a phase transition, not a terminal state, and every stop
 short of the readiness gate leaves the PR **draft** with a blocker report — a
 non-draft PR must always mean the automated work is done.
 
+**Round caps are resolved, not stated here.** The challenge, review, and
+shepherd stages below are each capped, but this file names no numbers: they
+live in [`.devflow.toml`](.devflow.toml) as `rigor` tiers, so there is one
+place to change them and a parity gate that catches a change made on only one
+side. Resolve in this order — an explicit instruction in this session, then a
+`rigor:*` label on the issue, then `default_rigor`, then a built-in 4 / 4 / 4
+if the file is absent. **Announce the resolved triple on entering the loop** —
+"rigor: deep (label) → challenge ≤5, review ≤5, shepherd 4" — and carry it into
+the PR body, so a later round or a different session can see which budget it is
+spending instead of inferring one. Everything else about these stages is
+policy rather than a parameter and does not vary by tier: the exit condition,
+the round-2 scaffolding checkpoint, the escalation rule, and the deferred-P2
+sidecar all hold identically at every rigor. A cap is a ceiling, never a quota
+— a stage that meets its exit condition on round 1 is done, whatever the tier
+allowed.
+
 - **Branch** — feature branch off `main`; never commit directly to `main`. For
   parallel or isolated work, take the branch in its own worktree via
   **`task worktree:new -- <name>`** (and `task worktree:rm -- <name>` when
@@ -275,8 +291,9 @@ non-draft PR must always mean the automated work is done.
   them to the PR (see "Deferring P2s" below). This loop is
   **self-referential** — the fixes you make in response to a round become the
   next round's input, so it can generate its own work indefinitely — and that
-  is what the cap defends against: max **4** challenge → fix → re-challenge
-  rounds; if P0/P1 findings persist, stop and escalate to Evan. A capped
+  is what the cap defends against: the resolved **challenge cap** bounds the
+  challenge → fix → re-challenge rounds; if P0/P1 findings persist at it, stop
+  and escalate to Evan. A capped
   final round that adjudicates to zero P0/P1 ends the stage by itself — its
   confirmation would be a run the cap forbids, and a clean last round is
   convergence, not the persisting disagreement escalation exists for.
@@ -296,8 +313,9 @@ non-draft PR must always mean the automated work is done.
 - **`task review`** — verification-checkpoint review; same adjudication, the
   same two-consecutive-adjudicated-clean exit condition counted over its own
   rounds, the same self-referential shape and so the
-  same reason for a cap, and the same background-and-poll handling, with its
-  own max **4** rounds. The two stages are counted separately: a converged
+  same reason for a cap, and the same background-and-poll handling, under
+  its own resolved **review cap**. The two stages are counted separately — and
+  capped separately, even where the tier gives them equal numbers: a converged
   challenge says nothing about review.
 - **`task ci`** — the full CI mirror; fix anything it catches.
 - **Open the draft PR** — conventional commit, push the branch,
@@ -317,7 +335,8 @@ non-draft PR must always mean the automated work is done.
   `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix
   matching — every SSH form needs its own mapping, hence all four).
-- **Shepherd the draft to ready for review (`/shepherd`, max 4 rounds).**
+- **Shepherd the draft to ready for review (`/shepherd`, under the resolved
+  shepherd cap).**
   `gh pr create --draft` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. The PR stays draft
@@ -425,8 +444,10 @@ non-draft PR must always mean the automated work is done.
   resolve halts the whole change rather than one loop, so it is not a licence
   to move on to the next stage either — a persistent P0/P1 at the challenge or
   review cap means wait for Evan, not open the PR anyway.
-  If checks still fail or findings remain after 4 rounds, stop and
-  summarize what's unresolved on the PR for Evan.
+  If checks still fail or findings remain at the shepherd cap, stop and
+  summarize what's unresolved on the PR for Evan. That cap does not vary by
+  rigor tier — it bounds other people's findings, not your own work, so
+  lowering it would abandon unanswered reviews rather than save effort.
   Where a **vendored** skill (`/shepherd`)
   states a different cap or exit condition, **this file wins** — the skills
   are synced from harmon-devkit on its own release cadence and can lag a
@@ -719,8 +740,9 @@ practice could spend every remaining round re-proving a change nobody still
 disputed. Two things ride along with the exit: every P2
 deferred during the stage must already be recorded in the sidecar (an exit
 that drops a P2 is not an exit), and round 2 owes the scaffolding checkpoint
-above. The caps are unchanged at **4** challenge iterations and **4** review
-iterations (challenge → fix → re-challenge, and likewise for review); if
+above. Each stage's cap is the one resolved from `.devflow.toml` per "Round
+caps are resolved, not stated here" in the Dev Loop above (challenge → fix →
+re-challenge, and likewise for review), counted separately per stage; if
 P0/P1 disagreement persists at the cap, stop and surface it to Evan instead
 of iterating further — escalation at the cap is for P0/P1 that **persist**,
 nothing else. Evan may always ask for more rounds — convergence is a
