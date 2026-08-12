@@ -94,12 +94,14 @@ rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 
 # The `rigor:*` family selects which round-cap tier in `.devflow.toml` an agent
 # works an issue under (AGENTS.md, "Round caps are resolved, not stated here").
-# It is a human input, like the foreman arming labels: an agent READS it and
-# never applies one to itself, because lowering rigor weakens a safety gate and
-# so needs an attributable actor. That is also why it is a label rather than a
-# project field — GitHub exposes no actor for a field change (ADR 0002 D-arming).
+# It is an input an agent READS and never applies to itself. Its authority is
+# exactly repo write access — anyone who can label an issue can retune its
+# budget — so it is advisory, not an authenticated gate; AGENTS.md requires a
+# resolved tier below `default_rigor` to be stated in the PR body, which keeps
+# a reduced budget visible to the human reviewer.
 # Labels are multi-select and nothing stops two being applied, so AGENTS.md
-# resolves a conflict fail-safe: the DEEPEST tier present wins.
+# resolves per stage by taking the HIGHEST cap present: a conflict can only
+# ever buy more review, never less, and no ranking of tier names is needed.
 
 # The model-centric agent vocabulary — `suggest:<family>` (advisory routing) and
 # `claim:<family>` (live ownership) — is rendered from the machine-readable agent

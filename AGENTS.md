@@ -250,12 +250,16 @@ place to change them and a parity gate that catches a change made on only one
 side. Resolve in this order — an explicit instruction in this session, then a
 `rigor:*` label on the issue, then `default_rigor`, then a built-in 4 / 4 / 4
 if the file is absent. GitHub labels are multi-select and nothing stops an
-issue carrying two, so resolve a conflict fail-safe: **the deepest tier present
-wins**, which errs toward more review rather than less, and a `rigor:` value
-that names no tier in the file is ignored rather than guessed at. An agent
-never applies one of these labels to itself — lowering rigor weakens a safety
-gate, so it takes an attributable human actor, which is also why the tier rides
-a label rather than a project field. **Announce the resolved triple on entering
+issue carrying two, so resolution is **per stage, taking the highest cap
+present**: a conflict can then only ever buy more review, never less, and no
+ranking of the tier names has to be agreed on anywhere. A `rigor:` value that
+names no tier in the file is ignored rather than guessed at. Treat the label as
+advisory input carrying exactly the authority of repo write access — anyone who
+can label an issue can retune its budget, the same way anyone who can push can
+edit `.devflow.toml`. An agent never applies one to itself, and **says so in
+the announcement and in the PR body whenever the resolved tier is below
+`default_rigor`**, so a reduced budget is visible to the human reviewer instead
+of silent. **Announce the resolved triple on entering
 the loop** — "rigor: `<tier>` (`<source>`) → challenge ≤`<n>`, review ≤`<n>`,
 shepherd `<n>`", filled in by reading the file rather than from memory — and
 carry it into the PR body, so a later round or a different session can see

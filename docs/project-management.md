@@ -415,10 +415,12 @@ families, color-coded by family; the starter set is created by
   grow from your ERD entities
 - **Rigor** — `rigor:light`, `rigor:standard`, `rigor:deep`: which round-cap
   tier in [`.devflow.toml`](../.devflow.toml) an agent works the issue under
-  (AGENTS.md, "Round caps are resolved, not stated here"). A human input an
-  agent reads and never self-applies — lowering rigor weakens a safety gate,
-  so it needs an attributable actor, which is also why it is a label and not a
-  project field. Two present resolves fail-safe: the deepest wins.
+  (AGENTS.md, "Round caps are resolved, not stated here"). An agent reads it
+  and never self-applies one. Its authority is exactly repo write access, so
+  it is advisory rather than an authenticated gate — AGENTS.md requires a tier
+  below `default_rigor` to be stated in the PR body, keeping a reduced budget
+  visible to the reviewer. Two present resolve per stage to the highest cap,
+  so a conflict can only ever buy more review.
 
 Two more families name **model intelligence** rather than a facet of the work,
 and their vocabulary is not hand-listed anywhere: it is rendered from
