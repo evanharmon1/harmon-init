@@ -535,6 +535,39 @@ prints `image is stale: N baked configs differ from the checkout — rebuild the
 container` when they have drifted. It is warn-only and silent when clean, so
 seeing it at all means rebuild rather than debug.
 
+### The standard flow, step by step
+
+Coder is still how you reach the workspace **host** — the split above is only
+about which layer makes the *container* hop. The extension path, concretely:
+
+1. **Connect to the workspace itself** (Coder UI button or "Coder: Open
+   Workspace"). If the picker offers both the workspace and a
+   `devcontainer` sub-agent target, choose the **workspace** — the sub-agent
+   target is exactly the Coder-direct hop the table above warns about.
+2. In that host window: **File → Open Folder** → the repo checkout on the
+   host.
+3. VS Code detects `.devcontainer/` and offers **"Reopen in Container"** —
+   accept it (or run "Dev Containers: Reopen in Container" from the palette).
+   When it asks which config, pick the **dev profile**
+   (`.devcontainer/dev/devcontainer.json`) for interactive work; the root
+   config is the bot profile.
+4. **Every reattach after that is one click**: File → **Open Recent** — the
+   entry reading `<repo> [Dev Container: DEV — …]` replays the whole nested
+   route (Coder → extension → container) correctly. This is the reattach
+   path; the Coder button is not.
+5. **Rebuilds** happen from the same window: "Dev Containers: Rebuild
+   Container".
+
+**Which path a window used is written in its bottom-left corner.** The remote
+indicator reads `Dev Container: DEV — …` in an extension-attached window and
+`Coder: <workspace>` (or the bare workspace name) in a Coder-direct one — a
+glance answers it before any terminal is opened. The shell-level check agrees:
+`echo $REMOTE_CONTAINERS` prints `true` only on the extension path. One caveat: the two managers each
+keep their own container generation, so after adopting this flow, remove any
+old Coder-managed container on the host (`docker ps -a`, then `docker rm -f`
+the stale one and `docker rmi` its image) — until then the Coder button keeps
+serving it, and only the staleness warning will tell you.
+
 Triage a suspect window with one line:
 
 ```sh
