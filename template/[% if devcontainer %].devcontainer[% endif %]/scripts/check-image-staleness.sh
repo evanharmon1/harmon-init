@@ -82,6 +82,16 @@ while IFS= read -r line; do
         rest="${line#Only in }"
         rel="$(rel_to_root "${rest%%: *}" "${rest#*: }")"
         ;;
+    "File "*" while "*)
+        # A path that changed TYPE between image and checkout (regular file on
+        # one side, directory on the other): GNU diff -q -r reports it as
+        # "File A is a directory while file B is a regular file" — a third
+        # message form, and drift like any other. Take the first path.
+        rest="${line#File }"
+        rel="${rest%% is a *}"
+        rel="${rel#"${baked}"/}"
+        rel="${rel#"${checkout}"/}"
+        ;;
     *) continue ;;
     esac
     count=$((count + 1))

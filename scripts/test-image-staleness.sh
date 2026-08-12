@@ -91,6 +91,24 @@ if printf '%s\n' "$out" | grep -q 'palette'; then
     fail "the warning printed file CONTENTS: ${out}"
 fi
 
+# ---- 2b. a path that changed TYPE is drift, not silence ----
+# diff -q -r reports "File A is a directory while file B is a regular file" —
+# a third message form. A parser matching only "Files … differ" and "Only in …"
+# reads a type flip as a clean tree: the one wrong answer, a stale image
+# reported fresh (challenge-stage finding on the PR that added this helper).
+
+echo "==> a file that became a directory (and vice versa) is counted"
+root="$(fixture typeflip)"
+rm "$root/checkout/starship.toml"
+mkdir "$root/checkout/starship.toml" # file in the image, directory in the checkout
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "a type flip exited ${rc}, not 0"
+[ -n "$out" ] || fail "a type flip was reported as a clean tree"
+printf '%s\n' "$out" | grep -q 'image is stale: 1 ' ||
+    fail "expected a count of 1 for the type flip, got: ${out}"
+printf '%s\n' "$out" | grep -q 'starship.toml' ||
+    fail "the type-flipped path is not named: ${out}"
+
 # ---- 3. no baked directory: absence is not staleness ----
 # True outside the container and in an image built without this convention.
 # Warning there would be noise nobody can act on.
