@@ -103,6 +103,7 @@ tasks:
       - task: test:hooks
       - task: test:worktree
       - task: test:statusline
+      - task: test:link-claude-json
       - task: test:codex-review
       - task: test:template
 
@@ -311,6 +312,11 @@ tasks:
     desc: Unit-test the devcontainer status line renderer (no container needed)
     cmds:
       - ./scripts/test-statusline.sh
+
+  test:link-claude-json:
+    desc: Unit-test the ~/.claude.json persistence helper (no container needed)
+    cmds:
+      - ./scripts/test-link-claude-json.sh
 
   test:devcontainer:image:
     desc: Build and smoke-test the canonical shared image and current repository overlay

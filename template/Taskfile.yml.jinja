@@ -133,6 +133,7 @@ tasks:
 [% if devcontainer %]
       - task: test:hooks
       - task: test:statusline
+      - task: test:link-claude-json
 [% endif %]
       - task: test
 
@@ -769,6 +770,11 @@ tasks:
     desc: Unit-test the devcontainer status line renderer (no container needed)
     cmds:
       - ./scripts/test-statusline.sh
+
+  test:link-claude-json:
+    desc: Unit-test the ~/.claude.json persistence helper (no container needed)
+    cmds:
+      - ./scripts/test-link-claude-json.sh
 
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
