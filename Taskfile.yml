@@ -96,6 +96,7 @@ tasks:
       - task: test:tag-hygiene
       - task: test:dogfood-parity
       - task: test:dogfood-structure
+      - task: test:devflow-config
       - task: test:starship-glyphs
       - task: test:template-independence
       - task: test:category-gates
@@ -365,6 +366,11 @@ tasks:
     desc: Unit-test the fail-closed CI aggregate result helper
     cmds:
       - ./scripts/test-ci-results.sh
+
+  test:devflow-config:
+    desc: Validate the Dev Loop round-cap tiers in .devflow.toml (both copies)
+    cmds:
+      - ./scripts/test-devflow-config.sh
 
   test:status:
     desc: Unit-test the status board-writes + local-credential checks (stubbed CLIs, no network)

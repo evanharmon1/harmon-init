@@ -26,7 +26,8 @@
 
 default_rigor = "standard"
 
-# `shepherd` is deliberately 4 in every tier, and is not a knob to turn down.
+# `shepherd` is deliberately identical in every tier, and is not a knob to
+# turn down.
 #
 # `challenge` and `review` bound work the agent generates itself — each round's
 # fixes are the next round's input — which is exactly what makes capping them

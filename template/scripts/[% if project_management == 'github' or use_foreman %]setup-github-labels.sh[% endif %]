@@ -87,7 +87,19 @@ layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 domain:auth|FBCA04|Authentication and authorization
 domain:billing|FBCA04|Billing and payments
 domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
+rigor:light|D4C5F9|Dev Loop caps: trivial, low-blast-radius change
+rigor:standard|D4C5F9|Dev Loop caps: the default budget
+rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 "
+
+# The `rigor:*` family selects which round-cap tier in `.devflow.toml` an agent
+# works an issue under (AGENTS.md, "Round caps are resolved, not stated here").
+# It is a human input, like the foreman arming labels: an agent READS it and
+# never applies one to itself, because lowering rigor weakens a safety gate and
+# so needs an attributable actor. That is also why it is a label rather than a
+# project field — GitHub exposes no actor for a field change (ADR 0002 D-arming).
+# Labels are multi-select and nothing stops two being applied, so AGENTS.md
+# resolves a conflict fail-safe: the DEEPEST tier present wins.
 
 # The model-centric agent vocabulary — `suggest:<family>` (advisory routing) and
 # `claim:<family>` (live ownership) — is rendered from the machine-readable agent

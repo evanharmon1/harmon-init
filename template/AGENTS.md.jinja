@@ -141,15 +141,23 @@ capped, but this file names no numbers: the caps live in
 [`.devflow.toml`](.devflow.toml) as `rigor` tiers, so there is one place to
 change them and one place to read them. Resolve in this order — an explicit
 instruction in this session, then a `rigor:*` label on the issue, then
-`default_rigor`, then a built-in 4 / 4 / 4 if the file is absent. **Announce
-the resolved triple on entering the loop** — "rigor: deep (label) → [% if use_codex_review %]challenge
-≤5, review ≤5, [% endif %]shepherd 4" — and carry it into the PR body, so a later round or
-a different session can see which budget it is spending instead of inferring
-one. Everything else about these stages is policy rather than a parameter and
-does not vary by tier: the exit condition, the round-2 scaffolding checkpoint,
-the escalation rule, and the deferred-P2 sidecar all hold identically at every
-rigor. A cap is a ceiling, never a quota — a stage that meets its exit
-condition on round 1 is done, whatever the tier allowed.
+`default_rigor`, then a built-in 4 / 4 / 4 if the file is absent. GitHub labels
+are multi-select and nothing stops an issue carrying two, so resolve a conflict
+fail-safe: **the deepest tier present wins**, which errs toward more review
+rather than less, and a `rigor:` value that names no tier in the file is
+ignored rather than guessed at. An agent never applies one of these labels to
+itself — lowering rigor weakens a safety gate, so it takes an attributable
+human actor, which is also why the tier rides a label rather than a project
+field. **Announce the resolved triple on entering the loop** — "rigor:
+`<tier>` (`<source>`) → [% if use_codex_review %]challenge ≤`<n>`, review ≤`<n>`, [% endif %]shepherd `<n>`", filled in
+by reading the file rather than from memory — and carry it into the PR body, so
+a later round or a different session can see which budget it is spending
+instead of inferring one. Everything else about these stages is policy rather
+than a parameter and does not vary by tier: the exit condition, the escalation
+rule, [% if use_codex_review %]the round-2 scaffolding checkpoint, the deferred-P2 sidecar, [% endif %]and the
+readiness gate all hold identically at every rigor. A cap is a ceiling, never a
+quota — a stage that meets its exit condition on round 1 is done, whatever the
+tier allowed.
 
 - **Branch** — feature branch off `main`; never commit directly to `main`. For
   parallel or isolated work, take the branch in its own worktree via
