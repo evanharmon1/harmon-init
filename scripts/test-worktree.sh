@@ -189,24 +189,32 @@ esac
 # refusal: the hang would read as a pass, and the state assertions after it
 # would agree because the operation never ran. `fail` exits, so a deadlock can
 # only ever end the suite loudly.
-new() {
+# ONE bounded entry point for every worktree-new.sh / worktree-rm.sh
+# invocation. The nested-caller cases below run the script from inside a
+# linked worktree, and when those called it directly they bypassed the bound
+# entirely — the same indefinite hang, reachable by three call sites that
+# happened not to use the wrapper.
+run_worktree_op() {
+    op_label=$1
+    op_dir=$2
+    op_script=$3
+    shift 3
     status=0
-    (cd "$fixture" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh "$@") || status=$?
+    (cd "$op_dir" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash "$op_script" "$@") || status=$?
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-        echo "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $*" >"$WORKTREE_TIMEOUT_SENTINEL"
-        fail "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
+        echo "$op_label timed out after ${WORKTREE_OP_TIMEOUT}s: $*" >"$WORKTREE_TIMEOUT_SENTINEL"
+        fail "$op_label timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
     fi
     return "$status"
 }
-rm_wt() {
-    status=0
-    (cd "$fixture" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh "$@") || status=$?
-    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-        echo "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $*" >"$WORKTREE_TIMEOUT_SENTINEL"
-        fail "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
-    fi
-    return "$status"
+new() { run_worktree_op "worktree:new" "$fixture" scripts/worktree-new.sh "$@"; }
+# Same operation, run from a caller directory that is not the main worktree.
+new_in() {
+    op_from=$1
+    shift
+    run_worktree_op "worktree:new" "$op_from" scripts/worktree-new.sh "$@"
 }
+rm_wt() { run_worktree_op "worktree:rm" "$fixture" scripts/worktree-rm.sh "$@"; }
 
 # ── create → work inside → remove ────────────────────────────────────
 echo "==> worktree:new creates .worktrees/<name> with its own branch"
@@ -370,7 +378,7 @@ git -C "$fixture" branch -D debris >/dev/null 2>&1 || true
 # ── .worktrees/ is anchored to the MAIN worktree ─────────────────────
 echo "==> creating from inside a linked worktree still anchors to the main tree"
 new outer >/dev/null || fail "worktree-new.sh failed creating the outer tree"
-(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh inner >/dev/null) ||
+new_in "$fixture/.worktrees/outer" inner >/dev/null ||
     fail "worktree-new.sh failed when run from inside a linked worktree"
 [ -d "$fixture/.worktrees/inner" ] ||
     fail "worktree-new.sh did not anchor .worktrees/ to the main worktree"
@@ -379,7 +387,7 @@ echo "==> a tree created from inside a worktree bases on the MAIN head, not the 
 printf 'outer work\n' >"$fixture/.worktrees/outer/OUTER.md"
 git -C "$fixture/.worktrees/outer" add OUTER.md
 LEFTHOOK=0 git -C "$fixture/.worktrees/outer" commit -qm "chore: outer-only commit"
-(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh sibling >/dev/null) ||
+new_in "$fixture/.worktrees/outer" sibling >/dev/null ||
     fail "worktree-new.sh failed creating a sibling from inside a worktree"
 main_head="$(git -C "$fixture" rev-parse HEAD)"
 sibling_head="$(git -C "$fixture/.worktrees/sibling" rev-parse HEAD)"
@@ -387,7 +395,7 @@ sibling_head="$(git -C "$fixture/.worktrees/sibling" rev-parse HEAD)"
     fail "the sibling tree stacked on the caller's branch instead of the main worktree's HEAD"
 
 echo "==> --base HEAD still stacks deliberately"
-(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh stacked --base HEAD >/dev/null) ||
+new_in "$fixture/.worktrees/outer" stacked --base HEAD >/dev/null ||
     fail "worktree-new.sh --base HEAD failed"
 outer_head="$(git -C "$fixture/.worktrees/outer" rev-parse HEAD)"
 [ "$(git -C "$fixture/.worktrees/stacked" rev-parse HEAD)" = "$outer_head" ] ||
@@ -948,6 +956,13 @@ fi
 # `-k` schedules, and the assertions below check all three properties that
 # matter — it is killed promptly, it says why, and it is FATAL rather than
 # passing for the expected-failure assertion that follows a refusal.
+# Any sentinel present HERE was left by an earlier case whose timeout was
+# swallowed — exactly the evidence the EXIT trap exists to surface. The
+# self-test below writes and then clears the sentinel, so without this check it
+# would erase that evidence and the suite could still exit 0.
+if [ -e "$WORKTREE_TIMEOUT_SENTINEL" ]; then
+    fail "an earlier worktree operation timed out and was swallowed: $(cat "$WORKTREE_TIMEOUT_SENTINEL")"
+fi
 echo "==> a hung worktree operation is killed, explained, and fatal"
 cp "$fixture/scripts/worktree-new.sh" "$test_tmp/worktree-new.sh.bak"
 cat >"$fixture/scripts/worktree-new.sh" <<'HANGSTUB'
