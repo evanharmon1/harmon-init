@@ -278,18 +278,30 @@ REPO_NAME="$(basename "$PWD")"
 XDG_CONDUCTOR_DIR="$HOME/.local/share/agent-deck/conductor/$REPO_NAME"
 if command -v agent-deck >/dev/null 2>&1 &&
     ! agent-deck conductor status "$REPO_NAME" >/dev/null 2>&1; then
+    # Whether the default-location dir predates this attempt decides what a
+    # failure below may delete. `status` exiting nonzero does NOT prove the
+    # conductor is absent — a transient agent-deck error reports an existing
+    # one as missing — and that conductor's dir holds user-maintained state
+    # (instructions, learnings). Rolling back anything this attempt did not
+    # create would turn a lifecycle hiccup into data loss.
+    conductor_dir_preexisted=false
+    [ -d "$XDG_CONDUCTOR_DIR" ] && conductor_dir_preexisted=true
     echo "==> Setting up agent-deck conductor '$REPO_NAME'..."
     if ! echo "n" | agent-deck conductor setup "$REPO_NAME" \
         --description "$REPO_NAME devcontainer conductor" \
         --no-heartbeat; then
         # Setup stays non-fatal, but a partial failure must not become
         # permanent: a half-created conductor that DID register would pass the
-        # status guard on every later create while being unusable. Remove the
-        # dir setup creates at its default location (a no-op if setup died
-        # before creating it, or if a custom [conductor].dir put it elsewhere)
-        # so the next create retries from the pre-run state.
-        rm -rf "$XDG_CONDUCTOR_DIR"
-        echo "WARN: agent-deck conductor setup failed; partial state removed so the next create retries (non-fatal)" >&2
+        # status guard on every later create while being unusable. Remove ONLY
+        # state proven created by this attempt — a dir that existed before it
+        # is someone else's data, never rollback scope. (No-op if setup died
+        # before creating it, or if a custom [conductor].dir put it elsewhere.)
+        if [ "$conductor_dir_preexisted" = false ]; then
+            rm -rf "$XDG_CONDUCTOR_DIR"
+            echo "WARN: agent-deck conductor setup failed; partial state removed so the next create retries (non-fatal)" >&2
+        else
+            echo "WARN: agent-deck conductor setup failed; pre-existing conductor dir left untouched (non-fatal)" >&2
+        fi
     fi
 fi
 
