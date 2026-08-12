@@ -416,11 +416,12 @@ families, color-coded by family; the starter set is created by
 - **Rigor** — `rigor:light`, `rigor:standard`, `rigor:deep`: which round-cap
   tier in [`.devflow.toml`](../.devflow.toml) an agent works the issue under
   (AGENTS.md, "Round caps are resolved, not stated here"). An agent reads it
-  and never self-applies one. Its authority is exactly repo write access, so
-  it is advisory rather than an authenticated gate — AGENTS.md requires a tier
-  below `default_rigor` to be stated in the PR body, keeping a reduced budget
-  visible to the reviewer. Two present resolve per stage to the highest cap,
-  so a conflict can only ever buy more review.
+  and never self-applies one. It is advisory rather than an authenticated
+  gate: nothing verifies who applied it, and the **triage** role can label an
+  issue with no push access — so AGENTS.md requires any cap resolving below
+  `default_rigor` to be stated in the PR body, keeping a reduced budget visible
+  to the reviewer. Two present resolve per stage to the highest cap, so a
+  conflict can only ever buy more review.
 
 Two more families name **model intelligence** rather than a facet of the work,
 and their vocabulary is not hand-listed anywhere: it is rendered from

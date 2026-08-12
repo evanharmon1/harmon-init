@@ -94,11 +94,12 @@ rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 
 # The `rigor:*` family selects which round-cap tier in `.devflow.toml` an agent
 # works an issue under (AGENTS.md, "Round caps are resolved, not stated here").
-# It is an input an agent READS and never applies to itself. Its authority is
-# exactly repo write access — anyone who can label an issue can retune its
-# budget — so it is advisory, not an authenticated gate; AGENTS.md requires a
-# resolved tier below `default_rigor` to be stated in the PR body, which keeps
-# a reduced budget visible to the human reviewer.
+# It is an input an agent READS and never applies to itself. It is advisory,
+# not an authenticated gate: nothing verifies who applied it, and GitHub's
+# triage role can label an issue with no push access at all — so a budget can
+# be retuned by someone who could not edit `.devflow.toml`. AGENTS.md requires
+# any cap resolving below `default_rigor` to be stated in the PR body, which
+# keeps a reduced budget visible to the human reviewer.
 # Labels are multi-select and nothing stops two being applied, so AGENTS.md
 # resolves per stage by taking the HIGHEST cap present: a conflict can only
 # ever buy more review, never less, and no ranking of tier names is needed.

@@ -249,12 +249,12 @@ gate that ends them — is defined in AGENTS.md ("Dev Loop"). The PR is a
 is the one signal that the automated work is finished.
 
 The caps are not written down here, or in AGENTS.md. They live in
-[`.devflow.toml`](../../.devflow.toml) as `rigor` tiers — `light`, `standard`,
-`deep` — and are resolved per change: an explicit instruction in the session,
-else a `rigor:*` label on the issue, else `default_rigor`. Only `challenge` and
-`review` vary by tier; the shepherd cap is fixed, because it bounds other
-people's findings rather than self-generated work. Announce the resolved
-triple when you enter the loop.
+[`.devflow.toml`](../../.devflow.toml) as `rigor` tiers, and **AGENTS.md alone
+defines how a change resolves one** — restating that chain here would only give
+it a second place to drift from, and which inputs are even available depends on
+how the repository is set up. Only `challenge` and `review` vary by tier; the
+shepherd cap is fixed, because it bounds other people's findings rather than
+self-generated work. Announce the resolved caps when you enter the loop.
 
 If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
