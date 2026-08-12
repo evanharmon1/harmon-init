@@ -1,28 +1,38 @@
 # .devflow.toml — round caps for the Dev Loop stages defined in AGENTS.md.
 #
-# The numbers live here rather than in prose because prose cannot be checked.
-# This file has a byte-identical twin at template/.devflow.toml, so
-# `task test:dogfood-parity` fails if only one side is edited — the caps are
-# now mechanically protected in a way eight scattered paragraphs never were.
+# The numbers live here rather than in prose so that there is exactly one place
+# to change them and one place to read them.
 #
-# Resolution order (AGENTS.md states this rule; only this file states numbers):
+# Resolution order (AGENTS.md states the rule; only this file states numbers):
 #
 #   explicit instruction in the session
-#     > a rigor:* label on the issue
+#     > a rigor:* label on the issue, where the repo provisions them
 #       > default_rigor below
 #         > 4 / 4 / 4 if this file is absent
 #
-# Announce the resolved triple on entering the Dev Loop — "rigor: deep (label)
-# -> challenge <=5, review <=5, shepherd 4" — and carry it into the PR body, so
-# the choice is auditable rather than recalled.
+# Announce the resolved caps on entering the Dev Loop and carry them into the
+# PR body, so the budget a change was reviewed under is on the record rather
+# than recalled.
+#
+# When the change under review edits THIS FILE, resolve its caps from the
+# merge-base copy rather than the branch copy — otherwise a branch can lower
+# the very gate it is changing. An explicit human instruction still overrides.
 #
 # These are ceilings, not quotas. A stage exits the moment its exit condition
 # in AGENTS.md is met: two consecutive rounds adjudicated to zero P0/P1, or any
 # single round with no findings at all. Nothing here obliges a round to be run.
 #
+# Retuning these is expected. The Dev Loop assumes four invariants, and nothing
+# at runtime will tell you if an edit breaks one:
+#   - every tier defines challenge, review and shepherd, all integers
+#   - challenge and review are >= 2, because the exit condition needs two
+#     consecutive adjudicated-clean rounds; at 1, one finding is an escalation
+#   - shepherd is the same in every tier (see below)
+#   - default_rigor names a tier that exists here
+#
 # `challenge` and `review` are inert wherever no second-model reviewer is
-# configured (`use_codex_review = false`): those stages never run, so their
-# caps have nothing to bound. `shepherd` always applies.
+# configured: those stages never run, so their caps bound nothing. `shepherd`
+# always applies.
 
 default_rigor = "standard"
 

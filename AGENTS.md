@@ -249,7 +249,14 @@ live in [`.devflow.toml`](.devflow.toml) as `rigor` tiers, so there is one
 place to change them and a parity gate that catches a change made on only one
 side. Resolve in this order — an explicit instruction in this session, then a
 `rigor:*` label on the issue, then `default_rigor`, then a built-in 4 / 4 / 4
-if the file is absent. GitHub labels are multi-select and nothing stops an
+if the file is absent. When the change under review **edits `.devflow.toml`
+itself**, resolve its caps from the **merge-base** copy rather than the branch
+copy: otherwise a branch can lower the very gate it is changing — dropping every
+tier and `default_rigor` together passes the validator and evades the
+below-default disclosure, because nothing is left to be below. An explicit
+instruction from Evan still overrides, since that is an attributable human
+decision rather than the branch deciding for itself. GitHub labels are
+multi-select and nothing stops an
 issue carrying two, so resolution is **per stage, taking the highest cap
 present**: a conflict can then only ever buy more review, never less, and no
 ranking of the tier names has to be agreed on anywhere. Because that is per
