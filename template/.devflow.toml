@@ -8,7 +8,7 @@
 #   explicit instruction in the session
 #     > a rigor:* label on the issue, where the repo provisions them
 #       > default_rigor below
-#         > 4 / 4 / 4 if this file is absent
+#         > the built-in fallback stated in AGENTS.md, if this file is absent
 #
 # Announce the resolved caps on entering the Dev Loop and carry them into the
 # PR body, so the budget a change was reviewed under is on the record rather

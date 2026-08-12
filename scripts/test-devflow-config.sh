@@ -20,6 +20,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LABELS_SCRIPT="scripts/setup-github-labels.sh"
+# The fallback applies when .devflow.toml is ABSENT, so it cannot live in that
+# file — it has to be stated in the policy, on both sides of the dogfood. That
+# is two prose copies no other gate compares: test:dogfood-structure comes
+# closest and deliberately checks headings and tasks, not paragraph bodies.
+AGENTS_ROOT="AGENTS.md"
+AGENTS_TEMPLATE="template/AGENTS.md.jinja"
 
 for f in .devflow.toml template/.devflow.toml; do
     [ -f "$f" ] || {
@@ -28,12 +34,13 @@ for f in .devflow.toml template/.devflow.toml; do
     }
 done
 
-python3 - "$LABELS_SCRIPT" .devflow.toml template/.devflow.toml <<'PY'
+python3 - "$LABELS_SCRIPT" "$AGENTS_ROOT" "$AGENTS_TEMPLATE" \
+    .devflow.toml template/.devflow.toml <<'PY'
 import re
 import sys
 import tomllib
 
-labels_script, *config_paths = sys.argv[1:]
+labels_script, agents_root, agents_template, *config_paths = sys.argv[1:]
 STAGES = ("challenge", "review", "shepherd")
 # The floor is 2, not 1: a stage exits on two consecutive adjudicated-clean
 # rounds, so a cap of 1 makes any single finding an instant escalation.
@@ -103,6 +110,24 @@ for path in config_paths:
             f"{path}: shepherd varies by tier ({sorted(shepherd_values)}) — it is "
             "fixed by design; lowering it abandons unanswered reviews"
         )
+
+FALLBACK_RE = re.compile(r"built-in (\d+ / \d+ / \d+)")
+fallbacks = {}
+for path in (agents_root, agents_template):
+    found = set(FALLBACK_RE.findall(open(path).read()))
+    if len(found) != 1:
+        failures.append(
+            f"{path}: expected exactly one 'built-in N / N / N' fallback, found "
+            f"{sorted(found) if found else 'none'} — the resolution rule needs it"
+        )
+    else:
+        fallbacks[path] = found.pop()
+if len(set(fallbacks.values())) > 1:
+    failures.append(
+        "the fallback caps disagree across the dogfood: "
+        + "; ".join(f"{p} says {v}" for p, v in sorted(fallbacks.items()))
+        + " — root and generated agents would use different caps"
+    )
 
 if failures:
     for line in failures:
