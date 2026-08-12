@@ -104,6 +104,28 @@ done <<EOF_DIFF
 ${diff_out}
 EOF_DIFF
 
+# diff compares CONTENT line by line; the executable bit is invisible to it.
+# That bit is load-bearing here — the tree bakes hook scripts that are invoked
+# directly from their installed paths — so a mode-only change (chmod +x/-x)
+# must count as drift too. Only the executable bit is compared: full-mode
+# comparison would flag umask noise, and the x bit is the one that changes
+# behavior. [ -x ] is portable where stat's flags are not.
+while IFS= read -r f; do
+    rel="${f#"${baked}"/}"
+    other="${checkout}/${rel}"
+    [ -f "${other}" ] || continue
+    bx=0 cx=0
+    [ -x "${f}" ] && bx=1
+    [ -x "${other}" ] && cx=1
+    if [ "${bx}" -ne "${cx}" ]; then
+        count=$((count + 1))
+        names="${names}      ${rel} (executable bit)
+"
+    fi
+done <<EOF_XBIT
+$(find "${baked}" -type f)
+EOF_XBIT
+
 # diff's exit code distinguishes "differences" (1) from "trouble" (>=2 — a
 # dangling symlink, an unreadable entry). Trouble means the comparison is
 # INCOMPLETE, and an incomplete comparison must never read as fresh: that is

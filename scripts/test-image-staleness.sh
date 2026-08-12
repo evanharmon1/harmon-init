@@ -109,6 +109,23 @@ printf '%s\n' "$out" | grep -q 'image is stale: 1 ' ||
 printf '%s\n' "$out" | grep -q 'starship.toml' ||
     fail "the type-flipped path is not named: ${out}"
 
+# ---- 2b2. an executable-bit flip alone is drift ----
+# diff compares content only; the x bit is invisible to it. The tree bakes
+# hook scripts invoked directly from their installed paths, so a mode-only
+# change leaves an image behaviorally stale while byte-identical (Codex
+# cloud-review finding on this PR).
+
+echo "==> a chmod-only change is counted as drift"
+root="$(fixture xbit)"
+chmod +x "$root/baked/starship.toml" # x in the image, not in the checkout
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "an x-bit flip exited ${rc}, not 0"
+[ -n "$out" ] || fail "an x-bit flip was reported as a clean tree"
+printf '%s\n' "$out" | grep -q 'image is stale: 1 ' ||
+    fail "expected a count of 1 for the x-bit flip, got: ${out}"
+printf '%s\n' "$out" | grep -q 'starship.toml (executable bit)' ||
+    fail "the x-bit-flipped path is not named with its reason: ${out}"
+
 # ---- 2c. a broken comparison is indeterminate, never fresh ----
 # A dangling symlink (or any unreadable entry) makes diff exit 2 with only
 # stderr diagnostics. Discarding that used to leave count=0 and report a
