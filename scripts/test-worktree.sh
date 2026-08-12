@@ -215,6 +215,15 @@ new_in() {
     run_worktree_op "worktree:new" "$op_from" scripts/worktree-new.sh "$@"
 }
 rm_wt() { run_worktree_op "worktree:rm" "$fixture" scripts/worktree-rm.sh "$@"; }
+# Removal run from inside the tree being removed: caller directory and script
+# path both differ, and it is the last invocation that would otherwise bypass
+# the bound.
+rm_in() {
+    op_from=$1
+    op_path=$2
+    shift 2
+    run_worktree_op "worktree:rm" "$op_from" "$op_path" "$@"
+}
 
 # ── create → work inside → remove ────────────────────────────────────
 echo "==> worktree:new creates .worktrees/<name> with its own branch"
@@ -361,7 +370,7 @@ rm -rf "${fixture:?}/.worktrees/standalone"
 # ── removal works from inside the tree being removed ─────────────────
 echo "==> worktree:rm works when run from inside the tree it removes"
 new selfremove >/dev/null || fail "worktree-new.sh failed for the self-removal case"
-(cd "$fixture/.worktrees/selfremove" && bash "$fixture/scripts/worktree-rm.sh" selfremove >/dev/null) ||
+rm_in "$fixture/.worktrees/selfremove" "$fixture/scripts/worktree-rm.sh" selfremove >/dev/null ||
     fail "worktree-rm.sh failed when run from inside the tree being removed"
 refute_exists "$fixture/.worktrees/selfremove" "the self-removed tree was left behind"
 
@@ -996,5 +1005,25 @@ grep -q 'TEST FAIL' "$hang_log" ||
 rm -f "$WORKTREE_TIMEOUT_SENTINEL"
 cp "$test_tmp/worktree-new.sh.bak" "$fixture/scripts/worktree-new.sh"
 chmod +x "$fixture/scripts/worktree-new.sh"
+
+# The self-test above proves the sentinel is WRITTEN; this proves it is
+# ACTED ON. Removing or miswiring the EXIT trap would leave that test green,
+# so assert the wiring and then run the real `worktree_exit` against throwaway
+# paths — the subshell's assignments keep the live $test_tmp and sentinel out
+# of its `rm -rf`.
+echo "==> the EXIT trap turns a swallowed timeout into a failing suite"
+trap -p EXIT | grep -q 'worktree_exit' ||
+    fail "the EXIT trap is no longer wired to worktree_exit"
+trap_log="$test_tmp/trap.log"
+if (
+    test_tmp="$(mktemp -d -t harmon-init-worktree-trap-XXXXXX)"
+    WORKTREE_TIMEOUT_SENTINEL="$(mktemp -t harmon-init-worktree-trapsentinel-XXXXXX)"
+    echo "worktree:new timed out after 1s: probe-tree" >"$WORKTREE_TIMEOUT_SENTINEL"
+    worktree_exit
+) >"$trap_log" 2>&1; then
+    fail "worktree_exit reported success despite a sentinel"
+fi
+grep -q 'probe-tree' "$trap_log" ||
+    fail "worktree_exit did not report what timed out: $(cat "$trap_log")"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
