@@ -126,6 +126,32 @@ printf '%s\n' "$out" | grep -q 'image is stale: 1 ' ||
 printf '%s\n' "$out" | grep -q 'starship.toml (executable bit)' ||
     fail "the x-bit-flipped path is not named with its reason: ${out}"
 
+# ---- 2b3. content + mode changing together is ONE drifted config ----
+# The diff pass counts the content change; the x-bit pass must not count the
+# same path again, or the summary claims two configs for one file.
+
+echo "==> a file changing both content and x bit is counted once"
+root="$(fixture bothdims)"
+printf 'palette = "z"\n' >"$root/checkout/starship.toml"
+chmod +x "$root/checkout/starship.toml"
+run_helper "$root/baked" "$root/checkout"
+printf '%s\n' "$out" | grep -q 'image is stale: 1 ' ||
+    fail "content+mode on one file must count once, got: ${out}"
+[ "$(printf '%s\n' "$out" | grep -c 'starship.toml')" -eq 1 ] ||
+    fail "the path is listed more than once: ${out}"
+
+# ---- 2b4. a filename containing \" and \" is named intact ----
+# The "Files A and B differ" parse must anchor on the known roots, not the
+# first " and " — which can legally occur inside a filename.
+
+echo "==> a filename containing ' and ' survives the parse"
+root="$(fixture andname)"
+printf 'a\n' >"$root/baked/settings and hooks.json"
+printf 'b\n' >"$root/checkout/settings and hooks.json"
+run_helper "$root/baked" "$root/checkout"
+printf '%s\n' "$out" | grep -qF 'settings and hooks.json' ||
+    fail "the ' and '-bearing filename was truncated: ${out}"
+
 # ---- 2c. a broken comparison is indeterminate, never fresh ----
 # A dangling symlink (or any unreadable entry) makes diff exit 2 with only
 # stderr diagnostics. Discarding that used to leave count=0 and report a

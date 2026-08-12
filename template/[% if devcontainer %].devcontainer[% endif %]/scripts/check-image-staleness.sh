@@ -76,10 +76,15 @@ names=""
 while IFS= read -r line; do
     case "${line}" in
     "Files "*" differ")
-        rest="${line#Files }"
+        # Anchor the parse on the KNOWN roots rather than the bare " and "
+        # separator: the line is "Files <baked>/REL and <checkout>/REL differ",
+        # and a filename legally containing " and " would split early under a
+        # naive "%% and *". Stripping the baked-root prefix first and then the
+        # shortest suffix matching " and <checkout>/…" keeps REL intact for
+        # every name that does not itself embed " and <checkout>/".
+        rest="${line#Files "${baked}"/}"
         rest="${rest% differ}"
-        rel="${rest%% and *}"
-        rel="${rel#"${baked}"/}"
+        rel="${rest% and "${checkout}"/*}"
         ;;
     "Only in "*)
         rest="${line#Only in }"
@@ -109,15 +114,30 @@ EOF_DIFF
 # directly from their installed paths — so a mode-only change (chmod +x/-x)
 # must count as drift too. Only the executable bit is compared: full-mode
 # comparison would flag umask noise, and the x bit is the one that changes
-# behavior. [ -x ] is portable where stat's flags are not.
+# behavior.
+#
+# STORED bits, not effective access: [ -x ] asks access(X_OK), which a noexec
+# mount answers "no" for a 0755 file — flagging every executable config as
+# stale on such a checkout. The x characters of ls -ld's mode string reflect
+# what is stored, portably (stat's flags are not portable).
+xbits_of() {
+    # e.g. -rwxr-xr-- -> "xxx": drop the r/w/- columns, then fold the
+    # setuid/sticky spellings (s/S/t/T) into x. Config files carry none of
+    # those in practice; folding S (setuid without execute) toward x errs on
+    # the side of reporting drift, never hiding it.
+    ls -ld "$1" 2>/dev/null | cut -c2-10 | tr -d 'rw-' | tr 'sStT' 'xxxx'
+}
 while IFS= read -r f; do
     rel="${f#"${baked}"/}"
     other="${checkout}/${rel}"
     [ -f "${other}" ] || continue
-    bx=0 cx=0
-    [ -x "${f}" ] && bx=1
-    [ -x "${other}" ] && cx=1
-    if [ "${bx}" -ne "${cx}" ]; then
+    # A path the diff pass already counted must not be counted again just
+    # because its MODE also changed — one drifted config is one entry, or the
+    # summary claims "2 baked configs" for a single file.
+    if printf '%s' "${names}" | grep -qxF "      ${rel}"; then
+        continue
+    fi
+    if [ "$(xbits_of "${f}")" != "$(xbits_of "${other}")" ]; then
         count=$((count + 1))
         names="${names}      ${rel} (executable bit)
 "
