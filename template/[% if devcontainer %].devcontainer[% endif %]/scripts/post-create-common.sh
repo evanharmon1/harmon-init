@@ -275,8 +275,22 @@ pip install --quiet toml aiogram 2>/dev/null || true
 # to a custom [conductor].dir no fixed path would find. Asking by name is
 # location-agnostic.
 REPO_NAME="$(basename "$PWD")"
-if command -v agent-deck >/dev/null 2>&1 &&
-    ! agent-deck conductor status "$REPO_NAME" >/dev/null 2>&1; then
+# Registration cannot be read off the exit code alone: `conductor status
+# <name>` exits 1 for an unknown name on a CONFIGURED install, but on a fresh
+# volume (conductor never set up at all) it prints "Conductor is not enabled."
+# and exits 0 — so a negated exit-code guard would skip setup on exactly the
+# fresh containers that need it. Treat "no output", a failed call, and the
+# not-enabled message all as missing.
+conductor_registered=false
+if command -v agent-deck >/dev/null 2>&1; then
+    conductor_status_out="$(agent-deck conductor status "$REPO_NAME" 2>/dev/null)" ||
+        conductor_status_out=""
+    case "$conductor_status_out" in
+    "" | *[Nn]"ot enabled"*) conductor_registered=false ;;
+    *) conductor_registered=true ;;
+    esac
+fi
+if command -v agent-deck >/dev/null 2>&1 && [ "$conductor_registered" = false ]; then
     echo "==> Setting up agent-deck conductor '$REPO_NAME'..."
     if ! echo "n" | agent-deck conductor setup "$REPO_NAME" \
         --description "$REPO_NAME devcontainer conductor" \
