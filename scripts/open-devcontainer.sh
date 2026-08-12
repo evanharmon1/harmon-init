@@ -24,6 +24,11 @@
 # dependency instead of three: python3 ships with the macOS command line tools,
 # whereas the sqlite3 CLI and jq are each absent often enough on a client to be
 # worth not requiring. `code` is needed only to launch, never to list.
+#
+# Self-contained on purpose: no `cd` to a repo root, no sibling files, nothing
+# read out of a checkout. The repo it ships from lives on the workspace HOST,
+# while VS Code's recents and the `code` CLI live on the client — so this is a
+# file you copy to the client once and run there, not one you run over SSH.
 set -euo pipefail
 
 # The extraction program. Given the database path, it prints one TAB-separated
@@ -32,6 +37,7 @@ set -euo pipefail
 # 3 = database unreadable, 4 = no recents key, 5 = recents value is not JSON.
 PY_EXTRACT=$(
     cat <<'PY'
+import hashlib
 import json
 import sqlite3
 import sys
@@ -62,30 +68,76 @@ except ValueError:
     sys.exit(5)
 
 
+def config_tail(info):
+    """The devcontainer.json this entry was built from, trimmed to its tail.
+
+    This is what tells one PROFILE of a checkout from another: the bot config
+    at `.devcontainer/devcontainer.json` and the dev config at
+    `.devcontainer/dev/devcontainer.json` produce two recents entries whose
+    container path, host path, and remote authority are all identical. Without
+    this, they are two indistinguishable lines.
+    """
+    config = info.get("configFile")
+    path = ""
+    if isinstance(config, str):
+        path = config
+    elif isinstance(config, dict) and isinstance(config.get("path"), str):
+        # VS Code serializes a URI as {"$mid":…,"path":…,"scheme":…}.
+        path = config["path"]
+    if not path:
+        return ""
+    path = urllib.parse.unquote(path)
+    marker = "/.devcontainer/"
+    at = path.find(marker)
+    if at >= 0:
+        return path[at + 1:]
+    parts = [p for p in path.split("/") if p]
+    return "/".join(parts[-2:])
+
+
+def token_for(folder_uri):
+    """A short, stable handle for an entry.
+
+    The discriminator of last resort. Everything else shown on a line is
+    decoded out of a blob the extension owns, so two entries CAN come back
+    with identical labels — and an ambiguous listing nothing can select is a
+    dead end. This is derived from the whole URI, so it always exists, always
+    differs between different entries, and does not move between runs.
+    """
+    return hashlib.sha256(folder_uri.encode("utf-8")).hexdigest()[:8]
+
+
 def label_for(folder_uri):
-    """A human-readable one-liner: container path, host path, remote host."""
+    """A human-readable one-liner ending in the entry's selection token."""
     decoded = urllib.parse.unquote(folder_uri)
     rest = decoded.split("://", 1)[1] if "://" in decoded else decoded
     authority, _, path = rest.partition("/")
     blob, _, remote = authority.partition("@")
-    host_path = ""
     hex_blob = blob.split("+", 1)[1] if "+" in blob else ""
+    info = {}
     try:
-        # The blob is hex-encoded JSON; hostPath is the checkout on the remote
-        # host. Any shape we do not recognize simply costs us the extra detail.
-        info = json.loads(bytes.fromhex(hex_blob).decode("utf-8"))
-        if isinstance(info, dict) and isinstance(info.get("hostPath"), str):
-            host_path = info["hostPath"]
+        # The blob is hex-encoded JSON. Any shape we do not recognize simply
+        # costs us the extra detail, never the line itself.
+        parsed = json.loads(bytes.fromhex(hex_blob).decode("utf-8"))
+        if isinstance(parsed, dict):
+            info = parsed
     except Exception:
+        info = {}
+    host_path = info.get("hostPath")
+    if not isinstance(host_path, str):
         host_path = ""
     label = "/" + path if path else decoded
     extra = []
     if host_path:
         extra.append("host " + host_path)
+    config = config_tail(info)
+    if config:
+        extra.append("config " + config)
     if remote:
         extra.append(remote)
     if extra:
         label += "  (" + ", ".join(extra) + ")"
+    label += "  [" + token_for(folder_uri) + "]"
     # The output is line- and TAB-delimited; never let a label break it.
     return label.replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
@@ -109,7 +161,11 @@ Usage: open-devcontainer.sh [<repo-match>]
 
   (no argument)  list the dev-container entries VS Code remembers
   <repo-match>   case-insensitive substring; a unique match is launched with
-                 `code --folder-uri`, several are listed so you can narrow it
+                 `code --folder-uri`, several are listed so you can narrow it.
+                 Every listed line ends in a short [token] that is also a
+                 match target — the way to pick between two entries whose
+                 details are identical (the bot and dev profiles of one
+                 checkout, say)
 
 Environment:
   VSCODE_STATE_DB            path to VS Code's state.vscdb (default: per-platform)
@@ -186,7 +242,7 @@ fi
 # ---- list, or match and launch --------------------------------------------
 
 if [ -z "$match" ]; then
-    echo "dev containers VS Code remembers (pass a substring to open one):" >&2
+    echo "dev containers VS Code remembers (pass a substring or a [token] to open one):" >&2
     for label in "${labels[@]}"; do
         printf '%s\n' "$label"
     done
@@ -198,7 +254,8 @@ hits=()
 for ((i = 0; i < ${#uris[@]}; i++)); do
     # Matched against the LABEL, not the raw URI: the URI's hex blob is a long
     # run of [0-9a-f] in which a short all-hex needle ("added", "cafe") would
-    # match nothing meaningful.
+    # match nothing meaningful. The label carries the entry's token, so a
+    # token is matched by this same pass and needs no special case.
     haystack="$(printf '%s' "${labels[i]}" | tr '[:upper:]' '[:lower:]')"
     case "$haystack" in
     *"$needle"*) hits+=("$i") ;;
@@ -210,7 +267,7 @@ if [ "${#hits[@]}" -eq 0 ]; then
 fi
 
 if [ "${#hits[@]}" -gt 1 ]; then
-    echo "open-devcontainer: '${match}' matches ${#hits[@]} entries — narrow it:" >&2
+    echo "open-devcontainer: '${match}' matches ${#hits[@]} entries — narrow by name, or use the [token] at the end of a line:" >&2
     for i in "${hits[@]}"; do
         printf '%s\n' "${labels[i]}" >&2
     done

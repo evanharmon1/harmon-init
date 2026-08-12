@@ -554,15 +554,26 @@ about which layer makes the *container* hop. The extension path, concretely:
 4. **Every reattach after that is one click**: File → **Open Recent** — the
    entry reading `<repo> [Dev Container: DEV — …]` replays the whole nested
    route (Coder → extension → container) correctly. This is the reattach
-   path; the Coder button is not. From a terminal on the client,
-   `scripts/open-devcontainer.sh <repo-match>` is the same click: it lifts the
-   matching `dev-container+…` folder URI out of VS Code's own recents and runs
-   `code --folder-uri` (no argument lists what is on offer). Wrap it in
-   whatever your fingers already reach for — an alias
-   (`alias devbox='~/src/harmon-init/scripts/open-devcontainer.sh harmon-init'`),
-   a Raycast script command, a Shortcuts action — remembering that it can only
-   replay an entry that exists, so step 3 is still how a repo gets its first
-   one.
+   path; the Coder button is not. `scripts/open-devcontainer.sh <repo-match>`
+   is the same click from a terminal: it lifts the matching `dev-container+…`
+   folder URI out of VS Code's own recents and runs `code --folder-uri` (no
+   argument lists what is on offer, each line ending in a short `[token]` to
+   pass instead of a name when two profiles of one checkout read alike). It
+   belongs on the **client**, which is where that recents database and `code`
+   are — the checkout it ships from is on the workspace host, so install a
+   copy once rather than running it over SSH against the wrong machine's
+   state; the script is deliberately self-contained, so a copy is all it takes:
+
+   ```sh
+   mkdir -p ~/bin
+   curl -fsSL https://raw.githubusercontent.com/evanharmon1/harmon-init/main/scripts/open-devcontainer.sh -o ~/bin/open-devcontainer
+   chmod +x ~/bin/open-devcontainer
+   ```
+
+   Then wrap the installed copy in whatever your fingers already reach for —
+   `alias devbox='~/bin/open-devcontainer harmon-init'`, a Raycast script
+   command, a Shortcuts action — remembering that it can only replay an entry
+   that exists, so step 3 is still how a repo gets its first one.
 5. **Rebuilds** happen from the same window: "Dev Containers: Rebuild
    Container".
 

@@ -41,10 +41,23 @@ hex() {
 # URI shaped exactly like the ones VS Code stores. The 4th argument chooses how
 # the `+` after `dev-container` is written: VS Code emits both forms, and the
 # launcher has to accept either.
+# A 5th argument gives the blob a configFile, serialized the way VS Code
+# serializes a URI ({"$mid":…,"path":…,"scheme":…}) — that is the only field
+# that differs between the dev and bot profiles of one checkout.
 dc_uri() {
-    local blob plus="${4-+}"
-    blob="$(hex "{\"hostPath\":\"$1\",\"localDocker\":false}")"
+    local blob json plus="${4-+}"
+    json="{\"hostPath\":\"$1\",\"localDocker\":false"
+    if [ -n "${5-}" ]; then
+        json="${json},\"configFile\":{\"\$mid\":1,\"path\":\"$5\",\"scheme\":\"vscode-fileHost\"}"
+    fi
+    blob="$(hex "${json}}")"
     printf 'vscode-remote://dev-container%s%s@%s%s' "$plus" "$blob" "$2" "$3"
+}
+
+# token_of <line> — the [xxxxxxxx] handle the launcher prints at the end of a
+# listed line.
+token_of() {
+    printf '%s\n' "$1" | sed -n 's/.*\[\([0-9a-f]\{8\}\)\]$/\1/p'
 }
 
 # make_db <name> <json> — a state.vscdb holding <json> under the recents key.
@@ -128,6 +141,57 @@ grep -qxF -- "--folder-uri" "${tmp_root}/stub-args" ||
     fail "the stub was not passed --folder-uri: $(cat "${tmp_root}/stub-args")"
 grep -qxF -- "$uri_site" "${tmp_root}/stub-args" ||
     fail "the stub was passed the wrong URI: $(cat "${tmp_root}/stub-args")"
+
+# ---- 2b. the two profiles of ONE checkout stay distinguishable ----
+# The dev and bot configs of a repo produce two recents entries with the same
+# container path, the same hostPath and the same remote authority — they differ
+# only inside the hex blob. If the listing renders them identically, ambiguity
+# is a dead end: no argument can ever select either one. Two things prevent
+# that, and both are asserted here — the decoded config path, and the token,
+# which exists even when the blob decodes to nothing at all.
+
+echo "==> the dev and bot profiles of one checkout list distinctly"
+uri_dev="$(dc_uri /srv/coder/harmon-init ssh-remote+devbox /workspaces/harmon-init \
+    + /srv/coder/harmon-init/.devcontainer/dev/devcontainer.json)"
+uri_bot="$(dc_uri /srv/coder/harmon-init ssh-remote+devbox /workspaces/harmon-init \
+    + /srv/coder/harmon-init/.devcontainer/devcontainer.json)"
+db_prof="$(make_db profiles "{\"entries\":[{\"folderUri\":\"${uri_dev}\"},{\"folderUri\":\"${uri_bot}\"}]}")"
+profiles="$(VSCODE_STATE_DB="$db_prof" bash "$launcher" 2>/dev/null)"
+[ "$(printf '%s\n' "$profiles" | grep -c .)" -eq 2 ] ||
+    fail "expected both profiles listed, got: ${profiles}"
+line_dev="$(printf '%s\n' "$profiles" | grep 'dev/devcontainer.json' || true)"
+line_bot="$(printf '%s\n' "$profiles" | grep -v 'dev/devcontainer.json' || true)"
+[ -n "$line_dev" ] || fail "the dev profile's config path was not decoded: ${profiles}"
+printf '%s\n' "$line_bot" | grep -q 'config .devcontainer/devcontainer.json' ||
+    fail "the bot profile's config path was not decoded: ${profiles}"
+[ "$line_dev" != "$line_bot" ] || fail "the two profiles rendered identically: ${profiles}"
+
+echo "==> each profile is selectable by its config path"
+run_launcher "$db_prof" dev/devcontainer.json
+[ "$rc" -eq 0 ] || fail "selecting the dev profile by config path exited ${rc}: ${out}"
+printf '%s\n' "$out" | grep -qF -- "--folder-uri ${uri_dev}" ||
+    fail "the config-path match launched the wrong profile: ${out}"
+
+echo "==> each profile is selectable by its token"
+tok_dev="$(token_of "$line_dev")"
+tok_bot="$(token_of "$line_bot")"
+[ -n "$tok_dev" ] || fail "the dev profile's line carries no token: ${profiles}"
+[ -n "$tok_bot" ] || fail "the bot profile's line carries no token: ${profiles}"
+[ "$tok_dev" != "$tok_bot" ] || fail "both profiles carry the same token: ${profiles}"
+# Stable and derived from the URI, not from listing order — a token a human
+# copied out of yesterday's listing has to still mean the same entry.
+[ "$tok_bot" = "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8])' "$uri_bot")" ] ||
+    fail "the token is not the first 8 hex of sha256(uri): ${tok_bot}"
+run_launcher "$db_prof" "$tok_bot"
+[ "$rc" -eq 0 ] || fail "selecting the bot profile by token exited ${rc}: ${out}"
+printf '%s\n' "$out" | grep -qF -- "--folder-uri ${uri_bot}" ||
+    fail "the token match launched the wrong profile: ${out}"
+
+echo "==> an ambiguity between the profiles points at the token"
+run_launcher "$db_prof" harmon-init
+[ "$rc" -eq 1 ] || fail "the two profiles were not reported as ambiguous (exit ${rc}): ${out}"
+printf '%s\n' "$out" | grep -q 'token' ||
+    fail "the ambiguous message does not mention the token: ${out}"
 
 # ---- 3. an ambiguous match refuses, and shows what to choose between ----
 # Silently opening the first of several is the failure mode worth designing
