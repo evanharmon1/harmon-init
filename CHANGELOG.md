@@ -8,6 +8,16 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.28.1](https://github.com/evanharmon1/harmon-init/compare/v4.28.0...v4.28.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* add osvVulnerabilityAlerts so transitive advisories reach Renovate without Dependabot ([#797](https://github.com/evanharmon1/harmon-init/issues/797)) ([a91c07a](https://github.com/evanharmon1/harmon-init/commit/a91c07af00cc1d2b500c0e8835ffd937127490db))
+* **template:** document settle instead of the manual disposition workaround ([#799](https://github.com/evanharmon1/harmon-init/issues/799)) ([a50dcd9](https://github.com/evanharmon1/harmon-init/commit/a50dcd9cfa913de0c82ea3cee8faa58ce2e2854a))
+* **template:** mask pnpm by what the sandbox holds, not by naming system dirs ([#798](https://github.com/evanharmon1/harmon-init/issues/798)) ([d08f981](https://github.com/evanharmon1/harmon-init/commit/d08f981d3f9230606b2a2b6b401fbff2c3b5281a))
+* **template:** sync harmon-devkit skills to v0.29.0 ([#789](https://github.com/evanharmon1/harmon-init/issues/789)) ([6f60e5c](https://github.com/evanharmon1/harmon-init/commit/6f60e5c5030e54413b695edc83ae09d803f62c0a))
+
 ## [4.28.0](https://github.com/evanharmon1/harmon-init/compare/v4.27.1...v4.28.0) (2026-08-11)
 
 
