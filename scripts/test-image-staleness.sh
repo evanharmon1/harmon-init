@@ -109,6 +109,26 @@ printf '%s\n' "$out" | grep -q 'image is stale: 1 ' ||
 printf '%s\n' "$out" | grep -q 'starship.toml' ||
     fail "the type-flipped path is not named: ${out}"
 
+# ---- 2c. a broken comparison is indeterminate, never fresh ----
+# A dangling symlink (or any unreadable entry) makes diff exit 2 with only
+# stderr diagnostics. Discarding that used to leave count=0 and report a
+# possibly-stale image as clean — the helper's one forbidden answer. It must
+# say something (indeterminate), and still exit 0 (Codex cloud-review finding
+# on the PR that added this helper; same class as the deferred symlink P2).
+
+echo "==> a dangling symlink makes the check speak, not report fresh"
+root="$(fixture dangling)"
+# The same dangling link on BOTH sides: one-sided would be an ordinary
+# "Only in" drift line. Two-sided, diff follows both, cannot read either
+# target, and exits 2 with nothing but stderr — the silent false-fresh path.
+ln -s /nonexistent-target-harmon-test "$root/baked/dangling-link"
+ln -s /nonexistent-target-harmon-test "$root/checkout/dangling-link"
+run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "a dangling symlink exited ${rc} — warn-only means exit 0 even when indeterminate"
+[ -n "$out" ] || fail "a broken comparison was reported as a clean tree"
+printf '%s\n' "$out" | grep -qi 'indeterminate' ||
+    fail "a broken comparison did not announce itself as indeterminate: ${out}"
+
 # ---- 3. no baked directory: absence is not staleness ----
 # True outside the container and in an image built without this convention.
 # Warning there would be noise nobody can act on.

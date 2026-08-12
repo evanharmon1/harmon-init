@@ -66,8 +66,11 @@ rel_to_root() {
 #
 # LC_ALL=C pins the message wording the parser below matches: these strings are
 # localized, and a translated `diff` would silently report zero drift forever.
-# A nonzero exit means "differences found", the expected case, so it is not an
-# error here; a genuine failure yields no parseable lines and stays silent.
+# Exit 1 means "differences found" — the expected case. Exit >=2 means the
+# comparison itself broke (a dangling symlink's target, an unreadable entry)
+# and is handled below as INDETERMINATE, never as fresh.
+diff_rc=0
+diff_out="$(LC_ALL=C diff -q -r "${baked}" "${checkout}" 2>/dev/null)" || diff_rc=$?
 count=0
 names=""
 while IFS= read -r line; do
@@ -97,7 +100,18 @@ while IFS= read -r line; do
     count=$((count + 1))
     names="${names}      ${rel}
 "
-done < <(LC_ALL=C diff -q -r "${baked}" "${checkout}" 2>/dev/null || true)
+done <<EOF_DIFF
+${diff_out}
+EOF_DIFF
+
+# diff's exit code distinguishes "differences" (1) from "trouble" (>=2 — a
+# dangling symlink, an unreadable entry). Trouble means the comparison is
+# INCOMPLETE, and an incomplete comparison must never read as fresh: that is
+# the false negative this helper exists to prevent, one layer down. Say
+# "indeterminate" loudly instead — still exit 0, still warn-only.
+if [ "${diff_rc}" -ge 2 ]; then
+    echo "==> image staleness indeterminate: the config comparison failed partway (diff exit ${diff_rc}) — treat as possibly stale and rebuild if in doubt"
+fi
 
 [ "${count}" -gt 0 ] || exit 0
 
