@@ -44,11 +44,15 @@ fail() {
     exit 1
 }
 
-if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_BIN="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_BIN="gtimeout"
-else
+# Resolved to an ABSOLUTE path, not a bare name. The missing-pnpm case below
+# runs under a PATH mask built from /usr/local/bin, /usr/bin and /bin, and on
+# Apple Silicon Homebrew puts `gtimeout` in /opt/homebrew/bin — outside that
+# set. A bare name would then fail to resolve inside the mask, the wrapper
+# would exit 127 before worktree-new.sh ever ran, and that non-zero would be
+# accepted as the refusal the case asserts: the test would pass while proving
+# nothing.
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+if [ -z "$TIMEOUT_BIN" ]; then
     echo "GNU timeout is required (install coreutils on macOS)." >&2
     exit 1
 fi
