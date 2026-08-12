@@ -44,6 +44,25 @@ fail() {
     exit 1
 }
 
+# Resolved to an ABSOLUTE path, not a bare name. The missing-pnpm case below
+# runs under a PATH mask built from /usr/local/bin, /usr/bin and /bin, and on
+# Apple Silicon Homebrew puts `gtimeout` in /opt/homebrew/bin — outside that
+# set. A bare name would then fail to resolve inside the mask, the wrapper
+# would exit 127 before worktree-new.sh ever ran, and that non-zero would be
+# accepted as the refusal the case asserts: the test would pass while proving
+# nothing.
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+if [ -z "$TIMEOUT_BIN" ]; then
+    echo "GNU timeout is required (install coreutils on macOS)." >&2
+    exit 1
+fi
+# post-checkout invokes lefthook, which has been observed to deadlock
+# (harmon-init#792) with nothing else in the path bounding the wait. Every
+# legitimate worktree operation here completes in single-digit seconds, so
+# 120s is far above the real ceiling while still bounding a hang.
+WORKTREE_OP_TIMEOUT=${WORKTREE_OP_TIMEOUT:-120}
+WORKTREE_OP_KILL_GRACE=${WORKTREE_OP_KILL_GRACE:-10}
+
 refute_exists() {
     # Spelled out rather than `[ -e X ] && fail ...`: the negative case of an
     # && list is itself a non-zero statement, which is a trap under set -e.
@@ -55,7 +74,33 @@ refute_exists() {
 # `pwd -P` because macOS mktemp hands back /var/... while git reports the
 # physical /private/var/... — the two must agree for the path assertions below.
 test_tmp="$(cd "$(mktemp -d -t harmon-init-worktree-XXXXXX)" && pwd -P)"
-trap 'rm -rf "$test_tmp"' EXIT
+# The sentinel lives OUTSIDE $test_tmp because the cleanup below removes that
+# directory, and this file has to outlive it to be read on the way out.
+WORKTREE_TIMEOUT_SENTINEL="$(mktemp -t harmon-init-worktree-timeout-XXXXXX)"
+rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+
+# A timeout must fail the SUITE, and `fail` alone cannot guarantee that: the
+# expected-failure cases run these wrappers inside `if ( … ); then` subshells,
+# where `exit 1` ends only the subshell and the `if` reads the non-zero status
+# as the refusal it was asserting. A hang would be accepted as a pass. The
+# sentinel escapes every subshell — it is a file, not an exit status — so
+# however the status is swallowed, the suite still ends non-zero and says why.
+worktree_exit() {
+    exit_status=$?
+    if [ -e "$WORKTREE_TIMEOUT_SENTINEL" ]; then
+        # Print what the sentinel HOLDS, not where it lives: it is removed
+        # immediately below, so a path would point at nothing by the time
+        # anyone read the message.
+        echo "TEST FAIL: $(cat "$WORKTREE_TIMEOUT_SENTINEL") — the operation was killed, not merely slow (harmon-init#792)" >&2
+        rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+        rm -rf "$test_tmp"
+        exit 1
+    fi
+    rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+    rm -rf "$test_tmp"
+    exit "$exit_status"
+}
+trap worktree_exit EXIT
 
 stub_bin="$test_tmp/bin"
 mkdir -p "$stub_bin"
@@ -138,8 +183,51 @@ case "$shared_hooks" in
 esac
 (cd "$fixture" && lefthook install >/dev/null 2>&1) || fail "could not install hooks in the fixture"
 
-new() { (cd "$fixture" && bash scripts/worktree-new.sh "$@"); }
-rm_wt() { (cd "$fixture" && bash scripts/worktree-rm.sh "$@"); }
+# `-k` is not optional: without it `timeout` sends TERM at the deadline and
+# then waits forever if the process ignores it — which is the very hang this
+# bound exists to stop. The grace period converts that into a KILL.
+#
+# A timeout is FATAL, never a return value. Many cases below assert that these
+# wrappers fail (`if new …; then fail …; fi`), usually with output redirected
+# to /dev/null, so a returned 124 would be indistinguishable from the expected
+# refusal: the hang would read as a pass, and the state assertions after it
+# would agree because the operation never ran. `fail` exits, so a deadlock can
+# only ever end the suite loudly.
+# ONE bounded entry point for every worktree-new.sh / worktree-rm.sh
+# invocation. The nested-caller cases below run the script from inside a
+# linked worktree, and when those called it directly they bypassed the bound
+# entirely — the same indefinite hang, reachable by three call sites that
+# happened not to use the wrapper.
+run_worktree_op() {
+    op_label=$1
+    op_dir=$2
+    op_script=$3
+    shift 3
+    status=0
+    (cd "$op_dir" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash "$op_script" "$@") || status=$?
+    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+        echo "$op_label timed out after ${WORKTREE_OP_TIMEOUT}s: $*" >"$WORKTREE_TIMEOUT_SENTINEL"
+        fail "$op_label timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)"
+    fi
+    return "$status"
+}
+new() { run_worktree_op "worktree:new" "$fixture" scripts/worktree-new.sh "$@"; }
+# Same operation, run from a caller directory that is not the main worktree.
+new_in() {
+    op_from=$1
+    shift
+    run_worktree_op "worktree:new" "$op_from" scripts/worktree-new.sh "$@"
+}
+rm_wt() { run_worktree_op "worktree:rm" "$fixture" scripts/worktree-rm.sh "$@"; }
+# Removal run from inside the tree being removed: caller directory and script
+# path both differ, and it is the last invocation that would otherwise bypass
+# the bound.
+rm_in() {
+    op_from=$1
+    op_path=$2
+    shift 2
+    run_worktree_op "worktree:rm" "$op_from" "$op_path" "$@"
+}
 
 # ── create → work inside → remove ────────────────────────────────────
 echo "==> worktree:new creates .worktrees/<name> with its own branch"
@@ -286,7 +374,7 @@ rm -rf "${fixture:?}/.worktrees/standalone"
 # ── removal works from inside the tree being removed ─────────────────
 echo "==> worktree:rm works when run from inside the tree it removes"
 new selfremove >/dev/null || fail "worktree-new.sh failed for the self-removal case"
-(cd "$fixture/.worktrees/selfremove" && bash "$fixture/scripts/worktree-rm.sh" selfremove >/dev/null) ||
+rm_in "$fixture/.worktrees/selfremove" "$fixture/scripts/worktree-rm.sh" selfremove >/dev/null ||
     fail "worktree-rm.sh failed when run from inside the tree being removed"
 refute_exists "$fixture/.worktrees/selfremove" "the self-removed tree was left behind"
 
@@ -303,7 +391,7 @@ git -C "$fixture" branch -D debris >/dev/null 2>&1 || true
 # ── .worktrees/ is anchored to the MAIN worktree ─────────────────────
 echo "==> creating from inside a linked worktree still anchors to the main tree"
 new outer >/dev/null || fail "worktree-new.sh failed creating the outer tree"
-(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh inner >/dev/null) ||
+new_in "$fixture/.worktrees/outer" inner >/dev/null ||
     fail "worktree-new.sh failed when run from inside a linked worktree"
 [ -d "$fixture/.worktrees/inner" ] ||
     fail "worktree-new.sh did not anchor .worktrees/ to the main worktree"
@@ -312,7 +400,7 @@ echo "==> a tree created from inside a worktree bases on the MAIN head, not the 
 printf 'outer work\n' >"$fixture/.worktrees/outer/OUTER.md"
 git -C "$fixture/.worktrees/outer" add OUTER.md
 LEFTHOOK=0 git -C "$fixture/.worktrees/outer" commit -qm "chore: outer-only commit"
-(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh sibling >/dev/null) ||
+new_in "$fixture/.worktrees/outer" sibling >/dev/null ||
     fail "worktree-new.sh failed creating a sibling from inside a worktree"
 main_head="$(git -C "$fixture" rev-parse HEAD)"
 sibling_head="$(git -C "$fixture/.worktrees/sibling" rev-parse HEAD)"
@@ -320,7 +408,7 @@ sibling_head="$(git -C "$fixture/.worktrees/sibling" rev-parse HEAD)"
     fail "the sibling tree stacked on the caller's branch instead of the main worktree's HEAD"
 
 echo "==> --base HEAD still stacks deliberately"
-(cd "$fixture/.worktrees/outer" && bash scripts/worktree-new.sh stacked --base HEAD >/dev/null) ||
+new_in "$fixture/.worktrees/outer" stacked --base HEAD >/dev/null ||
     fail "worktree-new.sh --base HEAD failed"
 outer_head="$(git -C "$fixture/.worktrees/outer" rev-parse HEAD)"
 [ "$(git -C "$fixture/.worktrees/stacked" rev-parse HEAD)" = "$outer_head" ] ||
@@ -874,5 +962,72 @@ refute_exists "$fixture/.worktrees/missing-pnpm" "worktree-new.sh left a half-pr
 if git -C "$fixture" show-ref --verify --quiet refs/heads/missing-pnpm; then
     fail "worktree-new.sh left the branch behind after rolling back"
 fi
+
+# The bound itself needs a test, or both protections above could regress in
+# silence: nothing else in this suite ever exceeds the deadline or ignores
+# TERM. The stub traps TERM and sleeps, so it can only die to the KILL that
+# `-k` schedules, and the assertions below check all three properties that
+# matter — it is killed promptly, it says why, and it is FATAL rather than
+# passing for the expected-failure assertion that follows a refusal.
+# Any sentinel present HERE was left by an earlier case whose timeout was
+# swallowed — exactly the evidence the EXIT trap exists to surface. The
+# self-test below writes and then clears the sentinel, so without this check it
+# would erase that evidence and the suite could still exit 0.
+if [ -e "$WORKTREE_TIMEOUT_SENTINEL" ]; then
+    fail "an earlier worktree operation timed out and was swallowed: $(cat "$WORKTREE_TIMEOUT_SENTINEL")"
+fi
+echo "==> a hung worktree operation is killed, explained, and fatal"
+cp "$fixture/scripts/worktree-new.sh" "$test_tmp/worktree-new.sh.bak"
+cat >"$fixture/scripts/worktree-new.sh" <<'HANGSTUB'
+#!/usr/bin/env bash
+trap '' TERM
+sleep 300
+HANGSTUB
+chmod +x "$fixture/scripts/worktree-new.sh"
+hang_log="$test_tmp/hang.log"
+hang_start=$(date +%s)
+if (
+    WORKTREE_OP_TIMEOUT=2
+    WORKTREE_OP_KILL_GRACE=1
+    new hang-tree
+) >"$hang_log" 2>&1; then
+    fail "a hung worktree:new reported success"
+fi
+hang_elapsed=$(($(date +%s) - hang_start))
+[ "$hang_elapsed" -lt 30 ] ||
+    fail "the hung operation was not killed promptly (${hang_elapsed}s) — is -k still passed?"
+grep -q 'timed out after' "$hang_log" ||
+    fail "the timeout emitted no diagnostic naming the operation"
+grep -q 'TEST FAIL' "$hang_log" ||
+    fail "a timeout must be fatal, not returned as an ordinary failure"
+# The property the subshell construct above would otherwise hide: the negative
+# cases run these wrappers exactly this way, so `fail` alone ends only the
+# subshell and the `if` accepts the non-zero status as the refusal it asserts.
+# The sentinel is what survives that, and it is what the EXIT trap reads.
+[ -e "$WORKTREE_TIMEOUT_SENTINEL" ] ||
+    fail "a timeout inside a subshell left no sentinel, so the suite could still exit 0"
+rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+cp "$test_tmp/worktree-new.sh.bak" "$fixture/scripts/worktree-new.sh"
+chmod +x "$fixture/scripts/worktree-new.sh"
+
+# The self-test above proves the sentinel is WRITTEN; this proves it is
+# ACTED ON. Removing or miswiring the EXIT trap would leave that test green,
+# so assert the wiring and then run the real `worktree_exit` against throwaway
+# paths — the subshell's assignments keep the live $test_tmp and sentinel out
+# of its `rm -rf`.
+echo "==> the EXIT trap turns a swallowed timeout into a failing suite"
+trap -p EXIT | grep -q 'worktree_exit' ||
+    fail "the EXIT trap is no longer wired to worktree_exit"
+trap_log="$test_tmp/trap.log"
+if (
+    test_tmp="$(mktemp -d -t harmon-init-worktree-trap-XXXXXX)"
+    WORKTREE_TIMEOUT_SENTINEL="$(mktemp -t harmon-init-worktree-trapsentinel-XXXXXX)"
+    echo "worktree:new timed out after 1s: probe-tree" >"$WORKTREE_TIMEOUT_SENTINEL"
+    worktree_exit
+) >"$trap_log" 2>&1; then
+    fail "worktree_exit reported success despite a sentinel"
+fi
+grep -q 'probe-tree' "$trap_log" ||
+    fail "worktree_exit did not report what timed out: $(cat "$trap_log")"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
