@@ -179,12 +179,16 @@ for var in "${ALLOWED_VARS[@]}"; do
 done
 
 # Write back ONLY on a real difference, so a no-op run leaves the env-file's
-# mtime (and inode) untouched. `mv` from mktemp lands the file at 0600, which
-# is what the strip path already produced on every rewrite.
+# mtime (and inode) untouched.
 if ! cmp -s "$WORK_FILE" "$ENV_FILE"; then
     mv "$WORK_FILE" "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
 fi
+# Enforce 0600 on EVERY run, not just rewrites: a pre-existing env-file (say,
+# copied from devcontainer.env.example under a permissive umask) holds secrets
+# at 0644, and the skip-on-identical path above would otherwise leave it that
+# way forever. chmod never changes mtime, so this cannot re-trigger the
+# recreation churn the compare exists to prevent.
+chmod 600 "$ENV_FILE"
 
 # Names only, never values — this lands in build logs. Non-fatal by design: a
 # rebuild must not be blocked by an optional secret, and this script runs as

@@ -272,12 +272,22 @@ pip install --quiet toml aiogram 2>/dev/null || true
 # it was the thing that clobbered the persisted ~/.claude.json. Check both
 # paths (XDG first, legacy second) so setup is skipped if either exists.
 REPO_NAME="$(basename "$PWD")"
-if [ ! -d "$HOME/.local/share/agent-deck/conductor/$REPO_NAME" ] &&
+XDG_CONDUCTOR_DIR="$HOME/.local/share/agent-deck/conductor/$REPO_NAME"
+if [ ! -d "$XDG_CONDUCTOR_DIR" ] &&
     [ ! -d "$HOME/.agent-deck/conductor/$REPO_NAME" ]; then
     echo "==> Setting up agent-deck conductor '$REPO_NAME'..."
-    echo "n" | agent-deck conductor setup "$REPO_NAME" \
+    if ! echo "n" | agent-deck conductor setup "$REPO_NAME" \
         --description "$REPO_NAME devcontainer conductor" \
-        --no-heartbeat || true
+        --no-heartbeat; then
+        # Setup stays non-fatal, but a partial failure must not become
+        # permanent: now that the dir guard above actually matches, a
+        # half-created conductor would be skipped on every later create while
+        # post-start treats the dir as a live conductor. The dir did not exist
+        # before this run, so removing it is a clean rollback to the pre-run
+        # state and the next create retries.
+        rm -rf "$XDG_CONDUCTOR_DIR"
+        echo "WARN: agent-deck conductor setup failed; partial state removed so the next create retries (non-fatal)" >&2
+    fi
 fi
 
 if [ -f pyproject.toml ]; then

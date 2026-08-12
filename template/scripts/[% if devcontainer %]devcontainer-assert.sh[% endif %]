@@ -374,6 +374,25 @@ assert_unit() {
     grep -q '^TS_AUTHKEY=new$' "$env_file" ||
         fail "init-env.sh skipped a write it needed to make — the changed TS_AUTHKEY never reached the env-file"
 
+    # 6c. Permissions are enforced even when the CONTENT needs no write. A
+    #     pre-existing env-file (copied from devcontainer.env.example under a
+    #     permissive umask) holds secrets at 0644, and a skip-on-identical run
+    #     must still tighten it — while leaving mtime alone (chmod never
+    #     touches mtime, so both assertions can hold at once).
+    env_file="${work_dir}/env-loose-perms"
+    printf 'TS_AUTHKEY=stable\nCLAUDE_CODE_OAUTH_TOKEN=tok\nAGENT_DECK_TELEGRAM_KEY=key\n' >"$env_file"
+    chmod 644 "$env_file"
+    mtime_before="$(stat -c %Y "$env_file" 2>/dev/null || stat -f %m "$env_file")"
+    sleep 1
+    TS_AUTHKEY=stable CLAUDE_CODE_OAUTH_TOKEN=tok AGENT_DECK_TELEGRAM_KEY=key \
+        bash "$init_env" "$env_file" "${dev_allow[@]}" 2>/dev/null
+    mode_after="$(stat -c '%a' "$env_file" 2>/dev/null || stat -f '%Lp' "$env_file")"
+    [ "$mode_after" = "600" ] ||
+        fail "init-env.sh left a secret env-file at mode ${mode_after} — 0600 must be enforced on every run, not only on rewrites"
+    mtime_after="$(stat -c %Y "$env_file" 2>/dev/null || stat -f %m "$env_file")"
+    [ "$mtime_before" = "$mtime_after" ] ||
+        fail "init-env.sh churned mtime while fixing permissions on an unchanged env-file"
+
     # 7. tailscale-connect.sh no-ops (exit 0, prints its "unavailable" message)
     #    when `tailscale` is not on PATH. Invoke with an absolute bash path so
     #    the unreachable PATH doesn't also hide the interpreter.
