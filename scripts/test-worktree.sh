@@ -44,6 +44,20 @@ fail() {
     exit 1
 }
 
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="gtimeout"
+else
+    echo "GNU timeout is required (install coreutils on macOS)." >&2
+    exit 1
+fi
+# post-checkout invokes lefthook, which has been observed to deadlock
+# (harmon-init#792) with nothing else in the path bounding the wait. Every
+# legitimate worktree operation here completes in single-digit seconds, so
+# 120s is far above the real ceiling while still bounding a hang.
+WORKTREE_OP_TIMEOUT=120
+
 refute_exists() {
     # Spelled out rather than `[ -e X ] && fail ...`: the negative case of an
     # && list is itself a non-zero statement, which is a trap under set -e.
@@ -138,8 +152,22 @@ case "$shared_hooks" in
 esac
 (cd "$fixture" && lefthook install >/dev/null 2>&1) || fail "could not install hooks in the fixture"
 
-new() { (cd "$fixture" && bash scripts/worktree-new.sh "$@"); }
-rm_wt() { (cd "$fixture" && bash scripts/worktree-rm.sh "$@"); }
+new() {
+    status=0
+    (cd "$fixture" && "$TIMEOUT_BIN" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh "$@") || status=$?
+    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+        echo "worktree:new timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)" >&2
+    fi
+    return "$status"
+}
+rm_wt() {
+    status=0
+    (cd "$fixture" && "$TIMEOUT_BIN" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh "$@") || status=$?
+    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+        echo "worktree:rm timed out after ${WORKTREE_OP_TIMEOUT}s: $* (see harmon-init#792)" >&2
+    fi
+    return "$status"
+}
 
 # ── create → work inside → remove ────────────────────────────────────
 echo "==> worktree:new creates .worktrees/<name> with its own branch"
