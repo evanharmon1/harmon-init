@@ -67,13 +67,12 @@ fi
 # Check for "stopped" specifically — the previous "! grep running" approach
 # was fooled by the bridge's status also appearing in conductor status output.
 #
-# Conductor location: agent-deck creates conductors under the XDG data dir
-# (~/.local/share/agent-deck/conductor/<name>); ~/.agent-deck/conductor is the
-# legacy location. Accept either, matching post-create-common.sh's setup guard.
+# No directory probe: `conductor status <name>` is already the authoritative
+# existence check (exit 0 iff registered) and stays correct when conductors
+# are relocated with `agent-deck conductor migrate-dir --apply` — a fixed
+# path would go stale there. Matches post-create-common.sh's setup guard.
 REPO_NAME="$(basename "$PWD")"
 if command -v agent-deck &>/dev/null &&
-    { [ -d "$HOME/.local/share/agent-deck/conductor/$REPO_NAME" ] ||
-        [ -d "$HOME/.agent-deck/conductor/$REPO_NAME" ]; } &&
     agent-deck conductor status "$REPO_NAME" 2>/dev/null | grep -qi "stopped"; then
     agent-deck session start "conductor-$REPO_NAME" 2>/dev/null &
     echo "==> Conductor $REPO_NAME started"

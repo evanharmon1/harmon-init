@@ -79,7 +79,9 @@ merged="$home/.claude/.claude.json"
 [ -L "$home/.claude.json" ] || fail "~/.claude.json is not a symlink after the merge"
 [ "$(readlink "$home/.claude.json")" = "$home/.claude/.claude.json" ] ||
     fail "the symlink does not point at the volume copy"
-[ "$(stat -c '%a' "$merged")" = "600" ] || fail "the merged volume copy is not mode 0600"
+# GNU stat first, BSD (macOS) fallback — verify must pass on both.
+[ "$(stat -c '%a' "$merged" 2>/dev/null || stat -f '%Lp' "$merged")" = "600" ] ||
+    fail "the merged volume copy is not mode 0600"
 
 # ---- 2. stray real file + missing/empty volume copy: first migration ----
 

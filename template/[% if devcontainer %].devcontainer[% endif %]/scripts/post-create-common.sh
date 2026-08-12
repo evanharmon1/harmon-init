@@ -265,26 +265,29 @@ pip install --quiet toml aiogram 2>/dev/null || true
 
 # Set up conductor if not already present (named after this repo).
 #
-# agent-deck creates conductors under the XDG data dir
-# (~/.local/share/agent-deck/conductor/<name>), NOT under ~/.agent-deck — which
-# is why the legacy-only guard never matched and setup re-ran on EVERY create.
-# That re-run spawns a `claude` process, and before link-claude-json.sh above
-# it was the thing that clobbered the persisted ~/.claude.json. Check both
-# paths (XDG first, legacy second) so setup is skipped if either exists.
+# Existence is asked of agent-deck itself (`conductor status <name>` exits 0
+# iff the conductor is registered), never of a hardcoded directory. The
+# original guard probed a path agent-deck does not use (~/.agent-deck instead
+# of the XDG data dir), so setup re-ran on EVERY create — and that re-run
+# spawns a `claude` process, which before link-claude-json.sh above was the
+# thing that clobbered the persisted ~/.claude.json. A path probe stays wrong
+# in general: `agent-deck conductor migrate-dir --apply` relocates conductors
+# to a custom [conductor].dir no fixed path would find. Asking by name is
+# location-agnostic.
 REPO_NAME="$(basename "$PWD")"
 XDG_CONDUCTOR_DIR="$HOME/.local/share/agent-deck/conductor/$REPO_NAME"
-if [ ! -d "$XDG_CONDUCTOR_DIR" ] &&
-    [ ! -d "$HOME/.agent-deck/conductor/$REPO_NAME" ]; then
+if command -v agent-deck >/dev/null 2>&1 &&
+    ! agent-deck conductor status "$REPO_NAME" >/dev/null 2>&1; then
     echo "==> Setting up agent-deck conductor '$REPO_NAME'..."
     if ! echo "n" | agent-deck conductor setup "$REPO_NAME" \
         --description "$REPO_NAME devcontainer conductor" \
         --no-heartbeat; then
         # Setup stays non-fatal, but a partial failure must not become
-        # permanent: now that the dir guard above actually matches, a
-        # half-created conductor would be skipped on every later create while
-        # post-start treats the dir as a live conductor. The dir did not exist
-        # before this run, so removing it is a clean rollback to the pre-run
-        # state and the next create retries.
+        # permanent: a half-created conductor that DID register would pass the
+        # status guard on every later create while being unusable. Remove the
+        # dir setup creates at its default location (a no-op if setup died
+        # before creating it, or if a custom [conductor].dir put it elsewhere)
+        # so the next create retries from the pre-run state.
         rm -rf "$XDG_CONDUCTOR_DIR"
         echo "WARN: agent-deck conductor setup failed; partial state removed so the next create retries (non-fatal)" >&2
     fi
