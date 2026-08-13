@@ -8,6 +8,22 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.30.0](https://github.com/evanharmon1/harmon-init/compare/v4.29.0...v4.30.0) (2026-08-13)
+
+
+### Features
+
+* **devcontainer:** one-command client-side launcher for the Dev Containers attach path ([#825](https://github.com/evanharmon1/harmon-init/issues/825)) ([27c4f1c](https://github.com/evanharmon1/harmon-init/commit/27c4f1cc7aa0ba56a1001debc099b770cee88e5e))
+* **devcontainer:** warn when the image-baked config drifts from the checkout ([#821](https://github.com/evanharmon1/harmon-init/issues/821)) ([3d3d1d8](https://github.com/evanharmon1/harmon-init/commit/3d3d1d85e1432d1ae45d09d7381534313ee8fab7))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to e46904b1 ([#830](https://github.com/evanharmon1/harmon-init/issues/830)) ([22e090e](https://github.com/evanharmon1/harmon-init/commit/22e090eaa1008834701dde388d21103846b13ab1))
+* **template:** install an optional session-end transcript archive hook in the devcontainer ([#816](https://github.com/evanharmon1/harmon-init/issues/816)) ([e46904b](https://github.com/evanharmon1/harmon-init/commit/e46904b128015bc03bc1b804826ac042e748c70e))
+* **template:** state the Auto-review knobs as settled fact across both template layers ([#831](https://github.com/evanharmon1/harmon-init/issues/831)) ([6a847e7](https://github.com/evanharmon1/harmon-init/commit/6a847e75beac9b0ee7f36d145855d15bcbff16b9))
+* **template:** sync harmon-devkit skills to v0.30.0 ([#807](https://github.com/evanharmon1/harmon-init/issues/807)) ([55daea2](https://github.com/evanharmon1/harmon-init/commit/55daea2aaacf082d560570fae6f096b3d605979b))
+
 ## [4.29.0](https://github.com/evanharmon1/harmon-init/compare/v4.28.1...v4.29.0) (2026-08-12)
 
 
