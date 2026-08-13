@@ -700,8 +700,12 @@ you rather than the bot):
   reply to, so no act on GitHub can ever record that you answered it and
   `check` returns exit 10 for that head forever — the deadlock the inline
   adjudication path was built to end, reappearing on the two surfaces it
-  cannot see. Answer the finding on the PR as usual (fix it, decline it with
-  reasoning, or file it), then record the disposition:
+  cannot see. Answer the finding on the PR as usual — and note that only two
+  of the three answers end here. **Fixing** it means a push, which moves the
+  head and starts a fresh cycle that reviews the fix on its own merits;
+  `settle` neither applies nor accepts that disposition. For the two answers
+  that leave the code alone — declining with reasoning, or filing it as
+  follow-up work — record the disposition:
 
   ```bash
   "$helper" settle --state "$state" --actor-id 199175422 \
@@ -1262,17 +1266,21 @@ loops indefinitely:
    When current-head Codex cloud review is enabled, **Codex Automatic reviews
    must be disabled in the external integration before the first promotion**.
    Otherwise `gh pr ready` can start a new asynchronous review after the gate
-   that supposedly completed automated work. Three knobs, all of them:
+   that supposedly completed automated work. Three knobs carry it:
    personal **Auto review** off, the repository's **Auto code review**
-   preference on **Follow personal**, and the repository's review **Trigger**
-   on Follow personal — an "On every push" trigger is dormant while Auto
-   review is off and arms the moment that toggle changes. GitHub does not
-   expose a reliable
-   repository API for this setting, so treat it honestly as a human-configured
-   prerequisite: use the repository setup record or maintainer confirmation,
-   never claim it was mechanically verified — a passing `readiness-gate.sh`
-   deliberately does not check it, and says so. If its state is unknown, stop
-   blocked and ask rather than promote.
+   preference on **Follow personal**, and the repository's
+   review **Trigger** on Follow personal — an "On every push" trigger is
+   dormant while Auto review is off and arms the moment that toggle changes.
+
+   **This is settled configuration, not a promotion-time check.** The
+   consuming repository's `AGENTS.md` carries the maintainer's confirmation
+   and its setup checklist carries the how-to; nothing in this stage gates on
+   it, and `readiness-gate.sh` says nothing about it either.
+   The one thing worth raising is an anomaly you happen to observe: if a
+   Codex cloud review fires **unsolicited** — after a push or a promotion
+   that no `@codex review` comment triggered — tell the maintainer, because
+   that is the signature of the knobs drifting back on. Report it and carry
+   on; it blocks nothing and there is no state to poll.
 
    Report the ready state honestly rather than over-claiming:
    `BLOCKED` or `REVIEW_REQUIRED` mean "ready for review and awaiting the
