@@ -79,9 +79,24 @@ status line:
 | What | Lives at | Source | Overridable |
 |---|---|---|---|
 | Managed settings | `/etc/claude-code/managed-settings.json` (image) | `config/claude-settings.json` | no (policy) |
-| Hook scripts | `/etc/claude-code/hooks/` (image) | `config/claude-hooks/` | no |
+| Hook scripts (mandatory) | `/etc/claude-code/hooks/` (image) | `config/claude-hooks/` | no |
+| Hook scripts (optional) | `/usr/local/share/devcontainer-config/claude-hooks/` (**staged**) | `config/claude-hooks/` | no |
 | Status line | `/etc/claude-code/statusline.sh` (image) | `config/claude-statusline.sh` | yes |
 | User defaults | `~/.claude/settings.json` (**volume**) | `config/claude-user-defaults.json` | yes |
+
+Two rows for hooks, because they are not installed the same way. A **mandatory**
+hook is listed in the image installer's `required_files`, so every image is
+guaranteed to place it under `/etc/claude-code/hooks/`. An **optional** hook —
+currently `session-end-archive.sh` — is installed only when the repository
+ships it, so a settings entry naming the `/etc` copy would break the moment the
+image pin were rolled back past the release that added it. Those are registered
+at their **staged** path instead, where the repository's own
+`COPY .devcontainer/config/` puts them regardless of which image is pinned.
+
+The practical consequence when troubleshooting: for an optional hook, the copy
+under `/etc/claude-code/hooks/` is **not** the one that runs. Inspect or replace
+the staged copy, and check `managed-settings.json` for the path actually
+registered rather than assuming it.
 
 The last row is the one exception, and deliberately so: `~/.claude/settings.json`
 is volume-backed because Claude Code writes your in-app changes there. Every
