@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.30.1](https://github.com/evanharmon1/harmon-init/compare/v4.30.0...v4.30.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **template:** register the session-end transcript archive hook in the devcontainer ([#832](https://github.com/evanharmon1/harmon-init/issues/832)) ([597f9ee](https://github.com/evanharmon1/harmon-init/commit/597f9ee24732a9bb8d2b34bedd8541d0bc8ffe1f))
+
 ## [4.30.0](https://github.com/evanharmon1/harmon-init/compare/v4.29.0...v4.30.0) (2026-08-13)
 
 
