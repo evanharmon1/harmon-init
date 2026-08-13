@@ -73,19 +73,46 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] `tier:*` ladder `local → economy → standard → frontier → apex` plus `adaptive`; `apex` =
       mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains `default_tier`
       and `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
-      (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier
-      (endpoint is a harness property per ADR 0005 D9). `tier:local` escalates to economy;
-      privacy-pinning is a future separate concern label, not a tier semantic. (#855)
+      (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier.
+      `tier:local` escalates to economy; privacy-pinning is a future separate concern label,
+      not a tier semantic. (#855)
+- [ ] Tier tables are **inert routing preferences, never dependencies**: nothing in a
+      generated repo invokes any model because the config exists, and an acting consumer may
+      select only among vendors/harnesses the operator has already configured and
+      authenticated — the shipped defaults therefore create no account, trial, or paid-SaaS
+      dependency (Hard Rule preserved), and escalation can never switch a repo to a vendor it
+      does not already use. The `local` tier's machinery binding is explicit: its entries
+      resolve to the registry's `-local` endpoint-variant harnesses (ADR 0005 D9), and
+      validation fails a local entry whose family has no registered `-local` harness.
+      `escalate_to` chains validate as referential, acyclic, and monotonic toward `apex`;
+      *when* escalation fires (failure, refusal, operator policy — never cost alone) is
+      defined in ADR 0006. (#855)
+- [ ] Built-in fallbacks are defined: absent `.devflow.toml` (or its `[tier]`/`[method]`
+      sections), both axes are advisory-informational only — the labels still classify, and
+      nothing resolves them to a model or workflow. `adaptive` is never a terminal answer:
+      the consumer's preflight resolves it to a concrete ladder tier, and a consumer with no
+      preflight capability treats it as `default_tier`. (#855)
 - [ ] `method:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`;
-      `default_method` in `.devflow.toml`. (#855)
-- [ ] Resolution and trust (ADR 0006): explicit instruction > trusted label > config default >
+      `default_method` in `.devflow.toml`. Method conflicts resolve by a **config-backed
+      rank** (shipped order, most human oversight first:
+      `human-led > plan-approved > council > orchestrate > plan > oneshot`), so topologies
+      with no inherent ordering still resolve deterministically and identically for every
+      consumer. (#855)
+- [ ] Resolution and trust (ADR 0006): explicit instruction > label > config default >
       built-in; merge-base copy when the change edits `.devflow.toml`; conflicts resolve
-      strongest-wins (a label only ever buys more capability or oversight); a concrete tier
-      beats `adaptive`; below-default resolutions are disclosed in the PR body (#809 doctrine
-      extended). Acting consumers read the label timeline and honor values only from
-      `trusted_actors` logins — advisory families fail open to the default, arming stays
-      fail-closed. Rigor's values are called **levels** in all prose from here on; "tier"
-      belongs to the model axis. (#855)
+      strongest-wins on tier and by the method rank above (a label only ever buys more
+      capability or oversight); a concrete tier beats `adaptive`; below-default resolutions
+      are disclosed in the PR body (#809 doctrine extended). Two consumer classes, because a
+      trust list cannot be assumed everywhere: an **interactive session** treats these labels
+      exactly as it treats `rigor:*` — advisory and unauthenticated, with below-default
+      disclosure as the mitigation (#809's accepted posture; works on every render, foreman
+      or not) — while **unattended automation** (foreman-class) honors a value only when the
+      actor of the **most recent apply of the current label state** is in that automation's
+      own trusted-actor configuration, re-read immediately before acting: a removal, or an
+      untrusted re-add after one, resolves to the config default rather than inheriting
+      stale trust. Advisory families fail open to the default; arming stays fail-closed.
+      Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
+      model axis. (#855)
 - [ ] ADR 0005 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
       family[:model] (vendor preference), `tier:*` is the human-decided policy layer;
       `suggest:tier:<value>` is reserved, not built. `claim:*` stays on the family axis; the
@@ -97,8 +124,13 @@ Issues become cheap to classify and route, for humans and agents alike:
       perishable facts are cited → optional `## Out of scope` / `## Provenance`; metadata
       checklist enforced by `check-issue-metadata.sh`; vocabulary read from the manifest with
       `gh label list` fallback.
-- [ ] Issue forms drop `title:` prefixes, apply `labels:` (work-type + `needs-triage`), and
-      match the skeleton's field names; org twins keep native `type:`. (#852)
+- [ ] Issue forms drop `title:` prefixes and match the skeleton's field names. Work-type
+      labels are applied by forms **only where native issue Type is unavailable** (personal
+      accounts); org twins set native `type:` and no work-type label, so each owner type has
+      exactly one writable source for the classification. Every form applies `needs-triage`.
+      Forms reference only labels the manifest provisions; provisioning order is the existing
+      CHECKLIST guarantee (`task setup:github-labels`), and an unprovisioned repo degrades to
+      unlabeled creation, which triage then catches. (#852)
 - [ ] Triage skill v1 (#856): write-allowlist = the manifest's `writers` field; v1 writes only
       area/layer/domain, unambiguous missing work-type, and `needs-triage` add/remove; never
       `foreman:*`/`rigor:*`/`tier:*`/`method:*`/`claim:*`/`suggest:*`, milestones, closes,
@@ -126,11 +158,21 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **Then** the resolution is `standard`, and any resolution below `default_tier` is disclosed in
   the PR body
 
-### Scenario: untrusted strategy labels are inert
+### Scenario: untrusted strategy labels are inert to automation
 
-- **Given** `tier:apex` applied by a login not in `trusted_actors`
-- **When** an acting consumer resolves the tier from the label timeline
-- **Then** the label is ignored with a warning and the config default applies
+- **Given** `tier:apex` applied by a login not in the automation's trusted-actor configuration
+- **When** unattended automation resolves the tier from the label timeline immediately before
+  acting
+- **Then** the label is ignored with a warning and the config default applies — and a
+  previously trusted value that was removed, or re-added by an untrusted login, resolves to
+  the default too, because trust binds to the most recent apply of the current state
+
+### Scenario: incomparable methods still resolve deterministically
+
+- **Given** an issue carrying both `method:orchestrate` and `method:council`
+- **When** any consumer resolves the method
+- **Then** the config-backed rank decides (`council`, under the shipped order) and every
+  consumer reaches the same answer
 
 ### Scenario: triage stays inside its allowlist
 
@@ -141,9 +183,11 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: a form-filed bug arrives classified
 
-- **Given** a user files through the Bug form
-- **When** the issue is created
+- **Given** a personal-account repo whose labels are provisioned (`task setup:github-labels`)
+- **When** a user files through the Bug form
 - **Then** its title carries no `[Bug]:` prefix and it already carries `bug` + `needs-triage`
+  — while on an organization repo the same form sets native issue Type `Bug` plus
+  `needs-triage`, and no work-type label
 
 ### Scenario: a standard-authored issue is foreman-dispatchable
 
