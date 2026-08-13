@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.29.0](https://github.com/evanharmon1/harmon-init/compare/v4.28.1...v4.29.0) (2026-08-12)
+
+
+### Features
+
+* **template:** resolve dev-loop round caps from .devflow.toml rigor tiers ([#808](https://github.com/evanharmon1/harmon-init/issues/808)) ([2f64511](https://github.com/evanharmon1/harmon-init/commit/2f64511af00909332613dc9fdc0527a1fd7b4418))
+
+
+### Bug Fixes
+
+* **devcontainer:** stop silent recreations from clobbering persisted state ([#815](https://github.com/evanharmon1/harmon-init/issues/815)) ([a92e894](https://github.com/evanharmon1/harmon-init/commit/a92e894ce506ce9e14e19259e8659dcafe4988d5))
+* **template:** bound the worktree fixture so a hung hook cannot stall verify ([#803](https://github.com/evanharmon1/harmon-init/issues/803)) ([df34ed2](https://github.com/evanharmon1/harmon-init/commit/df34ed22ea71a732868fd9619ace8a6bf57a15f2))
+
 ## [4.28.1](https://github.com/evanharmon1/harmon-init/compare/v4.28.0...v4.28.1) (2026-08-12)
 
 
