@@ -290,11 +290,11 @@ on `skill_categories`).
 
 ### Human-configured prerequisites (no API confirms these)
 
-- **Codex Auto review left off**, with the repository preference set to *Follow
-  personal* — a prerequisite of the readiness gate in `AGENTS.md`. Explicitly
-  **not** mechanically verifiable; never report it as verified. Mechanical
-  enforcement is tracked in
-  [#486](https://github.com/evanharmon1/harmon-init/issues/486).
+- **Codex Auto review left off**, with the repository preference *and* its
+  review Trigger set to *Follow personal* — settled configuration once
+  recorded under docs/CHECKLIST.md's [human-only] item (`AGENTS.md`, "Codex
+  Automatic reviews must stay disabled"). Nothing in the lifecycle gates on
+  it; an unsolicited Codex review is the drift signature worth reporting.
 - Codex cloud-review connector installed on the repository
   (`use_codex_cloud_review` is inert without it).
 - CodeRabbit GitHub App installation.

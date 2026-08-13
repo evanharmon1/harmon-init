@@ -45,16 +45,20 @@ primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
    request itself and promotes a draft only on a current-head result from the
    configured login — fail-closed, with bounded attempts.
 
-6. **Then disable Codex Automatic reviews** — personal Auto review off, and the
-   repository's Auto code review preference set to **Follow personal**. Codex
-   triggers a cloud review on three events: opening a PR for review, marking a
-   draft ready, and an explicit `@codex review`. Only the third is usable here:
-   the PR is a draft for the whole automated lifecycle, so the first never
-   fires, and the second fires *after* the readiness gate — starting a new
-   asynchronous review at the exact moment "non-draft" is supposed to mean the
-   automated work is done. No API reports this setting, so it is a
-   human-configured prerequisite recorded in docs/CHECKLIST.md; the readiness
-   gate trusts that record and must never claim it was mechanically verified.
+6. **Then disable Codex Automatic reviews** — personal Auto review off, the
+   repository's Auto code review preference set to **Follow personal**, and its
+   review **Trigger** set to Follow personal too (an "On every push" trigger
+   sits dormant while Auto review is off and arms the moment the personal
+   toggle changes). Codex triggers a cloud review on three events: opening a
+   PR for review, marking a draft ready, and an explicit `@codex review`. Only
+   the third is usable here: the PR is a draft for the whole automated
+   lifecycle, so the first never fires, and the second fires *after* the
+   readiness gate — starting a new asynchronous review at the exact moment
+   "non-draft" is supposed to mean the automated work is done. Record the
+   three knobs under docs/CHECKLIST.md's [human-only] item; once recorded it
+   is settled configuration — nothing in the lifecycle gates on it, and the
+   one thing worth reporting later is an unsolicited Codex review, the
+   signature of the knobs drifting back on.
 
 ## Manual reviews
 
