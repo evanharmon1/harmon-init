@@ -135,6 +135,7 @@ tasks:
       - task: test:statusline
       - task: test:link-claude-json
       - task: test:image-staleness
+      - task: test:open-devcontainer
 [% endif %]
       - task: test
 
@@ -781,6 +782,11 @@ tasks:
     desc: Unit-test the image-staleness warning (no container needed)
     cmds:
       - ./scripts/test-image-staleness.sh
+
+  test:open-devcontainer:
+    desc: Unit-test the client-side dev container launcher (no VS Code needed)
+    cmds:
+      - ./scripts/test-open-devcontainer.sh
 
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
