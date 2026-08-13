@@ -100,9 +100,10 @@ Issues become cheap to classify and route, for humans and agents alike:
       sections), both axes are advisory-informational only — the labels still classify, and
       nothing resolves them to a model or workflow. `adaptive` is never a terminal answer:
       the consumer's preflight resolves it to a concrete ladder tier, and a consumer with no
-      preflight capability treats it as `default_tier` where that key is configured — absent
-      the config, `adaptive` resolves to nothing, like every tier value under the
-      axes-inert fallback above. (#855)
+      preflight capability treats it as `default_tier` where that key is configured —
+      validation rejects `adaptive` as a `default_tier`, so that fallback is always
+      concrete — and absent the config, `adaptive` resolves to nothing, like every tier
+      value under the axes-inert fallback above. (#855)
 - [ ] `method:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`;
       `default_method` in `.devflow.toml`. Method conflicts resolve by a **config-backed
       rank** (shipped order, most human oversight first:
@@ -121,11 +122,14 @@ Issues become cheap to classify and route, for humans and agents alike:
       trust list cannot be assumed everywhere: an **interactive session** treats these labels
       exactly as it treats `rigor:*` — advisory and unauthenticated, with below-default
       disclosure as the mitigation (#809's accepted posture; works on every render, foreman
-      or not) — while **unattended automation** (foreman-class) honors a value only when the
-      actor of the **most recent apply of the current label state** is in that automation's
-      own trusted-actor configuration, re-read immediately before acting: a removal, or an
-      untrusted re-add after one, resolves to the config default rather than inheriting
-      stale trust. Advisory families fail open to the default; arming stays fail-closed.
+      or not), plus one hardening beyond it: before honoring a label that resolves **below**
+      the configured default, the session confirms with its operator, so the disclosure
+      records a human decision rather than a label's — while **unattended automation**
+      (foreman-class) honors a value only when the actor of the **latest mutation of the
+      whole axis** — any apply or removal of any label in that family — is in that
+      automation's own trusted-actor configuration, re-read immediately before acting: one
+      untrusted mutation anywhere on the axis resolves it to the config default, so neither
+      a removal nor a re-add can resurrect or launder an older value. Advisory families fail open to the default; arming stays fail-closed.
       Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
       model axis. (#855)
 - [ ] ADR 0005 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
@@ -151,7 +155,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       quick capture stays legal, and the authoring standard supplies criteria at triage
       before any dispatch. (#852)
 - [ ] Triage skill v1 (#856): write-allowlist = the manifest's `writers` field; v1 writes only
-      area/layer/domain, unambiguous missing work-type, and `needs-triage` add/remove; never
+      area/layer/domain, an unambiguous missing work-type **on personal-account repos** (org
+      classification is native Type, which v1 cannot write — a missing org Type is reported,
+      never labeled), and `needs-triage` add/remove; never
       `foreman:*`/`rigor:*`/`tier:*`/`method:*`/`claim:*`/`suggest:*`, milestones, closes,
       assignees, or body/title edits; everything else lands in one rolling report issue.
 - [ ] Foreman alignment: pin bump to 2.5.0 (#849), AdmiralFraggle in `trusted_actors` (#850),
@@ -182,9 +188,10 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **Given** `tier:apex` applied by a login not in the automation's trusted-actor configuration
 - **When** unattended automation resolves the tier from the label timeline immediately before
   acting
-- **Then** the label is ignored with a warning and the config default applies — and a
-  previously trusted value that was removed, or re-added by an untrusted login, resolves to
-  the default too, because trust binds to the most recent apply of the current state
+- **Then** the label is ignored with a warning and the config default applies — and any
+  untrusted apply **or removal** anywhere on the axis resolves it to the default too,
+  because trust binds to the latest mutation of the whole axis, never to a surviving older
+  value
 
 ### Scenario: incomparable methods still resolve deterministically
 
