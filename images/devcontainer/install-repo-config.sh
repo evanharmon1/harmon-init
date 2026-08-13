@@ -80,6 +80,23 @@ for hook in \
     session-start-context.sh; do
     install -m 0755 "${config_dir}/claude-hooks/${hook}" "/etc/claude-code/hooks/${hook}"
 done
+
+# OPTIONAL Claude hooks — installed when the consuming repository ships them,
+# skipped silently when it does not.
+#
+# Deliberately absent from required_files above, and the reason is the whole
+# point of the guard: this image is consumed by repositories generated from
+# older templates, which have no such file under claude-hooks/. Listing one in
+# required_files, or installing it unguarded under `set -e`, would fail the
+# devcontainer build of every repository that has not adopted it yet — a new
+# image must never break an old consumer. Promote an entry into required_files
+# only once the fleet has taken the update, at which point a missing file
+# becomes a genuine error worth failing on rather than an expected state.
+for hook in \
+    session-end-archive.sh; do
+    [ -f "${config_dir}/claude-hooks/${hook}" ] || continue
+    install -m 0755 "${config_dir}/claude-hooks/${hook}" "/etc/claude-code/hooks/${hook}"
+done
 for hook in claude-compat.sh file-payload.sh; do
     install -m 0755 "${config_dir}/codex-hooks/${hook}" "/etc/codex/hooks/${hook}"
 done
