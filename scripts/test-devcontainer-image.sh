@@ -36,9 +36,13 @@ esac
 
 candidate="harmon-devcontainer-candidate:${source_revision}"
 overlay="harmon-devcontainer-overlay-test:${source_revision}"
+legacy_overlay="harmon-devcontainer-legacy-overlay-test:${source_revision}"
+legacy_context=""
 
 cleanup() {
-    docker image rm --force "$overlay" "$candidate" >/dev/null 2>&1 || true
+    docker image rm --force "$overlay" "$legacy_overlay" "$candidate" >/dev/null 2>&1 || true
+    [ -n "$legacy_context" ] && rm -rf "$legacy_context"
+    return 0
 }
 trap cleanup EXIT
 
@@ -76,6 +80,7 @@ docker run --rm "$overlay" sh -eu -c '
     [ "$(id -un)" = vscode ]
     [ -f /etc/claude-code/managed-settings.json ]
     [ -x /etc/claude-code/hooks/protect-files.sh ]
+    [ -x /etc/claude-code/hooks/session-end-archive.sh ]
     [ -f /etc/codex/managed_config.toml ]
     [ -x /etc/codex/hooks/claude-compat.sh ]
     [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
@@ -91,4 +96,38 @@ docker run --rm "$overlay" sh -eu -c '
     infocmp -1 xterm-ghostty | grep -q "sgr=.*%p5%t;2"
 '
 
-echo "test-devcontainer-image: candidate and repository overlay passed"
+# LEGACY OVERLAY — the compatibility guarantee, retained.
+#
+# install-repo-config.sh installs some Claude hooks only when the consuming
+# repository ships them, because ${config_dir} is that repository's config and
+# repos generated from older templates do not have them. The overlay above
+# cannot test that: it builds from this repo, where every optional hook is
+# present, so it passes whether the guard works or not. Removing an `[ -f … ]`
+# guard, or promoting an optional hook into required_files, would keep it green
+# while the published image broke the devcontainer build of every repository
+# that had not adopted the file yet.
+#
+# So build the overlay a second time against a config directory with the
+# optional hooks stripped out. The build succeeding IS the assertion — the
+# installer runs under `set -e`, so an unguarded install of a missing file
+# fails here rather than in the fleet.
+legacy_context="$(mktemp -d)"
+mkdir -p "${legacy_context}/.devcontainer"
+cp -R .devcontainer/config "${legacy_context}/.devcontainer/config"
+rm -f "${legacy_context}/.devcontainer/config/claude-hooks/session-end-archive.sh"
+
+docker build \
+    --build-arg "BASE_IMAGE=${candidate}" \
+    --file images/devcontainer/test-overlay.Dockerfile \
+    --tag "$legacy_overlay" \
+    "$legacy_context"
+
+docker run --rm "$legacy_overlay" sh -eu -c '
+    # The mandatory hooks still install …
+    [ -x /etc/claude-code/hooks/protect-files.sh ]
+    [ -f /etc/claude-code/managed-settings.json ]
+    # … and the optional one is simply absent rather than a failed build.
+    [ ! -e /etc/claude-code/hooks/session-end-archive.sh ]
+'
+
+echo "test-devcontainer-image: candidate, repository overlay, and legacy overlay passed"
