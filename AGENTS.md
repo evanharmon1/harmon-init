@@ -615,12 +615,16 @@ workbench, and the second is actively harmful here — `gh pr ready` would kick
 off a fresh asynchronous review *after* the gate that was supposed to complete
 the automated work, so non-draft would stop meaning "ready for a human". The
 lifecycle therefore uses explicit `@codex review` requests while the PR is
-draft, per the current-head cycle above. Evan has set personal Auto review off
-and the repository preference to **Follow personal**; that state is a
-**human-configured prerequisite**, not something any API confirms, so never
-report it as mechanically verified. If it changes, the readiness gate stops
-being valid until it is restored. Mechanical enforcement is tracked separately
-in [#486](https://github.com/evanharmon1/harmon-init/issues/486).
+draft, per the current-head cycle above. They are disabled, platform-wide:
+personal Auto review is off, and the repository's Auto code review preference
+and its review **Trigger** are both on **Follow personal** — confirmed by the
+maintainer 2026-08-13 and recorded under docs/CHECKLIST.md's [human-only]
+item. Nothing in the lifecycle gates on it. One thing is worth telling the
+maintainer: if a Codex cloud review ever fires **unsolicited** — after a push
+or a promotion that no `@codex review` comment triggered — say so; that is
+the signature of the knobs drifting back on (observed and corrected
+2026-08-10). Reporting an anomaly you happened to observe is not a check to
+run, and nothing waits on it.
 
 **Treat Codex findings as hypotheses, not authority.** For every finding:
 
