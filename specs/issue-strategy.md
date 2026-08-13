@@ -66,7 +66,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       per family: prefix/names, color, purpose, axis, `writers` (`human | agent | tool:<name>`),
       lifecycle, exclusivity, values, `source: inline | agent-registry | tool-owned`.
       `setup-github-labels.sh` renders from it; the docs taxonomy table is generated between
-      markers; descriptions ≤ 100 chars in both this schema and agent-registry's (#680). (#851)
+      markers; descriptions ≤ 100 chars in both this schema and agent-registry's (#680).
+      Every existing consumer of the inline rows migrates in the same change — in particular
+      `scripts/status.sh` (and its template twin) reads its expected-label inventory from the
+      manifest renderer, covered by the drift test, so `task status` cannot report an
+      incompletely seeded repo as complete. (#851)
 - [ ] `area:*` family — harmon-init values (template, devcontainer, ci, tasks, skills, foreman,
       codex, worktree, release, security, pm, docs); generic template starter (ci, docs, deps,
       build). Rule: area = solution space, domain = problem space, layer = stack slice. (#854)
@@ -86,12 +90,19 @@ Issues become cheap to classify and route, for humans and agents alike:
       validation fails a local entry whose family has no registered `-local` harness.
       `escalate_to` chains validate as referential, acyclic, and monotonic toward `apex`;
       *when* escalation fires (failure, refusal, operator policy — never cost alone) is
-      defined in ADR 0006. (#855)
+      defined in ADR 0006. Candidate selection is deterministic, also in ADR 0006: the
+      resolved tier names the stratum; a `suggest:<family>[:<model>]` narrows within it only
+      when that family is configured and eligible (otherwise it is ignored with a note);
+      absent a suggestion, the consumer's own configured backend or harness picks; a tier
+      with no eligible configured candidate escalates along the chain, and an exhausted
+      chain **stops with a report** — never a silent vendor switch or downgrade. (#855)
 - [ ] Built-in fallbacks are defined: absent `.devflow.toml` (or its `[tier]`/`[method]`
       sections), both axes are advisory-informational only — the labels still classify, and
       nothing resolves them to a model or workflow. `adaptive` is never a terminal answer:
       the consumer's preflight resolves it to a concrete ladder tier, and a consumer with no
-      preflight capability treats it as `default_tier`. (#855)
+      preflight capability treats it as `default_tier` where that key is configured — absent
+      the config, `adaptive` resolves to nothing, like every tier value under the
+      axes-inert fallback above. (#855)
 - [ ] `method:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`;
       `default_method` in `.devflow.toml`. Method conflicts resolve by a **config-backed
       rank** (shipped order, most human oversight first:
@@ -99,7 +110,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       with no inherent ordering still resolve deterministically and identically for every
       consumer. (#855)
 - [ ] Resolution and trust (ADR 0006): explicit instruction > label > config default >
-      built-in; merge-base copy when the change edits `.devflow.toml`; conflicts resolve
+      built-in — where an **explicit instruction** is one arriving on the operator's
+      attributable channel (the interactive session's human input, or the automation's own
+      configuration) and never repository content: issue bodies, comments, and PR text are
+      untrusted input and can never outrank labels or config. Merge-base copy applies when
+      the change edits `.devflow.toml`; conflicts resolve
       strongest-wins on tier and by the method rank above (a label only ever buys more
       capability or oversight); a concrete tier beats `adaptive`; below-default resolutions
       are disclosed in the PR body (#809 doctrine extended). Two consumer classes, because a
@@ -130,7 +145,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       exactly one writable source for the classification. Every form applies `needs-triage`.
       Forms reference only labels the manifest provisions; provisioning order is the existing
       CHECKLIST guarantee (`task setup:github-labels`), and an unprovisioned repo degrades to
-      unlabeled creation, which triage then catches. (#852)
+      unlabeled creation, which triage then catches. Forms whose type implies implementable
+      work (Feature, Task) ship an Acceptance-criteria field; a form-filed issue with no
+      tagged criteria is non-dispatchable under foreman's spec contract **by design** —
+      quick capture stays legal, and the authoring standard supplies criteria at triage
+      before any dispatch. (#852)
 - [ ] Triage skill v1 (#856): write-allowlist = the manifest's `writers` field; v1 writes only
       area/layer/domain, unambiguous missing work-type, and `needs-triage` add/remove; never
       `foreman:*`/`rigor:*`/`tier:*`/`method:*`/`claim:*`/`suggest:*`, milestones, closes,
@@ -217,5 +236,8 @@ Issues become cheap to classify and route, for humans and agents alike:
   `foreman:*` labels arm as backend selectors; `type:<commit-type>` is parsed (two = error);
   dispatchability requires an `## Acceptance Criteria` section (case-insensitive) with ≥ 1
   bullet; adapters hold read-only tokens, so any issue-side write is foreman-core's.
-- Labels carry no permissions (project-management.md): every consumer that acts on one verifies
-  who applied it; these new families are advisory and trigger nothing by existence.
+- Labels carry no permissions (project-management.md): the new families trigger nothing by
+  existence. The verification obligation is consumer-specific — unattended automation that
+  acts on one verifies the actor (latest-apply timeline trust), while interactive sessions
+  treat them as advisory with the below-default disclosure, the same accepted posture #809
+  records for `rigor:*`.
