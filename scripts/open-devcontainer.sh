@@ -200,7 +200,9 @@ db="${VSCODE_STATE_DB-}"
 if [ -z "$db" ]; then
     case "$(uname -s)" in
     Darwin) db="${HOME}/Library/Application Support/Code/User/globalStorage/state.vscdb" ;;
-    Linux) db="${HOME}/.config/Code/User/globalStorage/state.vscdb" ;;
+    # VS Code honours XDG_CONFIG_HOME on Linux, so hardcoding ~/.config would
+    # miss the database on any client that sets it.
+    Linux) db="${XDG_CONFIG_HOME:-${HOME}/.config}/Code/User/globalStorage/state.vscdb" ;;
     *) die "unsupported platform '$(uname -s)' — set VSCODE_STATE_DB to VS Code's state.vscdb" ;;
     esac
 fi
@@ -227,15 +229,26 @@ case "$rc" in
 *) die "failed to read ${db} (extractor exit ${rc})" ;;
 esac
 
+# Arrays here are written by INDEX and read by index, never with `[@]` and
+# never through `${#arr[@]}`, with an ordinary integer carrying the count.
+# That is not a style preference. bash 3.2 — still the /bin/bash on macOS,
+# the client this script is written for — does not create a variable for
+# `arr=()`, so under `set -u` EVERY expansion of a still-empty array, the
+# length included, aborts with "arr: unbound variable". The empty case is
+# exactly the one that must survive: "recents exist, but none of them is a
+# dev container" and "nothing matched" are the two paths whose whole job is to
+# print a helpful message. Counters have no such edge, on any bash.
 uris=()
 labels=()
+count=0
 while IFS=$'\t' read -r uri label; do
     [ -n "$uri" ] || continue
-    uris+=("$uri")
-    labels+=("$label")
+    uris[count]="$uri"
+    labels[count]="$label"
+    count=$((count + 1))
 done <<<"$extracted"
 
-if [ "${#uris[@]}" -eq 0 ]; then
+if [ "$count" -eq 0 ]; then
     die "no dev-container entries in VS Code's recents — ${manual_flow_hint}"
 fi
 
@@ -243,33 +256,37 @@ fi
 
 if [ -z "$match" ]; then
     echo "dev containers VS Code remembers (pass a substring or a [token] to open one):" >&2
-    for label in "${labels[@]}"; do
-        printf '%s\n' "$label"
+    for ((i = 0; i < count; i++)); do
+        printf '%s\n' "${labels[i]}"
     done
     exit 0
 fi
 
 needle="$(printf '%s' "$match" | tr '[:upper:]' '[:lower:]')"
 hits=()
-for ((i = 0; i < ${#uris[@]}; i++)); do
+hit_count=0
+for ((i = 0; i < count; i++)); do
     # Matched against the LABEL, not the raw URI: the URI's hex blob is a long
     # run of [0-9a-f] in which a short all-hex needle ("added", "cafe") would
     # match nothing meaningful. The label carries the entry's token, so a
     # token is matched by this same pass and needs no special case.
     haystack="$(printf '%s' "${labels[i]}" | tr '[:upper:]' '[:lower:]')"
     case "$haystack" in
-    *"$needle"*) hits+=("$i") ;;
+    *"$needle"*)
+        hits[hit_count]="$i"
+        hit_count=$((hit_count + 1))
+        ;;
     esac
 done
 
-if [ "${#hits[@]}" -eq 0 ]; then
+if [ "$hit_count" -eq 0 ]; then
     die "no dev-container entry matching '${match}' — ${manual_flow_hint}"
 fi
 
-if [ "${#hits[@]}" -gt 1 ]; then
-    echo "open-devcontainer: '${match}' matches ${#hits[@]} entries — narrow by name, or use the [token] at the end of a line:" >&2
-    for i in "${hits[@]}"; do
-        printf '%s\n' "${labels[i]}" >&2
+if [ "$hit_count" -gt 1 ]; then
+    echo "open-devcontainer: '${match}' matches ${hit_count} entries — narrow by name, or use the [token] at the end of a line:" >&2
+    for ((i = 0; i < hit_count; i++)); do
+        printf '%s\n' "${labels[${hits[i]}]}" >&2
     done
     exit 1
 fi

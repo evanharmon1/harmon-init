@@ -27,14 +27,16 @@ fail() {
 tmp_root="$(mktemp -d -t harmon-open-devcontainer-XXXXXX)"
 trap 'rm -rf "$tmp_root"' EXIT
 
-# hex <string> — hex-encode ASCII in pure bash, so building a fixture URI needs
-# no xxd (absent on stock macOS) and no second language.
+# hex <string> — hex-encode a fixture blob in one python3 call. The launcher
+# under test already requires python3, so the test may too. What this replaced
+# looped in bash and forked a subshell PER CHARACTER — about 600 of them for
+# the fixtures below. Measured honestly in this Linux devcontainer that is
+# 1.36s before against 1.29s after: noise, because bash forks a subshell for
+# `$(printf …)` without an exec. It is kept for the process count itself,
+# which is real, and because fork is markedly dearer on the macOS client this
+# suite also runs on — not on a promise that `task verify` got faster.
 hex() {
-    local s="$1" i out=""
-    for ((i = 0; i < ${#s}; i++)); do
-        out="${out}$(printf '%02x' "'${s:i:1}")"
-    done
-    printf '%s' "$out"
+    python3 -c 'import sys; sys.stdout.write(sys.argv[1].encode("utf-8").hex())' "$1"
 }
 
 # dc_uri <hostPath> <remote> <container path> [plus] — a dev-container folder
@@ -224,6 +226,59 @@ run_launcher "$db_plain" harmon-init
 [ "$rc" -ne 0 ] || fail "a recents list with no dev containers exited 0"
 printf '%s\n' "$out" | grep -q 'docs/guides/devcontainers.md' ||
     fail "the empty-list message does not point at the guide: ${out}"
+
+echo "==> the no-entries path survives an explicit -u, and lists nothing"
+# Both of the paths above reach their message with EMPTY arrays. On bash 3.2 —
+# the /bin/bash of the macOS client this script targets — `arr=()` creates no
+# variable, so under `set -u` any expansion of a still-empty array (`${arr[@]}`
+# and `${#arr[@]}` alike) aborts with "unbound variable" BEFORE the message is
+# printed. That is the bug this pair of cases guards.
+#
+# Honest limit: bash 3.2 is not installed in this container, and `bash -u` on a
+# modern bash does NOT reproduce the 3.2 semantics — the run below only proves
+# the paths are clean under -u on the bash we have. The structural assertion
+# after it is what actually holds the line, because the 3.2 trap is reachable
+# only through `[@]`-style expansion: the launcher must not contain one.
+set +e
+out="$(VSCODE_STATE_DB="$db_plain" bash -u "$launcher" 2>&1)"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "the no-entries listing exited 0 under -u"
+printf '%s\n' "$out" | grep -q 'no dev-container entries' ||
+    fail "the no-entries listing did not print its message under -u: ${out}"
+if printf '%s\n' "$out" | grep -q 'unbound variable'; then
+    fail "an empty array was expanded on the no-entries path: ${out}"
+fi
+
+echo "==> the launcher expands no array with [@] or [*]"
+# Comment lines are filtered out: the launcher's own explanation of this rule
+# necessarily spells the forbidden form.
+offenders="$(grep -nE '\$\{#?[A-Za-z_][A-Za-z0-9_]*\[[@*]\]' "$launcher" |
+    grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+[ -z "$offenders" ] ||
+    fail "array expansions unsafe on bash 3.2 + set -u (index them instead): ${offenders}"
+
+# ---- 4b. the Linux default path follows XDG ----
+# VS Code writes its state under XDG_CONFIG_HOME when that is set, so a client
+# that sets it would otherwise get "no VS Code state database" pointing at a
+# ~/.config path nothing ever wrote to.
+
+echo "==> the Linux default path honours XDG_CONFIG_HOME"
+if [ "$(uname -s)" = "Linux" ]; then
+    xdg_root="${tmp_root}/xdg"
+    mkdir -p "${xdg_root}/Code/User/globalStorage"
+    cp "$db_ok" "${xdg_root}/Code/User/globalStorage/state.vscdb"
+    # No VSCODE_STATE_DB here on purpose: the point is the DEFAULT path.
+    set +e
+    out="$(XDG_CONFIG_HOME="$xdg_root" OPEN_DEVCONTAINER_DRY_RUN=1 bash "$launcher" harmon-init 2>&1)"
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] || fail "the XDG default path was not consulted (exit ${rc}): ${out}"
+    printf '%s\n' "$out" | grep -qF -- "--folder-uri ${uri_init}" ||
+        fail "the XDG default path found the wrong entry: ${out}"
+else
+    echo "    (skipped: XDG is the Linux branch, and this host is $(uname -s))"
+fi
 
 # ---- 5. every missing precondition is one specific line, never a trace ----
 
