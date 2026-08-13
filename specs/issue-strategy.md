@@ -64,7 +64,10 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 - [ ] `label-registry.json` + schema + validator + `task test:label-registry`, template twins;
       per family: prefix/names, color, purpose, axis, `writers` (`human | agent | tool:<name>`),
-      lifecycle, exclusivity, values, `source: inline | agent-registry | tool-owned`.
+      lifecycle, exclusivity, values, `source: inline | agent-registry | tool-owned` — with
+      **per-value overrides** of `writers`/`lifecycle`, because mixed namespaces exist
+      (`foreman:*`: arming selectors and `approved` are trusted-human inputs, `hold` is
+      human, `dispatched`/`ready-for-review` are tool-owned outputs).
       `setup-github-labels.sh` renders from it; the docs taxonomy table is generated between
       markers; descriptions ≤ 100 chars in both this schema and agent-registry's (#680).
       Every existing consumer of the inline rows migrates in the same change — in particular
@@ -92,7 +95,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       *when* escalation fires (failure, refusal, operator policy — never cost alone) is
       defined in ADR 0006. Candidate selection is deterministic, also in ADR 0006: the
       resolved tier names the stratum; a `suggest:<family>[:<model>]` narrows within it only
-      when that family is configured and eligible (otherwise it is ignored with a note);
+      when that family is configured and eligible (otherwise it is ignored with a note) —
+      and unattended consumption of a suggestion is subject to the same provenance
+      invariant as the strategy axes below;
       absent a suggestion, the consumer's own configured backend or harness picks; a tier
       with no eligible configured candidate escalates along the chain, and an exhausted
       chain **stops with a report** — never a silent vendor switch or downgrade. (#855)
@@ -118,18 +123,22 @@ Issues become cheap to classify and route, for humans and agents alike:
       the change edits `.devflow.toml`; conflicts resolve
       strongest-wins on tier and by the method rank above (a label only ever buys more
       capability or oversight); a concrete tier beats `adaptive`; below-default resolutions
-      are disclosed in the PR body (#809 doctrine extended). Two consumer classes, because a
-      trust list cannot be assumed everywhere: an **interactive session** treats these labels
-      exactly as it treats `rigor:*` — advisory and unauthenticated, with below-default
-      disclosure as the mitigation (#809's accepted posture; works on every render, foreman
-      or not), plus one hardening beyond it: before honoring a label that resolves **below**
-      the configured default, the session confirms with its operator, so the disclosure
-      records a human decision rather than a label's — while **unattended automation**
-      (foreman-class) honors a value only when the actor of the **latest mutation of the
-      whole axis** — any apply or removal of any label in that family — is in that
-      automation's own trusted-actor configuration, re-read immediately before acting: one
-      untrusted mutation anywhere on the axis resolves it to the config default, so neither
-      a removal nor a re-add can resurrect or launder an older value. Advisory families fail open to the default; arming stays fail-closed.
+      are disclosed in the PR body (#809 doctrine extended). Consumer trust is stated as
+      **invariants**; the concrete timeline-validation algorithm is deliberately not
+      specified here — it is ADR 0006 / foreman#139 design work under #855, and the
+      adversarial scenarios raised in this spec's review are carried there as required test
+      cases:
+      1. **Unattended automation** acts on a strategy or suggestion label only after
+         verifying its provenance end-to-end from its own trusted-actor configuration,
+         re-read immediately before acting — and no sequence of untrusted mutations,
+         applies **or removals**, on any label of the axis, may move the resolved outcome
+         away from what trusted actors' surviving actions alone would produce. Anything
+         short of that resolves to the config default with a warning.
+      2. An **interactive session** treats these labels as advisory (the #809 rigor
+         posture), and requires operator confirmation for **any off-default resolution** —
+         above or below, since one direction skips oversight and the other spends money —
+         arising from a label the session cannot attribute.
+      3. Advisory families fail open to the config default; arming stays fail-closed.
       Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
       model axis. (#855)
 - [ ] ADR 0005 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
@@ -150,14 +159,20 @@ Issues become cheap to classify and route, for humans and agents alike:
       Forms reference only labels the manifest provisions; provisioning order is the existing
       CHECKLIST guarantee (`task setup:github-labels`), and an unprovisioned repo degrades to
       unlabeled creation, which triage then catches. Forms whose type implies implementable
-      work (Feature, Task) ship an Acceptance-criteria field; a form-filed issue with no
-      tagged criteria is non-dispatchable under foreman's spec contract **by design** —
-      quick capture stays legal, and the authoring standard supplies criteria at triage
+      work (Feature, Task) ship an Acceptance-criteria field that is **empty — no prefilled
+      `- [ ]` placeholder**: foreman's parser accepts any nonempty section (untagged bullets
+      become `[CI]` with a warning), so a placeholder would make placeholder issues
+      dispatchable; an unfilled empty field omits the section entirely, and a form-filed
+      issue with no acceptance-criteria section is genuinely non-dispatchable **by design**
+      — quick capture stays legal, and the authoring standard supplies criteria at triage
       before any dispatch. (#852)
 - [ ] Triage skill v1 (#856): write-allowlist = the manifest's `writers` field; v1 writes only
       area/layer/domain, an unambiguous missing work-type **on personal-account repos** (org
       classification is native Type, which v1 cannot write — a missing org Type is reported,
-      never labeled), and `needs-triage` add/remove; never
+      never labeled), and `needs-triage` — added freely, removed **only when classification
+      is complete** (work type present in the owner-appropriate form, and each of
+      area/layer/domain either applied or genuinely inapplicable); a partially classified
+      issue keeps the label and appears in the report; never
       `foreman:*`/`rigor:*`/`tier:*`/`method:*`/`claim:*`/`suggest:*`, milestones, closes,
       assignees, or body/title edits; everything else lands in one rolling report issue.
 - [ ] Foreman alignment: pin bump to 2.5.0 (#849), AdmiralFraggle in `trusted_actors` (#850),
@@ -188,10 +203,10 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **Given** `tier:apex` applied by a login not in the automation's trusted-actor configuration
 - **When** unattended automation resolves the tier from the label timeline immediately before
   acting
-- **Then** the label is ignored with a warning and the config default applies — and any
-  untrusted apply **or removal** anywhere on the axis resolves it to the default too,
-  because trust binds to the latest mutation of the whole axis, never to a surviving older
-  value
+- **Then** the label is ignored with a warning and the config default applies — and no
+  sequence of untrusted applies **or removals** anywhere on the axis can move the outcome
+  away from what trusted actors' surviving actions alone would produce (the provenance
+  invariant; the concrete algorithm lives with ADR 0006 / foreman#139)
 
 ### Scenario: incomparable methods still resolve deterministically
 
