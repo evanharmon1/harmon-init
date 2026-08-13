@@ -81,6 +81,38 @@ docker run --rm "$overlay" sh -eu -c '
     [ -f /etc/claude-code/managed-settings.json ]
     [ -x /etc/claude-code/hooks/protect-files.sh ]
     [ -x /etc/claude-code/hooks/session-end-archive.sh ]
+    # Every hook the managed settings REGISTER must resolve to an executable.
+    # Reading the config rather than a hardcoded path is the point: a settings
+    # entry naming a file the image never creates is inert, and silently so,
+    # because these hooks are deliberately async and quiet (harmon-init#829 —
+    # the hook was installed for a whole release without ever running). The
+    # line above proves the installer placed a file; this proves the settings
+    # point at one. The two are independent, and the second is what a session
+    # actually executes.
+    for cmd in $(jq -r ".hooks[][].hooks[].command" \
+        /etc/claude-code/managed-settings.json | grep "^/" | sort -u); do
+        [ -x "$cmd" ] || {
+            echo "registered hook is not executable: $cmd" >&2
+            exit 1
+        }
+    done
+    # …and SessionEnd must be registered at its STAGED path specifically.
+    # Checking for non-null is not enough: pointing it back at
+    # /etc/claude-code/hooks/… would still pass here, because this candidate
+    # image does install that copy — and would silently break the documented
+    # one-line rollback the moment a consumer reverted to a pre-hook image.
+    # Asserting the exact path is what guards that contract; the loop above
+    # only proves whatever is registered resolves against THIS image.
+    # Says why it failed — a bare test exits silently under `sh -eu`, leaving
+    # the next reader to infer the cause from an exit code.
+    [ "$(jq -r ".hooks.SessionEnd[0].hooks[0].command" \
+        /etc/claude-code/managed-settings.json)" \
+        = /usr/local/share/devcontainer-config/claude-hooks/session-end-archive.sh ] || {
+        echo "SessionEnd must be registered at the staged hook path" >&2
+        echo "  expected: /usr/local/share/devcontainer-config/claude-hooks/session-end-archive.sh" >&2
+        echo "  an /etc/claude-code/… path breaks the one-line image rollback" >&2
+        exit 1
+    }
     [ -f /etc/codex/managed_config.toml ]
     [ -x /etc/codex/hooks/claude-compat.sh ]
     [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]

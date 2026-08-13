@@ -16,6 +16,12 @@ on:
       # reach them. PR-side only, deliberately: this file is repository config,
       # not image content, so it must never trigger a publish on main.
       - ".devcontainer/config/ghostty.terminfo"
+      # Same reason, same PR-side-only caveat: those assertions are also the
+      # only place the managed settings are checked for registering every hook
+      # they name — and specifically for keeping the optional archive hook on
+      # its rollback-safe staged path. A settings-only PR is exactly the change
+      # that would regress it, so it has to reach them.
+      - ".devcontainer/config/claude-settings.json"
   push:
     branches: [main]
     paths:

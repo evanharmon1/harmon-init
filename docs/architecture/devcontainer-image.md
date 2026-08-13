@@ -81,6 +81,29 @@ bridge from "image bytes exist" to "harmon-init recommends those bytes".
 Source-commit tags are immutable, so a rollback cannot silently resolve to
 different bytes.
 
+That one-line guarantee constrains how managed settings may reference hooks.
+A `claude-settings.json` entry pointing at `/etc/claude-code/hooks/…` is only
+valid for images whose installer places that hook there, so rolling the pin
+back past the image that introduced one would leave the setting invoking a
+command that does not exist — silently, for a hook that is deliberately
+`async` and quiet. Optional hooks are therefore referenced at their **staged**
+path, `/usr/local/share/devcontainer-config/claude-hooks/…`: the consumer's own
+`COPY .devcontainer/config/` puts them there regardless of which image is
+pinned, so the setting and the script it names ship as one artifact and roll
+back together. Mandatory hooks keep the `/etc/claude-code/…` path — the
+installer's `required_files` check guarantees them in every image, so no
+version coupling exists to break.
+
+The staged path is chosen for rollback safety, **not** as a security boundary,
+and it should not be described as one. The staged directory is root-owned while
+the container runs as `vscode`, so an *unprivileged* write cannot modify it —
+but that is the whole of the property. `vscode` has passwordless `sudo` (the
+Microsoft devcontainer base grants it, and the lifecycle scripts rely on it
+non-interactively), and the bot profile runs Claude in `bypassPermissions`, so
+an agent can overwrite the staged hook. `/etc/claude-code/` is no better:
+`enable-claude-bypass.sh` already writes the managed settings there with
+`sudo`. Neither location is protected from an agent that wants to change it.
+
 **Outage behavior:** pulls need no GHCR credential; if GHCR is unavailable,
 existing local/runner caches keep working and clean builders fail closed
 rather than falling back to an unpinned image.
