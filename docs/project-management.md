@@ -401,9 +401,12 @@ can be summed in a view's group header, which is `Size`'s whole job.
 ## Labels
 
 Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
-`Type` (kind of work) — they tag cross-cutting *facets*. Keep them in a few
-families, color-coded by family; the starter set is created by
-`task setup:github-labels`:
+`Type` (kind of work) — they tag cross-cutting *facets*, with one exception:
+the four work-type labels (`bug`, `enhancement`, `task`, `research`)
+substitute for `Type` on personal-account repos, which have no native issue
+Type; an organization carries that classification in `Type` alone and never
+applies these four. Keep the rest in a few families, color-coded by family;
+the starter set is created by `task setup:github-labels`:
 
 - **Concerns** — `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n`
 - **Source** — `customer-request`, `ai-generated`
