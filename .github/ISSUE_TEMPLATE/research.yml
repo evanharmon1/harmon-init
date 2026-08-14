@@ -15,8 +15,8 @@ body:
   - type: textarea
     id: question
     attributes:
-      label: Research question
-      description: What is being investigated, and what decision will it inform?
+      label: Problem
+      description: The research question to answer — what is being investigated, and what decision will it inform?
     validations:
       required: true
   - type: textarea
