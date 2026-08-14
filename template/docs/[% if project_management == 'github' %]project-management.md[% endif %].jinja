@@ -634,7 +634,8 @@ it creates it on demand, and provisioning deliberately leaves it alone.
 [% if use_release_please %]
 | `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
 [% endif %]
-| GitHub's own defaults (`bug`, `enhancement`, `question`, …) | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+| GitHub's remaining defaults (`documentation`, `duplicate`, `question`, …) | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+| `bug`, `enhancement`, `task`, `research` | humans, at triage — or a personal-account issue form, automatically | humans, `gh issue list --label` | provisioned — bug/enhancement match GitHub's own repo-creation color/description, so reconciling an unmodified repo is a no-op; task/research have no GitHub default | durable classification — the personal-account work-type set; org repos set native issue `Type` instead and never write these four |
 [% if use_foreman %]
 
 Foreman's PR-side labels are namespaced on purpose: every label Foreman reads

@@ -92,16 +92,25 @@ rigor:standard|D4C5F9|Dev Loop caps: the default budget
 rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 "
 
-# `task` and `research` are the two work-type values with no GitHub default
-# label (unlike bug/enhancement/documentation/question, which GitHub seeds on
-# every repo it creates — see the taxonomy table in docs/project-management.md).
-# Personal-account issue forms apply one of these six as the work-type label
-# (bug.yml.jinja, feature.yml.jinja, task.yml.jinja, research.yml.jinja); org
-# repos set native issue Type instead and never write these two. Colors match
-# the values already hand-seeded ahead of the label-registry manifest, so
-# manifest-driven provisioning reconciles with what is live instead of
-# fighting it.
+# The four work-type values a personal-account issue form can apply as its
+# `labels:` entry (bug.yml.jinja, feature.yml.jinja, task.yml.jinja,
+# research.yml.jinja); org repos set native issue Type instead and never
+# write these. `bug`/`enhancement` normally ship as GitHub's own
+# repo-creation defaults, but an ADOPTED repo may have deleted or renamed
+# them, so they are provisioned here too, with GitHub's own color and
+# description — reconciling an unmodified repo is a no-op, and a repo whose
+# defaults are gone or renamed still ends up with the label the forms
+# reference. `task`/`research` have no GitHub default at all; their colors
+# match the values already hand-seeded ahead of the label-registry manifest,
+# so manifest-driven provisioning reconciles with what is live instead of
+# fighting it. This provisioning — and the `labels:` keys in the forms
+# themselves — is gated behind the same condition as this script's own
+# template inclusion (project_management == 'github' or use_foreman): an
+# unprovisioned repo's forms apply no labels at all, rather than referencing
+# ones nothing guarantees.
 labels="$labels
+bug|D73A4A|Something isn't working
+enhancement|A2EEEF|New feature or request
 task|6E7781|General work: maintenance, chores, cleanup
 research|0E7C86|Produces a decision or written answer, not a code change
 "

@@ -4,12 +4,19 @@ assignees:
   - [[ author_git_provider_username ]]
 [% if github_org != author_git_provider_username %]
 type: Task
+[% endif %]
+[# labels: is gated on the same condition as scripts/setup-github-labels.sh's
+   own file inclusion (project_management == 'github' or use_foreman): an
+   unprovisioned repo's forms apply no labels at all, rather than
+   referencing ones nothing guarantees. #]
+[% if project_management == 'github' or use_foreman %]
 labels:
+[% if github_org != author_git_provider_username %]
   - needs-triage
 [% else %]
-labels:
   - task
   - needs-triage
+[% endif %]
 [% endif %]
 body:
   - type: textarea
