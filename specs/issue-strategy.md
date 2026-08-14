@@ -65,9 +65,11 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] `label-registry.json` + schema + validator + `task test:label-registry`, template twins;
       per family: prefix/names, color, purpose, axis, `writers` (`human | agent | tool:<name>`),
       lifecycle, exclusivity, values, `source: inline | agent-registry | tool-owned` — with
-      **per-value overrides** of `writers`/`lifecycle`, because mixed namespaces exist
-      (`foreman:*`: arming selectors and `approved` are trusted-human inputs, `hold` is
-      human, `dispatched`/`ready-for-review` are tool-owned outputs).
+      **per-value overrides** of `writers`, `lifecycle`, and `color`, because mixed
+      namespaces exist (`foreman:*`: arming selectors and `approved` are trusted-human
+      inputs, `hold` is human, `dispatched`/`ready-for-review` are tool-owned outputs — and
+      the four protocol labels ship four different colors today, which family-level color
+      alone cannot reproduce).
       `setup-github-labels.sh` renders from it; the docs taxonomy table is generated between
       markers; descriptions ≤ 100 chars in both this schema and agent-registry's (#680).
       Every existing consumer of the inline rows migrates in the same change — in particular
@@ -137,7 +139,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       2. An **interactive session** treats these labels as advisory (the #809 rigor
          posture), and requires operator confirmation for **any off-default resolution** —
          above or below, since one direction skips oversight and the other spends money —
-         arising from a label the session cannot attribute.
+         arising from a label that was not applied by an actor the operator has
+         **authorized** (the operator themselves, or a login their configuration trusts);
+         attribution to *some* identifiable actor is not authorization.
       3. Advisory families fail open to the config default; arming stays fail-closed.
       Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
       model axis. (#855)
@@ -162,8 +166,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       work (Feature, Task) ship an Acceptance-criteria field that is **empty — no prefilled
       `- [ ]` placeholder**: foreman's parser accepts any nonempty section (untagged bullets
       become `[CI]` with a warning), so a placeholder would make placeholder issues
-      dispatchable; an unfilled empty field omits the section entirely, and a form-filed
-      issue with no acceptance-criteria section is genuinely non-dispatchable **by design**
+      dispatchable; an unfilled optional field renders as the heading plus `_No response_`
+      — no checkbox items — so foreman's no-items check refuses it, and a form-filed issue
+      with no acceptance-criteria **items** is genuinely non-dispatchable **by design**
       — quick capture stays legal, and the authoring standard supplies criteria at triage
       before any dispatch. (#852)
 - [ ] Triage skill v1 (#856): write-allowlist = the manifest's `writers` field; v1 writes only
@@ -259,7 +264,8 @@ Issues become cheap to classify and route, for humans and agents alike:
   dispatchability requires an `## Acceptance Criteria` section (case-insensitive) with ≥ 1
   bullet; adapters hold read-only tokens, so any issue-side write is foreman-core's.
 - Labels carry no permissions (project-management.md): the new families trigger nothing by
-  existence. The verification obligation is consumer-specific — unattended automation that
-  acts on one verifies the actor (latest-apply timeline trust), while interactive sessions
-  treat them as advisory with the below-default disclosure, the same accepted posture #809
-  records for `rigor:*`.
+  existence. The verification obligation is consumer-specific — unattended automation
+  verifies provenance under the Requirements invariants (no sequence of untrusted
+  mutations may influence the outcome), while interactive sessions treat the labels as
+  advisory with off-default operator confirmation plus disclosure — the #809 posture,
+  extended.
