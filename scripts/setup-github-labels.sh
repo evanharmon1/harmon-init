@@ -95,12 +95,13 @@ rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 # The four work-type values a personal-account issue form can apply as its
 # `labels:` entry (bug.yml.jinja, feature.yml.jinja, task.yml.jinja,
 # research.yml.jinja); org repos set native issue Type instead and never
-# write these. `bug`/`enhancement` normally ship as GitHub's own
-# repo-creation defaults, but an ADOPTED repo may have deleted or renamed
-# them, so they are provisioned here too, with GitHub's own color and
-# description — reconciling an unmodified repo is a no-op, and a repo whose
-# defaults are gone or renamed still ends up with the label the forms
-# reference. `task`/`research` have no GitHub default at all; their colors
+# write these. `bug` normally ships as a GitHub repo-creation default, but
+# an ADOPTED repo may have deleted or renamed it, so it is provisioned here
+# too, with GitHub's own color and description — reconciling an unmodified
+# repo is a no-op. `feature` replaces GitHub's `enhancement` default, which
+# is retired from this vocabulary; it keeps enhancement's color, so a repo
+# that renamed enhancement to feature (the association-preserving migration)
+# reconciles as a no-op too. `task`/`research` have no GitHub default at all; their colors
 # match the values already hand-seeded ahead of the label-registry manifest,
 # so manifest-driven provisioning reconciles with what is live instead of
 # fighting it. This provisioning — and the `labels:` keys in the forms
@@ -110,7 +111,7 @@ rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 # ones nothing guarantees.
 labels="$labels
 bug|D73A4A|Something isn't working
-enhancement|A2EEEF|New feature or request
+feature|A2EEEF|New feature or request
 task|6E7781|General work: maintenance, chores, cleanup
 research|0E7C86|Produces a decision or written answer, not a code change
 "

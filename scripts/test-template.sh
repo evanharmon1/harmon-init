@@ -1064,7 +1064,7 @@ fi
 #       label nothing guarantees (#852) ──
 labels_provisioned=0
 [ -f scripts/setup-github-labels.sh ] && labels_provisioned=1
-for triple in "bug.yml:Bug:bug" "feature.yml:Feature:enhancement" "task.yml:Task:task" "research.yml:Research:research"; do
+for triple in "bug.yml:Bug:bug" "feature.yml:Feature:feature" "task.yml:Task:task" "research.yml:Research:research"; do
     form="${triple%%:*}"
     rest="${triple#*:}"
     org_type="${rest%%:*}"

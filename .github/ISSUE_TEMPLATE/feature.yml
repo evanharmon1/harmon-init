@@ -3,7 +3,7 @@ description: Suggest a new capability or improvement
 assignees:
   - evanharmon1
 labels:
-  - enhancement
+  - feature
   - needs-triage
 body:
   - type: textarea
