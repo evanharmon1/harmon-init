@@ -1,8 +1,10 @@
 name: Research
 description: Track a research question or investigation
-title: "[Research]: "
 assignees:
   - evanharmon1
+labels:
+  - research
+  - needs-triage
 body:
   - type: markdown
     attributes:

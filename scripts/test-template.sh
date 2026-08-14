@@ -1048,18 +1048,42 @@ if grep -Eq 'sender\.login.*sender\.login' .github/workflows/claude-review.yml; 
 fi
 
 # ── 9d. Issue forms: default assignee always renders; the org issue `type:` key
-#       is present only on org repos (issue types are org-level) ──
+#       is present only on org repos (issue types are org-level), and the
+#       personal-account path applies the work-type label instead — each
+#       owner type has exactly one writable source for the classification,
+#       but every repo always gets needs-triage (#852) ──
 if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
     grep -q '^assignees:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml is missing the default assignee"
     case "$profile" in
     full) # org repo (github_org != author) → the form declares the org issue type
         grep -q '^type: Bug$' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing 'type: Bug' on an org repo"
+        grep -qx '  - needs-triage' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing needs-triage on an org repo"
+        grep -qx '  - bug' .github/ISSUE_TEMPLATE/bug.yml && err "bug.yml applies the bug work-type label on an org repo (native type: already carries it)"
         ;;
     *) # personal repo → no org issue types, so the type: key must be absent
         ! grep -q '^type:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml has a type: key on a personal repo (org-only)"
+        grep -qx '  - bug' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing the bug work-type label on a personal repo"
+        grep -qx '  - needs-triage' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing needs-triage on a personal repo"
         ;;
     esac
 fi
+
+# ── 9d-titles. No issue form sets a title: prefix key — titles are free-form,
+#              structured-data-free statements (#852) ──
+for f in bug.yml feature.yml task.yml research.yml; do
+    [ -f ".github/ISSUE_TEMPLATE/$f" ] || continue
+    ! grep -q '^title:' ".github/ISSUE_TEMPLATE/$f" || err "$f still sets a title: prefix key"
+done
+
+# ── 9d-acceptance-empty. Feature/Task forms ship an EMPTY Acceptance-criteria
+#                         field: no prefilled value, so an unfilled submission
+#                         renders `_No response_` (no checkbox items) and
+#                         stays non-dispatchable under foreman's no-items
+#                         check (#852) ──
+for f in feature.yml task.yml; do
+    [ -f ".github/ISSUE_TEMPLATE/$f" ] || continue
+    ! grep -Eq '^[[:space:]]*value:' ".github/ISSUE_TEMPLATE/$f" || err "$f has a prefilled field value (Acceptance criteria must ship empty)"
+done
 
 # ── 9e. skills-sync renders per use_skills_sync (default on) ────────
 # minimal renders with use_skills_sync=false (OFF branch); every other profile

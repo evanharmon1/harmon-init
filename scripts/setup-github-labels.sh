@@ -92,6 +92,20 @@ rigor:standard|D4C5F9|Dev Loop caps: the default budget
 rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
 "
 
+# `task` and `research` are the two work-type values with no GitHub default
+# label (unlike bug/enhancement/documentation/question, which GitHub seeds on
+# every repo it creates — see the taxonomy table in docs/project-management.md).
+# Personal-account issue forms apply one of these six as the work-type label
+# (bug.yml.jinja, feature.yml.jinja, task.yml.jinja, research.yml.jinja); org
+# repos set native issue Type instead and never write these two. Colors match
+# the values already hand-seeded ahead of the label-registry manifest, so
+# manifest-driven provisioning reconciles with what is live instead of
+# fighting it.
+labels="$labels
+task|6E7781|General work: maintenance, chores, cleanup
+research|0E7C86|Produces a decision or written answer, not a code change
+"
+
 # The `rigor:*` family selects which round-cap tier in `.devflow.toml` an agent
 # works an issue under (AGENTS.md, "Round caps are resolved, not stated here").
 # It is an input an agent READS and never applies to itself. It is advisory,

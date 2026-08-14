@@ -1,16 +1,21 @@
 name: Bug
 description: Report something that's broken or behaving incorrectly
-title: "[Bug]: "
 assignees:
   - [[ author_git_provider_username ]]
 [% if github_org != author_git_provider_username %]
 type: Bug
+labels:
+  - needs-triage
+[% else %]
+labels:
+  - bug
+  - needs-triage
 [% endif %]
 body:
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened?
+      label: Problem
       description: A clear description of the bug, and what you expected instead.
     validations:
       required: true

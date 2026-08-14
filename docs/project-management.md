@@ -550,6 +550,7 @@ it creates it on demand, and provisioning deliberately leaves it alone.
 | `type:<commit-type>` | a human, optionally | Foreman, to pick the unit's conventional-commit type | **not provisioned** — an optional override of the native issue `Type` | applied when the native type is absent or wrong |
 | `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
 | GitHub's own defaults (`bug`, `enhancement`, `question`, …) | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+| `task`, `research` | humans, at triage — or a personal-account issue form, automatically | humans, `gh issue list --label` | provisioned; inert | durable classification — the personal-account work-type pair with no GitHub default; org repos set native issue `Type` instead and never write these two |
 
 Foreman's PR-side labels are namespaced on purpose: every label Foreman reads
 or writes lives under `foreman:`, so the arming inputs and the lifecycle
