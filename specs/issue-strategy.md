@@ -63,7 +63,11 @@ Issues become cheap to classify and route, for humans and agents alike:
 ## Requirements
 
 - [ ] `label-registry.json` + schema + validator + `task test:label-registry`, template twins;
-      per family: prefix/names, color, purpose, axis, `writers` (`human | agent | tool:<name>`),
+      per family: prefix/names, color, purpose, axis, `writers`
+      (`human | trusted-human | agent | tool:<name>` — `trusted-human` marks values an
+      actor-verifying consumer additionally authenticates, e.g. foreman arming inputs; the
+      label itself still carries no permission, the class names which consumer-side check
+      applies),
       lifecycle, exclusivity, values, `source: inline | agent-registry | tool-owned` — with
       **per-value overrides** of `writers`, `lifecycle`, and `color`, because mixed
       namespaces exist (`foreman:*`: arming selectors and `approved` are trusted-human
@@ -234,6 +238,13 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **Then** its title carries no `[Bug]:` prefix and it already carries `bug` + `needs-triage`
   — while on an organization repo the same form sets native issue Type `Bug` plus
   `needs-triage`, and no work-type label
+
+### Scenario: a blank form cannot dispatch
+
+- **Given** a Feature or Task form submitted with its Acceptance-criteria field left empty
+- **When** foreman evaluates the unit spec contract
+- **Then** the body carries no criteria list items (GitHub renders `_No response_` under the
+  heading) and foreman refuses the unit on its no-items check
 
 ### Scenario: a standard-authored issue is foreman-dispatchable
 
