@@ -402,11 +402,14 @@ can be summed in a view's group header, which is `Size`'s whole job.
 
 Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
 `Type` (kind of work) — they tag cross-cutting *facets*, with one exception:
-the four work-type labels (`bug`, `enhancement`, `task`, `research`)
-substitute for `Type` on personal-account repos, which have no native issue
-Type; an organization carries that classification in `Type` alone and never
-applies these four. Keep the rest in a few families, color-coded by family;
-the starter set is created by `task setup:github-labels`:
+personal-account repos have no native issue Type, so six labels (`bug`,
+`enhancement`, `documentation`, `question`, `task`, `research`) carry that
+classification instead; an organization carries it in `Type` alone and never
+applies any of the six. Four of them — `bug`, `enhancement`, `task`,
+`research` — are form-backed, applied automatically by the matching issue
+form; `documentation` and `question` have no dedicated form and are applied
+by hand. Keep the rest in a few families, color-coded by family; the starter
+set is created by `task setup:github-labels`:
 
 - **Concerns** — `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n`
 - **Source** — `customer-request`, `ai-generated`
@@ -553,7 +556,7 @@ it creates it on demand, and provisioning deliberately leaves it alone.
 | `type:<commit-type>` | a human, optionally | Foreman, to pick the unit's conventional-commit type | **not provisioned** — an optional override of the native issue `Type` | applied when the native type is absent or wrong |
 | `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
 | GitHub's remaining defaults (`documentation`, `duplicate`, `question`, …) | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
-| `bug`, `enhancement`, `task`, `research` | humans, at triage — or a personal-account issue form, automatically | humans, `gh issue list --label` | provisioned — bug/enhancement match GitHub's own repo-creation color/description, so reconciling an unmodified repo is a no-op; task/research have no GitHub default | durable classification — the personal-account work-type set; org repos set native issue `Type` instead and never write these four |
+| `bug`, `enhancement`, `task`, `research` | humans, at triage — or a personal-account issue form, automatically | humans, `gh issue list --label` | provisioned — bug/enhancement match GitHub's own repo-creation color/description, so reconciling an unmodified repo is a no-op; task/research have no GitHub default | durable classification — the form-backed four of the six personal-account work types (`documentation`/`question`, the row above, are the other two: GitHub's own defaults, applied by hand); org repos set native issue `Type` instead and never write any of the six |
 
 Foreman's PR-side labels are namespaced on purpose: every label Foreman reads
 or writes lives under `foreman:`, so the arming inputs and the lifecycle
