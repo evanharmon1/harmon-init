@@ -175,7 +175,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       with no acceptance-criteria **items** is genuinely non-dispatchable **by design**
       — quick capture stays legal, and the authoring standard supplies criteria at triage
       before any dispatch. (#852)
-- [ ] Triage skill v1 (#856): write-allowlist = the manifest's `writers` field; v1 writes only
+- [ ] Triage skill v1 (canonical in harmon-devkit#455 — skills live in harmon-devkit;
+      vendored and supervised here via #864): write-allowlist = the manifest's `writers`
+      field; v1 writes only
       area/layer/domain, an unambiguous missing work-type **on personal-account repos** (org
       classification is native Type, which v1 cannot write — a missing org Type is reported,
       never labeled), and `needs-triage` — added freely, removed **only when classification
@@ -264,7 +266,7 @@ Issues become cheap to classify and route, for humans and agents alike:
 ## Notes
 
 - Rollout is the milestone's dependency graph: #849/#850/#851/#852 and the devkit children are
-  the ready set; #854/#855/#856 unblock on #851; #857 closes the loop; #858 lands the vendored
+  the ready set; #854/#855/#864 unblock on #851; #857 closes the loop; #858 lands the vendored
   skills after the devkit release.
 - The `tier:*`/`method:*`/`area:*`/`task`/`research` labels were hand-seeded on 2026-08-13 across
   harmon-init, harmon-devkit, and ponderousdev/foreman (colors: area `0E8A16`, tier `7057FF`,
