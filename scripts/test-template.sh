@@ -85,26 +85,6 @@ err() {
     fail=1
 }
 
-# opt_names FILE START_REGEX — the `"name":"…"` values of one single-select
-# option block, sorted and deduped. The block opens on the line matching
-# START_REGEX and closes on the next line starting with `]`, so options are read
-# from the field they actually belong to rather than from anywhere in the file.
-# Any non-quote name matches: a name this misses would be silently absent from
-# the set comparison below, turning a drift failure into a false pass.
-opt_names() {
-    awk -v start="$2" '
-        $0 ~ start { inblock = 1; next }
-        inblock && /^\]/ { inblock = 0 }
-        inblock {
-            line = $0
-            while (match(line, /"name":"[^"]+"/)) {
-                print substr(line, RSTART + 8, RLENGTH - 9)
-                line = substr(line, RSTART + RLENGTH)
-            }
-        }
-    ' "$1" | sort -u
-}
-
 # Answers shared by every profile. Side-effectful answers are forced off so
 # this is safe to run anywhere (no gh repo create, no iCloud moves). The meta
 # profile re-enables bunch/obsidian but renders with --skip-tasks.
@@ -920,45 +900,25 @@ full) # project_management=github; github_org=test-org (an org repo)
     ./scripts/test-setup-github-issue-fields.sh >/dev/null ||
         err "rendered org issue-field reconciliation tests failed"
     [ -f scripts/setup-github-issue-types.sh ] || err "org-gated scripts/setup-github-issue-types.sh did not render"
-    # The Layer/Domain taxonomy is seeded in three places — the `layer:`/`domain:`
-    # label families, the org issue fields, and the personal-account project
-    # fields. They are meant to be one vocabulary per family, so compare each
-    # family's option SET across all three, exactly (not just membership
-    # somewhere in the file: `auth` living under Domain must not satisfy a
-    # `layer:auth` label) and in both directions (a field option with no label is
-    # drift too).
-    # The agent vocabulary is no longer a label/field pair here: it moved to
+    # The agent vocabulary is not a label/field pair here: it moved to
     # registry-driven suggest:/claim: labels (checked by test:registry-drift),
-    # and the Agent field is retired (#662) — the rendered scripts must not
-    # recreate it. Only the Layer/Domain taxonomy is cross-checked across
-    # labels + fields now.
+    # and the Agent field is retired (#662). The Layer/Domain taxonomy is
+    # likewise label-only now (#875) — both fields are retired, and the
+    # `layer:`/`domain:` label families in setup-github-labels.sh are their
+    # only surface, with no paired field vocabulary left to drift against.
+    # The rendered scripts must not recreate any of the three.
     ! grep -q 'create_field "Agent"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Agent field (#662)"
     ! grep -q 'create_single_select "Agent"' scripts/setup-github-project.sh ||
         err "rendered setup-github-project.sh recreates the retired Agent field (#662)"
-    for pair in layer:Layer domain:Domain; do
-        fam="${pair%%:*}"
-        field="${pair##*:}"
-        # Each source's option set for this family, one name per line, sorted.
-        # Name charset is deliberately permissive: a domain like `oauth2` or
-        # `saas_billing` must land in the compared set, not be silently dropped
-        # (which would make an "exact set" comparison quietly pass on drift).
-        lbl_set="$(sed -n -E "s/^${fam}:([^|]+)\|.*/\1/p" scripts/setup-github-labels.sh | sort -u)"
-        # `<fam>_opts='[ … ]'` in the org script; `create_single_select "<Field>" '[ … ]'`
-        # in the project script. Both blocks end on a line starting with `]`.
-        # Layer and Domain are compared EXACTLY: their option names and label
-        # suffixes are meant to be character-identical, and normalizing would
-        # let `Domain: Auth` pass against `domain:auth` — drift this guard has
-        # always caught.
-        normalize=cat
-        fld_set="$(opt_names scripts/setup-github-issue-fields.sh "^${fam}_opts='" | "$normalize")"
-        prj_set="$(opt_names scripts/setup-github-project.sh "^create_single_select \"${field}\" '" | "$normalize")"
-        [ -n "$lbl_set" ] || err "no ${fam}: labels found in setup-github-labels.sh"
-        [ "$lbl_set" = "$fld_set" ] ||
-            err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != issue-field options [$(echo "$fld_set" | tr '\n' ' ')]"
-        [ "$lbl_set" = "$prj_set" ] ||
-            err "${fam} vocabulary drift: labels [$(echo "$lbl_set" | tr '\n' ' ')] != project-field options [$(echo "$prj_set" | tr '\n' ' ')]"
-    done
+    ! grep -q 'create_field "Domain"' scripts/setup-github-issue-fields.sh ||
+        err "rendered setup-github-issue-fields.sh recreates the retired Domain field (#875)"
+    ! grep -q 'create_field "Layer"' scripts/setup-github-issue-fields.sh ||
+        err "rendered setup-github-issue-fields.sh recreates the retired Layer field (#875)"
+    ! grep -q 'create_single_select "Domain"' scripts/setup-github-project.sh ||
+        err "rendered setup-github-project.sh recreates the retired Domain field (#875)"
+    ! grep -q 'create_single_select "Layer"' scripts/setup-github-project.sh ||
+        err "rendered setup-github-project.sh recreates the retired Layer field (#875)"
     ;;
 minimal) # project_management=github on a PERSONAL account, use_foreman=false
     [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
@@ -1205,11 +1165,12 @@ iac | full)
     # adapters the pinned Foreman release ships), so check both the literal
     # family and that the registry still renders the production `claude` adapter.
     [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing for use_foreman=true"
-    grep -q '^foreman:approved|' scripts/setup-github-labels.sh || err "label script lacks the foreman protocol arming labels"
-    grep -q 'agent-registry-labels.mjs' scripts/setup-github-labels.sh ||
-        err "label script does not render foreman:<adapter> selectors from the registry"
-    node scripts/agent-registry-labels.mjs foreman-adapters | grep -q '^foreman:claude|' ||
-        err "registry no longer renders the foreman:claude adapter selector"
+    grep -q 'label-registry-render.mjs' scripts/setup-github-labels.sh ||
+        err "label script does not render from the label registry"
+    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:approved|' ||
+        err "rendered label set lacks the foreman protocol arming labels"
+    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:claude|' ||
+        err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
