@@ -220,6 +220,12 @@ this comment. -->
       single-select field is missing (so a value added by a later harmon-init
       release lands on the next run) and never touch, reorder, or delete the
       options you added.
+- [ ] **Upgrading from a release before #875?** If this repo's board still
+      carries `Domain`/`Layer` fields from an earlier harmon-init release, they
+      are not deleted automatically — retiring them is a deliberate,
+      irreversible operator step. See
+      [project-management.md](project-management.md), "Migrating a board that
+      still has one."
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
       families (concerns/source/workflow/layer/domain — see
       [project-management.md](project-management.md)). `domain:` is seeded with

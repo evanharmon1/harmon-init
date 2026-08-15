@@ -356,10 +356,14 @@ destroys every value on it, unrecoverably.
   1. Provision the replacement vocabulary first: run `task setup:github-labels`
      in every repository whose issues carry the field — a `suggest:*` label must
      exist in a repo before an assignment can be copied onto its issues.
-  2. List what the field holds: every issue or board item with `Agent` set —
-     including **draft items**, which can carry the project field but can never
-     carry a label. Convert any draft whose assignment you want to keep into an
-     issue first; a draft you leave as-is loses its assignment with the field.
+  2. List what the field holds — filter the Project's own board/table view by
+     the field, not a capped CLI listing (`gh project item-list` defaults to a
+     page size well under a typical board, and `gh issue list` won't show
+     draft items at all): every issue or board item with `Agent` set,
+     including **draft items**, which can carry the project field but can
+     never carry a label. Convert any draft whose assignment you want to keep
+     into an issue first; a draft you leave as-is loses its assignment with
+     the field.
   3. Carry each assignment you still want over as the matching `suggest:*` label
      on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
   4. Re-point the saved **Agent queue** view (below) at the new predicate —
@@ -381,7 +385,10 @@ destroys every value on it, unrecoverably.
      field. An org-wide issue field is shared by every repo in the org, and
      labels are not — a repo that never ran the script has neither label
      family yet.
-  2. List every issue or board item with `Domain`/`Layer` set, including
+  2. List every issue or board item with `Domain`/`Layer` set — filter the
+     Project's own board/table view by the field, not a capped CLI listing
+     (`gh project item-list` defaults to a page size well under a typical
+     board, and `gh issue list` won't show draft items at all) — including
      **draft items**, which can carry the project field but can never carry a
      label. Convert any draft whose value you want to keep into an issue
      first — a draft left as-is loses the value outright once the field is
