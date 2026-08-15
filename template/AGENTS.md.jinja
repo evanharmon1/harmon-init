@@ -145,9 +145,10 @@ then a built-in 4 / 4 / 4 if the file is absent — with a `min_rounds` floor of
 1 wherever no tier defines one — the absent-file case and any older or
 customized config whose tiers predate the key alike — which is also the floor
 every shipped tier states explicitly. When the change under review
-**edits `.devflow.toml` itself**, resolve its caps from the **merge-base** copy
-rather than the branch copy: otherwise a branch can lower the very gate it is
-changing, and dropping every tier together evades the below-default disclosure
+**edits `.devflow.toml` itself**, resolve its caps **and floor** from the
+**merge-base** copy rather than the branch copy: otherwise a branch can lower
+the very gate it is changing — the floor included, since a self-lowered
+`min_rounds` buys an earlier empty-round exit, and dropping every tier together evades the below-default disclosure
 because nothing is left to be below. An explicit human instruction still
 overrides.
 [% if project_management == 'github' or use_foreman %]Labels are multi-select and nothing stops an issue carrying two, so resolution
@@ -167,7 +168,7 @@ announcement and in the PR body whenever any resolved cap or floor is below what
 `default_rigor` would give**, so a reduced budget is visible to the human
 reviewer instead of silent.
 [% endif %]**Announce the resolved caps on entering the loop** — "rigor:
-`<tier>` (`<source>`) → [% if use_codex_review %]challenge ≤`<n>`, review ≤`<n>`, [% endif %]shepherd `<n>`, min_rounds `<n>`", filled in
+`<tier>` (`<source>`) → [% if use_codex_review %]challenge ≤`<n>`, review ≤`<n>`, [% endif %]shepherd `<n>`[% if use_codex_review %], min_rounds `<n>`[% endif %]", filled in
 by reading the file rather than from memory — and carry it into the PR body, so
 a later round or a different session can see which budget it is spending
 instead of inferring one. Everything else about these stages is policy rather

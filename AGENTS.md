@@ -253,8 +253,10 @@ if the file is absent — with a `min_rounds` floor of 1 wherever no tier
 defines one — the absent-file case and any older or customized config whose
 tiers predate the key alike — which is also the floor every shipped tier
 states explicitly. When the change under review **edits `.devflow.toml`
-itself**, resolve its caps from the **merge-base** copy rather than the branch
-copy: otherwise a branch can lower the very gate it is changing — dropping every
+itself**, resolve its caps **and floor** from the **merge-base** copy rather
+than the branch copy: otherwise a branch can lower the very gate it is
+changing — the floor included, since a self-lowered `min_rounds` buys an
+earlier empty-round exit — dropping every
 tier and `default_rigor` together passes the validator and evades the
 below-default disclosure, because nothing is left to be below. An explicit
 instruction from Evan still overrides, since that is an attributable human
