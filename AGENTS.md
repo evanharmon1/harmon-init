@@ -249,9 +249,14 @@ live in [`.devflow.toml`](.devflow.toml) as `rigor` tiers, so there is one
 place to change them and a parity gate that catches a change made on only one
 side. Resolve in this order — an explicit instruction in this session, then a
 `rigor:*` label on the issue, then `default_rigor`, then a built-in 4 / 4 / 4
-if the file is absent. When the change under review **edits `.devflow.toml`
-itself**, resolve its caps from the **merge-base** copy rather than the branch
-copy: otherwise a branch can lower the very gate it is changing — dropping every
+if the file is absent — with a `min_rounds` floor of 1 for any tier that
+does not define it — the absent-file case, a legacy config predating the key,
+and a partially migrated one where only some tiers state it alike — which is
+also the floor every shipped tier states explicitly. When the change under review **edits `.devflow.toml`
+itself**, resolve its caps **and floor** from the **merge-base** copy rather
+than the branch copy: otherwise a branch can lower the very gate it is
+changing — the floor included, since a self-lowered `min_rounds` buys an
+earlier empty-round exit — dropping every
 tier and `default_rigor` together passes the validator and evades the
 below-default disclosure, because nothing is left to be below. An explicit
 instruction from Evan still overrides, since that is an attributable human
@@ -259,20 +264,24 @@ decision rather than the branch deciding for itself. GitHub labels are
 multi-select and nothing stops an
 issue carrying two, so resolution is **per stage, taking the highest cap
 present**: a conflict can then only ever buy more review, never less, and no
-ranking of the tier names has to be agreed on anywhere. Because that is per
+ranking of the tier names has to be agreed on anywhere. `min_rounds` resolves
+under the same principle — the highest floor present wins — so a label
+conflict cannot quietly select the lower floor either. Because that is per
 stage, two retuned tiers can yield caps belonging to no single tier — so what
-you announce is the **caps**, naming a tier only when one supplied all of them,
+you announce is the **caps**, naming a tier only when one supplied all of
+them — the floor included,
 and the disclosure below compares caps rather than tier names. A `rigor:` value
 that names no tier in the file is ignored rather than guessed at. Treat the
 label as advisory: it is applied by people and verified by nothing, and
 GitHub's **triage** role can label an issue with no push access at all — so a
 budget can be retuned by someone who could not edit `.devflow.toml`. An agent
 never applies one to itself, and **says so in the announcement and in the PR
-body whenever any resolved cap is below what `default_rigor` would give**, so a
+body whenever any resolved cap or floor is below what `default_rigor` would give**, so a
 reduced budget is visible to the human reviewer instead of silent.
 **Announce the resolved caps on entering
 the loop** — "rigor: `<tier>` (`<source>`) → challenge ≤`<n>`, review ≤`<n>`,
-shepherd `<n>`", filled in by reading the file rather than from memory — and
+shepherd `<n>`, min_rounds `<n>`", filled in by reading the file rather than
+from memory — and
 carry it into the PR body, so a later round or a different session can see
 which budget it is spending instead of inferring one. Everything else about
 these stages is policy rather than a parameter and does not vary by tier: the
@@ -303,9 +312,14 @@ allowed.
   table, not off the reviewer's label, and nothing further is owed after the
   second such round: the second round *is* the confirmation, so there is no
   extra clean run to buy. A round that returns **no findings at all** ends
-  the stage on its own, whenever it comes — an empty round is the old rule's
-  clean re-run, so neither a trivial change nor a clean post-fix re-run pays
-  for a confirmation pass. Fixing the findings is still not the exit
+  the stage on its own **once at least `min_rounds` rounds have run** — an
+  empty round is the old rule's clean re-run, so neither a trivial change nor
+  a clean post-fix re-run pays for a confirmation pass, but a tier that sets a
+  floor buys the rounds it asked for before that shortcut opens. The other two
+  exits satisfy any floor of 2 or less by construction — two consecutive clean
+  rounds *are* two rounds, and a capped final round is at least the cap, which
+  is never below 2 — so `min_rounds` binds the empty-round path and nothing
+  else. Fixing the findings is still not the exit
   condition; adjudicated-clean rounds are. The exit carries one
   precondition: every P2 you deferred during the stage must already be in the
   deferred-findings sidecar (see "Deferring P2s" below) — an exit that drops
@@ -653,8 +667,9 @@ exit the cap is no longer the only thing standing between you and a loop that
 feeds on itself, so the check has to happen where it first can. At round 2,
 for every finding, say on the adjudication table whether its subject exists
 only because an **earlier round of this same stage** added it. A finding that
-does gets adjudicated with one of two dispositions written out: **delete** the
-scaffolding (which moots the finding — see below), or state that it is in
+does gets adjudicated with one of three dispositions written out: **delete**
+the scaffolding (which moots the finding — see below), **restructure it to
+invariants** (deletion by abstraction — see below), or state that it is in
 scope and why the change genuinely needs it. What is not allowed is hardening
 round-1's scaffolding by reflex and letting round 3 attack the result.
 
@@ -674,6 +689,17 @@ re-raise. Name the mooted findings
 in the adjudication table *and* in the message of the commit that removes the
 code — the table is scrollback, but the commit is why the code is gone, and it
 is the record a later round or a different session can still find.
+
+**Restructuring to invariants is the same move where deletion is unavailable**
+— deletion by abstraction. When the artifact is a spec or a document whose
+accreted procedure-prose *cannot* simply be dropped because earlier rounds
+legitimately demanded it, replace the attackable procedure with the
+universally-quantified property it was approximating, delegate the mechanism to
+the implementation surface that can be tested, and carry the review's attack
+scenarios over as required test cases. The next round finds no wording seam to
+attack, and the obligation is preserved rather than dropped — which is what
+separates this from quietly deleting a requirement. Name it on the table and in
+the commit message exactly as a deletion is named.
 
 One endpoint is worth knowing: if the deletion empties the change *entirely*,
 there is no round to converge on — `codex-review.sh` refuses an empty scope
@@ -755,9 +781,16 @@ all-P2 as labeled, or P1-labeled and adjudicated down to P2; what counts is
 the **adjudicated** column of the table, not the reviewer's label, and the
 second such round is itself the confirmation, so no further run is owed. Two
 exits are faster still. A round with **no findings at all** ends the stage by
-itself, whenever it comes — an empty round is exactly the old rule's clean
-re-run, so neither a trivial change nor a clean post-fix re-run pays for a
-confirmation pass. And a **capped final round** that adjudicates to zero
+itself **once the stage has run at least `min_rounds` rounds** (the per-tier
+floor in `.devflow.toml`; 1 if the file is absent) — an empty round is exactly
+the old rule's clean re-run, so neither a trivial change nor a clean post-fix
+re-run pays for a confirmation pass, and the floor only stops that shortcut
+being taken before the tier's minimum work has happened. Say plainly what
+follows: the other two exits satisfy any floor of 2 or less **by
+construction** — the two-consecutive exit runs two rounds by definition, and
+the capped-clean exit runs the cap, which is never below 2 — so `min_rounds`
+constrains the empty-round exit alone and needs no separate check on the
+other two. And a **capped final round** that adjudicates to zero
 P0/P1 also ends the stage by itself: the confirmation it would otherwise owe
 is a run the cap forbids, and a rule that strands a stage holding a clean
 last round and no valid exit would be wrong — the cap bounds work, it does

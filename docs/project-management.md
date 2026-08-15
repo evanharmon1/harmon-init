@@ -444,9 +444,11 @@ the taxonomy table below is generated from) and the starter set is created by
   here"). An agent reads it and never self-applies one. It is advisory rather
   than an authenticated gate: nothing verifies who applied it, and the
   **triage** role can label an issue with no push access — so AGENTS.md
-  requires any cap resolving below `default_rigor` to be stated in the PR
-  body, keeping a reduced budget visible to the reviewer. Two present resolve
-  per stage to the highest cap, so a conflict can only ever buy more review.
+  requires any cap or floor resolving below `default_rigor` to be stated in
+  the PR body, keeping a reduced budget visible to the reviewer — the
+  `min_rounds` floor included. Two present resolve per stage to the highest
+  cap, and the floor likewise to the highest present, so a conflict can only
+  ever buy more review.
 
 The prose above describes what each family *means*; the actual values — names,
 colors, writers, lifecycle — live in `label-registry.json` and appear in the
