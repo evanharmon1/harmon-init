@@ -967,6 +967,110 @@ case "$out" in
 *) fail "expected an install remedy for a missing gh, got: ${out}" ;;
 esac
 
+# ── run_timeout actually bounds a probe (harmon-init#865) ───────────────────
+#
+# A deadline is NOT a bound here. status.sh reads every probe through `$(...)`,
+# and a command substitution returns when the write end of its pipe closes, not
+# when `timeout` exits — so a probe that blocks on stdin, or that survives the
+# SIGTERM the deadline sends, hangs the board FOREVER while `timeout` has long
+# since reported 124. That is what `task status` did in a devcontainer terminal:
+# `claude auth status --json` waits on a terminal stdin, and nothing downstream
+# was left to fire.
+#
+# Both cases are driven from a stdin that is open and silent, the way a terminal
+# with nobody typing at it is. The outer deadline is the test's own safety net:
+# a regression must FAIL here, not wedge CI.
+
+# make_claude_stub_wedged MODE — a `claude` that reproduces one half of the hang.
+#   stdin — reads stdin to EOF before answering. Answers only if it was given
+#           an empty stdin of its own; otherwise it blocks on the caller's.
+#   term  — ignores SIGTERM and never exits, so only a hard kill closes the
+#           pipe the capture is waiting on.
+make_claude_stub_wedged() {
+    mkdir -p "${TMP}/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "trap '' TERM"
+        case "$1" in
+        stdin) echo 'cat >/dev/null' ;;
+        term) echo 'while :; do sleep 1; done' ;;
+        *) fail "unknown wedged claude stub mode: $1" ;;
+        esac
+        echo 'echo "{ \"loggedIn\": true }"'
+    } >"${TMP}/bin/claude"
+    chmod +x "${TMP}/bin/claude"
+}
+
+# run_creds_wedged — the credentials section with stdin bound to a pipe that
+# stays open and never delivers a byte. Read-write is how the fifo is opened
+# without blocking on a writer that will never come.
+run_creds_wedged() {
+    local fifo="${TMP}/wedge.fifo" rc=0
+    rm -f "${fifo}"
+    mkfifo "${fifo}"
+    exec 9<>"${fifo}"
+    "${TIMEOUT_FOR_TESTS}" 60 env PATH="${TMP}/bin:${PATH}" NO_COLOR=1 \
+        "${WITH_CODEX}" creds <&9 2>&1 || rc=$?
+    exec 9>&-
+    rm -f "${fifo}"
+    return "${rc}"
+}
+
+TIMEOUT_FOR_TESTS="$(command -v timeout || command -v gtimeout || true)"
+if [ -n "${TIMEOUT_FOR_TESTS}" ]; then
+    echo "==> a probe that blocks on stdin cannot wedge the board"
+    # Passes only if run_timeout handed the probe its own empty stdin: the stub
+    # answers after EOF, and EOF is what it never gets from the caller's.
+    make_stub project
+    make_codex_stub in
+    make_claude_stub_wedged stdin
+    out="$(run_creds_wedged)" ||
+        fail "status:creds never returned with a probe blocked on stdin — the deadline does not bound the capture"
+    case "$out" in
+    *"Claude Code CLI"*"logged in"*) ;;
+    *) fail "expected the stdin-blocked probe to be answered from an empty stdin, got: ${out}" ;;
+    esac
+
+    echo "==> a probe that ignores SIGTERM cannot wedge the board either"
+    # Nothing can make this one answer, so the contract is weaker but the point
+    # is the same: report the deadline and move on, rather than hang holding a
+    # pipe open. Skipped where `timeout` has no `-k`, which is the one build
+    # where status.sh cannot promise this.
+    if "${TIMEOUT_FOR_TESTS}" -k 1 1 true 2>/dev/null; then
+        make_claude_stub_wedged term
+        out="$(run_creds_wedged)" ||
+            fail "status:creds never returned with a probe that ignores SIGTERM — the capture outlives its deadline"
+        case "$out" in
+        *"[?] Claude Code CLI"*"timed out"*) ;;
+        *) fail "expected a timeout notice for a probe that ignores SIGTERM, got: ${out}" ;;
+        esac
+    else
+        echo "    (skipped: this timeout has no -k, so the hard kill is unavailable)"
+    fi
+    make_claude_stub in
+else
+    echo "    (skipped: no timeout binary — the probes are unbounded here)"
+fi
+
+echo "==> every gum call keeps its stdout off the terminal"
+# gum asks the TERMINAL for its background colour (OSC 11) whenever its own
+# stdout is one, and waits 5s when nothing answers — per invocation, and a board
+# renders a dozen. That is the other half of harmon-init#865, and it is invisible
+# in every test above because they all run under NO_COLOR with no terminal at
+# all. gum_style is the single place that keeps stdout off the terminal; a call
+# site that bypasses it reintroduces the stall on exactly the terminals that
+# cannot answer, which are the ones nobody develops on.
+grep -qF 'CLICOLOR_FORCE=1 gum style "$@" | cat' "${status}" ||
+    fail "gum_style no longer pipes gum's stdout with CLICOLOR_FORCE — the terminal probe and the colour both depend on it"
+grep -q 'gum_style ' "${status}" ||
+    fail "nothing calls gum_style — the check below would pass vacuously"
+stray="$(grep -nE '(^|[^_[:alnum:]])gum[[:space:]]+style' "${status}" |
+    grep -vF 'CLICOLOR_FORCE=1 gum style' |
+    grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+[ -z "${stray}" ] ||
+    fail "gum is invoked outside gum_style, so its stdout is a terminal and it will stall there:
+${stray}"
+
 echo "==> the session-start hook allows more time than status:creds can spend"
 # The same coupling as the status:gh assertion above, and the same total failure
 # mode — but budgeted from THIS section's own probes rather than inherited from
