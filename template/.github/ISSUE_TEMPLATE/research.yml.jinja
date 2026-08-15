@@ -1,10 +1,22 @@
 name: Research
 description: Track a research question or investigation
-title: "[Research]: "
 assignees:
   - [[ author_git_provider_username ]]
 [% if github_org != author_git_provider_username %]
 type: Research
+[% endif %]
+[# labels: is gated on the same condition as scripts/setup-github-labels.sh's
+   own file inclusion (project_management == 'github' or use_foreman): an
+   unprovisioned repo's forms apply no labels at all, rather than
+   referencing ones nothing guarantees. #]
+[% if project_management == 'github' or use_foreman %]
+labels:
+[% if github_org != author_git_provider_username %]
+  - needs-triage
+[% else %]
+  - research
+  - needs-triage
+[% endif %]
 [% endif %]
 body:
   - type: markdown
@@ -16,8 +28,8 @@ body:
   - type: textarea
     id: question
     attributes:
-      label: Research question
-      description: What is being investigated, and what decision will it inform?
+      label: Problem
+      description: The research question to answer — what is being investigated, and what decision will it inform?
     validations:
       required: true
   - type: textarea
