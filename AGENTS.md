@@ -249,8 +249,10 @@ live in [`.devflow.toml`](.devflow.toml) as `rigor` tiers, so there is one
 place to change them and a parity gate that catches a change made on only one
 side. Resolve in this order — an explicit instruction in this session, then a
 `rigor:*` label on the issue, then `default_rigor`, then a built-in 4 / 4 / 4
-if the file is absent — with a `min_rounds` floor of 1 in that same absent-file
-case, which is the floor every shipped tier states anyway. When the change under review **edits `.devflow.toml`
+if the file is absent — with a `min_rounds` floor of 1 wherever no tier
+defines one — the absent-file case and any older or customized config whose
+tiers predate the key alike — which is also the floor every shipped tier
+states explicitly. When the change under review **edits `.devflow.toml`
 itself**, resolve its caps from the **merge-base** copy rather than the branch
 copy: otherwise a branch can lower the very gate it is changing — dropping every
 tier and `default_rigor` together passes the validator and evades the
@@ -260,7 +262,9 @@ decision rather than the branch deciding for itself. GitHub labels are
 multi-select and nothing stops an
 issue carrying two, so resolution is **per stage, taking the highest cap
 present**: a conflict can then only ever buy more review, never less, and no
-ranking of the tier names has to be agreed on anywhere. Because that is per
+ranking of the tier names has to be agreed on anywhere. `min_rounds` resolves
+under the same principle — the highest floor present wins — so a label
+conflict cannot quietly select the lower floor either. Because that is per
 stage, two retuned tiers can yield caps belonging to no single tier — so what
 you announce is the **caps**, naming a tier only when one supplied all of them,
 and the disclosure below compares caps rather than tier names. A `rigor:` value
@@ -269,11 +273,12 @@ label as advisory: it is applied by people and verified by nothing, and
 GitHub's **triage** role can label an issue with no push access at all — so a
 budget can be retuned by someone who could not edit `.devflow.toml`. An agent
 never applies one to itself, and **says so in the announcement and in the PR
-body whenever any resolved cap is below what `default_rigor` would give**, so a
+body whenever any resolved cap or floor is below what `default_rigor` would give**, so a
 reduced budget is visible to the human reviewer instead of silent.
 **Announce the resolved caps on entering
 the loop** — "rigor: `<tier>` (`<source>`) → challenge ≤`<n>`, review ≤`<n>`,
-shepherd `<n>`", filled in by reading the file rather than from memory — and
+shepherd `<n>`, min_rounds `<n>`", filled in by reading the file rather than
+from memory — and
 carry it into the PR body, so a later round or a different session can see
 which budget it is spending instead of inferring one. Everything else about
 these stages is policy rather than a parameter and does not vary by tier: the

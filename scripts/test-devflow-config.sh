@@ -111,17 +111,17 @@ for path in config_paths:
                     f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} is below 1 — a stage "
                     "always runs at least one round"
                 )
-            else:
-                # A floor above the ceiling makes the stage impossible to exit:
-                # the empty-round path is unreachable and the cap forces an
-                # escalation that no amount of reviewing could avoid.
-                for stage in ("challenge", "review"):
-                    cap = caps.get(stage)
-                    if isinstance(cap, int) and not isinstance(cap, bool) and floor_value > cap:
-                        failures.append(
-                            f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} exceeds the "
-                            f"{stage} cap of {cap} — the floor cannot be above the ceiling"
-                        )
+            elif floor_value > 2:
+                # A floor above 2 is unenforceable, not merely aggressive: two
+                # consecutive adjudicated-clean rounds — including two empty
+                # ones — exit the stage at round 2 whatever the floor says, so
+                # accepting 3+ would document a budget no stage ever spends.
+                # (2 <= every cap, so the floor can never exceed a cap either.)
+                failures.append(
+                    f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} is above 2 — the "
+                    "two-consecutive-clean exit ends a stage at round 2 whatever the "
+                    "floor, so values above 2 cannot bind"
+                )
 
         if isinstance(caps.get("shepherd"), int) and not isinstance(caps.get("shepherd"), bool):
             shepherd_values.add(caps["shepherd"])

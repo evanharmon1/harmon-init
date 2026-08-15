@@ -37,8 +37,9 @@
 #     integers
 #   - challenge and review are >= 2, because the exit condition needs two
 #     consecutive adjudicated-clean rounds; at 1, one finding is an escalation
-#   - min_rounds is >= 1 and no greater than that tier's challenge or review
-#     cap — a floor above the ceiling makes the stage impossible to exit
+#   - min_rounds is 1 or 2, never more: two consecutive adjudicated-clean
+#     rounds — empty rounds included — exit a stage at round 2 whatever the
+#     floor says, so a value above 2 is a budget no stage ever spends
 #   - shepherd is the same in every tier (see below)
 #   - default_rigor names a tier that exists here
 #
