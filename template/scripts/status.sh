@@ -39,22 +39,65 @@ else
     echo "status: no 'timeout' found (brew install coreutils) — network probes are unbounded." >&2
 fi
 
+# A deadline alone does NOT bound a probe, because every probe below is read
+# through `$(...)`: a command substitution returns when the write end of its
+# pipe closes, not when `timeout` exits. A probe that survives SIGTERM keeps
+# that pipe open and the board hangs FOREVER while `timeout` has already
+# reported 124 (harmon-init#865 — `claude auth status --json` blocks reading a
+# terminal stdin, and `timeout 3` around it wedged the whole board with no
+# deadline left to fire). Two guards, because they fail differently:
+#
+#   * `</dev/null` — no probe here reads stdin, and a CLI that waits on one
+#     never starts blocking. This is the fix for the observed hang.
+#   * `-k` — a hard kill after the deadline, so the pipe closes even for a
+#     probe that ignores or traps SIGTERM. This is the guard for the next one.
+#
+# `-k` is probed rather than assumed: where `timeout` is BusyBox's, rejecting
+# the flag would fail every probe and report a wholly broken board. Note the
+# deadline exit code is then 137 (SIGKILL) rather than 124 — both mean "the
+# deadline fired", and every reader of these codes treats them alike.
+TIMEOUT_KILL_AFTER=no
+if [ -n "${TIMEOUT_BIN}" ] && "${TIMEOUT_BIN}" -k 1 1 true 2>/dev/null; then
+    TIMEOUT_KILL_AFTER=yes
+fi
+
 run_timeout() {
     local secs="$1"
     shift
-    if [ -n "${TIMEOUT_BIN}" ]; then
-        "${TIMEOUT_BIN}" "${secs}" "$@"
+    if [ -z "${TIMEOUT_BIN}" ]; then
+        "$@" </dev/null
+    elif [ "${TIMEOUT_KILL_AFTER}" = yes ]; then
+        "${TIMEOUT_BIN}" -k 1 "${secs}" "$@" </dev/null
     else
-        "$@"
+        "${TIMEOUT_BIN}" "${secs}" "$@" </dev/null
     fi
 }
 
 # ── Formatting helpers ──────────────────────────────────────────────────────
 
+# Every `gum` call goes through here, because gum asks the TERMINAL for its
+# background colour (OSC 11) whenever its own stdout is one — and waits 5s for
+# an answer. A terminal that replies to neither that nor the cursor-position
+# probe gum falls back on pays the full 5s, EVERY invocation; a board renders
+# a dozen of them, which is the minutes-long hang of harmon-init#865 on a
+# devcontainer terminal. (Terminals that answer either probe were always fast,
+# which is why this never reproduced on a Mac.)
+#
+# Piping stdout removes the terminal from gum's view, so it does not ask.
+# `CLICOLOR_FORCE` then restores the colour gum drops for a non-terminal
+# stdout: with stderr still on the terminal the output is BYTE-IDENTICAL to
+# what an answering terminal produced before this change, 256-colour included.
+# Where stderr is redirected too, gum cannot read the depth and falls back to
+# 16 colours — not a regression, since gum emitted no colour at all into that
+# case before.
+gum_style() {
+    CLICOLOR_FORCE=1 gum style "$@" | cat
+}
+
 section_header() {
     local title="$1"
     if $HAS_GUM; then
-        gum style --bold --foreground 212 --border-foreground 240 \
+        gum_style --bold --foreground 212 --border-foreground 240 \
             --border rounded --padding "0 1" -- "$title"
     else
         echo ""
@@ -67,7 +110,7 @@ section_box() {
     local content
     content="$(cat)"
     if $HAS_GUM; then
-        echo "$content" | gum style --border rounded \
+        echo "$content" | gum_style --border rounded \
             --border-foreground 240 --padding "0 1" --margin "0 0"
     else
         echo "$content"
@@ -78,7 +121,7 @@ section_box() {
 kv() {
     local key="$1" val="$2"
     if $HAS_GUM; then
-        printf "  %s  %s\n" "$(gum style --bold --foreground 39 "$key:")" "$val"
+        printf "  %s  %s\n" "$(gum_style --bold --foreground 39 "$key:")" "$val"
     else
         printf "  %-20s %s\n" "$key:" "$val"
     fi
@@ -267,13 +310,19 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
             --hostname "${gh_host}" >"${GH_AUTH_FILE}" 2>&1 ||
             gh_auth_rc=$?
     fi
-    # 124 is `timeout`'s own "deadline hit" code. Distinguished from a real
-    # failure because bounding this probe made a slow network indistinguishable
-    # from a missing login, and reporting "not authenticated" for a timeout
-    # sends the reader to fix the wrong thing.
+    # 124 is `timeout`'s own "deadline hit" code, and 137 the same deadline
+    # reached through run_timeout's `-k` hard kill. Both are distinguished from
+    # a real failure because bounding this probe made a slow network
+    # indistinguishable from a missing login, and reporting "not authenticated"
+    # for a timeout sends the reader to fix the wrong thing.
+    #
+    # 137 is not proof the deadline fired: `timeout` also returns it for a probe
+    # killed by anything else (OOM, an operator, a supervisor). Both roads lead
+    # to the same verdict — UNKNOWN, never "logged out" — so they share a branch,
+    # and only the wording below stays agnostic about which one it was.
     case "${gh_auth_rc}" in
     0) GH_AUTHED=true ;;
-    124) GH_AUTH_TIMEDOUT=true ;;
+    124 | 137) GH_AUTH_TIMEDOUT=true ;;
     esac
 fi
 
@@ -345,7 +394,7 @@ done
 
 if [[ -z "${SECTION}" ]]; then
     if $HAS_GUM; then
-        gum style --bold --foreground 212 --border double \
+        gum_style --bold --foreground 212 --border double \
             --border-foreground 99 --padding "0 2" --margin "1 0" \
             -- "${PROJECT_NAME}"
     else
@@ -389,7 +438,7 @@ if should_show "gh"; then
     section_header "GitHub Status"
 
     if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
-        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s -- skipping)" | section_box
+        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s, or was killed -- skipping)" | section_box
     elif [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- skipping)" | section_box
     else
@@ -622,7 +671,7 @@ render_local_credentials() {
         # absence of everything after it, which this line does not.
         if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
             checkline unknown "GitHub CLI (gh)" \
-                "auth probe timed out after ${NETWORK_TIMEOUT}s"
+                "auth probe timed out after ${NETWORK_TIMEOUT}s, or was killed"
         elif [[ "${GH_AUTHED}" == true ]]; then
             checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
         else
@@ -655,7 +704,7 @@ render_local_credentials() {
             checkline ok "GitHub CLI (gh)" \
                 "credential stored for $(gh_target_host) (not validated)"
             ;;
-        124) checkline unknown "GitHub CLI (gh)" "credential probe timed out" ;;
+        124 | 137) checkline unknown "GitHub CLI (gh)" "credential probe timed out or was killed" ;;
         *)
             case "$(printf '%s' "${gh_token_err}" | tr '[:upper:]' '[:lower:]')" in
             *"no oauth token"* | *"not logged in"*)
@@ -701,7 +750,7 @@ render_local_credentials() {
             codex_out="$(run_timeout 3 codex login status 2>&1)" || codex_rc=$?
             case "${codex_rc}" in
             0) checkline ok "Codex CLI" "logged in" ;;
-            124) checkline unknown "Codex CLI" "login status timed out" ;;
+            124 | 137) checkline unknown "Codex CLI" "login status timed out or was killed" ;;
             *)
                 case "${codex_out}" in
                 *"Not logged in"*) checkline no "Codex CLI" "codex login" ;;
@@ -750,7 +799,7 @@ render_local_credentials() {
         *'"loggedIn":false'*) checkline no "Claude Code CLI" "claude auth login" ;;
         *)
             case "${claude_rc}" in
-            124) checkline unknown "Claude Code CLI" "auth status timed out" ;;
+            124 | 137) checkline unknown "Claude Code CLI" "auth status timed out or was killed" ;;
             *) checkline unknown "Claude Code CLI" \
                 "auth status reported nothing readable (exit ${claude_rc})" ;;
             esac
@@ -827,7 +876,7 @@ if [[ "${SECTION}" == "setup" ]]; then
     # exactly like a missing login, and telling an authenticated user to run
     # `gh auth login` because GitHub was slow sends them to fix the wrong thing.
     if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
-        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s -- skipping)" | section_box
+        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s, or was killed -- skipping)" | section_box
     elif [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- run 'gh auth login')" | section_box
     else
