@@ -316,8 +316,17 @@ done
 
 # The guard above is worth nothing if the grouping it defends against is gone;
 # in that case the requirement should be re-derived rather than silently kept.
-grep -q '^output:' Taskfile.yml ||
-    fail "Taskfile.yml no longer sets a global 'output:' — re-derive whether the interactive: true assertion above still describes a real hazard"
+# GROUP specifically, not merely the presence of an `output:` key: `interleaved`
+# and `prefixed` keep the key while dropping the stdout pipe that makes
+# `interactive: true` necessary, and a check on the key alone would keep
+# demanding it long after the reason had evaporated.
+awk '
+    /^output:/ { inout = 1; next }
+    inout && /^[^[:space:]]/ { inout = 0 }
+    inout && /^[[:space:]]+group:[[:space:]]*$/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+' Taskfile.yml ||
+    fail "Taskfile.yml no longer selects 'output: group' — re-derive whether the interactive: true assertion above still describes a real hazard"
 
 if [ -x ./scripts/test-terraform-provider-locks.sh ]; then
     echo "==> Terraform provider locks cover developer and CI platforms"
