@@ -48,10 +48,18 @@ A bot container is the one place this task is the wrong answer: there the
 credential is `GH_TOKEN`, reissued at its source. See
 [bot-account.md](guides/bot-account.md).
 
-The raw equivalent, for a shell that is not in a checkout yet:
+The raw equivalent, derived from the same list rather than copied out of it —
+a hardcoded copy silently goes stale the moment the list changes (an org repo,
+for instance, also needs `admin:org`):
 
 ```sh
-gh auth refresh -s repo,workflow,project,read:project
+gh auth refresh -s "$(. scripts/gh-scopes.sh && gh_scopes_request_list)"
+```
+
+To just see what this repo asks for:
+
+```sh
+. scripts/gh-scopes.sh && gh_scopes_request_list
 ```
 
 Check what a token actually carries:

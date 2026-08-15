@@ -80,8 +80,9 @@ gh_auth_help() {
         echo "    gh auth login --hostname github.com --git-protocol https \\"
         echo "      --web --scopes \"$(gh_scopes_request_list)\""
         echo ""
-        echo "  In an existing checkout, 'task setup:gh-scopes' does the same"
-        echo "  from the repo and verifies the scopes landed."
+        echo "  Then, in the checkout, 'task setup:gh-scopes' verifies the"
+        echo "  scopes landed and adds any this repo needs. (It refreshes an"
+        echo "  EXISTING login — it cannot replace the command above.)"
         if [ -n "${1:-}" ]; then
             echo "    $1"
         fi

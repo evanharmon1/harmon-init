@@ -42,10 +42,18 @@ agent or CI job should re-mint a human credential. It prints the current
 scopes, requests the missing ones, and then **verifies they actually landed** —
 `gh auth refresh` can exit 0 having granted less than was asked for.
 
-The raw equivalent, for a shell that is not in a checkout yet:
+The raw equivalent, derived from the same list rather than copied out of it —
+a hardcoded copy silently goes stale the moment the list changes (an org repo,
+for instance, also needs `admin:org`):
 
 ```sh
-gh auth refresh -s repo,workflow,project,read:project
+gh auth refresh -s "$(. scripts/gh-scopes.sh && gh_scopes_request_list)"
+```
+
+To just see what this repo asks for:
+
+```sh
+. scripts/gh-scopes.sh && gh_scopes_request_list
 ```
 
 Check what a token actually carries:
