@@ -52,6 +52,7 @@ jobs:
       - run: task test:agent-registry
       - run: task test:registry-drift
       - run: task test:registry-docs
+      - run: task test:label-registry
 [% if use_codex_review %]
       - run: task test:codex-review
 [% endif %]

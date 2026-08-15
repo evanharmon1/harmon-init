@@ -109,6 +109,7 @@ tasks:
       - task: test:agent-registry
       - task: test:registry-drift
       - task: test:registry-docs
+      - task: test:label-registry
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -692,6 +693,17 @@ tasks:
     cmds:
       - ./scripts/test-registry-docs.sh
 
+  test:label-registry:
+    # COPIER_ANSWERS_FILE tells the verbatim-twin script which tracker this
+    # repo rendered — the linear project-management document shares the GitHub
+    # one's path and must not be held to the label-taxonomy markers. Same
+    # env-not-argument reasoning as test:registry-docs above.
+    desc: Bind label provisioning, the docs taxonomy table, and the status inventory to the label registry
+    env:
+      COPIER_ANSWERS_FILE: [[ _copier_conf.answers_file | string | tojson ]]
+    cmds:
+      - ./scripts/test-label-registry.sh
+
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
@@ -1041,7 +1053,7 @@ tasks:
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"[% if use_foreman %] --foreman[% endif %]
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"[% if use_foreman %] --foreman[% endif %][% if use_release_please %] --release-please[% endif %]
 [% endif %]
 [% if project_management == 'github' %]
 [% if github_org != author_git_provider_username %]

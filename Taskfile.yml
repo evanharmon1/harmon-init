@@ -81,6 +81,7 @@ tasks:
       - task: test:agent-registry
       - task: test:registry-drift
       - task: test:registry-docs
+      - task: test:label-registry
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -374,6 +375,11 @@ tasks:
     desc: Bind the published family/harness tables in docs/project-management.md to the agent registry
     cmds:
       - ./scripts/test-registry-docs.sh
+
+  test:label-registry:
+    desc: Bind label provisioning, the docs taxonomy table, and the status inventory to the label registry
+    cmds:
+      - ./scripts/test-label-registry.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
@@ -700,7 +706,7 @@ tasks:
     vars:
       REPO: "evanharmon1/harmon-init"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}" --foreman
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}" --foreman --release-please
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.

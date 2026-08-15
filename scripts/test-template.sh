@@ -1110,11 +1110,12 @@ iac | full)
     # adapters the pinned Foreman release ships), so check both the literal
     # family and that the registry still renders the production `claude` adapter.
     [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing for use_foreman=true"
-    grep -q '^foreman:approved|' scripts/setup-github-labels.sh || err "label script lacks the foreman protocol arming labels"
-    grep -q 'agent-registry-labels.mjs' scripts/setup-github-labels.sh ||
-        err "label script does not render foreman:<adapter> selectors from the registry"
-    node scripts/agent-registry-labels.mjs foreman-adapters | grep -q '^foreman:claude|' ||
-        err "registry no longer renders the foreman:claude adapter selector"
+    grep -q 'label-registry-render.mjs' scripts/setup-github-labels.sh ||
+        err "label script does not render from the label registry"
+    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:approved|' ||
+        err "rendered label set lacks the foreman protocol arming labels"
+    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:claude|' ||
+        err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
