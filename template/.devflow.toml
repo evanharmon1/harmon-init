@@ -20,16 +20,25 @@
 #
 # These are ceilings, not quotas. A stage exits the moment any of its exit
 # conditions in AGENTS.md is met: two consecutive rounds adjudicated to zero
-# P0/P1, any single round with no findings at all, or a round that hits the cap
-# below having adjudicated to zero P0/P1 — the confirming round it would
-# otherwise owe is one the cap forbids, so a clean last round is convergence,
-# not grounds to escalate. Nothing here obliges a round to be run.
+# P0/P1, any single round with no findings at all (once `min_rounds` rounds
+# have run), or a round that hits the cap below having adjudicated to zero
+# P0/P1 — the confirming round it would otherwise owe is one the cap forbids,
+# so a clean last round is convergence, not grounds to escalate.
 #
-# Retuning these is expected. The Dev Loop assumes four invariants, and nothing
+# `min_rounds` is the one number here that is a floor rather than a ceiling: it
+# is the minimum number of rounds a stage must actually run before the
+# empty-round instant exit is available. The other two exits already run two
+# rounds and one capped round respectively, so any floor of 2 or less is
+# satisfied by construction and `min_rounds` binds only the empty-round path.
+#
+# Retuning these is expected. The Dev Loop assumes five invariants, and nothing
 # at runtime will tell you if an edit breaks one:
-#   - every tier defines challenge, review and shepherd, all integers
+#   - every tier defines challenge, review, shepherd and min_rounds, all
+#     integers
 #   - challenge and review are >= 2, because the exit condition needs two
 #     consecutive adjudicated-clean rounds; at 1, one finding is an escalation
+#   - min_rounds is >= 1 and no greater than that tier's challenge or review
+#     cap — a floor above the ceiling makes the stage impossible to exit
 #   - shepherd is the same in every tier (see below)
 #   - default_rigor names a tier that exists here
 #
@@ -51,18 +60,21 @@ default_rigor = "standard"
 
 # Trivial, low-blast-radius work: doc touch-ups, mechanical bumps, typo fixes.
 [rigor.light]
-challenge = 2 # 2 is the floor, never 1: the exit condition needs two
-review    = 2 # consecutive adjudicated-clean rounds, so a cap of 1 turns any
-shepherd  = 4 # single finding into an immediate escalation.
+challenge  = 2 # 2 is the floor, never 1: the exit condition needs two
+review     = 2 # consecutive adjudicated-clean rounds, so a cap of 1 turns any
+shepherd   = 4 # single finding into an immediate escalation.
+min_rounds = 1
 
 # The default for ordinary changes.
 [rigor.standard]
-challenge = 3
-review    = 3
-shepherd  = 4
+challenge  = 3
+review     = 3
+shepherd   = 4
+min_rounds = 1
 
 # Security, migrations, data paths — anything with an irreversible failure mode.
 [rigor.deep]
-challenge = 5
-review    = 5
-shepherd  = 4
+challenge  = 5
+review     = 5
+shepherd   = 4
+min_rounds = 1

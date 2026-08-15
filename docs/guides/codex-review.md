@@ -298,9 +298,27 @@ along the way was individually defensible.
 The **scaffolding damper** is what replaces the cap as the first line of
 defense. At round 2 — the earliest round that can show the pattern — say on
 the table, for each finding, whether its subject exists only because an earlier
-round of the same stage added it. Where it does, adjudicate it with one of two
-dispositions written down: delete the scaffolding, or state that the code is
-in scope and why the change needs it. A deletion does not re-score the round
+round of the same stage added it. Where it does, adjudicate it with one of
+three dispositions written down: delete the scaffolding, restructure it to
+invariants, or state that the code is in scope and why the change needs it.
+
+**Restructuring to invariants** is deletion by abstraction, and it is the
+disposition to reach for when plain deletion is unavailable. Some artifacts —
+specs, policy documents, AGENTS.md itself — accrete procedure-prose that
+earlier rounds legitimately demanded, so it cannot just be dropped without
+dropping the obligation with it. Instead, replace the attackable procedure with
+the universally-quantified property it was approximating, delegate the
+mechanism to the implementation surface that can actually be tested, and carry
+the round's attack scenarios across as required test cases. The wording seam
+the next round would have attacked is gone, and the obligation survives as a
+property plus its tests rather than as prose. Three rounds of trust-rule
+whack-a-mole in the 2026-08-13/14 spec session ended in exactly one such
+restructure. It shares deletion's accounting: it does not re-score the round
+that raised the findings, and it must be named on the table and in the commit
+message, because "the procedure is gone" and "the requirement is gone" look
+identical in a diff and are not the same thing.
+
+A deletion does not re-score the round
 that flagged the code — the finding keeps its adjudicated priority there, and
 it is the **next** round, reviewing the tree without it, that finds nothing
 left to re-raise and counts toward convergence. Reflexively hardening the

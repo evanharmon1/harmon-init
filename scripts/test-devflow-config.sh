@@ -42,6 +42,11 @@ import tomllib
 
 labels_script, agents_root, agents_template, *config_paths = sys.argv[1:]
 STAGES = ("challenge", "review", "shepherd")
+# `min_rounds` is a floor on rounds actually run, not a cap — it gates only the
+# empty-round instant exit (AGENTS.md, "Loop cap and exit"). It is required in
+# every tier, so both dogfood copies state it rather than relying on a default.
+MIN_ROUNDS = "min_rounds"
+KNOWN_KEYS = STAGES + (MIN_ROUNDS,)
 # The floor is 2, not 1: a stage exits on two consecutive adjudicated-clean
 # rounds, so a cap of 1 makes any single finding an instant escalation.
 FLOOR = {"challenge": 2, "review": 2, "shepherd": 1}
@@ -77,10 +82,10 @@ for path in config_paths:
         if not isinstance(caps, dict):
             failures.append(f"{path}: [rigor.{name}] is not a table")
             continue
-        missing = [s for s in STAGES if s not in caps]
+        missing = [s for s in KNOWN_KEYS if s not in caps]
         if missing:
             failures.append(f"{path}: [rigor.{name}] missing {', '.join(missing)}")
-        extra = [k for k in caps if k not in STAGES]
+        extra = [k for k in caps if k not in KNOWN_KEYS]
         if extra:
             failures.append(f"{path}: [rigor.{name}] has unknown key(s) {', '.join(extra)}")
         for stage in STAGES:
@@ -94,6 +99,30 @@ for path in config_paths:
                 failures.append(
                     f"{path}: rigor.{name}.{stage}={value} is below the floor of {FLOOR[stage]}"
                 )
+        floor_value = caps.get(MIN_ROUNDS)
+        if floor_value is not None:
+            # bool is an int subclass in Python; `min_rounds = true` must fail.
+            if not isinstance(floor_value, int) or isinstance(floor_value, bool):
+                failures.append(
+                    f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value!r} is not an integer"
+                )
+            elif floor_value < 1:
+                failures.append(
+                    f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} is below 1 — a stage "
+                    "always runs at least one round"
+                )
+            else:
+                # A floor above the ceiling makes the stage impossible to exit:
+                # the empty-round path is unreachable and the cap forces an
+                # escalation that no amount of reviewing could avoid.
+                for stage in ("challenge", "review"):
+                    cap = caps.get(stage)
+                    if isinstance(cap, int) and not isinstance(cap, bool) and floor_value > cap:
+                        failures.append(
+                            f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} exceeds the "
+                            f"{stage} cap of {cap} — the floor cannot be above the ceiling"
+                        )
+
         if isinstance(caps.get("shepherd"), int) and not isinstance(caps.get("shepherd"), bool):
             shepherd_values.add(caps["shepherd"])
 
@@ -138,8 +167,9 @@ with open(config_paths[0], "rb") as fh:
     cfg = tomllib.load(fh)
 tiers = cfg["rigor"]
 summary = "; ".join(
-    f"{n}={t['challenge']}/{t['review']}/{t['shepherd']}" for n, t in sorted(tiers.items())
+    f"{n}={t['challenge']}/{t['review']}/{t['shepherd']} (min {t['min_rounds']})"
+    for n, t in sorted(tiers.items())
 )
 print(f"devflow config OK: default={cfg['default_rigor']} — {summary}")
-print("  (challenge/review/shepherd; both copies valid, every tier has a rigor:* label)")
+print("  (challenge/review/shepherd + min_rounds; both copies valid, every tier has a label)")
 PY
