@@ -192,14 +192,17 @@ tier allowed.
   green; verify is the definition-of-done gate.
 [% if use_codex_review %]
 - **`task challenge`** — adversarial second-model review, under the resolved
-  **challenge cap**. Where the optional `/gauntlet` skill is vendored it is the
-  procedure, and it is **user-invocable only**
+  **challenge cap**. Where the optional `/gauntlet` skill is vendored **and its
+  supported topology holds — `origin` is the repository the PR will
+  target** — it is the procedure, and it is **user-invocable only**
   (`disable-model-invocation: true`): an agent enters the stage by reading
   `.claude/skills/gauntlet/SKILL.md` and following it, not by calling a slash
   command it cannot call. That skill carries the mechanics this file does not
   restate — backgrounding the long reviewer runs, the adjudication table and
   its ledger, the deferred-findings sidecar recipe, and the PR-open ritual.
-  Where it is not vendored, the stage still runs from what ships without it:
+  Where it is not vendored — or the checkout is the conventional fork layout
+  whose `origin` is the writable fork, which the skill's entry gate stops on
+  by design — the stage still runs from what ships without it:
   the backgrounding guidance in
   [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
   backgrounding"), the sidecar obligation in "Deferring P2s" below, and the
@@ -553,9 +556,11 @@ These local tasks do not imply that Codex cloud review is installed or required.
    appropriate.
 4. Explain why any rejected finding is incorrect or irrelevant.
 5. Re-run `task verify` (and the other relevant gates) after fixes.
-6. Finish the round with an adjudication table and record it; where the
-   `/gauntlet` skill is vendored it defines the columns and the per-branch
-   ledger they are written to.
+6. Finish the round with an adjudication table — at minimum finding →
+   reviewer priority → **adjudicated** priority → classification → evidence →
+   action, plus the round-2 provenance column — and record it; where the
+   `/gauntlet` skill is vendored it adds the per-branch ledger the rows are
+   written to.
 
 **Between rounds, check what the findings are about.** Those six steps are all
 *per-finding*, so a reviewer can be right every round while the loop as a whole

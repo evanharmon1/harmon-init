@@ -304,10 +304,15 @@ allowed.
 - **`task verify`** — when the change feels done, loop edit → verify until
   green; verify is the definition-of-done gate (includes the render matrix).
 - **`task challenge`** — adversarial second-model review, under the resolved
-  **challenge cap**. `/gauntlet` is the procedure, and it is **user-invocable
-  only** (`disable-model-invocation: true`): an agent enters the stage by
-  reading `.claude/skills/gauntlet/SKILL.md` and following it, not by calling
-  a slash command it cannot call. The skill carries the mechanics this file
+  **challenge cap**. `/gauntlet` is the procedure **where its supported
+  topology holds — `origin` is the repository the PR will target** — and it
+  is **user-invocable only** (`disable-model-invocation: true`): an agent
+  enters the stage by reading `.claude/skills/gauntlet/SKILL.md` and
+  following it, not by calling a slash command it cannot call. In a fork
+  checkout where `origin` is the writable fork, the skill's entry gate stops
+  by design and this file's policy plus
+  [docs/guides/codex-review.md](docs/guides/codex-review.md) are the
+  procedure, exactly as when the skill is not vendored. The skill carries the mechanics this file
   deliberately does not restate — backgrounding the long reviewer runs, the
   adjudication table and its ledger, the deferred-findings sidecar, and the
   PR-open ritual. What stays here is the policy those mechanics run under, and
@@ -652,8 +657,10 @@ run, and nothing waits on it.
    appropriate.
 4. Explain why any rejected finding is incorrect or irrelevant.
 5. Re-run `task verify` (and the other relevant gates) after fixes.
-6. Finish the round with an adjudication table and record it; the skill
-   defines the columns and the per-branch ledger they are written to.
+6. Finish the round with an adjudication table — at minimum finding →
+   reviewer priority → **adjudicated** priority → classification → evidence →
+   action, plus the round-2 provenance column — and record it; the skill
+   adds the per-branch ledger the rows are written to.
 
 **Between rounds, check what the findings are about.** Those six steps are all
 *per-finding*, so a reviewer can be right every round while the loop as a whole
