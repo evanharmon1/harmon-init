@@ -478,41 +478,47 @@ families, color-coded by family; the vocabulary lives in
 the taxonomy table below is generated from) and the starter set is created by
 `task setup:github-labels`:
 
-- **Concerns** — `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n`
-- **Source** — `customer-request`, `ai-generated`
-- **Workflow** — `needs-triage`, `needs-requirements`, `blocked`, `waiting`,
-  `needs-decision`, `needs-response`, `needs-communication` (transient triage
-  states; `blocked` is the non-issue-blocker flag described above)
-- **Layer** — `layer:ui`, `layer:logic`, `layer:data`, `layer:integration`
-- **Domain** — start with `domain:auth`, `domain:billing`, `domain:platform`;
-  grow from your ERD entities
-- **Work type** — `bug`, `feature`, `task`, `research`: the personal-account
-  work-type surface the issue forms apply; org repos use native issue Type
-  instead and no work-type label
-- **Rigor** — `rigor:light`, `rigor:standard`, `rigor:deep`: which round-cap
-  tier in [`.devflow.toml`](../.devflow.toml) an agent works the issue under
-  (AGENTS.md, "Round caps are resolved, not stated here"). An agent reads it
-  and never self-applies one. It is advisory rather than an authenticated
-  gate: nothing verifies who applied it, and the **triage** role can label an
-  issue with no push access — so AGENTS.md requires any cap resolving below
-  `default_rigor` to be stated in the PR body, keeping a reduced budget visible
-  to the reviewer. Two present resolve per stage to the highest cap, so a
-  conflict can only ever buy more review.
+- **Concerns** — cross-cutting facets worth filtering on: security,
+  accessibility, performance, tech debt, internationalization
+- **Source** — where the work came from (a customer request, AI authorship) —
+  durable provenance, never removed
+- **Workflow** — transient triage states; `blocked` is the non-issue-blocker
+  flag described above
+- **Layer** — which stack slice the change lives in; mirrors the **Layer**
+  field, with no per-issue sync
+- **Domain** — which product capability the work serves (the *problem* space);
+  mirrors the **Domain** field. Domain values are per-repository vocabulary —
+  grow them from your product's own capabilities
+- **Work type** — what kind of work the issue is, on personal-account repos
+  where native issue Type is unavailable; the issue forms apply it, and org
+  repos use native Type with no work-type label
+- **Rigor** — which round-cap tier in [`.devflow.toml`](../.devflow.toml) an
+  agent works the issue under (AGENTS.md, "Round caps are resolved, not stated
+  here"). An agent reads it and never self-applies one. It is advisory rather
+  than an authenticated gate: nothing verifies who applied it, and the
+  **triage** role can label an issue with no push access — so AGENTS.md
+  requires any cap resolving below `default_rigor` to be stated in the PR
+  body, keeping a reduced budget visible to the reviewer. Two present resolve
+  per stage to the highest cap, so a conflict can only ever buy more review.
+
+The prose above describes what each family *means*; the actual values — names,
+colors, writers, lifecycle — live in `label-registry.json` and appear in the
+generated taxonomy table below, so vocabulary is never restated here.
 
 Two more families name **model intelligence** rather than a facet of the work,
 and their vocabulary is not hand-listed anywhere: it is rendered from
 `agent-registry.json` (see [Agent families and harnesses](#agent-families-and-harnesses)),
 so provisioning and documentation cannot fork from each other.
 
-- **Suggest** — `suggest:claude`, `suggest:gpt`, … — which agent family
+- **Suggest** — `suggest:<family>` — which agent family
   *should* implement the issue, set at triage. Advisory only: it routes
   nothing by itself[% if use_foreman %] and must never be read as Foreman arming (that is the
-  `foreman:*` family)[% endif %]. A model-level label (`suggest:claude:opus`, created on
+  `foreman:*` family)[% endif %]. A model-level label (`suggest:<family>:<model>`, created on
   demand) **refines** the family label, never replaces it — apply both, so
   views filtered on the family labels keep seeing the issue
-- **Claim** — `claim:claude`, `claim:gpt`, … — which agent family is working
+- **Claim** — `claim:<family>` — which agent family is working
   the issue *right now*, written by the agent itself (see **Claiming** below).
-  Model-level (`claim:claude:opus`) refines it the same way
+  Model-level (`claim:<family>:<model>`) refines it the same way
 
 > **Transition — the retired `agent:*` family.** Repos seeded before the
 > registry-driven vocabulary carry `agent:claude-code`-style labels instead of
