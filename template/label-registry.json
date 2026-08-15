@@ -240,6 +240,67 @@
       ]
     },
     {
+      "family": "area",
+      "prefix": "area",
+      "purpose": "Codebase subsystem the work lives in (solution space); at most one per issue.",
+      "axis": "classification",
+      "source": "inline",
+      "writers": ["human", "agent"],
+      "writer_note": "humans or agents, at triage",
+      "readers": "humans, `gh issue list --label`",
+      "lifecycle": "durable",
+      "lifecycle_note": "durable classification; area = solution space, domain = problem space, layer = stack slice",
+      "exclusive": true,
+      "provision": true,
+      "color": "0E8A16",
+      "values": [
+        {
+          "value": "ci",
+          "description": "GitHub Actions workflows and CI plumbing"
+        },
+        {
+          "value": "docs",
+          "description": "Documentation content and structure"
+        },
+        {
+          "value": "deps",
+          "description": "Renovate, version pins, dependency bumps"
+        },
+        {
+          "value": "build",
+          "description": "Build system and artifacts"
+        },
+        {
+          "value": "tests",
+          "description": "The test suite and gate assertions"
+        },
+        {
+          "value": "tasks",
+          "description": "Taskfile targets and scripts/ glue"
+        },
+        {
+          "value": "release",
+          "description": "release-please, tags, release guards"
+        },
+        {
+          "value": "devcontainer",
+          "description": "Dev containers, images, features"
+        },
+        {
+          "value": "pm",
+          "description": "Labels, projects, issue tooling, PM docs"
+        },
+        {
+          "value": "skills",
+          "description": "Vendored/authored agent skills and the skills sync"
+        },
+        {
+          "value": "gauntlet",
+          "description": "The challenge/review second-model stage: scripts, gates, and skill wiring"
+        }
+      ]
+    },
+    {
       "family": "rigor",
       "prefix": "rigor",
       "purpose": "Which round-cap level in .devflow.toml an agent works the issue under; values must match its [rigor.*] tables.",

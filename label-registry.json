@@ -226,16 +226,50 @@
       "color": "FBCA04",
       "values": [
         {
-          "value": "auth",
-          "description": "Authentication and authorization"
+          "value": "template",
+          "description": "Generating a new repo from the template — the copier copy journey"
         },
         {
-          "value": "billing",
-          "description": "Billing and payments"
+          "value": "standardization",
+          "description": "Keeping existing repos current — copier update, drift audits, migrations, adoption"
+        },
+        {
+          "value": "dev-loop",
+          "description": "The daily developer workflow: gates, hooks, tasks, worktrees, review stages"
+        },
+        {
+          "value": "agent-workflow",
+          "description": "AI-delegated work: foreman dispatch, claims, skills, Claude Actions"
+        },
+        {
+          "value": "project-tracking",
+          "description": "Issues, labels, boards, and the PM strategy"
+        },
+        {
+          "value": "auth",
+          "description": "Toolchain credentials and auth: gh, Claude, Codex, 1Password, tokens"
+        },
+        {
+          "value": "delivery",
+          "description": "Releases and versioning: release-please, tags, release guards, consumer pickup"
+        },
+        {
+          "value": "environment",
+          "description": "The ready-to-code environment: devcontainer, images, codespaces, editor setup"
         },
         {
           "value": "platform",
-          "description": "CI, build, test infra, and tooling in this repo"
+          "retired": true,
+          "writer_note": "nobody — retired at root",
+          "trust_note": "retired — split across dev-loop/delivery/environment; never provisioned here",
+          "lifecycle_note": "re-label its issues to the split domains, then delete the live label"
+        },
+        {
+          "value": "billing",
+          "retired": true,
+          "writer_note": "nobody — retired at root",
+          "trust_note": "retired — a generic starter value this repo never needed",
+          "lifecycle_note": "re-label any stragglers, then delete the live label"
         }
       ]
     },
@@ -255,8 +289,8 @@
       "color": "0E8A16",
       "values": [
         {
-          "value": "template",
-          "description": "Copier template under template/"
+          "value": "copier",
+          "description": "The templating engine: copier.yml, answers, validators, jinja, render matrix"
         },
         {
           "value": "devcontainer",
@@ -271,6 +305,14 @@
           "description": "Taskfile targets and scripts/ glue"
         },
         {
+          "value": "tests",
+          "description": "The test-*.sh suite and gate assertions"
+        },
+        {
+          "value": "deps",
+          "description": "Renovate, version pins, dependency bumps"
+        },
+        {
           "value": "skills",
           "description": "Vendored/authored agent skills and the skills sync"
         },
@@ -279,8 +321,8 @@
           "description": "Foreman config, wrapper tasks, adapters"
         },
         {
-          "value": "codex",
-          "description": "Codex second-model review integration"
+          "value": "gauntlet",
+          "description": "The challenge/review second-model stage: scripts, gates, and skill wiring"
         },
         {
           "value": "worktree",
@@ -301,6 +343,20 @@
         {
           "value": "docs",
           "description": "Documentation content and structure"
+        },
+        {
+          "value": "template",
+          "retired": true,
+          "writer_note": "nobody — renamed",
+          "trust_note": "retired — renamed to `area:copier` (the engine was what it labeled)",
+          "lifecycle_note": "rename BEFORE provisioning creates `area:copier`: `gh label edit area:template --name area:copier`"
+        },
+        {
+          "value": "codex",
+          "retired": true,
+          "writer_note": "nobody — renamed",
+          "trust_note": "retired — renamed to `area:gauntlet`; codex is the current backend, not the stage",
+          "lifecycle_note": "rename BEFORE provisioning creates `area:gauntlet`: `gh label edit area:codex --name area:gauntlet`"
         }
       ]
     },

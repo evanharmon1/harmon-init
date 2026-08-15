@@ -212,19 +212,26 @@ layer:ui|1D76DB|Components, styling, interaction, tokens, a11y. No data change
 layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
-domain:auth|FBCA04|Authentication and authorization
-domain:billing|FBCA04|Billing and payments
-domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
 rigor:light|D4C5F9|Dev Loop caps: trivial, low-blast-radius change
 rigor:standard|D4C5F9|Dev Loop caps: the default budget
 rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths"
-root_only_inline="area:template|0E8A16|Copier template under template/
+root_only_inline="domain:template|FBCA04|Generating a new repo from the template — the copier copy journey
+domain:standardization|FBCA04|Keeping existing repos current — copier update, drift audits, migrations, adoption
+domain:dev-loop|FBCA04|The daily developer workflow: gates, hooks, tasks, worktrees, review stages
+domain:agent-workflow|FBCA04|AI-delegated work: foreman dispatch, claims, skills, Claude Actions
+domain:project-tracking|FBCA04|Issues, labels, boards, and the PM strategy
+domain:auth|FBCA04|Toolchain credentials and auth: gh, Claude, Codex, 1Password, tokens
+domain:delivery|FBCA04|Releases and versioning: release-please, tags, release guards, consumer pickup
+domain:environment|FBCA04|The ready-to-code environment: devcontainer, images, codespaces, editor setup
+area:copier|0E8A16|The templating engine: copier.yml, answers, validators, jinja, render matrix
 area:devcontainer|0E8A16|Dev containers, images, features
 area:ci|0E8A16|GitHub Actions workflows and CI plumbing
 area:tasks|0E8A16|Taskfile targets and scripts/ glue
+area:tests|0E8A16|The test-*.sh suite and gate assertions
+area:deps|0E8A16|Renovate, version pins, dependency bumps
 area:skills|0E8A16|Vendored/authored agent skills and the skills sync
 area:foreman|0E8A16|Foreman config, wrapper tasks, adapters
-area:codex|0E8A16|Codex second-model review integration
+area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring
 area:worktree|0E8A16|Worktree lifecycle tooling
 area:release|0E8A16|release-please, tags, release guards
 area:security|0E8A16|Scanners, secret handling, hardening
@@ -270,18 +277,34 @@ if [ "$template_mode" = 1 ]; then
     check_lockfile label-registry.json agent-registry.json \
         "$shared_inline
 $root_only_inline" "root layer"
+    template_only_inline="domain:auth|FBCA04|Authentication and authorization
+domain:billing|FBCA04|Billing and payments
+domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
+area:ci|0E8A16|GitHub Actions workflows and CI plumbing
+area:docs|0E8A16|Documentation content and structure
+area:deps|0E8A16|Renovate, version pins, dependency bumps
+area:build|0E8A16|Build system and artifacts
+area:tests|0E8A16|The test suite and gate assertions
+area:tasks|0E8A16|Taskfile targets and scripts/ glue
+area:release|0E8A16|release-please, tags, release guards
+area:devcontainer|0E8A16|Dev containers, images, features
+area:pm|0E8A16|Labels, projects, issue tooling, PM docs
+area:skills|0E8A16|Vendored/authored agent skills and the skills sync
+area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring"
     check_lockfile template/label-registry.json template/agent-registry.json \
-        "$shared_inline" "template layer"
+        "$shared_inline
+$template_only_inline" "template layer"
 
     # The manifests are an allowlisted dogfood-parity divergence, but the
     # divergence is exactly the root-only families — everything else is shared
     # semantics generated repos must not lag on (writers, lifecycle, gates,
     # notes). Compare canonically with the root-only families removed, so a
     # root-side edit to a shared record fails here instead of shipping stale.
+    strip_per_layer='(.families[] | select(.family == "area" or .family == "domain") | .values) = []'
     if ! diff \
-        <(jq -S 'del(.families[] | select(.family == "area" or .family == "tier" or .family == "method"))' label-registry.json) \
-        <(jq -S . template/label-registry.json) >&2; then
-        fail "template/label-registry.json drifted from the root manifest outside the intentional root-only families (area/tier/method) — regenerate it: jq --indent 2 'del(.families[] | select(.family == \"area\" or .family == \"tier\" or .family == \"method\"))' label-registry.json"
+        <(jq -S "del(.families[] | select(.family == \"tier\" or .family == \"method\")) | $strip_per_layer" label-registry.json) \
+        <(jq -S "$strip_per_layer" template/label-registry.json) >&2; then
+        fail "template/label-registry.json drifted from the root manifest outside the per-layer surfaces (tier/method families; area/domain values) — shared family metadata and every other family must match"
     fi
 else
     echo "note: not the template repository — skipping the migration lockfile" >&2

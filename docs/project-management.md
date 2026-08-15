@@ -467,11 +467,13 @@ so provisioning and documentation cannot fork from each other.
 > carries. Do not seed `agent:*` into new repos; a repo carrying neither
 > family tracks a claim by assignee and claim comment alone.
 
-The `layer:` and `domain:` families offer the same options as the **Layer** and
-**Domain** fields above — same names, same meanings, but no per-issue sync (see
-Fields). Use the label when you want it on the issue list and in
-`gh issue list --label`, the field when you want to group a board view by it,
-and extend both together so the option sets stay identical.
+The `layer:` family offers the same options as the **Layer** field above —
+same names, same meanings, but no per-issue sync (see Fields). The `domain:`
+labels carry this repo's own vocabulary from `label-registry.json`, while the
+**Domain** field still seeds the generic starter until field provisioning
+reads the manifest — extend the field to match when you slice a board by
+domain. Use the label for the issue list and `gh issue list --label`, the
+field to group a board view.
 
 The `claim:` and `suggest:` families share a vocabulary and *nothing else*.
 `suggest:` is the planned implementer, `claim:` is the active one — see
@@ -563,8 +565,12 @@ deliberately leaves it alone.
 | `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `enhancement` (**retired**) | nobody — replaced by `feature` | humans, saved views | retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned | rename BEFORE provisioning creates `feature` (`gh label edit enhancement --name feature`, association-preserving); once `feature` exists the rename is refused — re-label the issues and delete `enhancement` |
 | `layer:{ui,logic,data,integration}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Layer` field, with no sync between them |
-| `domain:{auth,billing,platform}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Domain` field, with no sync between them |
-| `area:{template,devcontainer,ci,tasks,skills,foreman,codex,worktree,release,security,pm,docs}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
+| `domain:{template,standardization,dev-loop,agent-workflow,project-tracking,auth,delivery,environment}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Domain` field, with no sync between them |
+| `domain:platform` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — split across dev-loop/delivery/environment; never provisioned here | re-label its issues to the split domains, then delete the live label |
+| `domain:billing` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — a generic starter value this repo never needed | re-label any stragglers, then delete the live label |
+| `area:{copier,devcontainer,ci,tasks,tests,deps,skills,foreman,gauntlet,worktree,release,security,pm,docs}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
+| `area:template` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:copier` (the engine was what it labeled) | rename BEFORE provisioning creates `area:copier`: `gh label edit area:template --name area:copier` |
+| `area:codex` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:gauntlet`; codex is the current backend, not the stage | rename BEFORE provisioning creates `area:gauntlet`: `gh label edit area:codex --name area:gauntlet` |
 | `rigor:{light,standard,deep}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a round-cap level, arms nothing | set when the default budget is wrong for the change; survives the work |
 | `tier:{local,economy,standard,frontier,apex,adaptive}` | humans, at triage or planning — never an agent on itself | agents; unattended automation only under its trust model (ADR 0006) | provisioned; **read by agents** — advisory routing preference, arms nothing | set when the default tier is wrong for the issue; conflicts resolve strongest-wins |
 | `method:{oneshot,plan,plan-approved,orchestrate,council,human-led}` | humans, at triage or planning — never an agent on itself | agents; unattended automation only under its trust model (ADR 0006) | provisioned; **read by agents** — advisory execution topology, arms nothing | set when the default method is wrong for the issue; conflicts resolve by the config-backed rank |
