@@ -35,14 +35,35 @@ die() {
 
 command -v gh >/dev/null 2>&1 || die "gh is not installed (brew install gh)"
 
-# 1. Env-token refusal. Checked before anything else and named individually,
-#    because the fix differs per variable and a generic message sends the
-#    reader looking for the wrong one.
-for var in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
+# 1. Env-token refusal, for the token family gh actually uses on THIS host.
+#
+#    The four variables are not interchangeable: gh reads GH_TOKEN /
+#    GITHUB_TOKEN for github.com (and ghe.com), and GH_ENTERPRISE_TOKEN /
+#    GITHUB_ENTERPRISE_TOKEN for a GitHub Enterprise Server host. Refusing on
+#    any of the four blocked a legitimate dual-host workflow — an exported
+#    GH_ENTERPRISE_TOKEN for a GHES account stopped a github.com refresh that
+#    it does not override, and vice versa.
+#
+#    Where the variable DOES apply, the refusal stands: an env token overrides
+#    the stored credential, so `gh auth refresh` would repair something this
+#    shell never uses — and in a bot container it is the credential escalation
+#    ADR 0004 exists to prevent.
+#
+#    Resolved before the TTY check because the host is needed either way, and
+#    named individually because the fix differs per variable.
+HOSTNAME_ARG="$(gh_target_host)"
+
+case "${HOSTNAME_ARG}" in
+github.com | *.ghe.com) env_token_vars="GH_TOKEN GITHUB_TOKEN" ;;
+*) env_token_vars="GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN" ;;
+esac
+
+for var in ${env_token_vars}; do
     if [ -n "${!var:-}" ]; then
-        die "${var} is set. An env token overrides the stored credential, so
-  'gh auth refresh' would fix something this shell never uses. Reissue ${var}
-  at its source with: $(gh_scopes_request_list)
+        die "${var} is set, and gh uses it for ${HOSTNAME_ARG}. An env token
+  overrides the stored credential, so 'gh auth refresh' would fix something
+  this shell never uses. Reissue ${var} at its source with the scopes:
+  $(gh_scopes_request_list)
   (In a bot container this is the intended state — see docs/guides/bot-account.md.)"
     fi
 done
@@ -55,12 +76,11 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
   re-mint the operator's credential."
 fi
 
-# The host comes from the repository, exactly as status.sh derives it — not a
-# github.com assumption. In an Enterprise checkout with no GH_HOST, status.sh
-# warns about the ghe.example.com credential and names this task; refreshing
-# github.com here would edit an unrelated credential and leave the one the
-# warning was about still under-scoped.
-HOSTNAME_ARG="$(gh_target_host)"
+# HOSTNAME_ARG is resolved above, from the repository exactly as status.sh
+# derives it — not a github.com assumption. In an Enterprise checkout with no
+# GH_HOST, status.sh warns about the ghe.example.com credential and names this
+# task; refreshing github.com here would edit an unrelated credential and leave
+# the one the warning was about still under-scoped.
 REQUEST_LIST="$(gh_scopes_request_list)"
 
 # gh_auth_status_active — `gh auth status` narrowed to the ONE credential this
