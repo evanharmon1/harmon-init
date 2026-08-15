@@ -632,8 +632,25 @@ echo "==> the session-start hook allows more time than this section can spend"
 # the section was about to report — including the board-writes line. The section
 # spends up to NETWORK_TIMEOUT on the auth probe and then up to NETWORK_TIMEOUT
 # again on the PR/run probes, so the hook must allow more than twice the probe
-# budget. Skipped where the hook is not generated (no devcontainer).
+# budget. Skipped where a hook is not generated (no devcontainer).
 hook=".devcontainer/config/claude-hooks/session-start-context.sh"
+
+# EVERY session-start hook that launches status sections under a deadline, not
+# just the devcontainer one. Both ship and both are live — that one through
+# claude-settings.json, the repo-local one through .agents/hooks.json — so a
+# budget corrected in one of them is corrected nowhere for whoever runs the
+# other. Checking only the first is how the repo-local copy kept a stale
+# deadline through a change that existed to fix exactly that.
+STATUS_HOOKS=".devcontainer/config/claude-hooks/session-start-context.sh .claude/hooks/session-start-context.sh"
+
+# hook_deadline HOOK SECTION — the seconds HOOK allows `task status:SECTION`.
+# Anchored on `task status:` rather than on the command, because the two hooks
+# spell the deadline differently (`timeout 14` vs `"$timeout_cmd" 14`) and a
+# pattern keyed to one of them silently reads nothing from the other — which is
+# not a failure, just an assertion that stops asserting.
+hook_deadline() {
+    sed -n -E "s/.*[[:space:]]([0-9]+) task status:$2([[:space:]].*)?\$/\1/p" "$1" | head -1
+}
 
 # The seconds run_timeout waits between SIGTERM and SIGKILL. A probe that
 # ignores the first spends its deadline PLUS this before the pipe it holds
@@ -644,17 +661,21 @@ hook=".devcontainer/config/claude-hooks/session-start-context.sh"
 kill_grace="$(sed -n -E 's/.*"\$\{TIMEOUT_BIN\}" -k ([0-9]+) "\$\{secs\}".*/\1/p' "${status}" | head -1)"
 : "${kill_grace:=0}"
 
-if [ -f "$hook" ]; then
-    budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:gh.*/\1/p' "$hook")"
-    probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
-    [ -n "$budget" ] || fail "could not read the status:gh timeout out of ${hook}"
-    [ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
-    gh_worst="$(((probe + kill_grace) * 2))"
+probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
+[ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
+gh_worst="$(((probe + kill_grace) * 2))"
+checked_hooks=0
+for h in ${STATUS_HOOKS}; do
+    [ -f "$h" ] || continue
+    checked_hooks=$((checked_hooks + 1))
+    budget="$(hook_deadline "$h" gh)"
+    [ -n "$budget" ] || fail "could not read the status:gh timeout out of ${h}"
     [ "$budget" -gt "$gh_worst" ] ||
-        fail "hook allows ${budget}s but the section can spend ${gh_worst}s on probes alone (${probe}s deadline + ${kill_grace}s kill grace, twice) — the board-writes line is lost first"
-else
-    echo "    (skipped: no devcontainer hook in this profile)"
-fi
+        fail "${h} allows ${budget}s but the section can spend ${gh_worst}s on probes alone (${probe}s deadline + ${kill_grace}s kill grace, twice) — the board-writes line is lost first"
+done
+[ "$checked_hooks" -gt 0 ] &&
+    echo "    (checked ${checked_hooks} hook(s))" ||
+    echo "    (skipped: no session-start hook in this profile)"
 
 echo "==> the check never runs the setup section's Projects query"
 # The line is fed by the auth probe the section already makes. If it ever grows a
@@ -1133,33 +1154,37 @@ echo "==> the session-start hook allows more time than status:creds can spend"
 # mode — but budgeted from THIS section's own probes rather than inherited from
 # its neighbour's. Both bounds are read out of the files, so adding a probe to
 # the credentials group without widening the hook fails here.
-if [ -f "$hook" ]; then
-    creds_budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:creds.*/\1/p' "$hook" | head -1)"
-    # Deadlines and probe COUNT, because each probe carries the kill grace too.
-    creds_probes="$(awk '
-        /^render_local_credentials\(\) \{/ { inf = 1 }
-        inf && /^\}/ { inf = 0 }
-        inf {
-            line = $0
-            while (match(line, /run_timeout [0-9]+ /)) {
-                total += substr(line, RSTART + 12, RLENGTH - 13) + 0
-                n += 1
-                line = substr(line, RSTART + RLENGTH)
-            }
+# Deadlines and probe COUNT, because each probe carries the kill grace too.
+creds_probes="$(awk '
+    /^render_local_credentials\(\) \{/ { inf = 1 }
+    inf && /^\}/ { inf = 0 }
+    inf {
+        line = $0
+        while (match(line, /run_timeout [0-9]+ /)) {
+            total += substr(line, RSTART + 12, RLENGTH - 13) + 0
+            n += 1
+            line = substr(line, RSTART + RLENGTH)
         }
-        END { print total + 0, n + 0 }
-    ' "${status}")"
-    creds_deadlines="${creds_probes% *}"
-    creds_count="${creds_probes#* }"
-    creds_worst="$((creds_deadlines + creds_count * kill_grace))"
-    [ -n "$creds_budget" ] || fail "could not read the status:creds timeout out of ${hook}"
-    [ "$creds_count" -gt 0 ] ||
-        fail "found no bounded probes in render_local_credentials — the budget below would assert nothing"
+    }
+    END { print total + 0, n + 0 }
+' "${status}")"
+creds_deadlines="${creds_probes% *}"
+creds_count="${creds_probes#* }"
+creds_worst="$((creds_deadlines + creds_count * kill_grace))"
+[ "$creds_count" -gt 0 ] ||
+    fail "found no bounded probes in render_local_credentials — the budget below would assert nothing"
+checked_hooks=0
+for h in ${STATUS_HOOKS}; do
+    [ -f "$h" ] || continue
+    checked_hooks=$((checked_hooks + 1))
+    creds_budget="$(hook_deadline "$h" creds)"
+    [ -n "$creds_budget" ] || fail "could not read the status:creds timeout out of ${h}"
     [ "$creds_budget" -gt "$creds_worst" ] ||
-        fail "hook allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone (${creds_deadlines}s of deadlines + ${creds_count} probes x ${kill_grace}s kill grace) — the whole group is lost first"
-else
-    echo "    (skipped: no devcontainer hook in this profile)"
-fi
+        fail "${h} allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone (${creds_deadlines}s of deadlines + ${creds_count} probes x ${kill_grace}s kill grace) — the whole group is lost first"
+done
+[ "$checked_hooks" -gt 0 ] &&
+    echo "    (checked ${checked_hooks} hook(s))" ||
+    echo "    (skipped: no session-start hook in this profile)"
 
 echo "==> the session-start hook fits inside its managed SessionStart deadline"
 # The deadline ABOVE the per-section ones: Claude Code applies the `timeout` on
