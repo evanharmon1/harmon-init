@@ -1105,9 +1105,18 @@ ${stray}"
 # cost either divergent `script` invocations or a new dependency in a file that
 # ships to generated repos. Total colour loss is the regression worth catching;
 # the depth was verified by hand against a terminal that answers.
+#
+# Both probes run with the caller's colour environment CLEARED, so that
+# CLICOLOR_FORCE is the only difference between them. Either variable leaking in
+# breaks the assertion in a different direction: an inherited NO_COLOR (which gum
+# honours over CLICOLOR_FORCE) renders the forced probe plain, and an inherited
+# CLICOLOR_FORCE colours the plain one. Both would fail this gate purely on the
+# environment it was run in — `NO_COLOR=1 task verify` is an ordinary thing to
+# type — while status.sh stays correct in both, since NO_COLOR turns gum off
+# there entirely.
 if command -v gum >/dev/null 2>&1; then
-    gum_plain="$(gum style --bold --foreground 212 -- probe | cat)"
-    gum_forced="$(CLICOLOR_FORCE=1 gum style --bold --foreground 212 -- probe | cat)"
+    gum_plain="$(env -u NO_COLOR -u CLICOLOR_FORCE gum style --bold --foreground 212 -- probe | cat)"
+    gum_forced="$(env -u NO_COLOR CLICOLOR_FORCE=1 gum style --bold --foreground 212 -- probe | cat)"
     case "$gum_plain" in
     *$'\033['*) fail "gum coloured a piped stdout unprompted — CLICOLOR_FORCE is asserting nothing below" ;;
     esac
