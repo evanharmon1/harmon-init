@@ -306,36 +306,6 @@ The work-metadata fields:
 - **Size** — estimation points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
   a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
-- **Domain** — which part of the *product* it belongs to. Ships as a starter
-  single-select (`auth`, `billing`, `platform`); the real vocabulary comes from
-  your ERD entities — add options as the product grows
-- **Layer** — which slice of the *stack* it changes: `ui` (components, styling,
-  interaction, tokens, a11y — no data change), `logic` (business rules,
-  handlers, calculation), `data` (schema, indexes, validators, migrations),
-  `integration` (external boundary: webhooks, API clients, credentials)
-
-Domain and Layer are orthogonal to each other and to `Type`/`Status`: an issue
-normally carries one of each — *what part of the product* × *what slice of the
-stack*. They ship with the same option lists as the `domain:` / `layer:` label
-families below, so both surfaces start from one vocabulary — but nothing keeps
-them in step afterwards. Two things to know before you extend either:
-
-- **Nothing syncs an individual issue's label to its field value**, so an issue
-  can carry `domain:auth` and `Domain=billing` at once. **Pick one surface as the
-  source of truth** — the fields if you work the board, the labels if you live in
-  `gh issue list` — and treat the other as optional. Dual-entering both by hand is
-  how they end up contradicting each other.
-- **A new starter value lands on a re-run.** `task setup:github-labels` creates
-  *or updates*, and both field scripts **append** any starter option an existing
-  single-select is missing — `task setup:github-project` for project fields,
-  `task setup:github-issue-fields` for org issue fields. So a value added by a
-  later harmon-init release reaches every surface the next time you run them.
-  Appending is purely additive: the options you added are kept *with their
-  identity*, so issues and board items already assigned to one keep their value,
-  and nothing is renamed, reordered, or deleted. A re-run against an
-  already-synced project writes nothing at all. One caveat: the issue-fields API
-  is in public preview, so if its update endpoint rejects the change, the script
-  names the missing options to add by hand rather than failing the run.
 
 There is deliberately **no `Agent` field**. Which agent *should* take an issue
 is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
@@ -345,34 +315,78 @@ the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field) and
 [ADR 0005](decisions/0005-unified-agent-vocabulary.md).
 
-**Migrating a board that still has one** (set up before the field was retired):
-the setup scripts are additive-only by design, so deleting the live field is an
+There is likewise deliberately **no `Domain` or `Layer` field** (#875). Both
+used to exist as a field *and* a label — `domain:` / `layer:` below — with
+nothing syncing an issue's field value to its label, which is exactly the
+[Label or field?](#label-or-field) trade-off: a label is readable without
+project scope, writable with plain repo scope, and available on personal
+repos, none of which the field bought back. Since one surface has to be the
+source of truth and the label already was for anyone living in `gh issue list`,
+the field was the redundant one.
+
+**Migrating a board that still has one** (set up before a field was retired):
+the setup scripts are additive-only by design, so deleting a live field is an
 explicit operator step, and reviewing its values comes first — deleting a field
 destroys every value on it, unrecoverably.
 
-1. Provision the replacement vocabulary first: run `task setup:github-labels`
-   in every repository whose issues carry the field — a `suggest:*` label must
-   exist in a repo before an assignment can be copied onto its issues.
-2. List what the field holds: every issue or board item with `Agent` set —
-   including **draft items**, which can carry the project field but can never
-   carry a label. Convert any draft whose assignment you want to keep into an
-   issue first; a draft you leave as-is loses its assignment with the field.
-3. Carry each assignment you still want over as the matching `suggest:*` label
-   on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
-4. Re-point the saved **Agent queue** view (below) at the new predicate —
-   filter on the `suggest:*` labels instead of the `Agent` field. A view still
-   filtered on the field loses its routing predicate the moment the field is
-   deleted.
-5. Only then delete the field — Project settings → the field → *Delete field*
-   on a personal project. On an organization the field is **org-wide**:
-   deleting it under **Settings → Planning → Issue fields** removes the value
-   from every issue in every repository and project the org owns, not just
-   this board — repeat steps 2–4 across the whole organization before
-   deleting, including step 4 for **every** Project whose saved views filter
-   on the field, not just the board being migrated.
+- **Agent** (retired earlier):
+  1. Provision the replacement vocabulary first: run `task setup:github-labels`
+     in every repository whose issues carry the field — a `suggest:*` label must
+     exist in a repo before an assignment can be copied onto its issues.
+  2. List what the field holds — filter the Project's own board/table view by
+     the field, not a capped CLI listing (`gh project item-list` defaults to a
+     page size well under a typical board, and `gh issue list` won't show
+     draft items at all): every issue or board item with `Agent` set,
+     including **draft items**, which can carry the project field but can
+     never carry a label. Convert any draft whose assignment you want to keep
+     into an issue first; a draft you leave as-is loses its assignment with
+     the field.
+  3. Carry each assignment you still want over as the matching `suggest:*` label
+     on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
+  4. Re-point the saved **Agent queue** view (below) at the new predicate —
+     filter on the `suggest:*` labels instead of the `Agent` field. A view still
+     filtered on the field loses its routing predicate the moment the field is
+     deleted.
+  5. Only then delete the field — Project settings → the field → *Delete field*
+     on a personal project. On an organization the field is **org-wide**:
+     deleting it under **Settings → Planning → Issue fields** removes the value
+     from every issue in every repository and project the org owns, not just
+     this board — repeat steps 2–4 across the whole organization before
+     deleting, including step 4 for **every** Project whose saved views filter
+     on the field, not just the board being migrated.
+- **Domain / Layer** (retired by #875): `domain:*`/`layer:*` are provisioned
+  by default, so most repos already carry them — but don't skip the
+  provisioning step on that assumption; confirm it.
+  1. Provision the replacement vocabulary first, the same as Agent: run
+     `task setup:github-labels` in every repository whose issues carry the
+     field. An org-wide issue field is shared by every repo in the org, and
+     labels are not — a repo that never ran the script has neither label
+     family yet.
+  2. List every issue or board item with `Domain`/`Layer` set — filter the
+     Project's own board/table view by the field, not a capped CLI listing
+     (`gh project item-list` defaults to a page size well under a typical
+     board, and `gh issue list` won't show draft items at all) — including
+     **draft items**, which can carry the project field but can never carry a
+     label. Convert any draft whose value you want to keep into an issue
+     first — a draft left as-is loses the value outright once the field is
+     gone. For each item, add the matching `domain:*`/`layer:*` label —
+     **creating it first** if the field carries a custom option (e.g.
+     `Domain: crm`) that has no label counterpart yet, since the starter set
+     `setup:github-labels` provisioned is only a floor. Nothing kept the two
+     in sync, so do not assume the label already exists just because the
+     field option does.
+  3. Re-point any saved view that **groups, filters, or sorts** by the
+     `Domain`/`Layer` field. A label can still filter a view (`domain:auth`,
+     say), but — unlike a field — a project view cannot **group or sort** by a
+     label, so a view built for the per-domain/per-layer rollup or ordering
+     loses that; keep the grouping on `Product` (still a field) and reach for
+     a label filter instead.
+  4. Only then delete the field(s) — Project settings → the field → *Delete
+     field* on a personal project; **Settings → Planning → Issue fields** on an
+     organization, org-wide as above.
 
 On a personal account there are no issue fields, so `task setup:github-project`
-creates **Priority, Product, Domain, Layer, and Size** as project fields.
+creates **Priority, Product, and Size** as project fields.
 
 ### The provisioned field values
 
@@ -387,8 +401,6 @@ release lands on the next run.
 | **Size** | project number | free numeric entry; the Fibonacci ladder (1, 2, 3, 5, 8, 13, 21) is a convention, not an option list | `setup:github-project` |
 | **Priority** | single-select | Urgent, High, Medium, Low | `setup:github-project`, personal accounts only |
 | **Product** | text | free text | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
-| **Domain** | single-select | `auth`, `billing`, `platform` | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
-| **Layer** | single-select | `ui`, `logic`, `data`, `integration` | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
 
 Two org-only notes. GitHub ships **Priority** and **Effort** (plus **Start
 date** and **Target date**) as built-in *issue* fields, and both setup scripts
@@ -413,11 +425,10 @@ the taxonomy table below is generated from) and the starter set is created by
   durable provenance, never removed
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
-- **Layer** — which stack slice the change lives in; mirrors the **Layer**
-  field, with no per-issue sync
-- **Domain** — which product capability the work serves (the *problem* space);
-  mirrors the **Domain** field. Domain values are per-repository vocabulary —
-  grow them from your product's own capabilities
+- **Layer** — which stack slice the change lives in
+- **Domain** — which product capability the work serves (the *problem* space).
+  Domain values are per-repository vocabulary — grow them from your product's
+  own capabilities; the label family is the only surface for this taxonomy
 - **Work type** — what kind of work the issue is, on personal-account repos
   where native issue Type is unavailable; the issue forms apply it, and org
   repos use native Type with no work-type label
@@ -467,13 +478,9 @@ so provisioning and documentation cannot fork from each other.
 > carries. Do not seed `agent:*` into new repos; a repo carrying neither
 > family tracks a claim by assignee and claim comment alone.
 
-The `layer:` family offers the same options as the **Layer** field above —
-same names, same meanings, but no per-issue sync (see Fields). The `domain:`
-labels carry this repo's own vocabulary from `label-registry.json`, while the
-**Domain** field still seeds the generic starter until field provisioning
-reads the manifest — extend the field to match when you slice a board by
-domain. Use the label for the issue list and `gh issue list --label`, the
-field to group a board view.
+The `layer:` and `domain:` families are the *only* surface for this
+taxonomy (see Fields) — there is no more paired project/issue field to keep
+in step with, so extend the label lists alone as the product grows.
 
 The `claim:` and `suggest:` families share a vocabulary and *nothing else*.
 `suggest:` is the planned implementer, `claim:` is the active one — see
@@ -531,7 +538,7 @@ mechanics, not taste. Use a **label** when the datum must be any of:
 - **available on personal repos** — org issue fields do not exist there.
 
 Use a **field** when it is **single-valued planning metadata you slice the
-board by**: `Status`, `Priority`, `Size`, `Product`, `Domain`, `Layer`.
+board by**: `Status`, `Priority`, `Size`, `Product`.
 
 The consequences are not stylistic. Foreman arming is labels because only the
 label timeline names an arming actor. Claims are labels because a claim must be
@@ -539,7 +546,9 @@ writable and visible to an agent holding nothing but repo scope, on personal
 and org repos alike. And there is deliberately no `Agent` field: advisory
 routing and live ownership are two different facts, a single-select could carry
 neither without duplicating the label vocabulary, and on an organization the
-Projects V2 API could not write it at all.
+Projects V2 API could not write it at all. `Domain` and `Layer` were fields once
+too, and were retired for the same reason: a label already covered every one of
+the bullets above and nothing kept the two surfaces in sync (#875).
 
 ### The complete label taxonomy
 
@@ -564,8 +573,8 @@ deliberately leaves it alone.
 | `documentation` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `enhancement` (**retired**) | nobody — replaced by `feature` | humans, saved views | retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned | rename BEFORE provisioning creates `feature` (`gh label edit enhancement --name feature`, association-preserving); once `feature` exists the rename is refused — re-label the issues and delete `enhancement` |
-| `layer:{ui,logic,data,integration}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Layer` field, with no sync between them |
-| `domain:{template,standardization,dev-loop,agent-workflow,project-tracking,auth,delivery,environment}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Domain` field, with no sync between them |
+| `layer:{ui,logic,data,integration}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field |
+| `domain:{template,standardization,dev-loop,agent-workflow,project-tracking,auth,delivery,environment}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field |
 | `domain:platform` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — split across dev-loop/delivery/environment; never provisioned here | re-label its issues to the split domains, then delete the live label |
 | `domain:billing` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — a generic starter value this repo never needed | re-label any stragglers, then delete the live label |
 | `area:{copier,devcontainer,ci,tasks,tests,deps,skills,foreman,gauntlet,worktree,release,security,pm,docs}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
@@ -1057,13 +1066,14 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   otherwise reach for an Epic type to get — the payoff of choosing **sub-issues
   over Epics**: structure without the "Feature or Epic?" tax. Still preview, so
   expect rough edges.
-- **Slice the board** — rather than separate per-product / per-layer saved
-  views, slice the one board: by **`Product`** when you go multi-product, by
-  **`Domain`** to focus a product area, by **`Layer`** to focus a slice of the
-  stack. One board, many lenses — and how multiple products stay legible in one
-  aggregating project instead of fragmenting into project-per-product. (The
-  agent split is a label question — `suggest:*`/`claim:*` — filter, don't
-  slice.)
+- **Slice the board** — rather than a separate saved view per product, slice
+  the one board by **`Product`** (still a field, so a view can group by it).
+  One board, many lenses — how multiple products stay legible in one
+  aggregating project instead of fragmenting into project-per-product. Domain
+  and Layer are labels only (#875): a view can still **filter** on
+  `domain:*`/`layer:*` (add the label to the view's filter), it just cannot
+  **group** by them the way a field allows — same as the agent split, which is
+  a label question too (`suggest:*`/`claim:*` — filter, don't slice).
 
 ## Notes
 
