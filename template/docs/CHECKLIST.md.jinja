@@ -276,13 +276,12 @@ environment — against the items below
       [project-management.md](project-management.md), "Migrating a board that
       still has one."
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
-      families (concerns/source/workflow/layer/domain — see
-      [project-management.md](project-management.md)). `domain:` is seeded with
-      `auth`/`billing`/`platform` only — add this product's real domains (from
-      your ERD entities) in `scripts/setup-github-labels.sh`; `layer:`
-      (`ui`/`logic`/`data`/`integration`) is product-independent and normally
-      needs no edits. Labels are per-repo, so run it in each repo; org default
-      labels (org Settings → Repository, UI-only) only seed new repos.
+      families from `label-registry.json` (see the generated taxonomy table in
+      [project-management.md](project-management.md)) — grow `domain:` values
+      there as the product's own vocabulary; `layer:` is product-independent
+      and normally needs no edits. Labels are per-repo, so run it in each repo;
+      org default labels (org Settings → Repository, UI-only) only seed new
+      repos.
 - [ ] **[human-only] Retire any legacy `agent:*` claim labels** — needed only
       where `gh label list --limit 200` still shows the harness-named family
       (`agent:claude-code`, `agent:gemini-cli`, …) a pre-registry harmon-init

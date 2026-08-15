@@ -34,6 +34,7 @@ const supportedSchemaKeywords = new Set([
   'const',
   'enum',
   'minLength',
+  'maxLength',
   'pattern',
   'minItems',
   'uniqueItems',
@@ -97,10 +98,17 @@ function assertSchemaKeywordValues(rule, location) {
     }
   }
 
-  for (const keyword of ['minLength', 'minItems']) {
+  for (const keyword of ['minLength', 'maxLength', 'minItems']) {
     if (Object.hasOwn(rule, keyword) && (!Number.isInteger(rule[keyword]) || rule[keyword] < 0)) {
       schemaError(location, keyword, 'must be a non-negative integer')
     }
+  }
+  if (
+    Object.hasOwn(rule, 'minLength') &&
+    Object.hasOwn(rule, 'maxLength') &&
+    rule.maxLength < rule.minLength
+  ) {
+    schemaError(location, 'maxLength', 'must be >= minLength')
   }
 
   if (Object.hasOwn(rule, 'pattern')) {
@@ -213,6 +221,15 @@ function satisfiesMinLength(value, minimum) {
   return length >= minimum
 }
 
+function exceedsMaxLength(value, maximum) {
+  let length = 0
+  const codePoints = value[Symbol.iterator]()
+  while (length <= maximum && !codePoints.next().done) {
+    length += 1
+  }
+  return length > maximum
+}
+
 function instanceType(value) {
   if (value === null) return 'null'
   if (Array.isArray(value)) return 'array'
@@ -265,6 +282,9 @@ function validateSchema(value, rule, location) {
   if (typeof value === 'string') {
     if (rule.minLength !== undefined && !satisfiesMinLength(value, rule.minLength)) {
       errors.push(`${location}: must contain at least ${rule.minLength} character(s)`)
+    }
+    if (rule.maxLength !== undefined && exceedsMaxLength(value, rule.maxLength)) {
+      errors.push(`${location}: must contain at most ${rule.maxLength} character(s)`)
     }
     if (rule.pattern && !new RegExp(rule.pattern, 'u').test(value)) {
       errors.push(`${location}: does not match ${rule.pattern}`)

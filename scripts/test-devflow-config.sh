@@ -19,7 +19,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-LABELS_SCRIPT="scripts/setup-github-labels.sh"
+# The provisioned rigor:* vocabulary lives in the label registry (per layer —
+# the manifests legitimately diverge in other families, so each .devflow.toml
+# is checked against its own layer's manifest).
+LABEL_REGISTRY_ROOT="label-registry.json"
+LABEL_REGISTRY_TEMPLATE="template/label-registry.json"
 # The fallback applies when .devflow.toml is ABSENT, so it cannot live in that
 # file — it has to be stated in the policy, on both sides of the dogfood. That
 # is two prose copies no other gate compares: test:dogfood-structure comes
@@ -34,13 +38,14 @@ for f in .devflow.toml template/.devflow.toml; do
     }
 done
 
-python3 - "$LABELS_SCRIPT" "$AGENTS_ROOT" "$AGENTS_TEMPLATE" \
+python3 - "$LABEL_REGISTRY_ROOT" "$LABEL_REGISTRY_TEMPLATE" "$AGENTS_ROOT" "$AGENTS_TEMPLATE" \
     .devflow.toml template/.devflow.toml <<'PY'
+import json
 import re
 import sys
 import tomllib
 
-labels_script, agents_root, agents_template, *config_paths = sys.argv[1:]
+registry_root, registry_template, agents_root, agents_template, *config_paths = sys.argv[1:]
 STAGES = ("challenge", "review", "shepherd")
 # `min_rounds` is a floor on rounds actually run, not a cap — it gates only the
 # empty-round instant exit (AGENTS.md, "Loop cap and exit"). It is required in
@@ -51,7 +56,26 @@ KNOWN_KEYS = STAGES + (MIN_ROUNDS,)
 # rounds, so a cap of 1 makes any single finding an instant escalation.
 FLOOR = {"challenge": 2, "review": 2, "shepherd": 1}
 
-provisioned = set(re.findall(r"^rigor:([A-Za-z0-9_-]+)\|", open(labels_script).read(), re.M))
+def rigor_values(registry_path):
+    # Only values the renderer actually seeds count: a retired or
+    # provision:false rigor value has no live label, so a .devflow.toml tier
+    # named after one would be unselectable by the documented label path.
+    with open(registry_path, "rb") as fh:
+        manifest = json.load(fh)
+    return {
+        value["value"]
+        for family in manifest.get("families", [])
+        if family.get("family") == "rigor"
+        and family.get("provision") is True
+        and family.get("retired") is not True
+        for value in family.get("values", [])
+        if value.get("provision") is not False and value.get("retired") is not True
+    }
+
+provisioned_by_config = {
+    ".devflow.toml": (registry_root, rigor_values(registry_root)),
+    "template/.devflow.toml": (registry_template, rigor_values(registry_template)),
+}
 
 failures = []
 
@@ -126,9 +150,10 @@ for path in config_paths:
         if isinstance(caps.get("shepherd"), int) and not isinstance(caps.get("shepherd"), bool):
             shepherd_values.add(caps["shepherd"])
 
+        registry_path, provisioned = provisioned_by_config[path]
         if name not in provisioned:
             failures.append(
-                f"{path}: tier {name!r} has no rigor:{name} label in {labels_script} — "
+                f"{path}: tier {name!r} has no rigor:{name} label in {registry_path} — "
                 "the documented label resolution path cannot select it"
             )
 
