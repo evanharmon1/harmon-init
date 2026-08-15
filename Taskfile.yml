@@ -817,7 +817,7 @@ tasks:
       - ./scripts/status.sh gh
 
   status:creds:
-    desc: Local credential section (gh, Codex, Claude Code logins — local probes, no network)
+    desc: Credential section (gh, Codex, Claude Code logins + gh token scopes — local probes plus one bounded scope check; STATUS_NO_NETWORK=1 skips it)
     cmds:
       - ./scripts/status.sh creds
 

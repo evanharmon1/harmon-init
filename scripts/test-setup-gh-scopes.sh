@@ -21,6 +21,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Scrub every GitHub token variable from this test's own environment before
+# anything runs. The BOT devcontainer profile supplies GH_TOKEN by design, and
+# `task verify` runs there — so an inherited token would trip the env-token
+# refusal in the baseline cases below and fail the suite for a reason that has
+# nothing to do with the code. The explicit env-token cases set what they need,
+# one variable at a time.
+unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST
+
 script="./scripts/setup-gh-scopes.sh"
 scopes_lib="./scripts/gh-scopes.sh"
 
@@ -75,6 +83,18 @@ make_stub() {
             echo "        echo \"  - Token scopes: 'repo', 'workflow'\""
             echo "        echo \"  - Token scopes: 'project', 'read:project'\""
             echo '    fi'
+            echo '    exit 0'
+            ;;
+        read-only-grant)
+            # GitHub granted only the READ scope — an org restriction, or an
+            # operator who unticked the write box in the browser.
+            echo "    echo \"  - Token scopes: 'repo', 'workflow', 'read:project'\""
+            echo '    exit 0'
+            ;;
+        write-only-grant)
+            # Only 'project' reported. It subsumes 'read:project', so this must
+            # NOT be reported as a missing scope.
+            echo "    echo \"  - Token scopes: 'repo', 'workflow', 'project'\""
             echo '    exit 0'
             ;;
         logged-out)
@@ -224,7 +244,7 @@ if [ "${PTY_OK}" = true ]; then
     echo "==> succeeds when the refresh lands, naming the scopes"
     out="$(run_sut_pty lands GH_HOST=github.com)"
     case "$out" in
-    *"All required scopes present"*) ;;
+    *"All requested scopes present"*) ;;
     *) fail "expected success after a landed refresh, got: ${out}" ;;
     esac
 
@@ -243,9 +263,28 @@ if [ "${PTY_OK}" = true ]; then
     # host would let an unrelated login satisfy the requirement.
     out="$(run_sut_pty inactive-has-scope GH_HOST=github.com)"
     case "$out" in
-    *"All required scopes present"*) fail "an inactive account's scopes verified the active one: ${out}" ;;
+    *"All requested scopes present"*) fail "an inactive account's scopes verified the active one: ${out}" ;;
     *"did not grant"*) ;;
     *) fail "expected the active account's missing scopes to be reported, got: ${out}" ;;
+    esac
+
+    echo "==> a refresh that grants only read:project FAILS"
+    # The alternation `project|read:project` is right for the status check —
+    # either proves the credential was minted with Projects in mind. It is
+    # wrong here: the refresh asked for both, and coming back with only the
+    # read grant leaves board writes broken while satisfying the alternation.
+    out="$(run_sut_pty read-only-grant GH_HOST=github.com)"
+    case "$out" in
+    *"All requested scopes present"*) fail "a read-only grant was reported as success: ${out}" ;;
+    *"did not grant"*"project"*) ;;
+    *) fail "expected the missing write scope to be reported, got: ${out}" ;;
+    esac
+
+    echo "==> a write-only grant is accepted (project implies read:project)"
+    out="$(run_sut_pty write-only-grant GH_HOST=github.com)"
+    case "$out" in
+    *"All requested scopes present"*) ;;
+    *) fail "'project' subsumes 'read:project' and must not fail: ${out}" ;;
     esac
 
     echo "==> a fine-grained token is rejected with a source-side remedy"

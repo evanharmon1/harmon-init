@@ -146,6 +146,39 @@ gh_scopes_missing() {
     printf '%s' "${out}"
 }
 
+# gh_scopes_missing_requested SCOPE_LINE — the scopes that were REQUESTED but
+# are not present, whitespace-separated.
+#
+# Distinct from gh_scopes_missing, and both are needed. The status check asks
+# "was this credential minted with the right access in mind", and there the
+# `project|read:project` alternation is right — either proves it. A refresh
+# cannot use that question: `gh auth refresh` was handed every alternative, so
+# a grant that came back with only `read:project` satisfies the alternation
+# while board WRITES still fail, and reporting "all required scopes present"
+# there would leave the operator in exactly the failure the task exists to end.
+#
+# One implication is honoured, because GitHub's own scopes nest: `project`
+# (read and write) subsumes `read:project`, so a credential reported with only
+# `project` is not missing the read grant. Kept as a single named pair rather
+# than a general lattice — it is the only nesting this list contains, and an
+# implication table nobody can enumerate would be worse than none.
+gh_scopes_missing_requested() {
+    local line="$1" scope out=""
+    for scope in $(gh_scopes__alternatives "$(gh_scopes_request_list | tr ',' ' ')"); do
+        case "${line}" in
+        *"'${scope}'"*) continue ;;
+        esac
+        # `project` implies `read:project`.
+        if [ "${scope}" = "read:project" ]; then
+            case "${line}" in
+            *"'project'"*) continue ;;
+            esac
+        fi
+        out="${out:+${out} }${scope}"
+    done
+    printf '%s' "${out}"
+}
+
 # gh_scopes_human "req req…" — render requirements for a human: the `|`
 # alternation becomes " or ", and requirements are comma-separated.
 gh_scopes_human() {

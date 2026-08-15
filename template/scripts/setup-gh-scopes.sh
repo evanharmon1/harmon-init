@@ -147,7 +147,10 @@ case "${scopes_after}" in
     ;;
 esac
 
-missing="$(gh_scopes_missing "${scopes_after}")"
+# Every REQUESTED scope, not merely the required alternation: the refresh was
+# handed both Projects scopes, and coming back with only the read one leaves
+# board writes broken while satisfying `project|read:project`.
+missing="$(gh_scopes_missing_requested "${scopes_after}")"
 if [ -n "${missing}" ]; then
     die "the refresh did not grant: $(gh_scopes_human "${missing}").
   Re-run and approve every scope, or check whether the organization restricts
@@ -155,4 +158,4 @@ if [ -n "${missing}" ]; then
 fi
 
 echo ""
-echo "All required scopes present: $(gh_scopes_human "${GH_REQUIRED_SCOPES}")"
+echo "All requested scopes present: $(gh_scopes_request_list)"
