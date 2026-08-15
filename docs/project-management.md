@@ -359,9 +359,15 @@ destroys every value on it, unrecoverably.
      labels are not — a repo that never ran the script has neither label
      family yet.
   2. List every issue or board item with `Domain`/`Layer` set, including
-     **draft items** (label-only, so a draft loses the value outright once the
-     field is gone). For each, add the matching `domain:*`/`layer:*` label if
-     it isn't already there — nothing kept the two in sync, so do not assume it is.
+     **draft items**, which can carry the project field but can never carry a
+     label. Convert any draft whose value you want to keep into an issue
+     first — a draft left as-is loses the value outright once the field is
+     gone. For each item, add the matching `domain:*`/`layer:*` label —
+     **creating it first** if the field carries a custom option (e.g.
+     `Domain: crm`) that has no label counterpart yet, since the starter set
+     `setup:github-labels` provisioned is only a floor. Nothing kept the two
+     in sync, so do not assume the label already exists just because the
+     field option does.
   3. Re-point any saved view that **groups, filters, or sorts** by the
      `Domain`/`Layer` field. A label can still filter a view (`domain:auth`,
      say), but — unlike a field — a project view cannot **group or sort** by a
