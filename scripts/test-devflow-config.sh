@@ -143,7 +143,7 @@ for path in config_paths:
 FALLBACK_RE = re.compile(r"built-in (\d+ / \d+ / \d+)")
 # The missing-key floor exists only in prose, so its parity is checked the
 # same way as the caps: exactly one statement per layer, equal across layers.
-FLOOR_FALLBACK_RE = re.compile(r"`min_rounds` floor of\s+(\d+) wherever no tier\s+defines one")
+FLOOR_FALLBACK_RE = re.compile(r"`min_rounds` floor of\s+(\d+) for any tier that\s+does not define it")
 fallbacks = {}
 floor_fallbacks = {}
 for path in (agents_root, agents_template):

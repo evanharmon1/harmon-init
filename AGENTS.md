@@ -249,10 +249,10 @@ live in [`.devflow.toml`](.devflow.toml) as `rigor` tiers, so there is one
 place to change them and a parity gate that catches a change made on only one
 side. Resolve in this order — an explicit instruction in this session, then a
 `rigor:*` label on the issue, then `default_rigor`, then a built-in 4 / 4 / 4
-if the file is absent — with a `min_rounds` floor of 1 wherever no tier
-defines one — the absent-file case and any older or customized config whose
-tiers predate the key alike — which is also the floor every shipped tier
-states explicitly. When the change under review **edits `.devflow.toml`
+if the file is absent — with a `min_rounds` floor of 1 for any tier that
+does not define it — the absent-file case, a legacy config predating the key,
+and a partially migrated one where only some tiers state it alike — which is
+also the floor every shipped tier states explicitly. When the change under review **edits `.devflow.toml`
 itself**, resolve its caps **and floor** from the **merge-base** copy rather
 than the branch copy: otherwise a branch can lower the very gate it is
 changing — the floor included, since a self-lowered `min_rounds` buys an
