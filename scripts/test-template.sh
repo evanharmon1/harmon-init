@@ -1007,19 +1007,74 @@ if grep -Eq 'sender\.login.*sender\.login' .github/workflows/claude-review.yml; 
     err "claude-review sender expression contains multiple senders on one line"
 fi
 
-# ── 9d. Issue forms: default assignee always renders; the org issue `type:` key
-#       is present only on org repos (issue types are org-level) ──
-if [ -f .github/ISSUE_TEMPLATE/bug.yml ]; then
-    grep -q '^assignees:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml is missing the default assignee"
+# ── 9d. Issue forms: default assignee always renders; the opening field is
+#       labeled `Problem` on every form, matching the authoring-standard
+#       skeleton (specs/issue-strategy.md) — Research has no carve-out
+#       there, only its Acceptance-criteria field is exempt (9d-acceptance-
+#       empty below). The org issue `type:` key is present only on org
+#       repos (issue types are org-level). Labels are present only where
+#       scripts/setup-github-labels.sh itself renders — project_management
+#       == 'github' or use_foreman — so this reads that file's presence as
+#       the profile-aware signal instead of duplicating the boolean. Where
+#       labels ARE provisioned: the org path relies on type: alone (never
+#       the work-type label — one writable source per owner type) while the
+#       personal path applies the work-type label plus needs-triage. Where
+#       labels are NOT provisioned: no form emits a labels: key at all, on
+#       either path — an unprovisioned repo's forms must never reference a
+#       label nothing guarantees (#852) ──
+labels_provisioned=0
+[ -f scripts/setup-github-labels.sh ] && labels_provisioned=1
+for triple in "bug.yml:Bug:bug" "feature.yml:Feature:feature" "task.yml:Task:task" "research.yml:Research:research"; do
+    form="${triple%%:*}"
+    rest="${triple#*:}"
+    org_type="${rest%%:*}"
+    worktype_label="${rest#*:}"
+    [ -f ".github/ISSUE_TEMPLATE/$form" ] || continue
+    grep -q '^assignees:' ".github/ISSUE_TEMPLATE/$form" || err "$form is missing the default assignee"
+    grep -qx '      label: Problem' ".github/ISSUE_TEMPLATE/$form" || err "$form's opening field is not labeled 'Problem' (authoring-standard skeleton)"
     case "$profile" in
     full) # org repo (github_org != author) → the form declares the org issue type
-        grep -q '^type: Bug$' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml missing 'type: Bug' on an org repo"
+        grep -qx "type: ${org_type}" ".github/ISSUE_TEMPLATE/$form" || err "$form missing 'type: ${org_type}' on an org repo"
+        if [ "$labels_provisioned" = 1 ]; then
+            grep -qx '  - needs-triage' ".github/ISSUE_TEMPLATE/$form" || err "$form missing needs-triage on an org repo with labels provisioned"
+            grep -qx "  - ${worktype_label}" ".github/ISSUE_TEMPLATE/$form" && err "$form applies the ${worktype_label} work-type label on an org repo (native type: already carries it)"
+        else
+            grep -q '^labels:' ".github/ISSUE_TEMPLATE/$form" && err "$form has a labels: key on an org repo with no label provisioning"
+        fi
         ;;
     *) # personal repo → no org issue types, so the type: key must be absent
-        ! grep -q '^type:' .github/ISSUE_TEMPLATE/bug.yml || err "bug.yml has a type: key on a personal repo (org-only)"
+        ! grep -q '^type:' ".github/ISSUE_TEMPLATE/$form" || err "$form has a type: key on a personal repo (org-only)"
+        if [ "$labels_provisioned" = 1 ]; then
+            grep -qx "  - ${worktype_label}" ".github/ISSUE_TEMPLATE/$form" || err "$form missing the ${worktype_label} work-type label on a personal repo with labels provisioned"
+            grep -qx '  - needs-triage' ".github/ISSUE_TEMPLATE/$form" || err "$form missing needs-triage on a personal repo with labels provisioned"
+        else
+            grep -q '^labels:' ".github/ISSUE_TEMPLATE/$form" && err "$form has a labels: key on a personal repo with no label provisioning"
+        fi
         ;;
     esac
-fi
+done
+
+# ── 9d-titles. No issue form sets a title: prefix key — titles are free-form,
+#              structured-data-free statements (#852) ──
+for f in bug.yml feature.yml task.yml research.yml; do
+    [ -f ".github/ISSUE_TEMPLATE/$f" ] || continue
+    ! grep -q '^title:' ".github/ISSUE_TEMPLATE/$f" || err "$f still sets a title: prefix key"
+done
+
+# ── 9d-acceptance-empty. Feature/Task forms carry an Acceptance-criteria
+#                         field, and it ships EMPTY: no prefilled value, so
+#                         an unfilled submission renders `_No response_` (no
+#                         checkbox items) and stays non-dispatchable under
+#                         foreman's no-items check. The positive check runs
+#                         first — the field must actually exist, with its
+#                         exact label — so a refactor that deletes the field
+#                         outright cannot pass by vacuously satisfying "no
+#                         prefilled value" (#852) ──
+for f in feature.yml task.yml; do
+    [ -f ".github/ISSUE_TEMPLATE/$f" ] || continue
+    grep -qx '      label: Acceptance criteria' ".github/ISSUE_TEMPLATE/$f" || err "$f is missing the Acceptance criteria field"
+    ! grep -Eq '^[[:space:]]*value:' ".github/ISSUE_TEMPLATE/$f" || err "$f has a prefilled field value (Acceptance criteria must ship empty)"
+done
 
 # ── 9e. skills-sync renders per use_skills_sync (default on) ────────
 # minimal renders with use_skills_sync=false (OFF branch); every other profile

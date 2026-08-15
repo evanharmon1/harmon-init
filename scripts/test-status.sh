@@ -675,18 +675,50 @@ echo "==> the session-start hook allows more time than this section can spend"
 # the section was about to report — including the board-writes line. The section
 # spends up to NETWORK_TIMEOUT on the auth probe and then up to NETWORK_TIMEOUT
 # again on the PR/run probes, so the hook must allow more than twice the probe
-# budget. Skipped where the hook is not generated (no devcontainer).
+# budget. Skipped where a hook is not generated (no devcontainer).
 hook=".devcontainer/config/claude-hooks/session-start-context.sh"
-if [ -f "$hook" ]; then
-    budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:gh.*/\1/p' "$hook")"
-    probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
-    [ -n "$budget" ] || fail "could not read the status:gh timeout out of ${hook}"
-    [ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
-    [ "$budget" -gt "$((probe * 2))" ] ||
-        fail "hook allows ${budget}s but the section can spend $((probe * 2))s on probes alone — the board-writes line is lost first"
-else
-    echo "    (skipped: no devcontainer hook in this profile)"
-fi
+
+# EVERY session-start hook that launches status sections under a deadline, not
+# just the devcontainer one. Both ship and both are live — that one through
+# claude-settings.json, the repo-local one through .agents/hooks.json — so a
+# budget corrected in one of them is corrected nowhere for whoever runs the
+# other. Checking only the first is how the repo-local copy kept a stale
+# deadline through a change that existed to fix exactly that.
+STATUS_HOOKS=".devcontainer/config/claude-hooks/session-start-context.sh .claude/hooks/session-start-context.sh"
+
+# hook_deadline HOOK SECTION — the seconds HOOK allows `task status:SECTION`.
+# Anchored on `task status:` rather than on the command, because the two hooks
+# spell the deadline differently (`timeout 14` vs `"$timeout_cmd" 14`) and a
+# pattern keyed to one of them silently reads nothing from the other — which is
+# not a failure, just an assertion that stops asserting.
+hook_deadline() {
+    sed -n -E "s/.*[[:space:]]([0-9]+) task status:$2([[:space:]].*)?\$/\1/p" "$1" | head -1
+}
+
+# The seconds run_timeout waits between SIGTERM and SIGKILL. A probe that
+# ignores the first spends its deadline PLUS this before the pipe it holds
+# closes, so every budget below is modelled from the sum, not the deadline
+# alone. Read out of status.sh rather than restated, because a grace changed
+# in one place and remembered in the other is exactly how these budgets rot.
+# Absent (no `-k` in run_timeout) it is zero and the sums are unchanged.
+kill_grace="$(sed -n -E 's/.*"\$\{TIMEOUT_BIN\}" -k ([0-9]+) "\$\{secs\}".*/\1/p' "${status}" | head -1)"
+: "${kill_grace:=0}"
+
+probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
+[ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
+gh_worst="$(((probe + kill_grace) * 2))"
+checked_hooks=0
+for h in ${STATUS_HOOKS}; do
+    [ -f "$h" ] || continue
+    checked_hooks=$((checked_hooks + 1))
+    budget="$(hook_deadline "$h" gh)"
+    [ -n "$budget" ] || fail "could not read the status:gh timeout out of ${h}"
+    [ "$budget" -gt "$gh_worst" ] ||
+        fail "${h} allows ${budget}s but the section can spend ${gh_worst}s on probes alone (${probe}s deadline + ${kill_grace}s kill grace, twice) — the board-writes line is lost first"
+done
+[ "$checked_hooks" -gt 0 ] &&
+    echo "    (checked ${checked_hooks} hook(s))" ||
+    echo "    (skipped: no session-start hook in this profile)"
 
 echo "==> the check never runs the setup section's Projects query"
 # The line is fed by the auth probe the section already makes. If it ever grows a
@@ -1136,34 +1168,197 @@ case "$out" in
 *) fail "expected an install remedy for a missing gh, got: ${out}" ;;
 esac
 
+# ── run_timeout actually bounds a probe (harmon-init#865) ───────────────────
+#
+# A deadline is NOT a bound here. status.sh reads every probe through `$(...)`,
+# and a command substitution returns when the write end of its pipe closes, not
+# when `timeout` exits — so a probe that blocks on stdin, or that survives the
+# SIGTERM the deadline sends, hangs the board FOREVER while `timeout` has long
+# since reported 124. That is what `task status` did in a devcontainer terminal:
+# `claude auth status --json` waits on a terminal stdin, and nothing downstream
+# was left to fire.
+#
+# Both cases are driven from a stdin that is open and silent, the way a terminal
+# with nobody typing at it is. The outer deadline is the test's own safety net:
+# a regression must FAIL here, not wedge CI.
+
+# make_claude_stub_wedged MODE — a `claude` that reproduces one half of the hang.
+#   stdin — reads stdin to EOF before answering. Answers only if it was given
+#           an empty stdin of its own; otherwise it blocks on the caller's.
+#   term  — ignores SIGTERM and never exits, so only a hard kill closes the
+#           pipe the capture is waiting on.
+make_claude_stub_wedged() {
+    mkdir -p "${TMP}/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo "trap '' TERM"
+        case "$1" in
+        stdin) echo 'cat >/dev/null' ;;
+        term) echo 'while :; do sleep 1; done' ;;
+        *) fail "unknown wedged claude stub mode: $1" ;;
+        esac
+        echo 'echo "{ \"loggedIn\": true }"'
+    } >"${TMP}/bin/claude"
+    chmod +x "${TMP}/bin/claude"
+}
+
+# run_creds_wedged — the credentials section with stdin bound to a pipe that
+# stays open and never delivers a byte. Read-write is how the fifo is opened
+# without blocking on a writer that will never come.
+run_creds_wedged() {
+    local fifo="${TMP}/wedge.fifo" rc=0
+    rm -f "${fifo}"
+    mkfifo "${fifo}"
+    exec 9<>"${fifo}"
+    # `-k` on the safety net for the same reason status.sh needs one: the stub
+    # under test ignores SIGTERM, and a net that can only ask nicely is not a
+    # net. Harmless where the shape already terminates — status.sh dies on the
+    # TERM and the stub holds only status.sh's own capture pipe, not this one.
+    # shellcheck disable=SC2086 # deliberate: empty or the two words `-k 5`
+    "${TIMEOUT_FOR_TESTS}" ${TEST_KILL_AFTER} 60 env PATH="${TMP}/bin:${PATH}" NO_COLOR=1 \
+        "${WITH_CODEX}" creds <&9 2>&1 || rc=$?
+    exec 9>&-
+    rm -f "${fifo}"
+    return "${rc}"
+}
+
+TIMEOUT_FOR_TESTS="$(command -v timeout || command -v gtimeout || true)"
+# Either empty or the two words `-k 5`; expanded unquoted at the call site
+# because a quoted "" would be passed as a zero-length duration argument.
+TEST_KILL_AFTER=""
+if [ -n "${TIMEOUT_FOR_TESTS}" ] && "${TIMEOUT_FOR_TESTS}" -k 1 1 true 2>/dev/null; then
+    TEST_KILL_AFTER="-k 5"
+fi
+if [ -n "${TIMEOUT_FOR_TESTS}" ]; then
+    echo "==> a probe that blocks on stdin cannot wedge the board"
+    # Passes only if run_timeout handed the probe its own empty stdin: the stub
+    # answers after EOF, and EOF is what it never gets from the caller's.
+    make_stub project
+    make_codex_stub in
+    make_claude_stub_wedged stdin
+    out="$(run_creds_wedged)" ||
+        fail "status:creds never returned with a probe blocked on stdin — the deadline does not bound the capture"
+    case "$out" in
+    *"Claude Code CLI"*"logged in"*) ;;
+    *) fail "expected the stdin-blocked probe to be answered from an empty stdin, got: ${out}" ;;
+    esac
+
+    echo "==> a probe that ignores SIGTERM cannot wedge the board either"
+    # Nothing can make this one answer, so the contract is weaker but the point
+    # is the same: report the deadline and move on, rather than hang holding a
+    # pipe open. Skipped where `timeout` has no `-k`, which is the one build
+    # where status.sh cannot promise this.
+    if "${TIMEOUT_FOR_TESTS}" -k 1 1 true 2>/dev/null; then
+        make_claude_stub_wedged term
+        out="$(run_creds_wedged)" ||
+            fail "status:creds never returned with a probe that ignores SIGTERM — the capture outlives its deadline"
+        case "$out" in
+        *"[?] Claude Code CLI"*"timed out"*) ;;
+        *) fail "expected a timeout notice for a probe that ignores SIGTERM, got: ${out}" ;;
+        esac
+    else
+        echo "    (skipped: this timeout has no -k, so the hard kill is unavailable)"
+    fi
+    make_claude_stub in
+else
+    echo "    (skipped: no timeout binary — the probes are unbounded here)"
+fi
+
+echo "==> every gum call keeps its stdout off the terminal"
+# gum asks the TERMINAL for its background colour (OSC 11) whenever its own
+# stdout is one, and waits 5s when nothing answers — per invocation, and a board
+# renders a dozen. That is the other half of harmon-init#865, and it is invisible
+# in every test above because they all run under NO_COLOR with no terminal at
+# all. gum_style is the single place that keeps stdout off the terminal; a call
+# site that bypasses it reintroduces the stall on exactly the terminals that
+# cannot answer, which are the ones nobody develops on.
+grep -qF 'CLICOLOR_FORCE=1 gum style "$@" | cat' "${status}" ||
+    fail "gum_style no longer pipes gum's stdout with CLICOLOR_FORCE — the terminal probe and the colour both depend on it"
+grep -q 'gum_style ' "${status}" ||
+    fail "nothing calls gum_style — the check below would pass vacuously"
+stray="$(grep -nE '(^|[^_[:alnum:]])gum[[:space:]]+style' "${status}" |
+    grep -vF 'CLICOLOR_FORCE=1 gum style' |
+    grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+[ -z "${stray}" ] ||
+    fail "gum is invoked outside gum_style, so its stdout is a terminal and it will stall there:
+${stray}"
+
+# The half of gum_style the grep above cannot see: that piping stdout does not
+# cost the colour. gum drops ANSI for a stdout it does not consider a terminal,
+# and CLICOLOR_FORCE is the whole of what puts it back — so assert the mechanism
+# rather than trusting it. Run against the same shape gum_style uses, which needs
+# no terminal and therefore works in CI.
+#
+# What this canNOT see is the colour DEPTH: with no terminal on stdout or stderr
+# gum reads 16 colours here, where an interactive board keeps the full 256. That
+# distinction needs a pty, and a pty harness portable to macOS bash 3.2 would
+# cost either divergent `script` invocations or a new dependency in a file that
+# ships to generated repos. Total colour loss is the regression worth catching;
+# the depth was verified by hand against a terminal that answers.
+#
+# Both probes run with the caller's colour environment CLEARED, so that
+# CLICOLOR_FORCE is the only difference between them. Either variable leaking in
+# breaks the assertion in a different direction: an inherited NO_COLOR (which gum
+# honours over CLICOLOR_FORCE) renders the forced probe plain, and an inherited
+# CLICOLOR_FORCE colours the plain one. Both would fail this gate purely on the
+# environment it was run in — `NO_COLOR=1 task verify` is an ordinary thing to
+# type — while status.sh stays correct in both, since NO_COLOR turns gum off
+# there entirely.
+if command -v gum >/dev/null 2>&1; then
+    gum_plain="$(env -u NO_COLOR -u CLICOLOR_FORCE gum style --bold --foreground 212 -- probe | cat)"
+    gum_forced="$(env -u NO_COLOR CLICOLOR_FORCE=1 gum style --bold --foreground 212 -- probe | cat)"
+    case "$gum_plain" in
+    *$'\033['*) fail "gum coloured a piped stdout unprompted — CLICOLOR_FORCE is asserting nothing below" ;;
+    esac
+    case "$gum_forced" in
+    *$'\033['*) ;;
+    *) fail "CLICOLOR_FORCE did not restore gum's colour through a pipe, so gum_style renders the board plain" ;;
+    esac
+else
+    echo "    (skipped: gum not installed — the board renders its plain fallback)"
+fi
+
 echo "==> the session-start hook allows more time than status:creds can spend"
 # The same coupling as the status:gh assertion above, and the same total failure
 # mode — but budgeted from THIS section's own probes rather than inherited from
 # its neighbour's. Both bounds are read out of the files, so adding a probe to
 # the credentials group without widening the hook fails here.
-if [ -f "$hook" ]; then
-    creds_budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:creds.*/\1/p' "$hook" | head -1)"
-    creds_worst="$(awk '
-        /^render_local_credentials\(\) \{/ { inf = 1 }
-        /^render_gh_scope_check\(\) \{/ { inf = 1 }
-        inf && /^\}/ { inf = 0 }
-        inf {
-            line = $0
-            while (match(line, /run_timeout [0-9]+ /)) {
-                total += substr(line, RSTART + 12, RLENGTH - 13) + 0
-                line = substr(line, RSTART + RLENGTH)
-            }
+# Deadlines and probe COUNT, because each probe carries the kill grace too.
+# BOTH functions: the scope probe (#827) lives in render_gh_scope_check, and a
+# scan that stopped at render_local_credentials would model the section as
+# cheaper than it is — which is exactly the drift this assertion exists to
+# catch.
+creds_probes="$(awk '
+    /^render_local_credentials\(\) \{/ { inf = 1 }
+    /^render_gh_scope_check\(\) \{/ { inf = 1 }
+    inf && /^\}/ { inf = 0 }
+    inf {
+        line = $0
+        while (match(line, /run_timeout [0-9]+ /)) {
+            total += substr(line, RSTART + 12, RLENGTH - 13) + 0
+            n += 1
+            line = substr(line, RSTART + RLENGTH)
         }
-        END { print total + 0 }
-    ' "${status}")"
-    [ -n "$creds_budget" ] || fail "could not read the status:creds timeout out of ${hook}"
-    [ "$creds_worst" -gt 0 ] ||
-        fail "found no bounded probes in render_local_credentials — the budget below would assert nothing"
+    }
+    END { print total + 0, n + 0 }
+' "${status}")"
+creds_deadlines="${creds_probes% *}"
+creds_count="${creds_probes#* }"
+creds_worst="$((creds_deadlines + creds_count * kill_grace))"
+[ "$creds_count" -gt 0 ] ||
+    fail "found no bounded probes in the credentials section — the budget below would assert nothing"
+checked_hooks=0
+for h in ${STATUS_HOOKS}; do
+    [ -f "$h" ] || continue
+    checked_hooks=$((checked_hooks + 1))
+    creds_budget="$(hook_deadline "$h" creds)"
+    [ -n "$creds_budget" ] || fail "could not read the status:creds timeout out of ${h}"
     [ "$creds_budget" -gt "$creds_worst" ] ||
-        fail "hook allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone — the whole group is lost first"
-else
-    echo "    (skipped: no devcontainer hook in this profile)"
-fi
+        fail "${h} allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone (${creds_deadlines}s of deadlines + ${creds_count} probes x ${kill_grace}s kill grace) — the whole group is lost first"
+done
+[ "$checked_hooks" -gt 0 ] &&
+    echo "    (checked ${checked_hooks} hook(s))" ||
+    echo "    (skipped: no session-start hook in this profile)"
 
 echo "==> the session-start hook fits inside its managed SessionStart deadline"
 # The deadline ABOVE the per-section ones: Claude Code applies the `timeout` on

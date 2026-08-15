@@ -483,8 +483,15 @@ can be summed in a view's group header, which is `Size`'s whole job.
 ## Labels
 
 Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
-`Type` (kind of work) — they tag cross-cutting *facets*. Keep them in a few
-families, color-coded by family; the vocabulary lives in
+`Type` (kind of work) — they tag cross-cutting *facets*, with one exception:
+personal-account repos have no native issue Type, so six labels (`bug`,
+`feature`, `documentation`, `question`, `task`, `research`) carry that
+classification instead; an organization carries it in `Type` alone and never
+applies any of the six. Four of them — `bug`, `feature`, `task`,
+`research` — are form-backed, applied automatically by the matching issue
+form; `documentation` and `question` have no dedicated form and are applied
+by hand. Keep the rest in a few families, color-coded by family; the
+vocabulary lives in
 [`label-registry.json`](../label-registry.json) (the machine-readable manifest
 the taxonomy table below is generated from) and the starter set is created by
 `task setup:github-labels`:
