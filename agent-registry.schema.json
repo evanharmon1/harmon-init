@@ -40,10 +40,10 @@
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "labelSlug": {
-      "$comment": "Slugs that render into label names (suggest:/claim:/foreman:<slug>): 40 keeps every <prefix>:<slug> under GitHub's 50-char name limit. Model and harness slugs are runtime identifiers and stay unbounded.",
+      "$comment": "Slugs that render into label names: the longest prefixes (suggest:/foreman:) are 8 chars with the colon, so 42 keeps every <prefix>:<slug> within GitHub's 50-char name limit. Model and harness slugs are runtime identifiers and stay unbounded.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 40,
+      "maxLength": 42,
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "labelNamespace": {

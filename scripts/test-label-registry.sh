@@ -161,7 +161,9 @@ check_rigor() {
     }
     local want got
     want="$(sed -n -E 's/^\[rigor\.([a-z0-9-]+)\]$/\1/p' "$devflow" | sort)"
-    got="$(jq -r '.families[] | select(.family == "rigor") | .values[].value' "$manifest" | sort)"
+    got="$(jq -r '.families[]
+        | select(.family == "rigor" and .provision == true and .retired != true)
+        | .values[] | select(.provision != false and .retired != true) | .value' "$manifest" | sort)"
     [ "$want" = "$got" ] ||
         fail "$manifest rigor values [$(echo "$got" | tr '\n' ' ')] != $devflow levels [$(echo "$want" | tr '\n' ' ')] — the label must select an existing round-cap table"
 }

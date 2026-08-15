@@ -373,12 +373,12 @@ if (errors.length === 0) {
           `${where}: agent-registry families take their values from agent-registry.json — the values array must be empty`
         )
       }
-      if (!family.provision) {
+      if (!family.provision && family.retired !== true) {
         semanticError(
-          `${where}: agent-registry families exist to be provisioned — set provision: true`
+          `${where}: agent-registry families exist to be provisioned — set provision: true (retired families are the one exception)`
         )
       }
-      if (!family.color) {
+      if (!family.color && family.retired !== true) {
         semanticError(
           `${where}: agent-registry families need a color — it is what the renderer asserts ` +
             `against the agent-registry records, and without it that drift guard is silently skipped`
@@ -419,7 +419,7 @@ if (errors.length === 0) {
       if (family.prefix !== null && !VALUE_SLUG.test(value.value)) {
         semanticError(`${at}: prefixed values must be lowercase slugs`)
       }
-      if (name.length > GH_LABEL_NAME_MAX) {
+      if ([...name].length > GH_LABEL_NAME_MAX) {
         semanticError(
           `${at}: composed name '${name}' exceeds GitHub's ${GH_LABEL_NAME_MAX}-char limit`
         )

@@ -270,7 +270,7 @@ if (mode === 'docs-table') {
   const readerCell = (family, value) => value?.readers ?? family.readers
   const trustCell = (family, value) =>
     value?.trust_note ??
-    (value?.provision === false
+    (value?.provision === false || value?.retired === true
       ? 'not provisioned'
       : (family.trust_note ??
         (family.provision
@@ -337,7 +337,10 @@ if (mode === 'docs-table') {
     const retiredSuffix = family.retired === true ? ' (**retired**)' : ''
 
     if (family.source === 'agent-registry' || (family.values.length === 0 && family.open_values)) {
-      const label = code(composedName(family, family.placeholder)) + retiredSuffix
+      const label =
+        code(
+          cell(composedName(family, family.placeholder), `family ${family.family} placeholder`)
+        ) + retiredSuffix
       lines.push(row(label, family, undefined))
       continue
     }
@@ -372,7 +375,13 @@ if (mode === 'docs-table') {
     flush()
     if (family.open_values && family.values.length > 0) {
       lines.push(
-        row(code(composedName(family, family.placeholder)) + retiredSuffix, family, undefined)
+        row(
+          code(
+            cell(composedName(family, family.placeholder), `family ${family.family} placeholder`)
+          ) + retiredSuffix,
+          family,
+          undefined
+        )
       )
     }
   }
