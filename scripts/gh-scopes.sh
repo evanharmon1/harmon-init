@@ -10,10 +10,15 @@
 #   * .devcontainer/scripts/post-create-common.sh — the gh_auth_help banner's
 #     `gh auth login --scopes` line
 #
-# A consumer repo extends the list WITHOUT editing this file by exporting
-# GH_REQUIRED_SCOPES before invoking any of the above (e.g. in .envrc):
+# A consumer repo adds its own requirements WITHOUT editing this file by
+# exporting GH_EXTRA_SCOPES before invoking any of the above (e.g. in .envrc):
 #
-#     export GH_REQUIRED_SCOPES="repo workflow project|read:project admin:org"
+#     export GH_EXTRA_SCOPES="delete_repo"
+#
+# That is ADDITIVE — the repo's own requirements keep applying, including any a
+# later template update introduces. GH_REQUIRED_SCOPES also exists and REPLACES
+# the computed list outright; it is the escape hatch, and it freezes today's
+# defaults.
 #
 # Syntax: whitespace-separated requirements. A requirement is one scope name,
 # or several joined by `|` meaning "any one of these satisfies it". The
@@ -106,7 +111,17 @@ gh_scopes_default() {
     printf '%s' "${list}"
 }
 
-GH_REQUIRED_SCOPES="${GH_REQUIRED_SCOPES:-$(gh_scopes_default)}"
+# Two knobs, because "extend" and "replace" are different intentions and only
+# one of them is safe to reach for by default:
+#
+#   GH_EXTRA_SCOPES     — ADDED to whatever this repo's profile already
+#                         requires. The one to use: a later template update
+#                         that adds a requirement still reaches you.
+#   GH_REQUIRED_SCOPES  — REPLACES the computed list outright. An escape
+#                         hatch. Setting it freezes today's defaults, so a
+#                         requirement added upstream will silently stop being
+#                         checked.
+GH_REQUIRED_SCOPES="${GH_REQUIRED_SCOPES:-$(gh_scopes_default)${GH_EXTRA_SCOPES:+ ${GH_EXTRA_SCOPES}}}"
 
 # gh_scopes_request_list — the comma-separated list to hand
 # `gh auth login --scopes` / `gh auth refresh -s`.

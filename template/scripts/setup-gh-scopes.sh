@@ -148,6 +148,17 @@ echo "==> Required:        $(gh_scopes_human "${GH_REQUIRED_SCOPES}")"
 echo "==> Requesting:      ${REQUEST_LIST}"
 echo ""
 
+# Nothing to do? Say so and stop, WITHOUT opening a browser. `gh auth refresh`
+# is an interactive OAuth flow even when it would change nothing, so an
+# unconditional run makes the documented sequence (log in with the derived
+# scopes, then run this to verify) authenticate twice, and every idempotent
+# re-run repeats it. The docs promise this requests the MISSING scopes; this is
+# that promise kept.
+if [ -z "$(gh_scopes_missing_requested "${scopes_before}")" ]; then
+    echo "Already complete — no refresh needed."
+    exit 0
+fi
+
 gh auth refresh --hostname "${HOSTNAME_ARG}" -s "${REQUEST_LIST}"
 
 # 3. Verify the grant LANDED. `gh auth refresh` can exit 0 having granted less

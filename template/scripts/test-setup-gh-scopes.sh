@@ -55,7 +55,10 @@ make_stub() {
     {
         echo '#!/usr/bin/env bash'
         echo 'if [ -n "${STUB_CALLS:-}" ]; then echo "$*" >>"$STUB_CALLS"; fi'
-        echo 'if [ "$1" = "auth" ] && [ "$2" = "refresh" ]; then exit 0; fi'
+        echo 'if [ "$1" = "auth" ] && [ "$2" = "refresh" ]; then'
+        echo '    [ -n "${TMP_PHASE:-}" ] && : >"$TMP_PHASE"'
+        echo '    exit 0'
+        echo 'fi'
         echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
         echo '    seen_active=false'
         echo '    for a in "$@"; do [ "$a" = "--active" ] && seen_active=true; done'
@@ -82,6 +85,17 @@ make_stub() {
             echo '    else'
             echo "        echo \"  - Token scopes: 'repo', 'workflow'\""
             echo "        echo \"  - Token scopes: 'project', 'read:project'\""
+            echo '    fi'
+            echo '    exit 0'
+            ;;
+        lands-after-refresh)
+            # The genuine success path: incomplete BEFORE the refresh, complete
+            # after it. A single-phase stub cannot test this any more, now that
+            # an already-complete credential short-circuits without refreshing.
+            echo '    if [ -f "${TMP_PHASE:-/nonexistent}" ]; then'
+            echo "        echo \"  - Token scopes: 'repo', 'workflow', 'project', 'read:project'\""
+            echo '    else'
+            echo "        echo \"  - Token scopes: 'repo', 'workflow'\""
             echo '    fi'
             echo '    exit 0'
             ;;
@@ -153,6 +167,8 @@ run_sut_pty() {
     # function, and `env` can only exec a real binary.
     (
         export PATH="${TMP}/bin:${PATH}"
+        export TMP_PHASE="${TMP}/phase-marker"
+        rm -f "${TMP_PHASE}"
         local kv
         for kv in "$@"; do export "${kv?}"; done
         pty_exec "${SUT}"
@@ -171,6 +187,8 @@ rc_pty_of() {
     local rc=0
     (
         export PATH="${TMP}/bin:${PATH}"
+        export TMP_PHASE="${TMP}/phase-marker"
+        rm -f "${TMP_PHASE}"
         local kv
         for kv in "$@"; do export "${kv?}"; done
         pty_exec "${SUT}" >/dev/null 2>&1
@@ -261,7 +279,7 @@ if [ "${PTY_OK}" = true ]; then
     esac
 
     echo "==> succeeds when the refresh lands, naming the scopes"
-    out="$(run_sut_pty lands GH_HOST=github.com)"
+    out="$(run_sut_pty lands-after-refresh GH_HOST=github.com)"
     case "$out" in
     *"All requested scopes present"*) ;;
     *) fail "expected success after a landed refresh, got: ${out}" ;;
@@ -276,7 +294,7 @@ if [ "${PTY_OK}" = true ]; then
     esac
     [ "$(rc_pty_of does-not-land GH_HOST=github.com)" != 0 ] ||
         fail "an unlanded refresh must exit non-zero from the verification path"
-    [ "$(rc_pty_of lands GH_HOST=github.com)" = 0 ] ||
+    [ "$(rc_pty_of lands-after-refresh GH_HOST=github.com)" = 0 ] ||
         fail "a landed refresh must exit zero (else the case above proves nothing)"
 
     echo "==> another account's scopes cannot verify the refreshed one"
@@ -302,11 +320,33 @@ if [ "${PTY_OK}" = true ]; then
     esac
 
     echo "==> a write-only grant is accepted (project implies read:project)"
+    # Reported with only 'project', which subsumes 'read:project' — so nothing
+    # is missing, and the run must succeed rather than report a missing scope.
     out="$(run_sut_pty write-only-grant GH_HOST=github.com)"
     case "$out" in
-    *"All requested scopes present"*) ;;
-    *) fail "'project' subsumes 'read:project' and must not fail: ${out}" ;;
+    *"did not grant"*) fail "'project' subsumes 'read:project' and must not fail: ${out}" ;;
     esac
+    [ "$(rc_pty_of write-only-grant GH_HOST=github.com)" = 0 ] ||
+        fail "a write-only grant must exit zero: ${out}"
+
+    echo "==> an already-complete credential is NOT refreshed"
+    # `gh auth refresh` opens a browser even when it would change nothing, so
+    # the documented sequence (log in with the derived scopes, then run this to
+    # verify) would authenticate twice, and every re-run would repeat it.
+    STUB_CALLS="${TMP}/complete-calls.txt"
+    export STUB_CALLS
+    : >"${STUB_CALLS}"
+    out="$(run_sut_pty lands GH_HOST=github.com)"
+    if grep -q 'auth refresh' "${STUB_CALLS}"; then
+        fail "refreshed a credential that needed nothing: $(tr '\n' ' ' <"${STUB_CALLS}")"
+    fi
+    unset STUB_CALLS
+    case "$out" in
+    *"Already complete"*) ;;
+    *) fail "expected the no-op path to say so, got: ${out}" ;;
+    esac
+    [ "$(rc_pty_of lands GH_HOST=github.com)" = 0 ] ||
+        fail "the already-complete path must exit zero"
 
     echo "==> a stored fine-grained token is refused BEFORE any refresh"
     # `gh auth refresh` against a fine-grained PAT completes a device flow and

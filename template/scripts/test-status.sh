@@ -995,6 +995,23 @@ case "$scope_out" in
 *"admin:org"*) fail "a personal-account repo must not demand admin:org: ${scope_out}" ;;
 esac
 
+echo "==> GH_EXTRA_SCOPES adds to the profile's list rather than replacing it"
+# The documented extension point. Additive is the whole contract: a consumer
+# that names only its own requirement must still be held to this repo's, and to
+# any a later template update introduces.
+make_codex_stub in
+scope_out="$(GH_EXTRA_SCOPES=delete_repo run_creds_section fully-scoped "${CREDS_BOARD}")"
+case "$scope_out" in
+*"gh token scopes"*"missing delete_repo"*) ;;
+*) fail "GH_EXTRA_SCOPES was not required, got: ${scope_out}" ;;
+esac
+make_codex_stub in
+scope_out="$(GH_EXTRA_SCOPES=delete_repo run_creds_section none "${CREDS_BOARD}")"
+case "$scope_out" in
+*"project"*) ;;
+*) fail "GH_EXTRA_SCOPES replaced the built-in requirements: ${scope_out}" ;;
+esac
+
 echo "==> status:creds never prints the token it reads"
 # `gh auth token` writes the credential to stdout — the value is the output. The
 # probe reads its exit code only, so the stub's placeholder must not reach the

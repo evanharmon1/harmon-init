@@ -47,14 +47,19 @@ a hardcoded copy silently goes stale the moment the list changes (an org repo,
 for instance, also needs `admin:org`):
 
 ```sh
-gh auth refresh -s "$(. scripts/gh-scopes.sh && gh_scopes_request_list)"
+gh auth refresh -s "$(bash -c '. scripts/gh-scopes.sh && gh_scopes_request_list')"
 ```
 
 To just see what this repo asks for:
 
 ```sh
-. scripts/gh-scopes.sh && gh_scopes_request_list
+bash -c '. scripts/gh-scopes.sh && gh_scopes_request_list'
 ```
+
+(Through `bash` on purpose: the helper resolves its own location via
+`BASH_SOURCE`, and the devcontainer's default shell is zsh, where sourcing it
+directly would resolve the repo root to the wrong directory and silently shrink
+the list.)
 
 Check what a token actually carries:
 
@@ -67,12 +72,17 @@ gh auth status | grep 'Token scopes'
 One file: `scripts/gh-scopes.sh`. The session-start check in `status.sh`,
 `setup-gh-scopes.sh`, and the devcontainer's `gh_auth_help` banner all read it,
 so the remedy a warning prints and the scopes the task requests cannot drift
-apart. Extend it **without editing the file** by exporting
-`GH_REQUIRED_SCOPES` (e.g. from `.envrc`):
+apart. Add your own **without editing the file** by exporting
+`GH_EXTRA_SCOPES` (e.g. from `.envrc`):
 
 ```sh
-export GH_REQUIRED_SCOPES="repo workflow project|read:project admin:org"
+export GH_EXTRA_SCOPES="delete_repo"
 ```
+
+That is **additive**: everything this repo's profile already requires keeps
+applying, including anything a later template update introduces.
+`GH_REQUIRED_SCOPES` also exists and **replaces** the computed list outright —
+an escape hatch that freezes today's defaults. Prefer `GH_EXTRA_SCOPES`.
 
 Whitespace separates requirements; `|` joins alternatives that each satisfy
 one. The Projects requirement is present only because this repo has board

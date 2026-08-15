@@ -322,7 +322,7 @@ you log in as yourself:
 
 ```sh
 gh auth login --hostname github.com --git-protocol https \
-  --web --scopes "$(. scripts/gh-scopes.sh && gh_scopes_request_list)"
+  --web --scopes "$(bash -c '. scripts/gh-scopes.sh && gh_scopes_request_list')"
 gh auth setup-git
 ```
 
