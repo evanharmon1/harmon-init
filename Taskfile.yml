@@ -85,6 +85,7 @@ tasks:
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
+      - task: test:gh-scopes
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
@@ -401,6 +402,11 @@ tasks:
     cmds:
       - ./scripts/test-status.sh
 
+  test:gh-scopes:
+    desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-gh-scopes.sh
+
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
     cmds:
@@ -697,9 +703,18 @@ tasks:
           echo "Skipping private vulnerability reporting ({{.REPO}} is private; public-repo-only feature)."
         fi
   setup:github-project:
-    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires `gh auth refresh -s project`.
+    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires the Projects scopes — `task setup:gh-scopes`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "evanharmon1" --title "evanharmon1 Project"
+
+  setup:gh-scopes:
+    desc: >-
+      OPERATOR / DEV PROFILE ONLY: refresh your interactive gh login so it
+      carries every scope this repo needs (refuses against a GH_TOKEN env
+      credential and without a TTY; verifies the grant landed). Bot containers
+      must reissue GH_TOKEN instead.
+    cmds:
+      - ./scripts/setup-gh-scopes.sh
 
   setup:github-labels:
     desc: Idempotently create/update this repo's starter labels (see docs/project-management.md). Requires `gh` with repo write.
@@ -808,7 +823,7 @@ tasks:
       - ./scripts/status.sh gh
 
   status:creds:
-    desc: Local credential section (gh, Codex, Claude Code logins — local probes, no network)
+    desc: Credential section (gh, Codex, Claude Code logins + gh token scopes — local probes plus one bounded scope check; STATUS_NO_NETWORK=1 skips it)
     cmds:
       - ./scripts/status.sh creds
 

@@ -8,8 +8,8 @@
 #     and Codex logins the Dev Loop gates on, in every state including
 #     not-installed, rendered as its own section for the session-start hook AND
 #     inside the setup audit BEFORE the gate that skips the rest of it, counted
-#     by the summary at the end of that audit, and — standalone — making no
-#     network call at all.
+#     by the summary at the end of that audit, and — standalone — spending
+#     exactly one bounded network call, for the token scopes alone (#827).
 #
 # Run via `task test:status`.
 #
@@ -28,6 +28,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 status="./scripts/status.sh"
+# status.sh sources the required-scope list from its sibling; every fixture root
+# below therefore needs both files, not just the script under test.
+scopes_lib="./scripts/gh-scopes.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -41,13 +44,23 @@ trap 'rm -rf "${TMP}"' EXIT
 #   with-codex  — opted into second-model review, so the Codex login is a gate.
 #                 The other three have no codex-review.sh, which is what makes
 #                 them the not-opted-in case for that check.
-for fixture in with-board no-board skills-only with-codex; do
+#   creds-board — codex opted in AND board tooling present, so the session-start
+#                 scope check demands the Projects scopes. Its twin below
+#                 (with-codex, no board) is what proves that demand is gated.
+#   org-repo    — an ORG repo (github_org != the author's account), which
+#                 renders the issue-types setup and therefore needs admin:org.
+for fixture in with-board no-board skills-only with-codex creds-board org-repo; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
+    cp "${scopes_lib}" "${TMP}/${fixture}/scripts/gh-scopes.sh"
 done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
 : >"${TMP}/with-codex/scripts/codex-review.sh"
+: >"${TMP}/creds-board/scripts/codex-review.sh"
+: >"${TMP}/creds-board/scripts/setup-github-project.sh"
+: >"${TMP}/org-repo/scripts/codex-review.sh"
+: >"${TMP}/org-repo/scripts/setup-github-issue-types.sh"
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
@@ -55,6 +68,7 @@ mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 # GH_HOST — the case where forcing github.com disowns a valid login.
 mkdir -p "${TMP}/enterprise/scripts"
 cp "${status}" "${TMP}/enterprise/scripts/status.sh"
+cp "${scopes_lib}" "${TMP}/enterprise/scripts/gh-scopes.sh"
 : >"${TMP}/enterprise/scripts/setup-github-project.sh"
 git -C "${TMP}/enterprise" init -q
 git -C "${TMP}/enterprise" remote add origin git@ghe.example.com:owner/repo.git
@@ -64,6 +78,8 @@ NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
 WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
+CREDS_BOARD="${TMP}/creds-board/scripts/status.sh"
+ORG_REPO="${TMP}/org-repo/scripts/status.sh"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -194,6 +210,33 @@ make_stub() {
             # a locked keychain, an unreadable hosts.yml. Deliberately does NOT
             # carry gh's no-credential wording: that is the whole distinction.
             echo "    echo \"  - Token scopes: 'gist', 'project', 'repo'\""
+            echo '    exit 0'
+            ;;
+        fully-scoped)
+            # Every required scope. The session-start check must then say
+            # nothing at all.
+            echo "    echo \"  - Token scopes: 'read:project', 'project', 'repo', 'workflow'\""
+            echo '    exit 0'
+            ;;
+        creds-read-project)
+            # Projects READ only. Satisfies the session-start "was this
+            # credential minted with Projects in mind" check via the
+            # `project|read:project` alternation, while still failing the
+            # board-WRITE check in the GitHub section.
+            echo "    echo \"  - Token scopes: 'read:project', 'repo', 'workflow'\""
+            echo '    exit 0'
+            ;;
+        scope-probe-fails)
+            # The LOCAL credential read succeeds (see `auth token` below) but
+            # the scope probe cannot answer — a network blip, a proxy. Must be
+            # silence, never an accusation.
+            echo '    echo "error connecting to github.com" >&2'
+            echo '    exit 1'
+            ;;
+        no-workflow)
+            # A credential that satisfies the Projects half but not the
+            # unconditional half of the list.
+            echo "    echo \"  - Token scopes: 'repo', 'project', 'read:project'\""
             echo '    exit 0'
             ;;
         *) fail "unknown stub scenario: ${scenario}" ;;
@@ -439,14 +482,14 @@ echo "==> read-only 'read:project' is NOT reported as satisfied"
 out="$(run_gh_section read-only)"
 case "$out" in
 *"token has 'project'"*) fail "read:project must not satisfy a WRITE check: ${out}" ;;
-*"read-only"*"gh auth refresh -s project"*) ;;
+*"read-only"*"task setup:gh-scopes"*) ;;
 *) fail "expected a read-only warning naming the remedy, got: ${out}" ;;
 esac
 
 echo "==> a token with neither scope warns and names the remedy"
 out="$(run_gh_section none)"
 case "$out" in
-*"lacks 'project'"*"gh auth refresh -s project"*) ;;
+*"lacks 'project'"*"task setup:gh-scopes"*) ;;
 *) fail "expected a missing-scope warning naming the remedy, got: ${out}" ;;
 esac
 
@@ -514,7 +557,7 @@ echo "==> an env-provided token gets a remedy that can actually work"
 # advice that silently changes nothing.
 out="$(run_gh_section env-token-no-scope)"
 case "$out" in
-*"gh auth refresh -s project"*) fail "gh auth refresh cannot change an env token: ${out}" ;;
+*"gh auth refresh -s"* | *"task setup:gh-scopes"*) fail "neither a refresh nor the setup task can change an env token: ${out}" ;;
 *"reissue GH_TOKEN"*) ;;
 *) fail "expected an env-token remedy, got: ${out}" ;;
 esac
@@ -523,7 +566,7 @@ echo "==> an Enterprise env token gets the same treatment as GH_TOKEN"
 # The override problem is a property of environment tokens, not of github.com.
 out="$(run_gh_section enterprise-env-token)"
 case "$out" in
-*"gh auth refresh -s project"*) fail "gh auth refresh cannot change an env token: ${out}" ;;
+*"gh auth refresh -s"* | *"task setup:gh-scopes"*) fail "neither a refresh nor the setup task can change an env token: ${out}" ;;
 *"reissue GH_ENTERPRISE_TOKEN"*) ;;
 *) fail "expected the Enterprise env-token remedy, got: ${out}" ;;
 esac
@@ -618,7 +661,7 @@ while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
     *"#"*"gh auth refresh"*) continue ;; # a comment explaining the rule
-    *GH_REMEDY=*) continue ;;            # the derivation itself
+    *GH_REMEDY*=*) continue ;;           # the derivation itself
     *) fail "hardcoded refresh remedy — use \${GH_REMEDY}: ${line}" ;;
     esac
 done <<EOF
@@ -857,23 +900,149 @@ case "$out" in
 *) fail "expected a Codex credential line from status:creds, got: ${out}" ;;
 esac
 
-echo "==> status:creds makes no network call"
-# The acceptance criterion the session-start budget rests on. `gh auth status`
-# validates the token against the API; `gh auth token` reads local config and
-# the environment. The hook already spends this startup's one auth round trip in
-# status:gh, so this section must add none — and a stub that answers `auth
-# status` perfectly well would hide a second one from every output assertion.
+echo "==> status:creds spends exactly ONE network call, and only for scopes"
+# The session-start budget rests on this count. `gh auth status` asks GitHub;
+# `gh auth token` reads local config and the environment. The section was
+# network-free until issue #827 — scopes are a server-side property of the
+# token that no local file records, so the check it asks for cannot be had
+# without exactly one round trip. One, not two: a stub that answers `auth
+# status` happily would hide a second from every output assertion.
 STUB_CALLS="${TMP}/creds-calls.txt"
 export STUB_CALLS
 : >"${STUB_CALLS}"
 make_codex_stub in
 out="$(run_creds_section project)"
-if grep -q 'auth status' "${STUB_CALLS}"; then
-    fail "status:creds called 'gh auth status' — that is a network probe: $(tr '\n' ' ' <"${STUB_CALLS}")"
-fi
 grep -q 'auth token' "${STUB_CALLS}" ||
     fail "status:creds made no local credential read at all: $(tr '\n' ' ' <"${STUB_CALLS}")"
+calls="$(grep -c 'auth status' "${STUB_CALLS}" || true)"
+[ "${calls}" = 1 ] ||
+    fail "status:creds made ${calls} 'gh auth status' calls, expected exactly 1: $(tr '\n' ' ' <"${STUB_CALLS}")"
 unset STUB_CALLS
+
+echo "==> STATUS_NO_NETWORK=1 returns status:creds to a local-only read"
+# The opt-out for an offline or latency-sensitive shell. The credential lines
+# must still render — only the scope probe is given up.
+STUB_CALLS="${TMP}/creds-calls-offline.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+make_codex_stub in
+make_stub none
+offline_out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 STATUS_NO_NETWORK=1 \
+    "${CREDS_BOARD}" creds 2>&1)"
+if grep -q 'auth status' "${STUB_CALLS}"; then
+    fail "STATUS_NO_NETWORK=1 still probed the network: $(tr '\n' ' ' <"${STUB_CALLS}")"
+fi
+case "$offline_out" in
+*"gh token scopes"*) fail "a scope verdict without a probe to back it: ${offline_out}" ;;
+esac
+case "$offline_out" in
+*"GitHub CLI (gh)"*) ;;
+*) fail "the credential lines must still render offline: ${offline_out}" ;;
+esac
+unset STUB_CALLS
+
+echo "==> status:creds warns when the token is missing a required scope"
+# The whole point of #827: an under-scoped login is caught at session start
+# rather than days later, when a board write fails mid-shepherd.
+make_codex_stub in
+scope_out="$(run_creds_section none "${CREDS_BOARD}")"
+case "$scope_out" in
+*"gh token scopes"*"missing"*"project"*) ;;
+*) fail "expected a missing-scope warning from status:creds, got: ${scope_out}" ;;
+esac
+case "$scope_out" in
+*"task setup:gh-scopes"*) ;;
+*) fail "the warning must name the runnable remedy, got: ${scope_out}" ;;
+esac
+
+echo "==> a fully-scoped token produces NO scope line"
+# Silent on success, deliberately: the ✓ credential line above already proves
+# the check ran, and a second green line every session in every repo is noise.
+make_codex_stub in
+scope_out="$(run_creds_section fully-scoped "${CREDS_BOARD}")"
+case "$scope_out" in
+*"gh token scopes"*) fail "a complete token must not produce a scope line: ${scope_out}" ;;
+esac
+
+echo "==> 'read:project' alone satisfies the session-start scope check"
+# It does not satisfy the board-WRITE check in the GitHub section, and must
+# not: these are different questions about the same token. This one asks
+# whether the credential was minted with Projects in mind at all.
+make_codex_stub in
+scope_out="$(run_creds_section creds-read-project "${CREDS_BOARD}")"
+case "$scope_out" in
+*"gh token scopes"*) fail "read:project must satisfy the session-start check: ${scope_out}" ;;
+esac
+
+echo "==> a failed scope probe is not reported as a missing scope"
+# Issues #774 and #478: a probe that could not answer is unknown, never a
+# verdict. Sending a correctly-scoped operator to re-mint a working credential
+# is the error this guards.
+make_codex_stub in
+scope_out="$(run_creds_section scope-probe-fails "${CREDS_BOARD}")"
+case "$scope_out" in
+*"missing"*"project"*) fail "a failed probe must not accuse the token: ${scope_out}" ;;
+esac
+case "$scope_out" in
+*"credential stored"*) ;;
+*) fail "the credential line must survive a failed scope probe: ${scope_out}" ;;
+esac
+
+echo "==> a repo with no board tooling is never asked for Projects scopes"
+# `project_management: none` is the DEFAULT generated profile, and such a repo
+# has no board to write to. Demanding Projects access there would warn every
+# session, in the majority profile, about a grant the repo never uses — and
+# train the reader to ignore the line in the repos where it matters. Same
+# marker, and the same accepted cost, as the board-writes check in status:gh.
+make_codex_stub in
+scope_out="$(run_creds_section none)"
+case "$scope_out" in
+*"gh token scopes"*) fail "a boardless repo must not demand Projects scopes: ${scope_out}" ;;
+esac
+
+echo "==> a boardless repo IS still warned about repo/workflow"
+# The gate is on the Projects requirement alone — the unconditional part of the
+# list must keep working, or the case above would pass for the wrong reason.
+make_codex_stub in
+scope_out="$(run_creds_section no-workflow)"
+case "$scope_out" in
+*"gh token scopes"*"missing workflow"*) ;;
+*) fail "expected an unconditional-scope warning in a boardless repo: ${scope_out}" ;;
+esac
+
+echo "==> an org repo is asked for admin:org, a personal one is not"
+# The org-only setup tasks (issue types, issue fields) state they need
+# admin:org, and the template renders them only when the repo belongs to an
+# org. Same marker rule as the Projects scopes: a personal-account repo renders
+# neither script and must never be warned about a grant it cannot use.
+make_codex_stub in
+scope_out="$(run_creds_section fully-scoped "${ORG_REPO}")"
+case "$scope_out" in
+*"gh token scopes"*"missing admin:org"*) ;;
+*) fail "expected an admin:org warning in an org repo, got: ${scope_out}" ;;
+esac
+make_codex_stub in
+scope_out="$(run_creds_section fully-scoped "${CREDS_BOARD}")"
+case "$scope_out" in
+*"admin:org"*) fail "a personal-account repo must not demand admin:org: ${scope_out}" ;;
+esac
+
+echo "==> GH_EXTRA_SCOPES adds to the profile's list rather than replacing it"
+# The documented extension point. Additive is the whole contract: a consumer
+# that names only its own requirement must still be held to this repo's, and to
+# any a later template update introduces.
+make_codex_stub in
+scope_out="$(GH_EXTRA_SCOPES=delete_repo run_creds_section fully-scoped "${CREDS_BOARD}")"
+case "$scope_out" in
+*"gh token scopes"*"missing delete_repo"*) ;;
+*) fail "GH_EXTRA_SCOPES was not required, got: ${scope_out}" ;;
+esac
+make_codex_stub in
+scope_out="$(GH_EXTRA_SCOPES=delete_repo run_creds_section none "${CREDS_BOARD}")"
+case "$scope_out" in
+*"project"*) ;;
+*) fail "GH_EXTRA_SCOPES replaced the built-in requirements: ${scope_out}" ;;
+esac
 
 echo "==> status:creds never prints the token it reads"
 # `gh auth token` writes the credential to stdout — the value is the output. The
@@ -1155,8 +1324,13 @@ echo "==> the session-start hook allows more time than status:creds can spend"
 # its neighbour's. Both bounds are read out of the files, so adding a probe to
 # the credentials group without widening the hook fails here.
 # Deadlines and probe COUNT, because each probe carries the kill grace too.
+# BOTH functions: the scope probe (#827) lives in render_gh_scope_check, and a
+# scan that stopped at render_local_credentials would model the section as
+# cheaper than it is — which is exactly the drift this assertion exists to
+# catch.
 creds_probes="$(awk '
     /^render_local_credentials\(\) \{/ { inf = 1 }
+    /^render_gh_scope_check\(\) \{/ { inf = 1 }
     inf && /^\}/ { inf = 0 }
     inf {
         line = $0
@@ -1172,7 +1346,7 @@ creds_deadlines="${creds_probes% *}"
 creds_count="${creds_probes#* }"
 creds_worst="$((creds_deadlines + creds_count * kill_grace))"
 [ "$creds_count" -gt 0 ] ||
-    fail "found no bounded probes in render_local_credentials — the budget below would assert nothing"
+    fail "found no bounded probes in the credentials section — the budget below would assert nothing"
 checked_hooks=0
 for h in ${STATUS_HOOKS}; do
     [ -f "$h" ] || continue
