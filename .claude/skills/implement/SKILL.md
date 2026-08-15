@@ -213,7 +213,21 @@ unmerged PR's claim only when the PR's head matches it
 (`track-work/references/claim-lifecycle.md`). Post a new `Claiming —` comment
 with the real branch and the same record values (latest trusted claim wins,
 so this becomes the claim of record; nothing else changed, so the record
-lines carry over verbatim). Skip this when the names already match.
+lines carry over verbatim). **Copy the `Preflight (§3):` block over verbatim
+too**, where the claim comment carries one: it is the durable record of the
+credential gaps and human-only steps that claim found, and the refreshed
+comment is the one a maintainer or a later session reads. Skip this when the
+names already match.
+
+**A scope change refreshes the claim on its own, whatever the branch is
+named.** Where step 2 accepted a scope change from the issue's comments, the
+recorded preflight block describes a spec that no longer applies — so re-run
+the affected §3 checks against the accepted scope and post the recomputed
+block, rather than leaving the claim of record asserting `n/a` over a provider
+or a human prerequisite the issue has since grown. This is not conditional on
+the branch name: a claim that already named the eventual branch is exactly the
+case where the copy-forward above never runs and the stale block would survive
+untouched.
 
 The default branch is not always named `main`, which is why it is resolved
 rather than assumed.
@@ -254,6 +268,16 @@ get a change through. If a gate is wrong, fix the gate as part of the work and
 say so.
 
 ## 6. Second-model review
+
+**Where the `gauntlet` skill is vendored and its supported topology holds —
+`origin` is the repository the PR will target — it is the procedure for this
+step through step 8**: read `.agents/skills/gauntlet/SKILL.md` (or
+`.claude/skills/gauntlet/SKILL.md`) and follow it — it carries the
+adjudication ledger, durable round accounting, and the full PR-opening
+ceremony that the abbreviated steps below do not. In the fork topology this
+skill supports where `origin` is the writable fork rather than the target,
+gauntlet's entry gate would stop by design, so the steps below remain the
+procedure there — as they do wherever the skill is not vendored.
 
 Where the repo runs one (harmon-init and harmon-devkit: `task challenge`, then
 `task review`), it belongs here — after `verify` is green, before the CI
