@@ -621,9 +621,11 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
   past a BLOCK** — adjudicate the finding or escalate to Evan instead.
 
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
-before `task ci` — and the procedure for running them to convergence is the
-vendored `/gauntlet` skill, entered by reading
-`.claude/skills/gauntlet/SKILL.md`. What follows here is the policy that skill
+before `task ci` — and, where the skill's supported topology holds (`origin`
+is the repository the PR will target), the procedure for running them to
+convergence is the vendored `/gauntlet` skill, entered by reading
+`.claude/skills/gauntlet/SKILL.md`; otherwise the Dev Loop's fallback above
+is the procedure. What follows here is the policy that skill
 runs under; where the two disagree, this file wins. Codex cloud review is also connected to this repo's PRs —
 it posts inline comments only for high-priority findings. During shepherding,
 accept its clean comments, reviews, or reactions only under the current-head
