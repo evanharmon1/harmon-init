@@ -42,6 +42,11 @@ import tomllib
 
 labels_script, agents_root, agents_template, *config_paths = sys.argv[1:]
 STAGES = ("challenge", "review", "shepherd")
+# `min_rounds` is a floor on rounds actually run, not a cap — it gates only the
+# empty-round instant exit (AGENTS.md, "Loop cap and exit"). It is required in
+# every tier, so both dogfood copies state it rather than relying on a default.
+MIN_ROUNDS = "min_rounds"
+KNOWN_KEYS = STAGES + (MIN_ROUNDS,)
 # The floor is 2, not 1: a stage exits on two consecutive adjudicated-clean
 # rounds, so a cap of 1 makes any single finding an instant escalation.
 FLOOR = {"challenge": 2, "review": 2, "shepherd": 1}
@@ -77,10 +82,10 @@ for path in config_paths:
         if not isinstance(caps, dict):
             failures.append(f"{path}: [rigor.{name}] is not a table")
             continue
-        missing = [s for s in STAGES if s not in caps]
+        missing = [s for s in KNOWN_KEYS if s not in caps]
         if missing:
             failures.append(f"{path}: [rigor.{name}] missing {', '.join(missing)}")
-        extra = [k for k in caps if k not in STAGES]
+        extra = [k for k in caps if k not in KNOWN_KEYS]
         if extra:
             failures.append(f"{path}: [rigor.{name}] has unknown key(s) {', '.join(extra)}")
         for stage in STAGES:
@@ -94,6 +99,30 @@ for path in config_paths:
                 failures.append(
                     f"{path}: rigor.{name}.{stage}={value} is below the floor of {FLOOR[stage]}"
                 )
+        floor_value = caps.get(MIN_ROUNDS)
+        if floor_value is not None:
+            # bool is an int subclass in Python; `min_rounds = true` must fail.
+            if not isinstance(floor_value, int) or isinstance(floor_value, bool):
+                failures.append(
+                    f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value!r} is not an integer"
+                )
+            elif floor_value < 1:
+                failures.append(
+                    f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} is below 1 — a stage "
+                    "always runs at least one round"
+                )
+            elif floor_value > 2:
+                # A floor above 2 is unenforceable, not merely aggressive: two
+                # consecutive adjudicated-clean rounds — including two empty
+                # ones — exit the stage at round 2 whatever the floor says, so
+                # accepting 3+ would document a budget no stage ever spends.
+                # (2 <= every cap, so the floor can never exceed a cap either.)
+                failures.append(
+                    f"{path}: rigor.{name}.{MIN_ROUNDS}={floor_value} is above 2 — the "
+                    "two-consecutive-clean exit ends a stage at round 2 whatever the "
+                    "floor, so values above 2 cannot bind"
+                )
+
         if isinstance(caps.get("shepherd"), int) and not isinstance(caps.get("shepherd"), bool):
             shepherd_values.add(caps["shepherd"])
 
@@ -112,9 +141,14 @@ for path in config_paths:
         )
 
 FALLBACK_RE = re.compile(r"built-in (\d+ / \d+ / \d+)")
+# The missing-key floor exists only in prose, so its parity is checked the
+# same way as the caps: exactly one statement per layer, equal across layers.
+FLOOR_FALLBACK_RE = re.compile(r"`min_rounds` floor of\s+(\d+) for any tier that\s+does not define it")
 fallbacks = {}
+floor_fallbacks = {}
 for path in (agents_root, agents_template):
-    found = set(FALLBACK_RE.findall(open(path).read()))
+    text = open(path).read()
+    found = set(FALLBACK_RE.findall(text))
     if len(found) != 1:
         failures.append(
             f"{path}: expected exactly one 'built-in N / N / N' fallback, found "
@@ -122,12 +156,34 @@ for path in (agents_root, agents_template):
         )
     else:
         fallbacks[path] = found.pop()
+    floor_found = set(FLOOR_FALLBACK_RE.findall(text))
+    if len(floor_found) != 1:
+        failures.append(
+            f"{path}: expected exactly one 'min_rounds floor of N wherever no tier "
+            f"defines one' fallback, found {sorted(floor_found) if floor_found else 'none'}"
+        )
+    else:
+        floor_fallbacks[path] = floor_found.pop()
 if len(set(fallbacks.values())) > 1:
     failures.append(
         "the fallback caps disagree across the dogfood: "
         + "; ".join(f"{p} says {v}" for p, v in sorted(fallbacks.items()))
         + " — root and generated agents would use different caps"
     )
+if len(set(floor_fallbacks.values())) > 1:
+    failures.append(
+        "the fallback min_rounds floor disagrees across the dogfood: "
+        + "; ".join(f"{p} says {v}" for p, v in sorted(floor_fallbacks.items()))
+        + " — root and generated agents would use different exit rules"
+    )
+for path, value in sorted(floor_fallbacks.items()):
+    # Same range as configured min_rounds: 1 or 2. A fallback outside it would
+    # hand absent-file/legacy repos an exit rule no shipped tier may state.
+    if not value.isdigit() or not 1 <= int(value) <= 2:
+        failures.append(
+            f"{path}: fallback min_rounds floor {value} is outside the supported "
+            "range 1-2"
+        )
 
 if failures:
     for line in failures:
@@ -138,8 +194,9 @@ with open(config_paths[0], "rb") as fh:
     cfg = tomllib.load(fh)
 tiers = cfg["rigor"]
 summary = "; ".join(
-    f"{n}={t['challenge']}/{t['review']}/{t['shepherd']}" for n, t in sorted(tiers.items())
+    f"{n}={t['challenge']}/{t['review']}/{t['shepherd']} (min {t['min_rounds']})"
+    for n, t in sorted(tiers.items())
 )
 print(f"devflow config OK: default={cfg['default_rigor']} — {summary}")
-print("  (challenge/review/shepherd; both copies valid, every tier has a rigor:* label)")
+print("  (challenge/review/shepherd + min_rounds; both copies valid, every tier has a label)")
 PY
