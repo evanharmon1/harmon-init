@@ -176,6 +176,14 @@ if len(set(floor_fallbacks.values())) > 1:
         + "; ".join(f"{p} says {v}" for p, v in sorted(floor_fallbacks.items()))
         + " — root and generated agents would use different exit rules"
     )
+for path, value in sorted(floor_fallbacks.items()):
+    # Same range as configured min_rounds: 1 or 2. A fallback outside it would
+    # hand absent-file/legacy repos an exit rule no shipped tier may state.
+    if not value.isdigit() or not 1 <= int(value) <= 2:
+        failures.append(
+            f"{path}: fallback min_rounds floor {value} is outside the supported "
+            "range 1-2"
+        )
 
 if failures:
     for line in failures:
