@@ -634,13 +634,24 @@ echo "==> the session-start hook allows more time than this section can spend"
 # again on the PR/run probes, so the hook must allow more than twice the probe
 # budget. Skipped where the hook is not generated (no devcontainer).
 hook=".devcontainer/config/claude-hooks/session-start-context.sh"
+
+# The seconds run_timeout waits between SIGTERM and SIGKILL. A probe that
+# ignores the first spends its deadline PLUS this before the pipe it holds
+# closes, so every budget below is modelled from the sum, not the deadline
+# alone. Read out of status.sh rather than restated, because a grace changed
+# in one place and remembered in the other is exactly how these budgets rot.
+# Absent (no `-k` in run_timeout) it is zero and the sums are unchanged.
+kill_grace="$(sed -n -E 's/.*"\$\{TIMEOUT_BIN\}" -k ([0-9]+) "\$\{secs\}".*/\1/p' "${status}" | head -1)"
+: "${kill_grace:=0}"
+
 if [ -f "$hook" ]; then
     budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:gh.*/\1/p' "$hook")"
     probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
     [ -n "$budget" ] || fail "could not read the status:gh timeout out of ${hook}"
     [ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
-    [ "$budget" -gt "$((probe * 2))" ] ||
-        fail "hook allows ${budget}s but the section can spend $((probe * 2))s on probes alone — the board-writes line is lost first"
+    gh_worst="$(((probe + kill_grace) * 2))"
+    [ "$budget" -gt "$gh_worst" ] ||
+        fail "hook allows ${budget}s but the section can spend ${gh_worst}s on probes alone (${probe}s deadline + ${kill_grace}s kill grace, twice) — the board-writes line is lost first"
 else
     echo "    (skipped: no devcontainer hook in this profile)"
 fi
@@ -1009,7 +1020,12 @@ run_creds_wedged() {
     rm -f "${fifo}"
     mkfifo "${fifo}"
     exec 9<>"${fifo}"
-    "${TIMEOUT_FOR_TESTS}" 60 env PATH="${TMP}/bin:${PATH}" NO_COLOR=1 \
+    # `-k` on the safety net for the same reason status.sh needs one: the stub
+    # under test ignores SIGTERM, and a net that can only ask nicely is not a
+    # net. Harmless where the shape already terminates — status.sh dies on the
+    # TERM and the stub holds only status.sh's own capture pipe, not this one.
+    # shellcheck disable=SC2086 # deliberate: empty or the two words `-k 5`
+    "${TIMEOUT_FOR_TESTS}" ${TEST_KILL_AFTER} 60 env PATH="${TMP}/bin:${PATH}" NO_COLOR=1 \
         "${WITH_CODEX}" creds <&9 2>&1 || rc=$?
     exec 9>&-
     rm -f "${fifo}"
@@ -1017,6 +1033,12 @@ run_creds_wedged() {
 }
 
 TIMEOUT_FOR_TESTS="$(command -v timeout || command -v gtimeout || true)"
+# Either empty or the two words `-k 5`; expanded unquoted at the call site
+# because a quoted "" would be passed as a zero-length duration argument.
+TEST_KILL_AFTER=""
+if [ -n "${TIMEOUT_FOR_TESTS}" ] && "${TIMEOUT_FOR_TESTS}" -k 1 1 true 2>/dev/null; then
+    TEST_KILL_AFTER="-k 5"
+fi
 if [ -n "${TIMEOUT_FOR_TESTS}" ]; then
     echo "==> a probe that blocks on stdin cannot wedge the board"
     # Passes only if run_timeout handed the probe its own empty stdin: the stub
@@ -1078,23 +1100,28 @@ echo "==> the session-start hook allows more time than status:creds can spend"
 # the credentials group without widening the hook fails here.
 if [ -f "$hook" ]; then
     creds_budget="$(sed -n -E 's/.*timeout ([0-9]+) task status:creds.*/\1/p' "$hook" | head -1)"
-    creds_worst="$(awk '
+    # Deadlines and probe COUNT, because each probe carries the kill grace too.
+    creds_probes="$(awk '
         /^render_local_credentials\(\) \{/ { inf = 1 }
         inf && /^\}/ { inf = 0 }
         inf {
             line = $0
             while (match(line, /run_timeout [0-9]+ /)) {
                 total += substr(line, RSTART + 12, RLENGTH - 13) + 0
+                n += 1
                 line = substr(line, RSTART + RLENGTH)
             }
         }
-        END { print total + 0 }
+        END { print total + 0, n + 0 }
     ' "${status}")"
+    creds_deadlines="${creds_probes% *}"
+    creds_count="${creds_probes#* }"
+    creds_worst="$((creds_deadlines + creds_count * kill_grace))"
     [ -n "$creds_budget" ] || fail "could not read the status:creds timeout out of ${hook}"
-    [ "$creds_worst" -gt 0 ] ||
+    [ "$creds_count" -gt 0 ] ||
         fail "found no bounded probes in render_local_credentials — the budget below would assert nothing"
     [ "$creds_budget" -gt "$creds_worst" ] ||
-        fail "hook allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone — the whole group is lost first"
+        fail "hook allows ${creds_budget}s but the credentials section can spend ${creds_worst}s on probes alone (${creds_deadlines}s of deadlines + ${creds_count} probes x ${kill_grace}s kill grace) — the whole group is lost first"
 else
     echo "    (skipped: no devcontainer hook in this profile)"
 fi
