@@ -87,10 +87,21 @@ gh_target_host() {
 # which makes its presence the proxy for "this repo is configured to have a
 # board". Same accepted cost, recorded there: a repo on `none` whose issues
 # someone adds to a board by hand learns from the claim's own exit 2 instead.
+#
+# `admin:org` rides on the same rule. The template renders
+# setup-github-issue-types.sh (and setup-github-issue-fields.sh) only when the
+# repo belongs to an ORG rather than the author's own account, and those tasks
+# state they need `admin:org` — so a generated org repo could otherwise pass
+# every scope check here and still fail those setups. A personal-account repo
+# renders neither script and is never asked for it.
 gh_scopes_default() {
     local list="repo workflow"
     if [ -f "${GH_SCOPES_ROOT}/scripts/setup-github-project.sh" ]; then
         list="${list} project|read:project"
+    fi
+    if [ -f "${GH_SCOPES_ROOT}/scripts/setup-github-issue-types.sh" ] ||
+        [ -f "${GH_SCOPES_ROOT}/scripts/setup-github-issue-fields.sh" ]; then
+        list="${list} admin:org"
     fi
     printf '%s' "${list}"
 }

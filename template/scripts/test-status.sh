@@ -47,7 +47,9 @@ trap 'rm -rf "${TMP}"' EXIT
 #   creds-board — codex opted in AND board tooling present, so the session-start
 #                 scope check demands the Projects scopes. Its twin below
 #                 (with-codex, no board) is what proves that demand is gated.
-for fixture in with-board no-board skills-only with-codex creds-board; do
+#   org-repo    — an ORG repo (github_org != the author's account), which
+#                 renders the issue-types setup and therefore needs admin:org.
+for fixture in with-board no-board skills-only with-codex creds-board org-repo; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
     cp "${scopes_lib}" "${TMP}/${fixture}/scripts/gh-scopes.sh"
@@ -57,6 +59,8 @@ done
 : >"${TMP}/with-codex/scripts/codex-review.sh"
 : >"${TMP}/creds-board/scripts/codex-review.sh"
 : >"${TMP}/creds-board/scripts/setup-github-project.sh"
+: >"${TMP}/org-repo/scripts/codex-review.sh"
+: >"${TMP}/org-repo/scripts/setup-github-issue-types.sh"
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
@@ -75,6 +79,7 @@ SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
 WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
 CREDS_BOARD="${TMP}/creds-board/scripts/status.sh"
+ORG_REPO="${TMP}/org-repo/scripts/status.sh"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -971,6 +976,23 @@ scope_out="$(run_creds_section no-workflow)"
 case "$scope_out" in
 *"gh token scopes"*"missing workflow"*) ;;
 *) fail "expected an unconditional-scope warning in a boardless repo: ${scope_out}" ;;
+esac
+
+echo "==> an org repo is asked for admin:org, a personal one is not"
+# The org-only setup tasks (issue types, issue fields) state they need
+# admin:org, and the template renders them only when the repo belongs to an
+# org. Same marker rule as the Projects scopes: a personal-account repo renders
+# neither script and must never be warned about a grant it cannot use.
+make_codex_stub in
+scope_out="$(run_creds_section fully-scoped "${ORG_REPO}")"
+case "$scope_out" in
+*"gh token scopes"*"missing admin:org"*) ;;
+*) fail "expected an admin:org warning in an org repo, got: ${scope_out}" ;;
+esac
+make_codex_stub in
+scope_out="$(run_creds_section fully-scoped "${CREDS_BOARD}")"
+case "$scope_out" in
+*"admin:org"*) fail "a personal-account repo must not demand admin:org: ${scope_out}" ;;
 esac
 
 echo "==> status:creds never prints the token it reads"
