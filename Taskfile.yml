@@ -706,7 +706,7 @@ tasks:
     vars:
       REPO: "evanharmon1/harmon-init"
     cmds:
-      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}" --foreman
+      - ./scripts/setup-github-labels.sh --repo "{{.REPO}}" --foreman --release-please
 
   # ── Release ───────────────────────────────────────────────────
   # Releases are intentional — never automated on merge to main.

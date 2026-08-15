@@ -20,7 +20,7 @@
 # note. The retired `agent:*` family is the standing example: never seeded,
 # still recognized by the claim readers until an operator finishes the rename.
 #
-# Usage: setup-github-labels.sh --repo <owner/repo> [--foreman]
+# Usage: setup-github-labels.sh --repo <owner/repo> [--foreman] [--release-please]
 # Needs: gh authed with repo write; node (the renderer).
 #
 # --foreman additionally provisions the families the manifest gates on foreman
@@ -35,6 +35,7 @@ set -euo pipefail
 
 repo=""
 foreman=0
+release_please=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --repo)
@@ -43,6 +44,10 @@ while [ "$#" -gt 0 ]; do
         ;;
     --foreman)
         foreman=1
+        shift
+        ;;
+    --release-please)
+        release_please=1
         shift
         ;;
     *)
@@ -70,6 +75,9 @@ renderer="$script_dir/label-registry-render.mjs"
 render_args=(labels)
 if [ "$foreman" = 1 ]; then
     render_args+=(--foreman)
+fi
+if [ "$release_please" = 1 ]; then
+    render_args+=(--release-please)
 fi
 
 # Render first, then provision: the renderer fails closed (bad manifest, name

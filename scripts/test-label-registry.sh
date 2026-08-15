@@ -48,7 +48,7 @@ for required in label-registry.json label-registry.schema.json \
         exit 1
     }
 done
-for tool in node jq; do
+for tool in node jq python3; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "TEST FAIL: $tool is required to check the label registry" >&2
         exit 1
@@ -113,6 +113,9 @@ switch (mutation) {
   case 'per-value-provision-true':
     family('work-type').values[0].provision = true
     break
+  case 'closed-family-without-values':
+    family('concern').values = []
+    break
   default:
     throw new Error(`unknown mutation: ${mutation}`)
 }
@@ -149,6 +152,8 @@ rejects "a description over GitHub's 100-char limit" 'overlong-description' \
     'must contain at most 100 character(s)'
 rejects "a per-value provision switched on" 'per-value-provision-true' \
     'must equal false'
+rejects "a closed inline family with no values" 'closed-family-without-values' \
+    'closed inline family'
 
 # ── 2. cross-file checks ───────────────────────────────────────────────────
 # rigor values ↔ .devflow.toml levels: the label selects a [rigor.*] table, so
@@ -160,7 +165,11 @@ check_rigor() {
         return 0
     }
     local want got
-    want="$(sed -n -E 's/^\[rigor\.([a-z0-9-]+)\]$/\1/p' "$devflow" | sort)"
+    # tomllib, not a line regex: `[rigor.light] # comment` and quoted keys are
+    # valid TOML that test-devflow-config.sh accepts, and this check must not
+    # constrain syntax it does not own.
+    want="$(python3 -c 'import sys, tomllib
+print("\n".join(sorted((tomllib.load(open(sys.argv[1], "rb")).get("rigor") or {}).keys())))' "$devflow" | sed '/^$/d' | sort)"
     got="$(jq -r '.families[]
         | select(.family == "rigor" and .provision == true and .retired != true)
         | .values[] | select(.provision != false and .retired != true) | .value' "$manifest" | sort)"
@@ -374,7 +383,39 @@ check_docs() {
 profile_flags=""
 [ -f taskfiles/foreman.yml ] && profile_flags="--foreman"
 [ -f release-please-config.json ] && profile_flags="$profile_flags --release-please"
-if [ -f docs/project-management.md ]; then
+# Which document Copier rendered at docs/project-management.md depends on the
+# project_management answer — the linear variant lives at the SAME path with
+# no taxonomy markers, so a presence-only check fails every linear render.
+# Resolve the tracker the way test-registry-docs.sh does: the answers file
+# (env only outside the template repo), setup-github-project.sh as fallback,
+# fail closed on anything unrecognized.
+tracker="github"
+if [ "$template_mode" = 0 ]; then
+    answers=""
+    for candidate in "${COPIER_ANSWERS_FILE:-}" .copier-answers.yml .copier-answers.yaml; do
+        [ -n "$candidate" ] && [ -f "$candidate" ] && answers="$candidate" && break
+    done
+    tracker=""
+    if [ -n "$answers" ]; then
+        tracker="$(sed -n 's/^project_management:[[:space:]]*//p' "$answers" |
+            sed 's/[[:space:]]*#.*$//' | tr -d "\"'" |
+            sed 's/[[:space:]]*$//' | head -n1)"
+    fi
+    if [ -z "$tracker" ]; then
+        if [ -f scripts/setup-github-project.sh ]; then tracker="github"; else tracker="none"; fi
+        echo "note: no project_management answer found; inferred '$tracker' from scripts/setup-github-project.sh" >&2
+    fi
+    case "$tracker" in
+    github | linear | none) : ;;
+    *)
+        fail "unrecognized project_management value '$tracker' — refusing to skip the docs gate on it"
+        tracker="github"
+        ;;
+    esac
+fi
+if [ "$tracker" != "github" ]; then
+    echo "note: project_management=$tracker renders no GitHub taxonomy document — skipping the docs binding" >&2
+elif [ -f docs/project-management.md ]; then
     # shellcheck disable=SC2086  # profile_flags is deliberately word-split
     check_docs docs/project-management.md label-registry.json $profile_flags
 else

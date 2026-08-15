@@ -1131,6 +1131,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                     else
                         foreman_flag=""
                         [ -f taskfiles/foreman.yml ] && foreman_flag="--foreman"
+                        [ -f release-please-config.json ] && foreman_flag="$foreman_flag --release-please"
                         # shellcheck disable=SC2086  # foreman_flag is one optional word
                         if ! want_labels="$(node scripts/label-registry-render.mjs labels ${foreman_flag} 2>/dev/null)"; then
                             checkline unknown "Starter labels" "label-registry render failed — run node scripts/label-registry-render.mjs labels"
