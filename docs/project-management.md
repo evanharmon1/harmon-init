@@ -77,6 +77,12 @@ Whitespace separates requirements; `|` joins alternatives that each satisfy one
 requirement. `gh auth refresh` is asked for *every* alternative, which is why
 the raw command above lists both Projects scopes.
 
+The Projects requirement is itself conditional: it applies only where
+`scripts/setup-github-project.sh` exists — the same marker the board-write
+check uses, and the same reason. `project_management` defaults to `none`, and a
+repo generated that way has no board, so demanding Projects access there would
+warn every session about a grant the repo never uses.
+
 ### Where it surfaces
 
 `task status:creds` — which the session-start hook runs every session — warns

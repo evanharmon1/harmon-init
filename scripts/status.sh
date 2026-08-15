@@ -184,40 +184,10 @@ has_scope() {
     esac
 }
 
-# gh_target_host — the host gh will actually use for THIS repository.
-#
-# Narrowing `gh auth status --hostname` is only safe against the same host the
-# repo-aware calls use. Forcing github.com disowns a valid Enterprise login
-# (`gh auth login --hostname ghe.example.com`, no GH_HOST exported): the probe
-# exits non-zero, which this script reads as "not authenticated" and skips the
-# whole GitHub section — while `gh pr list` and `gh run list` would have worked
-# fine against that remote. So resolve it the way gh documents: GH_HOST is the
-# override for when a host "cannot be determined from repository context", which
-# means repository context comes first when GH_HOST is unset.
-#
-# Local and network-free — the remote URL is the context. github.com only as a
-# last resort, when there is no remote to read.
-gh_target_host() {
-    local url host=""
-    if [[ -n "${GH_HOST:-}" ]]; then
-        printf '%s' "${GH_HOST}"
-        return 0
-    fi
-    url="$(git config --get remote.origin.url 2>/dev/null || true)"
-    case "${url}" in
-    *://*)                 # scheme://[user@]host[:port]/path
-        host="${url#*://}" # drop the scheme
-        host="${host#*@}"  # drop any userinfo
-        host="${host%%/*}" # drop the path
-        host="${host%%:*}" # drop any port
-        ;;
-    *@*:*) # scp-like: user@host:owner/repo
-        host="${url#*@}"
-        host="${host%%:*}"
-        ;;
-    esac
-    printf '%s' "${host:-github.com}"
-}
+# gh_target_host is defined in scripts/gh-scopes.sh, sourced above: the host and
+# the required scopes are one question (whose token, carrying what), and two
+# copies of the resolution would let the check and its remedy disagree about
+# which credential they mean.
 
 # ── Parallel data collection ────────────────────────────────────────────────
 
@@ -284,7 +254,11 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     esac
 fi
 
-# The token's scope line, and how to give THIS credential Projects write access.
+# The token's scope line, and how to give THIS credential more access. The
+# remedy names the credential SOURCE, never a particular scope: the call sites
+# already say which requirement is unmet, and a remedy that hardcoded "Projects"
+# mis-instructed a reader whose missing scope was `workflow` — or one of a
+# consumer's own GH_REQUIRED_SCOPES additions.
 # Derived once, because every call site below would otherwise guess — and a
 # remedy that cannot work is worse than none. `gh auth refresh` edits only the
 # STORED classic credential: it cannot touch an env-provided token (which
@@ -313,22 +287,22 @@ derive_gh_scope_state() {
     GH_SCOPES_LINE="$(grep -i 'token scopes:' "${file}" 2>/dev/null || true)"
     case "$(<"${file}")" in
     *"(GH_TOKEN)"*)
-        GH_REMEDY="reissue GH_TOKEN with Projects write — an env token overrides gh auth refresh"
+        GH_REMEDY="reissue GH_TOKEN with the missing scopes — an env token overrides gh auth refresh"
         ;;
     *"(GITHUB_TOKEN)"*)
-        GH_REMEDY="reissue GITHUB_TOKEN with Projects write — an env token overrides gh auth refresh"
+        GH_REMEDY="reissue GITHUB_TOKEN with the missing scopes — an env token overrides gh auth refresh"
         ;;
     *"(GH_ENTERPRISE_TOKEN)"*)
-        GH_REMEDY="reissue GH_ENTERPRISE_TOKEN with Projects write — an env token overrides gh auth refresh"
+        GH_REMEDY="reissue GH_ENTERPRISE_TOKEN with the missing scopes — an env token overrides gh auth refresh"
         ;;
     *"(GITHUB_ENTERPRISE_TOKEN)"*)
-        GH_REMEDY="reissue GITHUB_ENTERPRISE_TOKEN with Projects write — an env token overrides gh auth refresh"
+        GH_REMEDY="reissue GITHUB_ENTERPRISE_TOKEN with the missing scopes — an env token overrides gh auth refresh"
         ;;
     *)
         # Not an env token. A scope line with no scopes in it is a fine-grained
         # PAT or an App installation token — a permission, granted at the source.
         if [[ -n "${GH_SCOPES_LINE}" && "${GH_SCOPES_LINE}" != *"'"* ]]; then
-            GH_REMEDY="set its Projects permission where the token was issued"
+            GH_REMEDY="grant the matching permission where the token was issued"
         fi
         ;;
     esac

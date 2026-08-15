@@ -25,15 +25,77 @@
 # Why these four:
 #   repo      — the PR/issue surface the Dev Loop runs on
 #   workflow  — pushing branches that touch .github/workflows/
-#   project   — the claim lifecycle's board writes (read:project alone is
-#               read-only; status.sh reports that distinction separately)
+#   project   — the claim lifecycle's board writes, and ONLY in a repo that has
+#               board tooling (read:project alone is read-only; status.sh
+#               reports that distinction separately) — see gh_scopes_default
 #
 # Deliberately NOT a check of what the token can do — scopes are a server-side
 # property of the credential and this file only names what to compare against.
 
 # shellcheck shell=bash
 
-GH_REQUIRED_SCOPES="${GH_REQUIRED_SCOPES:-repo workflow project|read:project}"
+# The repo root these helpers answer for. Resolved from this file's own
+# location, not the caller's cwd, because the devcontainer banner sources it
+# from a lifecycle script whose working directory is not guaranteed.
+GH_SCOPES_ROOT="${GH_SCOPES_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+# gh_target_host — the host gh will actually use for THIS repository.
+#
+# Lives here rather than in status.sh because scopes are a property of a
+# credential ON A HOST: "which scopes" is only answerable once "whose token" is,
+# and two copies of this resolution would let the check and the remedy disagree
+# about which credential they mean.
+#
+# Narrowing to github.com would disown a valid Enterprise login (`gh auth login
+# --hostname ghe.example.com`, no GH_HOST exported). So resolve it the way gh
+# documents: GH_HOST is the override for when a host "cannot be determined from
+# repository context", which means repository context comes first when GH_HOST
+# is unset. Local and network-free — the remote URL is the context.
+gh_target_host() {
+    local url host=""
+    if [ -n "${GH_HOST:-}" ]; then
+        printf '%s' "${GH_HOST}"
+        return 0
+    fi
+    url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    case "${url}" in
+    *://*)                 # scheme://[user@]host[:port]/path
+        host="${url#*://}" # drop the scheme
+        host="${host#*@}"  # drop any userinfo
+        host="${host%%/*}" # drop the path
+        host="${host%%:*}" # drop any port
+        ;;
+    *@*:*) # scp-like: user@host:owner/repo
+        host="${url#*@}"
+        host="${host%%:*}"
+        ;;
+    esac
+    printf '%s' "${host:-github.com}"
+}
+
+# gh_scopes_default — the required list for THIS repo's actual feature set.
+#
+# `repo` and `workflow` are unconditional: every generated repo opens PRs and
+# has a .github/workflows/ a push may touch.
+#
+# The Projects scopes are NOT. `project_management` defaults to `none`, and a
+# repo generated that way has no board to write to — demanding Projects access
+# there would warn every session, in the majority profile, about a grant the
+# repo never uses, and train the reader to ignore the line where it matters.
+# So it is gated on the same marker the board-write check in status.sh uses:
+# setup-github-project.sh is rendered only for `project_management: github`,
+# which makes its presence the proxy for "this repo is configured to have a
+# board". Same accepted cost, recorded there: a repo on `none` whose issues
+# someone adds to a board by hand learns from the claim's own exit 2 instead.
+gh_scopes_default() {
+    local list="repo workflow"
+    if [ -f "${GH_SCOPES_ROOT}/scripts/setup-github-project.sh" ]; then
+        list="${list} project|read:project"
+    fi
+    printf '%s' "${list}"
+}
+
+GH_REQUIRED_SCOPES="${GH_REQUIRED_SCOPES:-$(gh_scopes_default)}"
 
 # gh_scopes_request_list — the comma-separated list to hand
 # `gh auth login --scopes` / `gh auth refresh -s`.

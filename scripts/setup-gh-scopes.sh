@@ -55,15 +55,43 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
   re-mint the operator's credential."
 fi
 
-HOSTNAME_ARG="${GH_HOST:-github.com}"
+# The host comes from the repository, exactly as status.sh derives it — not a
+# github.com assumption. In an Enterprise checkout with no GH_HOST, status.sh
+# warns about the ghe.example.com credential and names this task; refreshing
+# github.com here would edit an unrelated credential and leave the one the
+# warning was about still under-scoped.
+HOSTNAME_ARG="$(gh_target_host)"
 REQUEST_LIST="$(gh_scopes_request_list)"
+
+# gh_auth_status_active — `gh auth status` narrowed to the ONE credential this
+# task refreshes. `gh auth refresh` updates only the ACTIVE account, while a
+# bare `--hostname` read reports every account on that host: concatenating
+# those scope lines lets one account's grants satisfy a requirement the
+# refreshed account still lacks, and the verification below would report a
+# success that did not happen. Same narrowing, and the same pre-2.40 fallback,
+# that status.sh uses.
+gh_auth_status_active() {
+    local out rc=0
+    out="$(gh auth status --active --hostname "${HOSTNAME_ARG}" 2>&1)" || rc=$?
+    case "${out}" in
+    *"unknown flag"*)
+        # gh predates --active (2.40). Multi-account per host arrived WITH
+        # 2.40, so on a gh this old one host means one account and the
+        # narrowing is already complete.
+        rc=0
+        out="$(gh auth status --hostname "${HOSTNAME_ARG}" 2>&1)" || rc=$?
+        ;;
+    esac
+    printf '%s\n' "${out}"
+    return "${rc}"
+}
 
 # `gh auth status` is the only place scopes are readable — they are a
 # server-side property of the token, not something stored locally. Captured
 # with 2>&1 because gh has moved this report between stdout and stderr across
 # versions; only the scope LINE is ever printed back.
 scopes_before=""
-if status_out="$(gh auth status --hostname "${HOSTNAME_ARG}" 2>&1)"; then
+if status_out="$(gh_auth_status_active)"; then
     scopes_before="$(printf '%s\n' "${status_out}" |
         grep -i 'token scopes:' || true)"
 else
@@ -83,7 +111,7 @@ gh auth refresh --hostname "${HOSTNAME_ARG}" -s "${REQUEST_LIST}"
 #    than was asked for — a browser flow the operator edited, an org that
 #    restricts the scope. Reporting success off the exit code alone would put
 #    the session right back into the failure this task exists to end.
-verify_out="$(gh auth status --hostname "${HOSTNAME_ARG}" 2>&1)" ||
+verify_out="$(gh_auth_status_active)" ||
     die "post-refresh 'gh auth status' failed — the credential may be broken."
 scopes_after="$(printf '%s\n' "${verify_out}" | grep -i 'token scopes:' || true)"
 

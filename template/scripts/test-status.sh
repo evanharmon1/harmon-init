@@ -44,7 +44,10 @@ trap 'rm -rf "${TMP}"' EXIT
 #   with-codex  — opted into second-model review, so the Codex login is a gate.
 #                 The other three have no codex-review.sh, which is what makes
 #                 them the not-opted-in case for that check.
-for fixture in with-board no-board skills-only with-codex; do
+#   creds-board — codex opted in AND board tooling present, so the session-start
+#                 scope check demands the Projects scopes. Its twin below
+#                 (with-codex, no board) is what proves that demand is gated.
+for fixture in with-board no-board skills-only with-codex creds-board; do
     mkdir -p "${TMP}/${fixture}/scripts"
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
     cp "${scopes_lib}" "${TMP}/${fixture}/scripts/gh-scopes.sh"
@@ -52,6 +55,8 @@ done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
 : >"${TMP}/with-codex/scripts/codex-review.sh"
+: >"${TMP}/creds-board/scripts/codex-review.sh"
+: >"${TMP}/creds-board/scripts/setup-github-project.sh"
 mkdir -p "${TMP}/skills-only/.claude/skills/track-work/assets"
 : >"${TMP}/skills-only/.claude/skills/track-work/assets/set-issue-status.sh"
 
@@ -69,6 +74,7 @@ NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
 WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
+CREDS_BOARD="${TMP}/creds-board/scripts/status.sh"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -221,6 +227,12 @@ make_stub() {
             # silence, never an accusation.
             echo '    echo "error connecting to github.com" >&2'
             echo '    exit 1'
+            ;;
+        no-workflow)
+            # A credential that satisfies the Projects half but not the
+            # unconditional half of the list.
+            echo "    echo \"  - Token scopes: 'repo', 'project', 'read:project'\""
+            echo '    exit 0'
             ;;
         *) fail "unknown stub scenario: ${scenario}" ;;
         esac
@@ -879,7 +891,7 @@ export STUB_CALLS
 make_codex_stub in
 make_stub none
 offline_out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 STATUS_NO_NETWORK=1 \
-    "${WITH_CODEX}" creds 2>&1)"
+    "${CREDS_BOARD}" creds 2>&1)"
 if grep -q 'auth status' "${STUB_CALLS}"; then
     fail "STATUS_NO_NETWORK=1 still probed the network: $(tr '\n' ' ' <"${STUB_CALLS}")"
 fi
@@ -896,7 +908,7 @@ echo "==> status:creds warns when the token is missing a required scope"
 # The whole point of #827: an under-scoped login is caught at session start
 # rather than days later, when a board write fails mid-shepherd.
 make_codex_stub in
-scope_out="$(run_creds_section none)"
+scope_out="$(run_creds_section none "${CREDS_BOARD}")"
 case "$scope_out" in
 *"gh token scopes"*"missing"*"project"*) ;;
 *) fail "expected a missing-scope warning from status:creds, got: ${scope_out}" ;;
@@ -910,7 +922,7 @@ echo "==> a fully-scoped token produces NO scope line"
 # Silent on success, deliberately: the ✓ credential line above already proves
 # the check ran, and a second green line every session in every repo is noise.
 make_codex_stub in
-scope_out="$(run_creds_section fully-scoped)"
+scope_out="$(run_creds_section fully-scoped "${CREDS_BOARD}")"
 case "$scope_out" in
 *"gh token scopes"*) fail "a complete token must not produce a scope line: ${scope_out}" ;;
 esac
@@ -920,7 +932,7 @@ echo "==> 'read:project' alone satisfies the session-start scope check"
 # not: these are different questions about the same token. This one asks
 # whether the credential was minted with Projects in mind at all.
 make_codex_stub in
-scope_out="$(run_creds_section creds-read-project)"
+scope_out="$(run_creds_section creds-read-project "${CREDS_BOARD}")"
 case "$scope_out" in
 *"gh token scopes"*) fail "read:project must satisfy the session-start check: ${scope_out}" ;;
 esac
@@ -930,13 +942,35 @@ echo "==> a failed scope probe is not reported as a missing scope"
 # verdict. Sending a correctly-scoped operator to re-mint a working credential
 # is the error this guards.
 make_codex_stub in
-scope_out="$(run_creds_section scope-probe-fails)"
+scope_out="$(run_creds_section scope-probe-fails "${CREDS_BOARD}")"
 case "$scope_out" in
 *"missing"*"project"*) fail "a failed probe must not accuse the token: ${scope_out}" ;;
 esac
 case "$scope_out" in
 *"credential stored"*) ;;
 *) fail "the credential line must survive a failed scope probe: ${scope_out}" ;;
+esac
+
+echo "==> a repo with no board tooling is never asked for Projects scopes"
+# `project_management: none` is the DEFAULT generated profile, and such a repo
+# has no board to write to. Demanding Projects access there would warn every
+# session, in the majority profile, about a grant the repo never uses — and
+# train the reader to ignore the line in the repos where it matters. Same
+# marker, and the same accepted cost, as the board-writes check in status:gh.
+make_codex_stub in
+scope_out="$(run_creds_section none)"
+case "$scope_out" in
+*"gh token scopes"*) fail "a boardless repo must not demand Projects scopes: ${scope_out}" ;;
+esac
+
+echo "==> a boardless repo IS still warned about repo/workflow"
+# The gate is on the Projects requirement alone — the unconditional part of the
+# list must keep working, or the case above would pass for the wrong reason.
+make_codex_stub in
+scope_out="$(run_creds_section no-workflow)"
+case "$scope_out" in
+*"gh token scopes"*"missing workflow"*) ;;
+*) fail "expected an unconditional-scope warning in a boardless repo: ${scope_out}" ;;
 esac
 
 echo "==> status:creds never prints the token it reads"
