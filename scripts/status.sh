@@ -315,6 +315,11 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     # a real failure because bounding this probe made a slow network
     # indistinguishable from a missing login, and reporting "not authenticated"
     # for a timeout sends the reader to fix the wrong thing.
+    #
+    # 137 is not proof the deadline fired: `timeout` also returns it for a probe
+    # killed by anything else (OOM, an operator, a supervisor). Both roads lead
+    # to the same verdict — UNKNOWN, never "logged out" — so they share a branch,
+    # and only the wording below stays agnostic about which one it was.
     case "${gh_auth_rc}" in
     0) GH_AUTHED=true ;;
     124 | 137) GH_AUTH_TIMEDOUT=true ;;
@@ -433,7 +438,7 @@ if should_show "gh"; then
     section_header "GitHub Status"
 
     if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
-        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s -- skipping)" | section_box
+        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s, or was killed -- skipping)" | section_box
     elif [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- skipping)" | section_box
     else
@@ -666,7 +671,7 @@ render_local_credentials() {
         # absence of everything after it, which this line does not.
         if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
             checkline unknown "GitHub CLI (gh)" \
-                "auth probe timed out after ${NETWORK_TIMEOUT}s"
+                "auth probe timed out after ${NETWORK_TIMEOUT}s, or was killed"
         elif [[ "${GH_AUTHED}" == true ]]; then
             checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
         else
@@ -699,7 +704,7 @@ render_local_credentials() {
             checkline ok "GitHub CLI (gh)" \
                 "credential stored for $(gh_target_host) (not validated)"
             ;;
-        124 | 137) checkline unknown "GitHub CLI (gh)" "credential probe timed out" ;;
+        124 | 137) checkline unknown "GitHub CLI (gh)" "credential probe timed out or was killed" ;;
         *)
             case "$(printf '%s' "${gh_token_err}" | tr '[:upper:]' '[:lower:]')" in
             *"no oauth token"* | *"not logged in"*)
@@ -745,7 +750,7 @@ render_local_credentials() {
             codex_out="$(run_timeout 3 codex login status 2>&1)" || codex_rc=$?
             case "${codex_rc}" in
             0) checkline ok "Codex CLI" "logged in" ;;
-            124 | 137) checkline unknown "Codex CLI" "login status timed out" ;;
+            124 | 137) checkline unknown "Codex CLI" "login status timed out or was killed" ;;
             *)
                 case "${codex_out}" in
                 *"Not logged in"*) checkline no "Codex CLI" "codex login" ;;
@@ -794,7 +799,7 @@ render_local_credentials() {
         *'"loggedIn":false'*) checkline no "Claude Code CLI" "claude auth login" ;;
         *)
             case "${claude_rc}" in
-            124 | 137) checkline unknown "Claude Code CLI" "auth status timed out" ;;
+            124 | 137) checkline unknown "Claude Code CLI" "auth status timed out or was killed" ;;
             *) checkline unknown "Claude Code CLI" \
                 "auth status reported nothing readable (exit ${claude_rc})" ;;
             esac
@@ -871,7 +876,7 @@ if [[ "${SECTION}" == "setup" ]]; then
     # exactly like a missing login, and telling an authenticated user to run
     # `gh auth login` because GitHub was slow sends them to fix the wrong thing.
     if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
-        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s -- skipping)" | section_box
+        echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s, or was killed -- skipping)" | section_box
     elif [[ "${GH_AUTHED}" != true ]]; then
         echo "  (gh not authenticated -- run 'gh auth login')" | section_box
     else
