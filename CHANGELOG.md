@@ -8,6 +8,25 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.31.0](https://github.com/evanharmon1/harmon-init/compare/v4.30.3...v4.31.0) (2026-08-15)
+
+
+### Features
+
+* **devflow:** add min_rounds floor and restructure-to-invariants damper ([#877](https://github.com/evanharmon1/harmon-init/issues/877)) ([18df411](https://github.com/evanharmon1/harmon-init/commit/18df411c1e241fb4f2dc9c26614c87a4d84d7469))
+* single-source the label taxonomy in a label-registry manifest ([#873](https://github.com/evanharmon1/harmon-init/issues/873)) ([a462f86](https://github.com/evanharmon1/harmon-init/commit/a462f86ac8871e67cd9cdf88610e009803fa4c14))
+* **status:** check gh token scopes at session start and add setup:gh-scopes ([#885](https://github.com/evanharmon1/harmon-init/issues/885)) ([9ca121e](https://github.com/evanharmon1/harmon-init/commit/9ca121e0f6ac2cfadad78f545855477bfa572f24))
+
+
+### Bug Fixes
+
+* **foreman:** bump pinned foreman to 2.5.0 and reconcile the adapter registry ([#868](https://github.com/evanharmon1/harmon-init/issues/868)) ([bb7bea0](https://github.com/evanharmon1/harmon-init/commit/bb7bea0d5878fc2e794387367b3191fa1e5fbfbe))
+* **template:** delete the Domain and Layer issue/project fields ([#879](https://github.com/evanharmon1/harmon-init/issues/879)) ([3d63d54](https://github.com/evanharmon1/harmon-init/commit/3d63d54a738814205db28b9bedc9e3a4db27714e))
+* **template:** issue forms apply labels, drop title prefixes, wire task/research ([#871](https://github.com/evanharmon1/harmon-init/issues/871)) ([47ff9f1](https://github.com/evanharmon1/harmon-init/commit/47ff9f1b6d59f0a8f8caed044ac2609c5d0e807d))
+* **template:** stop task status hanging on a terminal ([#886](https://github.com/evanharmon1/harmon-init/issues/886)) ([0ed8bf7](https://github.com/evanharmon1/harmon-init/commit/0ed8bf7601a075c5f6102b29b9242590915d58ef))
+* **template:** sync harmon-devkit skills to v0.31.0 ([#878](https://github.com/evanharmon1/harmon-init/issues/878)) ([80eeaef](https://github.com/evanharmon1/harmon-init/commit/80eeaef44b378014117cda4602389bf9e48f8b97))
+* update to harmon-devkit v0.32.0 ([#893](https://github.com/evanharmon1/harmon-init/issues/893)) ([e5a2676](https://github.com/evanharmon1/harmon-init/commit/e5a26763b0f5fc1f9274bb7207f4473a805eafa9))
+
 ## [4.30.3](https://github.com/evanharmon1/harmon-init/compare/v4.30.2...v4.30.3) (2026-08-13)
 
 
