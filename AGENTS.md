@@ -268,7 +268,8 @@ ranking of the tier names has to be agreed on anywhere. `min_rounds` resolves
 under the same principle — the highest floor present wins — so a label
 conflict cannot quietly select the lower floor either. Because that is per
 stage, two retuned tiers can yield caps belonging to no single tier — so what
-you announce is the **caps**, naming a tier only when one supplied all of them,
+you announce is the **caps**, naming a tier only when one supplied all of
+them — the floor included,
 and the disclosure below compares caps rather than tier names. A `rigor:` value
 that names no tier in the file is ignored rather than guessed at. Treat the
 label as advisory: it is applied by people and verified by nothing, and
