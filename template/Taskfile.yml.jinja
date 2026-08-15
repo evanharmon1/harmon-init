@@ -109,6 +109,7 @@ tasks:
       - task: test:agent-registry
       - task: test:registry-drift
       - task: test:registry-docs
+      - task: test:label-registry
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
@@ -691,6 +692,11 @@ tasks:
       COPIER_ANSWERS_FILE: [[ _copier_conf.answers_file | string | tojson ]]
     cmds:
       - ./scripts/test-registry-docs.sh
+
+  test:label-registry:
+    desc: Bind label provisioning, the docs taxonomy table, and the status inventory to the label registry
+    cmds:
+      - ./scripts/test-label-registry.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

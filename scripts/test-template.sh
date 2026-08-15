@@ -943,7 +943,11 @@ full) # project_management=github; github_org=test-org (an org repo)
         # Name charset is deliberately permissive: a domain like `oauth2` or
         # `saas_billing` must land in the compared set, not be silently dropped
         # (which would make an "exact set" comparison quietly pass on drift).
-        lbl_set="$(sed -n -E "s/^${fam}:([^|]+)\|.*/\1/p" scripts/setup-github-labels.sh | sort -u)"
+        # The label vocabulary lives in the rendered label-registry.json (the
+        # setup script is a thin renderer with no inline rows to parse).
+        lbl_set="$(jq -r --arg fam "$fam" \
+            '.families[] | select(.prefix == $fam) | .values[].value' \
+            label-registry.json | sort -u)"
         # `<fam>_opts='[ … ]'` in the org script; `create_single_select "<Field>" '[ … ]'`
         # in the project script. Both blocks end on a line starting with `]`.
         # Layer and Domain are compared EXACTLY: their option names and label
@@ -1150,11 +1154,12 @@ iac | full)
     # adapters the pinned Foreman release ships), so check both the literal
     # family and that the registry still renders the production `claude` adapter.
     [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing for use_foreman=true"
-    grep -q '^foreman:approved|' scripts/setup-github-labels.sh || err "label script lacks the foreman protocol arming labels"
-    grep -q 'agent-registry-labels.mjs' scripts/setup-github-labels.sh ||
-        err "label script does not render foreman:<adapter> selectors from the registry"
-    node scripts/agent-registry-labels.mjs foreman-adapters | grep -q '^foreman:claude|' ||
-        err "registry no longer renders the foreman:claude adapter selector"
+    grep -q 'label-registry-render.mjs' scripts/setup-github-labels.sh ||
+        err "label script does not render from the label registry"
+    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:approved|' ||
+        err "rendered label set lacks the foreman protocol arming labels"
+    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:claude|' ||
+        err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"

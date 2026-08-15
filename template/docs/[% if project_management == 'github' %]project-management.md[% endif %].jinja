@@ -473,7 +473,9 @@ there is no `task:` commit type, by design.
 
 Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
 `Type` (kind of work) — they tag cross-cutting *facets*. Keep them in a few
-families, color-coded by family; the starter set is created by
+families, color-coded by family; the vocabulary lives in
+[`label-registry.json`](../label-registry.json) (the machine-readable manifest
+the taxonomy table below is generated from) and the starter set is created by
 `task setup:github-labels`:
 
 - **Concerns** — `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n`
@@ -484,6 +486,9 @@ families, color-coded by family; the starter set is created by
 - **Layer** — `layer:ui`, `layer:logic`, `layer:data`, `layer:integration`
 - **Domain** — start with `domain:auth`, `domain:billing`, `domain:platform`;
   grow from your ERD entities
+- **Work type** — `bug`, `feature`, `task`, `research`: the personal-account
+  work-type surface the issue forms apply; org repos use native issue Type
+  instead and no work-type label
 - **Rigor** — `rigor:light`, `rigor:standard`, `rigor:deep`: which round-cap
   tier in [`.devflow.toml`](../.devflow.toml) an agent works the issue under
   (AGENTS.md, "Round caps are resolved, not stated here"). An agent reads it
@@ -604,37 +609,55 @@ organization the Projects V2 API could not write it at all.
 
 ### The complete label taxonomy
 
-Every label family this repository knows about. **Provisioned** means
-`task setup:github-labels` creates it; **tool-owned** means the tool that uses
-it creates it on demand, and provisioning deliberately leaves it alone.
+Every label family this repository knows about, **generated from the
+machine-readable manifest** — [`label-registry.json`](../label-registry.json)
+holds the families, values, colors, writers, lifecycle, and per-value
+overrides, and `task test:label-registry` fails when this table drifts from
+it. **Provisioned** means `task setup:github-labels` creates it; **tool-owned**
+means the tool that uses it creates it on demand, and provisioning
+deliberately leaves it alone.
+
+<!-- label-taxonomy:begin -->
+<!-- Generated from label-registry.json by `node scripts/label-registry-render.mjs docs-table`. Do not edit by hand — `task test:label-registry` fails on drift. -->
 
 | Label / family | Writer | Reader | Trust class | Lifecycle |
 |---|---|---|---|---|
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
-| `needs-triage`, `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
-| `layer:{ui,logic,data,integration}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Layer` field, with no sync between them |
-| `domain:{auth,billing,platform,…}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Domain` field, with no sync between them |
-| `rigor:{light,standard,deep}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a round-cap tier, arms nothing | set when the default budget is wrong for the change; survives the work |
-| `suggest:<family>` | humans, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |
+| `needs-triage` | humans, the issue forms, and the triage skill | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
+| `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
+| `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
+| `documentation` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
+| `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
+| `enhancement` (**retired**) | nobody — replaced by `feature` | humans, saved views | retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned | rename BEFORE provisioning creates `feature` (`gh label edit enhancement --name feature`, association-preserving); once `feature` exists the rename is refused — re-label the issues and delete `enhancement` |
+| `layer:{ui,logic,data,integration}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Layer` field, with no sync between them |
+| `domain:{auth,billing,platform}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; mirrors the `Domain` field, with no sync between them |
+| `rigor:{light,standard,deep}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a round-cap level, arms nothing | set when the default budget is wrong for the change; survives the work |
+| `suggest:<family>` | humans or agents, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |
 | `suggest:<family>:<model>` | humans | humans | **tool-owned, created on demand** — seeding every model would be an unbounded roster | refines the family label; apply both |
-| `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate[% if claim_release_available %]; `claim-release.yml`[% endif %] | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step[% if claim_release_available %], or by `claim-release.yml` on close[% endif %] |
-| `claim:<family>:<model>` | the agent itself | as above | **tool-owned, created on demand** | as above |
-| `claim:claude` in a repo with no label provisioning | the Claude Actions run | as above | **tool-owned, auto-created** with the registry's own color and description, so a later provisioning run reconciles it rather than fighting it | as above |
-| `agent:*` (**retired**) | nobody — never seeded into a new repo | claim skills[% if claim_release_available %] and `claim-release.yml`[% endif %], which still recognize it | legacy; inert | delete once live claims are re-mapped to `claim:*` |
+| `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step, or by `claim-release.yml` on close where the repo ships it |
+| `claim:<family>:<model>` | the agent itself | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | **tool-owned, created on demand** | refines the family label; added at claim, removed at release |
+| `agent:<harness>` (**retired**) | nobody — never seeded into a new repo | claim skills (and `claim-release.yml` where present), which still recognize it | legacy; inert | delete once live claims are re-mapped to `claim:*` |
 [% if use_foreman %]
-| `foreman:<adapter>` (today: `foreman:claude`) | a trusted human, to arm an issue | Foreman | provisioned from the registry, for production-dispatchable adapters only; **actor-verified arming** | applied to arm; stays on the issue |
-| `foreman:approved` | a trusted human | Foreman | provisioned; **actor-verified arming** with the repo default backend | as above |
-| `foreman:hold` | a human | Foreman | provisioned; non-arming and always wins | applied to exclude, removed to re-include |
-| `foreman:satisfied`, `foreman:external` | a human | Foreman's dependency graph | provisioned; non-arming dependency overrides | applied per dependency decision |
-| `foreman:dispatched` | Foreman, on the draft PR it opens | Foreman | **tool-owned, auto-created** | added when the draft PR opens |
+| `foreman:<adapter>` | a trusted human, to arm an issue | Foreman | provisioned from the registry where the repo uses foreman (`--foreman`), for production-dispatchable adapters only; **actor-verified arming** | applied to arm; stays on the issue |
+| `foreman:approved` | a trusted human | Foreman | provisioned (`--foreman`); **actor-verified arming** with the repo default backend | applied to arm; stays on the issue |
+| `foreman:hold` | a human | Foreman | provisioned (`--foreman`); non-arming and always wins | applied to exclude, removed to re-include |
+| `foreman:satisfied` | a human | Foreman's dependency graph | provisioned (`--foreman`); non-arming dependency override | applied per dependency decision |
+| `foreman:external` | a human | Foreman's dependency graph | provisioned (`--foreman`); non-arming dependency override | applied per dependency decision |
+| `foreman:dispatched` | Foreman, on the draft PR it opens | Foreman, humans | **tool-owned, auto-created** | added when the draft PR opens |
 | `foreman:ready-for-review` | Foreman, on passing its readiness gate | Foreman, humans | **tool-owned, auto-created** | added at promotion; the hand-off to human review |
 | `type:<commit-type>` | a human, optionally | Foreman, to pick the unit's conventional-commit type | **not provisioned** — an optional override of the native issue `Type` | applied when the native type is absent or wrong |
 [% endif %]
 [% if use_release_please %]
 | `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
 [% endif %]
-| GitHub's own defaults (`bug`, `enhancement`, `question`, …) | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+| `duplicate`, `good first issue`, `help wanted`, `invalid`, `wontfix` | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+<!-- label-taxonomy:end -->
+
+One nuance the table compresses: `claim:claude` in a repo with **no label
+provisioning at all** is tool-owned in practice — the Claude Actions run
+auto-creates it with the registry's own color and description, so a later
+provisioning run reconciles it rather than fighting it.
 [% if use_foreman %]
 
 Foreman's PR-side labels are namespaced on purpose: every label Foreman reads
