@@ -77,7 +77,12 @@
       "required": ["slug", "display_name", "models"],
       "properties": {
         "slug": { "$ref": "#/$defs/labelSlug" },
-        "display_name": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "display_name": {
+          "$comment": "64: the longest family description wrapper ('Suggested for the … family (advisory)') is 36 chars, so 64 is the longest display_name whose rendered descriptions stay under GitHub's 100.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
         "models": {
           "type": "array",
           "items": { "$ref": "#/$defs/model" }

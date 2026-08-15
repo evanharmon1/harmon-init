@@ -95,9 +95,9 @@ switch (mutation) {
     })
     break
   case 'overlong-display-name':
-    // 60 chars: passes the old schema, renders a >100-char foreman
-    // description — the schema's maxLength must reject it declaratively (#680).
-    registry.families[0].display_name = 'X'.repeat(60)
+    // 65 chars: one over the family bound (64, from the longest description
+    // wrapper) — the schema's maxLength must reject it declaratively (#680).
+    registry.families[0].display_name = 'X'.repeat(65)
     break
   case 'overlong-adapter-display-name':
     // 48 chars: inside the shared 50 cap but over the adapter-specific 47 —
@@ -247,7 +247,7 @@ rejects "a non-production legacy claude adapter" \
     'legacy Foreman adapter claude must be production-dispatchable and provisionable'
 rejects "a display_name over the schema's declarative length cap" \
     'overlong-display-name' \
-    'must contain at most 50 character(s)'
+    'must contain at most 64 character(s)'
 rejects "an adapter display_name over its tighter 47-char cap" \
     'overlong-adapter-display-name' \
     'must contain at most 47 character(s)'

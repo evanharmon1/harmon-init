@@ -125,16 +125,21 @@ const field = (value, where) => {
 const GH_LABEL_NAME_MAX = 50
 const GH_LABEL_DESC_MAX = 100
 const record = (name, color, description, where) => {
-  if (name.length > GH_LABEL_NAME_MAX) {
+  // Code points, not UTF-16 units, so this guard and the validator's
+  // maxLength agree on what "100 characters" means — a spread counts code
+  // points the way the validator's iterator does.
+  const nameLength = [...name].length
+  const descriptionLength = [...description].length
+  if (nameLength > GH_LABEL_NAME_MAX) {
     console.error(
-      `label-registry-render: label '${name}' is ${name.length} chars, over GitHub's ` +
+      `label-registry-render: label '${name}' is ${nameLength} chars, over GitHub's ` +
         `${GH_LABEL_NAME_MAX}-char limit (${where})`
     )
     process.exit(1)
   }
-  if (description.length > GH_LABEL_DESC_MAX) {
+  if (descriptionLength > GH_LABEL_DESC_MAX) {
     console.error(
-      `label-registry-render: label '${name}' description is ${description.length} chars, over ` +
+      `label-registry-render: label '${name}' description is ${descriptionLength} chars, over ` +
         `GitHub's ${GH_LABEL_DESC_MAX}-char limit (${where})`
     )
     process.exit(1)
@@ -248,25 +253,36 @@ if (mode === 'docs-table') {
     'tool-managed': 'applied and removed by the owning tool'
   }
 
-  const writerCell = (family, value) =>
-    value?.writer_note ??
-    family.writer_note ??
-    (value?.writers ?? family.writers)
+  // Per-value SEMANTIC overrides outrank family prose: a value that overrides
+  // `writers` without restating a writer_note must render its own writers, not
+  // the family's note — the note is a fallback for the field it describes,
+  // never for a field the value overrode. Same for lifecycle, and trust must
+  // see a per-value provision off-switch.
+  const writersText = (writers) =>
+    writers
       .map((writer) => WRITER_TEXT[writer] ?? writer.replace(/^tool:/, '') + ' (tool)')
       .join(' or ')
+  const writerCell = (family, value) =>
+    value?.writer_note ??
+    (value?.writers
+      ? writersText(value.writers)
+      : (family.writer_note ?? writersText(family.writers)))
   const readerCell = (family, value) => value?.readers ?? family.readers
   const trustCell = (family, value) =>
     value?.trust_note ??
-    family.trust_note ??
-    (family.provision
-      ? 'provisioned; inert'
-      : family.source === 'tool-owned'
-        ? '**tool-owned, created on demand**'
-        : 'not provisioned')
+    (value?.provision === false
+      ? 'not provisioned'
+      : (family.trust_note ??
+        (family.provision
+          ? 'provisioned; inert'
+          : family.source === 'tool-owned'
+            ? '**tool-owned, created on demand**'
+            : 'not provisioned')))
   const lifecycleCell = (family, value) =>
     value?.lifecycle_note ??
-    family.lifecycle_note ??
-    LIFECYCLE_TEXT[value?.lifecycle ?? family.lifecycle]
+    (value?.lifecycle
+      ? LIFECYCLE_TEXT[value.lifecycle]
+      : (family.lifecycle_note ?? LIFECYCLE_TEXT[family.lifecycle]))
 
   const composedName = (family, raw) => (family.prefix === null ? raw : `${family.prefix}:${raw}`)
   // A value renders as its own row when it overrides anything a row SHOWS
