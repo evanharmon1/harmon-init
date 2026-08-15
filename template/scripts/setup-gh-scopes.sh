@@ -119,6 +119,29 @@ else
   gh auth login --hostname ${HOSTNAME_ARG} --git-protocol https --web --scopes \"${REQUEST_LIST}\""
 fi
 
+# 3. Refuse a stored NON-OAuth credential before touching it. A fine-grained
+#    PAT or a GitHub App installation token carries permissions, not OAuth
+#    scopes, and gh reports its scope line with nothing quoted in it. Running
+#    `gh auth refresh` against one completes a device flow and STORES A NEW
+#    CLASSIC TOKEN — silently replacing a deliberately narrow credential with a
+#    broad one, and then reporting success. That is the opposite of the
+#    source-side remedy documented in docs/project-management.md.
+#
+#    Only the definite case is refused: a scope line that is present and has no
+#    quoted scopes in it. A missing line entirely is unknown (an older gh, a
+#    changed output format), and refusing on unknown would block a legitimate
+#    OAuth user from the one command that fixes their token.
+case "${scopes_before}" in
+"") ;;    # no scope line at all — unknown, not proof of a non-OAuth token
+*"'"*) ;; # quoted scopes present — a classic OAuth credential, proceed
+*)
+    die "the stored credential for ${HOSTNAME_ARG} reports no OAuth scopes — it is a
+  fine-grained PAT or a GitHub App token, which carries permissions rather than
+  scopes. 'gh auth refresh' would replace it with a broad classic token instead
+  of fixing it. Grant the matching permission where that token was issued."
+    ;;
+esac
+
 echo "==> Host:            ${HOSTNAME_ARG}"
 echo "==> Current scopes:  ${scopes_before:-<none reported>}"
 echo "==> Required:        $(gh_scopes_human "${GH_REQUIRED_SCOPES}")"

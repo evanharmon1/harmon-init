@@ -125,7 +125,7 @@ make_stub() {
 # (macOS) and util-linux (CI) argument orders differ.
 pty_exec() {
     if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import pty,sys; sys.exit(pty.spawn(sys.argv[1:]))' "$@" 2>&1
+        python3 -c 'import os,pty,sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))' "$@" 2>&1
     elif [ "$(uname -s)" = "Darwin" ]; then
         script -q /dev/null "$@" 2>&1
     else
@@ -157,6 +157,25 @@ run_sut_pty() {
         for kv in "$@"; do export "${kv?}"; done
         pty_exec "${SUT}"
     ) || true
+}
+
+# rc_pty_of SCENARIO [ENV...] — the exit code from a run that got a TTY, so a
+# case can assert on the code the POST-REFRESH path returned. rc_of cannot:
+# it runs without a TTY, so its non-zero comes from the TTY guard long before
+# the verification under test, and a missing-scope branch that printed the
+# right message but exited 0 would still look green.
+rc_pty_of() {
+    local scenario="$1"
+    shift
+    make_stub "${scenario}"
+    local rc=0
+    (
+        export PATH="${TMP}/bin:${PATH}"
+        local kv
+        for kv in "$@"; do export "${kv?}"; done
+        pty_exec "${SUT}" >/dev/null 2>&1
+    ) || rc=$?
+    printf '%s' "${rc}"
 }
 
 # run_sut_notty SCENARIO [ENV...] — capture output with NO tty. Valid for every
@@ -255,8 +274,10 @@ if [ "${PTY_OK}" = true ]; then
     *"did not grant"*) ;;
     *) fail "a refresh that did not land must fail loudly, got: ${out}" ;;
     esac
-    [ "$(rc_of does-not-land GH_HOST=github.com)" != 0 ] ||
-        fail "an unlanded refresh must exit non-zero"
+    [ "$(rc_pty_of does-not-land GH_HOST=github.com)" != 0 ] ||
+        fail "an unlanded refresh must exit non-zero from the verification path"
+    [ "$(rc_pty_of lands GH_HOST=github.com)" = 0 ] ||
+        fail "a landed refresh must exit zero (else the case above proves nothing)"
 
     echo "==> another account's scopes cannot verify the refreshed one"
     # gh auth refresh updates only the ACTIVE account; reading every account on the
@@ -287,12 +308,25 @@ if [ "${PTY_OK}" = true ]; then
     *) fail "'project' subsumes 'read:project' and must not fail: ${out}" ;;
     esac
 
-    echo "==> a fine-grained token is rejected with a source-side remedy"
+    echo "==> a stored fine-grained token is refused BEFORE any refresh"
+    # `gh auth refresh` against a fine-grained PAT completes a device flow and
+    # stores a new CLASSIC token — silently replacing a deliberately narrow
+    # credential with a broad one. The refusal has to precede the mutation, so
+    # this asserts on the call log, not just the message.
+    STUB_CALLS="${TMP}/fg-calls.txt"
+    export STUB_CALLS
+    : >"${STUB_CALLS}"
     out="$(run_sut_pty fine-grained GH_HOST=github.com)"
+    if grep -q 'auth refresh' "${STUB_CALLS}"; then
+        fail "refreshed a fine-grained credential: $(tr '\n' ' ' <"${STUB_CALLS}")"
+    fi
+    unset STUB_CALLS
     case "$out" in
-    *"no OAuth scopes reported"*) ;;
-    *) fail "expected the fine-grained-token notice, got: ${out}" ;;
+    *"reports no OAuth scopes"*"where that token was issued"*) ;;
+    *) fail "expected the source-side remedy for a fine-grained token, got: ${out}" ;;
     esac
+    [ "$(rc_pty_of fine-grained GH_HOST=github.com)" != 0 ] ||
+        fail "the fine-grained refusal must exit non-zero"
 
     echo "==> the token value is never printed"
     # The script prints scope LINES; nothing it captures may contain a credential,
