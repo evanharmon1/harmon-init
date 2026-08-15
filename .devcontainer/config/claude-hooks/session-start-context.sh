@@ -24,17 +24,18 @@ strip_ansi() { sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g'; }
 # status:git makes no network calls at all.
 #
 # status:creds is budgeted from its own probes rather than by copying a
-# neighbour's number: it makes NO network call (that is why it can be here at
-# all — status:gh already spends this startup's only auth round trip), and runs
-# three LOCAL probes back to back, each bounded at 3s inside status.sh — 9s
-# worst case, so 11 here for the `task` and shell startup around them.
+# neighbour's number: it runs three LOCAL probes back to back, each bounded at
+# 3s inside status.sh, plus ONE bounded 3s call to read the gh token's SCOPES
+# (a server-side property no local file records — issue #827), which is why it
+# is capped at the local bound rather than NETWORK_TIMEOUT. 12s worst case, so
+# 13 here for the `task` and shell startup around them.
 #
 # There is a SECOND deadline above all of these: the `timeout` on the
 # SessionStart entries in claude-settings.json, which Claude Code applies to this
 # whole script. Overrunning it is worse than any single section overrunning its
 # own bound — the hook is killed before `jq` emits anything, so the entire
 # payload is lost rather than one section of it. The sections are therefore run
-# in PARALLEL: the hook's wall clock is then the LONGEST deadline (12s), which
+# in PARALLEL: the hook's wall clock is then the LONGEST deadline (13s), which
 # fits inside that outer timeout, where the sum (25s) would not.
 git_out="$(mktemp)"
 gh_out="$(mktemp)"
@@ -45,7 +46,7 @@ timeout 5 task status:git >"$git_out" 2>/dev/null &
 git_pid=$!
 timeout 12 task status:gh >"$gh_out" 2>/dev/null &
 gh_pid=$!
-timeout 11 task status:creds >"$creds_out" 2>/dev/null &
+timeout 13 task status:creds >"$creds_out" 2>/dev/null &
 creds_pid=$!
 
 # `wait` on each, with the failure recorded rather than propagated: `set -e`

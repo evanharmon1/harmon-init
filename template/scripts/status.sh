@@ -15,6 +15,12 @@ trap 'rm -rf "${TMPDIR_STATUS}"' EXIT
 # Overridable so a test can drive the deadline path without waiting on it.
 NETWORK_TIMEOUT="${NETWORK_TIMEOUT:-5}"
 
+# The required-scope list and its comparison helpers, stated once for this
+# script, setup-gh-scopes.sh, and the devcontainer's gh_auth_help banner.
+# A consumer repo extends it by exporting GH_REQUIRED_SCOPES — see that file.
+# shellcheck source=scripts/gh-scopes.sh
+. "${REPO_ROOT}/scripts/gh-scopes.sh"
+
 # ── Tool detection ──────────────────────────────────────────────────────────
 
 # NO_COLOR (https://no-color.org/) turns off gum styling as well as ANSI, which
@@ -240,10 +246,11 @@ GH_AUTH_PROBED=false
 # read the board, and used to run its own `gh auth status` to decide whether to
 # render at all. One probe, two consumers.
 #
-# Deliberately NOT extended to `SECTION == creds`: that section is invoked on its
-# own from the session-start hook, which already runs `status:gh` in the same
-# startup, and a second `gh auth status` there would be a net-new network call in
-# the one path whose whole budget argument is that it makes none.
+# Deliberately NOT extended to `SECTION == creds`: that section's gh line is a
+# LOCAL read (see render_local_credentials), and turning it into the full
+# validating probe would change what that line is entitled to claim. The scope
+# check issue #827 asks for is added there as its own narrowly-scoped call
+# instead — see render_gh_scope_check.
 if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     GH_AUTH_PROBED=true
     gh_auth_rc=0
@@ -284,10 +291,27 @@ fi
 # overrides the stored one, on github.com and Enterprise alike) and cannot add a
 # fine-grained or App token's permissions, which are not OAuth scopes at all.
 GH_SCOPES_LINE=""
-GH_REMEDY="run: gh auth refresh -s project"
-if [[ -s "${GH_AUTH_FILE}" ]]; then
-    GH_SCOPES_LINE="$(grep -i 'token scopes:' "${GH_AUTH_FILE}" 2>/dev/null || true)"
-    case "$(<"${GH_AUTH_FILE}")" in
+# The stored-credential remedy names the TASK rather than a raw command: the
+# task refuses against an env token and without a TTY, and verifies the grant
+# actually landed, which a pasted `gh auth refresh` does none of (issue #596).
+# The raw command rides along for a reader who is not in a checkout yet, and is
+# derived from the same required-scope list — the two divergent remedy strings
+# #596 reported were exactly this string drifting from the skills' hint.
+GH_REMEDY_DEFAULT="run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
+GH_REMEDY="${GH_REMEDY_DEFAULT}"
+
+# derive_gh_scope_state FILE — set GH_SCOPES_LINE and GH_REMEDY from a captured
+# `gh auth status` report. A function rather than a straight-line block because
+# there are two probes that can produce one: the shared one below, and the
+# credentials section's own narrow one (render_gh_scope_check). Deriving it
+# twice by hand is how the two remedy strings issue #596 reported came to exist.
+derive_gh_scope_state() {
+    local file="$1"
+    GH_SCOPES_LINE=""
+    GH_REMEDY="${GH_REMEDY_DEFAULT}"
+    [[ -s "${file}" ]] || return 0
+    GH_SCOPES_LINE="$(grep -i 'token scopes:' "${file}" 2>/dev/null || true)"
+    case "$(<"${file}")" in
     *"(GH_TOKEN)"*)
         GH_REMEDY="reissue GH_TOKEN with Projects write — an env token overrides gh auth refresh"
         ;;
@@ -308,7 +332,9 @@ if [[ -s "${GH_AUTH_FILE}" ]]; then
         fi
         ;;
     esac
-fi
+}
+
+derive_gh_scope_state "${GH_AUTH_FILE}"
 
 # `should_show "gh"` as well as the auth flag: the auth probe above now also runs
 # for the setup section, and these two lists are read only by the GitHub section.
@@ -604,6 +630,76 @@ fi
 # Every probe here is bounded by the short LOCAL bound (3s), never by
 # NETWORK_TIMEOUT — nothing in it may reach the network, or the session-start
 # path inherits a cost its budget was not derived for.
+# render_gh_scope_check — one ⚠/unknown line when the authenticated token is
+# missing a scope this repo's tooling needs, and NOTHING when it has them all.
+#
+# Silent-on-success is a deliberate exception to this script's usual
+# report-both-directions rule (issue #827's acceptance criterion). The rule
+# exists so a check that never runs cannot masquerade as a passing one — and
+# here the caller has already printed a ✓ line for the same credential from the
+# same probe, so the evidence that this ran is on screen either way. A second
+# green line on every session start, in every repo, would be pure noise.
+#
+# Read-only and non-fatal: it only compares the scope line the shared probe
+# already captured.
+render_gh_scope_check() {
+    local missing rc=0 file
+    if [[ "${GH_AUTH_PROBED}" != true ]]; then
+        # Standalone `task status:creds` — the session-start path, and the one
+        # #827 is about. Scopes are a SERVER-side property of the token: no
+        # local file records them, so the one fact this check needs cannot be
+        # had without asking. The rest of the section stays local-only; this is
+        # a single bounded, read-only, non-fatal call, and
+        # `STATUS_NO_NETWORK=1` removes even that for offline shells.
+        if [[ "${STATUS_NO_NETWORK:-}" == 1 ]]; then
+            return 0
+        fi
+        file="${TMPDIR_STATUS}/auth-creds.txt"
+        : >"${file}"
+        # ONE call, bounded at the section's short local bound rather than
+        # NETWORK_TIMEOUT. Not because it is local — it is not — but because
+        # the session-start hook budgets this section from the sum of its
+        # probes, and a section that overruns loses ALL of its output
+        # (status.sh buffers before printing). A scope warning that costs the
+        # reader their credential lines is worse than no scope warning. For
+        # the same reason there is no `--active`-unsupported retry here: on a
+        # gh older than 2.40 the check simply does not run.
+        run_timeout 3 gh auth status --active \
+            --hostname "$(gh_target_host)" >"${file}" 2>&1 || rc=$?
+        if [[ "${rc}" -ne 0 ]] || grep -qi 'unknown flag' "${file}" 2>/dev/null; then
+            # A failed probe is NOT a missing login (issues #774, #478) and is
+            # not a missing scope either — say nothing rather than send a
+            # correctly-scoped operator to re-mint a working credential. The
+            # gh line above has already reported the credential itself.
+            return 0
+        fi
+        derive_gh_scope_state "${file}"
+    fi
+    if [[ -z "${GH_SCOPES_LINE}" ]]; then
+        # The probe ran and authenticated, but reported no scope line — an
+        # older gh, or an output change. Unknown, never "missing": telling
+        # someone to re-mint a working credential is the worse error.
+        checkline unknown "gh token scopes" \
+            "could not read token scopes from gh auth status"
+        return
+    fi
+    if [[ "${GH_SCOPES_LINE}" != *"'"* ]]; then
+        # A fine-grained PAT or an App installation token: permissions, not
+        # OAuth scopes. gh reports the line with nothing quoted in it. Such a
+        # token may well carry everything needed, so this is unknown — and the
+        # bot profile's credential is exactly this case, which is why the
+        # remedy here never says "log in" (see GH_REMEDY).
+        checkline unknown "gh token scopes" \
+            "no OAuth scopes reported (fine-grained or App token) — ${GH_REMEDY}"
+        return
+    fi
+    missing="$(gh_scopes_missing "${GH_SCOPES_LINE}")"
+    if [[ -n "${missing}" ]]; then
+        checkline no "gh token scopes" \
+            "missing $(gh_scopes_human "${missing}") — ${GH_REMEDY}"
+    fi
+}
+
 render_local_credentials() {
     # Not-installed is tested FIRST because it makes every other branch
     # meaningless: with no gh on PATH the shared probe above exits 127, which
@@ -625,6 +721,7 @@ render_local_credentials() {
                 "auth probe timed out after ${NETWORK_TIMEOUT}s"
         elif [[ "${GH_AUTHED}" == true ]]; then
             checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
+            render_gh_scope_check
         else
             checkline no "GitHub CLI (gh)" "gh auth login"
         fi
@@ -654,6 +751,10 @@ render_local_credentials() {
         0)
             checkline ok "GitHub CLI (gh)" \
                 "credential stored for $(gh_target_host) (not validated)"
+            # Only once a credential is known to exist: asking GitHub about the
+            # scopes of a token that is not there would spend a round trip to
+            # learn what the line above already said.
+            render_gh_scope_check
             ;;
         124) checkline unknown "GitHub CLI (gh)" "credential probe timed out" ;;
         *)

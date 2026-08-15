@@ -1030,10 +1030,19 @@ tasks:
     desc: >-
       Idempotently create/sync the owner's GitHub Project V2 board + Status
       pipeline + Size number field (on a personal account also the other
-      metadata fields). Requires `gh auth refresh -s project`.
+      metadata fields). Requires the Projects scopes — `task setup:gh-scopes`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
 [% endif %]
+
+  setup:gh-scopes:
+    desc: >-
+      OPERATOR / DEV PROFILE ONLY: refresh your interactive gh login so it
+      carries every scope this repo needs (refuses against a GH_TOKEN env
+      credential and without a TTY; verifies the grant landed). Bot containers
+      must reissue GH_TOKEN instead.
+    cmds:
+      - ./scripts/setup-gh-scopes.sh
 [% if project_management == 'github' or use_foreman %]
 
   setup:github-labels:

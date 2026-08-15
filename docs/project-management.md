@@ -27,11 +27,31 @@ board writes that do nothing.
 | `read:project` | read Projects | reading a card's current `Status`; **no writes** |
 | `project` | read **and write** Projects | everything on this page |
 
-Ask for the full scope. It is a superset, so there is no reason to request
-`read:project` alongside it:
+### Getting them: `task setup:gh-scopes`
 
 ```sh
-gh auth refresh -s project
+task setup:gh-scopes
+```
+
+**Operator / dev profile only.** It refreshes *your* interactive `gh` login —
+so it refuses when a `GH_TOKEN`/`GITHUB_TOKEN` env credential is set (an env
+token overrides the stored one, so a refresh would repair something this shell
+never uses — reissue that token at its source instead) and refuses without a
+TTY, because the flow is an interactive browser device-code exchange and no
+agent or CI job should re-mint a human credential. It prints the current
+scopes, requests the missing ones, and then **verifies they actually landed** —
+`gh auth refresh` can exit 0 having granted less than was asked for, and a
+remedy that reports success without checking puts the session straight back
+into the failure it was run to end.
+
+A bot container is the one place this task is the wrong answer: there the
+credential is `GH_TOKEN`, reissued at its source. See
+[bot-account.md](guides/bot-account.md).
+
+The raw equivalent, for a shell that is not in a checkout yet:
+
+```sh
+gh auth refresh -s repo,workflow,project,read:project
 ```
 
 Check what a token actually carries:
@@ -40,15 +60,40 @@ Check what a token actually carries:
 gh auth status | grep 'Token scopes'
 ```
 
-`task status:gh` reports this as **Project board writes**, so a missing scope
-surfaces at session start — before a claim is made against a board that cannot
-receive it. `task setup:github-project` refuses to run without it rather than
-failing partway through its writes.
+### Where the required list lives
+
+One file: [`scripts/gh-scopes.sh`](../scripts/gh-scopes.sh). `status.sh`'s
+session-start check, `setup-gh-scopes.sh`, and the devcontainer's
+`gh_auth_help` banner all read it, so the remedy a warning prints and the
+scopes the task requests cannot drift apart. A repo that needs more extends the
+list **without editing the file** by exporting `GH_REQUIRED_SCOPES` (e.g. from
+`.envrc`):
+
+```sh
+export GH_REQUIRED_SCOPES="repo workflow project|read:project admin:org"
+```
+
+Whitespace separates requirements; `|` joins alternatives that each satisfy one
+requirement. `gh auth refresh` is asked for *every* alternative, which is why
+the raw command above lists both Projects scopes.
+
+### Where it surfaces
+
+`task status:creds` — which the session-start hook runs every session — warns
+when the token is missing anything on that list, names the missing scopes, and
+prints the remedy. It is silent when the list is satisfied, read-only,
+non-fatal, and bounded (one 3s probe; `STATUS_NO_NETWORK=1` skips it). A probe
+that cannot answer reports nothing rather than accusing a working credential.
+
+`task status:gh` additionally reports **Project board writes**, which is a
+narrower question: `read:project` satisfies the session-start check but is
+read-only, so it fails that one. `task setup:github-project` refuses to run
+without `project` rather than failing partway through its writes.
 
 Two adjacent scopes, for completeness: an organization's **issue types** need
 `admin:org` (reported by `task status:setup`), and the vendored claim skills
-hint at `gh auth refresh -s read:project,project` — equivalent for this purpose,
-since `project` alone already covers it.
+hint at `gh auth refresh -s read:project,project` — a subset of what
+`setup:gh-scopes` requests, so a credential minted by the task satisfies it.
 
 ### Scopes are only half the story
 
