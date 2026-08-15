@@ -350,19 +350,25 @@ destroys every value on it, unrecoverably.
      this board — repeat steps 2–4 across the whole organization before
      deleting, including step 4 for **every** Project whose saved views filter
      on the field, not just the board being migrated.
-- **Domain / Layer** (retired by #875): the replacement vocabulary is already
-  there — `task setup:github-labels` has provisioned `domain:*` / `layer:*`
-  since before the fields existed — so skip straight to reconciling values.
-  1. List every issue or board item with `Domain`/`Layer` set, including
+- **Domain / Layer** (retired by #875): `domain:*`/`layer:*` are provisioned
+  by default, so most repos already carry them — but don't skip the
+  provisioning step on that assumption; confirm it.
+  1. Provision the replacement vocabulary first, the same as Agent: run
+     `task setup:github-labels` in every repository whose issues carry the
+     field. An org-wide issue field is shared by every repo in the org, and
+     labels are not — a repo that never ran the script has neither label
+     family yet.
+  2. List every issue or board item with `Domain`/`Layer` set, including
      **draft items** (label-only, so a draft loses the value outright once the
      field is gone). For each, add the matching `domain:*`/`layer:*` label if
      it isn't already there — nothing kept the two in sync, so do not assume it is.
-  2. Re-point any saved view that **groups or filters** by the `Domain`/`Layer`
-     field. A label can still filter a view (`domain:auth`, say), but — unlike a
-     field — a project view cannot **group** by a label, so a view built for the
-     per-domain/per-layer rollup loses that rollup; keep the grouping on
-     `Product` (still a field) and reach for a label filter instead.
-  3. Only then delete the field(s) — Project settings → the field → *Delete
+  3. Re-point any saved view that **groups, filters, or sorts** by the
+     `Domain`/`Layer` field. A label can still filter a view (`domain:auth`,
+     say), but — unlike a field — a project view cannot **group or sort** by a
+     label, so a view built for the per-domain/per-layer rollup or ordering
+     loses that; keep the grouping on `Product` (still a field) and reach for
+     a label filter instead.
+  4. Only then delete the field(s) — Project settings → the field → *Delete
      field* on a personal project; **Settings → Planning → Issue fields** on an
      organization, org-wide as above.
 
