@@ -262,10 +262,17 @@ environment — against the items below
       later harmon-init release lands on the next run) and never touch,
       reorder, or delete the options you added.
 [% endif %]
-- [ ] **Upgrading from a release before harmon-init#875?** If this repo's board still
-      carries `Domain`/`Layer` fields from an earlier harmon-init release, they
-      are not deleted automatically — retiring them is a deliberate,
-      irreversible operator step. See
+- [ ] **Upgrading from a release before harmon-init#875?**
+[% if github_org != author_git_provider_username %]
+      Check the org's issue-field settings (**Settings → Planning → Issue
+      fields**), not just this repo's board — `Domain`/`Layer` from an
+      earlier release are org issue fields, so they can survive on issues
+      outside this Project even after the board itself looks clean.
+[% else %]
+      If this repo's board still carries `Domain`/`Layer` fields from an
+      earlier release, they are not deleted automatically.
+[% endif %]
+      Retiring them is a deliberate, irreversible operator step — see
       [project-management.md](project-management.md), "Migrating a board that
       still has one."
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
