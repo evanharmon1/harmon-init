@@ -14,9 +14,10 @@
 # PR body, so the budget a change was reviewed under is on the record rather
 # than recalled.
 #
-# When the change under review edits THIS FILE, resolve its caps from the
-# merge-base copy rather than the branch copy — otherwise a branch can lower
-# the very gate it is changing. An explicit human instruction still overrides.
+# When the change under review edits THIS FILE, resolve its caps AND floor
+# from the merge-base copy rather than the branch copy — otherwise a branch
+# can lower the very gate it is changing, a self-lowered min_rounds buying an
+# earlier empty-round exit. An explicit human instruction still overrides.
 #
 # These are ceilings, not quotas. A stage exits the moment any of its exit
 # conditions in AGENTS.md is met: two consecutive rounds adjudicated to zero
