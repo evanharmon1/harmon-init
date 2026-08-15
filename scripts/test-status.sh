@@ -1093,6 +1093,32 @@ stray="$(grep -nE '(^|[^_[:alnum:]])gum[[:space:]]+style' "${status}" |
     fail "gum is invoked outside gum_style, so its stdout is a terminal and it will stall there:
 ${stray}"
 
+# The half of gum_style the grep above cannot see: that piping stdout does not
+# cost the colour. gum drops ANSI for a stdout it does not consider a terminal,
+# and CLICOLOR_FORCE is the whole of what puts it back — so assert the mechanism
+# rather than trusting it. Run against the same shape gum_style uses, which needs
+# no terminal and therefore works in CI.
+#
+# What this canNOT see is the colour DEPTH: with no terminal on stdout or stderr
+# gum reads 16 colours here, where an interactive board keeps the full 256. That
+# distinction needs a pty, and a pty harness portable to macOS bash 3.2 would
+# cost either divergent `script` invocations or a new dependency in a file that
+# ships to generated repos. Total colour loss is the regression worth catching;
+# the depth was verified by hand against a terminal that answers.
+if command -v gum >/dev/null 2>&1; then
+    gum_plain="$(gum style --bold --foreground 212 -- probe | cat)"
+    gum_forced="$(CLICOLOR_FORCE=1 gum style --bold --foreground 212 -- probe | cat)"
+    case "$gum_plain" in
+    *$'\033['*) fail "gum coloured a piped stdout unprompted — CLICOLOR_FORCE is asserting nothing below" ;;
+    esac
+    case "$gum_forced" in
+    *$'\033['*) ;;
+    *) fail "CLICOLOR_FORCE did not restore gum's colour through a pipe, so gum_style renders the board plain" ;;
+    esac
+else
+    echo "    (skipped: gum not installed — the board renders its plain fallback)"
+fi
+
 echo "==> the session-start hook allows more time than status:creds can spend"
 # The same coupling as the status:gh assertion above, and the same total failure
 # mode — but budgeted from THIS section's own probes rather than inherited from
