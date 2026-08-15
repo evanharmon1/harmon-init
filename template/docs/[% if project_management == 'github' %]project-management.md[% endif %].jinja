@@ -338,7 +338,7 @@ neither answer without duplicating the label vocabulary, and on an organization
 the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field).
 
-There is likewise deliberately **no `Domain` or `Layer` field** (#875). Both
+There is likewise deliberately **no `Domain` or `Layer` field** (harmon-init#875). Both
 used to exist as a field *and* a label — `domain:` / `layer:` below — with
 nothing syncing an issue's field value to its label, which is exactly the
 [Label or field?](#label-or-field) trade-off: a label is readable without
@@ -377,7 +377,7 @@ destroys every value on it, unrecoverably.
      this board — repeat steps 2–4 across the whole organization before
      deleting, including step 4 for **every** Project whose saved views filter
      on the field, not just the board being migrated.
-- **Domain / Layer** (retired by #875): `domain:*`/`layer:*` are provisioned
+- **Domain / Layer** (retired by harmon-init#875): `domain:*`/`layer:*` are provisioned
   by default, so most repos already carry them — but don't skip the
   provisioning step on that assumption; confirm it.
   1. Provision the replacement vocabulary first, the same as Agent: run
@@ -385,16 +385,30 @@ destroys every value on it, unrecoverably.
      field. An org-wide issue field is shared by every repo in the org, and
      labels are not — a repo that never ran the script has neither label
      family yet.
-  2. List every issue or board item with `Domain`/`Layer` set — filter the
-     Project's own board/table view by the field, not a capped CLI listing
-     (`gh project item-list` defaults to a page size well under a typical
-     board, and `gh issue list` won't show draft items at all) — including
-     **draft items**, which can carry the project field but can never carry a
-     label. Convert any draft whose value you want to keep into an issue
-     first — a draft left as-is loses the value outright once the field is
-     gone. For each item, add the matching `domain:*`/`layer:*` label —
-     **creating it first** if the field carries a custom option (e.g.
-     `Domain: crm`) that has no label counterpart yet, since the starter set
+  2. List every issue with `Domain`/`Layer` set.
+[% if github_org != author_git_provider_username %]
+     This is an **org issue field** — the value lives on the issue
+     independent of project membership, so an issue can carry it without
+     belonging to the Project you're migrating from. A single Project's
+     filtered view is therefore NOT a complete inventory: check the org's
+     issue-field settings (**Settings → Planning → Issue fields** → the
+     field) and sweep every repository/project in the org, not just the one
+     board. There are no draft items to convert here — a draft project item
+     isn't a real issue, so it can never carry an org issue field in the
+     first place.
+[% else %]
+     Filter the Project's own board/table view by the field — every value is
+     necessarily an item of that one project on a personal account — not a
+     capped CLI listing (`gh project item-list` defaults to a page size well
+     under a typical board, and `gh issue list` won't show draft items at
+     all). Include **draft items**, which can carry the project field but can
+     never carry a label: convert any draft whose value you want to keep into
+     an issue first, since a draft left as-is loses the value outright once
+     the field is gone.
+[% endif %]
+     For each item, add the matching `domain:*`/`layer:*` label — **creating
+     it first** if the field carries a custom option (e.g. `Domain: crm`)
+     that has no label counterpart yet, since the starter set
      `setup:github-labels` provisioned is only a floor. Nothing kept the two
      in sync, so do not assume the label already exists just because the
      field option does.
@@ -605,7 +619,7 @@ advisory routing and live ownership are two different facts, a single-select
 could carry neither without duplicating the label vocabulary, and on an
 organization the Projects V2 API could not write it at all. `Domain` and `Layer` were fields once
 too, and were retired for the same reason: a label already covered every one of
-the bullets above and nothing kept the two surfaces in sync (#875).
+the bullets above and nothing kept the two surfaces in sync (harmon-init#875).
 
 ### The complete label taxonomy
 
@@ -618,8 +632,8 @@ it creates it on demand, and provisioning deliberately leaves it alone.
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `needs-triage`, `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
-| `layer:{ui,logic,data,integration}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the only surface for this taxonomy (#875) |
-| `domain:{auth,billing,platform,…}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the only surface for this taxonomy (#875) |
+| `layer:{ui,logic,data,integration}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the only surface for this taxonomy (harmon-init#875) |
+| `domain:{auth,billing,platform,…}` | humans, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the only surface for this taxonomy (harmon-init#875) |
 | `rigor:{light,standard,deep}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a round-cap tier, arms nothing | set when the default budget is wrong for the change; survives the work |
 | `suggest:<family>` | humans, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |
 | `suggest:<family>:<model>` | humans | humans | **tool-owned, created on demand** — seeding every model would be an unbounded roster | refines the family label; apply both |
@@ -1126,7 +1140,7 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   the one board by **`Product`** (still a field, so a view can group by it).
   One board, many lenses — how multiple products stay legible in one
   aggregating project instead of fragmenting into project-per-product. Domain
-  and Layer are labels only (#875): a view can still **filter** on
+  and Layer are labels only (harmon-init#875): a view can still **filter** on
   `domain:*`/`layer:*` (add the label to the view's filter), it just cannot
   **group** by them the way a field allows — same as the agent split, which is
   a label question too (`suggest:*`/`claim:*` — filter, don't slice).
