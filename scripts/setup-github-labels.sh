@@ -3,10 +3,10 @@
 # set (docs/project-management.md). Colors are grouped by family (concerns=purple,
 # source=pink, workflow=orange, layer=blue, domain=yellow).
 #
-# The `layer:` and `domain:` families deliberately mirror the Layer and Domain
-# single-select fields created by setup-github-issue-fields.sh (org) /
-# setup-github-project.sh (personal account) — same vocabulary, so a label and a
-# field value never disagree. Keep the three lists in step when you extend them.
+# The `layer:` and `domain:` families are the only surface for that taxonomy —
+# there is deliberately no paired Layer/Domain project or issue field (#875;
+# see docs/project-management.md, "Label or field?"). Keep the two lists in
+# step with product growth.
 #
 # Labels are REPO-level in GitHub — there's no shared org label pool. Run this in
 # each repo; org "default labels" (Settings → Repository, UI-only, no API) only

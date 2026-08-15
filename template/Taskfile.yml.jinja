@@ -1063,12 +1063,12 @@ tasks:
 
   setup:github-issue-fields:
     desc: >-
-      Idempotently add the org's Product + Domain + Layer issue fields
-      (Priority/Effort are GitHub built-ins, left at defaults; the numeric Size
-      estimate is a project field via setup:github-project). Additive, org-wide:
-      creates what is missing and appends starter options an existing
-      single-select lacks, never renaming or deleting. Requires `gh` with the
-      admin:org scope.
+      Idempotently add the org's Product issue field (Priority/Effort are
+      GitHub built-ins, left at defaults; the numeric Size estimate is a
+      project field via setup:github-project; there is deliberately no Domain
+      or Layer field, #875 — see docs/project-management.md, "Label or
+      field?"). Creates the field if missing, never renaming or deleting.
+      Requires `gh` with the admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]
