@@ -1,16 +1,28 @@
 name: Task
 description: General work — maintenance, chores, cleanup, or a small improvement
-title: "[Task]: "
 assignees:
   - [[ author_git_provider_username ]]
 [% if github_org != author_git_provider_username %]
 type: Task
 [% endif %]
+[# labels: is gated on the same condition as scripts/setup-github-labels.sh's
+   own file inclusion (project_management == 'github' or use_foreman): an
+   unprovisioned repo's forms apply no labels at all, rather than
+   referencing ones nothing guarantees. #]
+[% if project_management == 'github' or use_foreman %]
+labels:
+[% if github_org != author_git_provider_username %]
+  - needs-triage
+[% else %]
+  - task
+  - needs-triage
+[% endif %]
+[% endif %]
 body:
   - type: textarea
     id: description
     attributes:
-      label: What needs doing?
+      label: Problem
       description: Briefly describe the task and the outcome it should achieve.
     validations:
       required: true
@@ -18,8 +30,10 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
-      value: |
-        - [ ]
+      description: >-
+        Optional. One `- [ ]` item per criterion; tag `[CI]`/`[HUMAN]` where
+        useful. Leave blank to file without criteria — triage adds them
+        before this is dispatched.
   - type: textarea
     id: context
     attributes:

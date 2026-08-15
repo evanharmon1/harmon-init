@@ -56,7 +56,9 @@ Issues become cheap to classify and route, for humans and agents alike:
   unrecognized `foreman:*` value as a backend selector, so no metadata may ever live there.
 - **No `type:*` work-type family.** That prefix is foreman's conventional-commit override. Work
   type is native issue Type on org repos and the informal labels
-  (`bug`/`enhancement`/`documentation`/`question`/`task`/`research`) on personal repos.
+  (`bug`/`feature`/`documentation`/`question`/`task`/`research`) on personal repos —
+  `feature` replacing GitHub's default `enhancement`, which is retired from the vocabulary
+  (maintainer decision, 2026-08-14, PR #871).
 - **No board/field mirrors for the new families** until a view needs one; labels only.
 - **No unattended triage in v1.** Scheduling is a separate, explicit later decision.
 
