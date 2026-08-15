@@ -602,8 +602,18 @@ fi
 # network-heavy; this group is not, so the reason to exclude it does not apply.
 #
 # Every probe here is bounded by the short LOCAL bound (3s), never by
-# NETWORK_TIMEOUT — nothing in it may reach the network, or the session-start
-# path inherits a cost its budget was not derived for.
+# NETWORK_TIMEOUT — the session-start path must not inherit a cost its budget
+# was not derived for.
+#
+# ONE of them reaches the network: the gh token's SCOPES (render_gh_scope_check
+# below). That is not a local fact — no file on disk records it — and issue
+# #827 needs it at session start, so the section spends exactly one bounded 3s
+# call for it and nothing else. It is capped at the LOCAL bound rather than
+# NETWORK_TIMEOUT for the same budget reason as everything else here: the hook
+# budgets this section from the sum of these bounds (13s, both hook copies),
+# and a section that overruns loses ALL of its buffered output. Set
+# `STATUS_NO_NETWORK=1` to drop that one probe and make the section local-only
+# again. Anything else added here must stay local.
 # render_gh_scope_check — one ⚠/unknown line when the authenticated token is
 # missing a scope this repo's tooling needs, and NOTHING when it has them all.
 #
@@ -614,8 +624,9 @@ fi
 # same probe, so the evidence that this ran is on screen either way. A second
 # green line on every session start, in every repo, would be pure noise.
 #
-# Read-only and non-fatal: it only compares the scope line the shared probe
-# already captured.
+# Read-only and non-fatal. It compares the scope line the shared probe already
+# captured where there is one; standalone (`status:creds`) it makes the single
+# bounded probe described above.
 render_gh_scope_check() {
     local missing rc=0 file
     if [[ "${GH_AUTH_PROBED}" != true ]]; then

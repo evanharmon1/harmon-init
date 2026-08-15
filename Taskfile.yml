@@ -84,6 +84,7 @@ tasks:
       - task: test:tasks
       - task: test:ci-results
       - task: test:status
+      - task: test:gh-scopes
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
@@ -394,6 +395,11 @@ tasks:
     desc: Unit-test the status board-writes + local-credential checks (stubbed CLIs, no network)
     cmds:
       - ./scripts/test-status.sh
+
+  test:gh-scopes:
+    desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-gh-scopes.sh
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals

@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+# test-setup-gh-scopes.sh — unit-test setup-gh-scopes.sh, the one script here
+# that MUTATES the operator's stored credential.
+#
+# Run via `task test:gh-scopes`.
+#
+# Its refusals are the safety story (an env token it cannot fix, a shell that
+# cannot complete a browser flow) and its post-refresh verification is the
+# reason it exists at all — `gh auth refresh` can exit 0 having granted less
+# than was asked for. None of that is exercised by test-status.sh, which only
+# covers the status consumer.
+#
+# Hermetic in two directions, as test-status.sh is:
+#
+#   * every `gh` call is answered by a stub on PATH, so this never reaches
+#     GitHub and never touches the developer's own credential — which is the
+#     whole point: the bug it guards (reporting a refresh that did not land)
+#     is INVISIBLE when tested against a token that already has the scopes.
+#   * the script runs from a fixture root this test builds, never the repo it
+#     lives in, so the required-scope list under test is the fixture's.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+script="./scripts/setup-gh-scopes.sh"
+scopes_lib="./scripts/gh-scopes.sh"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+
+# A board-carrying fixture, so the required list includes the Projects scopes.
+mkdir -p "${TMP}/repo/scripts"
+cp "${script}" "${TMP}/repo/scripts/setup-gh-scopes.sh"
+cp "${scopes_lib}" "${TMP}/repo/scripts/gh-scopes.sh"
+: >"${TMP}/repo/scripts/setup-github-project.sh"
+SUT="${TMP}/repo/scripts/setup-gh-scopes.sh"
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+# make_stub SCENARIO — write $TMP/bin/gh. The refresh is RECORDED, never real:
+# a stub that silently succeeded would let a broken verification pass.
+make_stub() {
+    local scenario="$1"
+    mkdir -p "${TMP}/bin"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'if [ -n "${STUB_CALLS:-}" ]; then echo "$*" >>"$STUB_CALLS"; fi'
+        echo 'if [ "$1" = "auth" ] && [ "$2" = "refresh" ]; then exit 0; fi'
+        echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
+        echo '    seen_active=false'
+        echo '    for a in "$@"; do [ "$a" = "--active" ] && seen_active=true; done'
+        case "$scenario" in
+        lands)
+            # The happy path: after the refresh every requirement is present.
+            echo "    echo \"  - Token scopes: 'repo', 'workflow', 'project', 'read:project'\""
+            echo '    exit 0'
+            ;;
+        does-not-land)
+            # `gh auth refresh` exits 0 but the grant did not happen — an org
+            # that restricts the scope, or an operator who unticked it in the
+            # browser. The reason this script verifies instead of trusting.
+            echo "    echo \"  - Token scopes: 'repo', 'workflow'\""
+            echo '    exit 0'
+            ;;
+        inactive-has-scope)
+            # Two accounts on one host; only the INACTIVE one is fully scoped.
+            # `gh auth refresh` only ever updates the active account, so a
+            # verification that read every account would report a success that
+            # did not happen.
+            echo '    if [ "$seen_active" = true ]; then'
+            echo "        echo \"  - Token scopes: 'repo', 'workflow'\""
+            echo '    else'
+            echo "        echo \"  - Token scopes: 'repo', 'workflow'\""
+            echo "        echo \"  - Token scopes: 'project', 'read:project'\""
+            echo '    fi'
+            echo '    exit 0'
+            ;;
+        logged-out)
+            echo '    echo "You are not logged into any GitHub hosts." >&2'
+            echo '    exit 1'
+            ;;
+        fine-grained)
+            # Permissions, not OAuth scopes: gh reports the line with nothing
+            # quoted. `gh auth refresh` cannot add to such a token.
+            echo '    echo "  - Token scopes: none"'
+            echo '    exit 0'
+            ;;
+        esac
+        echo 'fi'
+        echo 'echo "stub: unexpected gh call: $*" >&2; exit 1'
+    } >"${TMP}/bin/gh"
+    chmod +x "${TMP}/bin/gh"
+}
+
+# pty_exec CMD... — run CMD under a pseudo-terminal, so the script sees a TTY
+# on stdin and stdout.
+#
+# Two allocators, in preference order. `python3 -c 'pty.spawn(...)'` calls
+# openpty directly and therefore works in a sandbox or CI shell with no
+# CONTROLLING terminal — where `script` fails with tcgetattr/ioctl before ever
+# running the command, failing every case for a reason unrelated to the code
+# under test. `script` is the fallback for a host without python3; its BSD
+# (macOS) and util-linux (CI) argument orders differ.
+pty_exec() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import pty,sys; sys.exit(pty.spawn(sys.argv[1:]))' "$@" 2>&1
+    elif [ "$(uname -s)" = "Darwin" ]; then
+        script -q /dev/null "$@" 2>&1
+    else
+        script -qec "$*" /dev/null 2>&1
+    fi
+}
+
+# Whether a pty can be allocated AT ALL. The cases that need one are skipped
+# with a note rather than silently dropped (the same treatment test-status.sh
+# gives a missing `timeout` binary). Everything BEFORE the TTY gate — the
+# env-token refusals — is tested without a pty either way, because that
+# refusal deliberately runs first.
+PTY_OK=false
+if [ "$(pty_exec printf PTYPROBE 2>/dev/null | tr -dc 'A-Z')" = "PTYPROBE" ]; then
+    PTY_OK=true
+fi
+
+# run_sut_pty SCENARIO [ENV...] — the same, under a pseudo-terminal, capturing
+# output. Only call when PTY_OK.
+run_sut_pty() {
+    local scenario="$1"
+    shift
+    make_stub "${scenario}"
+    # A subshell with explicit exports rather than `env`: pty_exec is a shell
+    # function, and `env` can only exec a real binary.
+    (
+        export PATH="${TMP}/bin:${PATH}"
+        local kv
+        for kv in "$@"; do export "${kv?}"; done
+        pty_exec "${SUT}"
+    ) || true
+}
+
+# run_sut_notty SCENARIO [ENV...] — capture output with NO tty. Valid for every
+# assertion about a refusal that precedes the TTY gate.
+run_sut_notty() {
+    local scenario="$1"
+    shift
+    make_stub "${scenario}"
+    env "$@" PATH="${TMP}/bin:${PATH}" "${SUT}" </dev/null 2>&1 || true
+}
+
+# rc_of SCENARIO [ENV...] — the exit code, which the refusals must make
+# non-zero: a refusal that exited 0 would tell a caller the scopes are fine.
+rc_of() {
+    local scenario="$1"
+    shift
+    make_stub "${scenario}"
+    local rc=0
+    env "$@" PATH="${TMP}/bin:${PATH}" "${SUT}" </dev/null >/dev/null 2>&1 || rc=$?
+    printf '%s' "${rc}"
+}
+
+echo "==> refuses without a TTY, and says why"
+make_stub lands
+out="$(PATH="${TMP}/bin:${PATH}" "${SUT}" </dev/null 2>&1 || true)"
+case "$out" in
+*"no TTY"*) ;;
+*) fail "expected a TTY refusal, got: ${out}" ;;
+esac
+[ "$(rc_of lands)" != 0 ] || fail "the TTY refusal must exit non-zero"
+
+echo "==> a no-TTY refusal never reaches gh auth refresh"
+# The safety property behind the refusal: agents and CI must not re-mint the
+# operator's credential, so the refusal has to come BEFORE the mutation.
+STUB_CALLS="${TMP}/calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+make_stub lands
+PATH="${TMP}/bin:${PATH}" "${SUT}" </dev/null >/dev/null 2>&1 || true
+if grep -q 'auth refresh' "${STUB_CALLS}"; then
+    fail "a non-interactive run mutated the credential: $(tr '\n' ' ' <"${STUB_CALLS}")"
+fi
+unset STUB_CALLS
+
+echo "==> refuses the env-token family gh uses for THIS host"
+out="$(run_sut_notty lands GH_HOST=github.com GH_TOKEN=x)"
+case "$out" in
+*"GH_TOKEN is set"*"github.com"*) ;;
+*) fail "expected a GH_TOKEN refusal on github.com, got: ${out}" ;;
+esac
+[ "$(rc_of lands GH_HOST=github.com GH_TOKEN=x)" != 0 ] ||
+    fail "the env-token refusal must exit non-zero"
+
+echo "==> does NOT refuse an env token gh ignores on this host"
+# The dual-host case: gh reads GH_ENTERPRISE_TOKEN for a GHES host, not for
+# github.com, so it does not override the credential being refreshed here.
+out="$(run_sut_notty lands GH_HOST=github.com GH_ENTERPRISE_TOKEN=x)"
+case "$out" in
+*"GH_ENTERPRISE_TOKEN is set"*) fail "refused a token gh ignores on this host: ${out}" ;;
+*"no TTY"*) ;; # fell through to the NEXT gate, which is the point
+*) fail "expected the run to reach the TTY gate, got: ${out}" ;;
+esac
+out="$(run_sut_notty lands GH_HOST=ghe.example.com GH_TOKEN=x)"
+case "$out" in
+*"GH_TOKEN is set"*) fail "refused a github.com token in a GHES checkout: ${out}" ;;
+*"no TTY"*) ;;
+*) fail "expected the run to reach the TTY gate, got: ${out}" ;;
+esac
+
+echo "==> refuses the enterprise env token on an enterprise host"
+out="$(run_sut_notty lands GH_HOST=ghe.example.com GH_ENTERPRISE_TOKEN=x)"
+case "$out" in
+*"GH_ENTERPRISE_TOKEN is set"*"ghe.example.com"*) ;;
+*) fail "expected an enterprise env-token refusal, got: ${out}" ;;
+esac
+
+if [ "${PTY_OK}" = true ]; then
+    echo "==> a logged-out host is told to log in, not refreshed"
+    out="$(run_sut_pty logged-out GH_HOST=github.com)"
+    case "$out" in
+    *"not logged in"*"gh auth login"*) ;;
+    *) fail "expected a login remedy, got: ${out}" ;;
+    esac
+
+    echo "==> succeeds when the refresh lands, naming the scopes"
+    out="$(run_sut_pty lands GH_HOST=github.com)"
+    case "$out" in
+    *"All required scopes present"*) ;;
+    *) fail "expected success after a landed refresh, got: ${out}" ;;
+    esac
+
+    echo "==> FAILS when the refresh silently did not land"
+    # The whole reason this script verifies rather than trusting the exit code.
+    out="$(run_sut_pty does-not-land GH_HOST=github.com)"
+    case "$out" in
+    *"did not grant"*) ;;
+    *) fail "a refresh that did not land must fail loudly, got: ${out}" ;;
+    esac
+    [ "$(rc_of does-not-land GH_HOST=github.com)" != 0 ] ||
+        fail "an unlanded refresh must exit non-zero"
+
+    echo "==> another account's scopes cannot verify the refreshed one"
+    # gh auth refresh updates only the ACTIVE account; reading every account on the
+    # host would let an unrelated login satisfy the requirement.
+    out="$(run_sut_pty inactive-has-scope GH_HOST=github.com)"
+    case "$out" in
+    *"All required scopes present"*) fail "an inactive account's scopes verified the active one: ${out}" ;;
+    *"did not grant"*) ;;
+    *) fail "expected the active account's missing scopes to be reported, got: ${out}" ;;
+    esac
+
+    echo "==> a fine-grained token is rejected with a source-side remedy"
+    out="$(run_sut_pty fine-grained GH_HOST=github.com)"
+    case "$out" in
+    *"no OAuth scopes reported"*) ;;
+    *) fail "expected the fine-grained-token notice, got: ${out}" ;;
+    esac
+
+    echo "==> the token value is never printed"
+    # The script prints scope LINES; nothing it captures may contain a credential,
+    # and the stub's scope lines are the only thing it is allowed to echo back.
+    out="$(run_sut_pty lands GH_HOST=github.com)"
+    case "$out" in
+    *ghp_* | *gho_*) fail "something token-shaped reached the output: ${out}" ;;
+    esac
+else
+    echo "    (skipped: no controlling terminal — cannot allocate a pty for the"
+    echo "     interactive path; the refusals above are covered without one)"
+fi
+
+echo "setup-gh-scopes.sh tests passed"
