@@ -257,9 +257,10 @@ The caps are not written down here, or in AGENTS.md. They live in
 [`.devflow.toml`](../../.devflow.toml) as `rigor` tiers, and **AGENTS.md alone
 defines how a change resolves one** — restating that chain here would only give
 it a second place to drift from, and which inputs are even available depends on
-how the repository is set up. Only `challenge` and `review` vary by tier; the
+how the repository is set up. `challenge`, `review`, and the `min_rounds` floor vary by tier; the
 shepherd cap is fixed, because it bounds other people's findings rather than
-self-generated work. Announce the resolved caps when you enter the loop.
+self-generated work. Announce the resolved caps — the floor included — when
+you enter the loop.
 
 If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a

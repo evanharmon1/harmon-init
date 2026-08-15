@@ -141,9 +141,14 @@ for path in config_paths:
         )
 
 FALLBACK_RE = re.compile(r"built-in (\d+ / \d+ / \d+)")
+# The missing-key floor exists only in prose, so its parity is checked the
+# same way as the caps: exactly one statement per layer, equal across layers.
+FLOOR_FALLBACK_RE = re.compile(r"`min_rounds` floor of\s+(\d+) wherever no tier\s+defines one")
 fallbacks = {}
+floor_fallbacks = {}
 for path in (agents_root, agents_template):
-    found = set(FALLBACK_RE.findall(open(path).read()))
+    text = open(path).read()
+    found = set(FALLBACK_RE.findall(text))
     if len(found) != 1:
         failures.append(
             f"{path}: expected exactly one 'built-in N / N / N' fallback, found "
@@ -151,11 +156,25 @@ for path in (agents_root, agents_template):
         )
     else:
         fallbacks[path] = found.pop()
+    floor_found = set(FLOOR_FALLBACK_RE.findall(text))
+    if len(floor_found) != 1:
+        failures.append(
+            f"{path}: expected exactly one 'min_rounds floor of N wherever no tier "
+            f"defines one' fallback, found {sorted(floor_found) if floor_found else 'none'}"
+        )
+    else:
+        floor_fallbacks[path] = floor_found.pop()
 if len(set(fallbacks.values())) > 1:
     failures.append(
         "the fallback caps disagree across the dogfood: "
         + "; ".join(f"{p} says {v}" for p, v in sorted(fallbacks.items()))
         + " — root and generated agents would use different caps"
+    )
+if len(set(floor_fallbacks.values())) > 1:
+    failures.append(
+        "the fallback min_rounds floor disagrees across the dogfood: "
+        + "; ".join(f"{p} says {v}" for p, v in sorted(floor_fallbacks.items()))
+        + " — root and generated agents would use different exit rules"
     )
 
 if failures:
