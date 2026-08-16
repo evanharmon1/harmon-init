@@ -273,7 +273,8 @@ tier allowed.
   stage. Those stay single-copy until the PR body takes them, and the exit
   precondition above is not discharged by having pushed. After the draft PR
   exists the granularity changes: pushes batch per shepherd round, because
-  each one spends a CI run and starts a fresh current-head Codex cycle.
+  each one spends a CI run[% if use_codex_cloud_review %] and starts a fresh
+  current-head Codex cycle[% endif %].
   Amending or otherwise rewriting anything already pushed stays forbidden at
   every stage.
 - **`task review`** — verification-checkpoint review, run out of the same
