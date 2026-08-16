@@ -346,7 +346,17 @@ if ! mkdir "$tree" 2>/dev/null; then
     if [ -d "$tree" ]; then
         die "$tree already exists (or another worktree:new is creating it) — remove it with 'task worktree:rm -- $name' first"
     fi
-    die "could not create $tree"
+    # A sibling's removal can rmdir the emptied shared parent between our
+    # mkdir -p above and this leaf claim — both operations are deliberately
+    # admitted through the shared ancestor lock — so a missing parent gets
+    # one re-create-and-retry before the failure is real.
+    mkdir -p "$(dirname "$tree")" 2>/dev/null || true
+    if ! mkdir "$tree" 2>/dev/null; then
+        if [ -d "$tree" ]; then
+            die "$tree already exists (or another worktree:new is creating it) — remove it with 'task worktree:rm -- $name' first"
+        fi
+        die "could not create $tree"
+    fi
 fi
 
 # Roll back on any failure from here on. A half-provisioned worktree is worse

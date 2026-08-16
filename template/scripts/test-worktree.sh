@@ -1117,6 +1117,18 @@ if rm_wt 'bad name' >/dev/null 2>&1; then
     fail "worktree-rm.sh accepted a name outside the creation whitelist"
 fi
 
+echo "==> case-aliased names contend on one lock key"
+# Default macOS filesystems are case-insensitive: Foo and foo are one
+# worktree path, so their operations must exclude each other whatever the
+# spelling. The key is lowercased, so holding the lower-spelling lock must
+# refuse an upper-spelling operation.
+mkdir -p "$fixture_locks/case-lk+lock"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/case-lk+lock/owner"
+if new Case-LK >/dev/null 2>&1; then
+    fail "a case-aliased spelling bypassed the held lock (PR #911 cloud review)"
+fi
+rm -rf "$fixture_locks/case-lk+lock"
+
 echo "==> a stale lock from a dead process is broken, once"
 # Death is proven through a CONTROLLED ps, not the host's: a sandbox that
 # denies or restricts ps makes the implementation (correctly) refuse to
@@ -1185,7 +1197,7 @@ echo "==> a reused pid (mismatched start time) is judged dead and broken"
 # pid was reused, and the lock must break. Removing the start-time compare
 # turns this into a live-owner refusal and fails the case.
 mkdir -p "$fixture_locks/reuse-lk+lock"
-printf '%s %s %s %s %s\n' "999998" "$this_host" "$(id -u)" "999998" "Tue Feb  2 02:02:02 2027" >"$fixture_locks/reuse-lk+lock/owner"
+printf '%s %s %s %s %s %s\n' "999998" "$this_host" "$(id -u)" "999998" "n0" "Tue Feb  2 02:02:02 2027" >"$fixture_locks/reuse-lk+lock/owner"
 (
     PATH="$psstale_dir:$PATH"
     export PATH

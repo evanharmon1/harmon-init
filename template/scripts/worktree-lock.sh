@@ -69,8 +69,13 @@ lock_stamp() {
     # timezone: lstart renders via the locale's %c, so two invocations
     # differing in LC_TIME or TZ would otherwise disagree about the same
     # process and misread it as PID reuse.
-    printf '%s %s %s %s %s\n' "$$" "$lock_host" "$lock_uid" \
+    # The nonce makes every stamp unique per ACQUISITION: lstart has
+    # one-second resolution, so a same-second PID reuse could otherwise
+    # reproduce a dead owner's stamp exactly and slip past the
+    # content-equality revalidation that guards breaking.
+    printf '%s %s %s %s %s %s\n' "$$" "$lock_host" "$lock_uid" \
         "$(ps -o pgid= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//' | grep . || echo 0)" \
+        "n$$.$(date +%s).$RANDOM" \
         "$(LC_ALL=C TZ=UTC ps -o lstart= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//')"
 }
 lock_owner_alive() {
@@ -87,6 +92,9 @@ lock_owner_alive() {
     _own_uid="${_own_rest%% *}"
     case "$_own_rest" in *" "*) _own_rest="${_own_rest#* }" ;; *) _own_rest="" ;; esac
     _own_pgid="${_own_rest%% *}"
+    # Field 5 is the per-acquisition nonce; it exists for stamp uniqueness
+    # and plays no part in liveness, so it is skipped here.
+    case "$_own_rest" in *" "*) _own_rest="${_own_rest#* }" ;; *) _own_rest="" ;; esac
     case "$_own_rest" in *" "*) _own_start="${_own_rest#* }" ;; esac
     [ "$_own_host" = "$lock_host" ] || return 0
     case "$_own_pid" in "" | *[!0-9]*) return 0 ;; esac
@@ -242,7 +250,11 @@ acquire_path_locks() {
         *) _lock_rest="" ;;
         esac
         _lock_prefix="${_lock_prefix:+$_lock_prefix/}$_lock_seg"
-        _lock_enc="$(printf '%s' "$_lock_prefix" | tr '/' '%')"
+        # Lowercased: the default macOS filesystem is case-insensitive, so
+        # `Foo` and `foo` are ONE worktree path and must contend on one
+        # key. On case-sensitive systems this over-serializes two genuinely
+        # distinct names — refusal, the safe direction, never under-locking.
+        _lock_enc="$(printf '%s' "$_lock_prefix" | tr '/' '%' | tr '[:upper:]' '[:lower:]')"
         # A very long nested name would exceed NAME_MAX as one flat lock
         # basename although every real path component is valid — and such a
         # worktree may already exist, so refusing would strand it. Long
