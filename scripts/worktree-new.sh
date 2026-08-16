@@ -220,11 +220,13 @@ verify_default_base() {
         # mapped source triggers git's opportunistic tracking update, which
         # force-writes the configured mapping even without "+" in the
         # refspec (verified empirically on git 2.x — "(forced update)" on a
-        # refs/heads/* mapping). Fetching the remote's URL anonymously is
-        # what actually detaches from remote.<name>.fetch: objects arrive,
-        # FETCH_HEAD moves, and no configured mapping is consulted.
+        # refs/heads/* mapping). `--refmap=` is what actually detaches the
+        # fetch from remote.<name>.fetch: objects arrive, FETCH_HEAD moves,
+        # and no configured mapping is consulted (verified empirically) —
+        # while the NAMED remote keeps remote-specific transport config
+        # (remote.<name>.uploadpack, .proxy) that an anonymous URL fetch
+        # would silently drop (challenge round 1).
         verify_known_before="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
-        upstream_url="$(git -C "$main_root" remote get-url "$upstream_remote" 2>/dev/null || true)"
         verify_failed=0
         probe_out="$(git_net ls-remote "$upstream_remote" "$upstream_merge")" || verify_failed=1
         if [ "$verify_failed" -eq 0 ]; then
@@ -235,10 +237,9 @@ verify_default_base() {
                 echo "==> Note: '$upstream_remote' no longer has ${upstream_merge#refs/heads/} — basing on the local ${base_label}"
                 return 0
             fi
-            [ -n "$upstream_url" ] || verify_failed=1
         fi
         if [ "$verify_failed" -eq 0 ]; then
-            git_net fetch --quiet "$upstream_url" "$upstream_merge" || verify_failed=1
+            git_net fetch --quiet --refmap= "$upstream_remote" "$upstream_merge" || verify_failed=1
         fi
         if [ "$verify_failed" -eq 0 ]; then
             # One unconditional post-fetch probe, exactly as the remote-only
@@ -425,6 +426,7 @@ fi
 tree_created=1
 branch_created=0
 branch_owned=0
+branch_owned_tip=""
 probe_dir=""
 cleanup() {
     status=$?
@@ -451,13 +453,8 @@ cleanup() {
         # refusal is relaxed, this stays correct instead of silently deleting a
         # stranger's branch.
         branch_is_ours=0
-        if [ "$branch_owned" -eq 1 ]; then
-            # The remote-only path creates the branch with an explicit
-            # `git branch`, which refuses an existing name — success there is
-            # unambiguous ownership, with no registry inference needed
-            # (harmon-init#916).
-            branch_is_ours=1
-        elif [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
+        if [ "$branch_owned" -eq 0 ] &&
+            [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
             git worktree list --porcelain | grep -qxF "worktree $tree"; then
             branch_is_ours=1
         fi
@@ -485,7 +482,20 @@ cleanup() {
         if git worktree list --porcelain | grep -qxF "worktree $tree"; then
             echo "worktree:new: $tree is still registered after rollback — clear it with 'task worktree:rm -- $name'" >&2
         fi
-        if [ "$branch_is_ours" -eq 1 ]; then
+        if [ "$branch_owned" -eq 1 ]; then
+            # The remote-only path published this branch atomically at a
+            # recorded tip, so rollback is a COMPARE-and-delete: the ref
+            # goes only if it still holds exactly that tip. Path locks do
+            # not serialize branch refs, so a concurrent fetch or push can
+            # legitimately move the branch between creation and this
+            # rollback — a moved tip holds commits this run did not create,
+            # and deleting it would discard them (challenge round 1).
+            if git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
+                git config --remove-section "branch.$branch" 2>/dev/null || true
+            else
+                echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
+            fi
+        elif [ "$branch_is_ours" -eq 1 ]; then
             git branch -D "$branch" >/dev/null 2>&1 || true
         elif [ "$branch_created" -eq 1 ]; then
             echo "worktree:new: leaving branch '$branch' alone — this run did not create it" >&2
@@ -596,13 +606,24 @@ elif [ -n "$remote_ref" ]; then
     # (harmon-init#916): `git worktree add` fires any hand-written
     # post-checkout hook itself — LEFTHOOK=0 suppresses only lefthook-shaped
     # shims — and a hook that resolves @{upstream} must never observe the
-    # branch untracked. `git branch` refuses an existing name, so its
-    # success is unambiguous ownership: rollback deletes on that evidence
-    # alone (branch_owned), where the add -b path must infer ownership from
-    # the registry.
-    git branch "$branch" "$remote_probe_sha"
+    # branch untracked.
+    #
+    # Ownership bookkeeping is armed BEFORE the ref exists and the ref is
+    # created atomically create-only (old value "" = must not exist), so a
+    # signal landing between the ref transaction committing and the next
+    # shell statement already finds the flags set — cleanup can never be
+    # left unaware of a branch this run published (challenge round 1). A
+    # refused create un-arms before dying; what makes the early arming safe
+    # is cleanup's compare-and-delete, which only ever removes the exact
+    # tip recorded here.
     branch_created=1
     branch_owned=1
+    branch_owned_tip="$remote_probe_sha"
+    if ! git update-ref "refs/heads/$branch" "$remote_probe_sha" "" 2>/dev/null; then
+        branch_created=0
+        branch_owned=0
+        die "branch '$branch' appeared while this run was creating it — re-run to attach it"
+    fi
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
     LEFTHOOK=0 git worktree add "$tree" "$branch"

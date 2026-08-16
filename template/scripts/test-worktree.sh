@@ -1190,7 +1190,7 @@ if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
   saw_fetch=0
   for _arg in "\$@"; do
     if [ "\$_arg" = "fetch" ]; then saw_fetch=1; fi
-    if [ \$saw_fetch -eq 1 ] && [ "\$_arg" = "$base_upstream" ]; then
+    if [ \$saw_fetch -eq 1 ] && [ "\$_arg" = "--refmap=" ]; then
       "$ev_real_git" -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
       exit 1
     fi
@@ -1219,7 +1219,7 @@ if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
   saw_fetch=0
   for _arg in "\$@"; do
     if [ "\$_arg" = "fetch" ]; then saw_fetch=1; fi
-    if [ \$saw_fetch -eq 1 ] && [ "\$_arg" = "$base_upstream" ]; then
+    if [ \$saw_fetch -eq 1 ] && [ "\$_arg" = "--refmap=" ]; then
       exit 1
     fi
   done
@@ -1849,6 +1849,34 @@ if git -C "$fixture" worktree list --porcelain | grep -q "rollback-remote"; then
     fail "the failed remote-only attach left a registry record behind"
 fi
 git -C "$fixture" push -q origin :refs/heads/rollback-remote
+
+echo "==> rollback leaves a branch whose tip moved since this run created it"
+# The rollback is a COMPARE-and-delete: path locks do not serialize branch
+# refs, so a concurrent actor can move the just-created branch before the
+# attach fails, and deleting whatever tip exists then would discard commits
+# this run never created (harmon-init#916, challenge round 1). The failing
+# hook plays the concurrent actor deterministically: it moves the branch
+# tip and then fails the attach.
+moved_tip="$(git -C "$fixture" commit-tree -m "concurrent work" -p "$(git -C "$fixture" rev-parse HEAD)" "$(git -C "$fixture" rev-parse "HEAD^{tree}")")"
+cat >"$shared_hooks/post-checkout" <<EOF
+#!/bin/sh
+git update-ref refs/heads/rollback-moved "$moved_tip"
+exit 1
+EOF
+chmod +x "$shared_hooks/post-checkout"
+git -C "$fixture" push -q origin HEAD:refs/heads/rollback-moved
+git -C "$fixture" update-ref -d refs/remotes/origin/rollback-moved 2>/dev/null || true
+moved_out="$(new rollback-moved 2>&1)" && {
+    rm -f "$shared_hooks/post-checkout"
+    fail "worktree-new.sh reported success despite the moved-tip attach failure"
+}
+rm -f "$shared_hooks/post-checkout"
+[ "$(git -C "$fixture" rev-parse --verify --quiet refs/heads/rollback-moved || true)" = "$moved_tip" ] ||
+    fail "rollback discarded a branch tip this run did not create (harmon-init#916)"
+case "$moved_out" in *"leaving branch 'rollback-moved' alone"*) : ;; *) fail "the moved-tip rollback did not say it left the branch: $moved_out" ;; esac
+refute_exists "$fixture/.worktrees/rollback-moved" "the moved-tip rollback left its tree behind"
+git -C "$fixture" branch -D rollback-moved >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/rollback-moved
 
 # ── per-tree dependency install ──────────────────────────────────────
 echo "==> a Node repo gets its dependencies installed in the NEW tree"
