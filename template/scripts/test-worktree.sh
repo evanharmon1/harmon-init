@@ -310,6 +310,51 @@ fi
 rm_wt dirty --force >/dev/null || fail "worktree-rm.sh --force failed on a dirty tree"
 refute_exists "$fixture/.worktrees/dirty" "worktree-rm.sh --force left the directory behind"
 
+# ── edits hidden by skip-worktree / assume-unchanged ─────────────────
+# Git omits entries carrying either flag from `git status --porcelain` AND
+# `git diff-files` — hiding a locally modified tracked file is what the flags
+# are for — so the dirty-tree refusal above cannot see them, and before
+# harmon-init#785 an ordinary removal deleted the edit while reporting
+# success. Each case asserts the porcelain status is EMPTY first: were the
+# edit visible there, the ordinary dirty check would refuse and the case
+# would pass without exercising the hidden-edit guard at all.
+echo "==> worktree:rm refuses an edit hidden by skip-worktree, and --force overrides"
+new hidden-skip >/dev/null || fail "worktree-new.sh failed for the skip-worktree case"
+git -C "$fixture/.worktrees/hidden-skip" update-index --skip-worktree README.md
+printf 'hidden edit\n' >"$fixture/.worktrees/hidden-skip/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-skip" status --porcelain)" ] ||
+    fail "fixture assumption broken: a skip-worktree edit shows in git status"
+if rm_wt hidden-skip >"$test_tmp/hidden-skip.log" 2>&1; then
+    fail "worktree-rm.sh removed a tree with a skip-worktree-hidden edit without --force"
+fi
+grep -qx 'hidden edit' "$fixture/.worktrees/hidden-skip/README.md" 2>/dev/null ||
+    fail "the skip-worktree-hidden edit did not survive the refusal"
+grep -q 'README.md' "$test_tmp/hidden-skip.log" ||
+    fail "the refusal did not name the hidden path"
+rm_wt hidden-skip --force >/dev/null || fail "worktree-rm.sh --force failed on a skip-worktree-hidden edit"
+refute_exists "$fixture/.worktrees/hidden-skip" "worktree-rm.sh --force left the directory behind"
+
+echo "==> worktree:rm refuses an edit hidden by assume-unchanged"
+new hidden-assume >/dev/null || fail "worktree-new.sh failed for the assume-unchanged case"
+git -C "$fixture/.worktrees/hidden-assume" update-index --assume-unchanged README.md
+printf 'hidden edit\n' >"$fixture/.worktrees/hidden-assume/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-assume" status --porcelain)" ] ||
+    fail "fixture assumption broken: an assume-unchanged edit shows in git status"
+if rm_wt hidden-assume >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an assume-unchanged-hidden edit without --force"
+fi
+grep -qx 'hidden edit' "$fixture/.worktrees/hidden-assume/README.md" 2>/dev/null ||
+    fail "the assume-unchanged-hidden edit did not survive the refusal"
+rm_wt hidden-assume --force >/dev/null || fail "worktree-rm.sh --force failed on an assume-unchanged-hidden edit"
+refute_exists "$fixture/.worktrees/hidden-assume" "worktree-rm.sh --force left the directory behind"
+
+echo "==> an UNMODIFIED flagged entry does not block an ordinary removal"
+new hidden-clean >/dev/null || fail "worktree-new.sh failed for the unmodified-flag case"
+git -C "$fixture/.worktrees/hidden-clean" update-index --skip-worktree README.md
+rm_wt hidden-clean >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an unmodified skip-worktree entry"
+refute_exists "$fixture/.worktrees/hidden-clean" "worktree-rm.sh left the tree behind"
+
 # ── ignored local files are not silently deleted ─────────────────────
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.

@@ -221,6 +221,40 @@ else
     if [ "$force" -eq 0 ] && [ -n "$(git -C "$tree" status --porcelain)" ]; then
         die "$tree has uncommitted changes — commit or push them, or re-run with --force to discard them"
     fi
+    # `git status --porcelain` and `git diff-files` both OMIT entries flagged
+    # skip-worktree or assume-unchanged — hiding a locally modified tracked
+    # file is what the flags are for — so an edit to such a file is invisible
+    # to the check above and a plain removal would delete it while reporting
+    # success. The flags are visible to `git ls-files -v`: `S` marks
+    # skip-worktree and a lowercase tag letter marks assume-unchanged (`h` for
+    # an ordinary cached entry, `s` when both flags are set), so select those
+    # and compare each against its index blob directly. The grep is the
+    # short-circuit: in the common case nothing is flagged and no per-file
+    # work runs. A missing or unreadable file counts as a difference — a
+    # fresh checkout would restore it, so its absence is uncommitted local
+    # state exactly like an edit.
+    if [ "$force" -eq 0 ]; then
+        flagged_entries="$(git -C "$tree" ls-files -v | grep -E '^(S|[a-z]) ' || true)"
+        if [ -n "$flagged_entries" ]; then
+            hidden_paths=""
+            while IFS= read -r flagged_entry; do
+                [ -n "$flagged_entry" ] || continue
+                flagged_path="${flagged_entry#? }"
+                if ! git -C "$tree" cat-file blob ":$flagged_path" 2>/dev/null |
+                    cmp -s - "$tree/$flagged_path" 2>/dev/null; then
+                    hidden_paths="${hidden_paths}  ${flagged_path}
+"
+                fi
+            done <<EOF
+$flagged_entries
+EOF
+            if [ -n "$hidden_paths" ]; then
+                echo "worktree:rm: $tree has local edits hidden from git status by skip-worktree / assume-unchanged:" >&2
+                printf '%s' "$hidden_paths" >&2
+                die "clear the flag (git update-index --no-skip-worktree / --no-assume-unchanged <path>) and commit or push the edits, or re-run with --force to discard them"
+            fi
+        fi
+    fi
     # An in-progress rebase/merge/cherry-pick leaves a CLEAN status once it
     # stops at an edit, so the check above waves it through — while the
     # per-worktree git dir still holds the sequencer state and, after a `commit
