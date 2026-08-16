@@ -12,7 +12,9 @@
 #
 # Options:
 #   --branch <name>   branch to create/attach (default: the worktree name)
-#   --base <ref>      base for a NEW branch (default: HEAD)
+#   --base <ref>      base for a NEW branch (default: the main worktree's
+#                     HEAD, verified against its configured upstream; also
+#                     skips the live remote lookup for the branch name)
 #   --no-install      skip the per-tree dependency install
 #
 # Exits non-zero with the fix in the message when a precondition is missing, and
@@ -440,6 +442,7 @@ if [ "$base_origin" != "explicit" ] && ! git show-ref --verify --quiet "refs/hea
         if [ -n "$probe_sha" ]; then
             remote_matches="refs/remotes/$remote_name/$branch"
             remote_match_remote="$remote_name"
+            remote_probe_sha="$probe_sha"
             remote_count=$((remote_count + 1))
         fi
     done <<EOF
@@ -449,12 +452,25 @@ EOF
         die "branch '$branch' exists on more than one remote — pass --base <remote>/<branch> to choose one"
     fi
     if [ "$remote_count" -eq 1 ]; then
-        # Refresh the tracking ref to the tip the probe just saw, so the
-        # tracked checkout starts at the remote's current commit rather than
-        # a stale local mirror of it.
-        git_net fetch --quiet "$remote_match_remote" \
-            "+refs/heads/$branch:refs/remotes/$remote_match_remote/$branch" ||
+        # Fetched WITHOUT a destination refspec, so the only tracking refs
+        # updated are the ones the remote's OWN configured refspec maps —
+        # a synthesized identity destination could overwrite a tracking ref
+        # that a custom refspec maps a different branch into. The commit to
+        # attach is the one the probe saw ($remote_probe_sha), verified
+        # present after the fetch rather than read from any ref of ours.
+        git_net fetch --quiet "$remote_match_remote" "refs/heads/$branch" ||
             die "found branch '$branch' on remote '$remote_match_remote' but could not fetch it — retry, or pass --base <ref>"
+        if ! git rev-parse --verify --quiet "$remote_probe_sha^{commit}" >/dev/null; then
+            # The remote moved (or force-moved) between the probe and the
+            # fetch, so the probed commit never arrived. Probe once more:
+            # a stable answer this time is usable, anything else is a
+            # remote in motion.
+            probe_out="$(git_net ls-remote --heads "$remote_match_remote" "refs/heads/$branch")" ||
+                die "remote '$remote_match_remote' became unqueryable while fetching '$branch' — retry, or pass --base <ref>"
+            remote_probe_sha="$(printf '%s\n' "$probe_out" | awk -v ref="refs/heads/$branch" -F'\t' '$2 == ref {print $1; exit}')"
+            { [ -n "$remote_probe_sha" ] && git rev-parse --verify --quiet "$remote_probe_sha^{commit}" >/dev/null; } ||
+                die "branch '$branch' on remote '$remote_match_remote' is moving — retry, or pass --base <ref>"
+        fi
         remote_ref="$remote_matches"
     fi
 fi
@@ -465,17 +481,15 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
 elif [ -n "$remote_ref" ]; then
     echo "==> Creating branch '$branch' tracking $remote_match_remote/$branch"
     branch_created=1
-    # Created from the fetched SHA with tracking written as plain branch
-    # config, never via `--track` DWIM: --track derives the upstream by
-    # reverse-mapping the start point through the remote's fetch refspec, and
-    # under a non-identity refspec our synthesized refs/remotes/<r>/<b> ref
-    # maps to nothing — git aborts with "starting point is not a branch".
-    # branch.<name>.remote + branch.<name>.merge are correct under EVERY
-    # refspec, and @{u} then resolves through whatever mapping the repo
-    # actually configures.
-    remote_tip="$(git rev-parse --verify --quiet "$remote_ref^{commit}")" ||
-        die "fetched '$branch' from '$remote_match_remote' but cannot resolve it"
-    LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$remote_tip"
+    # Created from the PROBED commit with tracking written as plain branch
+    # config, never via `--track` DWIM and never via a ref this script
+    # wrote: --track derives the upstream by reverse-mapping the start point
+    # through the remote's fetch refspec and aborts under a non-identity
+    # one, and any destination ref we synthesized could collide with what a
+    # custom refspec maps there. branch.<name>.remote + branch.<name>.merge
+    # are correct under EVERY refspec, and @{u} then resolves through
+    # whatever mapping the repo actually configures.
+    LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$remote_probe_sha"
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
 else

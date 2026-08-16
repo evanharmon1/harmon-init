@@ -911,6 +911,35 @@ case "$base_out" in *"is behind baseup/$fixture_head_branch"*) : ;; *) fail "wor
 rm_wt fresh-base >/dev/null || fail "cleanup of the fresh-base tree failed"
 git -C "$fixture" branch -D fresh-base >/dev/null 2>&1 || true
 
+echo "==> losing the upstream ref-lock race still reads the winner's update"
+# The loser of two parallel worktree:new runs fails its own fetch while the
+# tracking ref already holds the winner's fresher value. Deterministic
+# reconstruction of that instant: the REMOTE is one commit past the winner's
+# value (commit-tree, so the local checkout never moves), the tracking ref
+# holds the winner's value, and a held ref lock makes THIS fetch fail — it
+# has an update to attempt and cannot take the lock. The loser must base on
+# the winner's value, read after the failed fetch, never return early on its
+# stale pre-fetch snapshot (which would base the tree on the local anchor).
+race_tip="$(git -C "$fixture" commit-tree -m "race remote tip" -p "$upstream_sha" "$(git -C "$fixture" rev-parse "$upstream_sha^{tree}")")"
+git -C "$fixture" push -q baseup "$race_tip:refs/heads/$fixture_head_branch"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
+race_lock="$fixture/.git/refs/remotes/baseup/$fixture_head_branch.lock"
+mkdir -p "$(dirname "$race_lock")"
+: >"$race_lock"
+race_out="$(new race-base 2>&1)" || {
+    rm -f "$race_lock"
+    fail "worktree-new.sh failed outright when the upstream fetch lost the ref lock"
+}
+rm -f "$race_lock"
+[ "$(git -C "$fixture/.worktrees/race-base" rev-parse HEAD)" = "$upstream_sha" ] ||
+    fail "the fetch-race loser based on its stale snapshot instead of the winner's ref (harmon-init#813)"
+case "$race_out" in *"could not fetch"*) : ;; *) fail "the lost ref-lock race produced no warning" ;; esac
+rm_wt race-base >/dev/null || fail "cleanup of the race-base tree failed"
+git -C "$fixture" branch -D race-base >/dev/null 2>&1 || true
+# Put the remote back at the winner's value for the cases that follow.
+git -C "$fixture" push -q -f baseup "$upstream_sha:refs/heads/$fixture_head_branch"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
+
 echo "==> a non-identity fetch refspec still verifies against the true source branch"
 # The upstream's short name and its source branch deliberately differ
 # (+refs/heads/trunk-src:refs/remotes/niup/localname): a helper that derives
@@ -973,6 +1002,38 @@ git -C "$fixture" branch -D attach-diverged >/dev/null 2>&1 || true
 git -C "$fixture" branch --unset-upstream >/dev/null 2>&1 || true
 git -C "$fixture" remote remove baseup
 git -C "$fixture" reset -q --hard "$anchor_sha"
+
+echo "==> a remote-only branch under a custom refspec never clobbers foreign tracking refs"
+# The remote maps ONLY decoy into refs/remotes/cref/victim. Creating the
+# remote-only branch 'victim' must attach it at the remote's tip via the
+# probe — not via any ref this script writes — and the mapped tracking ref
+# that belongs to decoy must be exactly as it was afterwards.
+cref_up="$test_tmp/cref-up.git"
+git init -q --bare "$cref_up"
+git -C "$fixture" remote add cref "$cref_up"
+git -C "$fixture" config remote.cref.fetch "+refs/heads/decoy:refs/remotes/cref/victim"
+git -C "$fixture" push -q cref HEAD:refs/heads/decoy
+decoy_tip="$(git -C "$fixture" rev-parse HEAD)"
+printf 'victim work\n' >"$fixture/VICTIM.md"
+git -C "$fixture" add VICTIM.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: advance the victim branch" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the victim advance failed"
+git -C "$fixture" push -q cref HEAD:refs/heads/victim
+victim_tip="$(git -C "$fixture" rev-parse HEAD)"
+git -C "$fixture" reset -q --hard "$decoy_tip"
+git -C "$fixture" update-ref refs/remotes/cref/victim "$decoy_tip"
+new victim >/dev/null || fail "worktree-new.sh failed for a remote-only branch under a custom refspec"
+[ "$(git -C "$fixture/.worktrees/victim" rev-parse HEAD)" = "$victim_tip" ] ||
+    fail "worktree-new.sh did not attach 'victim' at the remote tip under a custom refspec"
+[ "$(git -C "$fixture" rev-parse refs/remotes/cref/victim)" = "$decoy_tip" ] ||
+    fail "worktree-new.sh clobbered a tracking ref the custom refspec maps from another branch (harmon-init#840)"
+[ "$(git -C "$fixture" config branch.victim.remote)" = "cref" ] ||
+    fail "the custom-refspec branch is not configured to track its remote"
+[ "$(git -C "$fixture" config branch.victim.merge)" = "refs/heads/victim" ] ||
+    fail "the custom-refspec branch tracks the wrong merge ref"
+rm_wt victim >/dev/null || fail "cleanup of the victim tree failed"
+git -C "$fixture" branch -D victim >/dev/null 2>&1 || true
+git -C "$fixture" remote remove cref
 
 echo "==> a dot-segment name cannot smuggle a worktree inside another"
 new dotparent >/dev/null || fail "worktree-new.sh failed creating the dot-parent tree"
