@@ -11,6 +11,15 @@
 # hook assertion runs everywhere — including CI runners that carry no lefthook.
 set -euo pipefail
 
+# The suite reads nothing from stdin, and its children must not inherit one
+# that never ends: lefthook blocks `run post-checkout` until stdin reaches EOF
+# (observed on v2.1.10), so an invocation context holding stdin open — an
+# agent harness socket, a task runner pipe — deadlocks the fixture's hooks
+# (harmon-init#802). /dev/null hands every child an immediate EOF. One case
+# below deliberately re-introduces a never-ending stdin to prove the
+# entrypoint itself is immune.
+exec </dev/null
+
 repo="$(git rev-parse --show-toplevel)"
 
 # Hooks export GIT_DIR/GIT_WORK_TREE; left set, every `git` below would retarget
@@ -903,7 +912,20 @@ rm -f "$shared_hooks/post-checkout"
 
 echo "==> --no-install skips the dependency install"
 : >"$pnpm_marker"
-new no-install-tree --no-install >/dev/null || fail "worktree-new.sh --no-install failed"
+# This case runs real lefthook's post-checkout (the custom shim above is gone,
+# so worktree-new.sh reinstalled lefthook's own shims), and it runs under a
+# stdin that never reaches EOF — the agent-session condition the suite's own
+# `exec </dev/null` shields everything else from. lefthook blocks
+# `run post-checkout` until stdin EOF (harmon-init#802), so a worktree-new.sh
+# that ties the deferred hook to the caller's stdin hangs here into the #792
+# bound and fails the suite instead of passing by accident.
+mkfifo "$test_tmp/hostile-stdin"
+sleep 300 >"$test_tmp/hostile-stdin" &
+hostile_stdin_pid=$!
+new no-install-tree --no-install <"$test_tmp/hostile-stdin" >/dev/null ||
+    fail "worktree-new.sh --no-install failed under a non-EOF stdin"
+kill "$hostile_stdin_pid" 2>/dev/null || true
+wait "$hostile_stdin_pid" 2>/dev/null || true
 if [ -s "$pnpm_marker" ]; then
     fail "worktree-new.sh ran the installer despite --no-install"
 fi
