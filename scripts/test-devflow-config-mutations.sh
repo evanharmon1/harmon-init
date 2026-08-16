@@ -64,6 +64,15 @@ def edit_registry(tmp, fn):
         json.dump(reg, open(p, "w"), indent=2)
 
 
+def edit_label_registry(tmp, fn):
+    import json
+    for rel in ("label-registry.json", "template/label-registry.json"):
+        p = os.path.join(tmp, rel)
+        reg = json.load(open(p))
+        fn(reg)
+        json.dump(reg, open(p, "w"), indent=2)
+
+
 def run(tmp):
     return subprocess.run(
         ["bash", "scripts/test-devflow-config.sh"],
@@ -142,6 +151,20 @@ def drop_frontier(tmp):
     edit_toml(tmp, lambda t: re.sub(
         r"# Opus-class.*?qwen   = \"max\"\n\n", "", t, flags=re.S))
 rejects("dropping a ladder table", drop_frontier, "missing table(s) for frontier")
+# Same mutation, different assertion: dropping frontier also strands
+# standard's `escalate_to = ["frontier"]`, so the referential-chain check must
+# fire too — proving that rejection independently of the completeness error.
+rejects("dropping a ladder table strands its escalate_to (referential)",
+        drop_frontier, "is not referential")
+
+def add_extra_tier(tmp):
+    def fn(reg):
+        for fam in reg.get("families", []):
+            if fam.get("family") == "tier":
+                fam["values"].append({"value": "ultra", "description": "bogus extra rung"})
+    edit_label_registry(tmp, fn)
+rejects("an extra provisioned tier value beyond the fixed ladder",
+        add_extra_tier, "does not match the ADR-fixed ladder")
 
 def drop_all_tiers(tmp):
     edit_toml(tmp, lambda t: re.sub(

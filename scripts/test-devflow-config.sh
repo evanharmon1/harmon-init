@@ -242,13 +242,37 @@ for path in config_paths:
     models_by_family = registry_models(agent_registry_path)
     local_families = local_harness_families(agent_registry_path)
 
-    # The ADR-fixed ladder (plus `adaptive`) must be provisioned; a drifted
-    # registry that dropped a rung would silently narrow what config can name.
-    missing_ladder = [t for t in (*LADDER, "adaptive") if t not in valid_tiers]
-    if missing_ladder:
+    # The provisioned tier vocabulary must EQUAL the ADR-fixed ladder plus
+    # `adaptive` — both directions. A missing rung silently narrows what config
+    # can name; an EXTRA value (a future `tier:ultra`) provisions a label with no
+    # ladder position, table, or rank, leaving strongest-wins resolution
+    # undefined. The ladder is ADR-fixed, so a legitimate new rung is an ADR
+    # change that updates LADDER here too — equality is the right coupling.
+    expected_tiers = set(LADDER) | {"adaptive"}
+    if valid_tiers != expected_tiers:
+        missing = sorted(expected_tiers - valid_tiers)
+        extra = sorted(valid_tiers - expected_tiers)
+        detail = []
+        if missing:
+            detail.append(f"missing {', '.join(missing)}")
+        if extra:
+            detail.append(f"unexpected {', '.join(extra)} (no ladder position/table/rank)")
         failures.append(
-            f"{path}: tier value(s) {', '.join(missing_ladder)} are not provisioned "
-            f"in {label_registry_path}"
+            f"{path}: provisioned tier vocabulary in {label_registry_path} does not "
+            f"match the ADR-fixed ladder — {'; '.join(detail)}"
+        )
+    expected_methods = set(METHOD_RANK)
+    if valid_methods != expected_methods:
+        missing = sorted(expected_methods - valid_methods)
+        extra = sorted(valid_methods - expected_methods)
+        detail = []
+        if missing:
+            detail.append(f"missing {', '.join(missing)}")
+        if extra:
+            detail.append(f"unexpected {', '.join(extra)} (not in the fixed method rank)")
+        failures.append(
+            f"{path}: provisioned method vocabulary in {label_registry_path} does not "
+            f"match the ADR-fixed set — {'; '.join(detail)}"
         )
 
     dtier = cfg.get("default_tier")
