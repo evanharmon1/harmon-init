@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.32.0](https://github.com/evanharmon1/harmon-init/compare/v4.31.0...v4.32.0) (2026-08-16)
+
+
+### Features
+
+* route the challenge/review stage through the gauntlet skill ([#895](https://github.com/evanharmon1/harmon-init/issues/895)) ([1e7dceb](https://github.com/evanharmon1/harmon-init/commit/1e7dceb4f81ca9bc377e3ec09cf989a0b2a158a5))
+
+
+### Bug Fixes
+
+* **setup:** mark setup:gh-scopes interactive so its TTY guard can pass ([#896](https://github.com/evanharmon1/harmon-init/issues/896)) ([535ffe7](https://github.com/evanharmon1/harmon-init/commit/535ffe706ea4d6e663685b554bd4db94434073c7))
+
 ## [4.31.0](https://github.com/evanharmon1/harmon-init/compare/v4.30.3...v4.31.0) (2026-08-15)
 
 
