@@ -1171,33 +1171,74 @@ case "$base_out" in *"is behind baseup/$fixture_head_branch"*) : ;; *) fail "wor
 rm_wt fresh-base >/dev/null || fail "cleanup of the fresh-base tree failed"
 git -C "$fixture" branch -D fresh-base >/dev/null 2>&1 || true
 
-echo "==> losing the upstream ref-lock race still reads the winner's update"
+echo "==> a failed refresh with a concurrently-updated tracking ref proceeds on that update"
 # The loser of two parallel worktree:new runs fails its own fetch while the
-# tracking ref already holds the winner's fresher value. Deterministic
-# reconstruction of that instant: the REMOTE is one commit past the winner's
-# value (commit-tree, so the local checkout never moves), the tracking ref
-# holds the winner's value, and a held ref lock makes THIS fetch fail — it
-# has an update to attempt and cannot take the lock. The loser must base on
-# the winner's value, read after the failed fetch, never return early on its
-# stale pre-fetch snapshot (which would base the tree on the local anchor).
-race_tip="$(git -C "$fixture" commit-tree -m "race remote tip" -p "$upstream_sha" "$(git -C "$fixture" rev-parse "$upstream_sha^{tree}")")"
-git -C "$fixture" push -q baseup "$race_tip:refs/heads/$fixture_head_branch"
-git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
-race_lock="$fixture/.git/refs/remotes/baseup/$fixture_head_branch.lock"
-mkdir -p "$(dirname "$race_lock")"
-: >"$race_lock"
-race_out="$(new race-base 2>&1)" || {
-    rm -f "$race_lock"
-    fail "worktree-new.sh failed outright when the upstream fetch lost the ref lock"
-}
-rm -f "$race_lock"
-[ "$(git -C "$fixture/.worktrees/race-base" rev-parse HEAD)" = "$upstream_sha" ] ||
-    fail "the fetch-race loser based on its stale snapshot instead of the winner's ref (harmon-init#813)"
-case "$race_out" in *"could not fetch"*) : ;; *) fail "the lost ref-lock race produced no warning" ;; esac
-rm_wt race-base >/dev/null || fail "cleanup of the race-base tree failed"
-git -C "$fixture" branch -D race-base >/dev/null 2>&1 || true
-# Put the remote back at the winner's value for the cases that follow.
-git -C "$fixture" push -q -f baseup "$upstream_sha:refs/heads/$fixture_head_branch"
+# winner's fetch refreshes the tracking ref mid-run. Deterministic
+# reconstruction: a git shim plays the winner — on the loser's anonymous
+# URL fetch it updates the tracking ref to the remote's value and then
+# fails the fetch. The loser must read that in-run movement as positive
+# evidence of a concurrent refresh and verify against it (harmon-init#813),
+# rather than refusing (harmon-init#916's fail-closed default) or basing on
+# its stale pre-fetch snapshot.
+evshim_dir="$test_tmp/evshim"
+mkdir -p "$evshim_dir"
+ev_real_git="$(command -v git)"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$anchor_sha"
+cat >"$evshim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
+  saw_fetch=0
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "fetch" ]; then saw_fetch=1; fi
+    if [ \$saw_fetch -eq 1 ] && [ "\$_arg" = "$base_upstream" ]; then
+      "$ev_real_git" -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
+      exit 1
+    fi
+  done
+fi
+exec "$ev_real_git" "\$@"
+SHIM
+chmod +x "$evshim_dir/git"
+evidence_out="$(cd "$fixture" && PATH="$evshim_dir:$PATH" WTSHIM_EVIDENCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh evidence-base 2>&1)" ||
+    fail "worktree-new.sh refused although a concurrent fetch refreshed the tracking ref: $evidence_out"
+[ "$(git -C "$fixture/.worktrees/evidence-base" rev-parse HEAD)" = "$upstream_sha" ] ||
+    fail "the loser did not base on the concurrently-refreshed tracking value (harmon-init#813)"
+case "$evidence_out" in *"concurrent fetch refreshed"*) : ;; *) fail "the concurrent-evidence path produced no warning" ;; esac
+rm_wt evidence-base >/dev/null || fail "cleanup of the evidence-base tree failed"
+git -C "$fixture" branch -D evidence-base >/dev/null 2>&1 || true
+
+echo "==> a failed refresh with an unmoved tracking ref refuses, and --base opts out"
+# harmon-init#916 P2: proceeding on the last-known tracking ref after a
+# failed refresh silently defeats the freshness guarantee. With no in-run
+# movement of the tracking ref there is no evidence anything refreshed it,
+# so the creation must fail closed — the same policy the branch probes
+# apply — and name --base as the deliberate opt-out.
+cat >"$evshim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
+  saw_fetch=0
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "fetch" ]; then saw_fetch=1; fi
+    if [ \$saw_fetch -eq 1 ] && [ "\$_arg" = "$base_upstream" ]; then
+      exit 1
+    fi
+  done
+fi
+exec "$ev_real_git" "\$@"
+SHIM
+chmod +x "$evshim_dir/git"
+deadend_out="$(cd "$fixture" && PATH="$evshim_dir:$PATH" WTSHIM_EVIDENCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh deadend-base 2>&1)" &&
+    fail "worktree-new.sh based a new tree on an unverifiable upstream (harmon-init#916)"
+case "$deadend_out" in *"could not verify"*) : ;; *) fail "the fail-closed refusal did not say what it could not verify: $deadend_out" ;; esac
+case "$deadend_out" in *"--base"*) : ;; *) fail "the fail-closed refusal named no --base opt-out" ;; esac
+refute_exists "$fixture/.worktrees/deadend-base" "the fail-closed refusal left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/deadend-base; then
+    fail "the fail-closed refusal left the branch behind"
+fi
+new deadend-base --base HEAD >/dev/null || fail "an explicit --base did not skip the unverifiable-upstream refusal"
+rm_wt deadend-base >/dev/null || fail "cleanup of the deadend-base tree failed"
+git -C "$fixture" branch -D deadend-base >/dev/null 2>&1 || true
+# Restore the tracking ref the cases above moved.
 git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
 
 echo "==> a non-identity fetch refspec still verifies against the true source branch"
@@ -1262,6 +1303,44 @@ git -C "$fixture" branch -D attach-diverged >/dev/null 2>&1 || true
 git -C "$fixture" branch --unset-upstream >/dev/null 2>&1 || true
 git -C "$fixture" remote remove baseup
 git -C "$fixture" reset -q --hard "$anchor_sha"
+
+echo "==> the freshness check never writes a local branch mapped by a custom refspec"
+# harmon-init#916 P1: @{upstream}'s full name is wherever the user's refspec
+# maps it — including refs/heads/*. The old form force-fetched
+# "+<merge>:<that ref>", unreferencing local-only commits; and even a
+# destination-less fetch of the mapped source triggers git's opportunistic
+# tracking update, which force-writes the configured mapping ("(forced
+# update)" observed even without "+" in the refspec). Only the anonymous
+# URL fetch leaves the user's refs alone; this case pins exactly that: the
+# freshness answer must come from the remote while the mapped LOCAL branch
+# keeps its local-only commit.
+p1_up="$test_tmp/p1-up.git"
+git init -q --bare "$p1_up"
+git -C "$fixture" remote add p1rem "$p1_up"
+p1_anchor="$(git -C "$fixture" rev-parse HEAD)"
+p1_local="$(git -C "$fixture" commit-tree -m "local-only work" -p "$p1_anchor" "$(git -C "$fixture" rev-parse "$p1_anchor^{tree}")")"
+p1_tip="$(git -C "$fixture" commit-tree -m "remote advance" -p "$p1_anchor" "$(git -C "$fixture" rev-parse "$p1_anchor^{tree}")")"
+# Pushes happen BEFORE the custom refspec exists: a push also updates the
+# ref the fetch refspec maps its branch to, so pushing afterwards would
+# write refs/heads/local-mirror itself and pre-empt the very state this
+# case plants.
+git -C "$fixture" push -q p1rem HEAD:refs/heads/trunk-src
+git -C "$fixture" push -q p1rem "$p1_tip:refs/heads/trunk-src"
+git -C "$fixture" config remote.p1rem.fetch "+refs/heads/trunk-src:refs/heads/local-mirror"
+git -C "$fixture" update-ref refs/heads/local-mirror "$p1_local"
+git -C "$fixture" config "branch.$fixture_head_branch.remote" p1rem
+git -C "$fixture" config "branch.$fixture_head_branch.merge" refs/heads/trunk-src
+new p1-fresh >/dev/null || fail "worktree-new.sh failed under a refs/heads-mapped upstream"
+[ "$(git -C "$fixture/.worktrees/p1-fresh" rev-parse HEAD)" = "$p1_tip" ] ||
+    fail "the freshness check did not base on the remote tip under a refs/heads mapping"
+[ "$(git -C "$fixture" rev-parse refs/heads/local-mirror)" = "$p1_local" ] ||
+    fail "the freshness check rewrote a local branch mapped by a custom refspec (harmon-init#916 P1)"
+rm_wt p1-fresh >/dev/null || fail "cleanup of the p1-fresh tree failed"
+git -C "$fixture" branch -D p1-fresh >/dev/null 2>&1 || true
+git -C "$fixture" branch -D local-mirror >/dev/null 2>&1 || true
+git -C "$fixture" config --unset "branch.$fixture_head_branch.remote" || true
+git -C "$fixture" config --unset "branch.$fixture_head_branch.merge" || true
+git -C "$fixture" remote remove p1rem
 
 echo "==> a remote-only branch under a custom refspec never clobbers foreign tracking refs"
 # The remote maps ONLY decoy into refs/remotes/cref/victim. Creating the
@@ -1721,6 +1800,55 @@ fi
 refute_exists "$fixture/.worktrees/dotparent/child" "the smuggled nested worktree was created"
 rm_wt dotparent >/dev/null || fail "cleanup of the dot-parent tree failed"
 refute_exists "$test_tmp/evil" "worktree-new.sh escaped the fixture directory"
+
+echo "==> post-checkout at attach time already sees the remote-only branch tracked"
+# harmon-init#916: `git worktree add` fires any HAND-WRITTEN post-checkout
+# hook itself (LEFTHOOK=0 suppresses only lefthook-shaped shims), so
+# tracking config written after the add left such a hook observing an
+# untracked branch. The hook below records what @{upstream} resolves to at
+# checkout time; the branch and its tracking config must already be there.
+cat >"$shared_hooks/post-checkout" <<EOF
+#!/bin/sh
+git rev-parse --abbrev-ref '@{upstream}' >"$test_tmp/track-order.log" 2>/dev/null ||
+    echo "UNTRACKED" >"$test_tmp/track-order.log"
+exit 0
+EOF
+chmod +x "$shared_hooks/post-checkout"
+git -C "$fixture" push -q origin HEAD:refs/heads/track-order
+git -C "$fixture" update-ref -d refs/remotes/origin/track-order 2>/dev/null || true
+new track-order >/dev/null || fail "worktree-new.sh failed for the tracking-order case"
+grep -qx "origin/track-order" "$test_tmp/track-order.log" ||
+    fail "post-checkout observed the remote-only branch untracked at attach time (harmon-init#916): $(cat "$test_tmp/track-order.log")"
+rm -f "$shared_hooks/post-checkout"
+rm_wt track-order >/dev/null || fail "cleanup of the track-order tree failed"
+git -C "$fixture" branch -D track-order >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/track-order
+
+echo "==> a failed attach on the remote-only path rolls the pre-created branch back"
+# The branch now exists BEFORE `git worktree add` (harmon-init#916), so a
+# failing attach must take the pre-created branch and its tree with it —
+# `git branch` refusing an existing name is what makes that deletion
+# unambiguously safe (branch_owned in the rollback).
+cat >"$shared_hooks/post-checkout" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$shared_hooks/post-checkout"
+git -C "$fixture" push -q origin HEAD:refs/heads/rollback-remote
+git -C "$fixture" update-ref -d refs/remotes/origin/rollback-remote 2>/dev/null || true
+if new rollback-remote >/dev/null 2>&1; then
+    rm -f "$shared_hooks/post-checkout"
+    fail "worktree-new.sh reported success despite a failing attach on the remote-only path"
+fi
+rm -f "$shared_hooks/post-checkout"
+refute_exists "$fixture/.worktrees/rollback-remote" "the failed remote-only attach left its tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/rollback-remote; then
+    fail "the failed remote-only attach left its pre-created branch behind"
+fi
+if git -C "$fixture" worktree list --porcelain | grep -q "rollback-remote"; then
+    fail "the failed remote-only attach left a registry record behind"
+fi
+git -C "$fixture" push -q origin :refs/heads/rollback-remote
 
 # ── per-tree dependency install ──────────────────────────────────────
 echo "==> a Node repo gets its dependencies installed in the NEW tree"

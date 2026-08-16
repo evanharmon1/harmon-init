@@ -36,7 +36,19 @@
 #   cannot be told apart from here (default container hostnames differ,
 #   which is the intended guard). An acquirer that crashes inside the
 #   two-statement claim window leaves an ownerless entry needing the
-#   manual remedy its refusal message names.
+#   manual remedy its refusal message names. And an operation spawned into
+#   its wrapper's process group (a non-job-control shell, a CI/task
+#   runner) records that INHERITED pgid: kill the operation alone and the
+#   surviving wrapper keeps the group non-empty, so the lock reads alive
+#   and refuses with the manual remedy instead of self-breaking
+#   (harmon-init#916). Accepted, in the fail-closed direction: a group
+#   survivor cannot be told apart from the operation's own still-running
+#   children post-mortem — children reparent but keep their pgid, and the
+#   dead pid's ancestry is gone — so breaking there is a data-loss path;
+#   and taking a dedicated process group instead would detach the
+#   operation from terminal job control, so a caller's Ctrl-C no longer
+#   reaches it and the "stuck live lock" this would fix is reproduced by
+#   the fix itself.
 # - Lock entries live in the COMMON git dir (shared across linked
 #   worktrees; `--git-path` would resolve per-worktree). `/` in names is
 #   encoded as `%` and entry suffixes use `+`; both characters are outside

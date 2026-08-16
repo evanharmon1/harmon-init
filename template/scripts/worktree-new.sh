@@ -198,35 +198,86 @@ verify_default_base() {
     # Everything resolves from $default_base_branch, captured with $base —
     # never from a fresh HEAD read (the main worktree can have switched
     # branches since). The remote name comes from branch config, never from
-    # splitting ref text (a remote name may itself contain '/'); the fetch
-    # SOURCE comes from branch.<name>.merge, never from the abbreviated
-    # upstream name (a non-identity fetch refspec makes them differ); and the
-    # fetch DESTINATION is the upstream's full symbolic ref, never a
-    # refs/remotes/ prefix guess (a custom refspec can map outside
-    # refs/remotes/, and an ambiguous short name would mislead a prefix).
+    # splitting ref text (a remote name may itself contain '/'), and the
+    # probe/fetch SOURCE comes from branch.<name>.merge, never from the
+    # abbreviated upstream name (a non-identity fetch refspec makes them
+    # differ).
     [ -n "$default_base_branch" ] || return 0
     upstream_remote="$(git -C "$main_root" config --get "branch.$default_base_branch.remote" 2>/dev/null || true)"
     upstream_merge="$(git -C "$main_root" config --get "branch.$default_base_branch.merge" 2>/dev/null || true)"
     upstream_full="$(git -C "$main_root" rev-parse --symbolic-full-name "$default_base_branch@{upstream}" 2>/dev/null || true)"
     { [ -n "$upstream_remote" ] && [ -n "$upstream_full" ]; } || return 0
     upstream_label="$(git -C "$main_root" rev-parse --abbrev-ref "$default_base_branch@{upstream}" 2>/dev/null || echo "$upstream_full")"
-    fetch_failed=0
     if [ "$upstream_remote" != "." ]; then
         [ -n "$upstream_merge" ] || return 0
-        git_net fetch --quiet "$upstream_remote" \
-            "+$upstream_merge:$upstream_full" 2>/dev/null ||
-            fetch_failed=1
+        # The freshness answer is read LIVE off the remote and lands in no
+        # ref of ours (harmon-init#916). The earlier form fetched
+        # "+$upstream_merge:$upstream_full" — but @{upstream}'s full name is
+        # wherever the user's refspec maps it, including refs/heads/*, so
+        # that synthesized force-refspec could overwrite a LOCAL branch and
+        # unref local-only commits merely because worktree:new refreshed the
+        # base. Nor is dropping the destination enough: a fetch that names a
+        # mapped source triggers git's opportunistic tracking update, which
+        # force-writes the configured mapping even without "+" in the
+        # refspec (verified empirically on git 2.x — "(forced update)" on a
+        # refs/heads/* mapping). Fetching the remote's URL anonymously is
+        # what actually detaches from remote.<name>.fetch: objects arrive,
+        # FETCH_HEAD moves, and no configured mapping is consulted.
+        verify_known_before="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
+        upstream_url="$(git -C "$main_root" remote get-url "$upstream_remote" 2>/dev/null || true)"
+        verify_failed=0
+        probe_out="$(git_net ls-remote "$upstream_remote" "$upstream_merge")" || verify_failed=1
+        if [ "$verify_failed" -eq 0 ]; then
+            upstream_tip="$(printf '%s\n' "$probe_out" | awk -v ref="$upstream_merge" -F'\t' '$2 == ref {print $1; exit}')"
+            if [ -z "$upstream_tip" ]; then
+                # Nothing to verify against: the configured source branch is
+                # gone from the remote, and the local ref is all there is.
+                echo "==> Note: '$upstream_remote' no longer has ${upstream_merge#refs/heads/} — basing on the local ${base_label}"
+                return 0
+            fi
+            [ -n "$upstream_url" ] || verify_failed=1
+        fi
+        if [ "$verify_failed" -eq 0 ]; then
+            git_net fetch --quiet "$upstream_url" "$upstream_merge" || verify_failed=1
+        fi
+        if [ "$verify_failed" -eq 0 ]; then
+            # One unconditional post-fetch probe, exactly as the remote-only
+            # branch path below: the remote can advance between the first
+            # probe and the fetch, and a stale tip resolving locally is no
+            # evidence it stayed current. A tip that arrives unresolvable
+            # means the remote moved again mid-operation, which no
+            # client-side sequence can chase.
+            probe_out="$(git_net ls-remote "$upstream_remote" "$upstream_merge")" || verify_failed=1
+        fi
+        if [ "$verify_failed" -eq 0 ]; then
+            upstream_tip="$(printf '%s\n' "$probe_out" | awk -v ref="$upstream_merge" -F'\t' '$2 == ref {print $1; exit}')"
+            if [ -z "$upstream_tip" ]; then
+                echo "==> Note: '$upstream_remote' no longer has ${upstream_merge#refs/heads/} — basing on the local ${base_label}"
+                return 0
+            fi
+            git -C "$main_root" rev-parse --verify --quiet "$upstream_tip^{commit}" >/dev/null ||
+                die "${upstream_label} is moving on '$upstream_remote' — retry, or pass --base <ref>"
+        fi
+        if [ "$verify_failed" -eq 1 ]; then
+            # An unverifiable upstream fails CLOSED (harmon-init#916), the
+            # same policy the branch probes apply: proceeding on the
+            # last-known tracking ref silently defeats the freshness
+            # guarantee this function exists for. The one exception is
+            # positive evidence of a concurrent refresh — the tracking ref
+            # moved between this run's snapshot and the failure, so a
+            # parallel worktree:new won the race and its answer is current
+            # enough to verify against (harmon-init#813).
+            verify_known_after="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
+            if [ -n "$verify_known_after" ] && [ "$verify_known_after" != "$verify_known_before" ]; then
+                echo "worktree:new: warning: could not fetch '$upstream_remote' — a concurrent fetch refreshed ${upstream_label} mid-run; verifying ${base_label} against that update (harmon-init#813)" >&2
+                upstream_tip="$verify_known_after"
+            else
+                die "could not verify ${base_label} against ${upstream_label} — offline, unreachable, or needs interactive credentials; retry with network/auth, or pass --base <ref> to skip the freshness check"
+            fi
+        fi
+    else
+        upstream_tip="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
     fi
-    # The comparison reads the tracking ref AFTER the fetch attempt, success
-    # or not: a parallel worktree:new fetching the same upstream can win the
-    # ref lock and fail THIS fetch while leaving the ref freshly updated —
-    # returning early on failure would base the loser on the stale snapshot.
-    # Only a genuinely unreadable state keeps the base as captured, and a
-    # failed fetch still says so out loud.
-    if [ "$fetch_failed" -eq 1 ]; then
-        echo "worktree:new: warning: could not fetch '$upstream_remote' — verifying ${base_label} against the last-known ${upstream_label}, which may itself be stale (harmon-init#813)" >&2
-    fi
-    upstream_tip="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
     { [ -n "$upstream_tip" ] && [ "$upstream_tip" != "$base" ]; } || return 0
     if git -C "$main_root" merge-base --is-ancestor "$base" "$upstream_tip"; then
         # Behind: hand out the current upstream tip, not the stale local one.
@@ -373,6 +424,7 @@ fi
 # directory: every exit path from here owns it and must clean it up.
 tree_created=1
 branch_created=0
+branch_owned=0
 probe_dir=""
 cleanup() {
     status=$?
@@ -399,7 +451,13 @@ cleanup() {
         # refusal is relaxed, this stays correct instead of silently deleting a
         # stranger's branch.
         branch_is_ours=0
-        if [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
+        if [ "$branch_owned" -eq 1 ]; then
+            # The remote-only path creates the branch with an explicit
+            # `git branch`, which refuses an existing name — success there is
+            # unambiguous ownership, with no registry inference needed
+            # (harmon-init#916).
+            branch_is_ours=1
+        elif [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
             git worktree list --porcelain | grep -qxF "worktree $tree"; then
             branch_is_ours=1
         fi
@@ -525,7 +583,6 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
     LEFTHOOK=0 git worktree add "$tree" "$branch"
 elif [ -n "$remote_ref" ]; then
     echo "==> Creating branch '$branch' tracking $remote_match_remote/$branch"
-    branch_created=1
     # Created from the PROBED commit with tracking written as plain branch
     # config, never via `--track` DWIM and never via a ref this script
     # wrote: --track derives the upstream by reverse-mapping the start point
@@ -534,9 +591,21 @@ elif [ -n "$remote_ref" ]; then
     # custom refspec maps there. branch.<name>.remote + branch.<name>.merge
     # are correct under EVERY refspec, and @{u} then resolves through
     # whatever mapping the repo actually configures.
-    LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$remote_probe_sha"
+    #
+    # Branch and tracking config land BEFORE the worktree attach
+    # (harmon-init#916): `git worktree add` fires any hand-written
+    # post-checkout hook itself — LEFTHOOK=0 suppresses only lefthook-shaped
+    # shims — and a hook that resolves @{upstream} must never observe the
+    # branch untracked. `git branch` refuses an existing name, so its
+    # success is unambiguous ownership: rollback deletes on that evidence
+    # alone (branch_owned), where the add -b path must infer ownership from
+    # the registry.
+    git branch "$branch" "$remote_probe_sha"
+    branch_created=1
+    branch_owned=1
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
+    LEFTHOOK=0 git worktree add "$tree" "$branch"
     # Honesty check on the tracking claim: pull and push work off the branch
     # config just written, but @{upstream}-based tooling (status ahead/behind,
     # verify_default_base if this branch ever becomes the main HEAD) resolves
