@@ -2000,6 +2000,43 @@ refute_exists "$fixture/.worktrees/rollback-moved" "the moved-tip rollback left 
 git -C "$fixture" branch -D rollback-moved >/dev/null 2>&1 || true
 git -C "$fixture" push -q origin :refs/heads/rollback-moved
 
+echo "==> rollback leaves a branch a non-cooperating client attached mid-window"
+# challenge round 5: a raw `git worktree add` (outside the branch lock)
+# can attach the just-published branch between this run's update-ref and
+# its own failing attach. update-ref -d bypasses git's checked-out guard,
+# so rollback must scan for foreign attachments and leave the ref — no
+# commit can be orphaned (any commit moves the tip and the
+# compare-and-delete refuses), but the attach is not this run's to break.
+git -C "$fixture" push -q origin HEAD:refs/heads/attachrace
+git -C "$fixture" update-ref -d refs/remotes/origin/attachrace 2>/dev/null || true
+rival_tree="$test_tmp/rival-tree"
+rm -f "$test_tmp/attachrace-fired"
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_ATTACH_RACE" = "1" ] && [ ! -e "$test_tmp/attachrace-fired" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "$fixture/.worktrees/attachrace" ]; then
+      : >"$test_tmp/attachrace-fired"
+      "$real_git" -C "$fixture" worktree add "$rival_tree" attachrace >/dev/null 2>&1
+      break
+    fi
+  done
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+attachrace_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_ATTACH_RACE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh attachrace 2>&1)" &&
+    fail "worktree-new.sh reported success although its branch was attached elsewhere mid-run"
+git -C "$fixture" worktree list --porcelain | grep -qx "worktree $rival_tree" ||
+    fail "fixture assumption broken: the rival attach did not register"
+git -C "$fixture" show-ref --verify --quiet refs/heads/attachrace ||
+    fail "rollback deleted a branch another worktree had attached (harmon-init#916)"
+case "$attachrace_out" in *"another worktree has it checked out"*) : ;; *) fail "the foreign-attach rollback did not say it left the branch: $attachrace_out" ;; esac
+refute_exists "$fixture/.worktrees/attachrace" "the foreign-attach rollback left its own tree behind"
+git -C "$fixture" worktree remove --force "$rival_tree" >/dev/null 2>&1 || true
+git -C "$fixture" branch -D attachrace >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/attachrace
+
 echo "==> rollback keeps the branch when its worktree could not be removed"
 # challenge round 3: update-ref is plumbing that bypasses git's
 # checked-out guard, so deleting the branch under a tree the removal

@@ -523,6 +523,16 @@ cleanup() {
             # HEAD (challenge round 3).
             if [ "$rollback_tree_gone" -eq 0 ]; then
                 echo "worktree:new: leaving branch '$branch' alone — its worktree could not be removed and still has it checked out" >&2
+            elif git worktree list --porcelain | grep -qx "branch refs/heads/$branch"; then
+                # A non-cooperating client — a raw `git worktree add`,
+                # outside the branch lock — can attach the just-published
+                # branch before this run's own attach fails on it, and
+                # update-ref bypasses git's checked-out guard (challenge
+                # round 5). No commit can be orphaned here — any commit
+                # moves the tip and the compare-and-delete below refuses —
+                # but the attach is not ours to break. The moments between
+                # this scan and the delete are the documented residual.
+                echo "worktree:new: leaving branch '$branch' alone — another worktree has it checked out" >&2
             elif git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
                 # This run's writes are the only possible values here — a
                 # pre-existing remote/merge key refuses creation up front —
