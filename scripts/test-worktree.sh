@@ -497,6 +497,48 @@ fi
 rm_wt hidden-link-mod --force >/dev/null || fail "worktree-rm.sh --force failed on a repointed symlink"
 refute_exists "$fixture/.worktrees/hidden-link-mod" "worktree-rm.sh --force left the directory behind"
 
+echo "==> a flagged filename that looks like pathspec magic is looked up literally"
+# `git ls-files -s -- ':(literal)foo'` resolves the pathspec MAGIC — the
+# entry for `foo` — not the file literally named `:(literal)foo`. Comparing
+# against the wrong blob waved a real edit through when its content matched
+# the other file's checkout.
+new hidden-magic >/dev/null || fail "worktree-new.sh failed for the pathspec-magic case"
+printf 'AAA\n' >"$fixture/.worktrees/hidden-magic/plain-foo"
+printf 'BBB\n' >"$fixture/.worktrees/hidden-magic/:(literal)plain-foo"
+# --literal-pathspecs on the setup too: `git add ':(literal)plain-foo'`
+# would itself resolve the magic and add plain-foo instead.
+git --literal-pathspecs -C "$fixture/.worktrees/hidden-magic" add plain-foo ':(literal)plain-foo'
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-magic" commit -qm "chore: magic-named file"
+git --literal-pathspecs -C "$fixture/.worktrees/hidden-magic" update-index --skip-worktree ':(literal)plain-foo'
+printf 'AAA\n' >"$fixture/.worktrees/hidden-magic/:(literal)plain-foo"
+[ -z "$(git -C "$fixture/.worktrees/hidden-magic" status --porcelain)" ] ||
+    fail "fixture assumption broken: the magic-named edit shows in git status"
+if rm_wt hidden-magic >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree whose magic-named flagged file was edited"
+fi
+rm_wt hidden-magic --force >/dev/null || fail "worktree-rm.sh --force failed on the pathspec-magic case"
+refute_exists "$fixture/.worktrees/hidden-magic" "worktree-rm.sh --force left the directory behind"
+
+echo "==> core.symlinks=false: a real symlink refuses, the regular-file form passes"
+# With core.symlinks=false git checks a 120000 entry out as a regular file
+# holding the target text — so THAT is the clean representation there, and
+# an actual symlink is a local type change the guard must refuse.
+git -C "$fixture" config extensions.worktreeConfig true
+new hidden-symfalse >/dev/null || fail "worktree-new.sh failed for the core.symlinks case"
+ln -s README.md "$fixture/.worktrees/hidden-symfalse/hidden-sym-ln"
+git -C "$fixture/.worktrees/hidden-symfalse" add hidden-sym-ln
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-symfalse" commit -qm "chore: tracked symlink"
+git -C "$fixture/.worktrees/hidden-symfalse" config --worktree core.symlinks false
+git -C "$fixture/.worktrees/hidden-symfalse" update-index --skip-worktree hidden-sym-ln
+if rm_wt hidden-symfalse >/dev/null 2>&1; then
+    fail "worktree-rm.sh accepted a real symlink as clean under core.symlinks=false"
+fi
+rm "$fixture/.worktrees/hidden-symfalse/hidden-sym-ln"
+printf '%s' README.md >"$fixture/.worktrees/hidden-symfalse/hidden-sym-ln"
+rm_wt hidden-symfalse >/dev/null ||
+    fail "worktree-rm.sh refused the regular-file symlink representation under core.symlinks=false"
+refute_exists "$fixture/.worktrees/hidden-symfalse" "worktree-rm.sh left the tree behind"
+
 # ── ignored local files are not silently deleted ─────────────────────
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.

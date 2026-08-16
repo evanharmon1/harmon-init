@@ -298,17 +298,28 @@ else
                     ;;
                 esac
             else
-                index_entry="$(git -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
+                # Look the entry up with --literal-pathspecs: without it, a
+                # tracked filename that LOOKS like pathspec magic
+                # (`:(literal)foo`) or like a glob resolves some OTHER index
+                # entry — and comparing the file against the wrong blob can
+                # wave a real edit through.
+                index_entry="$(git --literal-pathspecs -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
                 index_mode="${index_entry%% *}"
                 index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
                 if [ "$index_mode" = "120000" ]; then
-                    if [ -L "$tree/$flagged_path" ]; then
+                    # A real symlink is the clean representation only where
+                    # git is actually checking symlinks out (core.symlinks):
+                    # with them disabled, git writes a regular file holding
+                    # the target text, so an actual symlink there is a local
+                    # type change to refuse.
+                    if [ -L "$tree/$flagged_path" ] && [ "$symlinks_enabled" = "true" ]; then
                         link_target="$(readlink -n "$tree/$flagged_path" 2>/dev/null && printf x)"
                         blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
                         if [ -n "$link_target" ] && [ "$link_target" = "$blob_target" ]; then
                             flagged_differs=0
                         fi
-                    elif [ -f "$tree/$flagged_path" ] && [ "$symlinks_enabled" = "false" ]; then
+                    elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ] &&
+                        [ "$symlinks_enabled" = "false" ]; then
                         # Byte-exact via cmp, not shell variables: command
                         # substitution strips NUL bytes, which would let a
                         # binary local file compare equal to a text target.
@@ -328,9 +339,14 @@ else
                         cmp -s - "$tree/$flagged_path" 2>/dev/null; then
                         flagged_differs=0
                         if [ "$filemode_enabled" = "true" ]; then
+                            # The OWNER-execute bit, which is what git's
+                            # filemode tracks — `test -x` asks whether THIS
+                            # process may execute the file, which diverges
+                            # under root (any x bit satisfies it) and ACLs.
+                            owner_exec="$(find "$tree/$flagged_path" -prune -perm -u+x 2>/dev/null)"
                             case "$index_mode" in
-                            100644) [ ! -x "$tree/$flagged_path" ] || flagged_differs=1 ;;
-                            100755) [ -x "$tree/$flagged_path" ] || flagged_differs=1 ;;
+                            100644) [ -z "$owner_exec" ] || flagged_differs=1 ;;
+                            100755) [ -n "$owner_exec" ] || flagged_differs=1 ;;
                             esac
                         fi
                     fi
