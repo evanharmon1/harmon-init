@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.34.0](https://github.com/evanharmon1/harmon-init/compare/v4.33.0...v4.34.0) (2026-08-16)
+
+
+### Features
+
+* ADR 0006 (method/tier axes) and rename rigor tiers to levels ([#917](https://github.com/evanharmon1/harmon-init/issues/917)) ([d5db8da](https://github.com/evanharmon1/harmon-init/commit/d5db8dab4815a93bf67a99082b3f7eea101ce2df))
+
+
+### Bug Fixes
+
+* worktree:rm refuses edits hidden by skip-worktree / assume-unchanged ([#918](https://github.com/evanharmon1/harmon-init/issues/918)) ([02408b0](https://github.com/evanharmon1/harmon-init/commit/02408b0be884dd80f9f3da665c1c517b693551d1))
+
 ## [4.33.0](https://github.com/evanharmon1/harmon-init/compare/v4.32.0...v4.33.0) (2026-08-16)
 
 
