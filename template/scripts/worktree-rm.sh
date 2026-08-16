@@ -304,8 +304,13 @@ else
                 # entry — and comparing the file against the wrong blob can
                 # wave a real edit through.
                 index_entry="$(git --literal-pathspecs -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
+                # Parse the fixed "mode SP sha SP stage TAB name" prefix by
+                # parameter expansion, never by line-based tools: -z keeps a
+                # newline INSIDE a filename verbatim, and awk would read the
+                # name's remainder as more records and corrupt the sha.
                 index_mode="${index_entry%% *}"
-                index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
+                index_rest="${index_entry#* }"
+                index_sha="${index_rest%% *}"
                 if [ "$index_mode" = "120000" ]; then
                     # A real symlink is the clean representation only where
                     # git is actually checking symlinks out (core.symlinks):
@@ -327,6 +332,18 @@ else
                             cmp -s - "$tree/$flagged_path" 2>/dev/null; then
                             flagged_differs=0
                         fi
+                    fi
+                elif [ "$index_mode" = "160000" ]; then
+                    # A gitlink. Uninitialized — an empty directory with no
+                    # .git — is its clean checkout representation, holding
+                    # nothing local to lose. An INITIALIZED submodule never
+                    # reaches the removal decision at all: git itself
+                    # refuses to remove a worktree containing submodules,
+                    # so leaving it "different" only puts this guard's
+                    # message ahead of git's own refusal.
+                    if [ -d "$tree/$flagged_path" ] && [ ! -e "$tree/$flagged_path/.git" ] &&
+                        [ -z "$(find "$tree/$flagged_path" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+                        flagged_differs=0
                     fi
                 elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
                     # Compare against the CHECKOUT representation —

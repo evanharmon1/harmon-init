@@ -539,6 +539,37 @@ rm_wt hidden-symfalse >/dev/null ||
     fail "worktree-rm.sh refused the regular-file symlink representation under core.symlinks=false"
 refute_exists "$fixture/.worktrees/hidden-symfalse" "worktree-rm.sh left the tree behind"
 
+echo "==> an UNINITIALIZED flagged gitlink does not block removal"
+# An uninitialized submodule checks out as an empty directory (index mode
+# 160000) — nothing local to lose, and native 'git worktree remove' accepts
+# it. Initialized submodules never reach the decision: git refuses to remove
+# worktrees containing them.
+new hidden-sub >/dev/null || fail "worktree-new.sh failed for the gitlink case"
+subsha="$(git -C "$fixture/.worktrees/hidden-sub" rev-parse HEAD)"
+git -C "$fixture/.worktrees/hidden-sub" update-index --add --cacheinfo "160000,$subsha,hidden-sub-mod"
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-sub" commit -qm "chore: gitlink"
+mkdir "$fixture/.worktrees/hidden-sub/hidden-sub-mod"
+git -C "$fixture/.worktrees/hidden-sub" update-index --skip-worktree hidden-sub-mod
+[ -z "$(git -C "$fixture/.worktrees/hidden-sub" status --porcelain)" ] ||
+    fail "fixture assumption broken: the flagged gitlink shows in git status"
+rm_wt hidden-sub >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an uninitialized flagged gitlink"
+refute_exists "$fixture/.worktrees/hidden-sub" "worktree-rm.sh left the tree behind"
+
+echo "==> a flagged filename containing a NEWLINE is parsed intact"
+# `ls-files -z` keeps a newline inside a filename verbatim; a line-based
+# sha extraction read the name's remainder as more records, corrupted the
+# sha, and falsely refused a byte-identical flagged file.
+new hidden-nl >/dev/null || fail "worktree-new.sh failed for the newline-name case"
+nl_name="$(printf 'odd\nsecond field')"
+printf 'content\n' >"$fixture/.worktrees/hidden-nl/$nl_name"
+git -C "$fixture/.worktrees/hidden-nl" add "$nl_name"
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-nl" commit -qm "chore: newline-named file"
+git -C "$fixture/.worktrees/hidden-nl" update-index --skip-worktree "$nl_name"
+rm_wt hidden-nl >/dev/null ||
+    fail "worktree-rm.sh falsely refused over an unmodified newline-named flagged file"
+refute_exists "$fixture/.worktrees/hidden-nl" "worktree-rm.sh left the tree behind"
+
 # ── ignored local files are not silently deleted ─────────────────────
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.
