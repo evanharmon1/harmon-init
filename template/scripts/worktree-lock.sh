@@ -141,20 +141,17 @@ lock_try_break() {
     # caller performed the break.
     _break="$1+break"
     if ! mkdir "$_break" 2>/dev/null; then
-        # A break lock is swept only on the same evidence as any other
-        # entry — a recorded owner proven dead, never an ownerless one — and
-        # by RENAME-aside, never rm-by-pathname: a contender holding a
-        # stale observation must not be able to delete the fresh break
-        # mutex a live breaker re-created after the sweep (the same TOCTOU
-        # the outer break closes the same way).
+        # A break mutex is NEVER reclaimed, by policy: reclaiming
+        # recovery-state needs its own serialization, and that recursion
+        # has no bottom — every rename-aside of a re-creatable well-known
+        # path re-opens the same stale-observation TOCTOU one level down.
+        # The recursion terminates here instead: level-0 locks self-heal
+        # under the break mutex, and a breaker that died inside its
+        # milliseconds-long window leaves a dir only a human removes —
+        # named precisely, with the remedy, rather than guessed at.
         _break_owner="$(cat "$_break/owner" 2>/dev/null || true)"
-        _break_dead=0
-        if [ -n "$_break_owner" ]; then
-            lock_owner_alive "$_break_owner" || _break_dead=1
-        fi
-        if [ "$_break_dead" -eq 1 ] &&
-            mv "$_break" "$lock_root/.deadbreak.$$" 2>/dev/null; then
-            rm -rf "$lock_root/.deadbreak.$$"
+        if [ -n "$_break_owner" ] && ! lock_owner_alive "$_break_owner"; then
+            die "a crashed lock-recovery attempt left $_break behind (${_break_owner}) — verify that process is gone, remove that directory, and re-run"
         fi
         return 1
     fi

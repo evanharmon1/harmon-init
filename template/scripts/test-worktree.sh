@@ -1193,16 +1193,26 @@ printf '%s %s %s %s %s\n' "999998" "$this_host" "$(id -u)" "999998" "Tue Feb  2 
 ) || fail "a reused-pid stale lock (start-time mismatch) was not broken"
 rm_wt reuse-lk >/dev/null || fail "cleanup of the reuse-lk tree failed"
 
-echo "==> a dead breaker's break mutex is reclaimed before breaking the lock"
+echo "==> a dead breaker's break mutex refuses with its own remedy"
+# Break mutexes are never auto-reclaimed — that recursion has no bottom
+# (PR #911 cloud review). The refusal must name the break directory
+# itself, and removing it per the remedy must unblock the next run.
 mkdir -p "$fixture_locks/deadbreak-lk+lock"
 printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/deadbreak-lk+lock/owner"
 mkdir -p "$fixture_locks/deadbreak-lk+lock+break"
 printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/deadbreak-lk+lock+break/owner"
+deadbreak_out="$(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new deadbreak-lk 2>&1
+)" && fail "a dead-owned break mutex was auto-reclaimed despite the no-reclamation policy"
+case "$deadbreak_out" in *"crashed lock-recovery attempt left"*) : ;; *) fail "the dead-breaker refusal did not name the break mutex" ;; esac
+rm -rf "$fixture_locks/deadbreak-lk+lock+break"
 (
     PATH="$psstale_dir:$PATH"
     export PATH
     new deadbreak-lk >/dev/null
-) || fail "a dead-owned break mutex blocked breaking a dead lock"
+) || fail "removing the break mutex per the remedy did not unblock the dead-lock break"
 rm_wt deadbreak-lk >/dev/null || fail "cleanup of the deadbreak-lk tree failed"
 
 echo "==> a foreign host's lock is refused with the remedy, never broken"
