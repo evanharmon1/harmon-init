@@ -158,9 +158,13 @@ release_locks() {
         rm -rf "$lock_root/$held_excl+lock"
         held_excl=""
     fi
+    # The holders directory itself is deliberately never removed: an rmdir
+    # here races a sibling's marker publication (mkdir -p sees the dir,
+    # rmdir empties it away, the marker write then fails spuriously). An
+    # empty holders dir is a few bytes of permanent bookkeeping; the
+    # session-cleanup surface (#838) is where sweeping it belongs.
     for _held in $held_shared; do
         rm -f "$lock_root/$_held+holders/$$.marker"
-        rmdir "$lock_root/$_held+holders" 2>/dev/null || true
     done
     held_shared=""
 }
@@ -179,7 +183,11 @@ lock_owner_alive() {
     case "$_own_rest" in *" "*) _own_start="${_own_rest#* }" ;; esac
     [ "$_own_host" = "$lock_host" ] || return 0
     case "$_own_pid" in "" | *[!0-9]*) return 0 ;; esac
-    ps -p "$_own_pid" >/dev/null 2>&1 || return 1
+    # ps is probed against OUR OWN pid first: a sandbox that denies ps
+    # entirely would otherwise make every probe "fail", and a failed probe
+    # must read as indeterminate (alive), never as proof of death.
+    [ -n "$(ps -p $$ -o pid= 2>/dev/null)" ] || return 0
+    [ -n "$(ps -p "$_own_pid" -o pid= 2>/dev/null)" ] || return 1
     if [ -n "$_own_start" ]; then
         _now_start="$(ps -o lstart= -p "$_own_pid" 2>/dev/null | sed 's/^ *//;s/ *$//')"
         if [ -n "$_now_start" ] && [ "$_now_start" != "$_own_start" ]; then
@@ -188,12 +196,39 @@ lock_owner_alive() {
     fi
     return 0
 }
-lock_break() {
-    # Rename-then-remove: only one breaker's rename can succeed, and the
-    # loser simply re-examines whatever now sits at the path.
+lock_try_break() {
+    # $1 = lock dir, $2 = the owner content it was judged dead on. Breaking
+    # is serialized under its own one-shot lock and REVALIDATED inside it:
+    # without that, a second breaker still holding yesterday's judgement
+    # can rename away the fresh lock the first breaker's successor just
+    # acquired. Content equality is the validation — a re-acquired lock
+    # carries a different stamp. An empty judgement additionally re-checks
+    # age inside the break lock, so a just-created lock in its two-statement
+    # claim window is never broken as "ownerless". Returns 0 only when this
+    # caller performed the break.
+    _break="$1+break"
+    if ! mkdir "$_break" 2>/dev/null; then
+        # A breaker died holding the break lock: ownerless and aged, sweep
+        # it and let the next loop iteration retry.
+        if [ -n "$(find "$_break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+            rm -rf "$_break"
+        fi
+        return 1
+    fi
+    _break_now="$(cat "$1/owner" 2>/dev/null || true)"
+    if [ "$_break_now" != "$2" ]; then
+        rmdir "$_break" 2>/dev/null || true
+        return 1
+    fi
+    if [ -z "$2" ] && [ -z "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+        rmdir "$_break" 2>/dev/null || true
+        return 1
+    fi
     if mv "$1" "$lock_root/.dead.$$" 2>/dev/null; then
         rm -rf "$lock_root/.dead.$$"
     fi
+    rmdir "$_break" 2>/dev/null || true
+    return 0
 }
 acquire_excl() {
     # $1 = encoded path, $2 = display path
@@ -207,12 +242,12 @@ acquire_excl() {
         _excl_tries=$((_excl_tries + 1))
         if [ "$_excl_tries" -le 2 ]; then
             if [ -n "$_excl_owner" ] && ! lock_owner_alive "$_excl_owner"; then
-                lock_break "$_excl"
+                lock_try_break "$_excl" "$_excl_owner" || true
                 continue
             fi
             if [ -z "$_excl_owner" ] &&
                 [ -n "$(find "$_excl" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-                lock_break "$_excl"
+                lock_try_break "$_excl" "" || true
                 continue
             fi
         fi
@@ -226,6 +261,14 @@ acquire_excl() {
     for _marker in "$lock_root/$1+holders"/*; do
         [ -e "$_marker" ] || continue
         _marker_owner="$(cat "$_marker" 2>/dev/null || true)"
+        # An empty marker is a holder killed inside its own two-statement
+        # publication window — aged, it is swept like an ownerless lock;
+        # fresh, it is a live publication and refuses below.
+        if [ -z "$_marker_owner" ] &&
+            [ -n "$(find "$_marker" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+            rm -f "$_marker"
+            continue
+        fi
         if lock_owner_alive "${_marker_owner:-0 unreadable}"; then
             die "a worktree operation under '$2/' is in progress (${_marker_owner:-holder unreadable}; $_marker) — if that process is gone, remove the marker file and re-run"
         fi
@@ -246,7 +289,7 @@ acquire_shared() {
         if lock_owner_alive "${_shared_owner:-0 unreadable}"; then
             die "another worktree operation holds '$2' (${_shared_owner:-owner not yet recorded}; lock $_shared_excl) — if that process is gone, remove the lock directory and re-run"
         fi
-        lock_break "$_shared_excl"
+        lock_try_break "$_shared_excl" "$_shared_owner" || true
     fi
 }
 acquire_path_locks() {

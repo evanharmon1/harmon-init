@@ -1118,6 +1118,42 @@ touch -t 202601010000 "$fixture_locks/aged-lk+lock"
 new aged-lk >/dev/null || fail "an aged ownerless lock (a crashed acquisition) was not broken"
 rm_wt aged-lk >/dev/null || fail "cleanup of the aged-lk tree failed"
 
+echo "==> an unusable ps fails closed instead of breaking a dead lock"
+# The liveness probe must read "ps itself is broken" as indeterminate: a
+# sandboxed host that denies ps would otherwise turn every held lock into
+# a breakable one (challenge round 2 of harmon-init#839/#784).
+psshim_dir="$test_tmp/psshim"
+mkdir -p "$psshim_dir"
+printf '#!/bin/sh\nexit 1\n' >"$psshim_dir/ps"
+chmod +x "$psshim_dir/ps"
+sleep 0 &
+psdead_pid=$!
+wait "$psdead_pid" 2>/dev/null || true
+mkdir -p "$fixture_locks/psdead-lk+lock"
+printf '%s %s\n' "$psdead_pid" "$this_host" >"$fixture_locks/psdead-lk+lock/owner"
+if (
+    PATH="$psshim_dir:$PATH"
+    export PATH
+    new psdead-lk >/dev/null 2>&1
+); then
+    fail "a dead lock was broken although ps could prove nothing (fail-open liveness)"
+fi
+[ -d "$fixture_locks/psdead-lk+lock" ] || fail "the unprovable lock was removed"
+rm -rf "$fixture_locks/psdead-lk+lock"
+
+echo "==> an aged empty holder marker is swept, a fresh one refuses"
+mkdir -p "$fixture_locks/marker-lk+holders"
+: >"$fixture_locks/marker-lk+holders/999999.marker"
+touch -t 202601010000 "$fixture_locks/marker-lk+holders/999999.marker"
+new marker-lk >/dev/null || fail "an aged empty holder marker blocked the exclusive acquisition"
+rm_wt marker-lk >/dev/null || fail "cleanup of the marker-lk tree failed"
+mkdir -p "$fixture_locks/marker2-lk+holders"
+: >"$fixture_locks/marker2-lk+holders/999999.marker"
+if new marker2-lk >/dev/null 2>&1; then
+    fail "a fresh empty holder marker (a live publication window) was ignored"
+fi
+rm -rf "$fixture_locks/marker2-lk+holders"
+
 echo "==> a post-acquisition failure releases the lock"
 new lock-rel >/dev/null || fail "creating the lock-release probe tree failed"
 if new lock-rel >/dev/null 2>&1; then
@@ -1206,7 +1242,7 @@ exec "$real_git" "\$@"
 SHIM
 chmod +x "$shim_dir/git"
 rm -f "$test_tmp/shim-advanced"
-(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_ADVANCE=1 bash scripts/worktree-new.sh adv-branch >"$test_tmp/adv.log" 2>&1) ||
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_ADVANCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh adv-branch >"$test_tmp/adv.log" 2>&1) ||
     fail "worktree-new.sh failed under the advancing remote: $(cat "$test_tmp/adv.log")"
 [ "$(git -C "$fixture/.worktrees/adv-branch" rev-parse HEAD)" = "$adv_b" ] ||
     fail "worktree-new.sh attached the stale probed tip instead of the advanced remote tip (PR #906 deferral)"
