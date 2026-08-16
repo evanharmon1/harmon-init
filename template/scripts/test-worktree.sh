@@ -1084,6 +1084,34 @@ new lockfree >/dev/null || fail "an unrelated creation was blocked by another na
 rm_wt lockfree >/dev/null || fail "cleanup of the unrelated tree failed"
 rm -rf "$fixture_locks/lockparent+holders" "$fixture_locks/lockparent%child+lock"
 
+echo "==> two same-process holder claims yield two markers, released cleanly"
+# Helper-level pin of the mktemp marker claim: the pre-fix implementation
+# named markers by bare PID, so two claims from one pid (as two PID
+# namespaces over a shared checkout would present) collapsed to one file
+# and a single release destroyed both holds. Two acquisitions from THIS
+# process must produce two distinct markers, and release must remove
+# exactly its own.
+(
+    cd "$fixture"
+    die() {
+        echo "lockcheck: $*" >&2
+        exit 1
+    }
+    # shellcheck source=/dev/null
+    . scripts/worktree-lock.sh
+    acquire_shared "collide-lk" "collide-lk"
+    acquire_shared "collide-lk" "collide-lk"
+    marker_count="$(find "$fixture_locks/collide-lk+holders" -type f | wc -l | tr -d ' ')"
+    [ "$marker_count" -eq 2 ] || exit 9
+    release_locks
+    remaining="$(find "$fixture_locks/collide-lk+holders" -type f | wc -l | tr -d ' ')"
+    [ "$remaining" -eq 0 ] || exit 8
+)
+collide_status=$?
+[ "$collide_status" -ne 9 ] || fail "two same-process holder claims collided into one marker (review r3/r4)"
+[ "$collide_status" -ne 8 ] || fail "release did not remove exactly its own markers"
+[ "$collide_status" -eq 0 ] || fail "the helper-level collision check failed (exit $collide_status)"
+
 echo "==> a name the whitelist refuses cannot reach the lock bookkeeping"
 if rm_wt 'bad name' >/dev/null 2>&1; then
     fail "worktree-rm.sh accepted a name outside the creation whitelist"
@@ -1134,13 +1162,21 @@ refute_exists "$fixture_locks/stale-lk+lock" "the stale-lock run did not release
 rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
 
 echo "==> a dead pid with a surviving process group is still alive"
-# The recorded shell is gone but its GROUP (a surviving child) is ours —
-# alive by group evidence, so the lock must refuse, not break.
+# Proven through the controlled ps shim on every host: the recorded pid is
+# the shim's dead one, but the recorded GROUP is the shim's live group
+# 4242 (self-group visible, survivor present) — alive by group evidence,
+# so the lock must refuse, not break. Removing the group scan turns this
+# into a dead verdict and fails the case.
 mkdir -p "$fixture_locks/livegroup-lk+lock"
-printf '%s %s %s %s\n' "999999" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/livegroup-lk+lock/owner"
-if new livegroup-lk >/dev/null 2>&1; then
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "4242" >"$fixture_locks/livegroup-lk+lock/owner"
+if (
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new livegroup-lk >/dev/null 2>&1
+); then
     fail "a lock with a surviving process group was broken (harmon-init#784 review r3)"
 fi
+[ -d "$fixture_locks/livegroup-lk+lock" ] || fail "the surviving-group lock was removed"
 rm -rf "$fixture_locks/livegroup-lk+lock"
 
 echo "==> a reused pid (mismatched start time) is judged dead and broken"

@@ -45,7 +45,10 @@ lock_root="$(git rev-parse --path-format=absolute --git-common-dir)/worktree-loc
 lock_host="$(hostname)"
 lock_uid="$(id -u)"
 held_excl=""
-held_shared=""
+# Marker paths are ABSOLUTE and the repository path may contain whitespace,
+# so held markers live in a bash array — a space-joined scalar would split
+# one path into several words at release and remove nothing.
+held_shared=()
 release_locks() {
     if [ -n "$held_excl" ]; then
         rm -rf "$lock_root/$held_excl+lock"
@@ -56,10 +59,10 @@ release_locks() {
     # rmdir empties it away, the marker write then fails spuriously). An
     # empty holders dir is a few bytes of permanent bookkeeping; the
     # session-cleanup surface (#838) is where sweeping it belongs.
-    for _held in $held_shared; do
+    for _held in ${held_shared[@]+"${held_shared[@]}"}; do
         rm -f "$_held"
     done
-    held_shared=""
+    held_shared=()
 }
 lock_stamp() {
     # The start stamp is recorded and compared under one pinned locale and
@@ -221,7 +224,7 @@ acquire_shared() {
     _marker_path="$(mktemp "$lock_root/$1+holders/holder.XXXXXX")" ||
         die "cannot claim a holder marker under $lock_root/$1+holders"
     lock_stamp >"$_marker_path"
-    held_shared="$held_shared $_marker_path"
+    held_shared=(${held_shared[@]+"${held_shared[@]}"} "$_marker_path")
     _shared_excl="$lock_root/$1+lock"
     if [ -d "$_shared_excl" ]; then
         _shared_owner="$(cat "$_shared_excl/owner" 2>/dev/null || true)"
