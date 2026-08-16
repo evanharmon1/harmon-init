@@ -94,6 +94,10 @@ rm -f "$WORKTREE_TIMEOUT_SENTINEL"
 # as the refusal it was asserting. A hang would be accepted as a pass. The
 # sentinel escapes every subshell — it is a file, not an exit status — so
 # however the status is swallowed, the suite still ends non-zero and says why.
+# Initialized empty BEFORE the trap is armed: an exported variable of this
+# name would otherwise flow in from the environment and the cleanup below
+# would kill a PID this suite never owned.
+WORKTREE_STDIN_HOLDER=""
 worktree_exit() {
     exit_status=$?
     # Reap the hostile-stdin writer if a case aborted before its explicit kill
