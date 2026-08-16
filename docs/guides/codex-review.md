@@ -240,7 +240,7 @@ task check      # fast inner loop while editing
 task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate, fix, re-challenge
                 # until TWO CONSECUTIVE rounds adjudicate to zero P0/P1
-                # (a round with no findings ends it once the tier's
+                # (a round with no findings ends it once the level's
                 # min_rounds floor is met), under the challenge cap
                 # resolved from .devflow.toml
 task review     # verification checkpoint — same convergence rule, under its
@@ -259,10 +259,10 @@ gate that ends them — is defined in AGENTS.md ("Dev Loop"). The PR is a
 is the one signal that the automated work is finished.
 
 The caps are not written down here, or in AGENTS.md. They live in
-[`.devflow.toml`](../../.devflow.toml) as `rigor` tiers, and **AGENTS.md alone
+[`.devflow.toml`](../../.devflow.toml) as `rigor` levels, and **AGENTS.md alone
 defines how a change resolves one** — restating that chain here would only give
 it a second place to drift from, and which inputs are even available depends on
-how the repository is set up. `challenge`, `review`, and the `min_rounds` floor vary by tier; the
+how the repository is set up. `challenge`, `review`, and the `min_rounds` floor vary by level; the
 shepherd cap is fixed, because it bounds other people's findings rather than
 self-generated work. Announce the resolved caps — the floor included — when
 you enter the loop.
@@ -285,8 +285,8 @@ down to
 P2; what counts is the **adjudicated** column of your adjudication table, not
 the label Codex attached. The second such round *is* the confirmation, so no
 extra run is owed after it. Two cases exit faster still. A round with **no
-findings at all** ends the stage on the spot **once the tier's `min_rounds`
-floor is met** (1 wherever a tier does not set it) — an empty round is exactly
+findings at all** ends the stage on the spot **once the level's `min_rounds`
+floor is met** (1 wherever a level does not set it) — an empty round is exactly
 the older "clean re-run" exit, so neither a trivial change nor a clean
 post-fix re-run pays for a confirmation pass, and a floor of 2 only delays
 that shortcut, never the other two exits, which run at least two rounds by
@@ -335,7 +335,7 @@ left to re-raise and counts toward convergence. Reflexively hardening the
 previous round's fix is the failure mode; naming it on the table is the
 check.
 
-Two things do not move. The **per-stage cap** stands — whatever rigor tier
+Two things do not move. The **per-stage cap** stands — whatever rigor level
 resolved it — and persistent
 P0/P1 disagreement at the cap is escalated rather than iterated on. And the
 deferred-P2 chain is a **precondition** of the exit, not a casualty of it:

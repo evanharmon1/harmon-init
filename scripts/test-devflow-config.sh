@@ -9,12 +9,12 @@
 # byte-identical, which two identically-broken files also satisfy.
 #
 # This checks the invariants the prose promises, on BOTH copies, plus the one
-# cross-file invariant that byte-equality cannot see: every tier must have a
-# provisioned `rigor:<tier>` label, or the documented label resolution path
+# cross-file invariant that byte-equality cannot see: every level must have a
+# provisioned `rigor:<level>` label, or the documented label resolution path
 # names something GitHub cannot apply.
 #
 # Root-only by design (no template twin): it guards what harmon-init SHIPS.
-# A consumer retuning their own tiers is editing their policy, the same way
+# A consumer retuning their own levels is editing their policy, the same way
 # they may edit their AGENTS.md, and owes no gate here.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -49,7 +49,7 @@ registry_root, registry_template, agents_root, agents_template, *config_paths = 
 STAGES = ("challenge", "review", "shepherd")
 # `min_rounds` is a floor on rounds actually run, not a cap — it gates only the
 # empty-round instant exit (AGENTS.md, "Loop cap and exit"). It is required in
-# every tier, so both dogfood copies state it rather than relying on a default.
+# every level, so both dogfood copies state it rather than relying on a default.
 MIN_ROUNDS = "min_rounds"
 KNOWN_KEYS = STAGES + (MIN_ROUNDS,)
 # The floor is 2, not 1: a stage exits on two consecutive adjudicated-clean
@@ -58,7 +58,7 @@ FLOOR = {"challenge": 2, "review": 2, "shepherd": 1}
 
 def rigor_values(registry_path):
     # Only values the renderer actually seeds count: a retired or
-    # provision:false rigor value has no live label, so a .devflow.toml tier
+    # provision:false rigor value has no live label, so a .devflow.toml level
     # named after one would be unselectable by the documented label path.
     with open(registry_path, "rb") as fh:
         manifest = json.load(fh)
@@ -87,22 +87,22 @@ for path in config_paths:
             failures.append(f"{path}: not valid TOML — {exc}")
             continue
 
-    tiers = cfg.get("rigor")
-    if not isinstance(tiers, dict) or not tiers:
-        failures.append(f"{path}: no [rigor.*] tiers defined")
+    levels = cfg.get("rigor")
+    if not isinstance(levels, dict) or not levels:
+        failures.append(f"{path}: no [rigor.*] levels defined")
         continue
 
     default = cfg.get("default_rigor")
     if not isinstance(default, str):
         failures.append(f"{path}: default_rigor is missing or not a string")
-    elif default not in tiers:
+    elif default not in levels:
         failures.append(
-            f"{path}: default_rigor={default!r} names no tier "
-            f"(have: {', '.join(sorted(tiers))})"
+            f"{path}: default_rigor={default!r} names no level "
+            f"(have: {', '.join(sorted(levels))})"
         )
 
     shepherd_values = set()
-    for name, caps in sorted(tiers.items()):
+    for name, caps in sorted(levels.items()):
         if not isinstance(caps, dict):
             failures.append(f"{path}: [rigor.{name}] is not a table")
             continue
@@ -153,22 +153,22 @@ for path in config_paths:
         registry_path, provisioned = provisioned_by_config[path]
         if name not in provisioned:
             failures.append(
-                f"{path}: tier {name!r} has no rigor:{name} label in {registry_path} — "
+                f"{path}: level {name!r} has no rigor:{name} label in {registry_path} — "
                 "the documented label resolution path cannot select it"
             )
 
     # shepherd bounds other people's findings, not self-generated work, so it
-    # is fixed across tiers by design (AGENTS.md). Catch a tier-varying edit.
+    # is fixed across levels by design (AGENTS.md). Catch a level-varying edit.
     if len(shepherd_values) > 1:
         failures.append(
-            f"{path}: shepherd varies by tier ({sorted(shepherd_values)}) — it is "
+            f"{path}: shepherd varies by level ({sorted(shepherd_values)}) — it is "
             "fixed by design; lowering it abandons unanswered reviews"
         )
 
 FALLBACK_RE = re.compile(r"built-in (\d+ / \d+ / \d+)")
 # The missing-key floor exists only in prose, so its parity is checked the
 # same way as the caps: exactly one statement per layer, equal across layers.
-FLOOR_FALLBACK_RE = re.compile(r"`min_rounds` floor of\s+(\d+) for any tier that\s+does not define it")
+FLOOR_FALLBACK_RE = re.compile(r"`min_rounds` floor of\s+(\d+) for any level that\s+does not define it")
 fallbacks = {}
 floor_fallbacks = {}
 for path in (agents_root, agents_template):
@@ -184,7 +184,7 @@ for path in (agents_root, agents_template):
     floor_found = set(FLOOR_FALLBACK_RE.findall(text))
     if len(floor_found) != 1:
         failures.append(
-            f"{path}: expected exactly one 'min_rounds floor of N wherever no tier "
+            f"{path}: expected exactly one 'min_rounds floor of N wherever no level "
             f"defines one' fallback, found {sorted(floor_found) if floor_found else 'none'}"
         )
     else:
@@ -203,7 +203,7 @@ if len(set(floor_fallbacks.values())) > 1:
     )
 for path, value in sorted(floor_fallbacks.items()):
     # Same range as configured min_rounds: 1 or 2. A fallback outside it would
-    # hand absent-file/legacy repos an exit rule no shipped tier may state.
+    # hand absent-file/legacy repos an exit rule no shipped level may state.
     if not value.isdigit() or not 1 <= int(value) <= 2:
         failures.append(
             f"{path}: fallback min_rounds floor {value} is outside the supported "
@@ -217,11 +217,11 @@ if failures:
 
 with open(config_paths[0], "rb") as fh:
     cfg = tomllib.load(fh)
-tiers = cfg["rigor"]
+levels = cfg["rigor"]
 summary = "; ".join(
     f"{n}={t['challenge']}/{t['review']}/{t['shepherd']} (min {t['min_rounds']})"
-    for n, t in sorted(tiers.items())
+    for n, t in sorted(levels.items())
 )
 print(f"devflow config OK: default={cfg['default_rigor']} — {summary}")
-print("  (challenge/review/shepherd + min_rounds; both copies valid, every tier has a label)")
+print("  (challenge/review/shepherd + min_rounds; both copies valid, every level has a label)")
 PY

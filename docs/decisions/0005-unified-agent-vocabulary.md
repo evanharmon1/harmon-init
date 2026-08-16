@@ -53,6 +53,12 @@ The following decisions are adopted together:
    `suggest:<family>[:<model>]` and `claim:<family>[:<model>]`. Suggestions are
    human-authored advice; claims are live, agent-authored ownership and are
    released at wrap or shepherd completion. Neither arms automation.
+   **Amended 2026-08-16 ([ADR 0006](0006-method-and-tier-axes.md)):**
+   suggestions are now human- **or agent-**authored; `suggest:*` stays
+   `family[:model]` (a vendor preference), `tier:*` is the human-decided policy
+   layer of the model axis, and `suggest:tier:<value>` is reserved, not built.
+   The claim record gains `harness:`/`model:`/`session:` fields
+   (harmon-devkit#450).
 7. **D7 — Foreman selectors name harness adapters.** `foreman:<adapter>` selects
    executable machinery. The registry maps that adapter to a harness and states
    who selects the model. The family and harness axes are intentionally distinct.
