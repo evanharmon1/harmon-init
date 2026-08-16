@@ -50,6 +50,7 @@ jobs:
       - run: task test:registry-drift
       - run: task test:registry-docs
       - run: task test:label-registry
+      - run: task test:devflow-config
       - run: task test:codex-review
       - run: task test:ci-results
       - run: task test:status

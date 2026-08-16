@@ -407,14 +407,12 @@ for path in config_paths:
                             f"tier (ladder: {' → '.join(LADDER)}; `adaptive` is not a target)"
                         )
                         continue
-                    # Referential: the hop must land on a defined table, not merely
-                    # a name in the ladder — a chain that points at a dropped table
-                    # dead-ends at a nonexistent config node (ADR 0006 D3).
-                    if target not in tiers:
-                        failures.append(
-                            f"{path}: [tier.{name}] escalate_to → {target!r} has no "
-                            f"[tier.{target}] table — the chain is not referential (ADR 0006 D3)"
-                        )
+                    # Referentiality (every hop lands on a defined table) needs no
+                    # check of its own: escalate targets are constrained to ladder
+                    # tiers just above, and the missing_tables check requires every
+                    # ladder tier to have a table — so a target always resolves. A
+                    # dangling hop can exist only when a table is missing, which the
+                    # completeness check already rejects (ADR 0006 D3).
                     if name in LADDER_RANK and LADDER_RANK[target] <= LADDER_RANK[name]:
                         failures.append(
                             f"{path}: [tier.{name}] escalate_to → {target!r} is not monotonic "

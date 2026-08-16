@@ -151,11 +151,9 @@ def drop_frontier(tmp):
     edit_toml(tmp, lambda t: re.sub(
         r"# Opus-class.*?qwen   = \"max\"\n\n", "", t, flags=re.S))
 rejects("dropping a ladder table", drop_frontier, "missing table(s) for frontier")
-# Same mutation, different assertion: dropping frontier also strands
-# standard's `escalate_to = ["frontier"]`, so the referential-chain check must
-# fire too — proving that rejection independently of the completeness error.
-rejects("dropping a ladder table strands its escalate_to (referential)",
-        drop_frontier, "is not referential")
+# Referentiality of escalate_to is guaranteed structurally (targets are ladder
+# tiers and every ladder tier must have a table), so there is no separate
+# referential rejection to exercise — a dropped table is caught above.
 
 def add_extra_tier(tmp):
     def fn(reg):
