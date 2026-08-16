@@ -1022,7 +1022,7 @@ git -C "$fixture" push -q cref HEAD:refs/heads/victim
 victim_tip="$(git -C "$fixture" rev-parse HEAD)"
 git -C "$fixture" reset -q --hard "$decoy_tip"
 git -C "$fixture" update-ref refs/remotes/cref/victim "$decoy_tip"
-new victim >/dev/null || fail "worktree-new.sh failed for a remote-only branch under a custom refspec"
+victim_out="$(new victim)" || fail "worktree-new.sh failed for a remote-only branch under a custom refspec"
 [ "$(git -C "$fixture/.worktrees/victim" rev-parse HEAD)" = "$victim_tip" ] ||
     fail "worktree-new.sh did not attach 'victim' at the remote tip under a custom refspec"
 [ "$(git -C "$fixture" rev-parse refs/remotes/cref/victim)" = "$decoy_tip" ] ||
@@ -1031,6 +1031,12 @@ new victim >/dev/null || fail "worktree-new.sh failed for a remote-only branch u
     fail "the custom-refspec branch is not configured to track its remote"
 [ "$(git -C "$fixture" config branch.victim.merge)" = "refs/heads/victim" ] ||
     fail "the custom-refspec branch tracks the wrong merge ref"
+# The refspec maps only decoy, so @{upstream} for victim CANNOT resolve —
+# and the command must say so rather than claim full tracking.
+if git -C "$fixture" rev-parse --verify --quiet "victim@{upstream}" >/dev/null 2>&1; then
+    fail "victim@{upstream} resolved although the refspec maps no such branch — fixture assumption broken"
+fi
+case "$victim_out" in *"does not map refs/heads/victim"*) : ;; *) fail "the unmapped-refspec degradation was not announced" ;; esac
 rm_wt victim >/dev/null || fail "cleanup of the victim tree failed"
 git -C "$fixture" branch -D victim >/dev/null 2>&1 || true
 git -C "$fixture" remote remove cref

@@ -460,17 +460,23 @@ EOF
         # present after the fetch rather than read from any ref of ours.
         git_net fetch --quiet "$remote_match_remote" "refs/heads/$branch" ||
             die "found branch '$branch' on remote '$remote_match_remote' but could not fetch it — retry, or pass --base <ref>"
-        if ! git rev-parse --verify --quiet "$remote_probe_sha^{commit}" >/dev/null; then
-            # The remote moved (or force-moved) between the probe and the
-            # fetch, so the probed commit never arrived. Probe once more:
-            # a stable answer this time is usable, anything else is a
-            # remote in motion.
-            probe_out="$(git_net ls-remote --heads "$remote_match_remote" "refs/heads/$branch")" ||
-                die "remote '$remote_match_remote' became unqueryable while fetching '$branch' — retry, or pass --base <ref>"
-            remote_probe_sha="$(printf '%s\n' "$probe_out" | awk -v ref="refs/heads/$branch" -F'\t' '$2 == ref {print $1; exit}')"
-            { [ -n "$remote_probe_sha" ] && git rev-parse --verify --quiet "$remote_probe_sha^{commit}" >/dev/null; } ||
-                die "branch '$branch' on remote '$remote_match_remote' is moving — retry, or pass --base <ref>"
-        fi
+        # One UNCONDITIONAL post-fetch probe. The remote can advance between
+        # the first probe and the fetch, and the first probe's tip resolving
+        # locally is no evidence it stayed current — a stale tracking ref
+        # can make an outdated commit resolve just fine. The fetch already
+        # imported whatever the remote advanced to, so the fresh probe's
+        # answer normally resolves and the attach lands on it; a tip that
+        # arrives unresolvable means the remote moved again mid-operation,
+        # which no client-side sequence can chase — stop and say so. (The
+        # window between this probe and the attach is inherent; this keeps
+        # it one probe wide instead of pretending to close it.)
+        probe_out="$(git_net ls-remote --heads "$remote_match_remote" "refs/heads/$branch")" ||
+            die "remote '$remote_match_remote' became unqueryable while fetching '$branch' — retry, or pass --base <ref>"
+        remote_probe_sha="$(printf '%s\n' "$probe_out" | awk -v ref="refs/heads/$branch" -F'\t' '$2 == ref {print $1; exit}')"
+        [ -n "$remote_probe_sha" ] ||
+            die "branch '$branch' disappeared from remote '$remote_match_remote' while fetching — retry, or pass --base <ref>"
+        git rev-parse --verify --quiet "$remote_probe_sha^{commit}" >/dev/null ||
+            die "branch '$branch' on remote '$remote_match_remote' is moving — retry, or pass --base <ref>"
         remote_ref="$remote_matches"
     fi
 fi
@@ -492,6 +498,14 @@ elif [ -n "$remote_ref" ]; then
     LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$remote_probe_sha"
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
+    # Honesty check on the tracking claim: pull and push work off the branch
+    # config just written, but @{upstream}-based tooling (status ahead/behind,
+    # verify_default_base if this branch ever becomes the main HEAD) resolves
+    # through the remote's fetch refspec — which a custom refspec may simply
+    # not map for this branch. Say so instead of letting "tracking" imply
+    # more than it delivers.
+    git rev-parse --verify --quiet "$branch@{upstream}" >/dev/null 2>&1 ||
+        echo "==> Note: '$remote_match_remote's fetch refspec does not map refs/heads/$branch — pull/push work via branch config, but @{upstream} tooling will not see an upstream"
 else
     # The one path that consumes the default base — verify its freshness
     # here and nowhere earlier, so attaching an existing branch or tracking
