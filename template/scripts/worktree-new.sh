@@ -278,16 +278,15 @@ verify_default_base() {
                 # commit moves the ref too, and counting that as a
                 # concurrent refresh would silently base the new tree on
                 # unrelated local work (challenge round 2). Trust the
-                # movement only when the moved value is one a remote
-                # attested — it equals the tip this run's own probe
-                # returned — or when the ref lives under refs/remotes/,
-                # which only fetches write.
+                # movement only when the moved value equals the tip this
+                # run's own probe returned — remote-attested, THIS run's
+                # answer. The namespace is deliberately not an arm of its
+                # own: a concurrent fetch can publish an OLDER advertised
+                # tip into refs/remotes/* after this run probed a newer
+                # one, and proceeding on it would knowingly contradict the
+                # fresher answer already in hand (challenge round 3).
                 if [ -n "$verify_probed_tip" ] && [ "$verify_known_after" = "$verify_probed_tip" ]; then
                     verify_trusted=1
-                else
-                    case "$upstream_full" in
-                    refs/remotes/*) verify_trusted=1 ;;
-                    esac
                 fi
             fi
             if [ "$verify_trusted" -eq 1 ]; then
@@ -452,6 +451,8 @@ tree_created=1
 branch_created=0
 branch_owned=0
 branch_owned_tip=""
+branch_owned_prior_remote=""
+branch_owned_prior_merge=""
 probe_dir=""
 cleanup() {
     status=$?
@@ -504,7 +505,9 @@ cleanup() {
         # the scoped form for the only record this run can have created, so a
         # prune has nothing left to do that is ours to do. A record surviving
         # both is reported, never swept.
+        rollback_tree_gone=1
         if git worktree list --porcelain | grep -qxF "worktree $tree"; then
+            rollback_tree_gone=0
             echo "worktree:new: $tree is still registered after rollback — clear it with 'task worktree:rm -- $name'" >&2
         fi
         if [ "$branch_owned" -eq 1 ]; then
@@ -514,9 +517,30 @@ cleanup() {
             # not serialize branch refs, so a concurrent fetch or push can
             # legitimately move the branch between creation and this
             # rollback — a moved tip holds commits this run did not create,
-            # and deleting it would discard them (challenge round 1).
-            if git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
-                git config --remove-section "branch.$branch" 2>/dev/null || true
+            # and deleting it would discard them (challenge round 1). And
+            # it is gated on the tree actually being DEREGISTERED:
+            # update-ref is plumbing that bypasses git's checked-out guard,
+            # so deleting the branch under a tree the removal failed to
+            # clear would leave a live registered worktree on an unborn
+            # HEAD (challenge round 3).
+            if [ "$rollback_tree_gone" -eq 0 ]; then
+                echo "worktree:new: leaving branch '$branch' alone — its worktree could not be removed and still has it checked out" >&2
+            elif git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
+                # This run wrote exactly branch.<name>.remote and .merge —
+                # restore those two keys to their prior values rather than
+                # removing the section, which would take pre-existing user
+                # settings (pushRemote, rebase, a description) with it
+                # (challenge round 3).
+                if [ -n "$branch_owned_prior_remote" ]; then
+                    git config "branch.$branch.remote" "$branch_owned_prior_remote"
+                else
+                    git config --unset "branch.$branch.remote" 2>/dev/null || true
+                fi
+                if [ -n "$branch_owned_prior_merge" ]; then
+                    git config "branch.$branch.merge" "$branch_owned_prior_merge"
+                else
+                    git config --unset "branch.$branch.merge" 2>/dev/null || true
+                fi
             else
                 echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
             fi
@@ -649,6 +673,8 @@ elif [ -n "$remote_ref" ]; then
         branch_owned=0
         die "branch '$branch' appeared while this run was creating it — re-run to attach it"
     fi
+    branch_owned_prior_remote="$(git config --get "branch.$branch.remote" 2>/dev/null || true)"
+    branch_owned_prior_merge="$(git config --get "branch.$branch.merge" 2>/dev/null || true)"
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
     LEFTHOOK=0 git worktree add "$tree" "$branch"

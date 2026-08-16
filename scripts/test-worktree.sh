@@ -1238,6 +1238,36 @@ fi
 new deadend-base --base HEAD >/dev/null || fail "an explicit --base did not skip the unverifiable-upstream refusal"
 rm_wt deadend-base >/dev/null || fail "cleanup of the deadend-base tree failed"
 git -C "$fixture" branch -D deadend-base >/dev/null 2>&1 || true
+
+echo "==> movement that contradicts this run's probed tip is not fetch evidence"
+# challenge round 3: an overlapping fetch can publish an OLDER advertised
+# tip into refs/remotes/* after this run probed a newer one. Proceeding on
+# it would knowingly contradict the fresher answer in hand, so only
+# movement to exactly the probed tip counts — the namespace alone does
+# not. The shim plays that slower fetch: it moves the tracking ref to a
+# value that is not the probe's answer and fails this run's fetch.
+stale_alt="$(git -C "$fixture" commit-tree -m "older advertised tip" -p "$anchor_sha" "$(git -C "$fixture" rev-parse "$anchor_sha^{tree}")")"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$anchor_sha"
+cat >"$evshim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "--refmap=" ]; then
+      "$ev_real_git" -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$stale_alt"
+      exit 1
+    fi
+  done
+fi
+exec "$ev_real_git" "\$@"
+SHIM
+chmod +x "$evshim_dir/git"
+staleatt_out="$(cd "$fixture" && PATH="$evshim_dir:$PATH" WTSHIM_EVIDENCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh staleatt-base 2>&1)" &&
+    fail "worktree-new.sh trusted tracking-ref movement that contradicts its own probe (harmon-init#916)"
+case "$staleatt_out" in *"could not verify"*) : ;; *) fail "the contradicted-movement refusal did not say what it could not verify: $staleatt_out" ;; esac
+refute_exists "$fixture/.worktrees/staleatt-base" "the contradicted-movement refusal left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/staleatt-base; then
+    fail "the contradicted-movement refusal left the branch behind"
+fi
 # Restore the tracking ref the cases above moved.
 git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
 
@@ -1969,6 +1999,67 @@ case "$moved_out" in *"leaving branch 'rollback-moved' alone"*) : ;; *) fail "th
 refute_exists "$fixture/.worktrees/rollback-moved" "the moved-tip rollback left its tree behind"
 git -C "$fixture" branch -D rollback-moved >/dev/null 2>&1 || true
 git -C "$fixture" push -q origin :refs/heads/rollback-moved
+
+echo "==> rollback keeps the branch when its worktree could not be removed"
+# challenge round 3: update-ref is plumbing that bypasses git's
+# checked-out guard, so deleting the branch under a tree the removal
+# failed to clear would leave a live registered worktree on an unborn
+# HEAD. `git worktree remove --force` deregisters even when directory
+# deletion fails on permissions, so the deterministic stand-in for "the
+# removal failed and the registration survived" is a LOCKED worktree:
+# remove --force refuses one outright unless --force is given twice, and
+# rollback passes it once. The failing hook locks its own tree.
+cat >"$shared_hooks/post-checkout" <<'EOF'
+#!/bin/sh
+git worktree lock "$PWD"
+exit 1
+EOF
+chmod +x "$shared_hooks/post-checkout"
+git -C "$fixture" push -q origin HEAD:refs/heads/heldtree
+git -C "$fixture" update-ref -d refs/remotes/origin/heldtree 2>/dev/null || true
+heldtree_out="$(new heldtree 2>&1)" && {
+    rm -f "$shared_hooks/post-checkout"
+    fail "worktree-new.sh reported success despite the locked-tree attach failure"
+}
+rm -f "$shared_hooks/post-checkout"
+git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/heldtree" ||
+    fail "fixture assumption broken: the locked tree was deregistered after all"
+git -C "$fixture" show-ref --verify --quiet refs/heads/heldtree ||
+    fail "rollback deleted the branch of a worktree it could not remove (harmon-init#916)"
+case "$heldtree_out" in *"could not be removed and still has it checked out"*) : ;; *) fail "the held-tree rollback did not say it kept the branch: $heldtree_out" ;; esac
+git -C "$fixture" worktree unlock "$fixture/.worktrees/heldtree" 2>/dev/null || true
+rm_wt heldtree --force >/dev/null || fail "cleanup of the held tree failed once unblocked"
+git -C "$fixture" branch -D heldtree >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/heldtree
+
+echo "==> rollback restores only the branch config keys this run wrote"
+# challenge round 3: branch.<name> config can outlive a deleted branch,
+# and a user's pushRemote/rebase/description in it are not this run's to
+# remove. Rollback restores the two keys the run wrote — remote and
+# merge — and leaves the rest of the section alone.
+git -C "$fixture" config branch.rollcfg.pushRemote myfork
+git -C "$fixture" config branch.rollcfg.remote oldrem
+cat >"$shared_hooks/post-checkout" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$shared_hooks/post-checkout"
+git -C "$fixture" push -q origin HEAD:refs/heads/rollcfg
+git -C "$fixture" update-ref -d refs/remotes/origin/rollcfg 2>/dev/null || true
+if new rollcfg >/dev/null 2>&1; then
+    rm -f "$shared_hooks/post-checkout"
+    fail "worktree-new.sh reported success despite the failing attach in the config-restore case"
+fi
+rm -f "$shared_hooks/post-checkout"
+[ "$(git -C "$fixture" config --get branch.rollcfg.pushRemote || true)" = "myfork" ] ||
+    fail "rollback removed a pre-existing branch config key it never wrote (harmon-init#916)"
+[ "$(git -C "$fixture" config --get branch.rollcfg.remote || true)" = "oldrem" ] ||
+    fail "rollback did not restore the prior branch.<name>.remote value"
+if git -C "$fixture" config --get branch.rollcfg.merge >/dev/null 2>&1; then
+    fail "rollback left the branch.<name>.merge key this run wrote"
+fi
+git -C "$fixture" config --remove-section branch.rollcfg 2>/dev/null || true
+git -C "$fixture" push -q origin :refs/heads/rollcfg
 
 # ── per-tree dependency install ──────────────────────────────────────
 echo "==> a Node repo gets its dependencies installed in the NEW tree"
