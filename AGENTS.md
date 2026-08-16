@@ -358,7 +358,14 @@ allowed.
   `pull_request` and pushes to `main` only, Codex cloud review is
   comment-triggered with Automatic reviews disabled, and a bare `task
   challenge`/`task review` covers branch commits *and* working tree alike, so
-  commit boundaries never change what a round reviews. What it buys is that a
+  commit boundaries never change what a round reviews. Nor does it outrun the
+  gate that matters: lefthook's `pre-push` runs `task security:secrets`, so
+  gitleaks clears every round's commit before it leaves the machine, and the
+  rest of the security suite still runs at `task ci` before the PR exists.
+  **Push to the branch's own writable remote** — the one `gh pr create` will
+  push to, which in a fork checkout is the fork rather than `origin` — and set
+  it on the first push (`git push -u <remote> <branch>`), since a new branch
+  has no upstream to infer. What it buys is that a
   lost environment costs one round instead of a whole converged stage, and
   that a push-permission gap surfaces at round 1 rather than at
   `gh pr create` — both observed failures. It does **not** carry the
