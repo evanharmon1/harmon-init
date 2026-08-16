@@ -126,6 +126,11 @@ if [ -z "$base" ]; then
     base="$(git -C "$main_root" rev-parse --verify --quiet HEAD || true)"
     [ -n "$base" ] ||
         die "the main worktree has no commits yet — make an initial commit, or pass --base <ref>"
+    # Captured HERE, in the same breath as $base, and never re-read: the main
+    # worktree can switch branches while this script runs (parallel use is
+    # this entrypoint's design space), and a verify that re-resolved HEAD
+    # later would compare one branch's upstream against another branch's SHA.
+    default_base_branch="$(git -C "$main_root" symbolic-ref --quiet --short HEAD || true)"
     echo "==> Base: ${base_origin} (${base_label} @ $(git rev-parse --short "$base")) — pass --base <ref> to branch elsewhere"
 fi
 
@@ -133,11 +138,19 @@ fi
 # this entrypoint is run by agents with no terminal, where a credential
 # prompt is an indefinite hang (the same failure shape as harmon-init#802),
 # and a degraded remote that accepts the connection and then stalls would
-# hang it just as hard. GIT_TERMINAL_PROMPT=0 turns a would-be prompt into a
-# fast failure; the low-speed bounds turn an HTTP stall into one. SSH obeys
-# the user's own ssh config and is deliberately not overridden here.
+# hang it just as hard. GIT_TERMINAL_PROMPT=0 turns a would-be HTTP prompt
+# into a fast failure and the low-speed bounds turn an HTTP stall into one;
+# neither reaches an SSH transport, so the ssh command gets BatchMode (no
+# interactive auth) and a connect timeout too. The options are APPENDED to
+# the user's own ssh command — ssh takes the first value obtained for an
+# option, so anything they set explicitly still wins — and core.sshCommand
+# is honoured before falling back to plain ssh, so a configured proxy or
+# jump host keeps working.
 git_net() {
-    GIT_TERMINAL_PROMPT=0 git -C "$main_root" \
+    _ssh_base="${GIT_SSH_COMMAND:-$(git -C "$main_root" config --get core.sshCommand 2>/dev/null || echo ssh)}"
+    GIT_TERMINAL_PROMPT=0 \
+        GIT_SSH_COMMAND="$_ssh_base -o BatchMode=yes -o ConnectTimeout=30" \
+        git -C "$main_root" \
         -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 "$@"
 }
 
@@ -151,43 +164,52 @@ git_net() {
 # uses the base, so neither should be blocked (or even warned) by its
 # staleness. May rewrite $base/$base_label or die.
 verify_default_base() {
-    # The remote name comes from branch config, never from splitting the ref
-    # text (a remote name may itself contain '/'), and the fetch SOURCE comes
-    # from branch.<name>.merge, never from the abbreviated upstream name — a
-    # non-identity fetch refspec makes @{u}'s short name differ from the
-    # branch it mirrors on the remote.
-    head_branch="$(git -C "$main_root" symbolic-ref --quiet --short HEAD || true)"
-    [ -n "$head_branch" ] || return 0
-    upstream_remote="$(git -C "$main_root" config --get "branch.$head_branch.remote" 2>/dev/null || true)"
-    upstream_merge="$(git -C "$main_root" config --get "branch.$head_branch.merge" 2>/dev/null || true)"
-    upstream_ref="$(git -C "$main_root" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
-    { [ -n "$upstream_remote" ] && [ -n "$upstream_ref" ]; } || return 0
-    fetch_ok=1
+    # Everything resolves from $default_base_branch, captured with $base —
+    # never from a fresh HEAD read (the main worktree can have switched
+    # branches since). The remote name comes from branch config, never from
+    # splitting ref text (a remote name may itself contain '/'); the fetch
+    # SOURCE comes from branch.<name>.merge, never from the abbreviated
+    # upstream name (a non-identity fetch refspec makes them differ); and the
+    # fetch DESTINATION is the upstream's full symbolic ref, never a
+    # refs/remotes/ prefix guess (a custom refspec can map outside
+    # refs/remotes/, and an ambiguous short name would mislead a prefix).
+    [ -n "$default_base_branch" ] || return 0
+    upstream_remote="$(git -C "$main_root" config --get "branch.$default_base_branch.remote" 2>/dev/null || true)"
+    upstream_merge="$(git -C "$main_root" config --get "branch.$default_base_branch.merge" 2>/dev/null || true)"
+    upstream_full="$(git -C "$main_root" rev-parse --symbolic-full-name "$default_base_branch@{upstream}" 2>/dev/null || true)"
+    { [ -n "$upstream_remote" ] && [ -n "$upstream_full" ]; } || return 0
+    upstream_label="$(git -C "$main_root" rev-parse --abbrev-ref "$default_base_branch@{upstream}" 2>/dev/null || echo "$upstream_full")"
+    fetch_failed=0
     if [ "$upstream_remote" != "." ]; then
         [ -n "$upstream_merge" ] || return 0
         git_net fetch --quiet "$upstream_remote" \
-            "+$upstream_merge:refs/remotes/$upstream_ref" 2>/dev/null ||
-            fetch_ok=0
+            "+$upstream_merge:$upstream_full" 2>/dev/null ||
+            fetch_failed=1
     fi
-    if [ "$fetch_ok" -eq 0 ]; then
-        echo "worktree:new: warning: could not reach '$upstream_remote' to verify ${base_label} against ${upstream_ref} — the base may be missing recently merged work (harmon-init#813)" >&2
-        return 0
+    # The comparison reads the tracking ref AFTER the fetch attempt, success
+    # or not: a parallel worktree:new fetching the same upstream can win the
+    # ref lock and fail THIS fetch while leaving the ref freshly updated —
+    # returning early on failure would base the loser on the stale snapshot.
+    # Only a genuinely unreadable state keeps the base as captured, and a
+    # failed fetch still says so out loud.
+    if [ "$fetch_failed" -eq 1 ]; then
+        echo "worktree:new: warning: could not fetch '$upstream_remote' — verifying ${base_label} against the last-known ${upstream_label}, which may itself be stale (harmon-init#813)" >&2
     fi
-    upstream_tip="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_ref^{commit}" || true)"
+    upstream_tip="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
     { [ -n "$upstream_tip" ] && [ "$upstream_tip" != "$base" ]; } || return 0
     if git -C "$main_root" merge-base --is-ancestor "$base" "$upstream_tip"; then
         # Behind: hand out the current upstream tip, not the stale local one.
         # Resolved to a SHA so branch creation picks up no tracking side
         # effects.
-        echo "==> Base: ${base_label} is behind ${upstream_ref} — using ${upstream_ref} @ $(git rev-parse --short "$upstream_tip")"
+        echo "==> Base: ${base_label} is behind ${upstream_label} — using ${upstream_label} @ $(git rev-parse --short "$upstream_tip")"
         base="$upstream_tip"
-        base_label="$upstream_ref"
+        base_label="$upstream_label"
     elif git -C "$main_root" merge-base --is-ancestor "$upstream_tip" "$base"; then
         # Ahead: local has everything the upstream has, plus unpushed work
         # the caller presumably wants. Say so.
-        echo "==> Note: ${base_label} is ahead of ${upstream_ref}; basing on the local tip"
+        echo "==> Note: ${base_label} is ahead of ${upstream_label}; basing on the local tip"
     else
-        die "${base_label} has diverged from ${upstream_ref} — reconcile them, or pass --base <ref> to choose a start point explicitly"
+        die "${base_label} has diverged from ${upstream_label} — reconcile them, or pass --base <ref> to choose a start point explicitly"
     fi
 }
 

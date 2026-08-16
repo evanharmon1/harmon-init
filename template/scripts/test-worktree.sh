@@ -911,6 +911,37 @@ case "$base_out" in *"is behind baseup/$fixture_head_branch"*) : ;; *) fail "wor
 rm_wt fresh-base >/dev/null || fail "cleanup of the fresh-base tree failed"
 git -C "$fixture" branch -D fresh-base >/dev/null 2>&1 || true
 
+echo "==> a non-identity fetch refspec still verifies against the true source branch"
+# The upstream's short name and its source branch deliberately differ
+# (+refs/heads/trunk-src:refs/remotes/niup/localname): a helper that derives
+# the fetch source by splitting the abbreviated upstream name would fetch a
+# branch that does not exist and silently keep the stale base (challenge
+# round 2 of harmon-init#813/#840).
+ni_upstream="$test_tmp/ni-upstream.git"
+git init -q --bare "$ni_upstream"
+git -C "$fixture" remote add niup "$ni_upstream"
+git -C "$fixture" config remote.niup.fetch "+refs/heads/trunk-src:refs/remotes/niup/localname"
+git -C "$fixture" push -q niup HEAD:refs/heads/trunk-src
+ni_anchor="$(git -C "$fixture" rev-parse HEAD)"
+printf 'landed on trunk-src\n' >"$fixture/NI.md"
+git -C "$fixture" add NI.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: advance the non-identity upstream" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the non-identity advance failed"
+git -C "$fixture" push -q niup HEAD:refs/heads/trunk-src
+ni_tip="$(git -C "$fixture" rev-parse HEAD)"
+git -C "$fixture" reset -q --hard "$ni_anchor"
+git -C "$fixture" config "branch.$fixture_head_branch.remote" niup
+git -C "$fixture" config "branch.$fixture_head_branch.merge" refs/heads/trunk-src
+git -C "$fixture" update-ref refs/remotes/niup/localname "$ni_anchor"
+new ni-base >/dev/null || fail "worktree-new.sh failed with a non-identity upstream refspec"
+[ "$(git -C "$fixture/.worktrees/ni-base" rev-parse HEAD)" = "$ni_tip" ] ||
+    fail "worktree-new.sh did not fetch the true source branch through the non-identity refspec (harmon-init#813)"
+rm_wt ni-base >/dev/null || fail "cleanup of the ni-base tree failed"
+git -C "$fixture" branch -D ni-base >/dev/null 2>&1 || true
+git -C "$fixture" config "branch.$fixture_head_branch.remote" baseup
+git -C "$fixture" config "branch.$fixture_head_branch.merge" "refs/heads/$fixture_head_branch"
+git -C "$fixture" remote remove niup
+
 echo "==> a default base diverged from its upstream is refused"
 printf 'local divergence\n' >"$fixture/DIVERGED.md"
 git -C "$fixture" add DIVERGED.md
