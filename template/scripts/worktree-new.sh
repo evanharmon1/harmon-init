@@ -168,9 +168,19 @@ fi
 # because closing it means a hand-rolled process watchdog whose own failure
 # modes (PID reuse, signal races, orphan supervision) outweigh the residual.
 git_net() {
-    _ssh_base="${GIT_SSH_COMMAND:-$(git -C "$main_root" config --get core.sshCommand 2>/dev/null || echo ssh)}"
+    _ssh_cmd="${GIT_SSH_COMMAND:-$(git -C "$main_root" config --get core.sshCommand 2>/dev/null || true)}"
+    if [ -z "$_ssh_cmd" ] && [ -n "${GIT_SSH:-}" ]; then
+        # GIT_SSH names a bare program that accepts no extra options —
+        # appending ours would break the wrapper, and exporting
+        # GIT_SSH_COMMAND would silently bypass it. Leave the SSH transport
+        # to it, unbounded; the HTTP bounds and prompt suppression still
+        # apply.
+        GIT_TERMINAL_PROMPT=0 git -C "$main_root" \
+            -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 "$@"
+        return
+    fi
     GIT_TERMINAL_PROMPT=0 \
-        GIT_SSH_COMMAND="$_ssh_base -o BatchMode=yes -o ConnectTimeout=30" \
+        GIT_SSH_COMMAND="${_ssh_cmd:-ssh} -o BatchMode=yes -o ConnectTimeout=30" \
         git -C "$main_root" \
         -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 "$@"
 }
