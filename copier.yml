@@ -194,6 +194,16 @@ use_foreman:
   help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv and operator setup: bot identity, arming labels, rulesets)?"
   default: no
 
+foreman_additional_trusted_actors:
+  type: str
+  help: >-
+    FOREMAN TRUST: Additional comma-separated GitHub logins whose arming events
+    and comment/review content Foreman may trust (for example, an operator App
+    identity). Security-sensitive; leave empty unless each identity is
+    intentionally authorized.
+  default: ""
+  when: "[[ use_foreman ]]"
+
 use_codeql:
   type: bool
   help: >-
