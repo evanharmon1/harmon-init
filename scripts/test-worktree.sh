@@ -1228,6 +1228,29 @@ aged_out="$(new aged-lk 2>&1)" && fail "an aged ownerless lock was auto-reclaime
 case "$aged_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the ownerless refusal named no remedy" ;; esac
 rm -rf "$fixture_locks/aged-lk+lock"
 
+echo "==> a repository path containing whitespace releases every marker"
+# The array-tracked marker paths exist for exactly this repository shape —
+# a space-joined scalar word-splits absolute paths and release strands
+# every marker. Run under /bin/bash so macOS exercises its 3.2 baseline.
+spaced_root="$test_tmp/with space"
+mkdir -p "$spaced_root/r/scripts"
+cp "$fixture/scripts/worktree-new.sh" "$fixture/scripts/worktree-rm.sh" "$fixture/scripts/worktree-lock.sh" "$spaced_root/r/scripts/"
+git -C "$spaced_root/r" init -q
+git -C "$spaced_root/r" config user.name "Worktree Test"
+git -C "$spaced_root/r" config user.email "worktree-test@example.invalid"
+git -C "$spaced_root/r" config commit.gpgsign false
+printf 'spaced\n' >"$spaced_root/r/README.md"
+git -C "$spaced_root/r" add -A
+LEFTHOOK=0 git -C "$spaced_root/r" commit -qm "chore: spaced fixture" >/dev/null 2>&1 ||
+    fail "committing the spaced fixture failed"
+(cd "$spaced_root/r" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" /bin/bash scripts/worktree-new.sh sp/child --no-install >/dev/null 2>&1) ||
+    fail "worktree:new failed in a repository path containing whitespace"
+(cd "$spaced_root/r" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" /bin/bash scripts/worktree-rm.sh sp/child >/dev/null 2>&1) ||
+    fail "worktree:rm failed in a repository path containing whitespace"
+spaced_leftover="$(find "$spaced_root/r/.git/worktree-locks" -type f 2>/dev/null | wc -l | tr -d ' ')"
+[ "$spaced_leftover" -eq 0 ] ||
+    fail "a whitespace repository path stranded $spaced_leftover lock marker(s) (review r4/r5)"
+
 echo "==> an unusable ps fails closed instead of breaking a dead lock"
 # The liveness probe must read "ps itself is broken" as indeterminate: a
 # sandboxed host that denies ps would otherwise turn every held lock into
