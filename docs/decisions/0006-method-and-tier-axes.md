@@ -160,7 +160,9 @@ amendment.
   confirmation, fail-open/closed) stated as invariants rather than left to each
   implementer's judgement.
 - The `tier`/`method` distinction from rigor is now unambiguous: rigor has
-  **levels**, the model axis has **tiers**. Prose everywhere follows suit.
+  **levels**, the model axis has **tiers**. This repo's own docs and config
+  follow suit; the vendored skills suite renames at its source
+  (harmon-devkit#498).
 - Nothing in a generated repo gains a runtime dependency: the tables are inert,
   and enforcement of the trust invariants rides foreman#139's rails.
 - The capability-monotonicity check and the timeline algorithm are named,

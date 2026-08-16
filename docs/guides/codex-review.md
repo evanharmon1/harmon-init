@@ -240,7 +240,7 @@ task check      # fast inner loop while editing
 task verify     # definition-of-done gate
 task challenge  # adversarial second model — adjudicate, fix, re-challenge
                 # until TWO CONSECUTIVE rounds adjudicate to zero P0/P1
-                # (a round with no findings ends it once the tier's
+                # (a round with no findings ends it once the level's
                 # min_rounds floor is met), under the challenge cap
                 # resolved from .devflow.toml
 task review     # verification checkpoint — same convergence rule, under its
@@ -285,8 +285,8 @@ down to
 P2; what counts is the **adjudicated** column of your adjudication table, not
 the label Codex attached. The second such round *is* the confirmation, so no
 extra run is owed after it. Two cases exit faster still. A round with **no
-findings at all** ends the stage on the spot **once the tier's `min_rounds`
-floor is met** (1 wherever a tier does not set it) — an empty round is exactly
+findings at all** ends the stage on the spot **once the level's `min_rounds`
+floor is met** (1 wherever a level does not set it) — an empty round is exactly
 the older "clean re-run" exit, so neither a trivial change nor a clean
 post-fix re-run pays for a confirmation pass, and a floor of 2 only delays
 that shortcut, never the other two exits, which run at least two rounds by
