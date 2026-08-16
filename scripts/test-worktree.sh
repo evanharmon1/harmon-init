@@ -1090,12 +1090,40 @@ if rm_wt 'bad name' >/dev/null 2>&1; then
 fi
 
 echo "==> a stale lock from a dead process is broken, once"
-sleep 0 &
-dead_pid=$!
-wait "$dead_pid" 2>/dev/null || true
+# Death is proven through a CONTROLLED ps, not the host's: a sandbox that
+# denies or restricts ps makes the implementation (correctly) refuse to
+# break, which would fail this case for the wrong reason. The shim renders
+# every probe visible and alive — self, pid 1, anything — except the one
+# recorded dead pid, so the case tests the breaking logic itself on every
+# host.
+stale_dead_pid=999999
+psstale_dir="$test_tmp/psstale"
+mkdir -p "$psstale_dir"
+cat >"$psstale_dir/ps" <<PSSHIM
+#!/bin/sh
+pid=""
+prev=""
+for arg in "\$@"; do
+  if [ "\$prev" = "-p" ]; then pid="\$arg"; fi
+  prev="\$arg"
+done
+if [ "\$pid" = "$stale_dead_pid" ]; then
+  exit 1
+fi
+case "\$*" in
+*lstart*) echo "Mon Jan  1 00:00:00 2026" ;;
+*) echo "\${pid:-1}" ;;
+esac
+exit 0
+PSSHIM
+chmod +x "$psstale_dir/ps"
 mkdir -p "$fixture_locks/stale-lk+lock"
-printf '%s %s\n' "$dead_pid" "$this_host" >"$fixture_locks/stale-lk+lock/owner"
-new stale-lk >/dev/null || fail "worktree-new.sh could not break a dead process's stale lock"
+printf '%s %s\n' "$stale_dead_pid" "$this_host" >"$fixture_locks/stale-lk+lock/owner"
+(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new stale-lk >/dev/null
+) || fail "worktree-new.sh could not break a dead process's stale lock"
 refute_exists "$fixture_locks/stale-lk+lock" "the stale-lock run did not release its own lock"
 rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
 

@@ -304,8 +304,12 @@ release_locks() {
     held_shared=""
 }
 lock_stamp() {
+    # The start stamp is recorded and compared under one pinned locale and
+    # timezone: lstart renders via the locale's %c, so two invocations
+    # differing in LC_TIME or TZ would otherwise disagree about the same
+    # process and misread it as PID reuse.
     printf '%s %s %s\n' "$$" "$lock_host" \
-        "$(ps -o lstart= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//')"
+        "$(LC_ALL=C TZ=UTC ps -o lstart= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//')"
 }
 lock_owner_alive() {
     # $1 = recorded "pid host [start-time]". Anything unparseable, and any
@@ -318,13 +322,17 @@ lock_owner_alive() {
     case "$_own_rest" in *" "*) _own_start="${_own_rest#* }" ;; esac
     [ "$_own_host" = "$lock_host" ] || return 0
     case "$_own_pid" in "" | *[!0-9]*) return 0 ;; esac
-    # ps is probed against OUR OWN pid first: a sandbox that denies ps
-    # entirely would otherwise make every probe "fail", and a failed probe
-    # must read as indeterminate (alive), never as proof of death.
+    # ps is trusted about absence only when it can prove visibility: our
+    # own pid (a sandbox denying ps entirely) AND pid 1 (a hidepid-style
+    # host hiding other users' processes — under which another user's live
+    # pid produces the same empty answer as a dead one). Either probe
+    # failing makes every absence indeterminate, and indeterminate reads
+    # as alive: breaking needs positive evidence of death.
     [ -n "$(ps -p $$ -o pid= 2>/dev/null)" ] || return 0
+    [ -n "$(ps -p 1 -o pid= 2>/dev/null)" ] || return 0
     [ -n "$(ps -p "$_own_pid" -o pid= 2>/dev/null)" ] || return 1
     if [ -n "$_own_start" ]; then
-        _now_start="$(ps -o lstart= -p "$_own_pid" 2>/dev/null | sed 's/^ *//;s/ *$//')"
+        _now_start="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$_own_pid" 2>/dev/null | sed 's/^ *//;s/ *$//')"
         if [ -n "$_now_start" ] && [ "$_now_start" != "$_own_start" ]; then
             return 1
         fi
@@ -343,26 +351,32 @@ lock_try_break() {
     # caller performed the break.
     _break="$1+break"
     if ! mkdir "$_break" 2>/dev/null; then
-        # A breaker died holding the break lock: ownerless and aged, sweep
-        # it and let the next loop iteration retry.
-        if [ -n "$(find "$_break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+        # A break lock is swept only on the same evidence as any other
+        # entry: a recorded owner proven dead, or ownerless AND aged. An
+        # age-only sweep would let a SIGSTOPped breaker resume after its
+        # break lock was swept and rename away a successor's fresh lock.
+        _break_owner="$(cat "$_break/owner" 2>/dev/null || true)"
+        if [ -n "$_break_owner" ]; then
+            lock_owner_alive "$_break_owner" || rm -rf "$_break"
+        elif [ -n "$(find "$_break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
             rm -rf "$_break"
         fi
         return 1
     fi
+    lock_stamp >"$_break/owner"
     _break_now="$(cat "$1/owner" 2>/dev/null || true)"
     if [ "$_break_now" != "$2" ]; then
-        rmdir "$_break" 2>/dev/null || true
+        rm -rf "$_break"
         return 1
     fi
     if [ -z "$2" ] && [ -z "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-        rmdir "$_break" 2>/dev/null || true
+        rm -rf "$_break"
         return 1
     fi
     if mv "$1" "$lock_root/.dead.$$" 2>/dev/null; then
         rm -rf "$lock_root/.dead.$$"
     fi
-    rmdir "$_break" 2>/dev/null || true
+    rm -rf "$_break"
     return 0
 }
 acquire_excl() {
