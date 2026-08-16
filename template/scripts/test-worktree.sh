@@ -96,6 +96,12 @@ rm -f "$WORKTREE_TIMEOUT_SENTINEL"
 # however the status is swallowed, the suite still ends non-zero and says why.
 worktree_exit() {
     exit_status=$?
+    # Reap the hostile-stdin writer if a case aborted before its explicit kill
+    # — it is backgrounded outside the timeout's process group, so nothing
+    # else collects it on a failing run (harmon-init#802).
+    if [ -n "${WORKTREE_STDIN_HOLDER:-}" ]; then
+        kill "$WORKTREE_STDIN_HOLDER" 2>/dev/null || true
+    fi
     if [ -e "$WORKTREE_TIMEOUT_SENTINEL" ]; then
         # Print what the sentinel HOLDS, not where it lives: it is removed
         # immediately below, so a path would point at nothing by the time
@@ -912,20 +918,42 @@ rm -f "$shared_hooks/post-checkout"
 
 echo "==> --no-install skips the dependency install"
 : >"$pnpm_marker"
-# This case runs real lefthook's post-checkout (the custom shim above is gone,
-# so worktree-new.sh reinstalled lefthook's own shims), and it runs under a
-# stdin that never reaches EOF — the agent-session condition the suite's own
-# `exec </dev/null` shields everything else from. lefthook blocks
-# `run post-checkout` until stdin EOF (harmon-init#802), so a worktree-new.sh
-# that ties the deferred hook to the caller's stdin hangs here into the #792
-# bound and fails the suite instead of passing by accident.
+# This case runs under a stdin that never reaches EOF — the agent-session
+# condition the suite's own `exec </dev/null` shields everything else from.
+# lefthook blocks `run post-checkout` until stdin EOF (harmon-init#802), so
+# worktree-new.sh must hand the deferred hook an already-EOF stdin. The shim
+# below asserts that invariant ITSELF (`cat` drains to EOF before logging):
+# relying on the real lefthook to do the blocking would make this case
+# vacuous under the stub (whose `run` reads nothing) and hostage to whichever
+# stdin behavior a future lefthook ships. A worktree-new.sh that ties the
+# hook to the caller's stdin blocks in `cat` and hangs into the #792 bound.
+cat >"$shared_hooks/post-checkout" <<EOF
+#!/bin/sh
+if [ "\$LEFTHOOK" = "0" ]; then
+  exit 0
+fi
+if [ -n "\$LEFTHOOK_BIN" ]; then
+  exec "\$LEFTHOOK_BIN" run "post-checkout" "\$@"
+fi
+cat >/dev/null
+printf 'post-checkout-eof %s\n' "\$PWD" >>"$test_tmp/post-checkout.log"
+EOF
+chmod +x "$shared_hooks/post-checkout"
+: >"$test_tmp/post-checkout.log"
 mkfifo "$test_tmp/hostile-stdin"
 sleep 300 >"$test_tmp/hostile-stdin" &
-hostile_stdin_pid=$!
+WORKTREE_STDIN_HOLDER=$!
 new no-install-tree --no-install <"$test_tmp/hostile-stdin" >/dev/null ||
     fail "worktree-new.sh --no-install failed under a non-EOF stdin"
-kill "$hostile_stdin_pid" 2>/dev/null || true
-wait "$hostile_stdin_pid" 2>/dev/null || true
+grep -qx "post-checkout-eof $fixture/.worktrees/no-install-tree" "$test_tmp/post-checkout.log" 2>/dev/null ||
+    fail "the deferred post-checkout never reached EOF on its stdin — is it still tied to the caller's stdin? (harmon-init#802)"
+kill "$WORKTREE_STDIN_HOLDER" 2>/dev/null || true
+wait "$WORKTREE_STDIN_HOLDER" 2>/dev/null || true
+WORKTREE_STDIN_HOLDER=""
+# The shim deliberately stays installed: the missing-pnpm case below runs
+# under a PATH mask that hides lefthook, so a configured-but-absent
+# post-checkout hook would fail it at the hook stage instead of the pnpm
+# gate it exists to assert.
 if [ -s "$pnpm_marker" ]; then
     fail "worktree-new.sh ran the installer despite --no-install"
 fi
