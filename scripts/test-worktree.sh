@@ -1046,13 +1046,13 @@ fixture_locks="$fixture/.git/worktree-locks"
 this_host="$(hostname)"
 
 echo "==> a live parent-path operation refuses a child creation, and vice versa"
-# Both #839 creation orders, deterministically: holding the locks a real
+# Both #839 creation orders, deterministically: holding the entries a real
 # concurrent operation would hold IS the race's exclusion state, minus the
-# scheduler. A parent operation holds {parent}; a child operation holds
-# {parent, parent/child} (ancestors first) — so each direction's newcomer
-# must refuse at its first lock.
-mkdir -p "$fixture_locks/lockparent"
-printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent/owner"
+# scheduler. An operation ON parent holds parent exclusively; an operation
+# on parent/child holds parent shared (a holder marker) and the child
+# exclusively.
+mkdir -p "$fixture_locks/lockparent+lock"
+printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent+lock/owner"
 if new lockparent/child --branch lockchild >/dev/null 2>&1; then
     fail "a child creation proceeded while a parent-path operation held the lock (harmon-init#839)"
 fi
@@ -1060,43 +1060,61 @@ refute_exists "$fixture/.worktrees/lockparent/child" "the refused child creation
 if git -C "$fixture" show-ref --verify --quiet refs/heads/lockchild; then
     fail "the refused child creation left its branch behind"
 fi
-mkdir -p "$fixture_locks/lockparent+child"
-printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent+child/owner"
+rm -rf "$fixture_locks/lockparent+lock"
+mkdir -p "$fixture_locks/lockparent+holders"
+printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent+holders/sim.marker"
+mkdir -p "$fixture_locks/lockparent%child+lock"
+printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent%child+lock/owner"
 if new lockparent >/dev/null 2>&1; then
-    fail "a parent creation proceeded while a child-path operation held the locks (harmon-init#839)"
+    fail "a parent creation proceeded while a child-path operation held its ancestor marker (harmon-init#839)"
 fi
 refute_exists "$fixture/.worktrees/lockparent" "the refused parent creation left a tree behind"
-echo "==> unrelated names stay concurrent under a held lock"
+refute_exists "$fixture_locks/lockparent+lock" "the refused parent creation left its exclusive lock held"
+
+echo "==> sibling operations under one ancestor stay concurrent"
+# The same child-operation simulation is still holding lockparent shared —
+# a SIBLING (lockparent/other) shares that ancestor without conflict and
+# must proceed; only an operation ON the ancestor is exclusive.
+new lockparent/other --branch locksibling >/dev/null ||
+    fail "a sibling creation was refused although only shared ancestor holds were live (harmon-init#839 round 1)"
+rm_wt lockparent/other >/dev/null || fail "cleanup of the sibling tree failed"
+git -C "$fixture" branch -D locksibling >/dev/null 2>&1 || true
+echo "==> unrelated names stay concurrent under held locks"
 new lockfree >/dev/null || fail "an unrelated creation was blocked by another name's lock"
 rm_wt lockfree >/dev/null || fail "cleanup of the unrelated tree failed"
-rm -rf "$fixture_locks/lockparent" "$fixture_locks/lockparent+child"
+rm -rf "$fixture_locks/lockparent+holders" "$fixture_locks/lockparent%child+lock"
+
+echo "==> a name the whitelist refuses cannot reach the lock bookkeeping"
+if rm_wt 'bad name' >/dev/null 2>&1; then
+    fail "worktree-rm.sh accepted a name outside the creation whitelist"
+fi
 
 echo "==> a stale lock from a dead process is broken, once"
 sleep 0 &
 dead_pid=$!
 wait "$dead_pid" 2>/dev/null || true
-mkdir -p "$fixture_locks/stale-lk"
-printf '%s %s\n' "$dead_pid" "$this_host" >"$fixture_locks/stale-lk/owner"
+mkdir -p "$fixture_locks/stale-lk+lock"
+printf '%s %s\n' "$dead_pid" "$this_host" >"$fixture_locks/stale-lk+lock/owner"
 new stale-lk >/dev/null || fail "worktree-new.sh could not break a dead process's stale lock"
-refute_exists "$fixture_locks/stale-lk" "the stale-lock run did not release its own lock"
+refute_exists "$fixture_locks/stale-lk+lock" "the stale-lock run did not release its own lock"
 rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
 
 echo "==> a foreign host's lock is refused with the remedy, never broken"
-mkdir -p "$fixture_locks/foreign-lk"
-printf '%s %s\n' "12345" "not-$this_host" >"$fixture_locks/foreign-lk/owner"
+mkdir -p "$fixture_locks/foreign-lk+lock"
+printf '%s %s\n' "12345" "not-$this_host" >"$fixture_locks/foreign-lk+lock/owner"
 foreign_out="$(new foreign-lk 2>&1)" && fail "worktree-new.sh broke a lock it could not liveness-check"
 case "$foreign_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the foreign-lock refusal named no remedy" ;; esac
-[ -d "$fixture_locks/foreign-lk" ] || fail "the foreign host's lock was removed"
-rm -rf "$fixture_locks/foreign-lk"
+[ -d "$fixture_locks/foreign-lk+lock" ] || fail "the foreign host's lock was removed"
+rm -rf "$fixture_locks/foreign-lk+lock"
 
 echo "==> an ownerless lock: fresh refuses, aged is broken"
-mkdir -p "$fixture_locks/fresh-lk"
+mkdir -p "$fixture_locks/fresh-lk+lock"
 if new fresh-lk >/dev/null 2>&1; then
     fail "a fresh ownerless lock (a live acquisition window) was broken"
 fi
-rm -rf "$fixture_locks/fresh-lk"
-mkdir -p "$fixture_locks/aged-lk"
-touch -t 202601010000 "$fixture_locks/aged-lk"
+rm -rf "$fixture_locks/fresh-lk+lock"
+mkdir -p "$fixture_locks/aged-lk+lock"
+touch -t 202601010000 "$fixture_locks/aged-lk+lock"
 new aged-lk >/dev/null || fail "an aged ownerless lock (a crashed acquisition) was not broken"
 rm_wt aged-lk >/dev/null || fail "cleanup of the aged-lk tree failed"
 
@@ -1105,9 +1123,9 @@ new lock-rel >/dev/null || fail "creating the lock-release probe tree failed"
 if new lock-rel >/dev/null 2>&1; then
     fail "a second creation of a registered name succeeded"
 fi
-refute_exists "$fixture_locks/lock-rel" "a refused creation left its lock held"
+refute_exists "$fixture_locks/lock-rel+lock" "a refused creation left its lock held"
 rm_wt lock-rel >/dev/null || fail "cleanup of the lock-rel tree failed"
-refute_exists "$fixture_locks/lock-rel" "worktree:rm left its lock held"
+refute_exists "$fixture_locks/lock-rel+lock" "worktree:rm left its lock held"
 
 echo "==> a removal in progress refuses a same-name recreation end to end"
 # The #784 window itself, interposed: a git shim pauses worktree-rm.sh
@@ -1135,12 +1153,18 @@ exec "$real_git" "\$@"
 SHIM
 chmod +x "$shim_dir/git"
 rm -f "$test_tmp/shim-paused" "$test_tmp/shim-release"
-(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_PAUSE_REMOVE=1 bash scripts/worktree-rm.sh interp >"$test_tmp/interp-rm.log" 2>&1) &
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_PAUSE_REMOVE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh interp >"$test_tmp/interp-rm.log" 2>&1) &
 interp_rm_pid=$!
 shim_deadline=$(($(date +%s) + 30))
 while [ ! -e "$test_tmp/shim-paused" ]; do
-    [ "$(date +%s)" -lt "$shim_deadline" ] || fail "the removal never reached its pause point"
-    kill -0 "$interp_rm_pid" 2>/dev/null || fail "the paused removal died before pausing: $(cat "$test_tmp/interp-rm.log")"
+    [ "$(date +%s)" -lt "$shim_deadline" ] || {
+        : >"$test_tmp/shim-release"
+        fail "the removal never reached its pause point"
+    }
+    kill -0 "$interp_rm_pid" 2>/dev/null || {
+        : >"$test_tmp/shim-release"
+        fail "the paused removal died before pausing: $(cat "$test_tmp/interp-rm.log")"
+    }
     sleep 0.2
 done
 if new interp >/dev/null 2>&1; then
@@ -1150,7 +1174,7 @@ fi
 : >"$test_tmp/shim-release"
 wait "$interp_rm_pid" || fail "the interposed removal failed: $(cat "$test_tmp/interp-rm.log")"
 refute_exists "$fixture/.worktrees/interp" "the interposed removal left the tree behind"
-refute_exists "$fixture_locks/interp" "the interposed removal left its lock held"
+refute_exists "$fixture_locks/interp+lock" "the interposed removal left its lock held"
 new interp >/dev/null || fail "recreation after the removal completed was refused"
 rm_wt interp >/dev/null || fail "cleanup of the interp tree failed"
 

@@ -92,6 +92,14 @@ case "$name" in
 /* | -*) die "invalid name '$name': must not start with '/' or '-'" ;;
 *..*) die "invalid name '$name': must not contain '..'" ;;
 esac
+# The same character whitelist creation enforces. Removal used to get away
+# without it, but lock entries are derived from the name, and a name
+# carrying whitespace, glob characters, or the encoding characters would
+# corrupt the lock bookkeeping (harmon-init#784) — and no conforming
+# creation can have produced such a worktree anyway.
+case "$name" in
+*[!A-Za-z0-9._/-]*) die "invalid name '$name': use only A-Z a-z 0-9 . _ - /" ;;
+esac
 # The same component rule creation enforces, and for the same reason: every
 # decision below compares `$tree` against git's CANONICAL registry paths as
 # text. `./live` would miss the record for the live worktree at `live`, and the
@@ -109,22 +117,137 @@ main_root="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 
 tree="$main_root/.worktrees/$name"
 
 # ── Per-path lifecycle locks ─────────────────────────────────────────
-# The same serialization worktree-new.sh takes, for the removal side of the
-# family (harmon-init#784, #839): every decision below drives off entry-time
-# snapshots, and the lock is what makes those snapshots invariants instead
-# of three independent guesses — a `worktree:new` recreating this name
-# mid-run now refuses at its own lock acquisition instead of racing the
-# debris sweep. Locks are TRY-acquired (refuse, never queue), unrelated
-# names stay fully concurrent, and the lock root lives in the COMMON git
-# dir so linked worktrees share it. Components join with `+`, a character
-# the name charset forbids.
+# worktree:new and worktree:rm serialize per worktree path (harmon-init#839,
+# #784): concurrent creations of `parent` and `parent/child` could otherwise
+# both read the pre-creation registry, pass the ancestry checks, and
+# register the nested layout those checks exist to refuse — and a removal's
+# later steps could act on a worktree recreated at the same path mid-run.
+#
+# The protocol, shared by both scripts:
+# - An operation on NAME holds every ancestor path SHARED and NAME itself
+#   EXCLUSIVE. Ancestors are shared so sibling operations — feat/a and
+#   feat/b both passing through feat — stay fully concurrent; an operation
+#   ON an ancestor takes it exclusively and refuses while any live
+#   descendant holds it, and vice versa.
+# - Everything is TRY-acquired: contention refuses immediately rather than
+#   queueing, so no deadlock is possible and no caller waits minutes to
+#   then be refused at the registry.
+# - A stale entry is broken by RENAMING it aside first — rename is atomic
+#   and single-winner, so two breakers can never both "succeed" and then
+#   delete each other's fresh lock.
+# - Liveness is judged with ps(1) — `kill -0` reports EPERM for another
+#   user's live process, which reads as dead — plus the recorded process
+#   start time where ps can report it, so a reused PID does not keep a dead
+#   owner's lock alive. Only owners recorded on THIS host are judged; a
+#   foreign host's entry refuses with the remedy, never a guess. Residuals,
+#   stated: two PID namespaces sharing one hostname over one checkout
+#   cannot be told apart from here (default container hostnames differ,
+#   which is the intended guard), and an acquirer SIGSTOPped for over a
+#   minute inside the two-statement claim window can have its ownerless
+#   lock broken as crashed.
+# - Lock entries live in the COMMON git dir (shared across linked
+#   worktrees; `--git-path` would resolve per-worktree). `/` in names is
+#   encoded as `%` and entry suffixes use `+`; both characters are outside
+#   the name charset both scripts enforce, so encodings cannot collide.
 lock_root="$(git rev-parse --path-format=absolute --git-common-dir)/worktree-locks"
-held_locks=""
+lock_host="$(hostname)"
+held_excl=""
+held_shared=""
 release_locks() {
-    for _held in $held_locks; do
-        rm -rf "$lock_root/$_held"
+    if [ -n "$held_excl" ]; then
+        rm -rf "$lock_root/$held_excl+lock"
+        held_excl=""
+    fi
+    for _held in $held_shared; do
+        rm -f "$lock_root/$_held+holders/$$.marker"
+        rmdir "$lock_root/$_held+holders" 2>/dev/null || true
     done
-    held_locks=""
+    held_shared=""
+}
+lock_stamp() {
+    printf '%s %s %s\n' "$$" "$lock_host" \
+        "$(ps -o lstart= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//')"
+}
+lock_owner_alive() {
+    # $1 = recorded "pid host [start-time]". Anything unparseable, and any
+    # owner from another host, is treated as alive: breaking is only ever
+    # allowed on positive evidence of death.
+    _own_pid="${1%% *}"
+    _own_rest="${1#* }"
+    _own_host="${_own_rest%% *}"
+    _own_start=""
+    case "$_own_rest" in *" "*) _own_start="${_own_rest#* }" ;; esac
+    [ "$_own_host" = "$lock_host" ] || return 0
+    case "$_own_pid" in "" | *[!0-9]*) return 0 ;; esac
+    ps -p "$_own_pid" >/dev/null 2>&1 || return 1
+    if [ -n "$_own_start" ]; then
+        _now_start="$(ps -o lstart= -p "$_own_pid" 2>/dev/null | sed 's/^ *//;s/ *$//')"
+        if [ -n "$_now_start" ] && [ "$_now_start" != "$_own_start" ]; then
+            return 1
+        fi
+    fi
+    return 0
+}
+lock_break() {
+    # Rename-then-remove: only one breaker's rename can succeed, and the
+    # loser simply re-examines whatever now sits at the path.
+    if mv "$1" "$lock_root/.dead.$$" 2>/dev/null; then
+        rm -rf "$lock_root/.dead.$$"
+    fi
+}
+acquire_excl() {
+    # $1 = encoded path, $2 = display path
+    _excl="$lock_root/$1+lock"
+    _excl_tries=0
+    while ! mkdir "$_excl" 2>/dev/null; do
+        if [ ! -d "$_excl" ]; then
+            die "cannot create lock $_excl — the lock name may exceed a filesystem limit; shorten the worktree name"
+        fi
+        _excl_owner="$(cat "$_excl/owner" 2>/dev/null || true)"
+        _excl_tries=$((_excl_tries + 1))
+        if [ "$_excl_tries" -le 2 ]; then
+            if [ -n "$_excl_owner" ] && ! lock_owner_alive "$_excl_owner"; then
+                lock_break "$_excl"
+                continue
+            fi
+            if [ -z "$_excl_owner" ] &&
+                [ -n "$(find "$_excl" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+                lock_break "$_excl"
+                continue
+            fi
+        fi
+        die "another worktree operation holds '$2' (${_excl_owner:-owner not yet recorded}; lock $_excl) — if that process is gone, remove the lock directory and re-run"
+    done
+    lock_stamp >"$_excl/owner"
+    held_excl="$1"
+    # Exclusive also means: no live descendant operation may be holding
+    # this path shared. Dead holders are pruned; a live one refuses (the
+    # EXIT trap releases the exclusive lock just taken).
+    for _marker in "$lock_root/$1+holders"/*; do
+        [ -e "$_marker" ] || continue
+        _marker_owner="$(cat "$_marker" 2>/dev/null || true)"
+        if lock_owner_alive "${_marker_owner:-0 unreadable}"; then
+            die "a worktree operation under '$2/' is in progress (${_marker_owner:-holder unreadable}; $_marker) — if that process is gone, remove the marker file and re-run"
+        fi
+        rm -f "$_marker"
+    done
+}
+acquire_shared() {
+    # $1 = encoded path, $2 = display path. Marker first, exclusive-check
+    # second — the exclusive side checks in the opposite order, so however
+    # the two interleave at least one of them sees the other and refuses.
+    mkdir -p "$lock_root/$1+holders" 2>/dev/null ||
+        die "cannot create lock marker under $lock_root/$1+holders — the lock name may exceed a filesystem limit; shorten the worktree name"
+    lock_stamp >"$lock_root/$1+holders/$$.marker"
+    held_shared="$held_shared $1"
+    _shared_excl="$lock_root/$1+lock"
+    if [ -d "$_shared_excl" ]; then
+        _shared_owner="$(cat "$_shared_excl/owner" 2>/dev/null || true)"
+        if lock_owner_alive "${_shared_owner:-0 unreadable}"; then
+            die "another worktree operation holds '$2' (${_shared_owner:-owner not yet recorded}; lock $_shared_excl) — if that process is gone, remove the lock directory and re-run"
+        fi
+        lock_break "$_shared_excl"
+    fi
 }
 acquire_path_locks() {
     _lock_rest="$1"
@@ -137,45 +260,22 @@ acquire_path_locks() {
         *) _lock_rest="" ;;
         esac
         _lock_prefix="${_lock_prefix:+$_lock_prefix/}$_lock_seg"
-        _lock_enc="$(printf '%s' "$_lock_prefix" | tr '/' '+')"
-        _lock_tries=0
-        while ! mkdir "$lock_root/$_lock_enc" 2>/dev/null; do
-            # A lock owned by a live process on this host is a real
-            # concurrent operation: refuse, never wait. A dead owner's
-            # leftover (kill -9 skips every trap) is broken exactly once,
-            # as is an ownerless lock older than a minute (a crash in the
-            # instant between mkdir and the owner write). An owner from
-            # another host cannot be liveness-checked from here, so it is
-            # reported with the remedy rather than guessed about.
-            _lock_owner="$(cat "$lock_root/$_lock_enc/owner" 2>/dev/null || true)"
-            _lock_pid="${_lock_owner%% *}"
-            _lock_host="${_lock_owner#* }"
-            _lock_tries=$((_lock_tries + 1))
-            if [ "$_lock_tries" -le 1 ]; then
-                if [ -n "$_lock_pid" ] && [ "$_lock_host" = "$(hostname)" ] &&
-                    ! kill -0 "$_lock_pid" 2>/dev/null; then
-                    rm -rf "$lock_root/$_lock_enc"
-                    continue
-                fi
-                if [ -z "$_lock_owner" ] &&
-                    [ -n "$(find "$lock_root/$_lock_enc" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-                    rm -rf "$lock_root/$_lock_enc"
-                    continue
-                fi
-            fi
-            die "another worktree operation holds '$_lock_prefix' (${_lock_owner:-owner unreadable}; lock $lock_root/$_lock_enc) — if that process is gone, remove the lock directory and re-run"
-        done
-        printf '%s %s\n' "$$" "$(hostname)" >"$lock_root/$_lock_enc/owner"
-        held_locks="$held_locks $_lock_enc"
+        _lock_enc="$(printf '%s' "$_lock_prefix" | tr '/' '%')"
+        if [ -z "$_lock_rest" ]; then
+            acquire_excl "$_lock_enc" "$_lock_prefix"
+        else
+            acquire_shared "$_lock_enc" "$_lock_prefix"
+        fi
     done
 }
+# The traps are armed BEFORE the first acquisition, so a signal or failure
+# landing mid-acquisition still releases whatever partial set was taken.
 # Held from before the entry snapshots to script exit, so no step of the
 # removal ever acts on a worktree that appeared at this path after the
-# command started. The signal traps make an interrupt release the locks
-# instead of leaving a live-owner leftover.
-acquire_path_locks "$name"
+# command started.
 trap release_locks EXIT
 trap 'exit 129' HUP INT TERM
+acquire_path_locks "$name"
 
 # Liveness comes from the worktree REGISTRY, not from running git inside the
 # directory: `git -C <dir> rev-parse` walks upward and happily finds the
