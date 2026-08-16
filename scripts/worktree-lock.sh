@@ -56,16 +56,20 @@
 lock_root="$(git rev-parse --path-format=absolute --git-common-dir)/worktree-locks"
 lock_host="$(hostname)"
 lock_uid="$(id -u)"
-held_excl=""
+# An operation can hold more than one exclusive lock — its worktree-path
+# leaf plus a branch-namespace lock (acquire_branch_lock below) — so the
+# held set is an array; a scalar slot would let the second acquisition
+# orphan the first at release.
+held_excl=()
 # Marker paths are ABSOLUTE and the repository path may contain whitespace,
 # so held markers live in a bash array — a space-joined scalar would split
 # one path into several words at release and remove nothing.
 held_shared=()
 release_locks() {
-    if [ -n "$held_excl" ]; then
-        rm -rf "$lock_root/$held_excl+lock"
-        held_excl=""
-    fi
+    for _held_x in ${held_excl[@]+"${held_excl[@]}"}; do
+        rm -rf "$lock_root/$_held_x+lock"
+    done
+    held_excl=()
     # The holders directory itself is deliberately never removed: an rmdir
     # here races a sibling's marker publication (mkdir -p sees the dir,
     # rmdir empties it away, the marker write then fails spuriously). An
@@ -236,7 +240,7 @@ acquire_excl() {
         die "another worktree operation holds '$2' (${_excl_owner:-owner not yet recorded}; lock $_excl) — if that process is gone, remove the lock directory and re-run"
     done
     lock_stamp >"$_excl/owner"
-    held_excl="$1"
+    held_excl=(${held_excl[@]+"${held_excl[@]}"} "$1")
     # Exclusive also means: no live descendant operation may be holding
     # this path shared. Dead holders are pruned; a live one refuses (the
     # EXIT trap releases the exclusive lock just taken).
@@ -275,6 +279,22 @@ acquire_shared() {
         fi
         lock_try_break "$_shared_excl" "$_shared_owner" || true
     fi
+}
+acquire_branch_lock() {
+    # $1 = branch name. Serializes branch-ref publication and attachment
+    # across operations whose PATH locks never contend — `new x --branch b`
+    # and `new y --branch b` lock the paths x and y, yet both write or
+    # attach the one branch b, and without this lock the loser's rollback
+    # can delete the ref out from under the winner's checked-out worktree
+    # (harmon-init#916, challenge round 2). The key lives in a namespace no
+    # path key can produce: path components cannot contain '=', so
+    # 'branch=<name>' never collides with a worktree-path lock. Lowercased
+    # and length-clamped exactly as path keys are, for the same reasons.
+    _bl_enc="$(printf 'branch=%s' "$1" | tr '/' '%' | tr '[:upper:]' '[:lower:]')"
+    if [ "${#_bl_enc}" -gt 200 ]; then
+        _bl_enc="h$(printf '%s' "$_bl_enc" | cksum | tr ' \t' '--')"
+    fi
+    acquire_excl "$_bl_enc" "branch '$1'"
 }
 acquire_path_locks() {
     _lock_rest="$1"

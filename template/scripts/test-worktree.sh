@@ -1342,6 +1342,76 @@ git -C "$fixture" config --unset "branch.$fixture_head_branch.remote" || true
 git -C "$fixture" config --unset "branch.$fixture_head_branch.merge" || true
 git -C "$fixture" remote remove p1rem
 
+echo "==> movement of a refs/heads-mapped upstream is not fetch evidence"
+# harmon-init#916 challenge round 2: under a refspec mapping the upstream
+# into refs/heads/*, an ordinary LOCAL commit moves @{upstream}'s ref too.
+# If the refresh also fails, that movement must not read as a concurrent
+# fetch — the run would silently base on unrelated local work. The shim
+# plays the local committer: it moves the mapped ref to a local-only
+# commit and fails the fetch.
+p2h_up="$test_tmp/p2h-up.git"
+git init -q --bare "$p2h_up"
+git -C "$fixture" remote add p2hrem "$p2h_up"
+p2h_anchor="$(git -C "$fixture" rev-parse HEAD)"
+p2h_local="$(git -C "$fixture" commit-tree -m "local-only move" -p "$p2h_anchor" "$(git -C "$fixture" rev-parse "$p2h_anchor^{tree}")")"
+p2h_tip="$(git -C "$fixture" commit-tree -m "remote advance" -p "$p2h_anchor" "$(git -C "$fixture" rev-parse "$p2h_anchor^{tree}")")"
+git -C "$fixture" push -q p2hrem HEAD:refs/heads/trunk-src
+git -C "$fixture" push -q p2hrem "$p2h_tip:refs/heads/trunk-src"
+git -C "$fixture" config remote.p2hrem.fetch "+refs/heads/trunk-src:refs/heads/local-mirror2"
+git -C "$fixture" update-ref refs/heads/local-mirror2 "$p2h_anchor"
+git -C "$fixture" config "branch.$fixture_head_branch.remote" p2hrem
+git -C "$fixture" config "branch.$fixture_head_branch.merge" refs/heads/trunk-src
+cat >"$evshim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "--refmap=" ]; then
+      "$ev_real_git" -C "$fixture" update-ref refs/heads/local-mirror2 "$p2h_local"
+      exit 1
+    fi
+  done
+fi
+exec "$ev_real_git" "\$@"
+SHIM
+chmod +x "$evshim_dir/git"
+p2h_out="$(cd "$fixture" && PATH="$evshim_dir:$PATH" WTSHIM_EVIDENCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh heads-ev 2>&1)" &&
+    fail "worktree-new.sh accepted a local-branch move as fetch evidence (harmon-init#916)"
+case "$p2h_out" in *"could not verify"*) : ;; *) fail "the untrusted-movement refusal did not say what it could not verify: $p2h_out" ;; esac
+refute_exists "$fixture/.worktrees/heads-ev" "the untrusted-movement refusal left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/heads-ev; then
+    fail "the untrusted-movement refusal left the branch behind"
+fi
+
+echo "==> movement to the remote-attested probed tip still counts as evidence"
+# The trust gate's other arm: the same failure with the mapped ref moved to
+# exactly the tip this run's probe returned is a concurrent fetch by
+# definition — whoever moved it had the remote's answer — and must proceed.
+git -C "$fixture" update-ref refs/heads/local-mirror2 "$p2h_anchor"
+cat >"$evshim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_EVIDENCE" = "1" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "--refmap=" ]; then
+      "$ev_real_git" -C "$fixture" update-ref refs/heads/local-mirror2 "$p2h_tip"
+      exit 1
+    fi
+  done
+fi
+exec "$ev_real_git" "\$@"
+SHIM
+chmod +x "$evshim_dir/git"
+p2h_out2="$(cd "$fixture" && PATH="$evshim_dir:$PATH" WTSHIM_EVIDENCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh heads-ev2 2>&1)" ||
+    fail "worktree-new.sh refused although the moved value was the probed remote tip: $p2h_out2"
+[ "$(git -C "$fixture/.worktrees/heads-ev2" rev-parse HEAD)" = "$p2h_tip" ] ||
+    fail "the attested-movement path did not base on the probed remote tip"
+case "$p2h_out2" in *"concurrent fetch refreshed"*) : ;; *) fail "the attested-movement path produced no warning" ;; esac
+rm_wt heads-ev2 >/dev/null || fail "cleanup of the heads-ev2 tree failed"
+git -C "$fixture" branch -D heads-ev2 >/dev/null 2>&1 || true
+git -C "$fixture" branch -D local-mirror2 >/dev/null 2>&1 || true
+git -C "$fixture" config --unset "branch.$fixture_head_branch.remote" || true
+git -C "$fixture" config --unset "branch.$fixture_head_branch.merge" || true
+git -C "$fixture" remote remove p2hrem
+
 echo "==> a remote-only branch under a custom refspec never clobbers foreign tracking refs"
 # The remote maps ONLY decoy into refs/remotes/cref/victim. Creating the
 # remote-only branch 'victim' must attach it at the remote's tip via the
@@ -1467,6 +1537,28 @@ if new Case-LK >/dev/null 2>&1; then
     fail "a case-aliased spelling bypassed the held lock (PR #911 cloud review)"
 fi
 rm -rf "$fixture_locks/case-lk+lock"
+
+echo "==> operations naming one --branch under different names contend on the branch lock"
+# Path locks never contend for different worktree names, yet both runs
+# write or attach the ONE branch — without a branch-namespace lock the
+# loser's rollback can delete the ref out from under the winner's
+# checked-out tree (harmon-init#916, challenge round 2).
+mkdir -p "$fixture_locks/branch=lk-branch+lock"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/branch=lk-branch+lock/owner"
+if new lockbr-a --branch lk-branch >/dev/null 2>&1; then
+    fail "a creation proceeded while another operation held its --branch (harmon-init#916)"
+fi
+refute_exists "$fixture/.worktrees/lockbr-a" "the refused branch-locked creation left a tree behind"
+if new lk-branch >/dev/null 2>&1; then
+    fail "a default-named creation bypassed the held branch lock"
+fi
+new lockbr-b --branch other-branch >/dev/null ||
+    fail "an unrelated branch name was blocked by another branch's lock"
+rm_wt lockbr-b >/dev/null || fail "cleanup of the unrelated-branch tree failed"
+git -C "$fixture" branch -D other-branch >/dev/null 2>&1 || true
+rm -rf "$fixture_locks/branch=lk-branch+lock"
+new lk-branch >/dev/null || fail "the branch lock was not released for a later creation"
+rm_wt lk-branch >/dev/null || fail "cleanup of the lk-branch tree failed"
 
 echo "==> a stale lock from a dead process is broken, once"
 # Death is proven through a CONTROLLED ps, not the host's: a sandbox that

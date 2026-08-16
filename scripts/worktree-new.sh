@@ -228,6 +228,7 @@ verify_default_base() {
         # would silently drop (challenge round 1).
         verify_known_before="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
         verify_failed=0
+        verify_probed_tip=""
         probe_out="$(git_net ls-remote "$upstream_remote" "$upstream_merge")" || verify_failed=1
         if [ "$verify_failed" -eq 0 ]; then
             upstream_tip="$(printf '%s\n' "$probe_out" | awk -v ref="$upstream_merge" -F'\t' '$2 == ref {print $1; exit}')"
@@ -237,6 +238,7 @@ verify_default_base() {
                 echo "==> Note: '$upstream_remote' no longer has ${upstream_merge#refs/heads/} — basing on the local ${base_label}"
                 return 0
             fi
+            verify_probed_tip="$upstream_tip"
         fi
         if [ "$verify_failed" -eq 0 ]; then
             git_net fetch --quiet --refmap= "$upstream_remote" "$upstream_merge" || verify_failed=1
@@ -269,7 +271,26 @@ verify_default_base() {
             # parallel worktree:new won the race and its answer is current
             # enough to verify against (harmon-init#813).
             verify_known_after="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_full^{commit}" || true)"
+            verify_trusted=0
             if [ -n "$verify_known_after" ] && [ "$verify_known_after" != "$verify_known_before" ]; then
+                # Movement alone is not evidence: a custom refspec can map
+                # the upstream into refs/heads/*, where an ordinary LOCAL
+                # commit moves the ref too, and counting that as a
+                # concurrent refresh would silently base the new tree on
+                # unrelated local work (challenge round 2). Trust the
+                # movement only when the moved value is one a remote
+                # attested — it equals the tip this run's own probe
+                # returned — or when the ref lives under refs/remotes/,
+                # which only fetches write.
+                if [ -n "$verify_probed_tip" ] && [ "$verify_known_after" = "$verify_probed_tip" ]; then
+                    verify_trusted=1
+                else
+                    case "$upstream_full" in
+                    refs/remotes/*) verify_trusted=1 ;;
+                    esac
+                fi
+            fi
+            if [ "$verify_trusted" -eq 1 ]; then
                 echo "worktree:new: warning: could not fetch '$upstream_remote' — a concurrent fetch refreshed ${upstream_label} mid-run; verifying ${base_label} against that update (harmon-init#813)" >&2
                 upstream_tip="$verify_known_after"
             else
@@ -320,6 +341,10 @@ tree="$main_root/.worktrees/$name"
 trap release_locks EXIT
 trap 'exit 129' HUP INT TERM
 acquire_path_locks "$name"
+# The branch is a second, independent resource: two creations under
+# DIFFERENT names can name the same --branch, and their path locks never
+# contend — see acquire_branch_lock for the race this closes.
+acquire_branch_lock "$branch"
 
 # Refuse to nest a worktree INSIDE another registered worktree. Git's own
 # guard is on branch names (it will not let `parent/child` coexist with
