@@ -108,6 +108,75 @@ main_root="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 
 
 tree="$main_root/.worktrees/$name"
 
+# ── Per-path lifecycle locks ─────────────────────────────────────────
+# The same serialization worktree-new.sh takes, for the removal side of the
+# family (harmon-init#784, #839): every decision below drives off entry-time
+# snapshots, and the lock is what makes those snapshots invariants instead
+# of three independent guesses — a `worktree:new` recreating this name
+# mid-run now refuses at its own lock acquisition instead of racing the
+# debris sweep. Locks are TRY-acquired (refuse, never queue), unrelated
+# names stay fully concurrent, and the lock root lives in the COMMON git
+# dir so linked worktrees share it. Components join with `+`, a character
+# the name charset forbids.
+lock_root="$(git rev-parse --path-format=absolute --git-common-dir)/worktree-locks"
+held_locks=""
+release_locks() {
+    for _held in $held_locks; do
+        rm -rf "$lock_root/$_held"
+    done
+    held_locks=""
+}
+acquire_path_locks() {
+    _lock_rest="$1"
+    _lock_prefix=""
+    mkdir -p "$lock_root"
+    while [ -n "$_lock_rest" ]; do
+        _lock_seg="${_lock_rest%%/*}"
+        case "$_lock_rest" in
+        */*) _lock_rest="${_lock_rest#*/}" ;;
+        *) _lock_rest="" ;;
+        esac
+        _lock_prefix="${_lock_prefix:+$_lock_prefix/}$_lock_seg"
+        _lock_enc="$(printf '%s' "$_lock_prefix" | tr '/' '+')"
+        _lock_tries=0
+        while ! mkdir "$lock_root/$_lock_enc" 2>/dev/null; do
+            # A lock owned by a live process on this host is a real
+            # concurrent operation: refuse, never wait. A dead owner's
+            # leftover (kill -9 skips every trap) is broken exactly once,
+            # as is an ownerless lock older than a minute (a crash in the
+            # instant between mkdir and the owner write). An owner from
+            # another host cannot be liveness-checked from here, so it is
+            # reported with the remedy rather than guessed about.
+            _lock_owner="$(cat "$lock_root/$_lock_enc/owner" 2>/dev/null || true)"
+            _lock_pid="${_lock_owner%% *}"
+            _lock_host="${_lock_owner#* }"
+            _lock_tries=$((_lock_tries + 1))
+            if [ "$_lock_tries" -le 1 ]; then
+                if [ -n "$_lock_pid" ] && [ "$_lock_host" = "$(hostname)" ] &&
+                    ! kill -0 "$_lock_pid" 2>/dev/null; then
+                    rm -rf "$lock_root/$_lock_enc"
+                    continue
+                fi
+                if [ -z "$_lock_owner" ] &&
+                    [ -n "$(find "$lock_root/$_lock_enc" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+                    rm -rf "$lock_root/$_lock_enc"
+                    continue
+                fi
+            fi
+            die "another worktree operation holds '$_lock_prefix' (${_lock_owner:-owner unreadable}; lock $lock_root/$_lock_enc) — if that process is gone, remove the lock directory and re-run"
+        done
+        printf '%s %s\n' "$$" "$(hostname)" >"$lock_root/$_lock_enc/owner"
+        held_locks="$held_locks $_lock_enc"
+    done
+}
+# Held from before the entry snapshots to script exit, so no step of the
+# removal ever acts on a worktree that appeared at this path after the
+# command started. The signal traps make an interrupt release the locks
+# instead of leaving a live-owner leftover.
+acquire_path_locks "$name"
+trap release_locks EXIT
+trap 'exit 129' HUP INT TERM
+
 # Liveness comes from the worktree REGISTRY, not from running git inside the
 # directory: `git -C <dir> rev-parse` walks upward and happily finds the
 # enclosing main repository, so an abandoned empty reservation from an

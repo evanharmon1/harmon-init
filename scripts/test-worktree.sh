@@ -1041,6 +1041,155 @@ rm_wt victim >/dev/null || fail "cleanup of the victim tree failed"
 git -C "$fixture" branch -D victim >/dev/null 2>&1 || true
 git -C "$fixture" remote remove cref
 
+# ── per-path lifecycle locks (#839 / #784) ───────────────────────────
+fixture_locks="$fixture/.git/worktree-locks"
+this_host="$(hostname)"
+
+echo "==> a live parent-path operation refuses a child creation, and vice versa"
+# Both #839 creation orders, deterministically: holding the locks a real
+# concurrent operation would hold IS the race's exclusion state, minus the
+# scheduler. A parent operation holds {parent}; a child operation holds
+# {parent, parent/child} (ancestors first) — so each direction's newcomer
+# must refuse at its first lock.
+mkdir -p "$fixture_locks/lockparent"
+printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent/owner"
+if new lockparent/child --branch lockchild >/dev/null 2>&1; then
+    fail "a child creation proceeded while a parent-path operation held the lock (harmon-init#839)"
+fi
+refute_exists "$fixture/.worktrees/lockparent/child" "the refused child creation left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/lockchild; then
+    fail "the refused child creation left its branch behind"
+fi
+mkdir -p "$fixture_locks/lockparent+child"
+printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent+child/owner"
+if new lockparent >/dev/null 2>&1; then
+    fail "a parent creation proceeded while a child-path operation held the locks (harmon-init#839)"
+fi
+refute_exists "$fixture/.worktrees/lockparent" "the refused parent creation left a tree behind"
+echo "==> unrelated names stay concurrent under a held lock"
+new lockfree >/dev/null || fail "an unrelated creation was blocked by another name's lock"
+rm_wt lockfree >/dev/null || fail "cleanup of the unrelated tree failed"
+rm -rf "$fixture_locks/lockparent" "$fixture_locks/lockparent+child"
+
+echo "==> a stale lock from a dead process is broken, once"
+sleep 0 &
+dead_pid=$!
+wait "$dead_pid" 2>/dev/null || true
+mkdir -p "$fixture_locks/stale-lk"
+printf '%s %s\n' "$dead_pid" "$this_host" >"$fixture_locks/stale-lk/owner"
+new stale-lk >/dev/null || fail "worktree-new.sh could not break a dead process's stale lock"
+refute_exists "$fixture_locks/stale-lk" "the stale-lock run did not release its own lock"
+rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
+
+echo "==> a foreign host's lock is refused with the remedy, never broken"
+mkdir -p "$fixture_locks/foreign-lk"
+printf '%s %s\n' "12345" "not-$this_host" >"$fixture_locks/foreign-lk/owner"
+foreign_out="$(new foreign-lk 2>&1)" && fail "worktree-new.sh broke a lock it could not liveness-check"
+case "$foreign_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the foreign-lock refusal named no remedy" ;; esac
+[ -d "$fixture_locks/foreign-lk" ] || fail "the foreign host's lock was removed"
+rm -rf "$fixture_locks/foreign-lk"
+
+echo "==> an ownerless lock: fresh refuses, aged is broken"
+mkdir -p "$fixture_locks/fresh-lk"
+if new fresh-lk >/dev/null 2>&1; then
+    fail "a fresh ownerless lock (a live acquisition window) was broken"
+fi
+rm -rf "$fixture_locks/fresh-lk"
+mkdir -p "$fixture_locks/aged-lk"
+touch -t 202601010000 "$fixture_locks/aged-lk"
+new aged-lk >/dev/null || fail "an aged ownerless lock (a crashed acquisition) was not broken"
+rm_wt aged-lk >/dev/null || fail "cleanup of the aged-lk tree failed"
+
+echo "==> a post-acquisition failure releases the lock"
+new lock-rel >/dev/null || fail "creating the lock-release probe tree failed"
+if new lock-rel >/dev/null 2>&1; then
+    fail "a second creation of a registered name succeeded"
+fi
+refute_exists "$fixture_locks/lock-rel" "a refused creation left its lock held"
+rm_wt lock-rel >/dev/null || fail "cleanup of the lock-rel tree failed"
+refute_exists "$fixture_locks/lock-rel" "worktree:rm left its lock held"
+
+echo "==> a removal in progress refuses a same-name recreation end to end"
+# The #784 window itself, interposed: a git shim pauses worktree-rm.sh
+# inside `git worktree remove`, a recreation is attempted mid-window (it
+# must refuse at the lock), and only then is the removal released.
+new interp >/dev/null || fail "creating the interposition tree failed"
+shim_dir="$test_tmp/gitshim"
+mkdir -p "$shim_dir"
+real_git="$(command -v git)"
+# The pause lands AFTER `git worktree remove` completes: that is when the
+# tree is gone and the path is claimable again, which is exactly the window
+# between removal and the later sweep steps that #784 is about. Pausing
+# before the remove would leave the tree in place and the recreation would
+# be refused by mere path occupancy, proving nothing about the lock.
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_PAUSE_REMOVE" = "1" ] && [ "\$1" = "worktree" ] && [ "\$2" = "remove" ]; then
+  "$real_git" "\$@"
+  shim_status=\$?
+  : >"$test_tmp/shim-paused"
+  while [ ! -e "$test_tmp/shim-release" ]; do sleep 0.2; done
+  exit "\$shim_status"
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+rm -f "$test_tmp/shim-paused" "$test_tmp/shim-release"
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_PAUSE_REMOVE=1 bash scripts/worktree-rm.sh interp >"$test_tmp/interp-rm.log" 2>&1) &
+interp_rm_pid=$!
+shim_deadline=$(($(date +%s) + 30))
+while [ ! -e "$test_tmp/shim-paused" ]; do
+    [ "$(date +%s)" -lt "$shim_deadline" ] || fail "the removal never reached its pause point"
+    kill -0 "$interp_rm_pid" 2>/dev/null || fail "the paused removal died before pausing: $(cat "$test_tmp/interp-rm.log")"
+    sleep 0.2
+done
+if new interp >/dev/null 2>&1; then
+    : >"$test_tmp/shim-release"
+    fail "a recreation succeeded while the removal held the name (harmon-init#784)"
+fi
+: >"$test_tmp/shim-release"
+wait "$interp_rm_pid" || fail "the interposed removal failed: $(cat "$test_tmp/interp-rm.log")"
+refute_exists "$fixture/.worktrees/interp" "the interposed removal left the tree behind"
+refute_exists "$fixture_locks/interp" "the interposed removal left its lock held"
+new interp >/dev/null || fail "recreation after the removal completed was refused"
+rm_wt interp >/dev/null || fail "cleanup of the interp tree failed"
+
+echo "==> a remote advancing between probe and fetch still lands the fresh tip"
+# The regression deferred from PR #906: the shim advances the bare remote
+# the moment worktree-new.sh runs its fetch, so the first ls-remote's
+# answer is stale by fetch time and only the UNCONDITIONAL post-fetch
+# probe attaches the fresh tip.
+padv_up="$test_tmp/probe-adv.git"
+git init -q --bare "$padv_up"
+git -C "$fixture" remote add padv "$padv_up"
+git -C "$fixture" push -q padv HEAD:refs/heads/adv-branch
+adv_a="$(git -C "$fixture" rev-parse HEAD)"
+adv_b="$(git -C "$fixture" commit-tree -m "advanced mid-operation" -p "$adv_a" "$(git -C "$fixture" rev-parse "$adv_a^{tree}")")"
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ -n "\$WTSHIM_ADVANCE" ] && [ "\$1" != "push" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "fetch" ]; then
+      if [ ! -e "$test_tmp/shim-advanced" ]; then
+        : >"$test_tmp/shim-advanced"
+        "$real_git" -C "$fixture" push -q padv "$adv_b:refs/heads/adv-branch"
+      fi
+      break
+    fi
+  done
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+rm -f "$test_tmp/shim-advanced"
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_ADVANCE=1 bash scripts/worktree-new.sh adv-branch >"$test_tmp/adv.log" 2>&1) ||
+    fail "worktree-new.sh failed under the advancing remote: $(cat "$test_tmp/adv.log")"
+[ "$(git -C "$fixture/.worktrees/adv-branch" rev-parse HEAD)" = "$adv_b" ] ||
+    fail "worktree-new.sh attached the stale probed tip instead of the advanced remote tip (PR #906 deferral)"
+rm_wt adv-branch >/dev/null || fail "cleanup of the adv-branch tree failed"
+git -C "$fixture" branch -D adv-branch >/dev/null 2>&1 || true
+git -C "$fixture" remote remove padv
+
 echo "==> a dot-segment name cannot smuggle a worktree inside another"
 new dotparent >/dev/null || fail "worktree-new.sh failed creating the dot-parent tree"
 if new ./dotparent/child --branch dotchild >/dev/null 2>&1; then

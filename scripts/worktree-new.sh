@@ -251,6 +251,81 @@ git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
 
 tree="$main_root/.worktrees/$name"
 
+# ── Per-path lifecycle locks ─────────────────────────────────────────
+# worktree:new and worktree:rm serialize on the worktree NAME and every
+# ancestor path component (harmon-init#839, #784): concurrent creations of
+# `parent` and `parent/child` could otherwise both read the pre-creation
+# registry, pass the ancestry checks, and register the nested layout those
+# checks exist to refuse — and a removal's later steps could act on a
+# worktree recreated at the same path mid-run. Locks are TRY-acquired: a
+# held path refuses immediately rather than queueing (so no deadlock is
+# possible and no caller waits minutes to then be refused), and unrelated
+# names share no lock, so their operations stay fully concurrent. The lock
+# root lives in the COMMON git dir — shared across linked worktrees, where
+# `--git-path` would resolve to a per-worktree location. Path components
+# are joined with `+` in lock names, a character the name charset forbids,
+# so encodings cannot collide.
+lock_root="$(git rev-parse --path-format=absolute --git-common-dir)/worktree-locks"
+held_locks=""
+release_locks() {
+    for _held in $held_locks; do
+        rm -rf "$lock_root/$_held"
+    done
+    held_locks=""
+}
+acquire_path_locks() {
+    _lock_rest="$1"
+    _lock_prefix=""
+    mkdir -p "$lock_root"
+    while [ -n "$_lock_rest" ]; do
+        _lock_seg="${_lock_rest%%/*}"
+        case "$_lock_rest" in
+        */*) _lock_rest="${_lock_rest#*/}" ;;
+        *) _lock_rest="" ;;
+        esac
+        _lock_prefix="${_lock_prefix:+$_lock_prefix/}$_lock_seg"
+        _lock_enc="$(printf '%s' "$_lock_prefix" | tr '/' '+')"
+        _lock_tries=0
+        while ! mkdir "$lock_root/$_lock_enc" 2>/dev/null; do
+            # A lock owned by a live process on this host is a real
+            # concurrent operation: refuse, never wait. A dead owner's
+            # leftover (kill -9 skips every trap) is broken exactly once,
+            # as is an ownerless lock older than a minute (a crash in the
+            # instant between mkdir and the owner write). An owner from
+            # another host cannot be liveness-checked from here, so it is
+            # reported with the remedy rather than guessed about.
+            _lock_owner="$(cat "$lock_root/$_lock_enc/owner" 2>/dev/null || true)"
+            _lock_pid="${_lock_owner%% *}"
+            _lock_host="${_lock_owner#* }"
+            _lock_tries=$((_lock_tries + 1))
+            if [ "$_lock_tries" -le 1 ]; then
+                if [ -n "$_lock_pid" ] && [ "$_lock_host" = "$(hostname)" ] &&
+                    ! kill -0 "$_lock_pid" 2>/dev/null; then
+                    rm -rf "$lock_root/$_lock_enc"
+                    continue
+                fi
+                if [ -z "$_lock_owner" ] &&
+                    [ -n "$(find "$lock_root/$_lock_enc" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+                    rm -rf "$lock_root/$_lock_enc"
+                    continue
+                fi
+            fi
+            die "another worktree operation holds '$_lock_prefix' (${_lock_owner:-owner unreadable}; lock $lock_root/$_lock_enc) — if that process is gone, remove the lock directory and re-run"
+        done
+        printf '%s %s\n' "$$" "$(hostname)" >"$lock_root/$_lock_enc/owner"
+        held_locks="$held_locks $_lock_enc"
+    done
+}
+# Held from BEFORE the registry snapshot to script exit, provisioning
+# included: a removal attempted mid-provisioning refuses with "operation in
+# progress" instead of pulling the tree out from under the installer. The
+# EXIT trap below is replaced by `cleanup` once rollback is armed, which
+# releases the locks itself; the signal traps make an interrupt run
+# whichever EXIT trap is current instead of skipping both.
+acquire_path_locks "$name"
+trap release_locks EXIT
+trap 'exit 129' HUP INT TERM
+
 # Refuse to nest a worktree INSIDE another registered worktree. Git's own
 # guard is on branch names (it will not let `parent/child` coexist with
 # `parent`), so a differing --branch slips straight past it and the new tree
@@ -405,6 +480,7 @@ cleanup() {
             echo "worktree:new: leaving branch '$branch' alone — this run did not create it" >&2
         fi
     fi
+    release_locks
     exit "$status"
 }
 trap cleanup EXIT
