@@ -23,7 +23,10 @@
 #   then be refused at the registry.
 # - A stale entry is broken by RENAMING it aside first — rename is atomic
 #   and single-winner, so two breakers can never both "succeed" and then
-#   delete each other's fresh lock.
+#   delete each other's fresh lock. Only entries with a RECORDED owner
+#   proven dead are ever broken; ownerless entries always refuse with a
+#   manual remedy, because a crash inside the claim window cannot be told
+#   apart from a suspension.
 # - Liveness is judged with ps(1) — `kill -0` reports EPERM for another
 #   user's live process, which reads as dead — plus the recorded process
 #   start time where ps can report it, so a reused PID does not keep a dead
@@ -31,9 +34,9 @@
 #   foreign host's entry refuses with the remedy, never a guess. Residuals,
 #   stated: two PID namespaces sharing one hostname over one checkout
 #   cannot be told apart from here (default container hostnames differ,
-#   which is the intended guard), and an acquirer SIGSTOPped for over a
-#   minute inside the two-statement claim window can have its ownerless
-#   lock broken as crashed.
+#   which is the intended guard). An acquirer that crashes inside the
+#   two-statement claim window leaves an ownerless entry needing the
+#   manual remedy its refusal message names.
 # - Lock entries live in the COMMON git dir (shared across linked
 #   worktrees; `--git-path` would resolve per-worktree). `/` in names is
 #   encoded as `%` and entry suffixes use `+`; both characters are outside
@@ -109,7 +112,7 @@ lock_try_break() {
     _break="$1+break"
     if ! mkdir "$_break" 2>/dev/null; then
         # A break lock is swept only on the same evidence as any other
-        # entry — a recorded owner proven dead, or ownerless AND aged — and
+        # entry — a recorded owner proven dead, never an ownerless one — and
         # by RENAME-aside, never rm-by-pathname: a contender holding a
         # stale observation must not be able to delete the fresh break
         # mutex a live breaker re-created after the sweep (the same TOCTOU

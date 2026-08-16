@@ -1127,6 +1127,32 @@ printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/s
 refute_exists "$fixture_locks/stale-lk+lock" "the stale-lock run did not release its own lock"
 rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
 
+echo "==> a reused pid (mismatched start time) is judged dead and broken"
+# The shim reports pid 999998 as visible with a FIXED start time; an owner
+# recorded with a different start time is therefore a dead process whose
+# pid was reused, and the lock must break. Removing the start-time compare
+# turns this into a live-owner refusal and fails the case.
+mkdir -p "$fixture_locks/reuse-lk+lock"
+printf '%s %s %s %s\n' "999998" "$this_host" "$(id -u)" "Tue Feb  2 02:02:02 2027" >"$fixture_locks/reuse-lk+lock/owner"
+(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new reuse-lk >/dev/null
+) || fail "a reused-pid stale lock (start-time mismatch) was not broken"
+rm_wt reuse-lk >/dev/null || fail "cleanup of the reuse-lk tree failed"
+
+echo "==> a dead breaker's break mutex is reclaimed before breaking the lock"
+mkdir -p "$fixture_locks/deadbreak-lk+lock"
+printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/deadbreak-lk+lock/owner"
+mkdir -p "$fixture_locks/deadbreak-lk+lock+break"
+printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/deadbreak-lk+lock+break/owner"
+(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new deadbreak-lk >/dev/null
+) || fail "a dead-owned break mutex blocked breaking a dead lock"
+rm_wt deadbreak-lk >/dev/null || fail "cleanup of the deadbreak-lk tree failed"
+
 echo "==> a foreign host's lock is refused with the remedy, never broken"
 mkdir -p "$fixture_locks/foreign-lk+lock"
 printf '%s %s %s\n' "12345" "not-$this_host" "$(id -u)" >"$fixture_locks/foreign-lk+lock/owner"
@@ -1246,6 +1272,46 @@ refute_exists "$fixture/.worktrees/interp" "the interposed removal left the tree
 refute_exists "$fixture_locks/interp+lock" "the interposed removal left its lock held"
 new interp >/dev/null || fail "recreation after the removal completed was refused"
 rm_wt interp >/dev/null || fail "cleanup of the interp tree failed"
+
+echo "==> a child removal in progress refuses an operation on its parent"
+# worktree-rm.sh must hold the same shared ancestor markers creation holds:
+# an rm integration taking only its leaf lock would let an operation ON the
+# parent overlap the child's removal.
+new rmparent/child --branch rmancestor >/dev/null || fail "creating the rm-ancestor tree failed"
+rm -f "$test_tmp/shim-paused" "$test_tmp/shim-release"
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_PAUSE_REMOVE" = "1" ] && [ "\$1" = "worktree" ] && [ "\$2" = "remove" ]; then
+  "$real_git" "\$@"
+  shim_status=\$?
+  : >"$test_tmp/shim-paused"
+  while [ ! -e "$test_tmp/shim-release" ]; do sleep 0.2; done
+  exit "\$shim_status"
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_PAUSE_REMOVE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh rmparent/child >"$test_tmp/rmanc.log" 2>&1) &
+rmanc_pid=$!
+shim_deadline=$(($(date +%s) + 30))
+while [ ! -e "$test_tmp/shim-paused" ]; do
+    [ "$(date +%s)" -lt "$shim_deadline" ] || {
+        : >"$test_tmp/shim-release"
+        fail "the child removal never reached its pause point"
+    }
+    kill -0 "$rmanc_pid" 2>/dev/null || {
+        : >"$test_tmp/shim-release"
+        fail "the paused child removal died: $(cat "$test_tmp/rmanc.log")"
+    }
+    sleep 0.2
+done
+if new rmparent >/dev/null 2>&1; then
+    : >"$test_tmp/shim-release"
+    fail "an operation on the parent proceeded while the child removal held its ancestor marker"
+fi
+: >"$test_tmp/shim-release"
+wait "$rmanc_pid" || fail "the interposed child removal failed: $(cat "$test_tmp/rmanc.log")"
+git -C "$fixture" branch -D rmancestor >/dev/null 2>&1 || true
 
 echo "==> a remote advancing between probe and fetch still lands the fresh tip"
 # The regression deferred from PR #906: the shim advances the bare remote
