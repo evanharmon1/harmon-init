@@ -262,8 +262,25 @@ else
     #   - anything unreadable, unhashable, or of unexpected type counts as
     #     different, which can only refuse a removal that was safe.
     if [ "$force" -eq 0 ]; then
+        # Per-tree constants, resolved ONCE before the loop. A sparse
+        # monorepo can hold hundreds of thousands of absent `S` entries, and
+        # a per-entry `git config` spawn turned a clean removal into minutes.
+        sparse_enabled="$(git -C "$tree" config --get --type=bool --default=false core.sparseCheckout 2>/dev/null || echo false)"
+        filemode_enabled="$(git -C "$tree" config --get --type=bool --default=true core.fileMode 2>/dev/null || echo true)"
+        symlinks_enabled="$(git -C "$tree" config --get --type=bool --default=true core.symlinks 2>/dev/null || echo true)"
         hidden_paths=""
+        flagged_enum_ok=0
         while IFS= read -r -d '' flagged_entry; do
+            # The sentinel is appended by the producer ONLY after a
+            # successful full enumeration; bash does not propagate a
+            # process-substitution failure, so without it a git error or
+            # truncated stream would fail OPEN and wave the removal
+            # through on an incomplete scan. A tracked file of the same
+            # name cannot forge it — real entries carry a tag prefix.
+            if [ "$flagged_entry" = "__WORKTREE_RM_ENUM_OK__" ]; then
+                flagged_enum_ok=1
+                continue
+            fi
             flagged_tag="${flagged_entry%% *}"
             case "$flagged_tag" in
             S | [a-z]) : ;;
@@ -274,7 +291,7 @@ else
             if [ ! -e "$tree/$flagged_path" ] && [ ! -L "$tree/$flagged_path" ]; then
                 case "$flagged_tag" in
                 S | s)
-                    if [ "$(git -C "$tree" config --get --type=bool --default=false core.sparseCheckout 2>/dev/null || echo false)" = "true" ]; then
+                    if [ "$sparse_enabled" = "true" ]; then
                         continue
                     fi
                     ;;
@@ -284,16 +301,18 @@ else
                 index_mode="${index_entry%% *}"
                 index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
                 if [ "$index_mode" = "120000" ]; then
-                    blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
                     if [ -L "$tree/$flagged_path" ]; then
                         link_target="$(readlink -n "$tree/$flagged_path" 2>/dev/null && printf x)"
+                        blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
                         if [ -n "$link_target" ] && [ "$link_target" = "$blob_target" ]; then
                             flagged_differs=0
                         fi
-                    elif [ -f "$tree/$flagged_path" ] &&
-                        [ "$(git -C "$tree" config --get --type=bool --default=true core.symlinks 2>/dev/null || echo true)" = "false" ]; then
-                        file_target="$(cat "$tree/$flagged_path" 2>/dev/null && printf x)"
-                        if [ -n "$file_target" ] && [ "$file_target" = "$blob_target" ]; then
+                    elif [ -f "$tree/$flagged_path" ] && [ "$symlinks_enabled" = "false" ]; then
+                        # Byte-exact via cmp, not shell variables: command
+                        # substitution strips NUL bytes, which would let a
+                        # binary local file compare equal to a text target.
+                        if git -C "$tree" cat-file blob "$index_sha" 2>/dev/null |
+                            cmp -s - "$tree/$flagged_path" 2>/dev/null; then
                             flagged_differs=0
                         fi
                     fi
@@ -301,7 +320,7 @@ else
                     work_sha="$(git -C "$tree" hash-object --path="$flagged_path" -- "$tree/$flagged_path" 2>/dev/null || true)"
                     if [ -n "$work_sha" ] && [ "$work_sha" = "$index_sha" ]; then
                         flagged_differs=0
-                        if [ "$(git -C "$tree" config --get --type=bool --default=true core.fileMode 2>/dev/null || echo true)" = "true" ]; then
+                        if [ "$filemode_enabled" = "true" ]; then
                             case "$index_mode" in
                             100644) [ ! -x "$tree/$flagged_path" ] || flagged_differs=1 ;;
                             100755) [ -x "$tree/$flagged_path" ] || flagged_differs=1 ;;
@@ -314,7 +333,10 @@ else
                 hidden_paths="${hidden_paths}  ${flagged_path}
 "
             fi
-        done < <(git -C "$tree" ls-files -v -z)
+        done < <(git -C "$tree" ls-files -v -z && printf '__WORKTREE_RM_ENUM_OK__\0')
+        if [ "$flagged_enum_ok" -ne 1 ]; then
+            die "could not enumerate $tree's index entries for the hidden-edit check — this guard fails closed; fix the enumeration (or discard the tree with --force)"
+        fi
         if [ -n "$hidden_paths" ]; then
             echo "worktree:rm: $tree has local edits hidden from git status by skip-worktree / assume-unchanged:" >&2
             printf '%s' "$hidden_paths" >&2
