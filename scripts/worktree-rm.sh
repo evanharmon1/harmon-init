@@ -227,32 +227,62 @@ else
     # to the check above and a plain removal would delete it while reporting
     # success. The flags are visible to `git ls-files -v`: `S` marks
     # skip-worktree and a lowercase tag letter marks assume-unchanged (`h` for
-    # an ordinary cached entry, `s` when both flags are set), so select those
-    # and compare each against its index blob directly. The grep is the
-    # short-circuit: in the common case nothing is flagged and no per-file
-    # work runs. A missing or unreadable file counts as a difference — a
-    # fresh checkout would restore it, so its absence is uncommitted local
-    # state exactly like an edit.
-    if [ "$force" -eq 0 ]; then
-        flagged_entries="$(git -C "$tree" ls-files -v | grep -E '^(S|[a-z]) ' || true)"
-        if [ -n "$flagged_entries" ]; then
-            hidden_paths=""
-            while IFS= read -r flagged_entry; do
-                [ -n "$flagged_entry" ] || continue
-                flagged_path="${flagged_entry#? }"
-                if ! git -C "$tree" cat-file blob ":$flagged_path" 2>/dev/null |
-                    cmp -s - "$tree/$flagged_path" 2>/dev/null; then
-                    hidden_paths="${hidden_paths}  ${flagged_path}
-"
-                fi
-            done <<EOF
-$flagged_entries
-EOF
-            if [ -n "$hidden_paths" ]; then
-                echo "worktree:rm: $tree has local edits hidden from git status by skip-worktree / assume-unchanged:" >&2
-                printf '%s' "$hidden_paths" >&2
-                die "clear the flag (git update-index --no-skip-worktree / --no-assume-unchanged <path>) and commit or push the edits, or re-run with --force to discard them"
+    # an ordinary cached entry, `s` when both flags are set), so compare each
+    # flagged entry against its index entry directly. Two passes on purpose:
+    # the line-based grep is the cheap short-circuit — display quoting can
+    # only ever change how a PATH prints, never the tag column — and the
+    # per-file loop re-reads the entries with -z, because `core.quotePath`
+    # C-quotes non-ASCII paths in line output and the quoted form would miss
+    # the file on disk (falsely refusing over a clean `café.txt`).
+    #
+    # What counts as a hidden edit is what a removal would DESTROY:
+    #   - a path absent from the working tree is skipped — deleting the tree
+    #     deletes nothing there, and sparse-checkout marks every excluded
+    #     path skip-worktree with no file present, so refusing on absence
+    #     would block the removal of every clean sparse worktree;
+    #   - content is compared as GIT sees it — `hash-object --path` runs the
+    #     clean filter, so an unmodified checkout under `eol=crlf`,
+    #     `core.autocrlf`, or a clean/smudge filter hashes back to its index
+    #     blob instead of reading as a raw-byte mismatch — and a symlink is
+    #     compared by its target against the index blob (hashing it would
+    #     follow the link);
+    #   - anything unreadable, unhashable, or of unexpected type counts as
+    #     different, which can only refuse a removal that was safe.
+    if [ "$force" -eq 0 ] && git -C "$tree" ls-files -v | grep -Eq '^(S|[a-z]) '; then
+        hidden_paths=""
+        while IFS= read -r -d '' flagged_entry; do
+            case "$flagged_entry" in
+            S\ * | [a-z]\ *) : ;;
+            *) continue ;;
+            esac
+            flagged_path="${flagged_entry#? }"
+            if [ ! -e "$tree/$flagged_path" ] && [ ! -L "$tree/$flagged_path" ]; then
+                continue
             fi
+            index_entry="$(git -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
+            index_mode="${index_entry%% *}"
+            index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
+            flagged_differs=1
+            if [ "$index_mode" = "120000" ]; then
+                if [ -L "$tree/$flagged_path" ] &&
+                    [ "$(readlink "$tree/$flagged_path")" = "$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null)" ]; then
+                    flagged_differs=0
+                fi
+            elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
+                work_sha="$(git -C "$tree" hash-object --path="$flagged_path" -- "$tree/$flagged_path" 2>/dev/null || true)"
+                if [ -n "$work_sha" ] && [ "$work_sha" = "$index_sha" ]; then
+                    flagged_differs=0
+                fi
+            fi
+            if [ "$flagged_differs" -eq 1 ]; then
+                hidden_paths="${hidden_paths}  ${flagged_path}
+"
+            fi
+        done < <(git -C "$tree" ls-files -v -z)
+        if [ -n "$hidden_paths" ]; then
+            echo "worktree:rm: $tree has local edits hidden from git status by skip-worktree / assume-unchanged:" >&2
+            printf '%s' "$hidden_paths" >&2
+            die "clear the flag (git update-index --no-skip-worktree / --no-assume-unchanged <path>) and commit or push the edits, or re-run with --force to discard them"
         fi
     fi
     # An in-progress rebase/merge/cherry-pick leaves a CLEAN status once it

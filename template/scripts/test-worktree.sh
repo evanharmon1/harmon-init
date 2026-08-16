@@ -355,6 +355,53 @@ rm_wt hidden-clean >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over an unmodified skip-worktree entry"
 refute_exists "$fixture/.worktrees/hidden-clean" "worktree-rm.sh left the tree behind"
 
+echo "==> an ABSENT flagged path does not block removal (sparse-checkout shape)"
+# Sparse checkout marks every excluded path skip-worktree with no file on
+# disk, so treating absence as a hidden edit would refuse the removal of
+# every clean sparse worktree — and deleting the tree destroys nothing at a
+# path that holds nothing.
+new hidden-sparse >/dev/null || fail "worktree-new.sh failed for the absent-flag case"
+git -C "$fixture/.worktrees/hidden-sparse" update-index --skip-worktree README.md
+rm "$fixture/.worktrees/hidden-sparse/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-sparse" status --porcelain)" ] ||
+    fail "fixture assumption broken: a skip-worktree deletion shows in git status"
+rm_wt hidden-sparse >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an absent skip-worktree path"
+refute_exists "$fixture/.worktrees/hidden-sparse" "worktree-rm.sh left the tree behind"
+
+echo "==> an UNMODIFIED flagged file under an eol filter does not block removal"
+# With `eol=crlf` the checkout legitimately differs byte-for-byte from the
+# index blob, so a raw-byte comparison would report every clean flagged
+# checkout as a hidden edit; the guard must compare content as git sees it
+# (clean filter applied). Scoped to one filename nothing else uses so the
+# shared fixture attributes cannot leak into other cases.
+printf 'hidden-filter.txt text eol=crlf\n' >>"$(git -C "$fixture" rev-parse --path-format=absolute --git-path info/attributes)"
+new hidden-filter >/dev/null || fail "worktree-new.sh failed for the eol-filter case"
+printf 'line one\nline two\n' >"$fixture/.worktrees/hidden-filter/hidden-filter.txt"
+git -C "$fixture/.worktrees/hidden-filter" add hidden-filter.txt
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-filter" commit -qm "chore: eol-filtered file"
+rm "$fixture/.worktrees/hidden-filter/hidden-filter.txt"
+git -C "$fixture/.worktrees/hidden-filter" checkout -- hidden-filter.txt
+grep -q "$(printf 'line one\r')" "$fixture/.worktrees/hidden-filter/hidden-filter.txt" ||
+    fail "fixture assumption broken: the eol=crlf checkout does not carry CRLF"
+git -C "$fixture/.worktrees/hidden-filter" update-index --skip-worktree hidden-filter.txt
+rm_wt hidden-filter >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over a clean eol-filtered flagged file"
+refute_exists "$fixture/.worktrees/hidden-filter" "worktree-rm.sh left the tree behind"
+
+echo "==> an UNMODIFIED flagged symlink does not block removal"
+# Hashing a symlink's PATH follows the link, so a content hash would compare
+# the target file's bytes against an index blob that holds the target STRING
+# — every clean flagged symlink would read as a hidden edit.
+new hidden-link >/dev/null || fail "worktree-new.sh failed for the symlink case"
+ln -s README.md "$fixture/.worktrees/hidden-link/hidden-link-ln"
+git -C "$fixture/.worktrees/hidden-link" add hidden-link-ln
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-link" commit -qm "chore: tracked symlink"
+git -C "$fixture/.worktrees/hidden-link" update-index --skip-worktree hidden-link-ln
+rm_wt hidden-link >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an unmodified flagged symlink"
+refute_exists "$fixture/.worktrees/hidden-link" "worktree-rm.sh left the tree behind"
+
 # ── ignored local files are not silently deleted ─────────────────────
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.
