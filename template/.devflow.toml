@@ -34,15 +34,15 @@
 #
 # Retuning these is expected. The Dev Loop assumes five invariants, and nothing
 # at runtime will tell you if an edit breaks one:
-#   - every tier defines challenge, review, shepherd and min_rounds, all
+#   - every level defines challenge, review, shepherd and min_rounds, all
 #     integers
 #   - challenge and review are >= 2, because the exit condition needs two
 #     consecutive adjudicated-clean rounds; at 1, one finding is an escalation
 #   - min_rounds is 1 or 2, never more: two consecutive adjudicated-clean
 #     rounds — empty rounds included — exit a stage at round 2 whatever the
 #     floor says, so a value above 2 is a budget no stage ever spends
-#   - shepherd is the same in every tier (see below)
-#   - default_rigor names a tier that exists here
+#   - shepherd is the same in every level (see below)
+#   - default_rigor names a level that exists here
 #
 # `challenge` and `review` are inert wherever no second-model reviewer is
 # configured: those stages never run, so their caps bound nothing. `shepherd`
@@ -50,7 +50,7 @@
 
 default_rigor = "standard"
 
-# `shepherd` is deliberately identical in every tier, and is not a knob to
+# `shepherd` is deliberately identical in every level, and is not a knob to
 # turn down.
 #
 # `challenge` and `review` bound work the agent generates itself — each round's
@@ -58,7 +58,7 @@ default_rigor = "standard"
 # low safe. `shepherd` bounds *other people's* findings: CI failures, human
 # review, Codex. Lowering it does not reduce effort spent; it abandons reviews
 # that are already unanswered, and the readiness gate then refuses to promote
-# the PR anyway. The key is present so that a tier is one consistent shape.
+# the PR anyway. The key is present so that a level is one consistent shape.
 
 # Trivial, low-blast-radius work: doc touch-ups, mechanical bumps, typo fixes.
 [rigor.light]
