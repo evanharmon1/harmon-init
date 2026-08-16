@@ -226,52 +226,67 @@ else
     # file is what the flags are for — so an edit to such a file is invisible
     # to the check above and a plain removal would delete it while reporting
     # success. The flags are visible to `git ls-files -v`: `S` marks
-    # skip-worktree and a lowercase tag letter marks assume-unchanged (`h` for
-    # an ordinary cached entry, `s` when both flags are set), so compare each
-    # flagged entry against its index entry directly. Two passes on purpose:
-    # the line-based grep is the cheap short-circuit — display quoting can
-    # only ever change how a PATH prints, never the tag column — and the
-    # per-file loop re-reads the entries with -z, because `core.quotePath`
-    # C-quotes non-ASCII paths in line output and the quoted form would miss
-    # the file on disk (falsely refusing over a clean `café.txt`).
+    # skip-worktree and a lowercase tag letter marks assume-unchanged (`h`
+    # for an ordinary cached entry, `s` when both flags are set), so compare
+    # each flagged entry against its index entry directly. ONE pass over the
+    # NUL-delimited stream, deliberately: `core.quotePath` C-quotes
+    # non-ASCII paths in line output, so a line-based read would miss the
+    # file on disk (falsely refusing over a clean `café.txt`) — and a
+    # `grep -q` pre-pass is not a safe short-circuit, because its early exit
+    # SIGPIPEs the git writer under `pipefail` and skips this whole guard
+    # precisely when a flagged entry exists in a large repo. The `case` is
+    # the short-circuit: unflagged entries fall through with no process
+    # spawned.
     #
     # What counts as a hidden edit is what a removal would DESTROY:
-    #   - a path absent from the working tree is skipped — deleting the tree
-    #     deletes nothing there, and sparse-checkout marks every excluded
-    #     path skip-worktree with no file present, so refusing on absence
-    #     would block the removal of every clean sparse worktree;
+    #   - an absent skip-worktree path is skipped — sparse-checkout marks
+    #     every excluded path skip-worktree with no file present, so
+    #     refusing on absence would block the removal of every clean sparse
+    #     worktree, and the path holds nothing to destroy;
+    #   - an absent assume-unchanged path (no skip-worktree bit) is a hidden
+    #     edit — nothing but a user's deletion produces that state, and the
+    #     uncommitted deletion is what the removal would discard;
     #   - content is compared as GIT sees it — `hash-object --path` runs the
     #     clean filter, so an unmodified checkout under `eol=crlf`,
     #     `core.autocrlf`, or a clean/smudge filter hashes back to its index
     #     blob instead of reading as a raw-byte mismatch — and a symlink is
     #     compared by its target against the index blob (hashing it would
-    #     follow the link);
+    #     follow the link), byte-exact via the `printf x` sentinels, which
+    #     stop command substitution eating the newlines that distinguish
+    #     `target` from `target\n`;
     #   - anything unreadable, unhashable, or of unexpected type counts as
     #     different, which can only refuse a removal that was safe.
-    if [ "$force" -eq 0 ] && git -C "$tree" ls-files -v | grep -Eq '^(S|[a-z]) '; then
+    if [ "$force" -eq 0 ]; then
         hidden_paths=""
         while IFS= read -r -d '' flagged_entry; do
-            case "$flagged_entry" in
-            S\ * | [a-z]\ *) : ;;
+            flagged_tag="${flagged_entry%% *}"
+            case "$flagged_tag" in
+            S | [a-z]) : ;;
             *) continue ;;
             esac
             flagged_path="${flagged_entry#? }"
-            if [ ! -e "$tree/$flagged_path" ] && [ ! -L "$tree/$flagged_path" ]; then
-                continue
-            fi
-            index_entry="$(git -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
-            index_mode="${index_entry%% *}"
-            index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
             flagged_differs=1
-            if [ "$index_mode" = "120000" ]; then
-                if [ -L "$tree/$flagged_path" ] &&
-                    [ "$(readlink "$tree/$flagged_path")" = "$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null)" ]; then
-                    flagged_differs=0
-                fi
-            elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
-                work_sha="$(git -C "$tree" hash-object --path="$flagged_path" -- "$tree/$flagged_path" 2>/dev/null || true)"
-                if [ -n "$work_sha" ] && [ "$work_sha" = "$index_sha" ]; then
-                    flagged_differs=0
+            if [ ! -e "$tree/$flagged_path" ] && [ ! -L "$tree/$flagged_path" ]; then
+                case "$flagged_tag" in
+                S | s) continue ;;
+                esac
+            else
+                index_entry="$(git -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
+                index_mode="${index_entry%% *}"
+                index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
+                if [ "$index_mode" = "120000" ]; then
+                    if [ -L "$tree/$flagged_path" ]; then
+                        link_target="$(readlink -n "$tree/$flagged_path" 2>/dev/null && printf x)"
+                        blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
+                        if [ -n "$link_target" ] && [ "$link_target" = "$blob_target" ]; then
+                            flagged_differs=0
+                        fi
+                    fi
+                elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
+                    work_sha="$(git -C "$tree" hash-object --path="$flagged_path" -- "$tree/$flagged_path" 2>/dev/null || true)"
+                    if [ -n "$work_sha" ] && [ "$work_sha" = "$index_sha" ]; then
+                        flagged_differs=0
+                    fi
                 fi
             fi
             if [ "$flagged_differs" -eq 1 ]; then

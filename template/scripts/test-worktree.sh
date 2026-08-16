@@ -389,6 +389,23 @@ rm_wt hidden-filter >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over a clean eol-filtered flagged file"
 refute_exists "$fixture/.worktrees/hidden-filter" "worktree-rm.sh left the tree behind"
 
+echo "==> a DELETED assume-unchanged file still blocks removal"
+# Absence is only sparse-normal for skip-worktree entries. git never marks a
+# path assume-unchanged on its own, so an absent one means the user deleted
+# a file they had flagged — an uncommitted deletion the removal would
+# discard.
+new hidden-del >/dev/null || fail "worktree-new.sh failed for the hidden-deletion case"
+git -C "$fixture/.worktrees/hidden-del" update-index --assume-unchanged README.md
+rm "$fixture/.worktrees/hidden-del/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-del" status --porcelain)" ] ||
+    fail "fixture assumption broken: an assume-unchanged deletion shows in git status"
+if rm_wt hidden-del >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an assume-unchanged-hidden deletion without --force"
+fi
+[ -d "$fixture/.worktrees/hidden-del" ] || fail "the tree was removed despite the refusal"
+rm_wt hidden-del --force >/dev/null || fail "worktree-rm.sh --force failed on a hidden deletion"
+refute_exists "$fixture/.worktrees/hidden-del" "worktree-rm.sh --force left the directory behind"
+
 echo "==> an UNMODIFIED flagged symlink does not block removal"
 # Hashing a symlink's PATH follows the link, so a content hash would compare
 # the target file's bytes against an index blob that holds the target STRING
@@ -401,6 +418,22 @@ git -C "$fixture/.worktrees/hidden-link" update-index --skip-worktree hidden-lin
 rm_wt hidden-link >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over an unmodified flagged symlink"
 refute_exists "$fixture/.worktrees/hidden-link" "worktree-rm.sh left the tree behind"
+
+echo "==> a REPOINTED flagged symlink blocks removal"
+new hidden-link-mod >/dev/null || fail "worktree-new.sh failed for the repointed-symlink case"
+ln -s README.md "$fixture/.worktrees/hidden-link-mod/hidden-link-ln2"
+git -C "$fixture/.worktrees/hidden-link-mod" add hidden-link-ln2
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-link-mod" commit -qm "chore: tracked symlink"
+git -C "$fixture/.worktrees/hidden-link-mod" update-index --skip-worktree hidden-link-ln2
+rm "$fixture/.worktrees/hidden-link-mod/hidden-link-ln2"
+ln -s lefthook.yml "$fixture/.worktrees/hidden-link-mod/hidden-link-ln2"
+[ -z "$(git -C "$fixture/.worktrees/hidden-link-mod" status --porcelain)" ] ||
+    fail "fixture assumption broken: a flagged symlink repoint shows in git status"
+if rm_wt hidden-link-mod >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with a repointed flagged symlink without --force"
+fi
+rm_wt hidden-link-mod --force >/dev/null || fail "worktree-rm.sh --force failed on a repointed symlink"
+refute_exists "$fixture/.worktrees/hidden-link-mod" "worktree-rm.sh --force left the directory behind"
 
 # ── ignored local files are not silently deleted ─────────────────────
 # `git worktree remove` counts modified and untracked files but not ignored
