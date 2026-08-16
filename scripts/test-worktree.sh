@@ -1016,8 +1016,12 @@ chmod +x "$fixture/scripts/worktree-new.sh"
 # paths — the subshell's assignments keep the live $test_tmp and sentinel out
 # of its `rm -rf`.
 echo "==> the EXIT trap turns a swallowed timeout into a failing suite"
-trap -p EXIT | grep -q 'worktree_exit' ||
-    fail "the EXIT trap is no longer wired to worktree_exit"
+# Captured, never piped: Bash 3.2 resets traps in a pipeline's subshell, so
+# `trap -p EXIT | grep -q …` reads an empty trap list and fails even when the
+# trap is wired (harmon-init#844). `$(trap -p EXIT)` reports the parent
+# shell's traps on every supported Bash.
+exit_trap="$(trap -p EXIT)"
+case "$exit_trap" in *worktree_exit*) : ;; *) fail "the EXIT trap is no longer wired to worktree_exit" ;; esac
 trap_log="$test_tmp/trap.log"
 if (
     test_tmp="$(mktemp -d -t harmon-init-worktree-trap-XXXXXX)"
