@@ -426,6 +426,31 @@ rm_wt hidden-filter >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over a clean eol-filtered flagged file"
 refute_exists "$fixture/.worktrees/hidden-filter" "worktree-rm.sh left the tree behind"
 
+echo "==> an edit a LOSSY clean filter would normalize away still blocks removal"
+# A non-round-tripping clean filter makes the cleaned working file hash
+# identical to the index blob, so a cleaned-hash comparison would wave the
+# edit through — and the discarded bytes are exactly what a fresh checkout
+# cannot restore. The guard must compare against the checkout
+# representation instead. The filter config is shared repo config, but the
+# attribute is scoped to one filename nothing else uses.
+git -C "$fixture" config filter.testlossy.clean "grep -v '^LOCAL:' || true"
+printf 'hidden-lossy.txt filter=testlossy\n' >>"$(git -C "$fixture" rev-parse --path-format=absolute --git-path info/attributes)"
+new hidden-lossy >/dev/null || fail "worktree-new.sh failed for the lossy-filter case"
+printf 'shared line\n' >"$fixture/.worktrees/hidden-lossy/hidden-lossy.txt"
+git -C "$fixture/.worktrees/hidden-lossy" add hidden-lossy.txt
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-lossy" commit -qm "chore: lossy-filtered file"
+printf 'shared line\nLOCAL: uncommitted local-only note\n' >"$fixture/.worktrees/hidden-lossy/hidden-lossy.txt"
+git -C "$fixture/.worktrees/hidden-lossy" update-index --skip-worktree hidden-lossy.txt
+[ -z "$(git -C "$fixture/.worktrees/hidden-lossy" status --porcelain)" ] ||
+    fail "fixture assumption broken: the lossy-filtered edit shows in git status"
+if rm_wt hidden-lossy >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree whose edit only a lossy clean filter hides"
+fi
+grep -q 'LOCAL: uncommitted' "$fixture/.worktrees/hidden-lossy/hidden-lossy.txt" ||
+    fail "the lossy-hidden edit did not survive the refusal"
+rm_wt hidden-lossy --force >/dev/null || fail "worktree-rm.sh --force failed on the lossy-filter case"
+refute_exists "$fixture/.worktrees/hidden-lossy" "worktree-rm.sh --force left the directory behind"
+
 echo "==> a DELETED assume-unchanged file still blocks removal"
 # Absence is only sparse-normal for skip-worktree entries. git never marks a
 # path assume-unchanged on its own, so an absent one means the user deleted

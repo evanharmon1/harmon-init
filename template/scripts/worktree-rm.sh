@@ -246,12 +246,13 @@ else
     #     absence means the user deleted a file they had flagged — for
     #     skip-worktree and assume-unchanged alike, that uncommitted
     #     deletion is what the removal would discard, so it refuses;
-    #   - content is compared as GIT sees it — `hash-object --path` runs the
-    #     clean filter, so an unmodified checkout under `eol=crlf`,
-    #     `core.autocrlf`, or a clean/smudge filter hashes back to its index
-    #     blob instead of reading as a raw-byte mismatch — and where
-    #     `core.fileMode` says the filesystem tracks it, a chmod-only
-    #     difference from the index mode is an edit too;
+    #   - content is compared against the CHECKOUT representation
+    #     (`cat-file --filters` — the bytes a fresh checkout would write),
+    #     so an unmodified checkout under `eol=crlf`, `core.autocrlf`, or a
+    #     clean/smudge filter reads as clean, while an edit survives the
+    #     comparison even when a lossy clean filter would normalize it away
+    #     — and where `core.fileMode` says the filesystem tracks it, a
+    #     chmod-only difference from the index mode is an edit too;
     #   - a symlink is compared by its target against the index blob
     #     (hashing it would follow the link), byte-exact via the `printf x`
     #     sentinels, which stop command substitution eating the newlines
@@ -317,8 +318,14 @@ else
                         fi
                     fi
                 elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
-                    work_sha="$(git -C "$tree" hash-object --path="$flagged_path" -- "$tree/$flagged_path" 2>/dev/null || true)"
-                    if [ -n "$work_sha" ] && [ "$work_sha" = "$index_sha" ]; then
+                    # Compare against the CHECKOUT representation —
+                    # `cat-file --filters` applies smudge/eol exactly as a
+                    # fresh checkout would. Hashing the CLEANED working file
+                    # would instead miss any edit a non-round-tripping clean
+                    # filter discards: bytes a fresh checkout could not
+                    # restore, which is precisely what this guard protects.
+                    if git -C "$tree" cat-file --filters --path="$flagged_path" "$index_sha" 2>/dev/null |
+                        cmp -s - "$tree/$flagged_path" 2>/dev/null; then
                         flagged_differs=0
                         if [ "$filemode_enabled" = "true" ]; then
                             case "$index_mode" in
