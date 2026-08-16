@@ -291,7 +291,11 @@ acquire_branch_lock() {
     # 'branch=<name>' never collides with a worktree-path lock. Lowercased
     # and length-clamped exactly as path keys are, for the same reasons.
     _bl_enc="$(printf 'branch=%s' "$1" | tr '/' '%' | tr '[:upper:]' '[:lower:]')"
-    if [ "${#_bl_enc}" -gt 200 ]; then
+    # Measured in BYTES, not characters: branch names are not charset-
+    # restricted the way worktree names are, so a multibyte name can pass a
+    # character count while its flattened basename exceeds NAME_MAX
+    # (review r1). Path keys need no such care — their charset is ASCII.
+    if [ "$(printf '%s' "$_bl_enc" | wc -c | tr -d ' ')" -gt 200 ]; then
         _bl_enc="h$(printf '%s' "$_bl_enc" | cksum | tr ' \t' '--')"
     fi
     acquire_excl "$_bl_enc" "branch '$1'"

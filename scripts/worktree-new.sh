@@ -523,7 +523,7 @@ cleanup() {
             # HEAD (challenge round 3).
             if [ "$rollback_tree_gone" -eq 0 ]; then
                 echo "worktree:new: leaving branch '$branch' alone — its worktree could not be removed and still has it checked out" >&2
-            elif git worktree list --porcelain | grep -qx "branch refs/heads/$branch"; then
+            elif git worktree list --porcelain | grep -qxF "branch refs/heads/$branch"; then
                 # A non-cooperating client — a raw `git worktree add`,
                 # outside the branch lock — can attach the just-published
                 # branch before this run's own attach fails on it, and
