@@ -1052,7 +1052,7 @@ echo "==> a live parent-path operation refuses a child creation, and vice versa"
 # on parent/child holds parent shared (a holder marker) and the child
 # exclusively.
 mkdir -p "$fixture_locks/lockparent+lock"
-printf '%s %s %s\n' "$$" "$this_host" "$(id -u)" >"$fixture_locks/lockparent+lock/owner"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/lockparent+lock/owner"
 if new lockparent/child --branch lockchild >/dev/null 2>&1; then
     fail "a child creation proceeded while a parent-path operation held the lock (harmon-init#839)"
 fi
@@ -1062,9 +1062,9 @@ if git -C "$fixture" show-ref --verify --quiet refs/heads/lockchild; then
 fi
 rm -rf "$fixture_locks/lockparent+lock"
 mkdir -p "$fixture_locks/lockparent+holders"
-printf '%s %s %s\n' "$$" "$this_host" "$(id -u)" >"$fixture_locks/lockparent+holders/sim.marker"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/lockparent+holders/sim.marker"
 mkdir -p "$fixture_locks/lockparent%child+lock"
-printf '%s %s %s\n' "$$" "$this_host" "$(id -u)" >"$fixture_locks/lockparent%child+lock/owner"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/lockparent%child+lock/owner"
 if new lockparent >/dev/null 2>&1; then
     fail "a parent creation proceeded while a child-path operation held its ancestor marker (harmon-init#839)"
 fi
@@ -1111,6 +1111,7 @@ if [ "\$pid" = "$stale_dead_pid" ]; then
   exit 1
 fi
 case "\$*" in
+*pgid*) : ;;
 *lstart*) echo "Mon Jan  1 00:00:00 2026" ;;
 *) echo "\${pid:-1}" ;;
 esac
@@ -1118,7 +1119,7 @@ exit 0
 PSSHIM
 chmod +x "$psstale_dir/ps"
 mkdir -p "$fixture_locks/stale-lk+lock"
-printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/stale-lk+lock/owner"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/stale-lk+lock/owner"
 (
     PATH="$psstale_dir:$PATH"
     export PATH
@@ -1133,7 +1134,7 @@ echo "==> a reused pid (mismatched start time) is judged dead and broken"
 # pid was reused, and the lock must break. Removing the start-time compare
 # turns this into a live-owner refusal and fails the case.
 mkdir -p "$fixture_locks/reuse-lk+lock"
-printf '%s %s %s %s\n' "999998" "$this_host" "$(id -u)" "Tue Feb  2 02:02:02 2027" >"$fixture_locks/reuse-lk+lock/owner"
+printf '%s %s %s %s %s\n' "999998" "$this_host" "$(id -u)" "999998" "Tue Feb  2 02:02:02 2027" >"$fixture_locks/reuse-lk+lock/owner"
 (
     PATH="$psstale_dir:$PATH"
     export PATH
@@ -1143,9 +1144,9 @@ rm_wt reuse-lk >/dev/null || fail "cleanup of the reuse-lk tree failed"
 
 echo "==> a dead breaker's break mutex is reclaimed before breaking the lock"
 mkdir -p "$fixture_locks/deadbreak-lk+lock"
-printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/deadbreak-lk+lock/owner"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/deadbreak-lk+lock/owner"
 mkdir -p "$fixture_locks/deadbreak-lk+lock+break"
-printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/deadbreak-lk+lock+break/owner"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/deadbreak-lk+lock+break/owner"
 (
     PATH="$psstale_dir:$PATH"
     export PATH
@@ -1155,7 +1156,7 @@ rm_wt deadbreak-lk >/dev/null || fail "cleanup of the deadbreak-lk tree failed"
 
 echo "==> a foreign host's lock is refused with the remedy, never broken"
 mkdir -p "$fixture_locks/foreign-lk+lock"
-printf '%s %s %s\n' "12345" "not-$this_host" "$(id -u)" >"$fixture_locks/foreign-lk+lock/owner"
+printf '%s %s %s %s\n' "12345" "not-$this_host" "$(id -u)" "12345" >"$fixture_locks/foreign-lk+lock/owner"
 foreign_out="$(new foreign-lk 2>&1)" && fail "worktree-new.sh broke a lock it could not liveness-check"
 case "$foreign_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the foreign-lock refusal named no remedy" ;; esac
 [ -d "$fixture_locks/foreign-lk+lock" ] || fail "the foreign host's lock was removed"
@@ -1188,7 +1189,7 @@ sleep 0 &
 psdead_pid=$!
 wait "$psdead_pid" 2>/dev/null || true
 mkdir -p "$fixture_locks/psdead-lk+lock"
-printf '%s %s %s\n' "$psdead_pid" "$this_host" "$(id -u)" >"$fixture_locks/psdead-lk+lock/owner"
+printf '%s %s %s %s\n' "$psdead_pid" "$this_host" "$(id -u)" "$psdead_pid" >"$fixture_locks/psdead-lk+lock/owner"
 if (
     PATH="$psshim_dir:$PATH"
     export PATH
@@ -1305,6 +1306,10 @@ while [ ! -e "$test_tmp/shim-paused" ]; do
     }
     sleep 0.2
 done
+# The child's removal leaves the emptied ancestor DIRECTORY until the
+# paused script resumes; clear it so the probe below can only be refused by
+# the shared marker, never by mere path occupancy.
+rmdir "$fixture/.worktrees/rmparent" 2>/dev/null || true
 if new rmparent >/dev/null 2>&1; then
     : >"$test_tmp/shim-release"
     fail "an operation on the parent proceeded while the child removal held its ancestor marker"

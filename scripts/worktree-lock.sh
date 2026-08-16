@@ -66,20 +66,24 @@ lock_stamp() {
     # timezone: lstart renders via the locale's %c, so two invocations
     # differing in LC_TIME or TZ would otherwise disagree about the same
     # process and misread it as PID reuse.
-    printf '%s %s %s %s\n' "$$" "$lock_host" "$lock_uid" \
+    printf '%s %s %s %s %s\n' "$$" "$lock_host" "$lock_uid" \
+        "$(ps -o pgid= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//' | grep . || echo 0)" \
         "$(LC_ALL=C TZ=UTC ps -o lstart= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//')"
 }
 lock_owner_alive() {
-    # $1 = recorded "pid host uid [start-time]". Anything unparseable, and
-    # any owner from another host, is treated as alive: breaking is only
+    # $1 = recorded "pid host uid pgid [start-time]". Anything unparseable,
+    # and any owner from another host, is treated as alive: breaking is only
     # ever allowed on positive evidence of death.
     _own_pid="${1%% *}"
     _own_rest="${1#* }"
     _own_host="${_own_rest%% *}"
     _own_uid=""
+    _own_pgid=""
     _own_start=""
     case "$_own_rest" in *" "*) _own_rest="${_own_rest#* }" ;; *) _own_rest="" ;; esac
     _own_uid="${_own_rest%% *}"
+    case "$_own_rest" in *" "*) _own_rest="${_own_rest#* }" ;; *) _own_rest="" ;; esac
+    _own_pgid="${_own_rest%% *}"
     case "$_own_rest" in *" "*) _own_start="${_own_rest#* }" ;; esac
     [ "$_own_host" = "$lock_host" ] || return 0
     case "$_own_pid" in "" | *[!0-9]*) return 0 ;; esac
@@ -91,14 +95,28 @@ lock_owner_alive() {
     # sandbox denying ps entirely reads as indeterminate, not dead.
     [ "$_own_uid" = "$lock_uid" ] || return 0
     [ -n "$(ps -p $$ -o pid= 2>/dev/null)" ] || return 0
-    [ -n "$(ps -p "$_own_pid" -o pid= 2>/dev/null)" ] || return 1
-    if [ -n "$_own_start" ]; then
+    # The recorded SHELL dying is not the operation dying: a SIGKILLed or
+    # OOM-culled wrapper can leave children — git worktree remove, a hook,
+    # an installer — still mutating the tree. The stamp therefore records
+    # the process GROUP, which those children inherit, and death requires
+    # BOTH the pid evidence to fail (gone, or start-time mismatch = reuse)
+    # AND the group to be empty. A child that setsid()s out of the group is
+    # the documented residual.
+    _pid_dead=0
+    if [ -z "$(ps -p "$_own_pid" -o pid= 2>/dev/null)" ]; then
+        _pid_dead=1
+    elif [ -n "$_own_start" ]; then
         _now_start="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$_own_pid" 2>/dev/null | sed 's/^ *//;s/ *$//')"
         if [ -n "$_now_start" ] && [ "$_now_start" != "$_own_start" ]; then
-            return 1
+            _pid_dead=1
         fi
     fi
-    return 0
+    [ "$_pid_dead" -eq 1 ] || return 0
+    case "$_own_pgid" in "" | 0 | *[!0-9]*) return 1 ;; esac
+    if [ -n "$(ps -Ao pgid= 2>/dev/null | awk -v g="$_own_pgid" '$1 == g {print; exit}')" ]; then
+        return 0
+    fi
+    return 1
 }
 lock_try_break() {
     # $1 = lock dir, $2 = the owner content it was judged dead on. Breaking
