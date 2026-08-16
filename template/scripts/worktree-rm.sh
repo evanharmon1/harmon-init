@@ -359,6 +359,19 @@ fi
 # only ever removes an EMPTY directory, so this cannot take a live tree with it.
 parent="$(dirname "$tree")"
 while [ "$parent" != "$main_root" ] && [ "$parent" != "/" ]; do
+    # Never delete a shared ancestor a live sibling operation still holds:
+    # the walk yields to any foreign holder marker rather than racing the
+    # sibling's own two-step path claim. An empty directory left under
+    # contention is noise; a deleted one is a spurious sibling failure.
+    parent_rel="${parent#"$main_root/.worktrees"}"
+    parent_rel="${parent_rel#/}"
+    if [ -n "$parent_rel" ]; then
+        parent_enc="$(printf '%s' "$parent_rel" | tr '/' '%' | tr '[:upper:]' '[:lower:]')"
+        if [ "${#parent_enc}" -gt 200 ]; then
+            parent_enc="h$(printf '%s' "$parent_enc" | cksum | tr ' \t' '--')"
+        fi
+        ancestor_holders_quiet "$parent_enc" || break
+    fi
     rmdir "$parent" 2>/dev/null || break
     parent="$(dirname "$parent")"
 done

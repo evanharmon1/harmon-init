@@ -75,7 +75,7 @@ lock_stamp() {
     # content-equality revalidation that guards breaking.
     printf '%s %s %s %s %s %s\n' "$$" "$lock_host" "$lock_uid" \
         "$(ps -o pgid= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//' | grep . || echo 0)" \
-        "n$$.$(date +%s).$RANDOM" \
+        "n$$.$(date +%s).$RANDOM$RANDOM$RANDOM" \
         "$(LC_ALL=C TZ=UTC ps -o lstart= -p $$ 2>/dev/null | sed 's/^ *//;s/ *$//')"
 }
 lock_owner_alive() {
@@ -175,6 +175,31 @@ lock_try_break() {
     rm -rf "$_break"
     return 0
 }
+ancestor_holders_quiet() {
+    # $1 = encoded ancestor key. True when no LIVE holder marker other than
+    # our own exists for it — the rmdir walk consults this so an emptied
+    # shared parent is never deleted out from under a live sibling
+    # operation (any number of which may hold the ancestor concurrently; a
+    # bounded retry on the claiming side cannot absorb unbounded
+    # deletions, so the deleting side yields instead). Unreadable or
+    # ownerless markers read as live: fail closed.
+    for _q_marker in "$lock_root/$1+holders"/*; do
+        [ -e "$_q_marker" ] || continue
+        _q_ours=0
+        for _q_held in ${held_shared[@]+"${held_shared[@]}"}; do
+            if [ "$_q_held" = "$_q_marker" ]; then
+                _q_ours=1
+                break
+            fi
+        done
+        [ "$_q_ours" -eq 1 ] && continue
+        _q_owner="$(cat "$_q_marker" 2>/dev/null || true)"
+        if lock_owner_alive "${_q_owner:-0 unreadable}"; then
+            return 1
+        fi
+    done
+    return 0
+}
 acquire_excl() {
     # $1 = encoded path, $2 = display path
     _excl="$lock_root/$1+lock"
@@ -261,7 +286,10 @@ acquire_path_locks() {
         # encodings collapse to a checksum key; a (astronomically unlikely)
         # collision only over-serializes two names, never under-locks one.
         if [ "${#_lock_enc}" -gt 200 ]; then
-            _lock_enc="h$(printf '%s' "$_lock_prefix" | cksum | tr ' \t' '--')"
+            # Hashed from the NORMALIZED key, not the raw prefix: hashing
+            # the original case would let long case-aliases of one path
+            # diverge into distinct keys, undoing the lowercasing above.
+            _lock_enc="h$(printf '%s' "$_lock_enc" | cksum | tr ' \t' '--')"
         fi
         if [ -z "$_lock_rest" ]; then
             acquire_excl "$_lock_enc" "$_lock_prefix"
