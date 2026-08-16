@@ -103,9 +103,8 @@ lock_try_break() {
     # without that, a second breaker still holding yesterday's judgement
     # can rename away the fresh lock the first breaker's successor just
     # acquired. Content equality is the validation — a re-acquired lock
-    # carries a different stamp. An empty judgement additionally re-checks
-    # age inside the break lock, so a just-created lock in its two-statement
-    # claim window is never broken as "ownerless". Returns 0 only when this
+    # carries a different stamp. Ownerless entries are never judged
+    # breakable at all, so an empty judgement never reaches this function. Returns 0 only when this
     # caller performed the break.
     _break="$1+break"
     if ! mkdir "$_break" 2>/dev/null; then
@@ -119,8 +118,6 @@ lock_try_break() {
         _break_dead=0
         if [ -n "$_break_owner" ]; then
             lock_owner_alive "$_break_owner" || _break_dead=1
-        elif [ -n "$(find "$_break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-            _break_dead=1
         fi
         if [ "$_break_dead" -eq 1 ] &&
             mv "$_break" "$lock_root/.deadbreak.$$" 2>/dev/null; then
@@ -131,10 +128,6 @@ lock_try_break() {
     lock_stamp >"$_break/owner"
     _break_now="$(cat "$1/owner" 2>/dev/null || true)"
     if [ "$_break_now" != "$2" ]; then
-        rm -rf "$_break"
-        return 1
-    fi
-    if [ -z "$2" ] && [ -z "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
         rm -rf "$_break"
         return 1
     fi
@@ -159,11 +152,11 @@ acquire_excl() {
                 lock_try_break "$_excl" "$_excl_owner" || true
                 continue
             fi
-            if [ -z "$_excl_owner" ] &&
-                [ -n "$(find "$_excl" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-                lock_try_break "$_excl" "" || true
-                continue
-            fi
+            # An OWNERLESS entry is deliberately never reclaimed: nothing
+            # can distinguish a crash inside the two-statement claim window
+            # from a suspension, and reclaiming a suspended acquirer's lock
+            # hands out two exclusive owners. The refusal below names the
+            # manual remedy for the vanishingly rare crash case.
         fi
         die "another worktree operation holds '$2' (${_excl_owner:-owner not yet recorded}; lock $_excl) — if that process is gone, remove the lock directory and re-run"
     done
@@ -175,14 +168,9 @@ acquire_excl() {
     for _marker in "$lock_root/$1+holders"/*; do
         [ -e "$_marker" ] || continue
         _marker_owner="$(cat "$_marker" 2>/dev/null || true)"
-        # An empty marker is a holder killed inside its own two-statement
-        # publication window — aged, it is swept like an ownerless lock;
-        # fresh, it is a live publication and refuses below.
-        if [ -z "$_marker_owner" ] &&
-            [ -n "$(find "$_marker" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-            rm -f "$_marker"
-            continue
-        fi
+        # An empty marker — a holder inside its publication window, or one
+        # crashed there — is never swept, for the same undecidability that
+        # protects ownerless locks; the refusal names the manual remedy.
         if lock_owner_alive "${_marker_owner:-0 unreadable}"; then
             die "a worktree operation under '$2/' is in progress (${_marker_owner:-holder unreadable}; $_marker) — if that process is gone, remove the marker file and re-run"
         fi

@@ -1135,7 +1135,10 @@ case "$foreign_out" in *"remove the lock directory and re-run"*) : ;; *) fail "t
 [ -d "$fixture_locks/foreign-lk+lock" ] || fail "the foreign host's lock was removed"
 rm -rf "$fixture_locks/foreign-lk+lock"
 
-echo "==> an ownerless lock: fresh refuses, aged is broken"
+echo "==> an ownerless lock always refuses with the remedy, whatever its age"
+# Crash-inside-the-claim-window and suspension are indistinguishable, so
+# ownerless entries are never auto-reclaimed (challenge round 5) — the
+# refusal carries the manual remedy instead.
 mkdir -p "$fixture_locks/fresh-lk+lock"
 if new fresh-lk >/dev/null 2>&1; then
     fail "a fresh ownerless lock (a live acquisition window) was broken"
@@ -1143,8 +1146,9 @@ fi
 rm -rf "$fixture_locks/fresh-lk+lock"
 mkdir -p "$fixture_locks/aged-lk+lock"
 touch -t 202601010000 "$fixture_locks/aged-lk+lock"
-new aged-lk >/dev/null || fail "an aged ownerless lock (a crashed acquisition) was not broken"
-rm_wt aged-lk >/dev/null || fail "cleanup of the aged-lk tree failed"
+aged_out="$(new aged-lk 2>&1)" && fail "an aged ownerless lock was auto-reclaimed despite the undecidable window"
+case "$aged_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the ownerless refusal named no remedy" ;; esac
+rm -rf "$fixture_locks/aged-lk+lock"
 
 echo "==> an unusable ps fails closed instead of breaking a dead lock"
 # The liveness probe must read "ps itself is broken" as indeterminate: a
@@ -1169,12 +1173,13 @@ fi
 [ -d "$fixture_locks/psdead-lk+lock" ] || fail "the unprovable lock was removed"
 rm -rf "$fixture_locks/psdead-lk+lock"
 
-echo "==> an aged empty holder marker is swept, a fresh one refuses"
+echo "==> an empty holder marker refuses with the remedy, whatever its age"
 mkdir -p "$fixture_locks/marker-lk+holders"
 : >"$fixture_locks/marker-lk+holders/999999.marker"
 touch -t 202601010000 "$fixture_locks/marker-lk+holders/999999.marker"
-new marker-lk >/dev/null || fail "an aged empty holder marker blocked the exclusive acquisition"
-rm_wt marker-lk >/dev/null || fail "cleanup of the marker-lk tree failed"
+marker_out="$(new marker-lk 2>&1)" && fail "an aged empty holder marker was auto-swept despite the undecidable window"
+case "$marker_out" in *"remove the marker file and re-run"*) : ;; *) fail "the empty-marker refusal named no remedy" ;; esac
+rm -rf "$fixture_locks/marker-lk+holders"
 mkdir -p "$fixture_locks/marker2-lk+holders"
 : >"$fixture_locks/marker2-lk+holders/999999.marker"
 if new marker2-lk >/dev/null 2>&1; then
