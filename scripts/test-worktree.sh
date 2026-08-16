@@ -174,7 +174,7 @@ export PATH
 # ── Fixture repository ───────────────────────────────────────────────
 fixture="$test_tmp/fixture"
 mkdir -p "$fixture/scripts"
-cp "$repo/scripts/worktree-new.sh" "$repo/scripts/worktree-rm.sh" "$fixture/scripts/"
+cp "$repo/scripts/worktree-new.sh" "$repo/scripts/worktree-rm.sh" "$repo/scripts/worktree-lock.sh" "$fixture/scripts/"
 chmod +x "$fixture/scripts/worktree-new.sh" "$fixture/scripts/worktree-rm.sh"
 cat >"$fixture/lefthook.yml" <<'EOF'
 pre-commit:
@@ -1052,7 +1052,7 @@ echo "==> a live parent-path operation refuses a child creation, and vice versa"
 # on parent/child holds parent shared (a holder marker) and the child
 # exclusively.
 mkdir -p "$fixture_locks/lockparent+lock"
-printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent+lock/owner"
+printf '%s %s %s\n' "$$" "$this_host" "$(id -u)" >"$fixture_locks/lockparent+lock/owner"
 if new lockparent/child --branch lockchild >/dev/null 2>&1; then
     fail "a child creation proceeded while a parent-path operation held the lock (harmon-init#839)"
 fi
@@ -1062,9 +1062,9 @@ if git -C "$fixture" show-ref --verify --quiet refs/heads/lockchild; then
 fi
 rm -rf "$fixture_locks/lockparent+lock"
 mkdir -p "$fixture_locks/lockparent+holders"
-printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent+holders/sim.marker"
+printf '%s %s %s\n' "$$" "$this_host" "$(id -u)" >"$fixture_locks/lockparent+holders/sim.marker"
 mkdir -p "$fixture_locks/lockparent%child+lock"
-printf '%s %s\n' "$$" "$this_host" >"$fixture_locks/lockparent%child+lock/owner"
+printf '%s %s %s\n' "$$" "$this_host" "$(id -u)" >"$fixture_locks/lockparent%child+lock/owner"
 if new lockparent >/dev/null 2>&1; then
     fail "a parent creation proceeded while a child-path operation held its ancestor marker (harmon-init#839)"
 fi
@@ -1118,7 +1118,7 @@ exit 0
 PSSHIM
 chmod +x "$psstale_dir/ps"
 mkdir -p "$fixture_locks/stale-lk+lock"
-printf '%s %s\n' "$stale_dead_pid" "$this_host" >"$fixture_locks/stale-lk+lock/owner"
+printf '%s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" >"$fixture_locks/stale-lk+lock/owner"
 (
     PATH="$psstale_dir:$PATH"
     export PATH
@@ -1129,7 +1129,7 @@ rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
 
 echo "==> a foreign host's lock is refused with the remedy, never broken"
 mkdir -p "$fixture_locks/foreign-lk+lock"
-printf '%s %s\n' "12345" "not-$this_host" >"$fixture_locks/foreign-lk+lock/owner"
+printf '%s %s %s\n' "12345" "not-$this_host" "$(id -u)" >"$fixture_locks/foreign-lk+lock/owner"
 foreign_out="$(new foreign-lk 2>&1)" && fail "worktree-new.sh broke a lock it could not liveness-check"
 case "$foreign_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the foreign-lock refusal named no remedy" ;; esac
 [ -d "$fixture_locks/foreign-lk+lock" ] || fail "the foreign host's lock was removed"
@@ -1158,7 +1158,7 @@ sleep 0 &
 psdead_pid=$!
 wait "$psdead_pid" 2>/dev/null || true
 mkdir -p "$fixture_locks/psdead-lk+lock"
-printf '%s %s\n' "$psdead_pid" "$this_host" >"$fixture_locks/psdead-lk+lock/owner"
+printf '%s %s %s\n' "$psdead_pid" "$this_host" "$(id -u)" >"$fixture_locks/psdead-lk+lock/owner"
 if (
     PATH="$psshim_dir:$PATH"
     export PATH
