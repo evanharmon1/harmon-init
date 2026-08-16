@@ -221,6 +221,168 @@ else
     if [ "$force" -eq 0 ] && [ -n "$(git -C "$tree" status --porcelain)" ]; then
         die "$tree has uncommitted changes — commit or push them, or re-run with --force to discard them"
     fi
+    # `git status --porcelain` and `git diff-files` both OMIT entries flagged
+    # skip-worktree or assume-unchanged — hiding a locally modified tracked
+    # file is what the flags are for — so an edit to such a file is invisible
+    # to the check above and a plain removal would delete it while reporting
+    # success. The flags are visible to `git ls-files -v`: `S` marks
+    # skip-worktree and a lowercase tag letter marks assume-unchanged (`h`
+    # for an ordinary cached entry, `s` when both flags are set), so compare
+    # each flagged entry against its index entry directly. ONE pass over the
+    # NUL-delimited stream, deliberately: `core.quotePath` C-quotes
+    # non-ASCII paths in line output, so a line-based read would miss the
+    # file on disk (falsely refusing over a clean `café.txt`) — and a
+    # `grep -q` pre-pass is not a safe short-circuit, because its early exit
+    # SIGPIPEs the git writer under `pipefail` and skips this whole guard
+    # precisely when a flagged entry exists in a large repo. The `case` is
+    # the short-circuit: unflagged entries fall through with no process
+    # spawned.
+    #
+    # What counts as a hidden edit is what a removal would DESTROY:
+    #   - an absent skip-worktree path is skipped only when sparse checkout
+    #     is enabled in the tree — sparse marks every excluded path
+    #     skip-worktree with no file present, so refusing on absence would
+    #     block the removal of every clean sparse worktree. Without sparse,
+    #     absence means the user deleted a file they had flagged — for
+    #     skip-worktree and assume-unchanged alike, that uncommitted
+    #     deletion is what the removal would discard, so it refuses;
+    #   - content is compared against the CHECKOUT representation
+    #     (`cat-file --filters` — the bytes a fresh checkout would write),
+    #     so an unmodified checkout under `eol=crlf`, `core.autocrlf`, or a
+    #     clean/smudge filter reads as clean, while an edit survives the
+    #     comparison even when a lossy clean filter would normalize it away
+    #     — and where `core.fileMode` says the filesystem tracks it, a
+    #     chmod-only difference from the index mode is an edit too;
+    #   - a symlink is compared by its target against the index blob
+    #     (hashing it would follow the link), byte-exact via the `printf x`
+    #     sentinels, which stop command substitution eating the newlines
+    #     that distinguish `target` from `target\n`; under
+    #     `core.symlinks=false` git legitimately checks a symlink entry out
+    #     as a regular file holding the target text, so that representation
+    #     is compared the same way instead of read as a type change;
+    #   - anything unreadable, unhashable, or of unexpected type counts as
+    #     different, which can only refuse a removal that was safe.
+    if [ "$force" -eq 0 ]; then
+        # Per-tree constants, resolved ONCE before the loop. A sparse
+        # monorepo can hold hundreds of thousands of absent `S` entries, and
+        # a per-entry `git config` spawn turned a clean removal into minutes.
+        sparse_enabled="$(git -C "$tree" config --get --type=bool --default=false core.sparseCheckout 2>/dev/null || echo false)"
+        filemode_enabled="$(git -C "$tree" config --get --type=bool --default=true core.fileMode 2>/dev/null || echo true)"
+        symlinks_enabled="$(git -C "$tree" config --get --type=bool --default=true core.symlinks 2>/dev/null || echo true)"
+        hidden_paths=""
+        flagged_enum_ok=0
+        while IFS= read -r -d '' flagged_entry; do
+            # The sentinel is appended by the producer ONLY after a
+            # successful full enumeration; bash does not propagate a
+            # process-substitution failure, so without it a git error or
+            # truncated stream would fail OPEN and wave the removal
+            # through on an incomplete scan. A tracked file of the same
+            # name cannot forge it — real entries carry a tag prefix.
+            if [ "$flagged_entry" = "__WORKTREE_RM_ENUM_OK__" ]; then
+                flagged_enum_ok=1
+                continue
+            fi
+            flagged_tag="${flagged_entry%% *}"
+            case "$flagged_tag" in
+            S | [a-z]) : ;;
+            *) continue ;;
+            esac
+            flagged_path="${flagged_entry#? }"
+            flagged_differs=1
+            if [ ! -e "$tree/$flagged_path" ] && [ ! -L "$tree/$flagged_path" ]; then
+                case "$flagged_tag" in
+                S | s)
+                    if [ "$sparse_enabled" = "true" ]; then
+                        continue
+                    fi
+                    ;;
+                esac
+            else
+                # Look the entry up with --literal-pathspecs: without it, a
+                # tracked filename that LOOKS like pathspec magic
+                # (`:(literal)foo`) or like a glob resolves some OTHER index
+                # entry — and comparing the file against the wrong blob can
+                # wave a real edit through.
+                index_entry="$(git --literal-pathspecs -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
+                # Parse the fixed "mode SP sha SP stage TAB name" prefix by
+                # parameter expansion, never by line-based tools: -z keeps a
+                # newline INSIDE a filename verbatim, and awk would read the
+                # name's remainder as more records and corrupt the sha.
+                index_mode="${index_entry%% *}"
+                index_rest="${index_entry#* }"
+                index_sha="${index_rest%% *}"
+                if [ "$index_mode" = "120000" ]; then
+                    # A real symlink is the clean representation only where
+                    # git is actually checking symlinks out (core.symlinks):
+                    # with them disabled, git writes a regular file holding
+                    # the target text, so an actual symlink there is a local
+                    # type change to refuse.
+                    if [ -L "$tree/$flagged_path" ] && [ "$symlinks_enabled" = "true" ]; then
+                        link_target="$(readlink -n "$tree/$flagged_path" 2>/dev/null && printf x)"
+                        blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
+                        if [ -n "$link_target" ] && [ "$link_target" = "$blob_target" ]; then
+                            flagged_differs=0
+                        fi
+                    elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ] &&
+                        [ "$symlinks_enabled" = "false" ]; then
+                        # Byte-exact via cmp, not shell variables: command
+                        # substitution strips NUL bytes, which would let a
+                        # binary local file compare equal to a text target.
+                        if git -C "$tree" cat-file blob "$index_sha" 2>/dev/null |
+                            cmp -s - "$tree/$flagged_path" 2>/dev/null; then
+                            flagged_differs=0
+                        fi
+                    fi
+                elif [ "$index_mode" = "160000" ]; then
+                    # A gitlink. Uninitialized — an empty directory with no
+                    # .git — is its clean checkout representation, holding
+                    # nothing local to lose. An INITIALIZED submodule never
+                    # reaches the removal decision at all: git itself
+                    # refuses to remove a worktree containing submodules,
+                    # so leaving it "different" only puts this guard's
+                    # message ahead of git's own refusal.
+                    if [ -d "$tree/$flagged_path" ] && [ ! -e "$tree/$flagged_path/.git" ] &&
+                        [ -z "$(find "$tree/$flagged_path" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+                        flagged_differs=0
+                    fi
+                elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
+                    # Compare against the CHECKOUT representation —
+                    # `cat-file --filters` applies smudge/eol exactly as a
+                    # fresh checkout would. Hashing the CLEANED working file
+                    # would instead miss any edit a non-round-tripping clean
+                    # filter discards: bytes a fresh checkout could not
+                    # restore, which is precisely what this guard protects.
+                    if git -C "$tree" cat-file --filters --path="$flagged_path" "$index_sha" 2>/dev/null |
+                        cmp -s - "$tree/$flagged_path" 2>/dev/null; then
+                        flagged_differs=0
+                        if [ "$filemode_enabled" = "true" ]; then
+                            # The OWNER-execute bit, which is what git's
+                            # filemode tracks — `test -x` asks whether THIS
+                            # process may execute the file, which diverges
+                            # under root (any x bit satisfies it) and ACLs.
+                            owner_exec="$(find "$tree/$flagged_path" -prune -perm -u+x 2>/dev/null)"
+                            case "$index_mode" in
+                            100644) [ -z "$owner_exec" ] || flagged_differs=1 ;;
+                            100755) [ -n "$owner_exec" ] || flagged_differs=1 ;;
+                            esac
+                        fi
+                    fi
+                fi
+            fi
+            if [ "$flagged_differs" -eq 1 ]; then
+                hidden_paths="${hidden_paths}  ${flagged_path}
+"
+            fi
+        done < <(git -C "$tree" ls-files -v -z && printf '__WORKTREE_RM_ENUM_OK__\0')
+        if [ "$flagged_enum_ok" -ne 1 ]; then
+            die "could not enumerate $tree's index entries for the hidden-edit check — this guard fails closed; fix the enumeration (or discard the tree with --force)"
+        fi
+        if [ -n "$hidden_paths" ]; then
+            echo "worktree:rm: $tree has local edits hidden from git status by skip-worktree / assume-unchanged:" >&2
+            printf '%s' "$hidden_paths" >&2
+            die "clear the flag (git update-index --no-skip-worktree / --no-assume-unchanged <path>) and commit or push the edits, or re-run with --force to discard them"
+        fi
+    fi
     # An in-progress rebase/merge/cherry-pick leaves a CLEAN status once it
     # stops at an edit, so the check above waves it through — while the
     # per-worktree git dir still holds the sequencer state and, after a `commit

@@ -310,6 +310,266 @@ fi
 rm_wt dirty --force >/dev/null || fail "worktree-rm.sh --force failed on a dirty tree"
 refute_exists "$fixture/.worktrees/dirty" "worktree-rm.sh --force left the directory behind"
 
+# ── edits hidden by skip-worktree / assume-unchanged ─────────────────
+# Git omits entries carrying either flag from `git status --porcelain` AND
+# `git diff-files` — hiding a locally modified tracked file is what the flags
+# are for — so the dirty-tree refusal above cannot see them, and before
+# harmon-init#785 an ordinary removal deleted the edit while reporting
+# success. Each case asserts the porcelain status is EMPTY first: were the
+# edit visible there, the ordinary dirty check would refuse and the case
+# would pass without exercising the hidden-edit guard at all.
+echo "==> worktree:rm refuses an edit hidden by skip-worktree, and --force overrides"
+new hidden-skip >/dev/null || fail "worktree-new.sh failed for the skip-worktree case"
+git -C "$fixture/.worktrees/hidden-skip" update-index --skip-worktree README.md
+printf 'hidden edit\n' >"$fixture/.worktrees/hidden-skip/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-skip" status --porcelain)" ] ||
+    fail "fixture assumption broken: a skip-worktree edit shows in git status"
+if rm_wt hidden-skip >"$test_tmp/hidden-skip.log" 2>&1; then
+    fail "worktree-rm.sh removed a tree with a skip-worktree-hidden edit without --force"
+fi
+grep -qx 'hidden edit' "$fixture/.worktrees/hidden-skip/README.md" 2>/dev/null ||
+    fail "the skip-worktree-hidden edit did not survive the refusal"
+grep -q 'README.md' "$test_tmp/hidden-skip.log" ||
+    fail "the refusal did not name the hidden path"
+rm_wt hidden-skip --force >/dev/null || fail "worktree-rm.sh --force failed on a skip-worktree-hidden edit"
+refute_exists "$fixture/.worktrees/hidden-skip" "worktree-rm.sh --force left the directory behind"
+
+echo "==> worktree:rm refuses an edit hidden by assume-unchanged"
+new hidden-assume >/dev/null || fail "worktree-new.sh failed for the assume-unchanged case"
+git -C "$fixture/.worktrees/hidden-assume" update-index --assume-unchanged README.md
+printf 'hidden edit\n' >"$fixture/.worktrees/hidden-assume/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-assume" status --porcelain)" ] ||
+    fail "fixture assumption broken: an assume-unchanged edit shows in git status"
+if rm_wt hidden-assume >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an assume-unchanged-hidden edit without --force"
+fi
+grep -qx 'hidden edit' "$fixture/.worktrees/hidden-assume/README.md" 2>/dev/null ||
+    fail "the assume-unchanged-hidden edit did not survive the refusal"
+rm_wt hidden-assume --force >/dev/null || fail "worktree-rm.sh --force failed on an assume-unchanged-hidden edit"
+refute_exists "$fixture/.worktrees/hidden-assume" "worktree-rm.sh --force left the directory behind"
+
+echo "==> an UNMODIFIED flagged entry does not block an ordinary removal"
+new hidden-clean >/dev/null || fail "worktree-new.sh failed for the unmodified-flag case"
+git -C "$fixture/.worktrees/hidden-clean" update-index --skip-worktree README.md
+rm_wt hidden-clean >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an unmodified skip-worktree entry"
+refute_exists "$fixture/.worktrees/hidden-clean" "worktree-rm.sh left the tree behind"
+
+echo "==> a clean SPARSE worktree is removable (absent skip-worktree paths)"
+# Sparse checkout marks every excluded path skip-worktree with no file on
+# disk, so treating that absence as a hidden edit would refuse the removal
+# of every clean sparse worktree. `sparse-checkout set` scopes its config to
+# the worktree (extensions.worktreeConfig), so the shared fixture is not
+# affected.
+new hidden-sparse >/dev/null || fail "worktree-new.sh failed for the sparse case"
+git -C "$fixture/.worktrees/hidden-sparse" sparse-checkout set --no-cone '/scripts' >/dev/null 2>&1 ||
+    fail "could not enable sparse checkout in the fixture worktree"
+[ ! -e "$fixture/.worktrees/hidden-sparse/README.md" ] ||
+    fail "fixture assumption broken: sparse checkout left README.md in place"
+git -C "$fixture/.worktrees/hidden-sparse" ls-files -v | grep -q '^S README.md' ||
+    fail "fixture assumption broken: sparse README.md is not marked skip-worktree"
+rm_wt hidden-sparse >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal of a clean sparse worktree"
+refute_exists "$fixture/.worktrees/hidden-sparse" "worktree-rm.sh left the tree behind"
+
+echo "==> a DELETED skip-worktree file WITHOUT sparse checkout blocks removal"
+# Absence is only sparse-normal where sparse checkout is actually enabled;
+# without it, an absent flagged file can only be a user's uncommitted
+# deletion.
+new hidden-swdel >/dev/null || fail "worktree-new.sh failed for the skip-worktree-deletion case"
+git -C "$fixture/.worktrees/hidden-swdel" update-index --skip-worktree README.md
+rm "$fixture/.worktrees/hidden-swdel/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-swdel" status --porcelain)" ] ||
+    fail "fixture assumption broken: a skip-worktree deletion shows in git status"
+if rm_wt hidden-swdel >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with a skip-worktree-hidden deletion without --force"
+fi
+rm_wt hidden-swdel --force >/dev/null || fail "worktree-rm.sh --force failed on a skip-worktree deletion"
+refute_exists "$fixture/.worktrees/hidden-swdel" "worktree-rm.sh --force left the directory behind"
+
+echo "==> a chmod-only change to a flagged file blocks removal"
+# The content hash cannot see an executable-bit change, but where
+# core.fileMode says the filesystem tracks it, a chmod is an uncommitted
+# change like any edit.
+if [ "$(git -C "$fixture" config --get --type=bool --default=true core.fileMode)" = "true" ]; then
+    new hidden-mode >/dev/null || fail "worktree-new.sh failed for the chmod case"
+    git -C "$fixture/.worktrees/hidden-mode" update-index --skip-worktree README.md
+    chmod +x "$fixture/.worktrees/hidden-mode/README.md"
+    [ -z "$(git -C "$fixture/.worktrees/hidden-mode" status --porcelain)" ] ||
+        fail "fixture assumption broken: a flagged chmod shows in git status"
+    if rm_wt hidden-mode >/dev/null 2>&1; then
+        fail "worktree-rm.sh removed a tree with a chmod-only hidden change without --force"
+    fi
+    rm_wt hidden-mode --force >/dev/null || fail "worktree-rm.sh --force failed on a chmod-only change"
+    refute_exists "$fixture/.worktrees/hidden-mode" "worktree-rm.sh --force left the directory behind"
+else
+    echo "    (skipped: fixture filesystem does not track the executable bit)"
+fi
+
+echo "==> an UNMODIFIED flagged file under an eol filter does not block removal"
+# With `eol=crlf` the checkout legitimately differs byte-for-byte from the
+# index blob, so a raw-byte comparison would report every clean flagged
+# checkout as a hidden edit; the guard must compare content as git sees it
+# (clean filter applied). Scoped to one filename nothing else uses so the
+# shared fixture attributes cannot leak into other cases.
+printf 'hidden-filter.txt text eol=crlf\n' >>"$(git -C "$fixture" rev-parse --path-format=absolute --git-path info/attributes)"
+new hidden-filter >/dev/null || fail "worktree-new.sh failed for the eol-filter case"
+printf 'line one\nline two\n' >"$fixture/.worktrees/hidden-filter/hidden-filter.txt"
+git -C "$fixture/.worktrees/hidden-filter" add hidden-filter.txt
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-filter" commit -qm "chore: eol-filtered file"
+rm "$fixture/.worktrees/hidden-filter/hidden-filter.txt"
+git -C "$fixture/.worktrees/hidden-filter" checkout -- hidden-filter.txt
+grep -q "$(printf 'line one\r')" "$fixture/.worktrees/hidden-filter/hidden-filter.txt" ||
+    fail "fixture assumption broken: the eol=crlf checkout does not carry CRLF"
+git -C "$fixture/.worktrees/hidden-filter" update-index --skip-worktree hidden-filter.txt
+rm_wt hidden-filter >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over a clean eol-filtered flagged file"
+refute_exists "$fixture/.worktrees/hidden-filter" "worktree-rm.sh left the tree behind"
+
+echo "==> an edit a LOSSY clean filter would normalize away still blocks removal"
+# A non-round-tripping clean filter makes the cleaned working file hash
+# identical to the index blob, so a cleaned-hash comparison would wave the
+# edit through — and the discarded bytes are exactly what a fresh checkout
+# cannot restore. The guard must compare against the checkout
+# representation instead. The filter config is shared repo config, but the
+# attribute is scoped to one filename nothing else uses.
+git -C "$fixture" config filter.testlossy.clean "grep -v '^LOCAL:' || true"
+printf 'hidden-lossy.txt filter=testlossy\n' >>"$(git -C "$fixture" rev-parse --path-format=absolute --git-path info/attributes)"
+new hidden-lossy >/dev/null || fail "worktree-new.sh failed for the lossy-filter case"
+printf 'shared line\n' >"$fixture/.worktrees/hidden-lossy/hidden-lossy.txt"
+git -C "$fixture/.worktrees/hidden-lossy" add hidden-lossy.txt
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-lossy" commit -qm "chore: lossy-filtered file"
+printf 'shared line\nLOCAL: uncommitted local-only note\n' >"$fixture/.worktrees/hidden-lossy/hidden-lossy.txt"
+git -C "$fixture/.worktrees/hidden-lossy" update-index --skip-worktree hidden-lossy.txt
+[ -z "$(git -C "$fixture/.worktrees/hidden-lossy" status --porcelain)" ] ||
+    fail "fixture assumption broken: the lossy-filtered edit shows in git status"
+if rm_wt hidden-lossy >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree whose edit only a lossy clean filter hides"
+fi
+grep -q 'LOCAL: uncommitted' "$fixture/.worktrees/hidden-lossy/hidden-lossy.txt" ||
+    fail "the lossy-hidden edit did not survive the refusal"
+rm_wt hidden-lossy --force >/dev/null || fail "worktree-rm.sh --force failed on the lossy-filter case"
+refute_exists "$fixture/.worktrees/hidden-lossy" "worktree-rm.sh --force left the directory behind"
+
+echo "==> a DELETED assume-unchanged file still blocks removal"
+# Absence is only sparse-normal for skip-worktree entries. git never marks a
+# path assume-unchanged on its own, so an absent one means the user deleted
+# a file they had flagged — an uncommitted deletion the removal would
+# discard.
+new hidden-del >/dev/null || fail "worktree-new.sh failed for the hidden-deletion case"
+git -C "$fixture/.worktrees/hidden-del" update-index --assume-unchanged README.md
+rm "$fixture/.worktrees/hidden-del/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-del" status --porcelain)" ] ||
+    fail "fixture assumption broken: an assume-unchanged deletion shows in git status"
+if rm_wt hidden-del >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an assume-unchanged-hidden deletion without --force"
+fi
+[ -d "$fixture/.worktrees/hidden-del" ] || fail "the tree was removed despite the refusal"
+rm_wt hidden-del --force >/dev/null || fail "worktree-rm.sh --force failed on a hidden deletion"
+refute_exists "$fixture/.worktrees/hidden-del" "worktree-rm.sh --force left the directory behind"
+
+echo "==> an UNMODIFIED flagged symlink does not block removal"
+# Hashing a symlink's PATH follows the link, so a content hash would compare
+# the target file's bytes against an index blob that holds the target STRING
+# — every clean flagged symlink would read as a hidden edit.
+new hidden-link >/dev/null || fail "worktree-new.sh failed for the symlink case"
+ln -s README.md "$fixture/.worktrees/hidden-link/hidden-link-ln"
+git -C "$fixture/.worktrees/hidden-link" add hidden-link-ln
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-link" commit -qm "chore: tracked symlink"
+git -C "$fixture/.worktrees/hidden-link" update-index --skip-worktree hidden-link-ln
+rm_wt hidden-link >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an unmodified flagged symlink"
+refute_exists "$fixture/.worktrees/hidden-link" "worktree-rm.sh left the tree behind"
+
+echo "==> a REPOINTED flagged symlink blocks removal"
+new hidden-link-mod >/dev/null || fail "worktree-new.sh failed for the repointed-symlink case"
+ln -s README.md "$fixture/.worktrees/hidden-link-mod/hidden-link-ln2"
+git -C "$fixture/.worktrees/hidden-link-mod" add hidden-link-ln2
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-link-mod" commit -qm "chore: tracked symlink"
+git -C "$fixture/.worktrees/hidden-link-mod" update-index --skip-worktree hidden-link-ln2
+rm "$fixture/.worktrees/hidden-link-mod/hidden-link-ln2"
+ln -s lefthook.yml "$fixture/.worktrees/hidden-link-mod/hidden-link-ln2"
+[ -z "$(git -C "$fixture/.worktrees/hidden-link-mod" status --porcelain)" ] ||
+    fail "fixture assumption broken: a flagged symlink repoint shows in git status"
+if rm_wt hidden-link-mod >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with a repointed flagged symlink without --force"
+fi
+rm_wt hidden-link-mod --force >/dev/null || fail "worktree-rm.sh --force failed on a repointed symlink"
+refute_exists "$fixture/.worktrees/hidden-link-mod" "worktree-rm.sh --force left the directory behind"
+
+echo "==> a flagged filename that looks like pathspec magic is looked up literally"
+# `git ls-files -s -- ':(literal)foo'` resolves the pathspec MAGIC — the
+# entry for `foo` — not the file literally named `:(literal)foo`. Comparing
+# against the wrong blob waved a real edit through when its content matched
+# the other file's checkout.
+new hidden-magic >/dev/null || fail "worktree-new.sh failed for the pathspec-magic case"
+printf 'AAA\n' >"$fixture/.worktrees/hidden-magic/plain-foo"
+printf 'BBB\n' >"$fixture/.worktrees/hidden-magic/:(literal)plain-foo"
+# --literal-pathspecs on the setup too: `git add ':(literal)plain-foo'`
+# would itself resolve the magic and add plain-foo instead.
+git --literal-pathspecs -C "$fixture/.worktrees/hidden-magic" add plain-foo ':(literal)plain-foo'
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-magic" commit -qm "chore: magic-named file"
+git --literal-pathspecs -C "$fixture/.worktrees/hidden-magic" update-index --skip-worktree ':(literal)plain-foo'
+printf 'AAA\n' >"$fixture/.worktrees/hidden-magic/:(literal)plain-foo"
+[ -z "$(git -C "$fixture/.worktrees/hidden-magic" status --porcelain)" ] ||
+    fail "fixture assumption broken: the magic-named edit shows in git status"
+if rm_wt hidden-magic >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree whose magic-named flagged file was edited"
+fi
+rm_wt hidden-magic --force >/dev/null || fail "worktree-rm.sh --force failed on the pathspec-magic case"
+refute_exists "$fixture/.worktrees/hidden-magic" "worktree-rm.sh --force left the directory behind"
+
+echo "==> core.symlinks=false: a real symlink refuses, the regular-file form passes"
+# With core.symlinks=false git checks a 120000 entry out as a regular file
+# holding the target text — so THAT is the clean representation there, and
+# an actual symlink is a local type change the guard must refuse.
+git -C "$fixture" config extensions.worktreeConfig true
+new hidden-symfalse >/dev/null || fail "worktree-new.sh failed for the core.symlinks case"
+ln -s README.md "$fixture/.worktrees/hidden-symfalse/hidden-sym-ln"
+git -C "$fixture/.worktrees/hidden-symfalse" add hidden-sym-ln
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-symfalse" commit -qm "chore: tracked symlink"
+git -C "$fixture/.worktrees/hidden-symfalse" config --worktree core.symlinks false
+git -C "$fixture/.worktrees/hidden-symfalse" update-index --skip-worktree hidden-sym-ln
+if rm_wt hidden-symfalse >/dev/null 2>&1; then
+    fail "worktree-rm.sh accepted a real symlink as clean under core.symlinks=false"
+fi
+rm "$fixture/.worktrees/hidden-symfalse/hidden-sym-ln"
+printf '%s' README.md >"$fixture/.worktrees/hidden-symfalse/hidden-sym-ln"
+rm_wt hidden-symfalse >/dev/null ||
+    fail "worktree-rm.sh refused the regular-file symlink representation under core.symlinks=false"
+refute_exists "$fixture/.worktrees/hidden-symfalse" "worktree-rm.sh left the tree behind"
+
+echo "==> an UNINITIALIZED flagged gitlink does not block removal"
+# An uninitialized submodule checks out as an empty directory (index mode
+# 160000) — nothing local to lose, and native 'git worktree remove' accepts
+# it. Initialized submodules never reach the decision: git refuses to remove
+# worktrees containing them.
+new hidden-sub >/dev/null || fail "worktree-new.sh failed for the gitlink case"
+subsha="$(git -C "$fixture/.worktrees/hidden-sub" rev-parse HEAD)"
+git -C "$fixture/.worktrees/hidden-sub" update-index --add --cacheinfo "160000,$subsha,hidden-sub-mod"
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-sub" commit -qm "chore: gitlink"
+mkdir "$fixture/.worktrees/hidden-sub/hidden-sub-mod"
+git -C "$fixture/.worktrees/hidden-sub" update-index --skip-worktree hidden-sub-mod
+[ -z "$(git -C "$fixture/.worktrees/hidden-sub" status --porcelain)" ] ||
+    fail "fixture assumption broken: the flagged gitlink shows in git status"
+rm_wt hidden-sub >/dev/null ||
+    fail "worktree-rm.sh refused an ordinary removal over an uninitialized flagged gitlink"
+refute_exists "$fixture/.worktrees/hidden-sub" "worktree-rm.sh left the tree behind"
+
+echo "==> a flagged filename containing a NEWLINE is parsed intact"
+# `ls-files -z` keeps a newline inside a filename verbatim; a line-based
+# sha extraction read the name's remainder as more records, corrupted the
+# sha, and falsely refused a byte-identical flagged file.
+new hidden-nl >/dev/null || fail "worktree-new.sh failed for the newline-name case"
+nl_name="$(printf 'odd\nsecond field')"
+printf 'content\n' >"$fixture/.worktrees/hidden-nl/$nl_name"
+git -C "$fixture/.worktrees/hidden-nl" add "$nl_name"
+LEFTHOOK=0 git -C "$fixture/.worktrees/hidden-nl" commit -qm "chore: newline-named file"
+git -C "$fixture/.worktrees/hidden-nl" update-index --skip-worktree "$nl_name"
+rm_wt hidden-nl >/dev/null ||
+    fail "worktree-rm.sh falsely refused over an unmodified newline-named flagged file"
+refute_exists "$fixture/.worktrees/hidden-nl" "worktree-rm.sh left the tree behind"
+
 # ── ignored local files are not silently deleted ─────────────────────
 # `git worktree remove` counts modified and untracked files but not ignored
 # ones, so a plain remove would take a .env with it.
