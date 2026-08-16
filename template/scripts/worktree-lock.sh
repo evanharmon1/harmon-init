@@ -57,7 +57,7 @@ release_locks() {
     # empty holders dir is a few bytes of permanent bookkeeping; the
     # session-cleanup surface (#838) is where sweeping it belongs.
     for _held in $held_shared; do
-        rm -f "$lock_root/$_held+holders/$$.marker"
+        rm -f "$_held"
     done
     held_shared=""
 }
@@ -112,8 +112,17 @@ lock_owner_alive() {
         fi
     fi
     [ "$_pid_dead" -eq 1 ] || return 0
-    case "$_own_pgid" in "" | 0 | *[!0-9]*) return 1 ;; esac
-    if [ -n "$(ps -Ao pgid= 2>/dev/null | awk -v g="$_own_pgid" '$1 == g {print; exit}')" ]; then
+    # Group evidence fails CLOSED: a stamp that could not capture a pgid,
+    # and a scan that cannot even see our own group, prove nothing about
+    # the operation's children — and "no proof" must read as alive.
+    case "$_own_pgid" in "" | 0 | *[!0-9]*) return 0 ;; esac
+    _group_scan="$(ps -Ao pgid= 2>/dev/null || true)"
+    _self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+    if [ -z "$_self_pgid" ] ||
+        [ -z "$(printf '%s\n' "$_group_scan" | awk -v g="$_self_pgid" '$1 == g {print; exit}')" ]; then
+        return 0
+    fi
+    if [ -n "$(printf '%s\n' "$_group_scan" | awk -v g="$_own_pgid" '$1 == g {print; exit}')" ]; then
         return 0
     fi
     return 1
@@ -204,8 +213,15 @@ acquire_shared() {
     # the two interleave at least one of them sees the other and refuses.
     mkdir -p "$lock_root/$1+holders" 2>/dev/null ||
         die "cannot create lock marker under $lock_root/$1+holders — the lock name may exceed a filesystem limit; shorten the worktree name"
-    lock_stamp >"$lock_root/$1+holders/$$.marker"
-    held_shared="$held_shared $1"
+    # The marker file is claimed with mktemp, never named by bare PID: two
+    # PID namespaces (a container and its host over one bind-mounted
+    # checkout) can run identical PIDs, and a shared name would let one
+    # holder overwrite the other and a single release delete the exclusion
+    # both depend on.
+    _marker_path="$(mktemp "$lock_root/$1+holders/holder.XXXXXX")" ||
+        die "cannot claim a holder marker under $lock_root/$1+holders"
+    lock_stamp >"$_marker_path"
+    held_shared="$held_shared $_marker_path"
     _shared_excl="$lock_root/$1+lock"
     if [ -d "$_shared_excl" ]; then
         _shared_owner="$(cat "$_shared_excl/owner" 2>/dev/null || true)"

@@ -1101,6 +1101,9 @@ psstale_dir="$test_tmp/psstale"
 mkdir -p "$psstale_dir"
 cat >"$psstale_dir/ps" <<PSSHIM
 #!/bin/sh
+# Emulated process table: every pid is visible and alive with a fixed
+# start time and lives in group 4242 — except the designated dead pid,
+# which is absent, and whose recorded group (itself) appears in no scan.
 pid=""
 prev=""
 for arg in "\$@"; do
@@ -1111,7 +1114,9 @@ if [ "\$pid" = "$stale_dead_pid" ]; then
   exit 1
 fi
 case "\$*" in
-*pgid*) : ;;
+*pgid*)
+  echo "4242"
+  ;;
 *lstart*) echo "Mon Jan  1 00:00:00 2026" ;;
 *) echo "\${pid:-1}" ;;
 esac
@@ -1127,6 +1132,16 @@ printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pi
 ) || fail "worktree-new.sh could not break a dead process's stale lock"
 refute_exists "$fixture_locks/stale-lk+lock" "the stale-lock run did not release its own lock"
 rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
+
+echo "==> a dead pid with a surviving process group is still alive"
+# The recorded shell is gone but its GROUP (a surviving child) is ours —
+# alive by group evidence, so the lock must refuse, not break.
+mkdir -p "$fixture_locks/livegroup-lk+lock"
+printf '%s %s %s %s\n' "999999" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/livegroup-lk+lock/owner"
+if new livegroup-lk >/dev/null 2>&1; then
+    fail "a lock with a surviving process group was broken (harmon-init#784 review r3)"
+fi
+rm -rf "$fixture_locks/livegroup-lk+lock"
 
 echo "==> a reused pid (mismatched start time) is judged dead and broken"
 # The shim reports pid 999998 as visible with a FIXED start time; an owner
@@ -1309,7 +1324,10 @@ done
 # The child's removal leaves the emptied ancestor DIRECTORY until the
 # paused script resumes; clear it so the probe below can only be refused by
 # the shared marker, never by mere path occupancy.
-rmdir "$fixture/.worktrees/rmparent" 2>/dev/null || true
+rmdir "$fixture/.worktrees/rmparent" 2>/dev/null || {
+    : >"$test_tmp/shim-release"
+    fail "the emptied ancestor directory could not be cleared — the probe below would test path occupancy, not the marker"
+}
 if new rmparent >/dev/null 2>&1; then
     : >"$test_tmp/shim-release"
     fail "an operation on the parent proceeded while the child removal held its ancestor marker"
