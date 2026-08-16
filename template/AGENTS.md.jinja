@@ -244,7 +244,8 @@ tier allowed.
   "Between rounds, check what the findings are about" below is how you catch
   the loop feeding on itself before the cap does, and round 2 is where that
   check is owed rather than optional.
-  **Each adjudicated round ends in one conventional commit, pushed.** Per
+  **Each adjudicated round, before the draft PR exists, ends in one
+  conventional commit, pushed.** Per
   *round*, not per finding: five fixes are one commit, and a round adjudicated
   clean with nothing to fix commits and pushes nothing. Before the draft PR
   exists this costs essentially nothing — the generated `build.yml` triggers
