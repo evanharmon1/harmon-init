@@ -355,19 +355,56 @@ rm_wt hidden-clean >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over an unmodified skip-worktree entry"
 refute_exists "$fixture/.worktrees/hidden-clean" "worktree-rm.sh left the tree behind"
 
-echo "==> an ABSENT flagged path does not block removal (sparse-checkout shape)"
+echo "==> a clean SPARSE worktree is removable (absent skip-worktree paths)"
 # Sparse checkout marks every excluded path skip-worktree with no file on
-# disk, so treating absence as a hidden edit would refuse the removal of
-# every clean sparse worktree — and deleting the tree destroys nothing at a
-# path that holds nothing.
-new hidden-sparse >/dev/null || fail "worktree-new.sh failed for the absent-flag case"
-git -C "$fixture/.worktrees/hidden-sparse" update-index --skip-worktree README.md
-rm "$fixture/.worktrees/hidden-sparse/README.md"
-[ -z "$(git -C "$fixture/.worktrees/hidden-sparse" status --porcelain)" ] ||
-    fail "fixture assumption broken: a skip-worktree deletion shows in git status"
+# disk, so treating that absence as a hidden edit would refuse the removal
+# of every clean sparse worktree. `sparse-checkout set` scopes its config to
+# the worktree (extensions.worktreeConfig), so the shared fixture is not
+# affected.
+new hidden-sparse >/dev/null || fail "worktree-new.sh failed for the sparse case"
+git -C "$fixture/.worktrees/hidden-sparse" sparse-checkout set --no-cone '/scripts' >/dev/null 2>&1 ||
+    fail "could not enable sparse checkout in the fixture worktree"
+[ ! -e "$fixture/.worktrees/hidden-sparse/README.md" ] ||
+    fail "fixture assumption broken: sparse checkout left README.md in place"
+git -C "$fixture/.worktrees/hidden-sparse" ls-files -v | grep -q '^S README.md' ||
+    fail "fixture assumption broken: sparse README.md is not marked skip-worktree"
 rm_wt hidden-sparse >/dev/null ||
-    fail "worktree-rm.sh refused an ordinary removal over an absent skip-worktree path"
+    fail "worktree-rm.sh refused an ordinary removal of a clean sparse worktree"
 refute_exists "$fixture/.worktrees/hidden-sparse" "worktree-rm.sh left the tree behind"
+
+echo "==> a DELETED skip-worktree file WITHOUT sparse checkout blocks removal"
+# Absence is only sparse-normal where sparse checkout is actually enabled;
+# without it, an absent flagged file can only be a user's uncommitted
+# deletion.
+new hidden-swdel >/dev/null || fail "worktree-new.sh failed for the skip-worktree-deletion case"
+git -C "$fixture/.worktrees/hidden-swdel" update-index --skip-worktree README.md
+rm "$fixture/.worktrees/hidden-swdel/README.md"
+[ -z "$(git -C "$fixture/.worktrees/hidden-swdel" status --porcelain)" ] ||
+    fail "fixture assumption broken: a skip-worktree deletion shows in git status"
+if rm_wt hidden-swdel >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with a skip-worktree-hidden deletion without --force"
+fi
+rm_wt hidden-swdel --force >/dev/null || fail "worktree-rm.sh --force failed on a skip-worktree deletion"
+refute_exists "$fixture/.worktrees/hidden-swdel" "worktree-rm.sh --force left the directory behind"
+
+echo "==> a chmod-only change to a flagged file blocks removal"
+# The content hash cannot see an executable-bit change, but where
+# core.fileMode says the filesystem tracks it, a chmod is an uncommitted
+# change like any edit.
+if [ "$(git -C "$fixture" config --get --type=bool --default=true core.fileMode)" = "true" ]; then
+    new hidden-mode >/dev/null || fail "worktree-new.sh failed for the chmod case"
+    git -C "$fixture/.worktrees/hidden-mode" update-index --skip-worktree README.md
+    chmod +x "$fixture/.worktrees/hidden-mode/README.md"
+    [ -z "$(git -C "$fixture/.worktrees/hidden-mode" status --porcelain)" ] ||
+        fail "fixture assumption broken: a flagged chmod shows in git status"
+    if rm_wt hidden-mode >/dev/null 2>&1; then
+        fail "worktree-rm.sh removed a tree with a chmod-only hidden change without --force"
+    fi
+    rm_wt hidden-mode --force >/dev/null || fail "worktree-rm.sh --force failed on a chmod-only change"
+    refute_exists "$fixture/.worktrees/hidden-mode" "worktree-rm.sh --force left the directory behind"
+else
+    echo "    (skipped: fixture filesystem does not track the executable bit)"
+fi
 
 echo "==> an UNMODIFIED flagged file under an eol filter does not block removal"
 # With `eol=crlf` the checkout legitimately differs byte-for-byte from the

@@ -239,21 +239,26 @@ else
     # spawned.
     #
     # What counts as a hidden edit is what a removal would DESTROY:
-    #   - an absent skip-worktree path is skipped — sparse-checkout marks
-    #     every excluded path skip-worktree with no file present, so
-    #     refusing on absence would block the removal of every clean sparse
-    #     worktree, and the path holds nothing to destroy;
-    #   - an absent assume-unchanged path (no skip-worktree bit) is a hidden
-    #     edit — nothing but a user's deletion produces that state, and the
-    #     uncommitted deletion is what the removal would discard;
+    #   - an absent skip-worktree path is skipped only when sparse checkout
+    #     is enabled in the tree — sparse marks every excluded path
+    #     skip-worktree with no file present, so refusing on absence would
+    #     block the removal of every clean sparse worktree. Without sparse,
+    #     absence means the user deleted a file they had flagged — for
+    #     skip-worktree and assume-unchanged alike, that uncommitted
+    #     deletion is what the removal would discard, so it refuses;
     #   - content is compared as GIT sees it — `hash-object --path` runs the
     #     clean filter, so an unmodified checkout under `eol=crlf`,
     #     `core.autocrlf`, or a clean/smudge filter hashes back to its index
-    #     blob instead of reading as a raw-byte mismatch — and a symlink is
-    #     compared by its target against the index blob (hashing it would
-    #     follow the link), byte-exact via the `printf x` sentinels, which
-    #     stop command substitution eating the newlines that distinguish
-    #     `target` from `target\n`;
+    #     blob instead of reading as a raw-byte mismatch — and where
+    #     `core.fileMode` says the filesystem tracks it, a chmod-only
+    #     difference from the index mode is an edit too;
+    #   - a symlink is compared by its target against the index blob
+    #     (hashing it would follow the link), byte-exact via the `printf x`
+    #     sentinels, which stop command substitution eating the newlines
+    #     that distinguish `target` from `target\n`; under
+    #     `core.symlinks=false` git legitimately checks a symlink entry out
+    #     as a regular file holding the target text, so that representation
+    #     is compared the same way instead of read as a type change;
     #   - anything unreadable, unhashable, or of unexpected type counts as
     #     different, which can only refuse a removal that was safe.
     if [ "$force" -eq 0 ]; then
@@ -268,17 +273,27 @@ else
             flagged_differs=1
             if [ ! -e "$tree/$flagged_path" ] && [ ! -L "$tree/$flagged_path" ]; then
                 case "$flagged_tag" in
-                S | s) continue ;;
+                S | s)
+                    if [ "$(git -C "$tree" config --get --type=bool --default=false core.sparseCheckout 2>/dev/null || echo false)" = "true" ]; then
+                        continue
+                    fi
+                    ;;
                 esac
             else
                 index_entry="$(git -C "$tree" ls-files -s -z -- "$flagged_path" | tr -d '\0')"
                 index_mode="${index_entry%% *}"
                 index_sha="$(printf '%s' "$index_entry" | awk '{print $2}')"
                 if [ "$index_mode" = "120000" ]; then
+                    blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
                     if [ -L "$tree/$flagged_path" ]; then
                         link_target="$(readlink -n "$tree/$flagged_path" 2>/dev/null && printf x)"
-                        blob_target="$(git -C "$tree" cat-file blob "$index_sha" 2>/dev/null && printf x)"
                         if [ -n "$link_target" ] && [ "$link_target" = "$blob_target" ]; then
+                            flagged_differs=0
+                        fi
+                    elif [ -f "$tree/$flagged_path" ] &&
+                        [ "$(git -C "$tree" config --get --type=bool --default=true core.symlinks 2>/dev/null || echo true)" = "false" ]; then
+                        file_target="$(cat "$tree/$flagged_path" 2>/dev/null && printf x)"
+                        if [ -n "$file_target" ] && [ "$file_target" = "$blob_target" ]; then
                             flagged_differs=0
                         fi
                     fi
@@ -286,6 +301,12 @@ else
                     work_sha="$(git -C "$tree" hash-object --path="$flagged_path" -- "$tree/$flagged_path" 2>/dev/null || true)"
                     if [ -n "$work_sha" ] && [ "$work_sha" = "$index_sha" ]; then
                         flagged_differs=0
+                        if [ "$(git -C "$tree" config --get --type=bool --default=true core.fileMode 2>/dev/null || echo true)" = "true" ]; then
+                            case "$index_mode" in
+                            100644) [ ! -x "$tree/$flagged_path" ] || flagged_differs=1 ;;
+                            100755) [ -x "$tree/$flagged_path" ] || flagged_differs=1 ;;
+                            esac
+                        fi
                     fi
                 fi
             fi
