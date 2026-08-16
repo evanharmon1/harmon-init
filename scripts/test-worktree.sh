@@ -174,7 +174,7 @@ export PATH
 # ── Fixture repository ───────────────────────────────────────────────
 fixture="$test_tmp/fixture"
 mkdir -p "$fixture/scripts"
-cp "$repo/scripts/worktree-new.sh" "$repo/scripts/worktree-rm.sh" "$fixture/scripts/"
+cp "$repo/scripts/worktree-new.sh" "$repo/scripts/worktree-rm.sh" "$repo/scripts/worktree-lock.sh" "$fixture/scripts/"
 chmod +x "$fixture/scripts/worktree-new.sh" "$fixture/scripts/worktree-rm.sh"
 cat >"$fixture/lefthook.yml" <<'EOF'
 pre-commit:
@@ -1040,6 +1040,418 @@ case "$victim_out" in *"does not map refs/heads/victim"*) : ;; *) fail "the unma
 rm_wt victim >/dev/null || fail "cleanup of the victim tree failed"
 git -C "$fixture" branch -D victim >/dev/null 2>&1 || true
 git -C "$fixture" remote remove cref
+
+# ── per-path lifecycle locks (#839 / #784) ───────────────────────────
+fixture_locks="$fixture/.git/worktree-locks"
+this_host="$(hostname)"
+
+echo "==> a live parent-path operation refuses a child creation, and vice versa"
+# Both #839 creation orders, deterministically: holding the entries a real
+# concurrent operation would hold IS the race's exclusion state, minus the
+# scheduler. An operation ON parent holds parent exclusively; an operation
+# on parent/child holds parent shared (a holder marker) and the child
+# exclusively.
+mkdir -p "$fixture_locks/lockparent+lock"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/lockparent+lock/owner"
+if new lockparent/child --branch lockchild >/dev/null 2>&1; then
+    fail "a child creation proceeded while a parent-path operation held the lock (harmon-init#839)"
+fi
+refute_exists "$fixture/.worktrees/lockparent/child" "the refused child creation left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/lockchild; then
+    fail "the refused child creation left its branch behind"
+fi
+rm -rf "$fixture_locks/lockparent+lock"
+mkdir -p "$fixture_locks/lockparent+holders"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/lockparent+holders/sim.marker"
+mkdir -p "$fixture_locks/lockparent%child+lock"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/lockparent%child+lock/owner"
+if new lockparent >/dev/null 2>&1; then
+    fail "a parent creation proceeded while a child-path operation held its ancestor marker (harmon-init#839)"
+fi
+refute_exists "$fixture/.worktrees/lockparent" "the refused parent creation left a tree behind"
+refute_exists "$fixture_locks/lockparent+lock" "the refused parent creation left its exclusive lock held"
+
+echo "==> sibling operations under one ancestor stay concurrent"
+# The same child-operation simulation is still holding lockparent shared —
+# a SIBLING (lockparent/other) shares that ancestor without conflict and
+# must proceed; only an operation ON the ancestor is exclusive.
+new lockparent/other --branch locksibling >/dev/null ||
+    fail "a sibling creation was refused although only shared ancestor holds were live (harmon-init#839 round 1)"
+rm_wt lockparent/other >/dev/null || fail "cleanup of the sibling tree failed"
+git -C "$fixture" branch -D locksibling >/dev/null 2>&1 || true
+echo "==> unrelated names stay concurrent under held locks"
+new lockfree >/dev/null || fail "an unrelated creation was blocked by another name's lock"
+rm_wt lockfree >/dev/null || fail "cleanup of the unrelated tree failed"
+rm -rf "$fixture_locks/lockparent+holders" "$fixture_locks/lockparent%child+lock"
+
+echo "==> two same-process holder claims yield two markers, released cleanly"
+# Helper-level pin of the mktemp marker claim: the pre-fix implementation
+# named markers by bare PID, so two claims from one pid (as two PID
+# namespaces over a shared checkout would present) collapsed to one file
+# and a single release destroyed both holds. Two acquisitions from THIS
+# process must produce two distinct markers, and release must remove
+# exactly its own.
+(
+    cd "$fixture"
+    die() {
+        echo "lockcheck: $*" >&2
+        exit 1
+    }
+    # shellcheck source=/dev/null
+    . scripts/worktree-lock.sh
+    acquire_shared "collide-lk" "collide-lk"
+    acquire_shared "collide-lk" "collide-lk"
+    marker_count="$(find "$fixture_locks/collide-lk+holders" -type f | wc -l | tr -d ' ')"
+    [ "$marker_count" -eq 2 ] || exit 9
+    release_locks
+    remaining="$(find "$fixture_locks/collide-lk+holders" -type f | wc -l | tr -d ' ')"
+    [ "$remaining" -eq 0 ] || exit 8
+)
+collide_status=$?
+[ "$collide_status" -ne 9 ] || fail "two same-process holder claims collided into one marker (review r3/r4)"
+[ "$collide_status" -ne 8 ] || fail "release did not remove exactly its own markers"
+[ "$collide_status" -eq 0 ] || fail "the helper-level collision check failed (exit $collide_status)"
+
+echo "==> a name the whitelist refuses cannot reach the lock bookkeeping"
+if rm_wt 'bad name' >/dev/null 2>&1; then
+    fail "worktree-rm.sh accepted a name outside the creation whitelist"
+fi
+
+echo "==> case-aliased names contend on one lock key"
+# Default macOS filesystems are case-insensitive: Foo and foo are one
+# worktree path, so their operations must exclude each other whatever the
+# spelling. The key is lowercased, so holding the lower-spelling lock must
+# refuse an upper-spelling operation.
+mkdir -p "$fixture_locks/case-lk+lock"
+printf '%s %s %s %s\n' "$$" "$this_host" "$(id -u)" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$fixture_locks/case-lk+lock/owner"
+if new Case-LK >/dev/null 2>&1; then
+    fail "a case-aliased spelling bypassed the held lock (PR #911 cloud review)"
+fi
+rm -rf "$fixture_locks/case-lk+lock"
+
+echo "==> a stale lock from a dead process is broken, once"
+# Death is proven through a CONTROLLED ps, not the host's: a sandbox that
+# denies or restricts ps makes the implementation (correctly) refuse to
+# break, which would fail this case for the wrong reason. The shim renders
+# every probe visible and alive — self, pid 1, anything — except the one
+# recorded dead pid, so the case tests the breaking logic itself on every
+# host.
+stale_dead_pid=999999
+psstale_dir="$test_tmp/psstale"
+mkdir -p "$psstale_dir"
+cat >"$psstale_dir/ps" <<PSSHIM
+#!/bin/sh
+# Emulated process table: every pid is visible and alive with a fixed
+# start time and lives in group 4242 — except the designated dead pid,
+# which is absent, and whose recorded group (itself) appears in no scan.
+pid=""
+prev=""
+for arg in "\$@"; do
+  if [ "\$prev" = "-p" ]; then pid="\$arg"; fi
+  prev="\$arg"
+done
+if [ "\$pid" = "$stale_dead_pid" ]; then
+  exit 1
+fi
+case "\$*" in
+*pgid*)
+  echo "4242"
+  ;;
+*lstart*) echo "Mon Jan  1 00:00:00 2026" ;;
+*) echo "\${pid:-1}" ;;
+esac
+exit 0
+PSSHIM
+chmod +x "$psstale_dir/ps"
+mkdir -p "$fixture_locks/stale-lk+lock"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/stale-lk+lock/owner"
+(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new stale-lk >/dev/null
+) || fail "worktree-new.sh could not break a dead process's stale lock"
+refute_exists "$fixture_locks/stale-lk+lock" "the stale-lock run did not release its own lock"
+rm_wt stale-lk >/dev/null || fail "cleanup of the stale-lk tree failed"
+
+echo "==> a dead pid with a surviving process group is still alive"
+# Proven through the controlled ps shim on every host: the recorded pid is
+# the shim's dead one, but the recorded GROUP is the shim's live group
+# 4242 (self-group visible, survivor present) — alive by group evidence,
+# so the lock must refuse, not break. Removing the group scan turns this
+# into a dead verdict and fails the case.
+mkdir -p "$fixture_locks/livegroup-lk+lock"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "4242" >"$fixture_locks/livegroup-lk+lock/owner"
+if (
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new livegroup-lk >/dev/null 2>&1
+); then
+    fail "a lock with a surviving process group was broken (harmon-init#784 review r3)"
+fi
+[ -d "$fixture_locks/livegroup-lk+lock" ] || fail "the surviving-group lock was removed"
+rm -rf "$fixture_locks/livegroup-lk+lock"
+
+echo "==> a reused pid (mismatched start time) is judged dead and broken"
+# The shim reports pid 999998 as visible with a FIXED start time; an owner
+# recorded with a different start time is therefore a dead process whose
+# pid was reused, and the lock must break. Removing the start-time compare
+# turns this into a live-owner refusal and fails the case.
+mkdir -p "$fixture_locks/reuse-lk+lock"
+printf '%s %s %s %s %s %s\n' "999998" "$this_host" "$(id -u)" "999998" "n0" "Tue Feb  2 02:02:02 2027" >"$fixture_locks/reuse-lk+lock/owner"
+(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new reuse-lk >/dev/null
+) || fail "a reused-pid stale lock (start-time mismatch) was not broken"
+rm_wt reuse-lk >/dev/null || fail "cleanup of the reuse-lk tree failed"
+
+echo "==> a dead breaker's break mutex refuses with its own remedy"
+# Break mutexes are never auto-reclaimed — that recursion has no bottom
+# (PR #911 cloud review). The refusal must name the break directory
+# itself, and removing it per the remedy must unblock the next run.
+mkdir -p "$fixture_locks/deadbreak-lk+lock"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/deadbreak-lk+lock/owner"
+mkdir -p "$fixture_locks/deadbreak-lk+lock+break"
+printf '%s %s %s %s\n' "$stale_dead_pid" "$this_host" "$(id -u)" "$stale_dead_pid" >"$fixture_locks/deadbreak-lk+lock+break/owner"
+deadbreak_out="$(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new deadbreak-lk 2>&1
+)" && fail "a dead-owned break mutex was auto-reclaimed despite the no-reclamation policy"
+case "$deadbreak_out" in *"crashed lock-recovery attempt left"*) : ;; *) fail "the dead-breaker refusal did not name the break mutex" ;; esac
+rm -rf "$fixture_locks/deadbreak-lk+lock+break"
+(
+    PATH="$psstale_dir:$PATH"
+    export PATH
+    new deadbreak-lk >/dev/null
+) || fail "removing the break mutex per the remedy did not unblock the dead-lock break"
+rm_wt deadbreak-lk >/dev/null || fail "cleanup of the deadbreak-lk tree failed"
+
+echo "==> a foreign host's lock is refused with the remedy, never broken"
+mkdir -p "$fixture_locks/foreign-lk+lock"
+printf '%s %s %s %s\n' "12345" "not-$this_host" "$(id -u)" "12345" >"$fixture_locks/foreign-lk+lock/owner"
+foreign_out="$(new foreign-lk 2>&1)" && fail "worktree-new.sh broke a lock it could not liveness-check"
+case "$foreign_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the foreign-lock refusal named no remedy" ;; esac
+[ -d "$fixture_locks/foreign-lk+lock" ] || fail "the foreign host's lock was removed"
+rm -rf "$fixture_locks/foreign-lk+lock"
+
+echo "==> an ownerless lock always refuses with the remedy, whatever its age"
+# Crash-inside-the-claim-window and suspension are indistinguishable, so
+# ownerless entries are never auto-reclaimed (challenge round 5) — the
+# refusal carries the manual remedy instead.
+mkdir -p "$fixture_locks/fresh-lk+lock"
+if new fresh-lk >/dev/null 2>&1; then
+    fail "a fresh ownerless lock (a live acquisition window) was broken"
+fi
+rm -rf "$fixture_locks/fresh-lk+lock"
+mkdir -p "$fixture_locks/aged-lk+lock"
+touch -t 202601010000 "$fixture_locks/aged-lk+lock"
+aged_out="$(new aged-lk 2>&1)" && fail "an aged ownerless lock was auto-reclaimed despite the undecidable window"
+case "$aged_out" in *"remove the lock directory and re-run"*) : ;; *) fail "the ownerless refusal named no remedy" ;; esac
+rm -rf "$fixture_locks/aged-lk+lock"
+
+echo "==> a repository path containing whitespace releases every marker"
+# The array-tracked marker paths exist for exactly this repository shape —
+# a space-joined scalar word-splits absolute paths and release strands
+# every marker. Run under /bin/bash so macOS exercises its 3.2 baseline.
+spaced_root="$test_tmp/with space"
+mkdir -p "$spaced_root/r/scripts"
+cp "$fixture/scripts/worktree-new.sh" "$fixture/scripts/worktree-rm.sh" "$fixture/scripts/worktree-lock.sh" "$spaced_root/r/scripts/"
+git -C "$spaced_root/r" init -q
+git -C "$spaced_root/r" config user.name "Worktree Test"
+git -C "$spaced_root/r" config user.email "worktree-test@example.invalid"
+git -C "$spaced_root/r" config commit.gpgsign false
+printf 'spaced\n' >"$spaced_root/r/README.md"
+git -C "$spaced_root/r" add -A
+LEFTHOOK=0 git -C "$spaced_root/r" commit -qm "chore: spaced fixture" >/dev/null 2>&1 ||
+    fail "committing the spaced fixture failed"
+(cd "$spaced_root/r" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" /bin/bash scripts/worktree-new.sh sp/child --no-install >/dev/null 2>&1) ||
+    fail "worktree:new failed in a repository path containing whitespace"
+(cd "$spaced_root/r" && "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" /bin/bash scripts/worktree-rm.sh sp/child >/dev/null 2>&1) ||
+    fail "worktree:rm failed in a repository path containing whitespace"
+spaced_leftover="$(find "$spaced_root/r/.git/worktree-locks" -type f 2>/dev/null | wc -l | tr -d ' ')"
+[ "$spaced_leftover" -eq 0 ] ||
+    fail "a whitespace repository path stranded $spaced_leftover lock marker(s) (review r4/r5)"
+
+echo "==> an unusable ps fails closed instead of breaking a dead lock"
+# The liveness probe must read "ps itself is broken" as indeterminate: a
+# sandboxed host that denies ps would otherwise turn every held lock into
+# a breakable one (challenge round 2 of harmon-init#839/#784).
+psshim_dir="$test_tmp/psshim"
+mkdir -p "$psshim_dir"
+printf '#!/bin/sh\nexit 1\n' >"$psshim_dir/ps"
+chmod +x "$psshim_dir/ps"
+sleep 0 &
+psdead_pid=$!
+wait "$psdead_pid" 2>/dev/null || true
+mkdir -p "$fixture_locks/psdead-lk+lock"
+printf '%s %s %s %s\n' "$psdead_pid" "$this_host" "$(id -u)" "$psdead_pid" >"$fixture_locks/psdead-lk+lock/owner"
+if (
+    PATH="$psshim_dir:$PATH"
+    export PATH
+    new psdead-lk >/dev/null 2>&1
+); then
+    fail "a dead lock was broken although ps could prove nothing (fail-open liveness)"
+fi
+[ -d "$fixture_locks/psdead-lk+lock" ] || fail "the unprovable lock was removed"
+rm -rf "$fixture_locks/psdead-lk+lock"
+
+echo "==> an empty holder marker refuses with the remedy, whatever its age"
+mkdir -p "$fixture_locks/marker-lk+holders"
+: >"$fixture_locks/marker-lk+holders/999999.marker"
+touch -t 202601010000 "$fixture_locks/marker-lk+holders/999999.marker"
+marker_out="$(new marker-lk 2>&1)" && fail "an aged empty holder marker was auto-swept despite the undecidable window"
+case "$marker_out" in *"remove the marker file and re-run"*) : ;; *) fail "the empty-marker refusal named no remedy" ;; esac
+rm -rf "$fixture_locks/marker-lk+holders"
+mkdir -p "$fixture_locks/marker2-lk+holders"
+: >"$fixture_locks/marker2-lk+holders/999999.marker"
+if new marker2-lk >/dev/null 2>&1; then
+    fail "a fresh empty holder marker (a live publication window) was ignored"
+fi
+rm -rf "$fixture_locks/marker2-lk+holders"
+
+echo "==> a post-acquisition failure releases the lock"
+new lock-rel >/dev/null || fail "creating the lock-release probe tree failed"
+if new lock-rel >/dev/null 2>&1; then
+    fail "a second creation of a registered name succeeded"
+fi
+refute_exists "$fixture_locks/lock-rel+lock" "a refused creation left its lock held"
+rm_wt lock-rel >/dev/null || fail "cleanup of the lock-rel tree failed"
+refute_exists "$fixture_locks/lock-rel+lock" "worktree:rm left its lock held"
+
+echo "==> a removal in progress refuses a same-name recreation end to end"
+# The #784 window itself, interposed: a git shim pauses worktree-rm.sh
+# inside `git worktree remove`, a recreation is attempted mid-window (it
+# must refuse at the lock), and only then is the removal released.
+new interp >/dev/null || fail "creating the interposition tree failed"
+shim_dir="$test_tmp/gitshim"
+mkdir -p "$shim_dir"
+real_git="$(command -v git)"
+# The pause lands AFTER `git worktree remove` completes: that is when the
+# tree is gone and the path is claimable again, which is exactly the window
+# between removal and the later sweep steps that #784 is about. Pausing
+# before the remove would leave the tree in place and the recreation would
+# be refused by mere path occupancy, proving nothing about the lock.
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_PAUSE_REMOVE" = "1" ] && [ "\$1" = "worktree" ] && [ "\$2" = "remove" ]; then
+  "$real_git" "\$@"
+  shim_status=\$?
+  : >"$test_tmp/shim-paused"
+  while [ ! -e "$test_tmp/shim-release" ]; do sleep 0.2; done
+  exit "\$shim_status"
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+rm -f "$test_tmp/shim-paused" "$test_tmp/shim-release"
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_PAUSE_REMOVE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh interp >"$test_tmp/interp-rm.log" 2>&1) &
+interp_rm_pid=$!
+shim_deadline=$(($(date +%s) + 30))
+while [ ! -e "$test_tmp/shim-paused" ]; do
+    [ "$(date +%s)" -lt "$shim_deadline" ] || {
+        : >"$test_tmp/shim-release"
+        fail "the removal never reached its pause point"
+    }
+    kill -0 "$interp_rm_pid" 2>/dev/null || {
+        : >"$test_tmp/shim-release"
+        fail "the paused removal died before pausing: $(cat "$test_tmp/interp-rm.log")"
+    }
+    sleep 0.2
+done
+if new interp >/dev/null 2>&1; then
+    : >"$test_tmp/shim-release"
+    fail "a recreation succeeded while the removal held the name (harmon-init#784)"
+fi
+: >"$test_tmp/shim-release"
+wait "$interp_rm_pid" || fail "the interposed removal failed: $(cat "$test_tmp/interp-rm.log")"
+refute_exists "$fixture/.worktrees/interp" "the interposed removal left the tree behind"
+refute_exists "$fixture_locks/interp+lock" "the interposed removal left its lock held"
+new interp >/dev/null || fail "recreation after the removal completed was refused"
+rm_wt interp >/dev/null || fail "cleanup of the interp tree failed"
+
+echo "==> a child removal in progress refuses an operation on its parent"
+# worktree-rm.sh must hold the same shared ancestor markers creation holds:
+# an rm integration taking only its leaf lock would let an operation ON the
+# parent overlap the child's removal.
+new rmparent/child --branch rmancestor >/dev/null || fail "creating the rm-ancestor tree failed"
+rm -f "$test_tmp/shim-paused" "$test_tmp/shim-release"
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_PAUSE_REMOVE" = "1" ] && [ "\$1" = "worktree" ] && [ "\$2" = "remove" ]; then
+  "$real_git" "\$@"
+  shim_status=\$?
+  : >"$test_tmp/shim-paused"
+  while [ ! -e "$test_tmp/shim-release" ]; do sleep 0.2; done
+  exit "\$shim_status"
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_PAUSE_REMOVE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-rm.sh rmparent/child >"$test_tmp/rmanc.log" 2>&1) &
+rmanc_pid=$!
+shim_deadline=$(($(date +%s) + 30))
+while [ ! -e "$test_tmp/shim-paused" ]; do
+    [ "$(date +%s)" -lt "$shim_deadline" ] || {
+        : >"$test_tmp/shim-release"
+        fail "the child removal never reached its pause point"
+    }
+    kill -0 "$rmanc_pid" 2>/dev/null || {
+        : >"$test_tmp/shim-release"
+        fail "the paused child removal died: $(cat "$test_tmp/rmanc.log")"
+    }
+    sleep 0.2
+done
+# The child's removal leaves the emptied ancestor DIRECTORY until the
+# paused script resumes; clear it so the probe below can only be refused by
+# the shared marker, never by mere path occupancy.
+rmdir "$fixture/.worktrees/rmparent" 2>/dev/null || {
+    : >"$test_tmp/shim-release"
+    fail "the emptied ancestor directory could not be cleared — the probe below would test path occupancy, not the marker"
+}
+if new rmparent >/dev/null 2>&1; then
+    : >"$test_tmp/shim-release"
+    fail "an operation on the parent proceeded while the child removal held its ancestor marker"
+fi
+: >"$test_tmp/shim-release"
+wait "$rmanc_pid" || fail "the interposed child removal failed: $(cat "$test_tmp/rmanc.log")"
+git -C "$fixture" branch -D rmancestor >/dev/null 2>&1 || true
+
+echo "==> a remote advancing between probe and fetch still lands the fresh tip"
+# The regression deferred from PR #906: the shim advances the bare remote
+# the moment worktree-new.sh runs its fetch, so the first ls-remote's
+# answer is stale by fetch time and only the UNCONDITIONAL post-fetch
+# probe attaches the fresh tip.
+padv_up="$test_tmp/probe-adv.git"
+git init -q --bare "$padv_up"
+git -C "$fixture" remote add padv "$padv_up"
+git -C "$fixture" push -q padv HEAD:refs/heads/adv-branch
+adv_a="$(git -C "$fixture" rev-parse HEAD)"
+adv_b="$(git -C "$fixture" commit-tree -m "advanced mid-operation" -p "$adv_a" "$(git -C "$fixture" rev-parse "$adv_a^{tree}")")"
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ -n "\$WTSHIM_ADVANCE" ] && [ "\$1" != "push" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "fetch" ]; then
+      if [ ! -e "$test_tmp/shim-advanced" ]; then
+        : >"$test_tmp/shim-advanced"
+        "$real_git" -C "$fixture" push -q padv "$adv_b:refs/heads/adv-branch"
+      fi
+      break
+    fi
+  done
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+rm -f "$test_tmp/shim-advanced"
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_ADVANCE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh adv-branch >"$test_tmp/adv.log" 2>&1) ||
+    fail "worktree-new.sh failed under the advancing remote: $(cat "$test_tmp/adv.log")"
+[ "$(git -C "$fixture/.worktrees/adv-branch" rev-parse HEAD)" = "$adv_b" ] ||
+    fail "worktree-new.sh attached the stale probed tip instead of the advanced remote tip (PR #906 deferral)"
+rm_wt adv-branch >/dev/null || fail "cleanup of the adv-branch tree failed"
+git -C "$fixture" branch -D adv-branch >/dev/null 2>&1 || true
+git -C "$fixture" remote remove padv
 
 echo "==> a dot-segment name cannot smuggle a worktree inside another"
 new dotparent >/dev/null || fail "worktree-new.sh failed creating the dot-parent tree"

@@ -251,6 +251,24 @@ git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
 
 tree="$main_root/.worktrees/$name"
 
+# ── Per-path lifecycle locks ─────────────────────────────────────────
+# The protocol lives in worktree-lock.sh, SHARED with the sibling command:
+# both must run identical lock semantics, so there is exactly one copy to
+# correct. See that file for the design and its residuals.
+# shellcheck source=scripts/worktree-lock.sh
+. "$(dirname "$0")/worktree-lock.sh"
+
+# The traps are armed BEFORE the first acquisition, so a signal or failure
+# landing mid-acquisition still releases whatever partial set was taken.
+# `cleanup` replaces the EXIT trap once rollback is armed and releases the
+# locks itself. Held from before the registry snapshot to script exit,
+# provisioning included: a removal attempted mid-provisioning refuses with
+# "operation in progress" instead of pulling the tree out from under the
+# installer.
+trap release_locks EXIT
+trap 'exit 129' HUP INT TERM
+acquire_path_locks "$name"
+
 # Refuse to nest a worktree INSIDE another registered worktree. Git's own
 # guard is on branch names (it will not let `parent/child` coexist with
 # `parent`), so a differing --branch slips straight past it and the new tree
@@ -328,7 +346,17 @@ if ! mkdir "$tree" 2>/dev/null; then
     if [ -d "$tree" ]; then
         die "$tree already exists (or another worktree:new is creating it) — remove it with 'task worktree:rm -- $name' first"
     fi
-    die "could not create $tree"
+    # A sibling's removal can rmdir the emptied shared parent between our
+    # mkdir -p above and this leaf claim — both operations are deliberately
+    # admitted through the shared ancestor lock — so a missing parent gets
+    # one re-create-and-retry before the failure is real.
+    mkdir -p "$(dirname "$tree")" 2>/dev/null || true
+    if ! mkdir "$tree" 2>/dev/null; then
+        if [ -d "$tree" ]; then
+            die "$tree already exists (or another worktree:new is creating it) — remove it with 'task worktree:rm -- $name' first"
+        fi
+        die "could not create $tree"
+    fi
 fi
 
 # Roll back on any failure from here on. A half-provisioned worktree is worse
@@ -405,6 +433,7 @@ cleanup() {
             echo "worktree:new: leaving branch '$branch' alone — this run did not create it" >&2
         fi
     fi
+    release_locks
     exit "$status"
 }
 trap cleanup EXIT
