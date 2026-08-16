@@ -122,15 +122,25 @@ main_root="$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 
 base_origin="explicit"
 if [ -z "$base" ]; then
     base_origin="the main worktree's HEAD"
-    base_label="$(git -C "$main_root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
-    base="$(git -C "$main_root" rev-parse --verify --quiet HEAD || true)"
+    # The branch NAME is captured first and the SHA resolved FROM that name,
+    # never from a second HEAD read: parallel use is this entrypoint's design
+    # space, and two separate HEAD reads can straddle a concurrent branch
+    # switch in the main worktree — the pair would then mix one branch's
+    # upstream with another branch's commit. Resolving refs/heads/<captured>
+    # yields a self-consistent pair even if HEAD has moved on; the
+    # verification below reuses the same captured name and never re-reads
+    # HEAD either. A detached HEAD has no branch: its SHA is read directly
+    # and the upstream verification stays off.
+    default_base_branch="$(git -C "$main_root" symbolic-ref --quiet --short HEAD || true)"
+    if [ -n "$default_base_branch" ]; then
+        base_label="$default_base_branch"
+        base="$(git -C "$main_root" rev-parse --verify --quiet "refs/heads/$default_base_branch" || true)"
+    else
+        base_label="HEAD"
+        base="$(git -C "$main_root" rev-parse --verify --quiet HEAD || true)"
+    fi
     [ -n "$base" ] ||
         die "the main worktree has no commits yet — make an initial commit, or pass --base <ref>"
-    # Captured HERE, in the same breath as $base, and never re-read: the main
-    # worktree can switch branches while this script runs (parallel use is
-    # this entrypoint's design space), and a verify that re-resolved HEAD
-    # later would compare one branch's upstream against another branch's SHA.
-    default_base_branch="$(git -C "$main_root" symbolic-ref --quiet --short HEAD || true)"
     echo "==> Base: ${base_origin} (${base_label} @ $(git rev-parse --short "$base")) — pass --base <ref> to branch elsewhere"
 fi
 
@@ -146,6 +156,15 @@ fi
 # option, so anything they set explicitly still wins — and core.sshCommand
 # is honoured before falling back to plain ssh, so a configured proxy or
 # jump host keeps working.
+#
+# Residual, stated so nobody rediscovers it as a surprise: a server that
+# ACCEPTS a connection and then stalls mid-protocol is bounded on HTTP (the
+# low-speed limits) but not on SSH past the handshake, nor on git:// or
+# custom remote helpers. This fleet's transport is HTTPS via gh (provisioned
+# hosts rewrite SSH remotes), so the exposure is an unprovisioned host on an
+# established-then-wedged non-HTTP connection — accepted rather than closed,
+# because closing it means a hand-rolled process watchdog whose own failure
+# modes (PID reuse, signal races, orphan supervision) outweigh the residual.
 git_net() {
     _ssh_base="${GIT_SSH_COMMAND:-$(git -C "$main_root" config --get core.sshCommand 2>/dev/null || echo ssh)}"
     GIT_TERMINAL_PROMPT=0 \
@@ -444,9 +463,21 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
     echo "==> Attaching existing branch '$branch'"
     LEFTHOOK=0 git worktree add "$tree" "$branch"
 elif [ -n "$remote_ref" ]; then
-    echo "==> Creating branch '$branch' tracking ${remote_ref#refs/remotes/}"
+    echo "==> Creating branch '$branch' tracking $remote_match_remote/$branch"
     branch_created=1
-    LEFTHOOK=0 git worktree add "$tree" --track -b "$branch" "${remote_ref#refs/remotes/}"
+    # Created from the fetched SHA with tracking written as plain branch
+    # config, never via `--track` DWIM: --track derives the upstream by
+    # reverse-mapping the start point through the remote's fetch refspec, and
+    # under a non-identity refspec our synthesized refs/remotes/<r>/<b> ref
+    # maps to nothing — git aborts with "starting point is not a branch".
+    # branch.<name>.remote + branch.<name>.merge are correct under EVERY
+    # refspec, and @{u} then resolves through whatever mapping the repo
+    # actually configures.
+    remote_tip="$(git rev-parse --verify --quiet "$remote_ref^{commit}")" ||
+        die "fetched '$branch' from '$remote_match_remote' but cannot resolve it"
+    LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$remote_tip"
+    git config "branch.$branch.remote" "$remote_match_remote"
+    git config "branch.$branch.merge" "refs/heads/$branch"
 else
     # The one path that consumes the default base — verify its freshness
     # here and nowhere earlier, so attaching an existing branch or tracking
