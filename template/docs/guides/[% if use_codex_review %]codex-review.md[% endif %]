@@ -259,10 +259,10 @@ gate that ends them — is defined in AGENTS.md ("Dev Loop"). The PR is a
 is the one signal that the automated work is finished.
 
 The caps are not written down here, or in AGENTS.md. They live in
-[`.devflow.toml`](../../.devflow.toml) as `rigor` tiers, and **AGENTS.md alone
+[`.devflow.toml`](../../.devflow.toml) as `rigor` levels, and **AGENTS.md alone
 defines how a change resolves one** — restating that chain here would only give
 it a second place to drift from, and which inputs are even available depends on
-how the repository is set up. `challenge`, `review`, and the `min_rounds` floor vary by tier; the
+how the repository is set up. `challenge`, `review`, and the `min_rounds` floor vary by level; the
 shepherd cap is fixed, because it bounds other people's findings rather than
 self-generated work. Announce the resolved caps — the floor included — when
 you enter the loop.
@@ -335,7 +335,7 @@ left to re-raise and counts toward convergence. Reflexively hardening the
 previous round's fix is the failure mode; naming it on the table is the
 check.
 
-Two things do not move. The **per-stage cap** stands — whatever rigor tier
+Two things do not move. The **per-stage cap** stands — whatever rigor level
 resolved it — and persistent
 P0/P1 disagreement at the cap is escalated rather than iterated on. And the
 deferred-P2 chain is a **precondition** of the exit, not a casualty of it:
