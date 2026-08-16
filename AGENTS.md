@@ -352,7 +352,8 @@ allowed.
   the loop feeding on itself before the cap does, and round 2 is where that
   check is owed rather than optional.
 - **`task review`** — verification-checkpoint review, run out of the same
-  skill; same adjudication, the
+  procedure — the skill where its topology holds, the fallback otherwise;
+  same adjudication, the
   same exit condition counted over its own
   rounds, the same self-referential shape and so the
   same reason for a cap, under
