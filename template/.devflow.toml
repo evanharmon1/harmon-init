@@ -50,6 +50,17 @@
 
 default_rigor = "standard"
 
+# Strategy-axis defaults (tier/method) — the [tier.*] tables and the full
+# rationale are at the bottom of this file; these two scalars must live up here
+# at top level, above the first [table] header, or TOML would nest them under
+# it. `default_tier` is the tier a consumer's preflight resolves `adaptive` to
+# and the fallback for an issue with no tier:* label — it must be concrete, so
+# validation rejects `adaptive` (ADR D7). `default_method` is the fallback for
+# an issue with no method:* label; the fixed method conflict-rank ships in the
+# [method] table at the bottom of this file (ADR 0006 D4).
+default_tier   = "standard"
+default_method = "plan"
+
 # `shepherd` is deliberately identical in every level, and is not a knob to
 # turn down.
 #
@@ -80,3 +91,91 @@ challenge  = 5
 review     = 5
 shepherd   = 4
 min_rounds = 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy axes — tier (which model stratum works an issue) and method (which
+# execution topology). Added under harmon-init#855, per ADR 0006. This config is
+# self-contained: the ADR (recorded in the harmon-init repository) holds the
+# rationale a consumer does not need to resolve the axes.
+#
+# These tables are INERT ROUTING PREFERENCES, never dependencies (ADR D1): a
+# generated repo invokes no model and runs no workflow because a table exists,
+# and an acting consumer may select only among vendors and harnesses the
+# operator has already configured and authenticated. The shipped defaults create
+# no account, trial, or paid-SaaS dependency, and escalation can never switch a
+# repo to a vendor it does not already use.
+#
+# The model slugs below are agent-registry.json family→model slugs. harmon-init
+# validates this file at release time with scripts/test-devflow-config.sh (a
+# root-only guard with no template counterpart — a generated repo carries this
+# config but not the script): every slug resolves against the registry,
+# default_tier/default_method (declared up top beside default_rigor) name
+# provisioned values, `adaptive` is rejected as default_tier, escalate_to is
+# referential/acyclic/monotonic toward `apex` (and `local` → `economy`), and a
+# [tier.local] entry binds to a registered `-local` harness. A consumer editing
+# these tables owns them the way it owns its AGENTS.md, and re-runs that check
+# only if it vendors the script itself.
+#
+# The tier ladder is `local → economy → standard → frontier → apex` (ADR D2);
+# `adaptive` is off-ladder and never a concrete map. `frontier` is opus-class,
+# `apex` is mythos-class (fable, sol). Families appear at a tier only where they
+# have a model of that stratum — the top strata are genuinely narrow, so most
+# families top out at `standard`. `escalate_to` climbs toward `apex` and fires
+# on failure, refusal, or operator policy — never cost alone (ADR D3); an
+# exhausted chain stops with a report rather than switching vendor or
+# downgrading.
+
+# Self-hosted stratum. Opt-in per family: an entry must bind to a registered
+# `-local` endpoint-variant harness (ADR 0005 D9), and today only
+# claude-code-qwen-local (family qwen) is registered — so `local` is qwen-only
+# until more are added. `tier:local` escalates to `economy` (ADR D2).
+[tier.local]
+endpoint    = "local"
+escalate_to = ["economy"]
+qwen        = "coder-30b"   # served locally by claude-code-qwen-local
+
+[tier.economy]
+escalate_to = ["standard"]
+claude   = "haiku"
+gpt      = "luna"
+gemini   = "3-5-flash-lite"
+qwen     = "coder"
+deepseek = "v4-flash"
+glm      = "4-7-flash"
+mai      = "code-1-flash"
+
+[tier.standard]
+escalate_to = ["frontier"]
+claude   = "sonnet"
+gpt      = "terra"
+gemini   = "3-6-flash"
+qwen     = "coder-plus"
+deepseek = "v4-pro"
+glm      = "5-2"
+mai      = "thinking-1"
+kimi     = "k3"
+minimax  = "m3"
+mistral  = "devstral-small-2"
+
+# Opus-class. Narrow by design — few families ship a model at this stratum.
+[tier.frontier]
+escalate_to = ["apex"]
+claude = "opus"
+gemini = "3-1-pro"
+qwen   = "max"
+
+# Mythos-class (fable, sol) — the top of the ladder, so escalate_to is empty.
+[tier.apex]
+escalate_to = []
+claude = "fable"
+gpt    = "sol"
+
+# The method conflict-resolution rank (ADR 0006 D4), most human oversight first.
+# It is shipped as config — not left to prose — so a
+# consumer resolves conflicting method:* labels from a machine-readable order
+# rather than re-deriving one, and it is FIXED: validation pins it to this exact
+# order so every consumer resolves identically. `default_method` (declared up
+# top) is the only method knob. Topologies with no inherent ordering
+# (`council` vs `orchestrate`) still resolve deterministically because of it.
+[method]
+rank = ["human-led", "plan-approved", "council", "orchestrate", "plan", "oneshot"]

@@ -393,9 +393,10 @@ tasks:
       - ./scripts/test-ci-results.sh
 
   test:devflow-config:
-    desc: Validate the Dev Loop round-cap levels in .devflow.toml (both copies)
+    desc: Validate the Dev Loop round-cap levels + tier/method axes in .devflow.toml (both copies)
     cmds:
       - ./scripts/test-devflow-config.sh
+      - ./scripts/test-devflow-config-mutations.sh
 
   test:status:
     desc: Unit-test the status board-writes + local-credential checks (stubbed CLIs, no network)
