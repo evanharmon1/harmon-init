@@ -830,6 +830,217 @@ rm_wt team-only >/dev/null || fail "cleanup of the slash-remote tree failed"
 git -C "$fixture" branch -D team-only >/dev/null 2>&1 || true
 git -C "$fixture" remote remove team/sub
 
+# ── stale remote state must not decide anything (#813 / #840) ────────
+echo "==> a branch pushed after the last fetch is still detected and tracked"
+# Push, then delete the tracking ref the push just wrote: the local
+# refs/remotes namespace now predates the branch, which is exactly the state
+# after a collaborator pushes and nothing fetches (harmon-init#840).
+git -C "$fixture" push -q origin HEAD:refs/heads/late-remote
+git -C "$fixture" update-ref -d refs/remotes/origin/late-remote
+late_tip="$(git -C "$fixture" ls-remote origin refs/heads/late-remote | awk '{print $1}')"
+# Advance main past the push, so a helper that misses the remote branch
+# creates 'late-remote' at a DIFFERENT commit — the divergence itself, not
+# only the missing tracking, is what the assertion below must catch.
+printf 'ahead of late-remote\n' >"$fixture/LATE.md"
+git -C "$fixture" add LATE.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: move main ahead of the late-pushed branch" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing ahead of the late-pushed branch failed"
+new late-remote >/dev/null || fail "worktree-new.sh failed for a branch with no local tracking ref"
+[ "$(git -C "$fixture/.worktrees/late-remote" rev-parse HEAD)" = "$late_tip" ] ||
+    fail "worktree-new.sh created 'late-remote' from the default base instead of the remote branch (harmon-init#840)"
+[ "$(git -C "$fixture" rev-parse --abbrev-ref late-remote@{upstream} 2>/dev/null)" = "origin/late-remote" ] ||
+    fail "worktree-new.sh did not set up tracking for the late-pushed branch"
+rm_wt late-remote >/dev/null || fail "cleanup of the late-remote tree failed"
+git -C "$fixture" branch -D late-remote >/dev/null 2>&1 || true
+
+echo "==> a stale tracking ref is refreshed to the remote's current tip"
+git -C "$fixture" push -q origin HEAD:refs/heads/moving-remote
+stale_tip="$(git -C "$fixture" rev-parse refs/remotes/origin/moving-remote)"
+printf 'advance\n' >"$fixture/MOVING.md"
+git -C "$fixture" add MOVING.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: advance the moving branch" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the moving-branch advance failed"
+git -C "$fixture" push -q origin HEAD:refs/heads/moving-remote
+moving_tip="$(git -C "$fixture" rev-parse HEAD)"
+# Roll main back and force the tracking ref stale, so only a live probe plus
+# fetch can know where the remote actually is.
+git -C "$fixture" reset -q --hard HEAD~1
+git -C "$fixture" update-ref refs/remotes/origin/moving-remote "$stale_tip"
+new moving-remote >/dev/null || fail "worktree-new.sh failed for a branch with a stale tracking ref"
+[ "$(git -C "$fixture/.worktrees/moving-remote" rev-parse HEAD)" = "$moving_tip" ] ||
+    fail "worktree-new.sh attached 'moving-remote' at the stale tracking tip instead of the remote's current commit (harmon-init#840)"
+rm_wt moving-remote >/dev/null || fail "cleanup of the moving-remote tree failed"
+git -C "$fixture" branch -D moving-remote >/dev/null 2>&1 || true
+
+echo "==> an unqueryable remote fails closed, and an explicit --base opts out"
+git -C "$fixture" remote add badremote "$test_tmp/nonexistent-bare.git"
+if new probe-fail >/dev/null 2>&1; then
+    fail "worktree-new.sh invented a new branch although a remote could not be queried (harmon-init#840)"
+fi
+refute_exists "$fixture/.worktrees/probe-fail" "the fail-closed probe left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/probe-fail; then
+    fail "the fail-closed probe left the branch behind"
+fi
+new probe-fail --base HEAD >/dev/null || fail "an explicit --base did not skip the remote probe"
+rm_wt probe-fail >/dev/null || fail "cleanup of the probe-fail tree failed"
+git -C "$fixture" branch -D probe-fail >/dev/null 2>&1 || true
+git -C "$fixture" remote remove badremote
+
+echo "==> a default base behind its upstream hands out the upstream tip"
+base_upstream="$test_tmp/base-upstream.git"
+git init -q --bare "$base_upstream"
+git -C "$fixture" remote add baseup "$base_upstream"
+fixture_head_branch="$(git -C "$fixture" symbolic-ref --short HEAD)"
+git -C "$fixture" push -q -u baseup "$fixture_head_branch" >/dev/null 2>&1 ||
+    fail "seeding the base upstream failed"
+anchor_sha="$(git -C "$fixture" rev-parse HEAD)"
+printf 'merged upstream\n' >"$fixture/UPSTREAM.md"
+git -C "$fixture" add UPSTREAM.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: land work on the upstream" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the upstream advance failed"
+git -C "$fixture" push -q baseup "$fixture_head_branch"
+upstream_sha="$(git -C "$fixture" rev-parse HEAD)"
+# Roll local back AND stale the tracking ref: only the fetch inside
+# worktree-new.sh can now learn where the upstream is (harmon-init#813).
+git -C "$fixture" reset -q --hard "$anchor_sha"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$anchor_sha"
+base_out="$(new fresh-base)" || fail "worktree-new.sh failed with a behind upstream"
+[ "$(git -C "$fixture/.worktrees/fresh-base" rev-parse HEAD)" = "$upstream_sha" ] ||
+    fail "worktree-new.sh based 'fresh-base' on the stale local HEAD instead of the upstream tip (harmon-init#813)"
+case "$base_out" in *"is behind baseup/$fixture_head_branch"*) : ;; *) fail "worktree-new.sh did not announce the behind-upstream base" ;; esac
+rm_wt fresh-base >/dev/null || fail "cleanup of the fresh-base tree failed"
+git -C "$fixture" branch -D fresh-base >/dev/null 2>&1 || true
+
+echo "==> losing the upstream ref-lock race still reads the winner's update"
+# The loser of two parallel worktree:new runs fails its own fetch while the
+# tracking ref already holds the winner's fresher value. Deterministic
+# reconstruction of that instant: the REMOTE is one commit past the winner's
+# value (commit-tree, so the local checkout never moves), the tracking ref
+# holds the winner's value, and a held ref lock makes THIS fetch fail — it
+# has an update to attempt and cannot take the lock. The loser must base on
+# the winner's value, read after the failed fetch, never return early on its
+# stale pre-fetch snapshot (which would base the tree on the local anchor).
+race_tip="$(git -C "$fixture" commit-tree -m "race remote tip" -p "$upstream_sha" "$(git -C "$fixture" rev-parse "$upstream_sha^{tree}")")"
+git -C "$fixture" push -q baseup "$race_tip:refs/heads/$fixture_head_branch"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
+race_lock="$fixture/.git/refs/remotes/baseup/$fixture_head_branch.lock"
+mkdir -p "$(dirname "$race_lock")"
+: >"$race_lock"
+race_out="$(new race-base 2>&1)" || {
+    rm -f "$race_lock"
+    fail "worktree-new.sh failed outright when the upstream fetch lost the ref lock"
+}
+rm -f "$race_lock"
+[ "$(git -C "$fixture/.worktrees/race-base" rev-parse HEAD)" = "$upstream_sha" ] ||
+    fail "the fetch-race loser based on its stale snapshot instead of the winner's ref (harmon-init#813)"
+case "$race_out" in *"could not fetch"*) : ;; *) fail "the lost ref-lock race produced no warning" ;; esac
+rm_wt race-base >/dev/null || fail "cleanup of the race-base tree failed"
+git -C "$fixture" branch -D race-base >/dev/null 2>&1 || true
+# Put the remote back at the winner's value for the cases that follow.
+git -C "$fixture" push -q -f baseup "$upstream_sha:refs/heads/$fixture_head_branch"
+git -C "$fixture" update-ref "refs/remotes/baseup/$fixture_head_branch" "$upstream_sha"
+
+echo "==> a non-identity fetch refspec still verifies against the true source branch"
+# The upstream's short name and its source branch deliberately differ
+# (+refs/heads/trunk-src:refs/remotes/niup/localname): a helper that derives
+# the fetch source by splitting the abbreviated upstream name would fetch a
+# branch that does not exist and silently keep the stale base (challenge
+# round 2 of harmon-init#813/#840).
+ni_upstream="$test_tmp/ni-upstream.git"
+git init -q --bare "$ni_upstream"
+git -C "$fixture" remote add niup "$ni_upstream"
+git -C "$fixture" config remote.niup.fetch "+refs/heads/trunk-src:refs/remotes/niup/localname"
+git -C "$fixture" push -q niup HEAD:refs/heads/trunk-src
+ni_anchor="$(git -C "$fixture" rev-parse HEAD)"
+printf 'landed on trunk-src\n' >"$fixture/NI.md"
+git -C "$fixture" add NI.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: advance the non-identity upstream" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the non-identity advance failed"
+git -C "$fixture" push -q niup HEAD:refs/heads/trunk-src
+ni_tip="$(git -C "$fixture" rev-parse HEAD)"
+git -C "$fixture" reset -q --hard "$ni_anchor"
+git -C "$fixture" config "branch.$fixture_head_branch.remote" niup
+git -C "$fixture" config "branch.$fixture_head_branch.merge" refs/heads/trunk-src
+git -C "$fixture" update-ref refs/remotes/niup/localname "$ni_anchor"
+new ni-base >/dev/null || fail "worktree-new.sh failed with a non-identity upstream refspec"
+[ "$(git -C "$fixture/.worktrees/ni-base" rev-parse HEAD)" = "$ni_tip" ] ||
+    fail "worktree-new.sh did not fetch the true source branch through the non-identity refspec (harmon-init#813)"
+rm_wt ni-base >/dev/null || fail "cleanup of the ni-base tree failed"
+git -C "$fixture" branch -D ni-base >/dev/null 2>&1 || true
+git -C "$fixture" config "branch.$fixture_head_branch.remote" baseup
+git -C "$fixture" config "branch.$fixture_head_branch.merge" "refs/heads/$fixture_head_branch"
+git -C "$fixture" remote remove niup
+
+echo "==> a default base diverged from its upstream is refused"
+printf 'local divergence\n' >"$fixture/DIVERGED.md"
+git -C "$fixture" add DIVERGED.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: diverge from the upstream" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the divergence failed"
+if new diverged-base >/dev/null 2>&1; then
+    fail "worktree-new.sh picked a base although local and upstream have diverged (harmon-init#813)"
+fi
+refute_exists "$fixture/.worktrees/diverged-base" "the diverged-base refusal left a tree behind"
+new diverged-base --base HEAD >/dev/null || fail "an explicit --base did not bypass the divergence refusal"
+rm_wt diverged-base >/dev/null || fail "cleanup of the diverged-base tree failed"
+git -C "$fixture" branch -D diverged-base >/dev/null 2>&1 || true
+
+echo "==> attaching an existing branch is never blocked by base staleness"
+# The default base is only consumed when a NEW branch is created from it, so
+# the diverged main that just refused 'diverged-base' must not block — or
+# even warn about — attaching a branch that already exists: the base plays
+# no part in that path (harmon-init#813, challenge round 1).
+git -C "$fixture" branch attach-diverged
+local_tip="$(git -C "$fixture" rev-parse HEAD)"
+attach_out="$(new attach-diverged 2>&1)" || fail "worktree-new.sh refused to attach an existing branch while main is diverged from its upstream"
+[ "$(git -C "$fixture/.worktrees/attach-diverged" rev-parse HEAD)" = "$local_tip" ] ||
+    fail "the attach did not check out the existing branch tip"
+case "$attach_out" in *"has diverged from"*) fail "attaching an existing branch surfaced the base divergence it never uses" ;; esac
+rm_wt attach-diverged >/dev/null || fail "cleanup of the attach-diverged tree failed"
+git -C "$fixture" branch -D attach-diverged >/dev/null 2>&1 || true
+# Teardown: restore the pre-case fixture state so later default-base cases
+# are decided by the local HEAD again, exactly as before this block.
+git -C "$fixture" branch --unset-upstream >/dev/null 2>&1 || true
+git -C "$fixture" remote remove baseup
+git -C "$fixture" reset -q --hard "$anchor_sha"
+
+echo "==> a remote-only branch under a custom refspec never clobbers foreign tracking refs"
+# The remote maps ONLY decoy into refs/remotes/cref/victim. Creating the
+# remote-only branch 'victim' must attach it at the remote's tip via the
+# probe — not via any ref this script writes — and the mapped tracking ref
+# that belongs to decoy must be exactly as it was afterwards.
+cref_up="$test_tmp/cref-up.git"
+git init -q --bare "$cref_up"
+git -C "$fixture" remote add cref "$cref_up"
+git -C "$fixture" config remote.cref.fetch "+refs/heads/decoy:refs/remotes/cref/victim"
+git -C "$fixture" push -q cref HEAD:refs/heads/decoy
+decoy_tip="$(git -C "$fixture" rev-parse HEAD)"
+printf 'victim work\n' >"$fixture/VICTIM.md"
+git -C "$fixture" add VICTIM.md
+LEFTHOOK=0 git -C "$fixture" commit -qm "chore: advance the victim branch" >"$test_tmp/commit.log" 2>&1 ||
+    fail "committing the victim advance failed"
+git -C "$fixture" push -q cref HEAD:refs/heads/victim
+victim_tip="$(git -C "$fixture" rev-parse HEAD)"
+git -C "$fixture" reset -q --hard "$decoy_tip"
+git -C "$fixture" update-ref refs/remotes/cref/victim "$decoy_tip"
+victim_out="$(new victim)" || fail "worktree-new.sh failed for a remote-only branch under a custom refspec"
+[ "$(git -C "$fixture/.worktrees/victim" rev-parse HEAD)" = "$victim_tip" ] ||
+    fail "worktree-new.sh did not attach 'victim' at the remote tip under a custom refspec"
+[ "$(git -C "$fixture" rev-parse refs/remotes/cref/victim)" = "$decoy_tip" ] ||
+    fail "worktree-new.sh clobbered a tracking ref the custom refspec maps from another branch (harmon-init#840)"
+[ "$(git -C "$fixture" config branch.victim.remote)" = "cref" ] ||
+    fail "the custom-refspec branch is not configured to track its remote"
+[ "$(git -C "$fixture" config branch.victim.merge)" = "refs/heads/victim" ] ||
+    fail "the custom-refspec branch tracks the wrong merge ref"
+# The refspec maps only decoy, so @{upstream} for victim CANNOT resolve —
+# and the command must say so rather than claim full tracking.
+if git -C "$fixture" rev-parse --verify --quiet "victim@{upstream}" >/dev/null 2>&1; then
+    fail "victim@{upstream} resolved although the refspec maps no such branch — fixture assumption broken"
+fi
+case "$victim_out" in *"does not map refs/heads/victim"*) : ;; *) fail "the unmapped-refspec degradation was not announced" ;; esac
+rm_wt victim >/dev/null || fail "cleanup of the victim tree failed"
+git -C "$fixture" branch -D victim >/dev/null 2>&1 || true
+git -C "$fixture" remote remove cref
+
 echo "==> a dot-segment name cannot smuggle a worktree inside another"
 new dotparent >/dev/null || fail "worktree-new.sh failed creating the dot-parent tree"
 if new ./dotparent/child --branch dotchild >/dev/null 2>&1; then
