@@ -358,10 +358,13 @@ allowed.
   `pull_request` and pushes to `main` only, Codex cloud review is
   comment-triggered with Automatic reviews disabled, and a bare `task
   challenge`/`task review` covers branch commits *and* working tree alike, so
-  commit boundaries never change what a round reviews. Nor does it outrun the
-  gate that matters: lefthook's `pre-push` runs `task security:secrets`, so
-  gitleaks clears every round's commit before it leaves the machine, and the
-  rest of the security suite still runs at `task ci` before the PR exists.
+  commit boundaries never change what a round reviews. It must not outrun
+  secret scanning, though, and that is an obligation rather than a claim about
+  the setup: **every round's commit is secret-scanned before it is pushed.**
+  Where the `pre-push` hook is installed it is automatic (this repo installs
+  it via `task install:hooks`); where it is not, run `task security:secrets`
+  yourself first. The rest of the security suite still runs at `task ci`
+  before the PR exists.
   **Push to the branch's own writable remote** — the one `gh pr create` will
   push to, which in a fork checkout is the fork rather than `origin` — and set
   it on the first push (`git push -u <remote> <branch>`), since a new branch

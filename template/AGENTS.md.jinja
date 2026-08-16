@@ -249,13 +249,17 @@ tier allowed.
   clean with nothing to fix commits and pushes nothing. Before the draft PR
   exists this costs essentially nothing — the generated `build.yml` triggers
   on `pull_request` and pushes to the default branch only (re-check your own
-  triggers if you have changed them), Codex cloud review is comment-triggered,
+  triggers if you have changed them),[% if use_codex_cloud_review %] Codex
+  cloud review is comment-triggered,[% endif %]
   and a bare `task challenge`/`task review` covers branch commits *and*
   working tree alike, so commit boundaries never change what a round reviews.
-  Nor does it outrun the gate that matters: lefthook's `pre-push` runs
-  `task security:secrets`, so gitleaks clears every round's commit before it
-  leaves the machine, and the rest of the security suite still runs at
-  `task ci` before the PR exists. **Push to the branch's own writable
+  It must not outrun secret scanning, though, and that is an obligation rather
+  than a claim about your setup: **every round's commit is secret-scanned
+  before it is pushed.** Where the `pre-push` hook is installed it is
+  automatic; where it is not — `run_task_install` defaults to no, so a repo
+  that has not run `task install:hooks` has no hooks at all — run
+  `task security:secrets` yourself first. The rest of the security suite still
+  runs at `task ci` before the PR exists. **Push to the branch's own writable
   remote** — the one `gh pr create` will push to, which in a fork checkout is
   the fork rather than `origin` — and set it on the first push
   (`git push -u <remote> <branch>`), since a new branch has no upstream to
