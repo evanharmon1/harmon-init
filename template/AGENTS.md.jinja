@@ -260,15 +260,16 @@ tier allowed.
   that has not run `task install:hooks` has no hooks at all — run
   `task security:secrets` yourself first. The rest of the security suite still
   runs at `task ci` before the PR exists. **Push to the branch's own writable
-  remote** — the one `gh pr create` will push to, which in a fork checkout is
-  the fork rather than `origin` — and set it on the first push
-  (`git push -u <remote> <branch>`), since a new branch has no upstream to
-  infer.
-  What it buys is that a lost environment costs one round instead of a whole
-  converged stage, and that a push-permission gap surfaces at round 1 rather
-  than at `gh pr create`. It does **not** carry the deferred-findings sidecar
+  remote** — the one `gh pr create` will push to — and set it on the first
+  push (`git push -u <remote> <branch>`), since a new branch has no upstream
+  to infer.
+  What it buys is that a lost environment costs at most the current round's
+  *code* rather than every round's, and that a push-permission gap surfaces at
+  round 1 rather than at `gh pr create`. It buys nothing beyond the code: it
+  does **not** carry the deferred-findings sidecar
   or the adjudication ledger, which live in the git directory and are never
-  pushed; those stay single-copy until the PR body takes them, so the exit
+  pushed, so a resumed session recovers the commits and still re-runs the
+  stage. Those stay single-copy until the PR body takes them, and the exit
   precondition above is not discharged by having pushed. After the draft PR
   exists the granularity changes: pushes batch per shepherd round, because
   each one spends a CI run and starts a fresh current-head Codex cycle.
