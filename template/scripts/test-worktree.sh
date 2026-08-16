@@ -945,7 +945,12 @@ EOF
 chmod +x "$shared_hooks/post-checkout"
 : >"$test_tmp/post-checkout.log"
 mkfifo "$test_tmp/hostile-stdin"
-sleep 300 >"$test_tmp/hostile-stdin" &
+# The writer is UNBOUNDED (`tail -f /dev/null` never exits, on macOS and
+# Linux alike): a `sleep <n>` writer would close the fifo at n seconds, and a
+# WORKTREE_OP_TIMEOUT configured above n would then hand a regressed hook its
+# EOF and pass this case instead of failing it. The explicit kill below and
+# the EXIT trap are what end this process.
+tail -f /dev/null >"$test_tmp/hostile-stdin" &
 WORKTREE_STDIN_HOLDER=$!
 new no-install-tree --no-install <"$test_tmp/hostile-stdin" >/dev/null ||
     fail "worktree-new.sh --no-install failed under a non-EOF stdin"
