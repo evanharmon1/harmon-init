@@ -11,6 +11,15 @@
 # hook assertion runs everywhere — including CI runners that carry no lefthook.
 set -euo pipefail
 
+# The suite reads nothing from stdin, and its children must not inherit one
+# that never ends: lefthook blocks `run post-checkout` until stdin reaches EOF
+# (observed on v2.1.10), so an invocation context holding stdin open — an
+# agent harness socket, a task runner pipe — deadlocks the fixture's hooks
+# (harmon-init#802). /dev/null hands every child an immediate EOF. One case
+# below deliberately re-introduces a never-ending stdin to prove the
+# entrypoint itself is immune.
+exec </dev/null
+
 repo="$(git rev-parse --show-toplevel)"
 
 # Hooks export GIT_DIR/GIT_WORK_TREE; left set, every `git` below would retarget
@@ -85,8 +94,18 @@ rm -f "$WORKTREE_TIMEOUT_SENTINEL"
 # as the refusal it was asserting. A hang would be accepted as a pass. The
 # sentinel escapes every subshell — it is a file, not an exit status — so
 # however the status is swallowed, the suite still ends non-zero and says why.
+# Initialized empty BEFORE the trap is armed: an exported variable of this
+# name would otherwise flow in from the environment and the cleanup below
+# would kill a PID this suite never owned.
+WORKTREE_STDIN_HOLDER=""
 worktree_exit() {
     exit_status=$?
+    # Reap the hostile-stdin writer if a case aborted before its explicit kill
+    # — it is backgrounded outside the timeout's process group, so nothing
+    # else collects it on a failing run (harmon-init#802).
+    if [ -n "${WORKTREE_STDIN_HOLDER:-}" ]; then
+        kill "$WORKTREE_STDIN_HOLDER" 2>/dev/null || true
+    fi
     if [ -e "$WORKTREE_TIMEOUT_SENTINEL" ]; then
         # Print what the sentinel HOLDS, not where it lives: it is removed
         # immediately below, so a path would point at nothing by the time
@@ -903,7 +922,47 @@ rm -f "$shared_hooks/post-checkout"
 
 echo "==> --no-install skips the dependency install"
 : >"$pnpm_marker"
-new no-install-tree --no-install >/dev/null || fail "worktree-new.sh --no-install failed"
+# This case runs under a stdin that never reaches EOF — the agent-session
+# condition the suite's own `exec </dev/null` shields everything else from.
+# lefthook blocks `run post-checkout` until stdin EOF (harmon-init#802), so
+# worktree-new.sh must hand the deferred hook an already-EOF stdin. The shim
+# below asserts that invariant ITSELF (`cat` drains to EOF before logging):
+# relying on the real lefthook to do the blocking would make this case
+# vacuous under the stub (whose `run` reads nothing) and hostage to whichever
+# stdin behavior a future lefthook ships. A worktree-new.sh that ties the
+# hook to the caller's stdin blocks in `cat` and hangs into the #792 bound.
+cat >"$shared_hooks/post-checkout" <<EOF
+#!/bin/sh
+if [ "\$LEFTHOOK" = "0" ]; then
+  exit 0
+fi
+if [ -n "\$LEFTHOOK_BIN" ]; then
+  exec "\$LEFTHOOK_BIN" run "post-checkout" "\$@"
+fi
+cat >/dev/null
+printf 'post-checkout-eof %s\n' "\$PWD" >>"$test_tmp/post-checkout.log"
+EOF
+chmod +x "$shared_hooks/post-checkout"
+: >"$test_tmp/post-checkout.log"
+mkfifo "$test_tmp/hostile-stdin"
+# The writer is UNBOUNDED (`tail -f /dev/null` never exits, on macOS and
+# Linux alike): a `sleep <n>` writer would close the fifo at n seconds, and a
+# WORKTREE_OP_TIMEOUT configured above n would then hand a regressed hook its
+# EOF and pass this case instead of failing it. The explicit kill below and
+# the EXIT trap are what end this process.
+tail -f /dev/null >"$test_tmp/hostile-stdin" &
+WORKTREE_STDIN_HOLDER=$!
+new no-install-tree --no-install <"$test_tmp/hostile-stdin" >/dev/null ||
+    fail "worktree-new.sh --no-install failed under a non-EOF stdin"
+grep -qx "post-checkout-eof $fixture/.worktrees/no-install-tree" "$test_tmp/post-checkout.log" 2>/dev/null ||
+    fail "the deferred post-checkout never reached EOF on its stdin — is it still tied to the caller's stdin? (harmon-init#802)"
+kill "$WORKTREE_STDIN_HOLDER" 2>/dev/null || true
+wait "$WORKTREE_STDIN_HOLDER" 2>/dev/null || true
+WORKTREE_STDIN_HOLDER=""
+# The shim deliberately stays installed: the missing-pnpm case below runs
+# under a PATH mask that hides lefthook, so a configured-but-absent
+# post-checkout hook would fail it at the hook stage instead of the pnpm
+# gate it exists to assert.
 if [ -s "$pnpm_marker" ]; then
     fail "worktree-new.sh ran the installer despite --no-install"
 fi

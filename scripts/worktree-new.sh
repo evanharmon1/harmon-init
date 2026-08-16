@@ -465,7 +465,12 @@ if [ "$run_post_checkout" -eq 1 ] && [ -x "$hooks_dir/post-checkout" ]; then
     new_head="$(git -C "$tree" rev-parse HEAD)"
     null_oid="$(printf '%s' "$new_head" | tr '[:alnum:]' '0')"
     echo "==> Running post-checkout now that the tree is provisioned"
-    (cd "$tree" && "$hooks_dir/post-checkout" "$null_oid" "$new_head" 1) ||
+    # </dev/null is load-bearing: lefthook blocks `run post-checkout` until its
+    # stdin reaches EOF (observed on v2.1.10), so inheriting a stdin the caller
+    # holds open — an agent harness socket, a task runner pipe — deadlocks the
+    # hook here indefinitely (harmon-init#802). Git hands post-checkout no
+    # stdin payload, so an immediate EOF loses nothing.
+    (cd "$tree" && "$hooks_dir/post-checkout" "$null_oid" "$new_head" 1 </dev/null) ||
         die "the repository's post-checkout hook failed in $tree"
 fi
 
