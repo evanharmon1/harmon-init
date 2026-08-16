@@ -924,21 +924,19 @@ new diverged-base --base HEAD >/dev/null || fail "an explicit --base did not byp
 rm_wt diverged-base >/dev/null || fail "cleanup of the diverged-base tree failed"
 git -C "$fixture" branch -D diverged-base >/dev/null 2>&1 || true
 
-echo "==> an unreachable upstream warns, and an existing branch still attaches"
-# For a NEW branch an unreachable remote already fails closed at the branch
-# probe (the case above) — the loud failure #813 allows. The warn-and-proceed
-# path is therefore the one the probe skips: attaching a branch that already
-# exists locally, where the base is not used but the staleness warning must
-# still be heard.
-git -C "$fixture" remote set-url baseup "$test_tmp/nonexistent-upstream.git"
-git -C "$fixture" branch warn-base
+echo "==> attaching an existing branch is never blocked by base staleness"
+# The default base is only consumed when a NEW branch is created from it, so
+# the diverged main that just refused 'diverged-base' must not block — or
+# even warn about — attaching a branch that already exists: the base plays
+# no part in that path (harmon-init#813, challenge round 1).
+git -C "$fixture" branch attach-diverged
 local_tip="$(git -C "$fixture" rev-parse HEAD)"
-warn_out="$(new warn-base 2>&1)" || fail "worktree-new.sh failed outright on an unreachable upstream"
-[ "$(git -C "$fixture/.worktrees/warn-base" rev-parse HEAD)" = "$local_tip" ] ||
-    fail "the unreachable-upstream attach did not check out the local branch tip"
-case "$warn_out" in *"could not reach 'baseup'"*) : ;; *) fail "the unreachable upstream produced no warning (harmon-init#813)" ;; esac
-rm_wt warn-base >/dev/null || fail "cleanup of the warn-base tree failed"
-git -C "$fixture" branch -D warn-base >/dev/null 2>&1 || true
+attach_out="$(new attach-diverged 2>&1)" || fail "worktree-new.sh refused to attach an existing branch while main is diverged from its upstream"
+[ "$(git -C "$fixture/.worktrees/attach-diverged" rev-parse HEAD)" = "$local_tip" ] ||
+    fail "the attach did not check out the existing branch tip"
+case "$attach_out" in *"has diverged from"*) fail "attaching an existing branch surfaced the base divergence it never uses" ;; esac
+rm_wt attach-diverged >/dev/null || fail "cleanup of the attach-diverged tree failed"
+git -C "$fixture" branch -D attach-diverged >/dev/null 2>&1 || true
 # Teardown: restore the pre-case fixture state so later default-base cases
 # are decided by the local HEAD again, exactly as before this block.
 git -C "$fixture" branch --unset-upstream >/dev/null 2>&1 || true
