@@ -451,8 +451,6 @@ tree_created=1
 branch_created=0
 branch_owned=0
 branch_owned_tip=""
-branch_owned_prior_remote=""
-branch_owned_prior_merge=""
 probe_dir=""
 cleanup() {
     status=$?
@@ -526,21 +524,16 @@ cleanup() {
             if [ "$rollback_tree_gone" -eq 0 ]; then
                 echo "worktree:new: leaving branch '$branch' alone — its worktree could not be removed and still has it checked out" >&2
             elif git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
-                # This run wrote exactly branch.<name>.remote and .merge —
-                # restore those two keys to their prior values rather than
-                # removing the section, which would take pre-existing user
-                # settings (pushRemote, rebase, a description) with it
-                # (challenge round 3).
-                if [ -n "$branch_owned_prior_remote" ]; then
-                    git config "branch.$branch.remote" "$branch_owned_prior_remote"
-                else
-                    git config --unset "branch.$branch.remote" 2>/dev/null || true
-                fi
-                if [ -n "$branch_owned_prior_merge" ]; then
-                    git config "branch.$branch.merge" "$branch_owned_prior_merge"
-                else
-                    git config --unset "branch.$branch.merge" 2>/dev/null || true
-                fi
+                # This run's writes are the only possible values here — a
+                # pre-existing remote/merge key refuses creation up front —
+                # so rollback removes exactly the two keys it wrote and
+                # nothing else (pushRemote, rebase, a description are never
+                # touched; challenge round 3). Guarded, because this runs
+                # inside the EXIT trap under set -e and a config-lock
+                # failure must never abort the trap before release_locks
+                # (challenge round 4).
+                git config --unset "branch.$branch.remote" 2>/dev/null || true
+                git config --unset "branch.$branch.merge" 2>/dev/null || true
             else
                 echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
             fi
@@ -657,6 +650,20 @@ elif [ -n "$remote_ref" ]; then
     # shims — and a hook that resolves @{upstream} must never observe the
     # branch untracked.
     #
+    # Pre-existing branch.<name>.remote/.merge config for a branch that
+    # does not exist locally is refused up front — stale debris from a
+    # deleted branch. Refusing is what keeps the rollback below trivial
+    # and lossless (challenge round 4): this run's writes become the ONLY
+    # possible values for those two keys, so there are no prior values to
+    # capture, no multi-valued snapshots to restore faithfully, and no
+    # signal window in which a capture could be missed. Everything else
+    # in the section (pushRemote, rebase, a description) is never touched
+    # in either direction.
+    for _bk in remote merge; do
+        if git config --get-all "branch.$branch.$_bk" >/dev/null 2>&1; then
+            die "branch '$branch' does not exist locally but branch.$branch.$_bk is configured — stale config from a deleted branch; review it, clear it with 'git config --unset-all branch.$branch.$_bk', and re-run"
+        fi
+    done
     # Ownership bookkeeping is armed BEFORE the ref exists and the ref is
     # created atomically create-only (old value "" = must not exist), so a
     # signal landing between the ref transaction committing and the next
@@ -673,8 +680,6 @@ elif [ -n "$remote_ref" ]; then
         branch_owned=0
         die "branch '$branch' appeared while this run was creating it — re-run to attach it"
     fi
-    branch_owned_prior_remote="$(git config --get "branch.$branch.remote" 2>/dev/null || true)"
-    branch_owned_prior_merge="$(git config --get "branch.$branch.merge" 2>/dev/null || true)"
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
     LEFTHOOK=0 git worktree add "$tree" "$branch"

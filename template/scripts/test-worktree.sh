@@ -2032,29 +2032,49 @@ rm_wt heldtree --force >/dev/null || fail "cleanup of the held tree failed once 
 git -C "$fixture" branch -D heldtree >/dev/null 2>&1 || true
 git -C "$fixture" push -q origin :refs/heads/heldtree
 
-echo "==> rollback restores only the branch config keys this run wrote"
-# challenge round 3: branch.<name> config can outlive a deleted branch,
-# and a user's pushRemote/rebase/description in it are not this run's to
-# remove. Rollback restores the two keys the run wrote — remote and
-# merge — and leaves the rest of the section alone.
+echo "==> stale branch remote/merge config refuses creation instead of being overwritten"
+# challenge rounds 3-4: branch.<name> config can outlive a deleted branch.
+# Overwriting its remote/merge and trying to restore them on rollback grew
+# capture-and-restore machinery with its own failure modes (a signal
+# before the capture, multi-valued merge keys), so the design refuses the
+# stale keys up front with the remedy — this run's writes are then the
+# only possible values, and rollback is two guarded unsets.
 git -C "$fixture" config branch.rollcfg.pushRemote myfork
 git -C "$fixture" config branch.rollcfg.remote oldrem
+git -C "$fixture" push -q origin HEAD:refs/heads/rollcfg
+git -C "$fixture" update-ref -d refs/remotes/origin/rollcfg 2>/dev/null || true
+rollcfg_out="$(new rollcfg 2>&1)" &&
+    fail "worktree-new.sh overwrote stale branch config instead of refusing"
+case "$rollcfg_out" in *"stale config from a deleted branch"*) : ;; *) fail "the stale-config refusal named no remedy: $rollcfg_out" ;; esac
+refute_exists "$fixture/.worktrees/rollcfg" "the stale-config refusal left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/rollcfg; then
+    fail "the stale-config refusal left the branch behind"
+fi
+[ "$(git -C "$fixture" config --get branch.rollcfg.remote || true)" = "oldrem" ] ||
+    fail "the stale-config refusal modified the pre-existing remote key"
+[ "$(git -C "$fixture" config --get branch.rollcfg.pushRemote || true)" = "myfork" ] ||
+    fail "the stale-config refusal modified an unrelated branch config key"
+
+echo "==> rollback removes only the branch config keys this run wrote"
+# With the stale keys cleared, creation proceeds; a failing attach must
+# take back exactly the remote/merge keys this run wrote while the
+# untouched pushRemote survives.
+git -C "$fixture" config --unset-all branch.rollcfg.remote
 cat >"$shared_hooks/post-checkout" <<'EOF'
 #!/bin/sh
 exit 1
 EOF
 chmod +x "$shared_hooks/post-checkout"
-git -C "$fixture" push -q origin HEAD:refs/heads/rollcfg
-git -C "$fixture" update-ref -d refs/remotes/origin/rollcfg 2>/dev/null || true
 if new rollcfg >/dev/null 2>&1; then
     rm -f "$shared_hooks/post-checkout"
-    fail "worktree-new.sh reported success despite the failing attach in the config-restore case"
+    fail "worktree-new.sh reported success despite the failing attach in the config case"
 fi
 rm -f "$shared_hooks/post-checkout"
 [ "$(git -C "$fixture" config --get branch.rollcfg.pushRemote || true)" = "myfork" ] ||
     fail "rollback removed a pre-existing branch config key it never wrote (harmon-init#916)"
-[ "$(git -C "$fixture" config --get branch.rollcfg.remote || true)" = "oldrem" ] ||
-    fail "rollback did not restore the prior branch.<name>.remote value"
+if git -C "$fixture" config --get branch.rollcfg.remote >/dev/null 2>&1; then
+    fail "rollback left the branch.<name>.remote key this run wrote"
+fi
 if git -C "$fixture" config --get branch.rollcfg.merge >/dev/null 2>&1; then
     fail "rollback left the branch.<name>.merge key this run wrote"
 fi
