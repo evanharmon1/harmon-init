@@ -301,7 +301,9 @@ in [`.devflow.toml`](.devflow.toml) (`default_tier`, `default_method`, and the
 `[tier.*]` family→model maps), implementing
 [ADR 0006](docs/decisions/0006-method-and-tier-axes.md); on any conflict
 `specs/issue-strategy.md` wins. Like the round caps, the config is the single
-source and `test:devflow-config` catches a one-sided edit. Resolve each axis in
+source: `test:devflow-config` validates each copy, and `test:dogfood-parity`
+catches a one-sided edit that leaves both copies individually valid but
+divergent. Resolve each axis in
 this order — **explicit instruction > label > config default > built-in** —
 where an **explicit instruction** arrives on the operator's attributable channel
 (this session's human input, or the automation's own configuration) and **never
