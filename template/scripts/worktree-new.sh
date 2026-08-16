@@ -126,6 +126,50 @@ if [ -z "$base" ]; then
     base="$(git -C "$main_root" rev-parse --verify --quiet HEAD || true)"
     [ -n "$base" ] ||
         die "the main worktree has no commits yet — make an initial commit, or pass --base <ref>"
+    # A local HEAD goes stale: merges land on the forge and nothing pulls, so
+    # an agent handed a fresh tree can be missing recently merged work
+    # (harmon-init#813). When HEAD's branch has an upstream, verify against it
+    # — this is not a guessed branch name; the upstream of whatever HEAD
+    # points at is configuration, which is what keeps #757's no-guessing
+    # design intact. The remote name comes from branch config, never from
+    # splitting the ref text: a remote name may itself contain '/'.
+    head_branch="$(git -C "$main_root" symbolic-ref --quiet --short HEAD || true)"
+    upstream_remote=""
+    upstream_ref=""
+    if [ -n "$head_branch" ]; then
+        upstream_remote="$(git -C "$main_root" config --get "branch.$head_branch.remote" 2>/dev/null || true)"
+        upstream_ref="$(git -C "$main_root" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+    fi
+    if [ -n "$upstream_remote" ] && [ -n "$upstream_ref" ]; then
+        fetch_ok=1
+        if [ "$upstream_remote" != "." ]; then
+            upstream_branch="${upstream_ref#"$upstream_remote"/}"
+            git -C "$main_root" fetch --quiet "$upstream_remote" \
+                "+refs/heads/$upstream_branch:refs/remotes/$upstream_remote/$upstream_branch" 2>/dev/null ||
+                fetch_ok=0
+        fi
+        if [ "$fetch_ok" -eq 1 ]; then
+            upstream_tip="$(git -C "$main_root" rev-parse --verify --quiet "$upstream_ref^{commit}" || true)"
+            if [ -n "$upstream_tip" ] && [ "$upstream_tip" != "$base" ]; then
+                if git -C "$main_root" merge-base --is-ancestor "$base" "$upstream_tip"; then
+                    # Behind: hand out the current upstream tip, not the stale
+                    # local one. Resolved to a SHA so branch creation below
+                    # picks up no tracking side effects.
+                    echo "==> Base: ${base_label} is behind ${upstream_ref} — using ${upstream_ref} @ $(git rev-parse --short "$upstream_tip")"
+                    base="$upstream_tip"
+                    base_label="$upstream_ref"
+                elif git -C "$main_root" merge-base --is-ancestor "$upstream_tip" "$base"; then
+                    # Ahead: local has everything the upstream has, plus
+                    # unpushed work the caller presumably wants. Say so.
+                    echo "==> Note: ${base_label} is ahead of ${upstream_ref}; basing on the local tip"
+                else
+                    die "${base_label} has diverged from ${upstream_ref} — reconcile them, or pass --base <ref> to choose a start point explicitly"
+                fi
+            fi
+        else
+            echo "worktree:new: warning: could not reach '$upstream_remote' to verify ${base_label} against ${upstream_ref} — the base may be missing recently merged work (harmon-init#813)" >&2
+        fi
+    fi
     echo "==> Base: ${base_origin} (${base_label} @ $(git rev-parse --short "$base")) — pass --base <ref> to branch elsewhere"
 fi
 
@@ -319,12 +363,24 @@ trap cleanup EXIT
 remote_ref=""
 if [ "$base_origin" != "explicit" ] && ! git show-ref --verify --quiet "refs/heads/$branch"; then
     remote_matches=""
+    remote_match_remote=""
     remote_count=0
     while IFS= read -r remote_name; do
         [ -n "$remote_name" ] || continue
-        candidate="refs/remotes/$remote_name/$branch"
-        if git show-ref --verify --quiet "$candidate"; then
-            remote_matches="$candidate"
+        # Each remote is probed LIVE (harmon-init#840): the local
+        # refs/remotes/* namespace is only as fresh as the last fetch, so a
+        # branch pushed since then would read as absent and be silently
+        # recreated at the default base — diverging from the collaborator's
+        # branch. `ls-remote` patterns are tail-matched, so the answer is
+        # filtered to the exact ref before it counts. A probe that cannot
+        # answer fails CLOSED: "the remote is unreachable" is not evidence
+        # the branch is new, and guessing here is the data-loss path.
+        probe_out="$(git ls-remote --heads "$remote_name" "refs/heads/$branch")" ||
+            die "could not query remote '$remote_name' for branch '$branch' — offline or unreachable; retry with network, or pass --base <ref> to skip the remote lookup"
+        probe_sha="$(printf '%s\n' "$probe_out" | awk -v ref="refs/heads/$branch" -F'\t' '$2 == ref {print $1; exit}')"
+        if [ -n "$probe_sha" ]; then
+            remote_matches="refs/remotes/$remote_name/$branch"
+            remote_match_remote="$remote_name"
             remote_count=$((remote_count + 1))
         fi
     done <<EOF
@@ -333,7 +389,15 @@ EOF
     if [ "$remote_count" -gt 1 ]; then
         die "branch '$branch' exists on more than one remote — pass --base <remote>/<branch> to choose one"
     fi
-    [ "$remote_count" -eq 1 ] && remote_ref="$remote_matches"
+    if [ "$remote_count" -eq 1 ]; then
+        # Refresh the tracking ref to the tip the probe just saw, so the
+        # tracked checkout starts at the remote's current commit rather than
+        # a stale local mirror of it.
+        git fetch --quiet "$remote_match_remote" \
+            "+refs/heads/$branch:refs/remotes/$remote_match_remote/$branch" ||
+            die "found branch '$branch' on remote '$remote_match_remote' but could not fetch it — retry, or pass --base <ref>"
+        remote_ref="$remote_matches"
+    fi
 fi
 
 if git show-ref --verify --quiet "refs/heads/$branch"; then
