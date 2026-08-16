@@ -8,6 +8,22 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.33.0](https://github.com/evanharmon1/harmon-init/compare/v4.32.0...v4.33.0) (2026-08-16)
+
+
+### Features
+
+* propagate the method and tier families into the template manifest ([#915](https://github.com/evanharmon1/harmon-init/issues/915)) ([eaca3a2](https://github.com/evanharmon1/harmon-init/commit/eaca3a20465c3ac32151cf63babb022f9c22a499)), closes [#913](https://github.com/evanharmon1/harmon-init/issues/913)
+* push each adjudicated challenge/review round to the branch ([#907](https://github.com/evanharmon1/harmon-init/issues/907)) ([9cf00ef](https://github.com/evanharmon1/harmon-init/commit/9cf00ef98992f80c3ae4b1897871141d9e0c8d7e))
+
+
+### Bug Fixes
+
+* make test:worktree's EXIT-trap assertion portable to Bash 3.2 ([#901](https://github.com/evanharmon1/harmon-init/issues/901)) ([5427d36](https://github.com/evanharmon1/harmon-init/commit/5427d36c6df9873e020478ee6ada8d5e9c6bbb7a)), closes [#844](https://github.com/evanharmon1/harmon-init/issues/844)
+* make worktree:new remote-aware for the default base and the requested branch ([#906](https://github.com/evanharmon1/harmon-init/issues/906)) ([56d70b0](https://github.com/evanharmon1/harmon-init/commit/56d70b03d773aaa8bddc8a099cc98758879c2e53))
+* serialize worktree lifecycle operations with per-path locks ([#911](https://github.com/evanharmon1/harmon-init/issues/911)) ([b9cd23a](https://github.com/evanharmon1/harmon-init/commit/b9cd23ae21775b53c06fff4d9e98de78b7c350c1))
+* stop lefthook post-checkout deadlocking test:worktree on a never-EOF stdin ([#904](https://github.com/evanharmon1/harmon-init/issues/904)) ([bac1f41](https://github.com/evanharmon1/harmon-init/commit/bac1f410536eb207e1864863053610af5657deeb))
+
 ## [4.32.0](https://github.com/evanharmon1/harmon-init/compare/v4.31.0...v4.32.0) (2026-08-16)
 
 
