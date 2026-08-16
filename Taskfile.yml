@@ -393,7 +393,7 @@ tasks:
       - ./scripts/test-ci-results.sh
 
   test:devflow-config:
-    desc: Validate the Dev Loop round-cap tiers in .devflow.toml (both copies)
+    desc: Validate the Dev Loop round-cap levels in .devflow.toml (both copies)
     cmds:
       - ./scripts/test-devflow-config.sh
 

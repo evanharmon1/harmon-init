@@ -516,7 +516,7 @@ the taxonomy table below is generated from) and the starter set is created by
   model
 - **Method** — the execution topology to work the issue under — advisory,
   like `tier:`
-- **Rigor** — which round-cap tier in [`.devflow.toml`](../.devflow.toml) an
+- **Rigor** — which round-cap level in [`.devflow.toml`](../.devflow.toml) an
   agent works the issue under (AGENTS.md, "Round caps are resolved, not stated
   here"). An agent reads it and never self-applies one. It is advisory rather
   than an authenticated gate: nothing verifies who applied it, and the
