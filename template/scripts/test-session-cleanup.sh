@@ -1106,6 +1106,125 @@ odd_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
 expect_contains "$odd_ok_out" "pruned record 'oddrec'" "unknown entry: understood record prunes normally"
 echo "ok: an unrecognized admin-dir entry refuses the sweep"
 
+# ── Case E7v: an unreadable gitdir or a surviving tree directory refuses ───
+# An unreadable gitdir target is not an absent worktree; and a worktree
+# DIRECTORY that outlives its .git link still holds the user's files —
+# sweeping the record would orphan them as a plain untracked directory.
+
+mkdir -p "$gitdir/worktrees/nogit-rec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/nogit-rec/HEAD"
+
+if nogit_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unreadable gitdir present: $nogit_out"
+fi
+expect_contains "$nogit_out" "cannot read its gitdir file" "no-gitdir: unvalidatable record refused"
+[ -d "$gitdir/worktrees/nogit-rec" ] || fail "no-gitdir: record swept despite its unreadable gitdir"
+printf '%s\n' "/nonexistent/nogit-rec/.git" >"$gitdir/worktrees/nogit-rec/gitdir"
+nogit_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the gitdir was restored: $nogit_ok_out"
+expect_contains "$nogit_ok_out" "pruned record 'nogit-rec'" "no-gitdir: restored record prunes normally"
+
+mkdir -p "$test_tmp/live-dir"
+echo "precious" >"$test_tmp/live-dir/work.txt"
+mkdir -p "$gitdir/worktrees/livedir-rec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/livedir-rec/HEAD"
+printf '%s\n' "$test_tmp/live-dir/.git" >"$gitdir/worktrees/livedir-rec/gitdir"
+
+if livedir_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the worktree directory survives: $livedir_out"
+fi
+expect_contains "$livedir_out" "its worktree directory still exists" "live-dir: surviving directory refused"
+[ -d "$gitdir/worktrees/livedir-rec" ] || fail "live-dir: record swept although its directory survives"
+rm -rf "$test_tmp/live-dir"
+livedir_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the directory was moved aside: $livedir_ok_out"
+expect_contains "$livedir_ok_out" "pruned record 'livedir-rec'" "live-dir: cleared record prunes normally"
+echo "ok: an unreadable gitdir or a surviving tree directory refuses the sweep"
+
+# ── Case E7w: resolve-undo state in a stage-0-clean index refuses ──────────
+# After a conflict is resolved back to HEAD's content, the index compares
+# clean yet its resolve-undo section still holds conflict-stage OIDs the
+# index alone references.
+
+blob_t="$(printf 'theirs\n' | git -C "$fixture" hash-object -w --stdin)"
+reuc_idx="$test_tmp/reuc-idx"
+GIT_INDEX_FILE="$reuc_idx" git -C "$fixture" read-tree main
+GIT_INDEX_FILE="$reuc_idx" git -C "$fixture" update-index --add --cacheinfo "100644,$blob_t,cf.txt"
+ttree="$(GIT_INDEX_FILE="$reuc_idx" git -C "$fixture" write-tree)"
+tcommit="$(git -C "$fixture" commit-tree "$ttree" -p main -m theirs)"
+git -C "$fixture" worktree add -q -b reuc-br "$test_tmp/wt-reuc" main
+(
+    cd "$test_tmp/wt-reuc"
+    printf 'ours\n' >cf.txt
+    git add cf.txt
+    git commit -qm ours
+    git merge -q "$tcommit" >/dev/null 2>&1 || true
+    git checkout -q --ours -- cf.txt
+    git add cf.txt
+)
+reuc_admin="$gitdir/worktrees/wt-reuc"
+rm -rf "$test_tmp/wt-reuc"
+rm -f "$reuc_admin/MERGE_HEAD" "$reuc_admin/MERGE_MSG" "$reuc_admin/MERGE_MODE" "$reuc_admin/AUTO_MERGE" "$reuc_admin/ORIG_HEAD"
+
+if reuc_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with resolve-undo state present: $reuc_out"
+fi
+expect_contains "$reuc_out" "carries resolve-undo (conflict) state" "resolve-undo: clean-looking index refused"
+[ -d "$reuc_admin" ] || fail "resolve-undo: record swept despite conflict state"
+
+# An uninspectable index refuses the same way an unscannable state dir does.
+rm -f "$shim_dir/find"
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == *"ls-files --resolve-undo"* ]]; then
+    exit 1
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+if reuc_shim_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the index was uninspectable: $reuc_shim_out"
+fi
+expect_contains "$reuc_shim_out" "cannot inspect its index for resolve-undo state" "resolve-undo inspect: failure refused fail-closed"
+[ -d "$reuc_admin" ] || fail "resolve-undo inspect: record swept although the index was uninspectable"
+rm -f "$shim_dir/git"
+
+rm -f "$reuc_admin/index"
+reuc_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the resolve-undo state was recovered: $reuc_ok_out"
+expect_contains "$reuc_ok_out" "pruned record 'wt-reuc'" "resolve-undo: recovered record prunes normally"
+echo "ok: resolve-undo state in a clean index refuses the sweep"
+
+# ── Case E7x: symlinked state paths are carried state, broken links judged ─
+# find scans a symlink's target (or nothing when broken), never the link;
+# and [ -e ] dereferences, so a broken unknown symlink would slip past the
+# allowlist unjudged.
+
+mkdir -p "$gitdir/worktrees/symrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/symrec/HEAD"
+printf '%s\n' "/nonexistent/symrec/.git" >"$gitdir/worktrees/symrec/gitdir"
+ln -s /nonexistent-target "$gitdir/worktrees/symrec/refs"
+
+if symrec_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a symlinked state path present: $symrec_out"
+fi
+expect_contains "$symrec_out" "carries worktree-local state (refs)" "symlink: linked state path refused as carried"
+[ -d "$gitdir/worktrees/symrec" ] || fail "symlink: record swept despite a symlinked state path"
+
+rm -f "$gitdir/worktrees/symrec/refs"
+ln -s /nowhere-at-all "$gitdir/worktrees/symrec/mystery-link"
+if symrec2_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a broken unknown symlink present: $symrec2_out"
+fi
+expect_contains "$symrec2_out" "unrecognized entry 'mystery-link'" "symlink: broken unknown link judged, not skipped"
+[ -d "$gitdir/worktrees/symrec" ] || fail "symlink: record swept despite a broken unknown symlink"
+
+rm -f "$gitdir/worktrees/symrec/mystery-link"
+symrec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the symlinks were cleared: $symrec_ok_out"
+expect_contains "$symrec_ok_out" "pruned record 'symrec'" "symlink: cleared record prunes normally"
+echo "ok: symlinked state paths are carried state and broken links are judged"
+
 # ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
 # A broken ref backend is not an empty pin namespace; the empty-plan path
 # must fail closed instead of printing "nothing to prune" with exit 0.

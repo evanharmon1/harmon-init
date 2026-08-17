@@ -160,12 +160,26 @@ remove_one_record() (
     esac
 
     [ -d "$admin_dir" ] || exit 3 # already gone (another cleaner won)
-    # Re-read under the lock: if the record's gitdir target exists again (a
-    # worktree recreated at the old path), the record is live — leave it.
-    wt_gitfile="$(cat "$admin_dir/gitdir" 2>/dev/null || true)"
-    if [ -n "$wt_gitfile" ] && [ -e "$wt_gitfile" ]; then
+    # Re-read under the lock — failing closed when the gitdir file cannot
+    # be read to a value: an unreadable target is not an absent worktree,
+    # and sweeping on that guess can orphan a live tree (challenge r7).
+    if ! wt_gitfile="$(cat "$admin_dir/gitdir" 2>/dev/null)" || [ -z "$wt_gitfile" ]; then
+        echo "SKIP  record '$record' — cannot read its gitdir file; refusing to sweep an unvalidatable record (inspect $admin_dir)"
+        exit 3 # unreadable gitdir refuses
+    fi
+    # If the gitdir target exists again (a worktree recreated at the old
+    # path), the record is live — leave it.
+    if [ -e "$wt_gitfile" ]; then
         echo "SKIP  record '$record' — its worktree reappeared since the plan"
         exit 3
+    fi
+    # A surviving worktree DIRECTORY whose .git link is gone still holds
+    # the user's files; sweeping its record would orphan them as a plain
+    # directory nothing tracks (challenge r7).
+    tree_dir="${wt_gitfile%/.git}"
+    if [ "$tree_dir" != "$wt_gitfile" ] && [ -d "$tree_dir" ]; then
+        echo "SKIP  record '$record' — its worktree directory still exists ($tree_dir) though the .git link is gone; restore the link or move the directory aside first"
+        exit 3 # surviving tree dir refuses
     fi
 
     # git's own worktree lock (worktrees/<id>/locked) protects e.g. a tree on
@@ -190,6 +204,13 @@ remove_one_record() (
     # --autostash killed before MERGE_HEAD exists leaves the user's dirty
     # work referenced by that one file alone (challenge r6).
     for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG config.worktree info/sparse-checkout; do
+        # A symlinked state path is carried state whatever it points at —
+        # find would scan the target (or nothing, broken), not the link
+        # (challenge r7).
+        if [ -L "$admin_dir/$sub" ]; then
+            carried="$carried $sub"
+            continue
+        fi
         [ -e "$admin_dir/$sub" ] || continue
         # A failed scan is not an empty scan: treating an errored find as
         # "no state" would sweep exactly the record it could not inspect
@@ -212,14 +233,14 @@ remove_one_record() (
     # that game; the unknown refuses instead (challenge r6 restructure,
     # maintainer-approved).
     for entry in "$admin_dir"/* "$admin_dir"/.[!.]* "$admin_dir"/..?*; do
-        [ -e "$entry" ] || continue
+        [ -e "$entry" ] || [ -L "$entry" ] || continue # -e dereferences: a broken symlink must still be judged
         entry_name="${entry##*/}"
         case "$entry_name" in
         gitdir | commondir | HEAD | locked | COMMIT_EDITMSG | ORIG_HEAD | FETCH_HEAD | index | logs) : ;;                                                                                                  # validated by the guards here, disposable scratch, or reflogs (accepted loss by design)
         deferred-findings | adjudication-ledger | shepherd-codex | refs | rebase-merge | rebase-apply | MERGE_HEAD | MERGE_AUTOSTASH | CHERRY_PICK_HEAD | REVERT_HEAD | BISECT_LOG | config.worktree) : ;; # carried-state names: the scan above refused them when non-empty
         info)
             for info_entry in "$entry"/* "$entry"/.[!.]* "$entry"/..?*; do
-                [ -e "$info_entry" ] || continue
+                [ -e "$info_entry" ] || [ -L "$info_entry" ] || continue
                 case "${info_entry##*/}" in
                 sparse-checkout) : ;; # refused above when present with content
                 *)
@@ -319,6 +340,17 @@ remove_one_record() (
             ! GIT_INDEX_FILE="$admin_dir/index" git diff-index --cached --quiet "$head_commit" 2>/dev/null; then
             echo "SKIP  record '$record' — its index diverges from the recorded HEAD (staged-only changes, or unverifiable); recover them first (GIT_INDEX_FILE=$(shell_quote "$admin_dir/index") git checkout-index ...), then remove the index file"
             exit 3
+        fi
+        # A stage-0-clean index can still carry resolve-undo entries whose
+        # conflict-stage blobs it alone references; an uninspectable index
+        # refuses the same way an unscannable state dir does (challenge r7).
+        if ! resolve_undo="$(GIT_INDEX_FILE="$admin_dir/index" git ls-files --resolve-undo 2>&1)"; then
+            echo "SKIP  record '$record' — cannot inspect its index for resolve-undo state ($resolve_undo); failing closed"
+            exit 3 # resolve-undo-inspect refuses
+        fi
+        if [ -n "$resolve_undo" ]; then
+            echo "SKIP  record '$record' — its index carries resolve-undo (conflict) state the index alone references; recover it (GIT_INDEX_FILE=$(shell_quote "$admin_dir/index") git ls-files --resolve-undo), then remove the index file"
+            exit 3 # resolve-undo refuses
         fi
     fi
 
