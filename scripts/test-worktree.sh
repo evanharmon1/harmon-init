@@ -9,6 +9,12 @@
 # lefthook is used for real when it is on PATH (the local/devcontainer case) and
 # stubbed with a shim matching lefthook's documented contract otherwise, so the
 # hook assertion runs everywhere — including CI runners that carry no lefthook.
+#
+# Every run is self-contained: the fixture repository, its worktree registry
+# and lifecycle locks, the PATH stubs and masks, and the timeout sentinel all
+# live under per-run mktemp paths, so any number of suites may run
+# concurrently — `task verify` in two linked worktrees included — without
+# sharing a byte of state (harmon-init#899).
 set -euo pipefail
 
 # The suite reads nothing from stdin, and its children must not inherit one
@@ -111,12 +117,24 @@ worktree_exit() {
         # immediately below, so a path would point at nothing by the time
         # anyone read the message.
         echo "TEST FAIL: $(cat "$WORKTREE_TIMEOUT_SENTINEL") — the operation was killed, not merely slow (harmon-init#792)" >&2
-        rm -f "$WORKTREE_TIMEOUT_SENTINEL"
-        rm -rf "$test_tmp"
-        exit 1
+        exit_status=1
     fi
-    rm -f "$WORKTREE_TIMEOUT_SENTINEL"
-    rm -rf "$test_tmp"
+    rm -f "$WORKTREE_TIMEOUT_SENTINEL" || true
+    # Teardown must not be able to fail the suite in silence (harmon-init#899):
+    # this trap runs under set -e, so a bare `rm -rf` that failed used to
+    # abort the trap mid-way and exit 1 with rm's raw stderr as the only clue
+    # — after the suite had already printed its success line, which reads as
+    # an inexplicable flake. Retry once (a straggler from a killed operation
+    # can hold the tree for a moment), then fail loudly, naming the
+    # survivors. The retry is tolerance; the contract is loudness.
+    if ! rm -rf "$test_tmp" 2>/dev/null; then
+        sleep 2
+        if ! rm -rf "$test_tmp"; then
+            echo "TEST FAIL: teardown could not remove $test_tmp — survivors:" >&2
+            find "$test_tmp" 2>/dev/null | head -20 >&2 || true
+            exit 1
+        fi
+    fi
     exit "$exit_status"
 }
 trap worktree_exit EXIT
@@ -2371,5 +2389,36 @@ if (
 fi
 grep -q 'probe-tree' "$trap_log" ||
     fail "worktree_exit did not report what timed out: $(cat "$trap_log")"
+
+echo "==> a teardown that cannot remove its directory fails loudly, not silently"
+# The harmon-init#899 signature: the suite printed its success line and still
+# exited 1, because the trap's bare `rm -rf` failed under set -e with nothing
+# but rm's raw stderr to explain it. The hardened teardown must NAME the
+# failure instead — that naming, not the retry, is the contract this case
+# pins. Root can delete a mode-000 directory, so the simulation is
+# impossible there.
+if [ "$(id -u)" -ne 0 ]; then
+    teardown_log="$test_tmp/teardown.log"
+    teardown_probe="$(mktemp -d -t harmon-init-worktree-teardown-XXXXXX)"
+    mkdir -p "$teardown_probe/held"
+    printf 'survivor\n' >"$teardown_probe/held/file"
+    chmod 000 "$teardown_probe/held"
+    if (
+        test_tmp="$teardown_probe"
+        WORKTREE_TIMEOUT_SENTINEL="$(mktemp -t harmon-init-worktree-tdsentinel-XXXXXX)"
+        rm -f "$WORKTREE_TIMEOUT_SENTINEL"
+        worktree_exit
+    ) >"$teardown_log" 2>&1; then
+        chmod 755 "$teardown_probe/held" 2>/dev/null || true
+        rm -rf "$teardown_probe"
+        fail "worktree_exit reported success although its teardown could not remove the directory"
+    fi
+    chmod 755 "$teardown_probe/held" 2>/dev/null || true
+    rm -rf "$teardown_probe"
+    grep -q 'teardown could not remove' "$teardown_log" ||
+        fail "a failing teardown did not name itself — the harmon-init#899 silent-teardown signature is back: $(cat "$teardown_log")"
+else
+    echo "    (skipped: running as root, a permission-held teardown cannot be simulated)"
+fi
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
