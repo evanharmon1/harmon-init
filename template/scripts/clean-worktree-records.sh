@@ -181,7 +181,10 @@ remove_one_record() (
     # adopt-or-rescue class as the review sidecars, and present only on
     # worktreeConfig-enabled records, so refusing costs no sweepability
     # (challenge r5, reversing r2's "dead config" declination).
-    for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG config.worktree info/sparse-checkout; do
+    # MERGE_AUTOSTASH extends the worktree-rm.sh op-state list: a merge
+    # --autostash killed before MERGE_HEAD exists leaves the user's dirty
+    # work referenced by that one file alone (challenge r6).
+    for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG config.worktree info/sparse-checkout; do
         [ -e "$admin_dir/$sub" ] || continue
         # A failed scan is not an empty scan: treating an errored find as
         # "no state" would sweep exactly the record it could not inspect
@@ -239,6 +242,20 @@ remove_one_record() (
         while IFS= read -r fetch_line || [ -n "$fetch_line" ]; do
             [ -n "$fetch_line" ] || continue
             fetch_sha="${fetch_line%%[[:space:]]*}"
+            # An annotated tag fetched without a destination ref is its own
+            # object: peeling to the commit would let the tag body (message,
+            # signature) vanish with the record. Exact points-at containment
+            # — object equality, so ancestry forgery does not apply
+            # (challenge r6).
+            fetch_type=""
+            [ -z "$fetch_sha" ] || fetch_type="$(git cat-file -t "$fetch_sha" 2>/dev/null || true)"
+            if [ "$fetch_type" = "tag" ]; then
+                if [ -z "$(git for-each-ref --points-at "$fetch_sha" --format='%(refname)' 2>/dev/null | grep -Ev '^refs/((worktree|bisect|rewritten|replace)/|session-cleanup/pin/)' || true)" ]; then
+                    echo "SKIP  record '$record' — FETCH_HEAD names annotated tag object $fetch_sha with no ref pointing at it; rescue it (git tag $(shell_quote "rescue/$record-fetch-tag-$(printf '%.7s' "$fetch_sha")") $fetch_sha) then remove $admin_dir/FETCH_HEAD"
+                    exit 3
+                fi
+                continue
+            fi
             fetch_commit=""
             [ -z "$fetch_sha" ] || fetch_commit="$(git rev-parse --quiet --verify "$fetch_sha^{commit}" || true)"
             if [ -z "$fetch_commit" ]; then
@@ -246,7 +263,7 @@ remove_one_record() (
                 exit 3
             fi
             if [ "$grafts_present" = true ] || [ -z "$(shared_refs_containing "$fetch_commit")" ]; then
-                echo "SKIP  record '$record' — FETCH_HEAD names $fetch_commit, reachable from no shared ref (a URL fetch left it here); rescue it (git branch $(shell_quote "rescue/$record-fetch") $fetch_commit) then remove $admin_dir/FETCH_HEAD"
+                echo "SKIP  record '$record' — FETCH_HEAD names $fetch_commit, reachable from no shared ref (a URL fetch left it here); rescue it (git branch $(shell_quote "rescue/$record-fetch-$(printf '%.7s' "$fetch_commit")") $fetch_commit) then remove $admin_dir/FETCH_HEAD"
                 exit 3
             fi
         done <"$admin_dir/FETCH_HEAD"

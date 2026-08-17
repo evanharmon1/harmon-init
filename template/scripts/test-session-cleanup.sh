@@ -648,7 +648,7 @@ echo "ok: an unsettled rescue pin refuses the prune instead of being overwritten
 # Sidecars and per-worktree ref files under worktrees/<id>/ are single-copy;
 # no pin can stand in for them.
 
-for rec in state-rec refs-rec op-rec cfg-rec; do
+for rec in state-rec refs-rec op-rec cfg-rec stash-rec; do
     mkdir -p "$gitdir/worktrees/$rec"
     printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/$rec/HEAD"
     printf '%s\n' "/nonexistent/$rec/.git" >"$gitdir/worktrees/$rec/gitdir"
@@ -663,6 +663,9 @@ printf '%s\n' "$refs_orph" >"$gitdir/worktrees/refs-rec/refs/worktree/only"
 git -C "$fixture" rev-parse main >"$gitdir/worktrees/op-rec/MERGE_HEAD"
 # User-set per-worktree configuration is single-copy exactly like a sidecar.
 printf '[review]\n\tunique = KEEP-ME\n' >"$gitdir/worktrees/cfg-rec/config.worktree"
+# An interrupted merge --autostash: the stash commit can be referenced by
+# this one file alone.
+git -C "$fixture" rev-parse main >"$gitdir/worktrees/stash-rec/MERGE_AUTOSTASH"
 
 if state_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
     fail "record prune exited zero with refused state-carrying records: $state_out"
@@ -671,18 +674,20 @@ expect_contains "$state_out" "record 'state-rec' — carries worktree-local stat
 expect_contains "$state_out" "record 'refs-rec' — carries worktree-local state (refs)" "state: per-worktree-ref record refused"
 expect_contains "$state_out" "record 'op-rec' — carries worktree-local state (MERGE_HEAD)" "state: in-progress-operation record refused"
 expect_contains "$state_out" "record 'cfg-rec' — carries worktree-local state (config.worktree)" "state: per-worktree-config record refused"
+expect_contains "$state_out" "record 'stash-rec' — carries worktree-local state (MERGE_AUTOSTASH)" "state: autostash record refused"
 [ -d "$gitdir/worktrees/state-rec" ] || fail "state: sidecar-carrying record was swept"
 [ -d "$gitdir/worktrees/refs-rec" ] || fail "state: ref-carrying record was swept"
 [ -d "$gitdir/worktrees/op-rec" ] || fail "state: op-state record was swept"
 git -C "$fixture" cat-file -e "$refs_orph" || fail "state: worktree-ref orphan commit lost"
 
-rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs" "$gitdir/worktrees/op-rec/MERGE_HEAD" "$gitdir/worktrees/cfg-rec/config.worktree"
+rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs" "$gitdir/worktrees/op-rec/MERGE_HEAD" "$gitdir/worktrees/cfg-rec/config.worktree" "$gitdir/worktrees/stash-rec/MERGE_AUTOSTASH"
 state_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the state was adopted: $state_ok_out"
 expect_contains "$state_ok_out" "pruned record 'state-rec'" "state: adopted record prunes normally"
 expect_contains "$state_ok_out" "pruned record 'refs-rec'" "state: rescued record prunes normally"
 expect_contains "$state_ok_out" "pruned record 'op-rec'" "state: finished-operation record prunes normally"
 expect_contains "$state_ok_out" "pruned record 'cfg-rec'" "state: adopted-config record prunes normally"
+expect_contains "$state_ok_out" "pruned record 'stash-rec'" "state: recovered-autostash record prunes normally"
 echo "ok: state-carrying records are refused until adopted, never swept"
 
 # ── Case E7e: an index diverging from the recorded HEAD refuses the sweep ──
@@ -1014,6 +1019,8 @@ if fetch_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; 
     fail "record prune exited zero with an unreachable FETCH_HEAD entry present: $fetch_out"
 fi
 expect_contains "$fetch_out" "FETCH_HEAD names $orph_f" "fetch-head: url-fetched tip refused"
+short_f="$(printf '%.7s' "$orph_f")"
+expect_contains "$fetch_out" "rescue/fetchrec-fetch-$short_f" "fetch-head: rescue name is per-OID, successive rescues cannot collide"
 [ -d "$gitdir/worktrees/fetchrec" ] || fail "fetch-head: record swept despite its unreachable FETCH_HEAD"
 git -C "$fixture" cat-file -e "$orph_f" || fail "fetch-head: fetched tip lost"
 
@@ -1041,6 +1048,32 @@ fetch2_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" 
     fail "record prune failed after the truncated FETCH_HEAD was removed: $fetch2_ok_out"
 expect_contains "$fetch2_ok_out" "pruned record 'fetchrec2'" "fetch-head: cleared record prunes normally"
 echo "ok: an unterminated FETCH_HEAD entry is still validated"
+
+# ── Case E7t: an unreferenced annotated tag in FETCH_HEAD refuses the sweep ─
+# Peeling the fetched OID to its commit would let the tag object itself —
+# message and signature — vanish with the record; containment for a tag is
+# exact points-at, not ancestry.
+
+git -C "$fixture" tag -a -m "fetched annotated tag" tmp-fetched-tag main
+tagoid_t="$(git -C "$fixture" rev-parse tmp-fetched-tag)"
+git -C "$fixture" tag -d tmp-fetched-tag >/dev/null
+mkdir -p "$gitdir/worktrees/tagrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/tagrec/HEAD"
+printf '%s\n' "/nonexistent/tagrec/.git" >"$gitdir/worktrees/tagrec/gitdir"
+printf '%s\t\ttag fetched-tag of https://example.invalid/repo\n' "$tagoid_t" >"$gitdir/worktrees/tagrec/FETCH_HEAD"
+
+if tagrec_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unreferenced annotated tag in FETCH_HEAD: $tagrec_out"
+fi
+expect_contains "$tagrec_out" "annotated tag object $tagoid_t with no ref pointing at it" "fetch-tag: unreferenced tag object refused"
+[ -d "$gitdir/worktrees/tagrec" ] || fail "fetch-tag: record swept despite its unreferenced tag object"
+git -C "$fixture" cat-file -e "$tagoid_t" || fail "fetch-tag: tag object lost"
+
+git -C "$fixture" tag rescue-fetched-tag "$tagoid_t"
+tagrec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the tag object was rescued: $tagrec_ok_out"
+expect_contains "$tagrec_ok_out" "pruned record 'tagrec'" "fetch-tag: referenced tag object sweeps normally"
+echo "ok: an unreferenced annotated tag in FETCH_HEAD refuses the sweep until rescued"
 
 # ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
 # A broken ref backend is not an empty pin namespace; the empty-plan path
