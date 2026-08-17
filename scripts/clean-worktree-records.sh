@@ -30,8 +30,8 @@
 #     (rebase/merge/cherry-pick — the worktree-rm.sh list), and an index
 #     that diverges from the recorded HEAD (staged-but-uncommitted blobs
 #     the index alone keeps alive). An unreadable HEAD refuses outright,
-#     and ORIG_HEAD — a ref file, not a reflog — refuses when it names a
-#     commit no shared ref contains. Reflogs are deliberately NOT state —
+#     and ORIG_HEAD and FETCH_HEAD — ref files, not reflogs — refuse when
+#     they name a commit no shared ref contains. Reflogs are deliberately NOT state —
 #     every record has one, and accepting reflog loss matches git's own
 #     prune semantics.
 #   * A detached record HEAD is pinned as refs/session-cleanup/pin/<record>
@@ -115,7 +115,10 @@ pins_outstanding() {
 }
 
 finish_no_work() {
-    if [ -n "$(pins_outstanding)" ]; then
+    # Enumeration failure is not an empty namespace: a broken ref backend
+    # must never let the run report cleanup complete (challenge r4).
+    outstanding="$(pins_outstanding)" || die "cannot enumerate rescue pins (refs/session-cleanup/pin unreadable); refusing to report cleanup complete"
+    if [ -n "$outstanding" ]; then
         echo "clean:worktree-records: nothing to prune, but rescue pins await settlement (task audit:session-artifacts lists them)." >&2
         exit 2
     fi
@@ -216,6 +219,29 @@ remove_one_record() (
             echo "SKIP  record '$record' — ORIG_HEAD $orig_commit is reachable from no shared ref, or containment is unusable under a legacy graft file (a reset/rebase abandoned it here); rescue it (git branch $(shell_quote "rescue/$record-orig") $orig_commit) then remove $admin_dir/ORIG_HEAD"
             exit 3
         fi
+    fi
+
+    # FETCH_HEAD can hold the only mapping to a URL-fetched, unbranched tip
+    # (a PR head). Ordinary fetches list tips the remote-tracking refs
+    # contain, so — exactly as with ORIG_HEAD — only an unreadable,
+    # unresolvable, or unreachable entry refuses; the conditional guard has
+    # none of the unsweepability cost an unconditional refusal would
+    # (challenge r4, revising r3's declination of the unconditional form).
+    if [ -f "$admin_dir/FETCH_HEAD" ]; then
+        while IFS= read -r fetch_line; do
+            [ -n "$fetch_line" ] || continue
+            fetch_sha="${fetch_line%%[[:space:]]*}"
+            fetch_commit=""
+            [ -z "$fetch_sha" ] || fetch_commit="$(git rev-parse --quiet --verify "$fetch_sha^{commit}" || true)"
+            if [ -z "$fetch_commit" ]; then
+                echo "SKIP  record '$record' — FETCH_HEAD entry '$fetch_sha' is unreadable or names no commit; refusing to sweep (inspect $admin_dir/FETCH_HEAD)"
+                exit 3
+            fi
+            if [ "$grafts_present" = true ] || [ -z "$(shared_refs_containing "$fetch_commit")" ]; then
+                echo "SKIP  record '$record' — FETCH_HEAD names $fetch_commit, reachable from no shared ref (a URL fetch left it here); rescue it (git branch $(shell_quote "rescue/$record-fetch") $fetch_commit) then remove $admin_dir/FETCH_HEAD"
+                exit 3
+            fi
+        done <"$admin_dir/FETCH_HEAD"
     fi
 
     # The index can be the only structure referencing staged-but-uncommitted
@@ -340,8 +366,13 @@ if [ "$errors" -gt 0 ]; then
     echo "clean:worktree-records: $removed record(s) pruned; $errors record removal(s) FAILED above — resolve before re-running." >&2
     exit 1
 fi
-if [ "$pins_pending" -gt 0 ] || [ "$skipped" -gt 0 ] || [ -n "$(pins_outstanding)" ]; then
-    echo "clean:worktree-records: $removed record(s) pruned; $pins_pending pin(s) awaiting settlement, $skipped record(s) refused above." >&2
+outstanding="$(pins_outstanding)" || die "cannot enumerate rescue pins (refs/session-cleanup/pin unreadable); refusing to report cleanup complete"
+if [ "$pins_pending" -gt 0 ] || [ "$skipped" -gt 0 ] || [ -n "$outstanding" ]; then
+    # Total, not just this run's: a pin inherited from an earlier run is
+    # exactly as much awaiting settlement as a fresh one, and printing "0"
+    # beside a nonzero exit contradicts the disposition (challenge r4).
+    total_pins="$(git for-each-ref refs/session-cleanup/pin --format='%(refname)' | grep -c . || true)"
+    echo "clean:worktree-records: $removed record(s) pruned; $pins_pending new pin(s) this run, $total_pins total awaiting settlement, $skipped record(s) refused above." >&2
     exit 2
 fi
 echo "clean:worktree-records: stale records pruned (worktree directories are never touched)."

@@ -590,6 +590,19 @@ fi
 expect_contains "$pin_retry_out" "rescue pins await settlement" "retry: pending pin keeps the run nonzero"
 echo "ok: a pending rescue pin keeps retries nonzero"
 
+# A pruning run made while an earlier pin is outstanding reports the TOTAL
+# awaiting settlement, not just this run's — "0 pins" beside a nonzero exit
+# would contradict the disposition.
+mkdir -p "$gitdir/worktrees/plainrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/plainrec/HEAD"
+printf '%s\n' "/nonexistent/plainrec/.git" >"$gitdir/worktrees/plainrec/gitdir"
+if inherit_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero while an inherited pin awaited settlement: $inherit_out"
+fi
+expect_contains "$inherit_out" "pruned record 'plainrec'" "retry-summary: unrelated record still prunes"
+expect_contains "$inherit_out" "1 total awaiting settlement" "retry-summary: inherited pin counted in the total"
+echo "ok: inherited pins are counted in the settlement total"
+
 git -C "$fixture" branch -q rescue-det "$det_sha"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-det
 prune_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
@@ -980,6 +993,53 @@ scanfail_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)
     fail "record prune failed after the scan blocker was cleared: $scanfail_ok_out"
 expect_contains "$scanfail_ok_out" "pruned record 'scanfail'" "scan failure: adopted record prunes normally"
 echo "ok: a failed state scan refuses the record, never sweeps it"
+
+# ── Case E7r: an unreachable FETCH_HEAD entry refuses the sweep ────────────
+# A URL fetch of an unbranched tip (a PR head) can leave FETCH_HEAD as the
+# only mapping to that commit; ordinary fetches list tips the tracking refs
+# contain and sweep normally.
+
+orph_f="$(git -C "$fixture" commit-tree "main^{tree}" -m "url-fetched-tip")"
+mkdir -p "$gitdir/worktrees/fetchrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/fetchrec/HEAD"
+printf '%s\n' "/nonexistent/fetchrec/.git" >"$gitdir/worktrees/fetchrec/gitdir"
+printf '%s\t\tbranch pr-head of https://example.invalid/repo\n' "$orph_f" >"$gitdir/worktrees/fetchrec/FETCH_HEAD"
+
+if fetch_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unreachable FETCH_HEAD entry present: $fetch_out"
+fi
+expect_contains "$fetch_out" "FETCH_HEAD names $orph_f" "fetch-head: url-fetched tip refused"
+[ -d "$gitdir/worktrees/fetchrec" ] || fail "fetch-head: record swept despite its unreachable FETCH_HEAD"
+git -C "$fixture" cat-file -e "$orph_f" || fail "fetch-head: fetched tip lost"
+
+git -C "$fixture" branch -q rescue-fetch "$orph_f"
+fetch_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the FETCH_HEAD commit was rescued: $fetch_ok_out"
+expect_contains "$fetch_ok_out" "pruned record 'fetchrec'" "fetch-head: reachable FETCH_HEAD sweeps normally"
+echo "ok: an unreachable FETCH_HEAD entry refuses the sweep until rescued"
+
+# ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
+# A broken ref backend is not an empty pin namespace; the empty-plan path
+# must fail closed instead of printing "nothing to prune" with exit 0.
+
+rm -f "$shim_dir/find"
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == *"--count=1 refs/session-cleanup/pin"* ]]; then
+    echo "fatal: simulated ref backend failure" >&2
+    exit 1
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+
+if enum_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although pin enumeration failed: $enum_out"
+fi
+expect_contains "$enum_out" "cannot enumerate rescue pins" "pin enumeration: failure refuses to report completion"
+expect_not_contains "$enum_out" "nothing to prune." "pin enumeration: no false cleanup-complete report"
+rm -f "$shim_dir/git"
+echo "ok: pin-enumeration failure never reports cleanup complete"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD
