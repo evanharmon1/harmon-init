@@ -2142,6 +2142,91 @@ refute_exists "$fixture/.worktrees/rollcfg-meta" "the metacharacter refusal left
 git -C "$fixture" config --unset 'branch.rollcfg$x.remote'
 git -C "$fixture" push -q origin ':refs/heads/rollcfg$x'
 
+echo "==> a non-local stale branch config value does not refuse creation"
+# PR #932 cloud review: the stale-debris guard exists for LOCAL config this
+# script's own rollback can leave; a global/system/include-provided value
+# is user configuration the advertised unset cannot clear (git config
+# --unset-all exits 5 for a global-only value), so an unscoped lookup
+# turned it into a permanent refusal. The guard reads --local only.
+git -C "$fixture" push -q origin HEAD:refs/heads/globalcfg
+git -C "$fixture" update-ref -d refs/remotes/origin/globalcfg 2>/dev/null || true
+global_cfg="$test_tmp/globalcfg.gitconfig"
+git config --file "$global_cfg" branch.globalcfg.remote elsewhere
+(cd "$fixture" && GIT_CONFIG_GLOBAL="$global_cfg" "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh globalcfg) >/dev/null 2>&1 ||
+    fail "a global-scope branch config value refused a remote-only creation (PR #932 cloud review)"
+[ "$(git config --file "$global_cfg" --get branch.globalcfg.remote)" = "elsewhere" ] ||
+    fail "the creation modified non-local user configuration"
+rm_wt globalcfg >/dev/null || fail "cleanup of the globalcfg tree failed"
+git -C "$fixture" branch -D globalcfg >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/globalcfg
+rm -f "$global_cfg"
+
+echo "==> lefthook-shimmed hooks stay suppressed during branch publication"
+# PR #932 cloud review: a repo can shim reference-transaction through
+# lefthook, and the bare update-ref publication fired it before the new
+# tree and its project tooling existed. Every ref write this operation
+# makes runs under LEFTHOOK=0, so a shim that refuses whenever LEFTHOOK
+# is not 0 must not block a remote-only creation.
+git -C "$fixture" push -q origin HEAD:refs/heads/refhook
+git -C "$fixture" update-ref -d refs/remotes/origin/refhook 2>/dev/null || true
+cat >"$shared_hooks/reference-transaction" <<'HOOK'
+#!/bin/sh
+[ "${LEFTHOOK:-}" = "0" ] && exit 0
+exit 1
+HOOK
+chmod +x "$shared_hooks/reference-transaction"
+refhook_status=0
+new refhook >/dev/null 2>&1 || refhook_status=$?
+rm -f "$shared_hooks/reference-transaction"
+[ "$refhook_status" -eq 0 ] ||
+    fail "an unsuppressed reference-transaction hook fired during publication (PR #932 cloud review)"
+rm_wt refhook >/dev/null || fail "cleanup of the refhook tree failed"
+git -C "$fixture" branch -D refhook >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/refhook
+
+echo "==> a signal landing on a failed publication cannot reach an armed rollback"
+# PR #932 cloud review: HUP/INT/TERM trap to 'exit 129', which runs
+# cleanup, and bash executes a pending trap between a FAILED create-only
+# update-ref and the un-arm that follows it — cleanup then saw
+# branch_owned=1 and its compare-and-delete matched a COMPETING client's
+# branch at the same probed tip, deleting a branch this run never
+# created. The fix defers the three signals across the create -> flag
+# transition and re-raises them after. The shim stages the race
+# deterministically: it creates the competing ref, signals the script,
+# and lets the real create-only update-ref fail.
+git -C "$fixture" push -q origin HEAD:refs/heads/sigrace
+git -C "$fixture" update-ref -d refs/remotes/origin/sigrace 2>/dev/null || true
+sigrace_tip="$(git -C "$fixture" rev-parse HEAD)"
+rm -f "$test_tmp/sigrace-fired"
+cat >"$shim_dir/git" <<SHIM
+#!/bin/sh
+if [ "\$WTSHIM_SIG_RACE" = "1" ] && [ ! -e "$test_tmp/sigrace-fired" ] && [ "\$1" = "update-ref" ]; then
+  for _arg in "\$@"; do
+    if [ "\$_arg" = "refs/heads/sigrace" ]; then
+      : >"$test_tmp/sigrace-fired"
+      "$real_git" -C "$fixture" update-ref refs/heads/sigrace "$sigrace_tip"
+      kill -TERM "\$PPID"
+      break
+    fi
+  done
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+sigrace_status=0
+(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_SIG_RACE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh sigrace) >/dev/null 2>&1 || sigrace_status=$?
+[ "$sigrace_status" -ne 0 ] ||
+    fail "fixture assumption broken: the raced creation reported success"
+[ -e "$test_tmp/sigrace-fired" ] ||
+    fail "fixture assumption broken: the update-ref shim never fired"
+git -C "$fixture" show-ref --verify --quiet refs/heads/sigrace ||
+    fail "a signal on a failed publication deleted a competing client's branch (PR #932 cloud review)"
+[ "$(git -C "$fixture" rev-parse refs/heads/sigrace)" = "$sigrace_tip" ] ||
+    fail "the competing branch tip changed under the raced rollback"
+refute_exists "$fixture/.worktrees/sigrace" "the raced creation left a tree behind"
+git -C "$fixture" branch -D sigrace >/dev/null 2>&1 || true
+git -C "$fixture" push -q origin :refs/heads/sigrace
+
 echo "==> rollback removes only the branch config keys this run wrote"
 # With the stale keys cleared, creation proceeds; a failing attach must
 # take back exactly the remote/merge keys this run wrote while the

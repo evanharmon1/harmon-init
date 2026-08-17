@@ -541,7 +541,7 @@ cleanup() {
                 # but the attach is not ours to break. The moments between
                 # this scan and the delete are the documented residual.
                 echo "worktree:new: leaving branch '$branch' alone — another worktree has it checked out" >&2
-            elif git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
+            elif LEFTHOOK=0 git update-ref -d "refs/heads/$branch" "$branch_owned_tip" 2>/dev/null; then
                 # This run's writes are the only possible values here — a
                 # pre-existing remote/merge key refuses creation up front —
                 # so rollback removes exactly the two keys it wrote and
@@ -565,7 +565,7 @@ cleanup() {
                 echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
             fi
         elif [ "$branch_is_ours" -eq 1 ]; then
-            git branch -D "$branch" >/dev/null 2>&1 || true
+            LEFTHOOK=0 git branch -D "$branch" >/dev/null 2>&1 || true
         elif [ "$branch_created" -eq 1 ]; then
             echo "worktree:new: leaving branch '$branch' alone — this run did not create it" >&2
         fi
@@ -634,7 +634,11 @@ EOF
         # that a custom refspec maps a different branch into. The commit to
         # attach is the one the probe saw ($remote_probe_sha), verified
         # present after the fetch rather than read from any ref of ours.
-        git_net fetch --quiet "$remote_match_remote" "refs/heads/$branch" ||
+        # LEFTHOOK=0: this fetch deliberately updates whatever tracking ref
+        # the remote's own refspec maps, and a lefthook-shimmed
+        # reference-transaction hook must not fire on a ref write of this
+        # operation before the new tree exists (PR #932 cloud review).
+        LEFTHOOK=0 git_net fetch --quiet "$remote_match_remote" "refs/heads/$branch" ||
             die "found branch '$branch' on remote '$remote_match_remote' but could not fetch it — retry, or pass --base <ref>"
         # One UNCONDITIONAL post-fetch probe. The remote can advance between
         # the first probe and the fetch, and the first probe's tip resolving
@@ -686,8 +690,14 @@ elif [ -n "$remote_ref" ]; then
     # signal window in which a capture could be missed. Everything else
     # in the section (pushRemote, rebase, a description) is never touched
     # in either direction.
+    # Scoped to --local deliberately: the repository config is the only
+    # scope this script writes and the only one its rollback and the
+    # remedy below can clear — an unscoped lookup would also match a
+    # global/system/include-provided value, which is user configuration
+    # rather than debris, and refuse forever with a remedy git answers
+    # with exit 5 (PR #932 cloud review).
     for _bk in remote merge; do
-        if git config --get-all "branch.$branch.$_bk" >/dev/null 2>&1; then
+        if git config --local --get-all "branch.$branch.$_bk" >/dev/null 2>&1; then
             die "branch '$branch' does not exist locally but branch.$branch.$_bk is configured — stale config from a deleted branch; review it, clear it with: git config --unset-all $(shell_quote "branch.$branch.$_bk") — and re-run"
         fi
     done
@@ -699,14 +709,33 @@ elif [ -n "$remote_ref" ]; then
     # refused create un-arms before dying; what makes the early arming safe
     # is cleanup's compare-and-delete, which only ever removes the exact
     # tip recorded here.
+    #
+    # HUP/INT/TERM are DEFERRED (recorded, re-raised after) across the
+    # create -> flag transition: bash runs a pending trap between a FAILED
+    # create-only update-ref and the un-arm below, so the 'exit 129' trap
+    # could reach cleanup still armed — and the compare-and-delete would
+    # match a COMPETING client's branch at the same probed tip, deleting a
+    # branch this run never created (PR #932 cloud review). LEFTHOOK=0 for
+    # the same reason the worktree-add calls carry it: a lefthook-shimmed
+    # reference-transaction hook must not fire mid-publication, before the
+    # tree its project tooling expects exists.
+    publish_sig=""
+    trap 'publish_sig=HUP' HUP
+    trap 'publish_sig=INT' INT
+    trap 'publish_sig=TERM' TERM
     branch_created=1
     branch_owned=1
     branch_owned_tip="$remote_probe_sha"
-    if ! git update-ref "refs/heads/$branch" "$remote_probe_sha" "" 2>/dev/null; then
+    publish_rc=0
+    LEFTHOOK=0 git update-ref "refs/heads/$branch" "$remote_probe_sha" "" 2>/dev/null || publish_rc=$?
+    if [ "$publish_rc" -ne 0 ]; then
         branch_created=0
         branch_owned=0
-        die "branch '$branch' appeared while this run was creating it — re-run to attach it"
     fi
+    trap 'exit 129' HUP INT TERM
+    [ -z "$publish_sig" ] || kill -s "$publish_sig" $$
+    [ "$publish_rc" -eq 0 ] ||
+        die "branch '$branch' appeared while this run was creating it (or a reference-transaction hook refused the update) — re-run to attach it"
     git config "branch.$branch.remote" "$remote_match_remote"
     git config "branch.$branch.merge" "refs/heads/$branch"
     LEFTHOOK=0 git worktree add "$tree" "$branch"
