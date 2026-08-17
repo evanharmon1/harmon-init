@@ -562,6 +562,7 @@ if prune_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; 
     fail "record prune exited zero although an orphan pin should have been kept: $prune_out"
 fi
 expect_contains "$prune_out" "KEPT  refs/session-cleanup/pin/wt-det" "record prune: orphan commit's pin kept and reported"
+expect_contains "$prune_out" "git update-ref -d 'refs/session-cleanup/pin/wt-det' $det_sha" "record prune: drop remedy is compare-and-delete, immune to record-name reuse"
 worktrees_admin="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees"
 if ls "$worktrees_admin" 2>/dev/null | grep -Eq '^(wt-det|wt-br)$'; then
     fail "record prune: stale records survived the prune"
@@ -613,6 +614,7 @@ if reuse_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; 
     fail "record prune proceeded over a foreign unsettled pin: $reuse_out"
 fi
 expect_contains "$reuse_out" "already pins $orph_sha" "pin reuse: refusal names the earlier pin"
+expect_contains "$reuse_out" "git update-ref -d 'refs/session-cleanup/pin/pin-reuse' $orph_sha" "pin reuse: refusal drop remedy is compare-and-delete"
 [ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$orph_sha" ] ||
     fail "pin reuse: the earlier pin was overwritten"
 [ -d "$gitdir/worktrees/pin-reuse" ] || fail "pin reuse: the record was removed despite the refusal"
@@ -929,6 +931,55 @@ expect_not_contains "$retarg_out" "KEPT  refs/session-cleanup/pin/retarg" "pin r
 git -C "$fixture" cat-file -e "$ret_orph" || fail "pin retarget: orphan commit lost from the object db"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/retarg
 echo "ok: a pin retargeted mid-run fails closed, never reported kept"
+
+# ── Case E7p: an unresolvable detached HEAD refuses the sweep ──────────────
+# A truncated HEAD, a missing object, or a promisor-held commit cannot be
+# pinned; falling through to rm -rf would destroy the only recovery
+# breadcrumb.
+
+mkdir -p "$gitdir/worktrees/badheadrec"
+printf '%s\n' "0123456789abcdef0123456789abcdef01234567" >"$gitdir/worktrees/badheadrec/HEAD"
+printf '%s\n' "/nonexistent/badheadrec/.git" >"$gitdir/worktrees/badheadrec/gitdir"
+
+if badhead_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unresolvable detached HEAD present: $badhead_out"
+fi
+expect_contains "$badhead_out" "does not resolve to a commit" "unresolvable: refusal names the failure"
+[ -d "$gitdir/worktrees/badheadrec" ] || fail "unresolvable: record swept despite an unresolvable HEAD"
+
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/badheadrec/HEAD"
+badhead_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the HEAD was repaired: $badhead_ok_out"
+expect_contains "$badhead_ok_out" "pruned record 'badheadrec'" "unresolvable: repaired record prunes normally"
+echo "ok: an unresolvable detached HEAD refuses the sweep"
+
+# ── Case E7q: a failed state scan refuses the record, never sweeps it ──────
+# An errored find is not an empty find: treating scan failure as "no state"
+# would sweep exactly the record that could not be inspected.
+
+mkdir -p "$gitdir/worktrees/scanfail/deferred-findings"
+echo "p2 note" >"$gitdir/worktrees/scanfail/deferred-findings/some-branch"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/scanfail/HEAD"
+printf '%s\n' "/nonexistent/scanfail/.git" >"$gitdir/worktrees/scanfail/gitdir"
+rm -f "$shim_dir/git"
+cat >"$shim_dir/find" <<'SHIM'
+#!/usr/bin/env bash
+exit 1
+SHIM
+chmod +x "$shim_dir/find"
+
+if scanfail_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the state scan failed: $scanfail_out"
+fi
+expect_contains "$scanfail_out" "cannot scan deferred-findings" "scan failure: refused fail-closed"
+[ -d "$gitdir/worktrees/scanfail" ] || fail "scan failure: uninspectable record was swept"
+
+rm -f "$shim_dir/find"
+rm -rf "$gitdir/worktrees/scanfail/deferred-findings"
+scanfail_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the scan blocker was cleared: $scanfail_ok_out"
+expect_contains "$scanfail_ok_out" "pruned record 'scanfail'" "scan failure: adopted record prunes normally"
+echo "ok: a failed state scan refuses the record, never sweeps it"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD

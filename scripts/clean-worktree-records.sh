@@ -174,10 +174,15 @@ remove_one_record() (
     # nothing else references (challenge r1).
     carried=""
     for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
-        if [ -e "$admin_dir/$sub" ] &&
-            [ -n "$(find "$admin_dir/$sub" -type f 2>/dev/null | head -n 1)" ]; then
-            carried="$carried $sub"
+        [ -e "$admin_dir/$sub" ] || continue
+        # A failed scan is not an empty scan: treating an errored find as
+        # "no state" would sweep exactly the record it could not inspect
+        # (challenge r3).
+        if ! state_scan="$(find "$admin_dir/$sub" -type f 2>&1)"; then
+            echo "SKIP  record '$record' — cannot scan $sub for worktree-local state ($state_scan); failing closed"
+            exit 3
         fi
+        [ -z "$state_scan" ] || carried="$carried $sub"
     done
     if [ -n "$carried" ]; then
         echo "SKIP  record '$record' — carries worktree-local state (${carried# }); adopt or rescue it first, it exists nowhere else"
@@ -237,7 +242,7 @@ remove_one_record() (
         if git rev-parse --quiet --verify "$record_head^{commit}" >/dev/null 2>&1; then
             existing_pin="$(git rev-parse --quiet --verify "refs/session-cleanup/pin/$record" || true)"
             if [ -n "$existing_pin" ] && [ "$existing_pin" != "$record_head" ]; then
-                echo "SKIP  record '$record' — refs/session-cleanup/pin/$record already pins $existing_pin from an earlier run; settle it first (git branch $(shell_quote "rescue/$record") $existing_pin, or git update-ref -d $(shell_quote "refs/session-cleanup/pin/$record"))"
+                echo "SKIP  record '$record' — refs/session-cleanup/pin/$record already pins $existing_pin from an earlier run; settle it first (git branch $(shell_quote "rescue/$record") $existing_pin, or git update-ref -d $(shell_quote "refs/session-cleanup/pin/$record") $existing_pin)"
                 exit 3
             fi
             # Create-only (old value ''): never overwrite a pin this run did
@@ -247,6 +252,13 @@ remove_one_record() (
                 exit 3
             fi
             pinned_here=true
+        else
+            # A nonempty detached HEAD that resolves to no commit — a
+            # truncated file, a missing or promisor-held object — cannot be
+            # pinned, and sweeping would destroy the only recovery
+            # breadcrumb; refuse instead of falling through (challenge r3).
+            echo "SKIP  record '$record' — its detached HEAD $record_head does not resolve to a commit (missing or corrupt object); refusing to sweep the only reference"
+            exit 3 # unresolvable HEAD refuses
         fi
         ;;
     esac
@@ -283,9 +295,13 @@ remove_one_record() (
         # PRESENT safety: reachability is a prune-time snapshot, so the drop
         # remedy instructs re-verification first (challenge r1).
         if [ "$grafts_present" = false ] && [ -n "$(shared_refs_containing "$record_head")" ]; then
-            echo "PINNED  $pin_ref — $record_head was reachable from shared refs at prune time; re-verify before dropping (git --no-replace-objects for-each-ref --contains $record_head refs/heads refs/tags refs/remotes), then: git update-ref -d $(shell_quote "$pin_ref")"
+            # Every printed drop remedy carries the expected OID: update-ref
+            # -d with an old value is compare-and-delete, so a stale command
+            # re-run after record-name reuse cannot delete a newer pin
+            # (challenge r3).
+            echo "PINNED  $pin_ref — $record_head was reachable from shared refs at prune time; re-verify before dropping (git --no-replace-objects for-each-ref --contains $record_head refs/heads refs/tags refs/remotes), then: git update-ref -d $(shell_quote "$pin_ref") $record_head"
         else
-            echo "KEPT  $pin_ref — pruned record '$record' held the only reference to detached commit $record_head; branch it (git branch $(shell_quote "rescue/$record") $record_head) or discard it (git update-ref -d $(shell_quote "$pin_ref"))"
+            echo "KEPT  $pin_ref — pruned record '$record' held the only reference to detached commit $record_head; branch it (git branch $(shell_quote "rescue/$record") $record_head) or discard it (git update-ref -d $(shell_quote "$pin_ref") $record_head)"
         fi
         exit 2
     fi
