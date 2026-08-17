@@ -132,6 +132,7 @@ tasks:
       - task: test:sync-devkit-release
 [% endif %]
       - task: test:worktree
+      - task: test:session-cleanup
 [% if devcontainer %]
       - task: test:hooks
       - task: test:statusline
@@ -667,6 +668,11 @@ tasks:
     cmds:
       - ./scripts/test-worktree.sh
 
+  test:session-cleanup:
+    desc: Behavioral test for audit:session-artifacts / clean:branches (evidence-gated deletion + negative controls, in a throwaway fixture repo)
+    cmds:
+      - ./scripts/test-session-cleanup.sh
+
   test:agent-instructions-size:
     desc: Unit-test the non-blocking AGENTS.md size advisory
     cmds:
@@ -1197,6 +1203,29 @@ tasks:
 [% if use_python %]
       - find . -type d -name __pycache__ -exec rm -rf {} +
 [% endif %]
+
+  # ── Session cleanup ────────────────────────────────────────────
+  # audit:* reports, clean:* acts — and deletion only ever runs on positive
+  # evidence (a PR merged into the default branch at exactly the local tip,
+  # or verified-fresh ancestry into the remote default), because squash-merge
+  # makes ancestry blind to delivered branches. Every deletion is a guarded
+  # compare-and-delete against the verified tip. Dry run by default; never a
+  # force flag; never touches a worktree or a remote branch.
+  audit:session-artifacts:
+    desc: "Report session leftovers (unpushed branches, gone upstreams vs merged PRs, other worktrees, review sidecars) — mutates nothing"
+    cmds:
+      - ./scripts/audit-session-artifacts.sh
+
+  clean:branches:
+    desc: "Delete local branches only on positive merge evidence (dry run; 'task clean:branches -- --delete' to act)"
+    cmds:
+      - ./scripts/clean-branches.sh {{.CLI_ARGS}}
+
+  clean:remote-refs:
+    desc: Prune remote-tracking refs whose remote branch is gone, on every remote (git fetch --all --prune)
+    cmds:
+      - git fetch --all --prune
+
 
   # ── Status ─────────────────────────────────────────────────────
   status:
