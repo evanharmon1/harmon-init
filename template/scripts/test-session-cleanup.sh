@@ -648,7 +648,7 @@ echo "ok: an unsettled rescue pin refuses the prune instead of being overwritten
 # Sidecars and per-worktree ref files under worktrees/<id>/ are single-copy;
 # no pin can stand in for them.
 
-for rec in state-rec refs-rec op-rec; do
+for rec in state-rec refs-rec op-rec cfg-rec; do
     mkdir -p "$gitdir/worktrees/$rec"
     printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/$rec/HEAD"
     printf '%s\n' "/nonexistent/$rec/.git" >"$gitdir/worktrees/$rec/gitdir"
@@ -661,6 +661,8 @@ printf '%s\n' "$refs_orph" >"$gitdir/worktrees/refs-rec/refs/worktree/only"
 # A merge parked at an edit: MERGE_HEAD is sequencer state the record alone
 # holds (the worktree-rm.sh op-state list).
 git -C "$fixture" rev-parse main >"$gitdir/worktrees/op-rec/MERGE_HEAD"
+# User-set per-worktree configuration is single-copy exactly like a sidecar.
+printf '[review]\n\tunique = KEEP-ME\n' >"$gitdir/worktrees/cfg-rec/config.worktree"
 
 if state_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
     fail "record prune exited zero with refused state-carrying records: $state_out"
@@ -668,17 +670,19 @@ fi
 expect_contains "$state_out" "record 'state-rec' — carries worktree-local state (deferred-findings)" "state: sidecar-carrying record refused"
 expect_contains "$state_out" "record 'refs-rec' — carries worktree-local state (refs)" "state: per-worktree-ref record refused"
 expect_contains "$state_out" "record 'op-rec' — carries worktree-local state (MERGE_HEAD)" "state: in-progress-operation record refused"
+expect_contains "$state_out" "record 'cfg-rec' — carries worktree-local state (config.worktree)" "state: per-worktree-config record refused"
 [ -d "$gitdir/worktrees/state-rec" ] || fail "state: sidecar-carrying record was swept"
 [ -d "$gitdir/worktrees/refs-rec" ] || fail "state: ref-carrying record was swept"
 [ -d "$gitdir/worktrees/op-rec" ] || fail "state: op-state record was swept"
 git -C "$fixture" cat-file -e "$refs_orph" || fail "state: worktree-ref orphan commit lost"
 
-rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs" "$gitdir/worktrees/op-rec/MERGE_HEAD"
+rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs" "$gitdir/worktrees/op-rec/MERGE_HEAD" "$gitdir/worktrees/cfg-rec/config.worktree"
 state_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the state was adopted: $state_ok_out"
 expect_contains "$state_ok_out" "pruned record 'state-rec'" "state: adopted record prunes normally"
 expect_contains "$state_ok_out" "pruned record 'refs-rec'" "state: rescued record prunes normally"
 expect_contains "$state_ok_out" "pruned record 'op-rec'" "state: finished-operation record prunes normally"
+expect_contains "$state_ok_out" "pruned record 'cfg-rec'" "state: adopted-config record prunes normally"
 echo "ok: state-carrying records are refused until adopted, never swept"
 
 # ── Case E7e: an index diverging from the recorded HEAD refuses the sweep ──
@@ -697,6 +701,7 @@ if staged_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)";
     fail "record prune exited zero with a staged-divergent index present: $staged_out"
 fi
 expect_contains "$staged_out" "record 'wt-staged' — its index diverges from the recorded HEAD" "staged: divergent index refused"
+expect_contains "$staged_out" "GIT_INDEX_FILE='" "staged: recovery command shell-quotes the index path"
 [ -d "$gitdir/worktrees/wt-staged" ] || fail "staged: index-carrying record was swept"
 
 rm -f "$gitdir/worktrees/wt-staged/index"
@@ -1017,6 +1022,25 @@ fetch_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" |
     fail "record prune failed after the FETCH_HEAD commit was rescued: $fetch_ok_out"
 expect_contains "$fetch_ok_out" "pruned record 'fetchrec'" "fetch-head: reachable FETCH_HEAD sweeps normally"
 echo "ok: an unreachable FETCH_HEAD entry refuses the sweep until rescued"
+
+# A truncated write can leave the final FETCH_HEAD record unterminated; the
+# guard must validate that entry too, not skip it with the read loop.
+orph_f2="$(git -C "$fixture" commit-tree "main^{tree}" -m "truncated-fetch-tip")"
+mkdir -p "$gitdir/worktrees/fetchrec2"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/fetchrec2/HEAD"
+printf '%s\n' "/nonexistent/fetchrec2/.git" >"$gitdir/worktrees/fetchrec2/gitdir"
+printf '%s\t\tbranch other of https://example.invalid/repo' "$orph_f2" >"$gitdir/worktrees/fetchrec2/FETCH_HEAD"
+
+if fetch2_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unterminated FETCH_HEAD entry present: $fetch2_out"
+fi
+expect_contains "$fetch2_out" "FETCH_HEAD names $orph_f2" "fetch-head: unterminated final entry still validated"
+[ -d "$gitdir/worktrees/fetchrec2" ] || fail "fetch-head: record swept despite its unterminated FETCH_HEAD entry"
+rm -f "$gitdir/worktrees/fetchrec2/FETCH_HEAD"
+fetch2_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the truncated FETCH_HEAD was removed: $fetch2_ok_out"
+expect_contains "$fetch2_ok_out" "pruned record 'fetchrec2'" "fetch-head: cleared record prunes normally"
+echo "ok: an unterminated FETCH_HEAD entry is still validated"
 
 # ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
 # A broken ref backend is not an empty pin namespace; the empty-plan path

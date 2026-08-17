@@ -176,7 +176,12 @@ remove_one_record() (
     # edit leaves sequencer state — and, after an amend there, commits —
     # nothing else references (challenge r1).
     carried=""
-    for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+    # config.worktree and info/sparse-checkout carry user-set per-worktree
+    # configuration (extensions.worktreeConfig, sparse patterns) — the same
+    # adopt-or-rescue class as the review sidecars, and present only on
+    # worktreeConfig-enabled records, so refusing costs no sweepability
+    # (challenge r5, reversing r2's "dead config" declination).
+    for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG config.worktree info/sparse-checkout; do
         [ -e "$admin_dir/$sub" ] || continue
         # A failed scan is not an empty scan: treating an errored find as
         # "no state" would sweep exactly the record it could not inspect
@@ -228,7 +233,10 @@ remove_one_record() (
     # none of the unsweepability cost an unconditional refusal would
     # (challenge r4, revising r3's declination of the unconditional form).
     if [ -f "$admin_dir/FETCH_HEAD" ]; then
-        while IFS= read -r fetch_line; do
+        # `|| [ -n ... ]`: a truncated write can leave the final record
+        # unterminated, and a plain read would skip exactly that entry
+        # (challenge r5).
+        while IFS= read -r fetch_line || [ -n "$fetch_line" ]; do
             [ -n "$fetch_line" ] || continue
             fetch_sha="${fetch_line%%[[:space:]]*}"
             fetch_commit=""
@@ -256,7 +264,7 @@ remove_one_record() (
         esac
         if [ -z "$head_commit" ] ||
             ! GIT_INDEX_FILE="$admin_dir/index" git diff-index --cached --quiet "$head_commit" 2>/dev/null; then
-            echo "SKIP  record '$record' — its index diverges from the recorded HEAD (staged-only changes, or unverifiable); recover them first (GIT_INDEX_FILE=$admin_dir/index git checkout-index ...), then remove the index file"
+            echo "SKIP  record '$record' — its index diverges from the recorded HEAD (staged-only changes, or unverifiable); recover them first (GIT_INDEX_FILE=$(shell_quote "$admin_dir/index") git checkout-index ...), then remove the index file"
             exit 3
         fi
     fi
