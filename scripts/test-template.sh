@@ -1189,6 +1189,8 @@ iac | full)
             err "CHECKLIST omits legacy-label migration for project_management=none + use_foreman=true"
         grep -Fq 'treat it as capped' docs/CHECKLIST.md ||
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
+        ! grep -Fq '[project-management.md](project-management.md)' docs/CHECKLIST.md ||
+            err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
     fi
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"

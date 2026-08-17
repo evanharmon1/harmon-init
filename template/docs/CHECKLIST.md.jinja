@@ -278,8 +278,9 @@ environment — against the items below
 [% endif %]
 [% if project_management == 'github' or use_foreman %]
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
-      families from `label-registry.json` (see the generated taxonomy table in
-      [project-management.md](project-management.md)) — grow `domain:` values
+      families from `label-registry.json`[% if project_management == 'github' %]
+      (see the generated taxonomy table in
+      [project-management.md](project-management.md))[% endif %] — grow `domain:` values
       there as the product's own vocabulary; `layer:` is product-independent
       and normally needs no edits. Labels are per-repo, so run it in each repo;
       org default labels (org Settings → Repository, UI-only) only seed new
