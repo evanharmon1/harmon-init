@@ -55,6 +55,13 @@ it points here.
   uncommitted work). It refuses on uncommitted changes **and** on ignored local
   files such as a `.env` — `git worktree remove` counts modified and untracked
   files but not ignored ones, so a plain remove would take those with it.
+  Edits hidden by `skip-worktree`/`assume-unchanged` refuse too, a deleted
+  flagged file included. In a sparse checkout an absent flagged path is exempt
+  only when the tree's active sparse rules exclude it (asked via
+  `git sparse-checkout check-rules`); on git < 2.42, which lacks
+  `check-rules`, the exemption deliberately stays per-tree rather than
+  failing closed, so clean sparse worktrees remain removable on e.g. macOS
+  system git (harmon-init#919).
   Ignored *directories* (`node_modules/`, `.venv/`, `dist/`) do not block it:
   `worktree:new` reinstalls them, and refusing there would make `--force`
   routine and so meaningless. It also prunes the registry and clears leftover
