@@ -63,6 +63,17 @@ it points here.
 - **A fresh worktree has no `node_modules`/`.venv`.** Working files are per-tree,
   so dependency install is per-tree too; that is what `worktree:new` runs and
   why "it worked in the main checkout" is not evidence.
+- **The Node installer is selected from the repo's own signals** — a
+  `package.json` alone proves "Node repo", never "pnpm repo". Precedence:
+  the `packageManager` field in `package.json` (the Corepack declaration)
+  wins outright, even over a contradicting lockfile; otherwise exactly one
+  manager's files at the tree root — `pnpm-lock.yaml`/`pnpm-workspace.yaml`
+  → pnpm, `package-lock.json`/`npm-shrinkwrap.json` → npm, `yarn.lock` →
+  Yarn, `bun.lock`/`bun.lockb` → Bun. Files from two managers at once fail
+  loudly rather than guess, an unsupported `packageManager` value fails
+  loudly without touching the tree, and a bare `package.json` with no signal
+  skips the install with a note — declare `packageManager` to make it
+  deterministic.
 - **Never pass `-c core.hooksPath=.git/hooks` to git in a worktree.** In a
   linked worktree `.git` is a **file**, not a directory, so that path resolves
   to nothing and commits run **hook-less and silently**. Git's own defaults are

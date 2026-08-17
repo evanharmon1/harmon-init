@@ -771,9 +771,72 @@ if [ "$do_install" -eq 1 ]; then
     # keying solely on a root package.json would report such a tree ready with
     # none of its dependencies installed.
     if [ -f "$tree/package.json" ] || [ -f "$tree/pnpm-workspace.yaml" ]; then
-        have pnpm || die "a Node manifest is present but pnpm is not installed — run 'task bootstrap' (or install pnpm) and re-run"
-        echo "==> Installing Node dependencies (pnpm) in the new tree"
-        (cd "$tree" && pnpm install)
+        # package.json is shared by npm, Yarn, Bun, and pnpm alike, so it
+        # proves "this is a Node repo", never "this repo uses pnpm"
+        # (harmon-init#841) — running the wrong installer resolves a different
+        # dependency graph and writes a foreign lockfile into the new tree.
+        # Select the manager deterministically, in this precedence
+        # (documented in docs/conventions.md § Worktrees):
+        #   1. The `packageManager` field in package.json — the repo's own
+        #      declaration (the Corepack convention), so it wins even over a
+        #      contradicting lockfile, exactly as Corepack itself would.
+        #      Parsed best-effort — the first string-valued occurrence in the
+        #      file — because jq is not one of this script's dependencies;
+        #      the spec puts the field at top level with a string value, and
+        #      nested objects like devEngines.packageManager carry an object
+        #      value, which this pattern does not match.
+        #   2. Exactly one manager's own files at the tree root:
+        #      pnpm-lock.yaml or pnpm-workspace.yaml → pnpm;
+        #      package-lock.json or npm-shrinkwrap.json → npm;
+        #      yarn.lock → yarn; bun.lock or bun.lockb → bun.
+        #      Files from two managers at once is a contradiction only the
+        #      repo can resolve — fail loudly rather than guess, because the
+        #      guess that loses writes the wrong lockfile.
+        #   3. No signal at all (a bare package.json): skip the install with
+        #      a note naming the fix. Installing on a guess here is the exact
+        #      defect this block replaces, and a skipped install is visible
+        #      while a wrong lockfile is not.
+        node_pm=""
+        pm_decl=""
+        if [ -f "$tree/package.json" ]; then
+            pm_decl="$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tree/package.json" | head -n 1)"
+        fi
+        if [ -n "$pm_decl" ]; then
+            node_pm=${pm_decl%%@*}
+            case "$node_pm" in
+            pnpm | npm | yarn | bun) ;;
+            *) die "package.json declares packageManager '$pm_decl', which this script does not support (pnpm, npm, yarn, bun) — install dependencies with it yourself, or re-run with --no-install" ;;
+            esac
+        else
+            node_signals=""
+            if [ -f "$tree/pnpm-lock.yaml" ] || [ -f "$tree/pnpm-workspace.yaml" ]; then
+                node_signals="$node_signals pnpm"
+            fi
+            if [ -f "$tree/package-lock.json" ] || [ -f "$tree/npm-shrinkwrap.json" ]; then
+                node_signals="$node_signals npm"
+            fi
+            if [ -f "$tree/yarn.lock" ]; then
+                node_signals="$node_signals yarn"
+            fi
+            if [ -f "$tree/bun.lock" ] || [ -f "$tree/bun.lockb" ]; then
+                node_signals="$node_signals bun"
+            fi
+            node_pm_count=0
+            for node_pm_candidate in $node_signals; do
+                node_pm_count=$((node_pm_count + 1))
+                node_pm=$node_pm_candidate
+            done
+            if [ "$node_pm_count" -gt 1 ]; then
+                die "conflicting Node package-manager signals in this tree:$node_signals — remove the stale manager's file(s) or declare \"packageManager\" in package.json, then re-run"
+            fi
+        fi
+        if [ -n "$node_pm" ]; then
+            have "$node_pm" || die "this repo's Node package manager is $node_pm but it is not installed — install $node_pm (for pnpm, 'task bootstrap' does) and re-run"
+            echo "==> Installing Node dependencies ($node_pm) in the new tree"
+            (cd "$tree" && "$node_pm" install)
+        else
+            echo "==> Note: package.json carries no package-manager signal (no packageManager field, no lockfile) — skipping the Node install; declare \"packageManager\" in package.json, or install dependencies in the tree yourself"
+        fi
     fi
     if [ -f "$tree/pyproject.toml" ]; then
         have uv || die "pyproject.toml is present but uv is not installed — run 'task bootstrap' (or install uv) and re-run"
