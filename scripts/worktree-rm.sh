@@ -41,6 +41,26 @@ shared_refs_containing() {
         grep -Ev '^refs/(worktree|bisect|rewritten)/' || true
 }
 
+# `git sparse-checkout check-rules` (git >= 2.42) lets the hidden-edit guard
+# ask whether an absent flagged path is genuinely EXCLUDED by a sparse tree's
+# active rules, or was deleted by the user. The gate is an explicit version
+# parse, not a capability probe: probing by running the subcommand cannot
+# distinguish "this git predates check-rules" from "check-rules failed at
+# runtime", and misreading the second as the first would silently widen the
+# exemption on a git that could have answered. A version this parser cannot
+# read is treated as < 2.42 — not provably capable — which lands on the
+# DOCUMENTED old-git behavior below rather than an undefined one.
+git_supports_check_rules() {
+    gate_ver="$(git --version 2>/dev/null)" || return 1
+    gate_ver="${gate_ver#git version }"
+    gate_major="${gate_ver%%.*}"
+    gate_rest="${gate_ver#*.}"
+    gate_minor="${gate_rest%%.*}"
+    case "$gate_major" in '' | *[!0-9]*) return 1 ;; esac
+    case "$gate_minor" in '' | *[!0-9]*) return 1 ;; esac
+    [ "$gate_major" -gt 2 ] || { [ "$gate_major" -eq 2 ] && [ "$gate_minor" -ge 42 ]; }
+}
+
 # Locate the administrative directory backing the registry record for a
 # worktree path. git exposes no porcelain for this mapping; each record's
 # `gitdir` file holds the path of that worktree's `.git` file, which is the
@@ -239,13 +259,28 @@ else
     # spawned.
     #
     # What counts as a hidden edit is what a removal would DESTROY:
-    #   - an absent skip-worktree path is skipped only when sparse checkout
-    #     is enabled in the tree — sparse marks every excluded path
-    #     skip-worktree with no file present, so refusing on absence would
-    #     block the removal of every clean sparse worktree. Without sparse,
-    #     absence means the user deleted a file they had flagged — for
-    #     skip-worktree and assume-unchanged alike, that uncommitted
-    #     deletion is what the removal would discard, so it refuses;
+    #   - an absent skip-worktree path in a sparse-enabled tree is skipped
+    #     only when the tree's ACTIVE sparse rules exclude it — sparse marks
+    #     every excluded path skip-worktree with no file present, so refusing
+    #     on absence alone would block the removal of every clean sparse
+    #     worktree. But sparse-enabled is a per-tree fact and the flag is
+    #     per-path: an IN-CONE file the user manually flagged and then
+    #     deleted shows the same absent-`S` state, and skipping it discards
+    #     that uncommitted deletion-intent (harmon-init#919). So absence is
+    #     exempt per PATH, by asking `git sparse-checkout check-rules`
+    #     (git >= 2.42) whether the rules exclude it — batched once per tree,
+    #     because a sparse monorepo can hold hundreds of thousands of absent
+    #     entries and a per-path spawn turned removal into minutes. On
+    #     git < 2.42 the whole-tree exemption is KEPT, deliberately and
+    #     documented (harmon-init#919's decided AC): the residual loss is
+    #     deletion-intent on an exotic, unstable state (git recomputes
+    #     sparse skip-worktree bits itself), while failing closed would
+    #     refuse every clean sparse-worktree removal on e.g. macOS system
+    #     git ~2.39 and teach the routine use of --force, which discards
+    #     every OTHER protection here too. Without sparse, absence means the
+    #     user deleted a file they had flagged — for skip-worktree and
+    #     assume-unchanged alike, that uncommitted deletion is what the
+    #     removal would discard, so it refuses;
     #   - content is compared against the CHECKOUT representation
     #     (`cat-file --filters` — the bytes a fresh checkout would write),
     #     so an unmodified checkout under `eol=crlf`, `core.autocrlf`, or a
@@ -269,6 +304,16 @@ else
         sparse_enabled="$(git -C "$tree" config --get --type=bool --default=false core.sparseCheckout 2>/dev/null || echo false)"
         filemode_enabled="$(git -C "$tree" config --get --type=bool --default=true core.fileMode 2>/dev/null || echo true)"
         symlinks_enabled="$(git -C "$tree" config --get --type=bool --default=true core.symlinks 2>/dev/null || echo true)"
+        sparse_rules_checkable=0
+        if [ "$sparse_enabled" = "true" ] && git_supports_check_rules; then
+            sparse_rules_checkable=1
+        fi
+        # Absent flagged paths whose exemption depends on the sparse rules,
+        # deferred to ONE batched check-rules call after the enumeration. A
+        # bash array, not a delimited string: a variable cannot hold the NUL
+        # this stream frames with, and any other delimiter can occur in a
+        # path.
+        sparse_absent_candidates=()
         hidden_paths=""
         flagged_enum_ok=0
         while IFS= read -r -d '' flagged_entry; do
@@ -293,6 +338,15 @@ else
                 case "$flagged_tag" in
                 S | s)
                     if [ "$sparse_enabled" = "true" ]; then
+                        if [ "$sparse_rules_checkable" -eq 1 ]; then
+                            # Excluded-or-deleted is decided by the batched
+                            # check-rules call after the enumeration, not
+                            # here: deferring keeps this loop spawn-free
+                            # per entry.
+                            sparse_absent_candidates+=("$flagged_path")
+                        fi
+                        # git < 2.42: the documented whole-tree exemption
+                        # (see the guard comment above).
                         continue
                     fi
                     ;;
@@ -376,6 +430,36 @@ else
         done < <(git -C "$tree" ls-files -v -z && printf '__WORKTREE_RM_ENUM_OK__\0')
         if [ "$flagged_enum_ok" -ne 1 ]; then
             die "could not enumerate $tree's index entries for the hidden-edit check — this guard fails closed; fix the enumeration (or discard the tree with --force)"
+        fi
+        # ONE query for every deferred absent flagged path: check-rules
+        # echoes back exactly the paths the tree's active sparse rules MATCH
+        # (would keep present), so an echoed path is in-cone — its absence is
+        # a user's deletion, refused like any hidden deletion — and a path
+        # not echoed is excluded, absent because sparse removed it. `-C
+        # "$tree"` is load-bearing: check-rules reads the invoking worktree's
+        # own sparse-checkout state, and each linked worktree carries its own
+        # (extensions.worktreeConfig).
+        #
+        # The trailing empty record is this pipeline's success sentinel,
+        # mirroring flagged_enum_ok above: bash does not propagate a
+        # process-substitution failure, so without it a check-rules error or
+        # truncated stream would fail OPEN and wave the removal through. An
+        # empty record is unforgeable here — check-rules only echoes paths it
+        # was fed, and no index entry has an empty path.
+        if [ "${#sparse_absent_candidates[@]}" -gt 0 ]; then
+            sparse_rules_ok=0
+            while IFS= read -r -d '' incone_path; do
+                if [ -z "$incone_path" ]; then
+                    sparse_rules_ok=1
+                    continue
+                fi
+                hidden_paths="${hidden_paths}  ${incone_path}
+"
+            done < <(printf '%s\0' "${sparse_absent_candidates[@]}" |
+                git -C "$tree" sparse-checkout check-rules -z && printf '\0')
+            if [ "$sparse_rules_ok" -ne 1 ]; then
+                die "could not evaluate $tree's sparse rules for the hidden-edit check — this guard fails closed; fix the sparse-checkout state (or discard the tree with --force)"
+            fi
         fi
         if [ -n "$hidden_paths" ]; then
             echo "worktree:rm: $tree has local edits hidden from git status by skip-worktree / assume-unchanged:" >&2

@@ -390,6 +390,96 @@ rm_wt hidden-sparse >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal of a clean sparse worktree"
 refute_exists "$fixture/.worktrees/hidden-sparse" "worktree-rm.sh left the tree behind"
 
+echo "==> a DELETED in-cone flagged file in a SPARSE tree blocks removal"
+# Sparse-enabled is a per-tree fact; the skip-worktree flag is per path. A
+# user who manually flags an IN-CONE (included) file and deletes it shows
+# the same absent-`S` state as a sparse-excluded path, and the pre-#919
+# guard skipped it as sparse-absent — discarding the uncommitted
+# deletion-intent. The active rules decide now: excluded stays exempt (the
+# case above), in-cone refuses, naming the path.
+new hidden-sparse-cone >/dev/null || fail "worktree-new.sh failed for the in-cone sparse case"
+git -C "$fixture/.worktrees/hidden-sparse-cone" sparse-checkout set --no-cone '/scripts' >/dev/null 2>&1 ||
+    fail "could not enable sparse checkout in the fixture worktree"
+[ -f "$fixture/.worktrees/hidden-sparse-cone/scripts/worktree-lock.sh" ] ||
+    fail "fixture assumption broken: sparse checkout removed an in-cone file"
+git -C "$fixture/.worktrees/hidden-sparse-cone" update-index --skip-worktree scripts/worktree-lock.sh
+rm "$fixture/.worktrees/hidden-sparse-cone/scripts/worktree-lock.sh"
+[ -z "$(git -C "$fixture/.worktrees/hidden-sparse-cone" status --porcelain)" ] ||
+    fail "fixture assumption broken: the flagged in-cone deletion shows in git status"
+cone_out="$(rm_wt hidden-sparse-cone 2>&1)" &&
+    fail "worktree-rm.sh removed a sparse tree with a deleted in-cone flagged file without --force"
+case "$cone_out" in *"scripts/worktree-lock.sh"*) : ;; *) fail "the in-cone sparse refusal did not name the deleted path" ;; esac
+rm_wt hidden-sparse-cone --force >/dev/null || fail "worktree-rm.sh --force failed on the in-cone sparse case"
+refute_exists "$fixture/.worktrees/hidden-sparse-cone" "worktree-rm.sh --force left the directory behind"
+
+echo "==> on git < 2.42 the whole-tree sparse exemption is kept (#919 decision)"
+# The decided AC-3 behavior: without `sparse-checkout check-rules` the
+# guard cannot ask the rules, and it deliberately keeps the pre-#919
+# per-tree exemption rather than failing closed — which would refuse every
+# clean sparse removal on e.g. macOS system git ~2.39 and teach routine
+# --force. The stub fakes ONLY the version probe; a correct gate then never
+# invokes check-rules, so delegating everything else to the real git is
+# faithful — while a gate that ignores the version DOES reach the real
+# check-rules, refuses the deletion below, and fails this case.
+oldgit_dir="$test_tmp/oldgit-bin"
+mkdir -p "$oldgit_dir"
+real_git="$(command -v git)"
+cat >"$oldgit_dir/git" <<OLDGIT
+#!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then
+    echo "git version 2.39.5"
+    exit 0
+fi
+exec "$real_git" "\$@"
+OLDGIT
+chmod +x "$oldgit_dir/git"
+new hidden-sparse-oldgit >/dev/null || fail "worktree-new.sh failed for the old-git sparse case"
+git -C "$fixture/.worktrees/hidden-sparse-oldgit" sparse-checkout set --no-cone '/scripts' >/dev/null 2>&1 ||
+    fail "could not enable sparse checkout in the fixture worktree"
+git -C "$fixture/.worktrees/hidden-sparse-oldgit" update-index --skip-worktree scripts/worktree-lock.sh
+rm "$fixture/.worktrees/hidden-sparse-oldgit/scripts/worktree-lock.sh"
+(
+    PATH="$oldgit_dir:$PATH"
+    export PATH
+    rm_wt hidden-sparse-oldgit >/dev/null
+) || fail "worktree-rm.sh on git < 2.42 did not keep the documented whole-tree sparse exemption"
+refute_exists "$fixture/.worktrees/hidden-sparse-oldgit" "worktree-rm.sh left the tree behind"
+
+echo "==> a check-rules failure fails CLOSED, refusing the removal"
+# The batch query's success sentinel mirrors the enumeration's: bash does
+# not propagate a process-substitution failure, so without the sentinel a
+# check-rules error would be swallowed and the removal waved through on an
+# unevaluated exemption. The shim passes the version gate (real git
+# answers --version) and breaks exactly the check-rules invocation; the
+# tree's absent excluded entries are candidate enough to force the batch
+# query to run.
+brokenrules_dir="$test_tmp/brokenrules-bin"
+mkdir -p "$brokenrules_dir"
+cat >"$brokenrules_dir/git" <<BROKENRULES
+#!/usr/bin/env bash
+for brk_arg in "\$@"; do
+    if [ "\$brk_arg" = "check-rules" ]; then
+        echo "git: simulated check-rules failure" >&2
+        exit 1
+    fi
+done
+exec "$real_git" "\$@"
+BROKENRULES
+chmod +x "$brokenrules_dir/git"
+new hidden-sparse-broken >/dev/null || fail "worktree-new.sh failed for the broken-rules case"
+git -C "$fixture/.worktrees/hidden-sparse-broken" sparse-checkout set --no-cone '/scripts' >/dev/null 2>&1 ||
+    fail "could not enable sparse checkout in the fixture worktree"
+if (
+    PATH="$brokenrules_dir:$PATH"
+    export PATH
+    rm_wt hidden-sparse-broken >/dev/null 2>&1
+); then
+    fail "worktree-rm.sh removed a sparse tree although the sparse-rules check failed"
+fi
+[ -d "$fixture/.worktrees/hidden-sparse-broken" ] || fail "the tree was removed despite the fail-closed refusal"
+rm_wt hidden-sparse-broken >/dev/null || fail "cleanup of the broken-rules tree failed"
+refute_exists "$fixture/.worktrees/hidden-sparse-broken" "worktree-rm.sh left the tree behind"
+
 echo "==> a DELETED skip-worktree file WITHOUT sparse checkout blocks removal"
 # Absence is only sparse-normal where sparse checkout is actually enabled;
 # without it, an absent flagged file can only be a user's uncommitted
