@@ -110,11 +110,23 @@ fi
 section "Remote-tracking freshness"
 if [ "$has_remote" = false ]; then
     echo "  n/a — no remote configured"
-elif net_probe git ls-remote --heads "$remote" >"$tmp/remote-heads" 2>/dev/null; then
+elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remote-heads-raw" 2>/dev/null; then
+    # The same advertisement also names the LIVE default branch (challenge
+    # r5): a renamed default with a stale local origin/HEAD would otherwise
+    # classify PRs against the obsolete base below. The live name wins.
+    stale=0
+    live_default="$(awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }' \
+        "$tmp/remote-heads-raw")"
+    if [ -n "$live_default" ] && [ -n "$default_branch" ] && [ "$live_default" != "$default_branch" ]; then
+        printf "  stale  the remote's default branch is now '%s', not '%s' — classification below uses '%s'\n" \
+            "$live_default" "$default_branch" "$live_default"
+        default_branch="$live_default"
+        stale=$((stale + 1))
+    fi
+    awk '$1 != "ref:" && $2 != "HEAD"' "$tmp/remote-heads-raw" >"$tmp/remote-heads"
     git for-each-ref "refs/remotes/$remote" \
         --format='%(refname:lstrip=3)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
         >"$tmp/tracking"
-    stale=0
     while IFS=$'\t' read -r tname toid tsymref; do
         [ "$tsymref" = "-" ] || continue
         live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"

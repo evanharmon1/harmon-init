@@ -106,6 +106,9 @@ if [ "$cmd" = pr ] && [ "$sub" = list ]; then
         if [ "$batch" = true ]; then
             head -n "$limit" "$data"
         else
+            if [ "${GH_STUB_HEAD_FAIL:-0}" = "1" ]; then
+                exit 1
+            fi
             awk -F'\t' -v b="$head_filter" '$1 == b { print $3 "\t" $2 "\t" $4 }' "$data"
             # Side effect modes, firing AFTER the answer to open the window
             # between verification and deletion: advance the queried branch,
@@ -582,11 +585,35 @@ git -C "$fixture" branch -q rescue-det "$det_sha"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-det
 prune_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the pin was settled: $prune_ok_out"
-expect_contains "$prune_ok_out" "stale records pruned" "record prune: clean run once pins are settled"
+expect_contains "$prune_ok_out" "nothing to prune" "record prune: live worktrees leave nothing plan-scoped to remove"
 git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-live >/dev/null &&
     fail "record prune: live-worktree pin left behind on the clean run"
 git -C "$fixture" cat-file -e "$det_sha" || fail "record prune: rescued commit lost from the object db"
 echo "ok: record prune settles cleanly once every commit is referenced"
+
+# ── Case E7c: an unsettled pin from an earlier run is never overwritten ────
+# A record name reused after a kept pin would silently replace the sole
+# reference to the older commit; the create-only pin write must refuse.
+
+orph_sha="$(git -C "$fixture" commit-tree "main^{tree}" -p main -m "old orphan")"
+git -C "$fixture" update-ref refs/session-cleanup/pin/pin-reuse "$orph_sha"
+mkdir -p "$gitdir/worktrees/pin-reuse"
+git -C "$fixture" rev-parse main >"$gitdir/worktrees/pin-reuse/HEAD"
+printf '%s\n' "/nonexistent/pin-reuse/.git" >"$gitdir/worktrees/pin-reuse/gitdir"
+
+if reuse_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune proceeded over a foreign unsettled pin: $reuse_out"
+fi
+expect_contains "$reuse_out" "already pins $orph_sha" "pin reuse: refusal names the earlier pin"
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$orph_sha" ] ||
+    fail "pin reuse: the earlier pin was overwritten"
+[ -d "$gitdir/worktrees/pin-reuse" ] || fail "pin reuse: the record was removed despite the refusal"
+
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse "$orph_sha"
+reuse_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the foreign pin was settled: $reuse_ok_out"
+expect_contains "$reuse_ok_out" "pruned record 'pin-reuse'" "pin reuse: settled pin lets the removal proceed"
+echo "ok: an unsettled rescue pin refuses the prune instead of being overwritten"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD
@@ -608,6 +635,9 @@ ren_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
 expect_contains "$ren_out" "default branch is now 'trunk'" "rename: live default named in the note"
 expect_contains "$ren_out" "could not be verified as 'main'" "rename: deletions refused"
 branch_exists anc-ren || fail "rename: anc-ren deleted although the remote default moved"
+ren_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "audit exited nonzero inside the renamed-default window: $ren_audit_out"
+expect_contains "$ren_audit_out" "default branch is now 'trunk'" "rename: audit resolves the live default over stale origin/HEAD"
 
 git -C "$origin" symbolic-ref HEAD refs/heads/main
 git -C "$origin" update-ref -d refs/heads/trunk
@@ -666,6 +696,17 @@ rw_ok_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
     fail "post-rewrite-restore run exited nonzero: $rw_ok_out"
 expect_contains "$rw_ok_out" "deleted  anc-race" "rewrite race: restored default lets the deletion proceed"
 echo "ok: ancestry deletion re-validates against the verified advertised tip"
+
+# ── Case E11: one failed fallback probe fails the remaining set closed ─────
+# With the batch capped and per-branch probes failing, the run must spend
+# ONE bounded probe, not one per unmatched branch.
+
+circ_out="$(cd "$fixture" && CLEAN_PR_LIMIT=1 GH_STUB_HEAD_FAIL=1 bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "circuit-breaker run exited nonzero: $circ_out"
+expect_contains "$circ_out" "suspending remaining per-branch probes" "circuit: first failure trips the breaker"
+expect_contains "$circ_out" "per-branch probes suspended after an earlier probe failure" "circuit: later branches skipped without probing"
+branch_exists gone-nopr || fail "circuit: a branch was deleted while probes were failing"
+echo "ok: a failed fallback probe suspends the remaining probes"
 
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 

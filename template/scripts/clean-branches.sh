@@ -165,6 +165,7 @@ fi
 # so branches it does not answer fall back to one per-branch probe each —
 # bounded by the number of unmatched gone branches, not the whole tree.
 batch_state=unfetched # unfetched | ok | capped | failed
+fallback_dead=false   # one failed per-branch probe fails the rest closed
 batch_prs() {
     if [ "$batch_state" = unfetched ]; then
         pr_limit="${CLEAN_PR_LIMIT:-1000}"
@@ -261,8 +262,17 @@ while IFS=$'\t' read -r branch tip track symref; do
         pr="$(awk -F'\t' -v b="$branch" -v tip="$tip" -v base="$default_branch" \
             '$1 == b && $2 == tip && $4 == base { print $3; exit }' "$tmp/merged-prs")"
         if [ -z "$pr" ] && [ "$batch_state" = capped ]; then
+            # Circuit breaker (challenge r5): one failed fallback probe fails
+            # the REMAINING unmatched set closed — otherwise a stalled API
+            # costs GH_TIMEOUT per unmatched branch instead of once.
+            if [ "$fallback_dead" = true ]; then
+                echo "SKIP  $branch — upstream gone; per-branch probes suspended after an earlier probe failure (fail closed)"
+                refused=$((refused + 1))
+                continue
+            fi
             if ! pr="$(merged_pr_for "$branch" "$tip")"; then
-                echo "SKIP  $branch — upstream gone, but the merged-PR probe failed (gh/network error)"
+                fallback_dead=true
+                echo "SKIP  $branch — upstream gone, but the merged-PR probe failed (gh/network error); suspending remaining per-branch probes"
                 refused=$((refused + 1))
                 continue
             fi

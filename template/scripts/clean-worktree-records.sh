@@ -8,17 +8,26 @@
 # keeping that commit alive — pruning it makes the commit unreachable and
 # eventually GC-collectible.
 #
-# The guard is a PIN, not a scan (challenge r4): a scan-then-prune design
-# leaves a window in which the sole containing ref can vanish (a concurrent
-# `fetch --prune` removing a remote-tracking ref) or a record can become
-# prune-eligible after the scan. Instead, every registered record whose HEAD
-# is detached gets a shared rescue ref — refs/session-cleanup/pin/<record> —
-# BEFORE the prune runs. Ref creation is atomic, and a shared ref survives
-# record removal, so no interleaving can strand the commit. After the prune,
-# pins proven redundant (the record survived, or another shared ref contains
-# the commit) are dropped; a pin that is now the commit's only reference is
-# KEPT and reported with the rescue command, and the exit code is nonzero so
-# wrappers notice — but nothing was lost either way.
+# Two design decisions close that, and both are deliberate (challenge r4+r5):
+#
+#   * Only records in git's own dry-run plan are removed, each one
+#     individually, never via the global `git worktree prune` — a global
+#     prune re-computes eligibility at its own moment, so a LIVE worktree
+#     whose directory vanishes mid-run could be pruned on a HEAD snapshot
+#     taken while it was still advancing. A plan-verified stale record has
+#     no working directory, so its HEAD cannot move; removing exactly that
+#     set makes the snapshot race structurally impossible. Live records are
+#     never touched, and a record that goes stale mid-run simply waits for
+#     the next run.
+#   * A detached record HEAD is pinned as refs/session-cleanup/pin/<record>
+#     BEFORE its record is removed, with a CREATE-ONLY ref write: an
+#     existing pin under the same name from an earlier run may be the sole
+#     reference to an older commit, so it is never overwritten — a mismatch
+#     refuses the whole run until that pin is settled. After removal, pins
+#     proven redundant (another shared ref contains the commit) are dropped;
+#     a pin that is now the commit's only reference is KEPT and reported
+#     with the rescue command, and the exit code is nonzero so wrappers
+#     notice — but nothing is lost either way.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,34 +49,58 @@ shared_refs_containing() {
 
 common="$(git rev-parse --path-format=absolute --git-common-dir)"
 
-# ── Pin every detached record HEAD before anything is removed ──────────────
-
-pinned=""
-if [ -d "$common/worktrees" ]; then
-    for admin_dir in "$common"/worktrees/*; do
-        [ -d "$admin_dir" ] || continue
-        record="$(basename "$admin_dir")"
-        record_head="$(cat "$admin_dir/HEAD" 2>/dev/null || true)"
-        case "$record_head" in
-        ref:* | '') continue ;; # attached to a branch: the branch keeps the commits
-        esac
-        git rev-parse --quiet --verify "$record_head^{commit}" >/dev/null 2>&1 || continue
-        # A pin failure means the commit cannot be protected — refuse the
-        # whole prune rather than proceed unguarded.
-        LEFTHOOK=0 git update-ref "refs/session-cleanup/pin/$record" "$record_head" ||
-            die "cannot pin detached commit $record_head of record '$record' — refusing to prune unprotected"
-        pinned="$pinned $record"
-    done
-fi
-
-# ── Prune (records only; git never touches worktree directories here) ──────
-
+# git's own dry run is the authority on what is prunable
+# ("Removing worktrees/<name>: <reason>"); LC_ALL=C pins the message shape.
 prune_plan="$(LC_ALL=C git worktree prune --dry-run -v 2>&1)"
-if [ -z "$prune_plan" ] && [ -z "$pinned" ]; then
+if [ -z "$prune_plan" ]; then
     echo "clean:worktree-records: nothing to prune."
     exit 0
 fi
-LC_ALL=C LEFTHOOK=0 git worktree prune -v
+
+pinned=""
+removed=0
+while IFS= read -r line; do
+    record="$(printf '%s\n' "$line" | sed -n 's/^Removing worktrees\/\(.*\): .*$/\1/p')"
+    [ -n "$record" ] || continue
+    admin_dir="$common/worktrees/$record"
+    [ -d "$admin_dir" ] || continue
+    # Belt, not testable deterministically: if the record's gitdir target
+    # exists again (a worktree resurrected at the old path since the plan),
+    # the record is live — leave it alone rather than orphan a live tree.
+    wt_gitfile="$(cat "$admin_dir/gitdir" 2>/dev/null || true)"
+    if [ -n "$wt_gitfile" ] && [ -e "$wt_gitfile" ]; then
+        echo "SKIP  record '$record' — its worktree reappeared since the plan"
+        continue
+    fi
+    record_head="$(cat "$admin_dir/HEAD" 2>/dev/null || true)"
+    case "$record_head" in
+    ref:* | '') : ;; # attached to a branch: the branch keeps the commits
+    *)
+        if git rev-parse --quiet --verify "$record_head^{commit}" >/dev/null 2>&1; then
+            existing_pin="$(git rev-parse --quiet --verify "refs/session-cleanup/pin/$record" || true)"
+            if [ -n "$existing_pin" ] && [ "$existing_pin" != "$record_head" ]; then
+                die "refs/session-cleanup/pin/$record already pins $existing_pin from an earlier run — settle it first (git branch rescue/$record $existing_pin, or git update-ref -d refs/session-cleanup/pin/$record), then re-run"
+            fi
+            # Create-only (old value ''): never overwrite a pin this run did
+            # not just verify; a concurrent writer refuses the run.
+            LEFTHOOK=0 git update-ref "refs/session-cleanup/pin/$record" "$record_head" "${existing_pin:-}" ||
+                die "cannot pin detached commit $record_head of record '$record' — refusing to remove it unprotected"
+            pinned="$pinned $record"
+        fi
+        ;;
+    esac
+    # Records only: the stale admin directory is all that goes.
+    rm -rf "$admin_dir"
+    echo "pruned record '$record'"
+    removed=$((removed + 1))
+done <<EOF
+$prune_plan
+EOF
+
+if [ "$removed" -eq 0 ]; then
+    echo "clean:worktree-records: nothing to prune."
+    exit 0
+fi
 
 # ── Settle the pins ────────────────────────────────────────────────────────
 
@@ -76,11 +109,7 @@ for record in $pinned; do
     pin_ref="refs/session-cleanup/pin/$record"
     pin_sha="$(git rev-parse --quiet --verify "$pin_ref" || true)"
     [ -n "$pin_sha" ] || continue
-    if [ -d "$common/worktrees/$record" ]; then
-        # The record survived the prune (live worktree): it keeps its own
-        # HEAD reachable, exactly as before this script ran.
-        LEFTHOOK=0 git update-ref -d "$pin_ref" "$pin_sha" 2>/dev/null || true
-    elif [ -n "$(shared_refs_containing "$pin_sha")" ]; then
+    if [ -n "$(shared_refs_containing "$pin_sha")" ]; then
         LEFTHOOK=0 git update-ref -d "$pin_ref" "$pin_sha" 2>/dev/null || true
     else
         echo "KEPT  $pin_ref — pruned record '$record' held the only reference to detached commit $pin_sha; branch it (git branch rescue/$record $pin_sha) or discard it (git update-ref -d $pin_ref)"
