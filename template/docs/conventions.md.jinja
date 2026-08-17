@@ -67,6 +67,18 @@ it points here.
   routine and so meaningless. It also prunes the registry and clears leftover
   gitlink directories — stale ones make later tooling treat a dead path as a
   live checkout.
+- **Sweep leftover admin records with `task clean:worktree-records`**, never a
+  raw `git worktree prune` — a stale record's detached HEAD can be the only
+  thing keeping a commit alive, and a raw prune makes it unreachable. The task
+  removes records only (never a worktree directory), refuses records carrying
+  single-copy state, and pins a detached commit as
+  `refs/session-cleanup/pin/<record>` *before* the record goes; pins are
+  settled only by explicit human action (`task audit:session-artifacts` lists
+  the pending ones). Removal serializes with `worktree:new`/`worktree:rm`
+  through the shared lifecycle lock — for trees under the blessed
+  `.worktrees/` layout; a tree from a raw `git worktree add` elsewhere is
+  outside that protocol, which is the documented residual for keeping to the
+  tasks.
 - **A fresh worktree has no `node_modules`/`.venv`.** Working files are per-tree,
   so dependency install is per-tree too; that is what `worktree:new` runs and
   why "it worked in the main checkout" is not evidence.

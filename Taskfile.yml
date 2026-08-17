@@ -354,7 +354,7 @@ tasks:
       - ./scripts/test-worktree.sh
 
   test:session-cleanup:
-    desc: Behavioral test for audit:session-artifacts / clean:branches (evidence-gated deletion + negative controls, in a throwaway fixture repo)
+    desc: Behavioral test for audit:session-artifacts / clean:branches / clean:worktree-records (evidence-gated deletion + negative controls, in a throwaway fixture repo)
     cmds:
       - ./scripts/test-session-cleanup.sh
 
@@ -842,6 +842,10 @@ tasks:
     cmds:
       - git fetch --all --prune
 
+  clean:worktree-records:
+    desc: Prune stale worktree admin records only — pins a detached commit before its record goes (human settles the pin); never removes a worktree directory
+    cmds:
+      - ./scripts/clean-worktree-records.sh
 
   # ── Status ────────────────────────────────────────────────────
   status:

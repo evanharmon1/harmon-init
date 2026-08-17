@@ -537,6 +537,212 @@ expect_contains "$cfg_out" "WARN  sq-cfg was deleted but its branch.sq-cfg" "con
 git -C "$fixture" config --local --remove-section branch.sq-cfg 2>/dev/null || true
 echo "ok: config cleanup failure is reported, never swallowed"
 
+# ── Case E7: worktree-record pruning pins detached commits through the prune ─
+# A stale record whose HEAD is detached at a commit no shared ref contains is
+# the only thing keeping that commit alive (challenge r3); the guard is a pin
+# created BEFORE the prune, so no interleaving can strand the commit
+# (challenge r4). Branch-attached stale records prune normally; a live
+# detached worktree's pin is dropped as redundant.
+
+cp "$repo/scripts/clean-worktree-records.sh" "$fixture/scripts/"
+
+git -C "$fixture" worktree add -q -b prune-br "$test_tmp/wt-br" main
+git -C "$fixture" worktree add -q --detach "$test_tmp/wt-det" main
+git -C "$fixture" worktree add -q --detach "$test_tmp/wt-live" main
+(
+    cd "$test_tmp/wt-det"
+    echo det >det.txt
+    git add det.txt
+    git commit -qm "detached-only work"
+)
+det_sha="$(git -C "$test_tmp/wt-det" rev-parse HEAD)"
+rm -rf "$test_tmp/wt-br" "$test_tmp/wt-det"
+
+if prune_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although an orphan pin should have been kept: $prune_out"
+fi
+expect_contains "$prune_out" "KEPT  refs/session-cleanup/pin/wt-det" "record prune: orphan commit's pin kept and reported"
+worktrees_admin="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees"
+if ls "$worktrees_admin" 2>/dev/null | grep -Eq '^(wt-det|wt-br)$'; then
+    fail "record prune: stale records survived the prune"
+fi
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-det)" = "$det_sha" ] ||
+    fail "record prune: pin does not hold the detached commit"
+git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-live >/dev/null &&
+    fail "record prune: redundant pin for a live worktree was kept"
+if git -C "$fixture" fsck --unreachable 2>/dev/null | grep -q "$det_sha"; then
+    fail "record prune: detached commit became unreachable despite the pin"
+fi
+echo "ok: record prune pins an orphan detached commit through the prune"
+
+# The audit surfaces a lingering pin as a decision waiting to be made.
+pin_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "audit exited nonzero with a pin present: $pin_audit_out"
+expect_contains "$pin_audit_out" "wt-det — pins $det_sha" "audit: leftover rescue pin reported"
+echo "ok: audit reports leftover rescue pins"
+
+git -C "$fixture" branch -q rescue-det "$det_sha"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-det
+prune_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the pin was settled: $prune_ok_out"
+expect_contains "$prune_ok_out" "nothing to prune" "record prune: live worktrees leave nothing plan-scoped to remove"
+git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-live >/dev/null &&
+    fail "record prune: live-worktree pin left behind on the clean run"
+git -C "$fixture" cat-file -e "$det_sha" || fail "record prune: rescued commit lost from the object db"
+echo "ok: record prune settles cleanly once every commit is referenced"
+
+# ── Case E7c: an unsettled pin from an earlier run is never overwritten ────
+# A record name reused after a kept pin would silently replace the sole
+# reference to the older commit; the create-only pin write must refuse.
+
+orph_sha="$(git -C "$fixture" commit-tree "main^{tree}" -p main -m "old orphan")"
+git -C "$fixture" update-ref refs/session-cleanup/pin/pin-reuse "$orph_sha"
+mkdir -p "$gitdir/worktrees/pin-reuse"
+git -C "$fixture" rev-parse main >"$gitdir/worktrees/pin-reuse/HEAD"
+printf '%s\n' "/nonexistent/pin-reuse/.git" >"$gitdir/worktrees/pin-reuse/gitdir"
+
+if reuse_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune proceeded over a foreign unsettled pin: $reuse_out"
+fi
+expect_contains "$reuse_out" "already pins $orph_sha" "pin reuse: refusal names the earlier pin"
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$orph_sha" ] ||
+    fail "pin reuse: the earlier pin was overwritten"
+[ -d "$gitdir/worktrees/pin-reuse" ] || fail "pin reuse: the record was removed despite the refusal"
+
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse "$orph_sha"
+if reuse_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although its fresh pin awaits settlement: $reuse_ok_out"
+fi
+expect_contains "$reuse_ok_out" "pruned record 'pin-reuse'" "pin reuse: settled pin lets the removal proceed"
+expect_contains "$reuse_ok_out" "PINNED  refs/session-cleanup/pin/pin-reuse" "pin reuse: fresh pin reported for explicit settlement"
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$(git -C "$fixture" rev-parse main)" ] ||
+    fail "pin reuse: fresh pin missing or wrong — pins must never be auto-dropped"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse
+echo "ok: an unsettled rescue pin refuses the prune instead of being overwritten"
+
+# ── Case E7d: a record carrying worktree-local state is refused, not swept ─
+# Sidecars and per-worktree ref files under worktrees/<id>/ are single-copy;
+# no pin can stand in for them.
+
+for rec in state-rec refs-rec; do
+    mkdir -p "$gitdir/worktrees/$rec"
+    printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/$rec/HEAD"
+    printf '%s\n' "/nonexistent/$rec/.git" >"$gitdir/worktrees/$rec/gitdir"
+done
+mkdir -p "$gitdir/worktrees/state-rec/deferred-findings"
+echo "p2 from a dead session" >"$gitdir/worktrees/state-rec/deferred-findings/some-branch"
+mkdir -p "$gitdir/worktrees/refs-rec/refs/worktree"
+refs_orph="$(git -C "$fixture" commit-tree "main^{tree}" -p main -m "worktree-ref orphan")"
+printf '%s\n' "$refs_orph" >"$gitdir/worktrees/refs-rec/refs/worktree/only"
+
+if state_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with refused state-carrying records: $state_out"
+fi
+expect_contains "$state_out" "record 'state-rec' — carries worktree-local state (deferred-findings)" "state: sidecar-carrying record refused"
+expect_contains "$state_out" "record 'refs-rec' — carries worktree-local state (refs)" "state: per-worktree-ref record refused"
+[ -d "$gitdir/worktrees/state-rec" ] || fail "state: sidecar-carrying record was swept"
+[ -d "$gitdir/worktrees/refs-rec" ] || fail "state: ref-carrying record was swept"
+git -C "$fixture" cat-file -e "$refs_orph" || fail "state: worktree-ref orphan commit lost"
+
+rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs"
+state_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the state was adopted: $state_ok_out"
+expect_contains "$state_ok_out" "pruned record 'state-rec'" "state: adopted record prunes normally"
+expect_contains "$state_ok_out" "pruned record 'refs-rec'" "state: rescued record prunes normally"
+echo "ok: state-carrying records are refused until adopted, never swept"
+
+# ── Case E7e: an index diverging from the recorded HEAD refuses the sweep ──
+# Staged-but-uncommitted blobs can be referenced by the record's index
+# alone; sweeping the record hands them to the next gc.
+
+git -C "$fixture" worktree add -q --detach "$test_tmp/wt-staged" main
+(
+    cd "$test_tmp/wt-staged"
+    echo staged-only >staged.txt
+    git add staged.txt
+)
+rm -rf "$test_tmp/wt-staged"
+
+if staged_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a staged-divergent index present: $staged_out"
+fi
+expect_contains "$staged_out" "record 'wt-staged' — its index diverges from the recorded HEAD" "staged: divergent index refused"
+[ -d "$gitdir/worktrees/wt-staged" ] || fail "staged: index-carrying record was swept"
+
+rm -f "$gitdir/worktrees/wt-staged/index"
+if staged_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the detached record's pin awaits settlement: $staged_ok_out"
+fi
+expect_contains "$staged_ok_out" "pruned record 'wt-staged'" "staged: adopted record prunes normally"
+expect_contains "$staged_ok_out" "PINNED  refs/session-cleanup/pin/wt-staged" "staged: detached head pinned for explicit settlement"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-staged
+echo "ok: a staged-divergent index refuses the sweep until adopted"
+
+# ── Case E7f: record removal honors the worktree lifecycle lock ────────────
+# A record for a tree under .worktrees/ takes the same per-path lock that
+# worktree:new/rm hold, so removal cannot race a blessed re-creation.
+
+mkdir -p "$gitdir/worktrees/lockrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/lockrec/HEAD"
+printf '%s\n' "$fixture/.worktrees/lockrec/.git" >"$gitdir/worktrees/lockrec/gitdir"
+commondir_l="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)"
+mkdir -p "$commondir_l/worktree-locks/lockrec+lock"
+
+if lockrec_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the lifecycle lock was held: $lockrec_out"
+fi
+expect_contains "$lockrec_out" "worktree lifecycle lock refused" "record lock: contended record skipped loudly"
+[ -d "$gitdir/worktrees/lockrec" ] || fail "record lock: record removed although its lifecycle lock was held"
+
+rmdir "$commondir_l/worktree-locks/lockrec+lock"
+lockrec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the lock was released: $lockrec_ok_out"
+expect_contains "$lockrec_ok_out" "pruned record 'lockrec'" "record lock: released lock lets the removal proceed"
+echo "ok: record removal is serialized by the worktree lifecycle lock"
+
+# ── Case E7g: a replacement ref cannot forge the pin-drop remedy ───────────
+# The kept-pin report picks its wording from raw history: a refs/replace
+# graft that makes an orphan read as reachable from shared refs would
+# otherwise print a copyable "drop it" command for the only real reference.
+
+orph_g="$(git -C "$fixture" commit-tree "main^{tree}" -m "orphan-behind-replace")"
+mkdir -p "$gitdir/worktrees/reptrap"
+printf '%s\n' "$orph_g" >"$gitdir/worktrees/reptrap/HEAD"
+printf '%s\n' "$test_tmp/gone-reptrap/.git" >"$gitdir/worktrees/reptrap/gitdir"
+repg_main="$(git -C "$fixture" rev-parse refs/heads/main)"
+repg_synth="$(git -C "$fixture" commit-tree "main^{tree}" -p "$repg_main" -p "$orph_g" -m "graft")"
+git -C "$fixture" update-ref "refs/replace/$repg_main" "$repg_synth"
+
+if repg_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although a forged-reachability pin should await settlement: $repg_out"
+fi
+git -C "$fixture" update-ref -d "refs/replace/$repg_main"
+expect_contains "$repg_out" "KEPT  refs/session-cleanup/pin/reptrap" "replace ref: pin reported as the only reference"
+expect_not_contains "$repg_out" "also reachable from shared refs" "replace ref: forged containment does not invite dropping the pin"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/reptrap
+echo "ok: a replacement ref cannot forge the pin-drop remedy"
+
+# ── Case E7h: a legacy graft file forces the conservative pin wording ──────
+# info/grafts rewrites parentage and GIT_NO_REPLACE_OBJECTS does not cover
+# it; while one exists, containment is not evidence and every kept pin gets
+# the conservative wording.
+
+orph_h="$(git -C "$fixture" commit-tree "main^{tree}" -m "orphan-behind-graft")"
+mkdir -p "$gitdir/worktrees/grafttrap"
+printf '%s\n' "$orph_h" >"$gitdir/worktrees/grafttrap/HEAD"
+printf '%s\n' "$test_tmp/gone-grafttrap/.git" >"$gitdir/worktrees/grafttrap/gitdir"
+printf '%s %s\n' "$(git -C "$fixture" rev-parse refs/heads/main)" "$orph_h" >"$gitdir/info/grafts"
+
+if graftrec_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although a grafted-reachability pin should await settlement: $graftrec_out"
+fi
+rm -f "$gitdir/info/grafts"
+expect_contains "$graftrec_out" "legacy graft file present" "grafts: presence announced by the record prune"
+expect_contains "$graftrec_out" "KEPT  refs/session-cleanup/pin/grafttrap" "grafts: pin reported conservatively"
+expect_not_contains "$graftrec_out" "also reachable from shared refs" "grafts: grafted containment does not invite dropping the pin"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/grafttrap
+echo "ok: a legacy graft file forces the conservative pin wording"
+
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD
 # must be verified before any evidence computed against the old name is
