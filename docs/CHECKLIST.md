@@ -300,10 +300,10 @@ this comment. -->
       name --jq '.[].name' | grep -E '^(suggest|claim):(codex|copilot)$'`
       (the default `gh label list --limit 200` paged listing can miss these
       on a repo with many labels — use this enumeration, not the paged form,
-      everywhere in this item). harmon-init issue #751 renamed those families
-      to `gpt` and `mai`: labels classify the model family, not the harness;
-      Codex runs GPT-family models, while Copilot is represented by its `mai`
-      broker family because it can route across models.
+      everywhere in this item). harmon-init issue #751 replaced those
+      harness-named families with model-family vocabulary: Codex maps to `gpt`;
+      Copilot is a broker that defaults to `mai`, but each association must use
+      the actual family recovered by the procedure below.
       A `setup-github-labels` re-run never deletes the old family, so it
       survives beside the new registry-rendered one.
 

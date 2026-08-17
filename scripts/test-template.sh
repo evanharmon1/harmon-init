@@ -1193,6 +1193,8 @@ iac | full)
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
         ! grep -Fq 'ADR 0005' docs/CHECKLIST.md ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
+        grep -Fq 'Copilot is a broker that defaults to `mai`' docs/CHECKLIST.md ||
+            err "CHECKLIST loses the Copilot broker/default-family distinction"
     fi
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
