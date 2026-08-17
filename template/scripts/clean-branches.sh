@@ -121,6 +121,8 @@ if command -v timeout >/dev/null 2>&1; then
     TIMEOUT_BIN=timeout
 elif command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_BIN=gtimeout
+else
+    echo "clean:branches: no 'timeout' found (brew install coreutils) — network probes are unbounded." >&2
 fi
 
 gh_pr_probe() {
@@ -157,8 +159,16 @@ merged_pr_for() {
 
 # ── Classify every branch ───────────────────────────────────────────────────
 
+# %(refname:lstrip=2), not %(refname:short): when a tag shares the branch's
+# name, :short disambiguates to "heads/<name>", which would break every
+# "refs/heads/$branch" built from it (challenge r1). %(symref) is nonempty
+# for a symbolic ref — deleting one via update-ref would DEREFERENCE it and
+# delete the target branch instead, so symbolic entries are skipped outright.
+# The two optionally-empty fields carry a '-' sentinel: tab is IFS
+# whitespace, so `read` would otherwise COLLAPSE an empty middle field and
+# shift %(symref) into the track column.
 git for-each-ref refs/heads \
-    --format='%(refname:short)%09%(objectname)%09%(upstream:track)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
     >"$tmp/branches"
 
 total=0
@@ -166,11 +176,17 @@ candidates=0
 refused=0
 active=0
 
-while IFS=$'\t' read -r branch tip track; do
+while IFS=$'\t' read -r branch tip track symref; do
     total=$((total + 1))
 
     [ "$branch" = "$current_branch" ] && continue
     [ "$branch" = "$default_branch" ] && continue
+
+    if [ "$symref" != "-" ]; then
+        echo "SKIP  $branch — symbolic ref (points at $symref; never dereferenced or deleted)"
+        refused=$((refused + 1))
+        continue
+    fi
 
     if wt_path="$(awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }' "$tmp/checked-out")" &&
         [ -n "$wt_path" ]; then
@@ -228,6 +244,82 @@ done <"$tmp/branches"
 
 # ── Act (or report) ─────────────────────────────────────────────────────────
 
+# Ancestry evidence is only as fresh as the last fetch: a force-pushed or
+# repointed remote default branch can leave refs/remotes/$remote/<default>
+# vouching for commits the remote no longer holds (challenge r1). Before any
+# ancestry-class deletion, compare the remote's ADVERTISED default tip with
+# the local tracking ref — one bounded read-only ls-remote — and fail closed
+# on mismatch or error. PR evidence does not depend on tracking refs and is
+# unaffected.
+ancestry_fresh=""
+ancestry_fresh_checked=false
+check_ancestry_freshness() {
+    if [ "$ancestry_fresh_checked" = false ]; then
+        ancestry_fresh_checked=true
+        advertised=""
+        if [ -n "$TIMEOUT_BIN" ]; then
+            advertised="$("$TIMEOUT_BIN" -k 5 "${GH_TIMEOUT:-30}" git ls-remote "$remote" \
+                "refs/heads/$default_branch" </dev/null 2>/dev/null | awk '{ print $1; exit }')" || advertised=""
+        else
+            advertised="$(git ls-remote "$remote" "refs/heads/$default_branch" </dev/null 2>/dev/null |
+                awk '{ print $1; exit }')" || advertised=""
+        fi
+        if [ -n "$advertised" ] && [ "$advertised" = "$(git rev-parse "$ancestry_target")" ]; then
+            ancestry_fresh=true
+        else
+            ancestry_fresh=false
+        fi
+    fi
+    [ "$ancestry_fresh" = true ]
+}
+
+# delete_one <branch> <tip> <evidence> <why> — runs in a SUBSHELL so a lock
+# refusal (die) aborts this branch only. The whole check-then-delete sequence
+# holds the per-branch lifecycle lock shared with worktree:new / worktree:rm
+# (challenge r1): without it, a concurrent creation can claim the branch
+# between the worktree re-check and the ref delete — stranding a live
+# worktree on a deleted ref — or recreate the branch before the config sweep
+# and have its fresh branch.<name> configuration erased.
+# Exit codes: 0 deleted, 3 refused cleanly (message already printed),
+# anything else = lock contention or fatal (die's message is on stderr).
+delete_one() (
+    branch="$1"
+    tip="$2"
+    evidence="$3"
+    why="$4"
+    # shellcheck source=scripts/worktree-lock.sh
+    . "$REPO_ROOT/scripts/worktree-lock.sh"
+    mkdir -p "$lock_root"
+    trap release_locks EXIT
+    trap 'exit 129' HUP INT TERM
+    acquire_branch_lock "$branch"
+    # Re-check checkout state under the lock: another session can have
+    # claimed the branch since classification, and update-ref does not
+    # respect git's checked-out guard.
+    if git worktree list --porcelain | grep -Fxq "branch refs/heads/$branch"; then
+        echo "SKIP  $branch — became checked out in a worktree since classification"
+        exit 3
+    fi
+    # LEFTHOOK=0 on both delete forms: a reference-transaction hook must
+    # not fire on cleanup ref writes (worktree-new.sh precedent).
+    if [ "$evidence" = ancestry ]; then
+        if ! LEFTHOOK=0 git branch -d "$branch" >/dev/null; then
+            echo "SKIP  $branch — git branch -d refused (its refusal is final; never forced)"
+            exit 3
+        fi
+    else
+        # Compare-and-delete: refuses if the tip moved since verification.
+        # --no-deref as a belt behind the classification symref skip: the
+        # named ref itself is what dies, never a target it points at.
+        if ! LEFTHOOK=0 git update-ref --no-deref -d "refs/heads/$branch" "$tip" 2>/dev/null; then
+            echo "SKIP  $branch — tip moved since verification (compare-and-delete refused)"
+            exit 3
+        fi
+        git config --local --remove-section "branch.$branch" 2>/dev/null || true
+    fi
+    echo "deleted  $branch (was ${tip}) — $why — recover: git branch $branch ${tip:0:12}"
+)
+
 deleted=0
 if [ -s "$tmp/candidates" ]; then
     while IFS=$'\t' read -r branch tip evidence pr; do
@@ -239,35 +331,21 @@ if [ -s "$tmp/candidates" ]; then
             echo "WOULD DELETE  $branch (${tip:0:12}) — $why"
             continue
         fi
-        # Re-check checkout state at the moment of deletion: another session
-        # can have claimed the branch since classification, and update-ref
-        # does not respect git's checked-out guard.
-        if git worktree list --porcelain | grep -Fxq "branch refs/heads/$branch"; then
-            echo "SKIP  $branch — became checked out in a worktree since classification"
+        if [ "$evidence" = ancestry ] && ! check_ancestry_freshness; then
+            echo "SKIP  $branch — $remote/$default_branch is stale or unverifiable against the live remote (run 'task clean:remote-refs', then re-run)"
             refused=$((refused + 1))
             continue
         fi
-        # LEFTHOOK=0 on both delete forms: a reference-transaction hook must
-        # not fire on cleanup ref writes (worktree-new.sh precedent).
-        if [ "$evidence" = ancestry ]; then
-            if LEFTHOOK=0 git branch -d "$branch" >/dev/null; then
-                echo "deleted  $branch (was ${tip}) — $why — recover: git branch $branch ${tip:0:12}"
-                deleted=$((deleted + 1))
-            else
-                echo "SKIP  $branch — git branch -d refused (its refusal is final; never forced)"
-                refused=$((refused + 1))
-            fi
-        else
-            # Compare-and-delete: refuses if the tip moved since verification.
-            if LEFTHOOK=0 git update-ref -d "refs/heads/$branch" "$tip" 2>/dev/null; then
-                git config --local --remove-section "branch.$branch" 2>/dev/null || true
-                echo "deleted  $branch (was ${tip}) — $why — recover: git branch $branch ${tip:0:12}"
-                deleted=$((deleted + 1))
-            else
-                echo "SKIP  $branch — tip moved since verification (compare-and-delete refused)"
-                refused=$((refused + 1))
-            fi
-        fi
+        rc=0
+        delete_one "$branch" "$tip" "$evidence" "$why" || rc=$?
+        case "$rc" in
+        0) deleted=$((deleted + 1)) ;;
+        3) refused=$((refused + 1)) ;;
+        *)
+            echo "SKIP  $branch — the branch lifecycle lock refused (a worktree operation is active; details above)"
+            refused=$((refused + 1))
+            ;;
+        esac
     done <"$tmp/candidates"
 fi
 

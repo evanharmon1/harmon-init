@@ -146,9 +146,11 @@ git -C "$fixture" symbolic-ref HEAD refs/heads/main
 )
 
 # The scripts resolve their repo root from their own location, so the fixture
-# gets its own copy — the same way generated repos ship them.
+# gets its own copy — the same way generated repos ship them. worktree-lock.sh
+# rides along because the delete path sources its lifecycle-lock protocol.
 mkdir -p "$fixture/scripts"
-cp "$repo/scripts/clean-branches.sh" "$repo/scripts/audit-session-artifacts.sh" "$fixture/scripts/"
+cp "$repo/scripts/clean-branches.sh" "$repo/scripts/audit-session-artifacts.sh" \
+    "$repo/scripts/worktree-lock.sh" "$fixture/scripts/"
 
 # make_branch <name> <file> — new branch off main with one pushed commit;
 # echoes the tip. Leaves the checkout back on main.
@@ -228,6 +230,15 @@ git -C "$fixture" worktree add -q "$test_tmp/wt" wt-checked
     git checkout -q main
 )
 
+# 7. A tag sharing a branch's name: %(refname:short) would disambiguate the
+#    branch to "heads/gone-nopr" and break every ref built from it.
+git -C "$fixture" tag gone-nopr
+
+# 8. A symbolic ref under refs/heads: deleting it via update-ref would
+#    DEREFERENCE it and delete the target branch — it must be skipped, never
+#    resolved.
+git -C "$fixture" symbolic-ref refs/heads/alias-main refs/heads/main
+
 # The PR table the stub serves (headRefName, headRefOid, number).
 export GH_STUB_PRS="$test_tmp/prs.tsv"
 printf '%s\t%s\t%s\n' \
@@ -264,6 +275,9 @@ expect_not_contains "$dry_out" "WOULD DELETE  gone-nopr" "dry run: no-evidence b
 expect_contains "$dry_out" "gone-nopr" "dry run: no-evidence branch is skipped loudly"
 expect_contains "$dry_out" "unpushed work is never deleted" "dry run: tip-past-PR branch refused as unpushed"
 expect_contains "$dry_out" "checked out in worktree" "dry run: worktree branch refused loudly"
+expect_contains "$dry_out" "SKIP  alias-main — symbolic ref" "dry run: symbolic ref skipped, never dereferenced"
+expect_not_contains "$dry_out" "WOULD DELETE  alias-main" "dry run: symbolic ref is never a candidate"
+expect_not_contains "$dry_out" "heads/gone-nopr" "dry run: tag/branch name collision does not mangle the branch name"
 echo "ok: dry run classifies and mutates nothing"
 
 # ── Case B: audit reports everything and mutates nothing ───────────────────
@@ -315,6 +329,8 @@ branch_exists wt-checked || fail "negative control: worktree-checked-out branch 
 branch_exists unpushed-live || fail "negative control: unpushed in-flight branch was deleted"
 branch_exists main || fail "negative control: default branch was deleted"
 [ -d "$test_tmp/wt" ] || fail "delete: worktree directory was removed"
+git -C "$fixture" symbolic-ref -q refs/heads/alias-main >/dev/null ||
+    fail "negative control: symbolic ref alias-main was deleted"
 echo "ok: delete removes evidenced branches only, negative controls survive"
 
 # ── Case E: compare-and-delete refuses a tip that moved after verification ─
@@ -358,6 +374,73 @@ race_out="$(cd "$fixture" && GH_STUB_CHECKOUT=sq-race GH_STUB_CHECKOUT_DIR="$tes
 expect_contains "$race_out" "became checked out in a worktree since classification" "race: delete-phase re-check refused"
 branch_exists sq-race || fail "race: sq-race deleted although a worktree claimed it mid-run"
 echo "ok: delete-phase worktree re-check catches a mid-run checkout"
+
+# ── Case E3: a held branch lifecycle lock refuses the deletion ─────────────
+# The lock is the serialization boundary shared with worktree:new/rm; an
+# ownerless entry always refuses (crash-vs-suspension is undecidable), which
+# doubles here as the cheapest way to simulate a concurrent holder.
+
+lock_tip="$(make_branch sq-locked lock.txt)"
+(
+    cd "$fixture"
+    echo locked >lock.txt
+    git add lock.txt
+    git commit -qm "squash of sq-locked"
+    git push -q origin main
+)
+retire_remote sq-locked
+printf '%s\t%s\t%s\n' sq-locked "$lock_tip" 106 >>"$GH_STUB_PRS"
+
+commondir="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)"
+mkdir -p "$commondir/worktree-locks/branch=sq-locked+lock"
+locked_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "locked run exited nonzero: $locked_out"
+expect_contains "$locked_out" "branch lifecycle lock refused" "lock: contended branch skipped loudly"
+branch_exists sq-locked || fail "lock: sq-locked deleted although its lifecycle lock was held"
+rmdir "$commondir/worktree-locks/branch=sq-locked+lock"
+unlocked_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "post-lock run exited nonzero: $unlocked_out"
+expect_contains "$unlocked_out" "deleted  sq-locked" "lock: released lock lets the evidenced delete proceed"
+branch_exists sq-locked && fail "lock: sq-locked still exists after the lock was released"
+echo "ok: branch lifecycle lock serializes deletion with worktree operations"
+
+# ── Case E4: stale ancestry evidence fails closed ──────────────────────────
+# The remote default branch moves (force-push/repoint) after the last fetch;
+# the local tracking ref then vouches for commits the remote no longer
+# holds. The delete phase compares against the ADVERTISED tip and refuses.
+
+fresh_tip="$(make_branch anc-fresh fresh.txt)"
+(
+    cd "$fixture"
+    git merge -q --ff-only anc-fresh
+    git push -q origin main
+)
+retire_remote anc-fresh
+
+sab_sha="$(
+    cd "$fixture"
+    git checkout -q -b sabotage main
+    echo sab >sab.txt
+    git add sab.txt
+    git commit -qm "divergent remote main"
+    git push -q origin sabotage:refs/heads/main-sab 2>/dev/null
+    git rev-parse HEAD
+    git checkout -q main
+    git update-ref -d refs/heads/sabotage
+)"
+git -C "$origin" update-ref refs/heads/main "$sab_sha"
+
+stale_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "stale-ancestry run exited nonzero: $stale_out"
+expect_contains "$stale_out" "stale or unverifiable against the live remote" "freshness: stale tracking ref refused"
+branch_exists anc-fresh || fail "freshness: anc-fresh deleted against stale ancestry evidence"
+
+git -C "$origin" update-ref refs/heads/main "$(git -C "$fixture" rev-parse refs/remotes/origin/main)"
+fresh_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "restored-freshness run exited nonzero: $fresh_out"
+expect_contains "$fresh_out" "deleted  anc-fresh" "freshness: fresh evidence lets the ancestry delete proceed"
+branch_exists anc-fresh && fail "freshness: anc-fresh still exists after freshness was restored"
+echo "ok: ancestry deletion fails closed on stale remote evidence"
 
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 

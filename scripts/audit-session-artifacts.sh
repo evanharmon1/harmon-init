@@ -35,6 +35,8 @@ if command -v timeout >/dev/null 2>&1; then
     TIMEOUT_BIN=timeout
 elif command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_BIN=gtimeout
+else
+    echo "audit:session-artifacts: no 'timeout' found (brew install coreutils) — network probes are unbounded." >&2
 fi
 
 gh_probe() {
@@ -45,8 +47,11 @@ gh_probe() {
     fi
 }
 
+# %(refname:lstrip=2), not %(refname:short): when a tag shares a branch's
+# name, :short disambiguates to "heads/<name>" and every "refs/heads/$branch"
+# built from it dereferences nothing (challenge r1).
 git for-each-ref refs/heads \
-    --format='%(refname:short)%09%(objectname)%09%(upstream:track)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(upstream:track)' \
     >"$tmp/branches"
 total_branches="$(wc -l <"$tmp/branches" | tr -d ' ')"
 
