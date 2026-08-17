@@ -47,6 +47,11 @@
 #     the whole run and a legacy graft file forces the conservative wording,
 #     because a forged "also reachable from shared refs" would hand the
 #     human a copyable command that drops the only real reference.
+#   * The sweep is allowlist-gated: a record is removed only when every
+#     entry in its admin dir is known to this tool — validated, refused
+#     when carried, or accepted by design (reflogs). Unknown entries
+#     refuse, so a git version that grows new state files fails closed
+#     instead of being silently swept.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -199,6 +204,37 @@ remove_one_record() (
         echo "SKIP  record '$record' — carries worktree-local state (${carried# }); adopt or rescue it first, it exists nowhere else"
         exit 3
     fi
+
+    # Fail closed by construction: a record is swept only when EVERY entry
+    # in its admin dir is known to this tool — validated below, refused
+    # above when carried, or accepted by design (reflogs). Git grows state
+    # files over time and an enumeration of dangerous ones can only lose
+    # that game; the unknown refuses instead (challenge r6 restructure,
+    # maintainer-approved).
+    for entry in "$admin_dir"/* "$admin_dir"/.[!.]* "$admin_dir"/..?*; do
+        [ -e "$entry" ] || continue
+        entry_name="${entry##*/}"
+        case "$entry_name" in
+        gitdir | commondir | HEAD | locked | COMMIT_EDITMSG | ORIG_HEAD | FETCH_HEAD | index | logs) : ;;                                                                                                  # validated by the guards here, disposable scratch, or reflogs (accepted loss by design)
+        deferred-findings | adjudication-ledger | shepherd-codex | refs | rebase-merge | rebase-apply | MERGE_HEAD | MERGE_AUTOSTASH | CHERRY_PICK_HEAD | REVERT_HEAD | BISECT_LOG | config.worktree) : ;; # carried-state names: the scan above refused them when non-empty
+        info)
+            for info_entry in "$entry"/* "$entry"/.[!.]* "$entry"/..?*; do
+                [ -e "$info_entry" ] || continue
+                case "${info_entry##*/}" in
+                sparse-checkout) : ;; # refused above when present with content
+                *)
+                    echo "SKIP  record '$record' — unrecognized entry info/${info_entry##*/}; refusing to sweep what this tool does not understand (inspect $admin_dir)"
+                    exit 3 # unknown info entry refuses
+                    ;;
+                esac
+            done
+            ;;
+        *)
+            echo "SKIP  record '$record' — unrecognized entry '$entry_name'; refusing to sweep what this tool does not understand (inspect $admin_dir)"
+            exit 3 # unknown entry refuses
+            ;;
+        esac
+    done
 
     record_head="$(cat "$admin_dir/HEAD" 2>/dev/null || true)"
 

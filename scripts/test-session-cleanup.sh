@@ -856,17 +856,17 @@ echo "ok: a pin dropped mid-run by a racing settlement is re-asserted"
 # A partial rm is corrupt state needing inspection; reporting it as lock
 # contention hands the operator the wrong remedy.
 
-mkdir -p "$gitdir/worktrees/stuckrec/blocker"
+mkdir -p "$gitdir/worktrees/stuckrec/logs/blocker"
 printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/stuckrec/HEAD"
 printf '%s\n' "/nonexistent/stuckrec/.git" >"$gitdir/worktrees/stuckrec/gitdir"
-touch "$gitdir/worktrees/stuckrec/blocker/held"
-chmod 000 "$gitdir/worktrees/stuckrec/blocker"
+touch "$gitdir/worktrees/stuckrec/logs/blocker/held"
+chmod 000 "$gitdir/worktrees/stuckrec/logs/blocker"
 
 if stuck_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
-    chmod 755 "$gitdir/worktrees/stuckrec/blocker" 2>/dev/null || true
+    chmod 755 "$gitdir/worktrees/stuckrec/logs/blocker" 2>/dev/null || true
     fail "record prune exited zero although removal failed: $stuck_out"
 fi
-chmod 755 "$gitdir/worktrees/stuckrec/blocker" 2>/dev/null || true
+chmod 755 "$gitdir/worktrees/stuckrec/logs/blocker" 2>/dev/null || true
 expect_contains "$stuck_out" "removal failed midway" "rm failure: reported as its own outcome"
 expect_not_contains "$stuck_out" "lifecycle lock refused" "rm failure: never mislabeled as lock contention"
 
@@ -1074,6 +1074,37 @@ tagrec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" 
     fail "record prune failed after the tag object was rescued: $tagrec_ok_out"
 expect_contains "$tagrec_ok_out" "pruned record 'tagrec'" "fetch-tag: referenced tag object sweeps normally"
 echo "ok: an unreferenced annotated tag in FETCH_HEAD refuses the sweep until rescued"
+
+# ── Case E7u: an unrecognized admin-dir entry refuses the sweep ────────────
+# The sweep is allowlist-gated: git grows state files over time (sequencer/,
+# AUTO_MERGE, ...) and enumerating dangerous ones loses that game — anything
+# this tool does not understand fails closed.
+
+mkdir -p "$gitdir/worktrees/oddrec/sequencer"
+echo "pick deadbeef subject" >"$gitdir/worktrees/oddrec/sequencer/todo"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/oddrec/HEAD"
+printf '%s\n' "/nonexistent/oddrec/.git" >"$gitdir/worktrees/oddrec/gitdir"
+
+if odd_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unrecognized admin entry present: $odd_out"
+fi
+expect_contains "$odd_out" "unrecognized entry 'sequencer'" "unknown entry: refused fail-closed"
+[ -d "$gitdir/worktrees/oddrec" ] || fail "unknown entry: record swept despite unrecognized state"
+
+rm -rf "$gitdir/worktrees/oddrec/sequencer"
+mkdir -p "$gitdir/worktrees/oddrec/info"
+echo "mystery" >"$gitdir/worktrees/oddrec/info/attributes-cache"
+if oddinfo_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unrecognized info/ entry present: $oddinfo_out"
+fi
+expect_contains "$oddinfo_out" "unrecognized entry info/attributes-cache" "unknown info entry: refused fail-closed"
+[ -d "$gitdir/worktrees/oddrec" ] || fail "unknown info entry: record swept despite unrecognized state"
+
+rm -rf "$gitdir/worktrees/oddrec/info"
+odd_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the unknown entries were adopted: $odd_ok_out"
+expect_contains "$odd_ok_out" "pruned record 'oddrec'" "unknown entry: understood record prunes normally"
+echo "ok: an unrecognized admin-dir entry refuses the sweep"
 
 # ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
 # A broken ref backend is not an empty pin namespace; the empty-plan path
