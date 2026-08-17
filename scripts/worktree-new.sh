@@ -780,11 +780,13 @@ if [ "$do_install" -eq 1 ]; then
         #   1. The `packageManager` field in package.json — the repo's own
         #      declaration (the Corepack convention), so it wins even over a
         #      contradicting lockfile, exactly as Corepack itself would.
-        #      Parsed best-effort — the first string-valued occurrence in the
-        #      file — because jq is not one of this script's dependencies;
-        #      the spec puts the field at top level with a string value, and
-        #      nested objects like devEngines.packageManager carry an object
-        #      value, which this pattern does not match.
+        #      Parsed best-effort because jq is not one of this script's
+        #      dependencies: the file is flattened first (the field's name,
+        #      colon, and value legally sit on separate lines, and values
+        #      never contain whitespace), then matched as a string-valued
+        #      key. The spec puts the field at top level with a string
+        #      value; nested objects like devEngines.packageManager carry an
+        #      object value, which this pattern does not match.
         #   2. Exactly one manager's own files at the tree root:
         #      pnpm-lock.yaml or pnpm-workspace.yaml → pnpm;
         #      package-lock.json or npm-shrinkwrap.json → npm;
@@ -799,7 +801,10 @@ if [ "$do_install" -eq 1 ]; then
         node_pm=""
         pm_decl=""
         if [ -f "$tree/package.json" ]; then
-            pm_decl="$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tree/package.json" | head -n 1)"
+            # tr collapses the whole file to one line, so sed emits at most
+            # one match and needs no `head` (whose early exit would race a
+            # SIGPIPE under pipefail).
+            pm_decl="$(tr -d '\n\r\t ' <"$tree/package.json" | sed -n 's/.*"packageManager":"\([^"]*\)".*/\1/p')"
         fi
         if [ -n "$pm_decl" ]; then
             node_pm=${pm_decl%%@*}

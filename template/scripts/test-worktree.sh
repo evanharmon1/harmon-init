@@ -2421,6 +2421,47 @@ printf '%s\n' "$det_out" | grep -q "no package-manager signal" ||
 det_assert_installer "" ""
 rm_wt det-bare >/dev/null || fail "cleanup of the signal-less tree failed"
 
+echo "==> a packageManager declaration split across lines still parses"
+det_reset
+printf '{\n  "name": "fixture",\n  "private": true,\n  "packageManager":\n    "yarn@4.1.0"\n}\n' >"$fixture/package.json"
+det_commit "multi-line packageManager declaration"
+new det-multiline >/dev/null || fail "worktree-new.sh failed on a multi-line packageManager declaration"
+det_assert_installer yarn "$fixture/.worktrees/det-multiline"
+rm_wt det-multiline >/dev/null || fail "cleanup of the multi-line tree failed"
+
+# The shipped devcontainer post-checkout hook auto-installs Node dependencies
+# and is NOT a lefthook shim — post-create.sh copies it straight into
+# .git/hooks, so `git worktree add` fires it before the detector ever runs.
+# The guard under test is that hook's own LEFTHOOK=0 gate (harmon-init#841):
+# without it, its lockfile-first fallback runs a competing installer — pnpm
+# from a stale pnpm-lock.yaml in a repo whose package.json declares npm. The
+# REAL hook is exercised, not a mimic, so dropping the guard upstream fails
+# this case. A rendered tree without the devcontainer profile has no hook to
+# pin down, and the case skips.
+if [ -f "$repo/.devcontainer/hooks/post-checkout" ]; then
+    echo "==> the devcontainer post-checkout hook defers to the detector"
+    det_reset
+    printf '{"name":"fixture","private":true,"packageManager":"npm@10.9.2"}\n' >"$fixture/package.json"
+    printf 'lockfileVersion: "9.0"\n' >"$fixture/pnpm-lock.yaml"
+    det_commit "declared npm with a stale pnpm lockfile"
+    cp "$repo/.devcontainer/hooks/post-checkout" "$shared_hooks/post-checkout"
+    chmod +x "$shared_hooks/post-checkout"
+    # The hook chains git-lfs before its install section and exits 2 when the
+    # binary is missing — which would fail the worktree add for a reason this
+    # case is not about. Satisfy the chain with a stub.
+    cat >"$stub_bin/git-lfs" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$stub_bin/git-lfs"
+    new det-hook >/dev/null || fail "worktree-new.sh failed with the devcontainer post-checkout hook installed"
+    det_assert_installer npm "$fixture/.worktrees/det-hook"
+    rm_wt det-hook >/dev/null || fail "cleanup of the hook tree failed"
+    rm -f "$shared_hooks/post-checkout" "$stub_bin/git-lfs"
+else
+    echo "==> Note: no devcontainer post-checkout hook in this tree; skipping its suppression case"
+fi
+
 # Restore the pnpm fixture the cases below assume — package.json plus the
 # workspace file, exactly as it stood before this block.
 det_reset
