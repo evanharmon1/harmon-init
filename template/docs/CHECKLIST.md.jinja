@@ -354,8 +354,9 @@ environment — against the items below
       (the default `gh label list --limit 200` paged listing can miss these
       on a repo with many labels — use this enumeration, not the paged form,
       everywhere in this item). harmon-init issue #751 renamed those families
-      to `gpt` and `mai` (Codex and Copilot are harnesses, not families — the
-      same harness/family split D9 already made elsewhere; see ADR 0005 D8).
+      to `gpt` and `mai`: labels classify the model family, not the harness;
+      Codex runs GPT-family models, while Copilot is represented by its `mai`
+      broker family because it can route across models.
       A `setup-github-labels` re-run never deletes the old family, so it
       survives beside the new registry-rendered one.
 
