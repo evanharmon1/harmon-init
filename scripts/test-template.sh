@@ -158,6 +158,7 @@ full)
         --data use_antigravity_cli=true
         --data use_alternative_claude_providers=true
         --data use_foreman=true
+        --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
     )
     ;;
 meta)
@@ -1155,6 +1156,15 @@ iac | full)
     # warned-and-ignored by the CLI, so shipping them would be silent rot.
     grep -q '^runner = ' .foreman.toml || err ".foreman.toml missing v2 runner key"
     grep -q '^trusted_actors = ' .foreman.toml || err ".foreman.toml missing v2 trusted_actors"
+    if [ "$profile" = "full" ]; then
+        grep -Eq '^trusted_actors = .*"AdmiralFraggle"' .foreman.toml ||
+            err ".foreman.toml missing configured additional trusted human"
+        grep -Eq '^trusted_actors = .*"review-app\[bot\]"' .foreman.toml ||
+            err ".foreman.toml missing configured additional trusted App"
+    else
+        ! grep -q 'AdmiralFraggle\|review-app\[bot\]' .foreman.toml ||
+            err ".foreman.toml renders additional trusted actors when none were configured"
+    fi
     grep -q '^\[verify\]' .foreman.toml || err ".foreman.toml missing v2 [verify] table"
     grep -q 'expected_login' .foreman.toml || err ".foreman.toml missing expected_login"
     ! grep -q '^verify_command' .foreman.toml || err ".foreman.toml still ships the v1 verify_command key"
