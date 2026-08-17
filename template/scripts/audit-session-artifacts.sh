@@ -128,6 +128,12 @@ elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remot
             "$live_default" "$default_branch" "$live_default"
         default_branch="$live_default"
         stale=$((stale + 1))
+    elif [ -n "$live_default" ] && [ -z "$default_branch" ]; then
+        # No local record at all (origin/HEAD unset, default neither main nor
+        # master): the successful advertisement is the answer, not a reason
+        # to report UNVERIFIED (review r1).
+        printf "  note   no local default-branch record — using the remote's advertised '%s'\n" "$live_default"
+        default_branch="$live_default"
     fi
     awk '$1 != "ref:" && $2 != "HEAD"' "$tmp/remote-heads-raw" >"$tmp/remote-heads"
     git for-each-ref "refs/remotes/$remote" \

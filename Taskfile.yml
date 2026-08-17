@@ -822,9 +822,11 @@ tasks:
 
   # ── Session cleanup (#838) ────────────────────────────────────
   # audit:* reports, clean:* acts — and deletion only ever runs on positive
-  # evidence (a merged PR, or `git branch -d` succeeding on its own), because
-  # squash-merge makes ancestry blind to delivered branches. Dry run by
-  # default; never a force flag; never touches a worktree or a remote branch.
+  # evidence (a PR merged into the default branch at exactly the local tip,
+  # or verified-fresh ancestry into the remote default), because squash-merge
+  # makes ancestry blind to delivered branches. Every deletion is a guarded
+  # compare-and-delete against the verified tip. Dry run by default; never a
+  # force flag; never touches a worktree or a remote branch.
   audit:session-artifacts:
     desc: "Report session leftovers (unpushed branches, gone upstreams vs merged PRs, other worktrees, review sidecars) — mutates nothing"
     cmds:

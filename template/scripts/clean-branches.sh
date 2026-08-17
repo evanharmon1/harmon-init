@@ -119,6 +119,17 @@ ancestry_target="refs/remotes/$remote/$default_branch"
 
 current_branch="$(git branch --show-current || true)"
 
+# Legacy graft files rewrite parentage exactly as replace refs do, but
+# GIT_NO_REPLACE_OBJECTS does NOT disable them (review r1). Ancestry walked
+# over grafted history is not evidence — refuse the whole ancestry class
+# while one exists; merged-PR evidence does not walk history and stays valid.
+grafts_present=false
+grafts_file="$(git rev-parse --git-path info/grafts)"
+if [ -s "$grafts_file" ]; then
+    grafts_present=true
+    echo "NOTE  legacy graft file present ($grafts_file) — ancestry evidence is unusable while it exists; only merged-PR evidence applies"
+fi
+
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/clean-branches.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -251,9 +262,11 @@ while IFS=$'\t' read -r branch tip track symref; do
     fi
 
     # Evidence class 1 — ancestry: every commit is reachable from the remote
-    # default branch, so nothing local can be lost. `git branch -d` performs
-    # the delete and stays the final authority.
-    if git merge-base --is-ancestor "refs/heads/$branch" "$ancestry_target"; then
+    # default branch, so nothing local can be lost. The deletion itself is
+    # the same guarded compare-and-delete as the PR class (see delete_one) —
+    # authorized by this verified ancestry, re-validated at delete time.
+    if [ "$grafts_present" = false ] &&
+        git merge-base --is-ancestor "refs/heads/$branch" "$ancestry_target"; then
         printf '%s\t%s\tancestry\t\n' "$branch" "$tip" >>"$tmp/candidates"
         candidates=$((candidates + 1))
         continue
@@ -422,7 +435,11 @@ delete_one() (
     # to inherit. Absence afterwards is the success condition — the section
     # legitimately may not exist at all.
     git config --local --remove-section "branch.$branch" 2>/dev/null || true
-    if git config --local --list --name-only 2>/dev/null | grep -Fq "branch.$branch."; then
+    # Exact-section match: a sibling branch named "$branch.<more>" flattens
+    # to keys sharing this prefix, so the leftover check requires a key whose
+    # remainder has no further dot (review r1).
+    if git config --local --list --name-only 2>/dev/null |
+        awk -v p="branch.$branch." 'index($0, p) == 1 { rest = substr($0, length(p) + 1); if (rest !~ /\./) found = 1 } END { exit !found }'; then
         echo "WARN  $branch was deleted but its branch.$branch.* config could not be removed — remove it by hand (git config --local --remove-section $(shell_quote "branch.$branch"))"
     fi
     echo "deleted  $branch (was ${tip}) — $why — recover: git branch $(shell_quote "$branch") ${tip:0:12}"

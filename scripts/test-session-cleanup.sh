@@ -668,6 +668,98 @@ expect_not_contains "$rep_out" "WOULD DELETE  rep-trap" "replace ref: grafted pa
 branch_exists rep-trap || fail "replace ref: rep-trap vanished during a dry run"
 echo "ok: replacement refs cannot forge ancestry evidence"
 
+# ── Case E14: a dotted sibling's config never triggers a false WARN ────────
+# branch "sq-dot.sub"'s keys flatten to branch.sq-dot.sub.*, which shares a
+# prefix with branch.sq-dot.* — the leftover check must match the exact
+# section.
+
+dot_tip="$(make_branch sq-dot dot.txt)"
+(
+    cd "$fixture"
+    echo dot >dot.txt
+    git add dot.txt
+    git commit -qm "squash of sq-dot"
+    git push -q origin main
+)
+retire_remote sq-dot
+printf '%s\t%s\t%s\t%s\n' sq-dot "$dot_tip" 112 main >>"$GH_STUB_PRS"
+git -C "$fixture" config --local branch.sq-dot.sub.remote origin
+
+dot_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "dotted-sibling run exited nonzero: $dot_out"
+expect_contains "$dot_out" "deleted  sq-dot" "dotted sibling: evidenced deletion proceeds"
+expect_not_contains "$dot_out" "WARN  sq-dot" "dotted sibling: no false leftover-config warning"
+git -C "$fixture" config --local --remove-section branch.sq-dot.sub 2>/dev/null || true
+echo "ok: leftover-config check matches the exact section"
+
+# ── Case E15: a legacy graft file disables ancestry evidence ───────────────
+# info/grafts rewrites parentage and GIT_NO_REPLACE_OBJECTS does not cover
+# it; ancestry walked over grafts is not evidence.
+
+graft_tip="$(make_branch anc-graft graft.txt)"
+(
+    cd "$fixture"
+    git merge -q --ff-only anc-graft
+    git push -q origin main
+)
+retire_remote anc-graft
+printf '%s\n' "# legacy graft" >"$gitdir/info/grafts"
+
+graft_out="$(cd "$fixture" && bash scripts/clean-branches.sh 2>&1)" ||
+    fail "grafts dry run exited nonzero: $graft_out"
+expect_contains "$graft_out" "legacy graft file present" "grafts: presence announced"
+expect_not_contains "$graft_out" "WOULD DELETE  anc-graft" "grafts: ancestry evidence disabled"
+
+rm -f "$gitdir/info/grafts"
+graft_ok_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "post-grafts run exited nonzero: $graft_ok_out"
+expect_contains "$graft_ok_out" "deleted  anc-graft" "grafts: removal restores ancestry evidence"
+echo "ok: a legacy graft file fails ancestry evidence closed"
+
+# ── Case E16: the audit adopts the advertised default when none is local ───
+# origin/HEAD unset and a default named neither main nor master: the
+# advertisement the freshness probe already read is the answer, not a reason
+# to report UNVERIFIED.
+
+o2="$test_tmp/o2.git"
+f2="$test_tmp/f2"
+git init -q --bare --initial-branch=trunk "$o2"
+git clone -q "$o2" "$f2" 2>/dev/null
+git -C "$f2" config user.email test@example.invalid
+git -C "$f2" config user.name "Session Cleanup Test"
+git -C "$f2" symbolic-ref HEAD refs/heads/trunk
+(
+    cd "$f2"
+    echo base >README.md
+    git add README.md
+    git commit -qm "initial"
+    git push -qu origin trunk
+    git checkout -q -b g1 trunk
+    echo g1 >g1.txt
+    git add g1.txt
+    git commit -qm "work on g1"
+    git push -qu origin g1 2>/dev/null
+    git checkout -q trunk
+    echo g1 >g1.txt
+    git add g1.txt
+    git commit -qm "squash of g1"
+    git push -q origin trunk
+    git push -q origin :g1 2>/dev/null
+    git fetch -qp origin
+)
+git -C "$f2" symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null || true
+g1_tip="$(git -C "$f2" rev-parse refs/heads/g1)"
+printf '%s\t%s\t%s\t%s\n' g1 "$g1_tip" 201 trunk >>"$GH_STUB_PRS"
+mkdir -p "$f2/scripts"
+cp "$repo/scripts/audit-session-artifacts.sh" "$f2/scripts/"
+
+nodef_out="$(cd "$f2" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "no-local-default audit exited nonzero: $nodef_out"
+expect_contains "$nodef_out" "using the remote's advertised 'trunk'" "no local default: advertisement adopted"
+expect_contains "$nodef_out" "prunable      g1 — merged PR #201 into trunk" "no local default: classification still runs"
+expect_not_contains "$nodef_out" "UNVERIFIED" "no local default: a successful advertisement is not UNVERIFIED"
+echo "ok: the audit adopts the advertised default when no local record exists"
+
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 
 grep -q 'branch -D' "$repo/scripts/clean-branches.sh" &&
