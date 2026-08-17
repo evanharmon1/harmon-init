@@ -760,6 +760,17 @@ expect_contains "$nodef_out" "prunable      g1 — merged PR #201 into trunk" "n
 expect_not_contains "$nodef_out" "UNVERIFIED" "no local default: a successful advertisement is not UNVERIFIED"
 echo "ok: the audit adopts the advertised default when no local record exists"
 
+# ── Case E17: a slash-containing remote name does not mangle freshness ─────
+# Remote names may legally contain slashes; a fixed strip depth would read
+# every tracking ref as deleted upstream.
+
+git -C "$f2" remote rename origin ns/origin 2>/dev/null
+slash_out="$(cd "$f2" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "slash-remote audit exited nonzero: $slash_out"
+expect_contains "$slash_out" "fresh — local tracking refs match" "slash remote: tracking refs matched, not mangled"
+expect_not_contains "$slash_out" "deleted upstream" "slash remote: no false deleted-upstream reports"
+echo "ok: slash-containing remote names keep freshness accurate"
+
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 
 grep -q 'branch -D' "$repo/scripts/clean-branches.sh" &&

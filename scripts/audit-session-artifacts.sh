@@ -136,11 +136,15 @@ elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remot
         default_branch="$live_default"
     fi
     awk '$1 != "ref:" && $2 != "HEAD"' "$tmp/remote-heads-raw" >"$tmp/remote-heads"
+    # Full refname with a dynamic strip, not %(refname:lstrip=3): a remote
+    # name may itself contain slashes, and a fixed strip depth would mangle
+    # every tracking ref into a false "deleted upstream" (review r2).
     git for-each-ref "refs/remotes/$remote" \
-        --format='%(refname:lstrip=3)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
+        --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
         >"$tmp/tracking"
-    while IFS=$'\t' read -r tname toid tsymref; do
+    while IFS=$'\t' read -r tref toid tsymref; do
         [ "$tsymref" = "-" ] || continue
+        tname="${tref#refs/remotes/$remote/}"
         live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"
         if [ -z "$live_oid" ]; then
             printf '  stale  %s — deleted upstream; local tracking ref survives until a prune\n' "$tname"

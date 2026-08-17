@@ -838,9 +838,9 @@ tasks:
       - ./scripts/clean-branches.sh {{.CLI_ARGS}}
 
   clean:remote-refs:
-    desc: Prune remote-tracking refs whose remote branch is gone (git fetch --prune)
+    desc: Prune remote-tracking refs whose remote branch is gone, on every remote (git fetch --all --prune)
     cmds:
-      - git fetch --prune
+      - git fetch --all --prune
 
 
   # ── Status ────────────────────────────────────────────────────
