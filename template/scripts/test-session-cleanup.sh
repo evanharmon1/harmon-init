@@ -359,7 +359,7 @@ echo "ok: PR-evidence deletion fails closed without gh"
 del_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
     fail "delete run exited nonzero: $del_out"
 expect_contains "$del_out" "deleted  sq-merged" "delete: squash-merged branch removed"
-expect_contains "$del_out" "recover: git branch sq-merged" "delete: recovery hint printed"
+expect_contains "$del_out" "recover: git branch 'sq-merged'" "delete: recovery hint printed, branch name quoted"
 branch_exists sq-merged && fail "delete: sq-merged still exists"
 git -C "$fixture" config --get-regexp '^branch\.sq-merged\.' >/dev/null 2>&1 &&
     fail "delete: branch.sq-merged config section left behind"
@@ -651,6 +651,55 @@ expect_contains "$state_ok_out" "pruned record 'state-rec'" "state: adopted reco
 expect_contains "$state_ok_out" "pruned record 'refs-rec'" "state: rescued record prunes normally"
 echo "ok: state-carrying records are refused until adopted, never swept"
 
+# ── Case E7e: an index diverging from the recorded HEAD refuses the sweep ──
+# Staged-but-uncommitted blobs can be referenced by the record's index
+# alone; sweeping the record hands them to the next gc.
+
+git -C "$fixture" worktree add -q --detach "$test_tmp/wt-staged" main
+(
+    cd "$test_tmp/wt-staged"
+    echo staged-only >staged.txt
+    git add staged.txt
+)
+rm -rf "$test_tmp/wt-staged"
+
+if staged_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a staged-divergent index present: $staged_out"
+fi
+expect_contains "$staged_out" "record 'wt-staged' — its index diverges from the recorded HEAD" "staged: divergent index refused"
+[ -d "$gitdir/worktrees/wt-staged" ] || fail "staged: index-carrying record was swept"
+
+rm -f "$gitdir/worktrees/wt-staged/index"
+if staged_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the detached record's pin awaits settlement: $staged_ok_out"
+fi
+expect_contains "$staged_ok_out" "pruned record 'wt-staged'" "staged: adopted record prunes normally"
+expect_contains "$staged_ok_out" "PINNED  refs/session-cleanup/pin/wt-staged" "staged: detached head pinned for explicit settlement"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-staged
+echo "ok: a staged-divergent index refuses the sweep until adopted"
+
+# ── Case E7f: record removal honors the worktree lifecycle lock ────────────
+# A record for a tree under .worktrees/ takes the same per-path lock that
+# worktree:new/rm hold, so removal cannot race a blessed re-creation.
+
+mkdir -p "$gitdir/worktrees/lockrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/lockrec/HEAD"
+printf '%s\n' "$fixture/.worktrees/lockrec/.git" >"$gitdir/worktrees/lockrec/gitdir"
+commondir_l="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)"
+mkdir -p "$commondir_l/worktree-locks/lockrec+lock"
+
+if lockrec_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the lifecycle lock was held: $lockrec_out"
+fi
+expect_contains "$lockrec_out" "worktree lifecycle lock refused" "record lock: contended record skipped loudly"
+[ -d "$gitdir/worktrees/lockrec" ] || fail "record lock: record removed although its lifecycle lock was held"
+
+rmdir "$commondir_l/worktree-locks/lockrec+lock"
+lockrec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the lock was released: $lockrec_ok_out"
+expect_contains "$lockrec_ok_out" "pruned record 'lockrec'" "record lock: released lock lets the removal proceed"
+echo "ok: record removal is serialized by the worktree lifecycle lock"
+
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD
 # must be verified before any evidence computed against the old name is
@@ -743,6 +792,27 @@ expect_contains "$circ_out" "suspending remaining per-branch probes" "circuit: f
 expect_contains "$circ_out" "per-branch probes suspended after an earlier probe failure" "circuit: later branches skipped without probing"
 branch_exists gone-nopr || fail "circuit: a branch was deleted while probes were failing"
 echo "ok: a failed fallback probe suspends the remaining probes"
+
+# ── Case E12: shell metacharacters in branch names stay inert in remedies ──
+# Refnames legally carry \$ and friends; a copyable recovery command must
+# quote them.
+
+meta_tip="$(make_branch 'sq-$meta' meta.txt)"
+(
+    cd "$fixture"
+    echo meta >meta.txt
+    git add meta.txt
+    git commit -qm "squash of sq-meta"
+    git push -q origin main
+)
+retire_remote 'sq-$meta'
+printf '%s\t%s\t%s\t%s\n' 'sq-$meta' "$meta_tip" 111 main >>"$GH_STUB_PRS"
+
+meta_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "metachar run exited nonzero: $meta_out"
+expect_contains "$meta_out" "recover: git branch 'sq-\$meta'" "metachar: recovery command quotes the branch name"
+branch_exists 'sq-$meta' && fail "metachar: sq-\$meta still exists after evidenced deletion"
+echo "ok: recovery commands shell-quote branch names"
 
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 

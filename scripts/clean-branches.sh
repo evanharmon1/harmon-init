@@ -56,6 +56,13 @@ die() {
     exit 1
 }
 
+# POSIX shell-quote for values echoed into copyable commands: branch names
+# legally carry shell metacharacters (challenge r7; same class as
+# worktree-new.sh's printed remedies).
+shell_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 do_delete=false
 for arg in "$@"; do
     case "$arg" in
@@ -410,9 +417,9 @@ delete_one() (
     # legitimately may not exist at all.
     git config --local --remove-section "branch.$branch" 2>/dev/null || true
     if git config --local --list --name-only 2>/dev/null | grep -Fq "branch.$branch."; then
-        echo "WARN  $branch was deleted but its branch.$branch.* config could not be removed — remove it by hand (git config --local --remove-section branch.$branch)"
+        echo "WARN  $branch was deleted but its branch.$branch.* config could not be removed — remove it by hand (git config --local --remove-section $(shell_quote "branch.$branch"))"
     fi
-    echo "deleted  $branch (was ${tip}) — $why — recover: git branch $branch ${tip:0:12}"
+    echo "deleted  $branch (was ${tip}) — $why — recover: git branch $(shell_quote "$branch") ${tip:0:12}"
 )
 
 deleted=0
