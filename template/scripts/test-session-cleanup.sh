@@ -514,6 +514,43 @@ expect_contains "$cfg_out" "WARN  sq-cfg was deleted but its branch.sq-cfg" "con
 git -C "$fixture" config --local --remove-section branch.sq-cfg 2>/dev/null || true
 echo "ok: config cleanup failure is reported, never swallowed"
 
+# ── Case E7: worktree-record pruning refuses to orphan a detached commit ───
+# A stale record whose HEAD is detached at a commit no shared ref contains is
+# the only thing keeping that commit alive; a raw `git worktree prune` would
+# drop it (challenge r3). Branch-attached stale records prune normally.
+
+cp "$repo/scripts/clean-worktree-records.sh" "$fixture/scripts/"
+
+git -C "$fixture" worktree add -q -b prune-br "$test_tmp/wt-br" main
+git -C "$fixture" worktree add -q --detach "$test_tmp/wt-det" main
+(
+    cd "$test_tmp/wt-det"
+    echo det >det.txt
+    git add det.txt
+    git commit -qm "detached-only work"
+)
+det_sha="$(git -C "$test_tmp/wt-det" rev-parse HEAD)"
+rm -rf "$test_tmp/wt-br" "$test_tmp/wt-det"
+
+if prune_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune succeeded while a record was the last reference to $det_sha: $prune_out"
+fi
+expect_contains "$prune_out" "detached commit $det_sha" "record prune: refusal names the at-risk commit"
+[ -d "$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees" ] &&
+    ls "$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees" | grep -q wt-det ||
+    fail "record prune: the at-risk record was pruned anyway"
+echo "ok: record prune refuses to orphan a detached commit"
+
+git -C "$fixture" branch -q rescue-det "$det_sha"
+prune_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the commit was rescued: $prune_ok_out"
+expect_contains "$prune_ok_out" "stale records pruned" "record prune: proceeds once the commit is referenced"
+if ls "$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees" 2>/dev/null | grep -Eq 'wt-det|wt-br'; then
+    fail "record prune: stale records survived a safe prune"
+fi
+git -C "$fixture" cat-file -e "$det_sha" || fail "record prune: rescued commit lost from the object db"
+echo "ok: record prune clears stale records once every commit is referenced"
+
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 
 grep -q 'branch -D' "$repo/scripts/clean-branches.sh" &&

@@ -1225,9 +1225,9 @@ tasks:
       - git fetch --prune
 
   clean:worktree-records:
-    desc: Prune stale worktree admin records only — never removes a worktree directory
+    desc: Prune stale worktree admin records only — refuses when a record is the last reference to a detached commit; never removes a worktree directory
     cmds:
-      - git worktree prune
+      - ./scripts/clean-worktree-records.sh
 
   # ── Status ─────────────────────────────────────────────────────
   status:
