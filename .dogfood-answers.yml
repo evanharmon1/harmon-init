@@ -40,6 +40,7 @@ skill_categories:
   - repo
 
 use_foreman: true
+foreman_additional_trusted_actors: AdmiralFraggle
 
 # No first-party source language remains (foreman is a pinned external CLI,
 # not vendored Python), so CodeQL has nothing to analyze here. The template
