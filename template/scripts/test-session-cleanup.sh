@@ -651,6 +651,23 @@ expect_contains "$meta_out" "recover: git branch 'sq-\$meta'" "metachar: recover
 branch_exists 'sq-$meta' && fail "metachar: sq-\$meta still exists after evidenced deletion"
 echo "ok: recovery commands shell-quote branch names"
 
+# ── Case E13: replacement refs cannot forge ancestry evidence ──────────────
+# A refs/replace graft can rewrite the default tip's parentage so an
+# unmerged branch walks as an ancestor; evidence must be judged on raw
+# history.
+
+rep_tip="$(make_branch rep-trap trap.txt)"
+rep_main="$(git -C "$fixture" rev-parse refs/remotes/origin/main)"
+rep_synth="$(git -C "$fixture" commit-tree "main^{tree}" -p "$rep_tip" -m "graft")"
+git -C "$fixture" update-ref "refs/replace/$rep_main" "$rep_synth"
+
+rep_out="$(cd "$fixture" && bash scripts/clean-branches.sh 2>&1)" ||
+    fail "replace-ref dry run exited nonzero: $rep_out"
+git -C "$fixture" update-ref -d "refs/replace/$rep_main"
+expect_not_contains "$rep_out" "WOULD DELETE  rep-trap" "replace ref: grafted parentage is not ancestry evidence"
+branch_exists rep-trap || fail "replace ref: rep-trap vanished during a dry run"
+echo "ok: replacement refs cannot forge ancestry evidence"
+
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 
 grep -q 'branch -D' "$repo/scripts/clean-branches.sh" &&

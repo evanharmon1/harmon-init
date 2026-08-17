@@ -36,6 +36,12 @@
 # can restore it until git prunes the objects.
 set -euo pipefail
 
+# Replacement refs rewrite parentage cosmetically; evidence and reporting must
+# judge RAW history — a refs/replace graft could make an unmerged branch read
+# as an ancestor of the default branch (challenge r8). Ignoring replacements
+# is the fail-closed direction: a grafted-in branch is kept, never deleted.
+export GIT_NO_REPLACE_OBJECTS=1
+
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
