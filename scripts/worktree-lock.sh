@@ -296,7 +296,12 @@ acquire_branch_lock() {
     # character count while its flattened basename exceeds NAME_MAX
     # (review r1). Path keys need no such care — their charset is ASCII.
     if [ "$(printf '%s' "$_bl_enc" | wc -c | tr -d ' ')" -gt 200 ]; then
-        _bl_enc="h$(printf '%s' "$_bl_enc" | cksum | tr ' \t' '--')"
+        # The hashed form KEEPS the 'branch=' prefix: a bare 'h<cksum>' key
+        # lands in the path-key namespace, where the creation whitelist
+        # admits a worktree literally named that string — the operation
+        # would then contend with its own path lock and refuse itself
+        # (PR #932 cloud review).
+        _bl_enc="branch=h$(printf '%s' "$_bl_enc" | cksum | tr ' \t' '--')"
     fi
     acquire_excl "$_bl_enc" "branch '$1'"
 }

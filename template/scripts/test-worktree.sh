@@ -1608,6 +1608,22 @@ rm -rf "$fixture_locks/branch=lk-branch+lock"
 new lk-branch >/dev/null || fail "the branch lock was not released for a later creation"
 rm_wt lk-branch >/dev/null || fail "cleanup of the lk-branch tree failed"
 
+echo "==> a hashed long-branch lock key stays outside the path-key namespace"
+# A branch encoding over 200 bytes collapses its lock key to a checksum.
+# Hashed WITHOUT the branch= prefix, that key lands in the path-key
+# namespace — and the creation whitelist admits a worktree literally named
+# the checksum string, so `new <hash> --branch <long>` would contend with
+# its own path lock and refuse itself (PR #932 cloud review). The name
+# below is derived exactly as acquire_branch_lock derives the key, so the
+# case stages the collision deterministically whatever cksum returns.
+long_branch="$(printf 'a%.0s' $(seq 1 201))"
+hash_name="h$(printf 'branch=%s' "$long_branch" |
+    tr '/' '%' | tr '[:upper:]' '[:lower:]' | cksum | tr ' \t' '--')"
+new "$hash_name" --branch "$long_branch" >/dev/null ||
+    fail "a worktree named its own hashed branch-lock key refused itself (PR #932 cloud review)"
+rm_wt "$hash_name" >/dev/null || fail "cleanup of the hashed-name tree failed"
+git -C "$fixture" branch -D "$long_branch" >/dev/null 2>&1 || true
+
 echo "==> a stale lock from a dead process is broken, once"
 # Death is proven through a CONTROLLED ps, not the host's: a sandbox that
 # denies or restricts ps makes the implementation (correctly) refuse to
