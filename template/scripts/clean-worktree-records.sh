@@ -15,23 +15,30 @@
 #     prune re-computes eligibility at its own moment, so a LIVE worktree
 #     whose directory vanishes mid-run could be pruned on a stale HEAD
 #     snapshot. A plan-verified stale record has no working directory, so
-#     its HEAD cannot move. Live records are never touched.
+#     its HEAD cannot move. Live records are never touched, and git's own
+#     `locked` marker is re-checked under the lock — a worktree locked
+#     after the plan (removable media) stays preserved.
 #   * Each removal runs under the same per-path lifecycle lock that
 #     worktree:new / worktree:rm hold (for trees under the blessed
 #     .worktrees layout), so a removal cannot race a re-creation of the
 #     same path by the blessed tooling. Raw `git worktree add` outside the
 #     tooling remains the documented residual.
 #   * A record that carries worktree-local state is refused, never swept:
-#     review sidecars, per-worktree ref files, and an index that diverges
-#     from the recorded HEAD (staged-but-uncommitted blobs the index alone
-#     keeps alive). Reflogs are deliberately NOT state — every record has
-#     one, and accepting reflog loss matches git's own prune semantics.
+#     review sidecars, per-worktree ref files, in-progress operation state
+#     (rebase/merge/cherry-pick — the worktree-rm.sh list), and an index
+#     that diverges from the recorded HEAD (staged-but-uncommitted blobs
+#     the index alone keeps alive). Reflogs are deliberately NOT state —
+#     every record has one, and accepting reflog loss matches git's own
+#     prune semantics.
 #   * A detached record HEAD is pinned as refs/session-cleanup/pin/<record>
 #     BEFORE its record is removed, with a CREATE-ONLY ref write; an
 #     existing mismatched pin from an earlier run refuses that record. Pins
 #     are removed only by EXPLICIT human settlement — an auto-drop races
 #     concurrent ref deletion — and the run exits nonzero while any await
-#     action. Nothing is ever lost.
+#     action, prior runs' pins included. The pin is re-asserted after the
+#     removal (a racing settlement could drop it in the window), and its
+#     drop remedy instructs re-verification, never asserts present safety.
+#     Nothing is ever lost.
 #   * The pin report judges RAW history: replacement refs are disabled for
 #     the whole run and a legacy graft file forces the conservative wording,
 #     because a forged "also reachable from shared refs" would hand the
@@ -86,12 +93,28 @@ if [ -s "$grafts_file" ]; then
     echo "NOTE  legacy graft file present ($grafts_file) — shared-ref containment is unusable while it exists; kept pins are reported conservatively"
 fi
 
+# The header's contract: the run stays nonzero while ANY pin awaits human
+# settlement — including pins left by an earlier run, which an otherwise
+# empty retry would otherwise report as "cleanup complete" (challenge r1).
+# --count=1 avoids a git|head pipeline, which pipefail turns into SIGPIPE.
+pins_outstanding() {
+    git for-each-ref --count=1 refs/session-cleanup/pin --format='%(refname)'
+}
+
+finish_no_work() {
+    if [ -n "$(pins_outstanding)" ]; then
+        echo "clean:worktree-records: nothing to prune, but rescue pins await settlement (task audit:session-artifacts lists them)." >&2
+        exit 2
+    fi
+    echo "clean:worktree-records: nothing to prune."
+    exit 0
+}
+
 # git's own dry run is the authority on what is prunable
 # ("Removing worktrees/<name>: <reason>"); LC_ALL=C pins the message shape.
 prune_plan="$(LC_ALL=C git worktree prune --dry-run -v 2>&1)"
 if [ -z "$prune_plan" ]; then
-    echo "clean:worktree-records: nothing to prune."
-    exit 0
+    finish_no_work
 fi
 
 # remove_one_record <record> — runs in a SUBSHELL so a lock refusal (die)
@@ -125,9 +148,20 @@ remove_one_record() (
         exit 3
     fi
 
-    # Single-copy worktree-local state is refused, never swept.
+    # git's own worktree lock (worktrees/<id>/locked) protects e.g. a tree on
+    # removable media; the plan predates it, so re-check under our lifecycle
+    # lock — git preserves locked records and so must we (challenge r1).
+    if [ -e "$admin_dir/locked" ]; then
+        echo "SKIP  record '$record' — locked by git worktree lock since the plan (git worktree unlock, or remove $admin_dir/locked, to release)"
+        exit 3
+    fi
+
+    # Single-copy worktree-local state is refused, never swept. The op-state
+    # names mirror worktree-rm.sh: a rebase/merge/cherry-pick parked at an
+    # edit leaves sequencer state — and, after an amend there, commits —
+    # nothing else references (challenge r1).
     carried=""
-    for sub in deferred-findings adjudication-ledger shepherd-codex refs; do
+    for sub in deferred-findings adjudication-ledger shepherd-codex refs rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
         if [ -e "$admin_dir/$sub" ] &&
             [ -n "$(find "$admin_dir/$sub" -type f 2>/dev/null | head -n 1)" ]; then
             carried="$carried $sub"
@@ -178,17 +212,34 @@ remove_one_record() (
         ;;
     esac
 
-    # Records only: the stale admin directory is all that goes.
-    rm -rf "$admin_dir"
+    # Records only: the stale admin directory is all that goes. A failed
+    # removal is its own loud outcome, never mislabeled as lock contention
+    # (challenge r1).
+    if ! rm -rf "$admin_dir"; then
+        echo "ERROR  record '$record' — removal failed midway; inspect $admin_dir before re-running"
+        exit 4
+    fi
     echo "pruned record '$record'"
 
     if [ "$pinned_here" = true ]; then
+        pin_ref="refs/session-cleanup/pin/$record"
+        # The pin must have outlived the removal: the audit advertises pins,
+        # so a human settlement can race this run and drop one in the window
+        # between the create and the rm — re-assert before reporting
+        # (challenge r1).
+        if ! git rev-parse --quiet --verify "$pin_ref" >/dev/null; then
+            if ! LEFTHOOK=0 git update-ref "$pin_ref" "$record_head" ""; then
+                echo "CRITICAL  $pin_ref vanished during the prune and could not be recreated — rescue detached commit $record_head NOW: git branch $(shell_quote "rescue/$record") $record_head"
+                exit 5
+            fi
+        fi
         # Reporting only — pins are settled by humans, never auto-dropped
         # (challenge r6): the reachability check picks the wording, and a
-        # race can at worst mislabel, never delete.
-        pin_ref="refs/session-cleanup/pin/$record"
+        # race can at worst mislabel, never delete. The wording never asserts
+        # PRESENT safety: reachability is a prune-time snapshot, so the drop
+        # remedy instructs re-verification first (challenge r1).
         if [ "$grafts_present" = false ] && [ -n "$(shared_refs_containing "$record_head")" ]; then
-            echo "PINNED  $pin_ref — $record_head is also reachable from shared refs; drop it with: git update-ref -d $(shell_quote "$pin_ref")"
+            echo "PINNED  $pin_ref — $record_head was reachable from shared refs at prune time; re-verify before dropping (git --no-replace-objects for-each-ref --contains $record_head refs/heads refs/tags refs/remotes), then: git update-ref -d $(shell_quote "$pin_ref")"
         else
             echo "KEPT  $pin_ref — pruned record '$record' held the only reference to detached commit $record_head; branch it (git branch $(shell_quote "rescue/$record") $record_head) or discard it (git update-ref -d $(shell_quote "$pin_ref"))"
         fi
@@ -198,6 +249,7 @@ remove_one_record() (
 
 removed=0
 skipped=0
+errors=0
 pins_pending=0
 while IFS= read -r line; do
     record="$(printf '%s\n' "$line" | sed -n 's/^Removing worktrees\/\(.*\): .*$/\1/p')"
@@ -211,8 +263,9 @@ while IFS= read -r line; do
         pins_pending=$((pins_pending + 1))
         ;;
     3) skipped=$((skipped + 1)) ;;
+    4 | 5) errors=$((errors + 1)) ;; # own message printed above; never lock-labeled
     *)
-        echo "SKIP  record '$record' — the worktree lifecycle lock refused (a worktree operation is active; details above)"
+        echo "SKIP  record '$record' — the worktree lifecycle lock refused, or an unexpected failure (details above)"
         skipped=$((skipped + 1))
         ;;
     esac
@@ -220,11 +273,14 @@ done <<EOF
 $prune_plan
 EOF
 
-if [ "$removed" -eq 0 ] && [ "$skipped" -eq 0 ]; then
-    echo "clean:worktree-records: nothing to prune."
-    exit 0
+if [ "$removed" -eq 0 ] && [ "$skipped" -eq 0 ] && [ "$errors" -eq 0 ]; then
+    finish_no_work
 fi
-if [ "$pins_pending" -gt 0 ] || [ "$skipped" -gt 0 ]; then
+if [ "$errors" -gt 0 ]; then
+    echo "clean:worktree-records: $removed record(s) pruned; $errors record removal(s) FAILED above — resolve before re-running." >&2
+    exit 1
+fi
+if [ "$pins_pending" -gt 0 ] || [ "$skipped" -gt 0 ] || [ -n "$(pins_outstanding)" ]; then
     echo "clean:worktree-records: $removed record(s) pruned; $pins_pending pin(s) awaiting settlement, $skipped record(s) refused above." >&2
     exit 2
 fi

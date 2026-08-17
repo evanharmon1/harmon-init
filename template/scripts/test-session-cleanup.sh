@@ -581,6 +581,14 @@ pin_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)"
 expect_contains "$pin_audit_out" "wt-det — pins $det_sha" "audit: leftover rescue pin reported"
 echo "ok: audit reports leftover rescue pins"
 
+# The contract holds across retries: an otherwise-empty re-run must stay
+# nonzero while any pin awaits settlement, not report cleanup complete.
+if pin_retry_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero while a rescue pin awaited settlement: $pin_retry_out"
+fi
+expect_contains "$pin_retry_out" "rescue pins await settlement" "retry: pending pin keeps the run nonzero"
+echo "ok: a pending rescue pin keeps retries nonzero"
+
 git -C "$fixture" branch -q rescue-det "$det_sha"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-det
 prune_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
@@ -615,6 +623,7 @@ if reuse_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)
 fi
 expect_contains "$reuse_ok_out" "pruned record 'pin-reuse'" "pin reuse: settled pin lets the removal proceed"
 expect_contains "$reuse_ok_out" "PINNED  refs/session-cleanup/pin/pin-reuse" "pin reuse: fresh pin reported for explicit settlement"
+expect_contains "$reuse_ok_out" "re-verify before dropping" "pin reuse: drop remedy demands execution-time re-verification, not a stale snapshot"
 [ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$(git -C "$fixture" rev-parse main)" ] ||
     fail "pin reuse: fresh pin missing or wrong — pins must never be auto-dropped"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse
@@ -624,7 +633,7 @@ echo "ok: an unsettled rescue pin refuses the prune instead of being overwritten
 # Sidecars and per-worktree ref files under worktrees/<id>/ are single-copy;
 # no pin can stand in for them.
 
-for rec in state-rec refs-rec; do
+for rec in state-rec refs-rec op-rec; do
     mkdir -p "$gitdir/worktrees/$rec"
     printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/$rec/HEAD"
     printf '%s\n' "/nonexistent/$rec/.git" >"$gitdir/worktrees/$rec/gitdir"
@@ -634,21 +643,27 @@ echo "p2 from a dead session" >"$gitdir/worktrees/state-rec/deferred-findings/so
 mkdir -p "$gitdir/worktrees/refs-rec/refs/worktree"
 refs_orph="$(git -C "$fixture" commit-tree "main^{tree}" -p main -m "worktree-ref orphan")"
 printf '%s\n' "$refs_orph" >"$gitdir/worktrees/refs-rec/refs/worktree/only"
+# A merge parked at an edit: MERGE_HEAD is sequencer state the record alone
+# holds (the worktree-rm.sh op-state list).
+git -C "$fixture" rev-parse main >"$gitdir/worktrees/op-rec/MERGE_HEAD"
 
 if state_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
     fail "record prune exited zero with refused state-carrying records: $state_out"
 fi
 expect_contains "$state_out" "record 'state-rec' — carries worktree-local state (deferred-findings)" "state: sidecar-carrying record refused"
 expect_contains "$state_out" "record 'refs-rec' — carries worktree-local state (refs)" "state: per-worktree-ref record refused"
+expect_contains "$state_out" "record 'op-rec' — carries worktree-local state (MERGE_HEAD)" "state: in-progress-operation record refused"
 [ -d "$gitdir/worktrees/state-rec" ] || fail "state: sidecar-carrying record was swept"
 [ -d "$gitdir/worktrees/refs-rec" ] || fail "state: ref-carrying record was swept"
+[ -d "$gitdir/worktrees/op-rec" ] || fail "state: op-state record was swept"
 git -C "$fixture" cat-file -e "$refs_orph" || fail "state: worktree-ref orphan commit lost"
 
-rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs"
+rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs" "$gitdir/worktrees/op-rec/MERGE_HEAD"
 state_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the state was adopted: $state_ok_out"
 expect_contains "$state_ok_out" "pruned record 'state-rec'" "state: adopted record prunes normally"
 expect_contains "$state_ok_out" "pruned record 'refs-rec'" "state: rescued record prunes normally"
+expect_contains "$state_ok_out" "pruned record 'op-rec'" "state: finished-operation record prunes normally"
 echo "ok: state-carrying records are refused until adopted, never swept"
 
 # ── Case E7e: an index diverging from the recorded HEAD refuses the sweep ──
@@ -718,7 +733,7 @@ if repg_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; t
 fi
 git -C "$fixture" update-ref -d "refs/replace/$repg_main"
 expect_contains "$repg_out" "KEPT  refs/session-cleanup/pin/reptrap" "replace ref: pin reported as the only reference"
-expect_not_contains "$repg_out" "also reachable from shared refs" "replace ref: forged containment does not invite dropping the pin"
+expect_not_contains "$repg_out" "reachable from shared refs at prune time" "replace ref: forged containment does not invite dropping the pin"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/reptrap
 echo "ok: a replacement ref cannot forge the pin-drop remedy"
 
@@ -739,9 +754,100 @@ fi
 rm -f "$gitdir/info/grafts"
 expect_contains "$graftrec_out" "legacy graft file present" "grafts: presence announced by the record prune"
 expect_contains "$graftrec_out" "KEPT  refs/session-cleanup/pin/grafttrap" "grafts: pin reported conservatively"
-expect_not_contains "$graftrec_out" "also reachable from shared refs" "grafts: grafted containment does not invite dropping the pin"
+expect_not_contains "$graftrec_out" "reachable from shared refs at prune time" "grafts: grafted containment does not invite dropping the pin"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/grafttrap
 echo "ok: a legacy graft file forces the conservative pin wording"
+
+# The two interleaving guards below need a mid-run event; a PATH shim around
+# git injects it deterministically at the exact seam, then passes through.
+shim_dir="$test_tmp/git-shim"
+mkdir -p "$shim_dir"
+real_git="$(command -v git)"
+
+# ── Case E7i: a git worktree lock taken after the plan still protects ──────
+# `git worktree prune` skips locked records at plan time, but a lock created
+# between the plan and the removal (removable media coming under protection)
+# must be honored by the re-check under the lifecycle lock.
+
+mkdir -p "$gitdir/worktrees/lockedrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/lockedrec/HEAD"
+printf '%s\n' "/nonexistent/lockedrec/.git" >"$gitdir/worktrees/lockedrec/gitdir"
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == *"worktree prune --dry-run"* ]]; then
+    "$real_git" "\$@"
+    touch "$gitdir/worktrees/lockedrec/locked"
+    exit 0
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+
+if lockmark_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although a git worktree lock landed post-plan: $lockmark_out"
+fi
+expect_contains "$lockmark_out" "locked by git worktree lock since the plan" "post-plan lock: record skipped loudly"
+[ -d "$gitdir/worktrees/lockedrec" ] || fail "post-plan lock: locked record was swept"
+
+rm -f "$gitdir/worktrees/lockedrec/locked"
+lockmark_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the git lock was released: $lockmark_ok_out"
+expect_contains "$lockmark_ok_out" "pruned record 'lockedrec'" "post-plan lock: unlocked record prunes normally"
+echo "ok: a git worktree lock taken after the plan still protects the record"
+
+# ── Case E7j: a pin dropped mid-run by a racing settlement is re-asserted ──
+# The audit advertises pins, so a human settlement can delete one in the
+# window between the create and the record removal; the pin is re-asserted
+# before the run reports it kept.
+
+race_orph="$(git -C "$fixture" commit-tree "main^{tree}" -m "orphan-behind-race")"
+mkdir -p "$gitdir/worktrees/racepin"
+printf '%s\n' "$race_orph" >"$gitdir/worktrees/racepin/HEAD"
+printf '%s\n' "/nonexistent/racepin/.git" >"$gitdir/worktrees/racepin/gitdir"
+rm -f "$test_tmp/racepin-dropped"
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$1" == "update-ref" && "\$2" == "refs/session-cleanup/pin/racepin" && ! -e "$test_tmp/racepin-dropped" ]]; then
+    touch "$test_tmp/racepin-dropped"
+    "$real_git" "\$@" || exit \$?
+    "$real_git" update-ref -d refs/session-cleanup/pin/racepin
+    exit 0
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+
+if racepin_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although its re-asserted pin awaits settlement: $racepin_out"
+fi
+expect_contains "$racepin_out" "KEPT  refs/session-cleanup/pin/racepin" "pin race: pin reported kept"
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/racepin)" = "$race_orph" ] ||
+    fail "pin race: pin dropped mid-run was not re-asserted — the KEPT report is a lie"
+git -C "$fixture" cat-file -e "$race_orph" || fail "pin race: orphan commit lost"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/racepin
+echo "ok: a pin dropped mid-run by a racing settlement is re-asserted"
+
+# ── Case E7k: a failed record removal is loud and never lock-labeled ───────
+# A partial rm is corrupt state needing inspection; reporting it as lock
+# contention hands the operator the wrong remedy.
+
+mkdir -p "$gitdir/worktrees/stuckrec/blocker"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/stuckrec/HEAD"
+printf '%s\n' "/nonexistent/stuckrec/.git" >"$gitdir/worktrees/stuckrec/gitdir"
+touch "$gitdir/worktrees/stuckrec/blocker/held"
+chmod 000 "$gitdir/worktrees/stuckrec/blocker"
+
+if stuck_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    chmod 755 "$gitdir/worktrees/stuckrec/blocker" 2>/dev/null || true
+    fail "record prune exited zero although removal failed: $stuck_out"
+fi
+chmod 755 "$gitdir/worktrees/stuckrec/blocker" 2>/dev/null || true
+expect_contains "$stuck_out" "removal failed midway" "rm failure: reported as its own outcome"
+expect_not_contains "$stuck_out" "lifecycle lock refused" "rm failure: never mislabeled as lock contention"
+
+stuck_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the blocker was cleared: $stuck_ok_out"
+echo "ok: a failed record removal is loud and never lock-labeled"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD
