@@ -252,9 +252,11 @@ has.
   to a tag); generated repos configure their own via the `release_content_paths`
   copier answer (empty = no guard). Automated dependency PRs (Renovate/Dependabot)
   are skipped — retitle by hand if a dep bump to guarded content must ship.
-- Issue types map many-to-one onto these commit types — see
-  [project-management.md](project-management.md).
-- **Milestones are named after release versions** (`v1.1.0` = the git tag): the
-  pre-ship "what must land before this version" container, distinct from
-  release-please cutting the tag post-merge — same name, different jobs. See
+- Issue types map many-to-one onto these commit types. Personal-account repos
+  use the equivalent work-type labels as that mapping's substrate because native
+  issue Type is unavailable there; organization repos use native Type and no
+  work-type label. See [project-management.md](project-management.md).
+- **Milestones use an explicit naming mode**: a version milestone is named after
+  its git tag (`v1.1.0`), while a rolling-release or tooling repo may use a
+  finite scope-batch name when the version is not a planning input. See
   [project-management.md](project-management.md).

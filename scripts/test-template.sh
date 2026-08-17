@@ -1182,6 +1182,20 @@ iac | full)
     node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:claude|' ||
         err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
+    if [ "$profile" = "iac" ]; then
+        grep -Fq 'Labels: run `task setup:github-labels`' docs/CHECKLIST.md ||
+            err "CHECKLIST omits label setup for project_management=none + use_foreman=true"
+        grep -Fq 'Retire any legacy `agent:*` claim labels' docs/CHECKLIST.md ||
+            err "CHECKLIST omits legacy-label migration for project_management=none + use_foreman=true"
+        grep -Fq 'treat it as capped' docs/CHECKLIST.md ||
+            err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
+        ! grep -Fq '[project-management.md](project-management.md)' docs/CHECKLIST.md ||
+            err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
+        ! grep -Fq 'ADR 0005' docs/CHECKLIST.md ||
+            err "CHECKLIST cites a repository-only ADR for project_management=none"
+        grep -Fq 'Copilot is a broker that defaults to `mai`' docs/CHECKLIST.md ||
+            err "CHECKLIST loses the Copilot broker/default-family distinction"
+    fi
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
     # Foreman >= 2.2.0 is draft-first with namespaced PR labels; the rendered
