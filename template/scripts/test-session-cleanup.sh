@@ -610,10 +610,46 @@ expect_contains "$reuse_out" "already pins $orph_sha" "pin reuse: refusal names 
 [ -d "$gitdir/worktrees/pin-reuse" ] || fail "pin reuse: the record was removed despite the refusal"
 
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse "$orph_sha"
-reuse_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
-    fail "record prune failed after the foreign pin was settled: $reuse_ok_out"
+if reuse_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although its fresh pin awaits settlement: $reuse_ok_out"
+fi
 expect_contains "$reuse_ok_out" "pruned record 'pin-reuse'" "pin reuse: settled pin lets the removal proceed"
+expect_contains "$reuse_ok_out" "PINNED  refs/session-cleanup/pin/pin-reuse" "pin reuse: fresh pin reported for explicit settlement"
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$(git -C "$fixture" rev-parse main)" ] ||
+    fail "pin reuse: fresh pin missing or wrong — pins must never be auto-dropped"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse
 echo "ok: an unsettled rescue pin refuses the prune instead of being overwritten"
+
+# ── Case E7d: a record carrying worktree-local state is refused, not swept ─
+# Sidecars and per-worktree ref files under worktrees/<id>/ are single-copy;
+# no pin can stand in for them.
+
+for rec in state-rec refs-rec; do
+    mkdir -p "$gitdir/worktrees/$rec"
+    printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/$rec/HEAD"
+    printf '%s\n' "/nonexistent/$rec/.git" >"$gitdir/worktrees/$rec/gitdir"
+done
+mkdir -p "$gitdir/worktrees/state-rec/deferred-findings"
+echo "p2 from a dead session" >"$gitdir/worktrees/state-rec/deferred-findings/some-branch"
+mkdir -p "$gitdir/worktrees/refs-rec/refs/worktree"
+refs_orph="$(git -C "$fixture" commit-tree "main^{tree}" -p main -m "worktree-ref orphan")"
+printf '%s\n' "$refs_orph" >"$gitdir/worktrees/refs-rec/refs/worktree/only"
+
+if state_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with refused state-carrying records: $state_out"
+fi
+expect_contains "$state_out" "record 'state-rec' — carries worktree-local state (deferred-findings)" "state: sidecar-carrying record refused"
+expect_contains "$state_out" "record 'refs-rec' — carries worktree-local state (refs)" "state: per-worktree-ref record refused"
+[ -d "$gitdir/worktrees/state-rec" ] || fail "state: sidecar-carrying record was swept"
+[ -d "$gitdir/worktrees/refs-rec" ] || fail "state: ref-carrying record was swept"
+git -C "$fixture" cat-file -e "$refs_orph" || fail "state: worktree-ref orphan commit lost"
+
+rm -rf "$gitdir/worktrees/state-rec/deferred-findings" "$gitdir/worktrees/refs-rec/refs"
+state_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the state was adopted: $state_ok_out"
+expect_contains "$state_ok_out" "pruned record 'state-rec'" "state: adopted record prunes normally"
+expect_contains "$state_ok_out" "pruned record 'refs-rec'" "state: rescued record prunes normally"
+echo "ok: state-carrying records are refused until adopted, never swept"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD

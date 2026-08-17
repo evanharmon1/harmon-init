@@ -23,11 +23,15 @@
 #     BEFORE its record is removed, with a CREATE-ONLY ref write: an
 #     existing pin under the same name from an earlier run may be the sole
 #     reference to an older commit, so it is never overwritten — a mismatch
-#     refuses the whole run until that pin is settled. After removal, pins
-#     proven redundant (another shared ref contains the commit) are dropped;
-#     a pin that is now the commit's only reference is KEPT and reported
-#     with the rescue command, and the exit code is nonzero so wrappers
-#     notice — but nothing is lost either way.
+#     refuses the whole run until that pin is settled. Pins are removed only
+#     by EXPLICIT human settlement, never automatically (challenge r6): a
+#     reachability-checked auto-drop races any concurrent ref deletion. The
+#     run reports each pin with its settle command and exits nonzero while
+#     any await settlement — nothing is ever lost.
+#
+# A record that carries worktree-local state — review sidecars, per-worktree
+# ref files — is refused outright: that state exists nowhere else, and no
+# pin can stand in for it.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,6 +63,7 @@ fi
 
 pinned=""
 removed=0
+skipped=0
 while IFS= read -r line; do
     record="$(printf '%s\n' "$line" | sed -n 's/^Removing worktrees\/\(.*\): .*$/\1/p')"
     [ -n "$record" ] || continue
@@ -70,6 +75,27 @@ while IFS= read -r line; do
     wt_gitfile="$(cat "$admin_dir/gitdir" 2>/dev/null || true)"
     if [ -n "$wt_gitfile" ] && [ -e "$wt_gitfile" ]; then
         echo "SKIP  record '$record' — its worktree reappeared since the plan"
+        continue
+    fi
+    # A record can carry worktree-local state that exists NOWHERE else
+    # (challenge r6): review sidecars a linked-worktree session wrote under
+    # its admin dir — the same single-copy state audit:session-artifacts
+    # reports — and per-worktree ref files whose targets may be reachable
+    # only from here. Such a record is refused, never swept; a human adopts
+    # the sidecars (gauntlet orphan-sweep) or rescues the refs first.
+    # Reflogs (logs/) are deliberately NOT state: every record has one, and
+    # accepting reflog loss matches git's own prune semantics — the HEAD
+    # pin below covers the final position.
+    carried=""
+    for sub in deferred-findings adjudication-ledger shepherd-codex refs; do
+        if [ -e "$admin_dir/$sub" ] &&
+            [ -n "$(find "$admin_dir/$sub" -type f 2>/dev/null | head -n 1)" ]; then
+            carried="$carried $sub"
+        fi
+    done
+    if [ -n "$carried" ]; then
+        echo "SKIP  record '$record' — carries worktree-local state (${carried# }); adopt or rescue it first, it exists nowhere else"
+        skipped=$((skipped + 1))
         continue
     fi
     record_head="$(cat "$admin_dir/HEAD" 2>/dev/null || true)"
@@ -97,28 +123,33 @@ done <<EOF
 $prune_plan
 EOF
 
-if [ "$removed" -eq 0 ]; then
+if [ "$removed" -eq 0 ] && [ "$skipped" -eq 0 ]; then
     echo "clean:worktree-records: nothing to prune."
     exit 0
 fi
 
-# ── Settle the pins ────────────────────────────────────────────────────────
+# ── Report the pins ────────────────────────────────────────────────────────
 
-kept=0
+# Pins are removed ONLY by explicit human settlement (challenge r6): an
+# automatic drop after a reachability check races any concurrent ref
+# deletion — the last vouching ref can vanish between the check and the
+# drop, and the drop then discards the sole remaining reference. The check
+# below chooses the WORDING; it never deletes anything.
+pins_pending=0
 for record in $pinned; do
     pin_ref="refs/session-cleanup/pin/$record"
     pin_sha="$(git rev-parse --quiet --verify "$pin_ref" || true)"
     [ -n "$pin_sha" ] || continue
     if [ -n "$(shared_refs_containing "$pin_sha")" ]; then
-        LEFTHOOK=0 git update-ref -d "$pin_ref" "$pin_sha" 2>/dev/null || true
+        echo "PINNED  $pin_ref — $pin_sha is also reachable from shared refs; drop it with: git update-ref -d $pin_ref"
     else
         echo "KEPT  $pin_ref — pruned record '$record' held the only reference to detached commit $pin_sha; branch it (git branch rescue/$record $pin_sha) or discard it (git update-ref -d $pin_ref)"
-        kept=$((kept + 1))
     fi
+    pins_pending=$((pins_pending + 1))
 done
 
-if [ "$kept" -gt 0 ]; then
-    echo "clean:worktree-records: stale records pruned; $kept rescue pin(s) kept above — settle them before the next gc." >&2
+if [ "$pins_pending" -gt 0 ] || [ "$skipped" -gt 0 ]; then
+    echo "clean:worktree-records: $removed record(s) pruned; $pins_pending pin(s) awaiting settlement, $skipped record(s) refused above." >&2
     exit 2
 fi
 echo "clean:worktree-records: stale records pruned (worktree directories are never touched)."
