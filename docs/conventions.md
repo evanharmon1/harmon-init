@@ -75,8 +75,8 @@ it points here.
   the pending ones). Removal serializes with `worktree:new`/`worktree:rm`
   through the shared lifecycle lock — for trees under the blessed
   `.worktrees/` layout; a tree from a raw `git worktree add` elsewhere is
-  outside that protocol, which is the documented residual for keeping to the
-  tasks.
+  outside that protocol — as is a `git worktree lock` racing the removal
+  itself — which is the documented residual for keeping to the tasks.
 - **A fresh worktree has no `node_modules`/`.venv`.** Working files are per-tree,
   so dependency install is per-tree too; that is what `worktree:new` runs and
   why "it worked in the main checkout" is not evidence.

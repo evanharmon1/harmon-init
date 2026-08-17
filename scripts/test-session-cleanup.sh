@@ -845,9 +845,90 @@ chmod 755 "$gitdir/worktrees/stuckrec/blocker" 2>/dev/null || true
 expect_contains "$stuck_out" "removal failed midway" "rm failure: reported as its own outcome"
 expect_not_contains "$stuck_out" "lifecycle lock refused" "rm failure: never mislabeled as lock contention"
 
+# The partial rm may have taken HEAD/gitdir (deletion order is undefined);
+# restore them so the recovery run exercises a validatable record.
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/stuckrec/HEAD"
+printf '%s\n' "/nonexistent/stuckrec/.git" >"$gitdir/worktrees/stuckrec/gitdir"
 stuck_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the blocker was cleared: $stuck_ok_out"
 echo "ok: a failed record removal is loud and never lock-labeled"
+
+# ── Case E7m: an unreachable ORIG_HEAD refuses the sweep ───────────────────
+# ORIG_HEAD is a ref file, not a reflog: a reset --hard's abandoned commit
+# can live in it alone, so reflog accepted-loss does not cover it. A
+# reachable ORIG_HEAD sweeps normally.
+
+orph_o="$(git -C "$fixture" commit-tree "main^{tree}" -m "reset-away")"
+mkdir -p "$gitdir/worktrees/origrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/origrec/HEAD"
+printf '%s\n' "/nonexistent/origrec/.git" >"$gitdir/worktrees/origrec/gitdir"
+printf '%s\n' "$orph_o" >"$gitdir/worktrees/origrec/ORIG_HEAD"
+
+if orig_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unreachable ORIG_HEAD present: $orig_out"
+fi
+expect_contains "$orig_out" "ORIG_HEAD $orph_o is reachable from no shared ref" "orig-head: reset-away commit refused"
+[ -d "$gitdir/worktrees/origrec" ] || fail "orig-head: record swept despite its unreachable ORIG_HEAD"
+git -C "$fixture" cat-file -e "$orph_o" || fail "orig-head: reset-away commit lost"
+
+git -C "$fixture" branch -q rescue-orig "$orph_o"
+orig_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the ORIG_HEAD commit was rescued: $orig_ok_out"
+expect_contains "$orig_ok_out" "pruned record 'origrec'" "orig-head: reachable ORIG_HEAD sweeps normally"
+echo "ok: an unreachable ORIG_HEAD refuses the sweep until rescued"
+
+# ── Case E7n: a record with an unreadable HEAD is refused, never swept ─────
+# An empty or missing HEAD would fall through every HEAD-derived guard and
+# sweep unpinned; an unvalidatable record fails closed.
+
+mkdir -p "$gitdir/worktrees/noheadrec"
+printf '%s\n' "/nonexistent/noheadrec/.git" >"$gitdir/worktrees/noheadrec/gitdir"
+
+if nohead_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with an unvalidatable record present: $nohead_out"
+fi
+expect_contains "$nohead_out" "cannot read its HEAD" "no-head: unvalidatable record refused"
+[ -d "$gitdir/worktrees/noheadrec" ] || fail "no-head: unvalidatable record was swept"
+
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/noheadrec/HEAD"
+nohead_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after HEAD was restored: $nohead_ok_out"
+expect_contains "$nohead_ok_out" "pruned record 'noheadrec'" "no-head: restored record prunes normally"
+echo "ok: a record with an unreadable HEAD is refused, never swept"
+
+# ── Case E7o: a pin retargeted mid-run fails closed, never reported kept ───
+# Existence alone verifies nothing: a pin rewritten between its creation
+# and the post-removal check must fail the run loudly with a rescue remedy,
+# not be overwritten and not be reported as keeping the commit.
+
+ret_orph="$(git -C "$fixture" commit-tree "main^{tree}" -m "orphan-behind-retarget")"
+ret_main="$(git -C "$fixture" rev-parse main)"
+mkdir -p "$gitdir/worktrees/retarg"
+printf '%s\n' "$ret_orph" >"$gitdir/worktrees/retarg/HEAD"
+printf '%s\n' "/nonexistent/retarg/.git" >"$gitdir/worktrees/retarg/gitdir"
+rm -f "$test_tmp/retarg-hit"
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$1" == "update-ref" && "\$2" == "refs/session-cleanup/pin/retarg" && ! -e "$test_tmp/retarg-hit" ]]; then
+    touch "$test_tmp/retarg-hit"
+    "$real_git" "\$@" || exit \$?
+    "$real_git" update-ref refs/session-cleanup/pin/retarg "$ret_main"
+    exit 0
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+
+if retarg_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although its pin was retargeted mid-run: $retarg_out"
+fi
+expect_contains "$retarg_out" "no longer pins $ret_orph" "pin retarget: OID mismatch fails closed with the rescue remedy"
+expect_not_contains "$retarg_out" "KEPT  refs/session-cleanup/pin/retarg" "pin retarget: a retargeted pin is never reported as keeping the commit"
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/retarg)" = "$ret_main" ] ||
+    fail "pin retarget: the foreign write was overwritten — settlement is human-only"
+git -C "$fixture" cat-file -e "$ret_orph" || fail "pin retarget: orphan commit lost from the object db"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/retarg
+echo "ok: a pin retargeted mid-run fails closed, never reported kept"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD

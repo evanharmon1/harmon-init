@@ -17,7 +17,9 @@
 #     snapshot. A plan-verified stale record has no working directory, so
 #     its HEAD cannot move. Live records are never touched, and git's own
 #     `locked` marker is re-checked under the lock — a worktree locked
-#     after the plan (removable media) stays preserved.
+#     after the plan (removable media) stays preserved. A `git worktree
+#     lock` racing the removal itself does not take the lifecycle lock;
+#     that is the same native-command residual as raw `git worktree add`.
 #   * Each removal runs under the same per-path lifecycle lock that
 #     worktree:new / worktree:rm hold (for trees under the blessed
 #     .worktrees layout), so a removal cannot race a re-creation of the
@@ -27,7 +29,9 @@
 #     review sidecars, per-worktree ref files, in-progress operation state
 #     (rebase/merge/cherry-pick — the worktree-rm.sh list), and an index
 #     that diverges from the recorded HEAD (staged-but-uncommitted blobs
-#     the index alone keeps alive). Reflogs are deliberately NOT state —
+#     the index alone keeps alive). An unreadable HEAD refuses outright,
+#     and ORIG_HEAD — a ref file, not a reflog — refuses when it names a
+#     commit no shared ref contains. Reflogs are deliberately NOT state —
 #     every record has one, and accepting reflog loss matches git's own
 #     prune semantics.
 #   * A detached record HEAD is pinned as refs/session-cleanup/pin/<record>
@@ -81,6 +85,15 @@ shared_refs_containing() {
 
 common="$(git rev-parse --path-format=absolute --git-common-dir)"
 
+# The blessed-path anchor is the registry's first entry — the SAME source
+# worktree-new.sh reads to place .worktrees/, because these locks only
+# serialize anything if both sides key identically. Empirically git derives
+# this entry as ${common%/.git} in every layout we could produce
+# (separate-git-dir included), so this is consistency by construction with
+# the peer tool rather than a behavioral change: if git's registry
+# computation ever shifts, both tools move together (challenge r2).
+main_root="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+
 # Legacy graft files rewrite parentage exactly as replace refs do, but
 # GIT_NO_REPLACE_OBJECTS does NOT disable them (review r1, ported at
 # resurrection): containment walked over grafted history is not evidence, so
@@ -131,7 +144,6 @@ remove_one_record() (
     trap release_locks EXIT
     trap 'exit 129' HUP INT TERM
     wt_gitfile="$(cat "$admin_dir/gitdir" 2>/dev/null || true)"
-    main_root="${common%/.git}"
     tree_path="${wt_gitfile%/.git}"
     case "$tree_path" in
     "$main_root/.worktrees/"*)
@@ -173,6 +185,33 @@ remove_one_record() (
     fi
 
     record_head="$(cat "$admin_dir/HEAD" 2>/dev/null || true)"
+
+    # A record whose HEAD cannot be read would fall through every
+    # HEAD-derived guard below and sweep unpinned; an unvalidatable record
+    # is refused, never swept (challenge r2).
+    if [ -z "$record_head" ]; then
+        echo "SKIP  record '$record' — cannot read its HEAD; refusing to sweep an unvalidatable record (inspect $admin_dir)"
+        exit 3
+    fi
+
+    # ORIG_HEAD is a ref file, not a reflog: a reset --hard's abandoned
+    # commit can live in this one file alone, so reflog accepted-loss does
+    # not cover it. A reachable ORIG_HEAD sweeps normally (every used tree
+    # has one); unreachable or unreadable refuses — and a legacy graft file
+    # makes containment unusable, so it refuses too (challenge r2).
+    if [ -f "$admin_dir/ORIG_HEAD" ]; then
+        orig_head="$(cat "$admin_dir/ORIG_HEAD" 2>/dev/null || true)"
+        orig_commit=""
+        [ -z "$orig_head" ] || orig_commit="$(git rev-parse --quiet --verify "$orig_head^{commit}" || true)"
+        if [ -z "$orig_commit" ]; then
+            echo "SKIP  record '$record' — its ORIG_HEAD is unreadable or names no commit; refusing to sweep (inspect $admin_dir/ORIG_HEAD)"
+            exit 3
+        fi
+        if [ "$grafts_present" = true ] || [ -z "$(shared_refs_containing "$orig_commit")" ]; then
+            echo "SKIP  record '$record' — ORIG_HEAD $orig_commit is reachable from no shared ref, or containment is unusable under a legacy graft file (a reset/rebase abandoned it here); rescue it (git branch $(shell_quote "rescue/$record-orig") $orig_commit) then remove $admin_dir/ORIG_HEAD"
+            exit 3
+        fi
+    fi
 
     # The index can be the only structure referencing staged-but-uncommitted
     # blobs (challenge r7): an index that diverges from the recorded HEAD —
@@ -223,15 +262,20 @@ remove_one_record() (
 
     if [ "$pinned_here" = true ]; then
         pin_ref="refs/session-cleanup/pin/$record"
-        # The pin must have outlived the removal: the audit advertises pins,
-        # so a human settlement can race this run and drop one in the window
-        # between the create and the rm — re-assert before reporting
-        # (challenge r1).
-        if ! git rev-parse --quiet --verify "$pin_ref" >/dev/null; then
+        # The pin must have outlived the removal AND still target the
+        # detached commit: the audit advertises pins, so a settlement can
+        # race this run — a dropped pin is re-asserted, and a retargeted
+        # one fails closed rather than being overwritten or reported kept
+        # (challenge r1, tightened r2: existence alone verifies nothing).
+        pin_now="$(git rev-parse --quiet --verify "$pin_ref" || true)"
+        if [ -z "$pin_now" ]; then
             if ! LEFTHOOK=0 git update-ref "$pin_ref" "$record_head" ""; then
                 echo "CRITICAL  $pin_ref vanished during the prune and could not be recreated — rescue detached commit $record_head NOW: git branch $(shell_quote "rescue/$record") $record_head"
                 exit 5
             fi
+        elif [ "$pin_now" != "$record_head" ]; then
+            echo "CRITICAL  $pin_ref no longer pins $record_head (it now holds $pin_now) — rescue the detached commit NOW: git branch $(shell_quote "rescue/$record") $record_head"
+            exit 5
         fi
         # Reporting only — pins are settled by humans, never auto-dropped
         # (challenge r6): the reachability check picks the wording, and a
