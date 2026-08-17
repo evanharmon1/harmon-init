@@ -281,20 +281,6 @@ else
     echo "  none"
 fi
 
-# ── 5b. Rescue pins ─────────────────────────────────────────────────────────
-
-# clean:worktree-records keeps refs/session-cleanup/pin/<record> when a
-# pruned record held the only reference to a detached commit; a lingering pin
-# is a decision waiting to be made.
-section "Rescue pins (refs/session-cleanup/pin)"
-git for-each-ref refs/session-cleanup/pin \
-    --format='  %(refname:lstrip=3) — pins %(objectname) (branch it or delete the pin)' >"$tmp/pins"
-if [ -s "$tmp/pins" ]; then
-    cat "$tmp/pins"
-else
-    echo "  none"
-fi
-
 # ── 6. Totals ───────────────────────────────────────────────────────────────
 
 section "Totals"
