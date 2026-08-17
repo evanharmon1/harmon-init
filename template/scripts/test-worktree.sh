@@ -2126,6 +2126,22 @@ fi
 [ "$(git -C "$fixture" config --get branch.rollcfg.pushRemote || true)" = "myfork" ] ||
     fail "the stale-config refusal modified an unrelated branch config key"
 
+echo "==> the stale-config remedy is shell-quoted for a metacharacter branch name"
+# Branch names — unlike whitelisted worktree names — legally carry \$, ;,
+# and quotes, so the pasted remedy must quote the key: unquoted,
+# branch.rollcfg\$x.remote expands \$x away in the user's shell and clears
+# the wrong key, or worse (PR #932 cloud review).
+git -C "$fixture" config 'branch.rollcfg$x.remote' oldrem
+git -C "$fixture" push -q origin 'HEAD:refs/heads/rollcfg$x'
+git -C "$fixture" update-ref -d 'refs/remotes/origin/rollcfg$x' 2>/dev/null || true
+metacfg_out="$(new rollcfg-meta --branch 'rollcfg$x' 2>&1)" &&
+    fail "worktree-new.sh accepted a metacharacter branch with stale config"
+case "$metacfg_out" in *"stale config from a deleted branch"*) : ;; *) fail "the metacharacter branch was refused for the wrong reason: $metacfg_out" ;; esac
+case "$metacfg_out" in *"--unset-all 'branch.rollcfg\$x.remote'"*) : ;; *) fail "the stale-config remedy was not shell-quoted: $metacfg_out" ;; esac
+refute_exists "$fixture/.worktrees/rollcfg-meta" "the metacharacter refusal left a tree behind"
+git -C "$fixture" config --unset 'branch.rollcfg$x.remote'
+git -C "$fixture" push -q origin ':refs/heads/rollcfg$x'
+
 echo "==> rollback removes only the branch config keys this run wrote"
 # With the stale keys cleared, creation proceeds; a failing attach must
 # take back exactly the remote/merge keys this run wrote while the

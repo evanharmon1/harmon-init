@@ -35,6 +35,14 @@ die() {
     exit 1
 }
 
+shell_quote() {
+    # Single-quote $1 for a copy-pasteable remedy: branch names — unlike
+    # worktree names, whose charset is whitelisted — legally carry $, ;,
+    # quotes, and parentheses, so an unquoted name in a printed command
+    # expands or executes when pasted (PR #932 cloud review).
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 name=""
 branch=""
 base=""
@@ -550,9 +558,9 @@ cleanup() {
                 # unsets leaves a SURVIVING branch silently untracked
                 # (PR #932 cloud review).
                 git config --unset "branch.$branch.remote" 2>/dev/null ||
-                    echo "worktree:new: could not remove branch.$branch.remote — clear it with: git config --unset branch.$branch.remote" >&2 || true
+                    echo "worktree:new: could not remove branch.$branch.remote — clear it with: git config --unset $(shell_quote "branch.$branch.remote")" >&2 || true
                 git config --unset "branch.$branch.merge" 2>/dev/null ||
-                    echo "worktree:new: could not remove branch.$branch.merge — clear it with: git config --unset branch.$branch.merge" >&2 || true
+                    echo "worktree:new: could not remove branch.$branch.merge — clear it with: git config --unset $(shell_quote "branch.$branch.merge")" >&2 || true
             else
                 echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
             fi
@@ -680,7 +688,7 @@ elif [ -n "$remote_ref" ]; then
     # in either direction.
     for _bk in remote merge; do
         if git config --get-all "branch.$branch.$_bk" >/dev/null 2>&1; then
-            die "branch '$branch' does not exist locally but branch.$branch.$_bk is configured — stale config from a deleted branch; review it, clear it with 'git config --unset-all branch.$branch.$_bk', and re-run"
+            die "branch '$branch' does not exist locally but branch.$branch.$_bk is configured — stale config from a deleted branch; review it, clear it with: git config --unset-all $(shell_quote "branch.$branch.$_bk") — and re-run"
         fi
     done
     # Ownership bookkeeping is armed BEFORE the ref exists and the ref is
