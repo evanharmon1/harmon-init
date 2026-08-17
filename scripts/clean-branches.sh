@@ -5,30 +5,32 @@
 #
 # The rule this script encodes (harmon-init#838): every deletion requires
 # positive evidence — either the branch is an ANCESTOR of the remote default
-# branch (so `git branch -d` succeeds on its own), or a MERGED PR whose head
-# commit is exactly this branch's tip proves the same work landed by squash or
-# rebase. "The upstream is gone" is an inference, not evidence: this repo
-# squash-merges, so a delivered branch is not an ancestor of main and is
-# indistinguishable, by ancestry alone, from genuinely unmerged work.
+# branch (verified fresh against the remote's advertised tip), or a PR MERGED
+# INTO THE DEFAULT BRANCH whose head commit is exactly this branch's tip
+# proves the same work landed by squash or rebase. "The upstream is gone" is
+# an inference, not evidence: this repo squash-merges, so a delivered branch
+# is not an ancestor of main and is indistinguishable, by ancestry alone,
+# from genuinely unmerged work.
 #
 # What it never does:
 #   * force-delete (the capital-D flag) — that discards the evidence rule by
 #     design, and issue #838's verify greps this file to prove its absence.
 #   * remove a worktree, or touch any remote branch.
 #   * delete the current branch, the default branch, or a branch checked out
-#     in any worktree (git refuses for `branch -d`; the update-ref path below
-#     bypasses that guard, so the worktree check here is load-bearing).
+#     in any worktree (update-ref does not respect git's checked-out guard,
+#     so the explicit worktree check below is load-bearing).
 #   * delete unpushed work. Ancestry evidence means every commit is on the
 #     remote default branch; PR evidence means the merged PR's head commit IS
 #     this tip, so every local commit was pushed into the PR that merged. A
 #     tip that sits even one commit past the merged head matches neither and
 #     is refused.
 #
-# Squash-merged branches are deleted with a guarded compare-and-delete
-# (`git update-ref -d <ref> <verified-tip>`) rather than `git branch -d`,
-# because `-d` structurally refuses a non-ancestor no matter how much evidence
-# exists — the very branches the PR API check makes safe to clear. The old
-# value guard makes the delete atomic: if anything moves the branch between
+# Every deletion is a guarded compare-and-delete
+# (`git update-ref --no-deref -d <ref> <verified-tip>`) rather than
+# `git branch -d`: -d structurally refuses a squash-merged non-ancestor no
+# matter how much evidence exists, and it authorizes against the CURRENT
+# HEAD rather than the verified remote default (challenge r2). The old-value
+# guard makes the delete atomic: if anything moves the branch between
 # verification and deletion, git refuses. Same pattern as worktree-new.sh's
 # rollback. Every deletion prints the tip SHA so `git branch <name> <sha>`
 # can restore it until git prunes the objects.
@@ -43,8 +45,9 @@ Usage: task clean:branches [-- --delete]
 
 Dry run by default: reports what would be deleted and why, mutating nothing.
 --delete performs the deletions. Only branches with positive merge evidence
-(ancestry into the remote default branch, or a merged PR whose head commit
-equals the local tip) are ever deleted, always without force.
+(ancestry into the remote default branch, or a PR merged into the default
+branch whose head commit equals the local tip) are ever deleted, always
+without force.
 EOF
 }
 
@@ -144,17 +147,22 @@ if command -v gh >/dev/null 2>&1; then
 fi
 
 # merged_pr_for <branch> <tip> — echo the merged PR number whose head commit
-# is exactly <tip>; echo nothing when no merged PR matches; return nonzero
-# when the probe itself failed (so a network error is never mistaken for "no
-# PR"). Tip equality is the point: matching by branch NAME alone would let a
-# recycled branch name inherit an old PR's merged-ness and delete unrelated
-# new work.
+# is exactly <tip> AND whose base is the remote default branch; echo nothing
+# when no such PR exists; return nonzero when the probe itself failed (so a
+# network error is never mistaken for "no PR"). Tip equality is the point:
+# matching by branch NAME alone would let a recycled branch name inherit an
+# old PR's merged-ness and delete unrelated new work. The base filter is
+# equally load-bearing (challenge r2): a PR merged into a stacked or
+# temporary base that was later deleted still reports "merged" with this
+# head, yet its result may be reachable from no live ref — only a merge into
+# the default branch proves the work is durably delivered.
 merged_pr_for() {
     gh_pr_probe pr list --repo "$gh_repo" --head "$1" --state merged \
-        --json number,headRefOid \
-        --jq '.[] | [(.number | tostring), .headRefOid] | @tsv' \
+        --json number,headRefOid,baseRefName \
+        --jq '.[] | [(.number | tostring), .headRefOid, .baseRefName] | @tsv' \
         >"$tmp/pr-probe" 2>/dev/null || return 1
-    awk -F'\t' -v tip="$2" '$2 == tip { print $1; exit }' "$tmp/pr-probe"
+    awk -F'\t' -v tip="$2" -v base="$default_branch" \
+        '$2 == tip && $3 == base { print $1; exit }' "$tmp/pr-probe"
 }
 
 # ── Classify every branch ───────────────────────────────────────────────────
@@ -232,9 +240,9 @@ while IFS=$'\t' read -r branch tip track symref; do
         if [ -z "$gh_repo" ]; then
             echo "SKIP  $branch — upstream gone, but gh is unavailable so no merged PR can vouch for it"
         elif [ "$unpushed" -gt 0 ]; then
-            echo "SKIP  $branch — upstream gone, $unpushed commit(s) on no remote and no merged PR matches tip ${tip:0:12} (unpushed work is never deleted)"
+            echo "SKIP  $branch — upstream gone, $unpushed commit(s) on no remote and no PR merged into $default_branch matches tip ${tip:0:12} (unpushed work is never deleted)"
         else
-            echo "SKIP  $branch — upstream gone and no merged PR matches tip ${tip:0:12} (a human decides)"
+            echo "SKIP  $branch — upstream gone and no PR merged into $default_branch matches tip ${tip:0:12} (a human decides)"
         fi
         refused=$((refused + 1))
         continue
@@ -300,22 +308,30 @@ delete_one() (
         echo "SKIP  $branch — became checked out in a worktree since classification"
         exit 3
     fi
-    # LEFTHOOK=0 on both delete forms: a reference-transaction hook must
-    # not fire on cleanup ref writes (worktree-new.sh precedent).
-    if [ "$evidence" = ancestry ]; then
-        if ! LEFTHOOK=0 git branch -d "$branch" >/dev/null; then
-            echo "SKIP  $branch — git branch -d refused (its refusal is final; never forced)"
-            exit 3
-        fi
-    else
-        # Compare-and-delete: refuses if the tip moved since verification.
-        # --no-deref as a belt behind the classification symref skip: the
-        # named ref itself is what dies, never a target it points at.
-        if ! LEFTHOOK=0 git update-ref --no-deref -d "refs/heads/$branch" "$tip" 2>/dev/null; then
-            echo "SKIP  $branch — tip moved since verification (compare-and-delete refused)"
-            exit 3
-        fi
-        git config --local --remove-section "branch.$branch" 2>/dev/null || true
+    # ONE deletion mechanism for both evidence classes: a guarded
+    # compare-and-delete. `git branch -d` was deliberately dropped even for
+    # the ancestry class (challenge r2): -d authorizes against the CURRENT
+    # HEAD, so running cleanup from a divergent feature branch would refuse
+    # a deletion the dry run promised — the authority here is the verified
+    # evidence (fresh ancestry into the remote default, or a merged default-
+    # base PR at exactly this tip), not the checkout. The old-value guard
+    # makes it atomic: anything moving the branch since verification refuses
+    # the delete. --no-deref as a belt behind the classification symref
+    # skip: the named ref itself is what dies, never a target it points at.
+    # LEFTHOOK=0: a reference-transaction hook must not fire on cleanup ref
+    # writes (worktree-new.sh precedent).
+    if ! LEFTHOOK=0 git update-ref --no-deref -d "refs/heads/$branch" "$tip" 2>/dev/null; then
+        echo "SKIP  $branch — tip moved since verification (compare-and-delete refused)"
+        exit 3
+    fi
+    # Clear the branch's config section, and never silently fail (challenge
+    # r2): a locked or unwritable config would otherwise leave stale
+    # branch.<name>.remote/merge settings for the next branch of this name
+    # to inherit. Absence afterwards is the success condition — the section
+    # legitimately may not exist at all.
+    git config --local --remove-section "branch.$branch" 2>/dev/null || true
+    if git config --local --list --name-only 2>/dev/null | grep -Fq "branch.$branch."; then
+        echo "WARN  $branch was deleted but its branch.$branch.* config could not be removed — remove it by hand (git config --local --remove-section branch.$branch)"
     fi
     echo "deleted  $branch (was ${tip}) — $why — recover: git branch $branch ${tip:0:12}"
 )

@@ -39,11 +39,12 @@ else
     echo "audit:session-artifacts: no 'timeout' found (brew install coreutils) — network probes are unbounded." >&2
 fi
 
-gh_probe() {
+# net_probe <cmd...> — bounded, stdin-closed network invocation (gh or git).
+net_probe() {
     if [ -n "$TIMEOUT_BIN" ]; then
-        "$TIMEOUT_BIN" -k 5 "${GH_TIMEOUT:-30}" gh "$@" </dev/null
+        "$TIMEOUT_BIN" -k 5 "${GH_TIMEOUT:-30}" "$@" </dev/null
     else
-        gh "$@" </dev/null
+        "$@" </dev/null
     fi
 }
 
@@ -57,6 +58,28 @@ total_branches="$(wc -l <"$tmp/branches" | tr -d ' ')"
 
 has_remote=true
 [ -n "$(git remote)" ] || has_remote=false
+
+# One remote and its default branch, resolved once: origin preferred, else
+# the first listed. The default branch scopes the merged-PR evidence below —
+# only a merge into it proves durable delivery (challenge r2).
+remote=""
+default_branch=""
+if [ "$has_remote" = true ]; then
+    remote="$(git remote | head -n 1)"
+    if git remote | grep -qx origin; then
+        remote=origin
+    fi
+    if default_ref="$(git symbolic-ref --quiet "refs/remotes/$remote/HEAD")"; then
+        default_branch="${default_ref#"refs/remotes/$remote/"}"
+    else
+        for cand in main master; do
+            if git show-ref --verify --quiet "refs/remotes/$remote/$cand"; then
+                default_branch="$cand"
+                break
+            fi
+        done
+    fi
+fi
 
 # ── 1. Unpushed work ────────────────────────────────────────────────────────
 
@@ -77,6 +100,41 @@ else
     fi
 fi
 
+# ── 1b. Remote-tracking freshness ───────────────────────────────────────────
+
+# Every judgement above and below is only as fresh as the tracking refs: a
+# remote branch deleted upstream (e.g. GitHub's delete-on-merge) is invisible
+# here until a fetch --prune — its local branch reads neither [gone] nor
+# unpushed (challenge r2). One bounded read of the remote's advertised heads
+# makes that staleness explicit instead of silent.
+section "Remote-tracking freshness"
+if [ "$has_remote" = false ]; then
+    echo "  n/a — no remote configured"
+elif net_probe git ls-remote --heads "$remote" >"$tmp/remote-heads" 2>/dev/null; then
+    git for-each-ref "refs/remotes/$remote" \
+        --format='%(refname:lstrip=3)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
+        >"$tmp/tracking"
+    stale=0
+    while IFS=$'\t' read -r tname toid tsymref; do
+        [ "$tsymref" = "-" ] || continue
+        live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"
+        if [ -z "$live_oid" ]; then
+            printf '  stale  %s — deleted upstream; local tracking ref survives until a prune\n' "$tname"
+            stale=$((stale + 1))
+        elif [ "$live_oid" != "$toid" ]; then
+            printf '  stale  %s — moved upstream (local tracking is behind or diverged)\n' "$tname"
+            stale=$((stale + 1))
+        fi
+    done <"$tmp/tracking"
+    if [ "$stale" -eq 0 ]; then
+        echo "  fresh — local tracking refs match the remote's advertised heads"
+    else
+        echo "  -> $stale stale tracking ref(s): run 'task clean:remote-refs' (git fetch --prune), then re-run this audit"
+    fi
+else
+    echo "  UNVERIFIED — could not read the remote's advertised heads; every section below trusts possibly-stale tracking refs"
+fi
+
 # ── 2. Gone-upstream classification ─────────────────────────────────────────
 
 section "Branches whose upstream is gone"
@@ -86,21 +144,20 @@ if [ "$gone_count" -eq 0 ]; then
     echo "  none"
 else
     # One batched read of merged PRs, matched locally. Tip equality decides
-    # "prunable": a recycled branch name can match an old PR by name alone.
+    # "prunable" — a recycled branch name can match an old PR by name alone —
+    # and so does the base: only a PR merged into the default branch proves
+    # durable delivery, since a stacked base can be deleted with the merge
+    # result in it (challenge r2).
     gh_repo=""
-    if command -v gh >/dev/null 2>&1 && [ "$has_remote" = true ]; then
-        remote="$(git remote | head -n 1)"
-        if git remote | grep -qx origin; then
-            remote=origin
-        fi
-        gh_repo="$(gh_probe repo view "$(git remote get-url "$remote")" \
+    if command -v gh >/dev/null 2>&1 && [ "$has_remote" = true ] && [ -n "$default_branch" ]; then
+        gh_repo="$(net_probe gh repo view "$(git remote get-url "$remote")" \
             --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || gh_repo=""
     fi
     pr_limit="${AUDIT_PR_LIMIT:-1000}"
     if [ -n "$gh_repo" ] &&
-        gh_probe pr list --repo "$gh_repo" --state merged --limit "$pr_limit" \
-            --json number,headRefName,headRefOid \
-            --jq '.[] | [.headRefName, .headRefOid, (.number | tostring)] | @tsv' \
+        net_probe gh pr list --repo "$gh_repo" --state merged --limit "$pr_limit" \
+            --json number,headRefName,headRefOid,baseRefName \
+            --jq '.[] | [.headRefName, .headRefOid, (.number | tostring), .baseRefName] | @tsv' \
             >"$tmp/merged-prs" 2>/dev/null; then
         merged_seen="$(wc -l <"$tmp/merged-prs" | tr -d ' ')"
         if [ "$merged_seen" -ge "$pr_limit" ]; then
@@ -110,13 +167,13 @@ else
         tip_differs=0
         no_pr=0
         while IFS=$'\t' read -r branch tip; do
-            match="$(awk -F'\t' -v b="$branch" -v tip="$tip" \
-                '$1 == b && $2 == tip { print $3; exit }' "$tmp/merged-prs")"
+            match="$(awk -F'\t' -v b="$branch" -v tip="$tip" -v base="$default_branch" \
+                '$1 == b && $2 == tip && $4 == base { print $3; exit }' "$tmp/merged-prs")"
             if [ -n "$match" ]; then
-                printf '  prunable      %s — merged PR #%s (head == tip %s)\n' "$branch" "$match" "${tip:0:12}"
+                printf '  prunable      %s — merged PR #%s into %s (head == tip %s)\n' "$branch" "$match" "$default_branch" "${tip:0:12}"
                 prunable=$((prunable + 1))
             elif awk -F'\t' -v b="$branch" '$1 == b { found = 1; exit } END { exit !found }' "$tmp/merged-prs"; then
-                printf '  tip differs   %s — a merged PR matches by name but not tip (a human decides)\n' "$branch"
+                printf '  tip differs   %s — a merged PR matches by name but not tip/base (a human decides)\n' "$branch"
                 tip_differs=$((tip_differs + 1))
             else
                 printf '  no merged PR  %s — abandoned or renamed (a human decides)\n' "$branch"

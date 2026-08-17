@@ -79,7 +79,7 @@ mkdir -p "$stub_bin"
 cat >"$stub_bin/gh" <<'STUB'
 #!/usr/bin/env bash
 # gh stub: answers the exact reads the cleanup scripts perform, from the PR
-# table in $GH_STUB_PRS (lines: headRefName<TAB>headRefOid<TAB>number).
+# table in $GH_STUB_PRS (lines: headRefName<TAB>headRefOid<TAB>number<TAB>baseRefName).
 set -euo pipefail
 if [ "${GH_STUB_FAIL:-0}" = "1" ]; then
     exit 1
@@ -104,7 +104,7 @@ if [ "$cmd" = pr ] && [ "$sub" = list ]; then
         if [ "$batch" = true ]; then
             cat "$data"
         else
-            awk -F'\t' -v b="$head_filter" '$1 == b { print $3 "\t" $2 }' "$data"
+            awk -F'\t' -v b="$head_filter" '$1 == b { print $3 "\t" $2 "\t" $4 }' "$data"
             # Side effect modes, firing AFTER the answer to open the window
             # between verification and deletion: advance the queried branch,
             # or check it out into a worktree (the concurrent-session race).
@@ -230,6 +230,18 @@ git -C "$fixture" worktree add -q "$test_tmp/wt" wt-checked
     git checkout -q main
 )
 
+# 6b. sq-stacked: a merged PR exists at exactly this tip, but its base was a
+#     stacked branch, not the default — insufficient evidence; must survive.
+stacked_tip="$(make_branch sq-stacked stacked.txt)"
+retire_remote sq-stacked
+
+# 6c. tf-stale: the remote branch is deleted upstream WITHOUT a local fetch
+#     (bare-origin surgery), so the local tracking ref survives, the branch
+#     reads neither [gone] nor unpushed — the audit's freshness section is
+#     what must surface it.
+tf_tip="$(make_branch tf-stale tf.txt)"
+git -C "$origin" update-ref -d refs/heads/tf-stale
+
 # 7. A tag sharing a branch's name: %(refname:short) would disambiguate the
 #    branch to "heads/gone-nopr" and break every ref built from it.
 git -C "$fixture" tag gone-nopr
@@ -241,10 +253,11 @@ git -C "$fixture" symbolic-ref refs/heads/alias-main refs/heads/main
 
 # The PR table the stub serves (headRefName, headRefOid, number).
 export GH_STUB_PRS="$test_tmp/prs.tsv"
-printf '%s\t%s\t%s\n' \
-    sq-merged "$sq_tip" 101 \
-    gone-tipdiff "$tipdiff_pushed" 102 \
-    wt-checked "$wt_tip" 103 \
+printf '%s\t%s\t%s\t%s\n' \
+    sq-merged "$sq_tip" 101 main \
+    gone-tipdiff "$tipdiff_pushed" 102 main \
+    wt-checked "$wt_tip" 103 main \
+    sq-stacked "$stacked_tip" 107 feature-base \
     >"$GH_STUB_PRS"
 
 # Audit fixtures: sidecar files and a shepherd cycle state.
@@ -276,6 +289,8 @@ expect_contains "$dry_out" "gone-nopr" "dry run: no-evidence branch is skipped l
 expect_contains "$dry_out" "unpushed work is never deleted" "dry run: tip-past-PR branch refused as unpushed"
 expect_contains "$dry_out" "checked out in worktree" "dry run: worktree branch refused loudly"
 expect_contains "$dry_out" "SKIP  alias-main — symbolic ref" "dry run: symbolic ref skipped, never dereferenced"
+expect_not_contains "$dry_out" "WOULD DELETE  sq-stacked" "dry run: PR into a non-default base is not evidence"
+expect_contains "$dry_out" "sq-stacked" "dry run: stacked-base branch skipped loudly"
 expect_not_contains "$dry_out" "WOULD DELETE  alias-main" "dry run: symbolic ref is never a candidate"
 expect_not_contains "$dry_out" "heads/gone-nopr" "dry run: tag/branch name collision does not mangle the branch name"
 echo "ok: dry run classifies and mutates nothing"
@@ -292,6 +307,8 @@ expect_contains "$audit_out" "unpushed-live — 1 commit(s) on no remote" "audit
 expect_contains "$audit_out" "prunable      sq-merged — merged PR #101" "audit: prunable classification"
 expect_contains "$audit_out" "no merged PR  gone-nopr" "audit: gone without PR"
 expect_contains "$audit_out" "tip differs   gone-tipdiff" "audit: PR matched by name but not tip"
+expect_contains "$audit_out" "tip differs   sq-stacked" "audit: non-default-base PR is not prunable evidence"
+expect_contains "$audit_out" "tf-stale — deleted upstream" "audit: stale tracking ref surfaced by the freshness section"
 expect_contains "$audit_out" "$test_tmp/wt — wt-checked" "audit: other worktree named"
 expect_contains "$audit_out" "active    deferred-findings/unpushed-live" "audit: live sidecar"
 expect_contains "$audit_out" "leftover  adjudication-ledger/dead/branch" "audit: orphan sidecar"
@@ -327,6 +344,7 @@ branch_exists gone-nopr || fail "negative control: gone-nopr was deleted without
 branch_exists gone-tipdiff || fail "negative control: gone-tipdiff was deleted despite unpushed tip"
 branch_exists wt-checked || fail "negative control: worktree-checked-out branch was deleted"
 branch_exists unpushed-live || fail "negative control: unpushed in-flight branch was deleted"
+branch_exists sq-stacked || fail "negative control: stacked-base PR branch was deleted"
 branch_exists main || fail "negative control: default branch was deleted"
 [ -d "$test_tmp/wt" ] || fail "delete: worktree directory was removed"
 git -C "$fixture" symbolic-ref -q refs/heads/alias-main >/dev/null ||
@@ -344,7 +362,7 @@ cad_tip="$(make_branch sq-cad cad.txt)"
     git push -q origin main
 )
 retire_remote sq-cad
-printf '%s\t%s\t%s\n' sq-cad "$cad_tip" 104 >>"$GH_STUB_PRS"
+printf '%s\t%s\t%s\t%s\n' sq-cad "$cad_tip" 104 main >>"$GH_STUB_PRS"
 
 cad_out="$(cd "$fixture" && GH_STUB_ADVANCE=sq-cad bash scripts/clean-branches.sh --delete 2>&1)" ||
     fail "CAD run exited nonzero: $cad_out"
@@ -366,7 +384,7 @@ race_tip="$(make_branch sq-race race.txt)"
     git push -q origin main
 )
 retire_remote sq-race
-printf '%s\t%s\t%s\n' sq-race "$race_tip" 105 >>"$GH_STUB_PRS"
+printf '%s\t%s\t%s\t%s\n' sq-race "$race_tip" 105 main >>"$GH_STUB_PRS"
 
 race_out="$(cd "$fixture" && GH_STUB_CHECKOUT=sq-race GH_STUB_CHECKOUT_DIR="$test_tmp/wt-race" \
     bash scripts/clean-branches.sh --delete 2>&1)" ||
@@ -389,7 +407,7 @@ lock_tip="$(make_branch sq-locked lock.txt)"
     git push -q origin main
 )
 retire_remote sq-locked
-printf '%s\t%s\t%s\n' sq-locked "$lock_tip" 106 >>"$GH_STUB_PRS"
+printf '%s\t%s\t%s\t%s\n' sq-locked "$lock_tip" 106 main >>"$GH_STUB_PRS"
 
 commondir="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)"
 mkdir -p "$commondir/worktree-locks/branch=sq-locked+lock"
@@ -441,6 +459,60 @@ fresh_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
 expect_contains "$fresh_out" "deleted  anc-fresh" "freshness: fresh evidence lets the ancestry delete proceed"
 branch_exists anc-fresh && fail "freshness: anc-fresh still exists after freshness was restored"
 echo "ok: ancestry deletion fails closed on stale remote evidence"
+
+# ── Case E5: ancestry deletion works from a divergent checkout ─────────────
+# `git branch -d` would authorize against the current HEAD and refuse here;
+# the verified-evidence compare-and-delete must not (challenge r2).
+
+anc_head_tip="$(make_branch anc-head head.txt)"
+(
+    cd "$fixture"
+    git merge -q --ff-only anc-head
+    git push -q origin main
+)
+retire_remote anc-head
+# runner branches from BEFORE the anc-head merge, so anc-head is not an
+# ancestor of HEAD during the run — exactly the state where `git branch -d`
+# would refuse what the dry run promised.
+(
+    cd "$fixture"
+    git checkout -q -b runner main~1
+    echo runner >runner.txt
+    git add runner.txt
+    git commit -qm "divergent runner work"
+)
+div_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "divergent-checkout run exited nonzero: $div_out"
+git -C "$fixture" checkout -q main
+expect_contains "$div_out" "deleted  anc-head" "divergent HEAD: verified ancestry deletes regardless of checkout"
+branch_exists anc-head && fail "divergent HEAD: anc-head still exists"
+branch_exists runner || fail "divergent HEAD: the current branch itself was deleted"
+echo "ok: ancestry deletion is checkout-independent"
+
+# ── Case E6: a config write failure after deletion is loud ─────────────────
+# A stale config.lock makes --remove-section fail; the deletion must still
+# report the leftover branch.<name> config instead of swallowing it.
+
+cfg_tip="$(make_branch sq-cfg cfg.txt)"
+(
+    cd "$fixture"
+    echo cfg >cfg.txt
+    git add cfg.txt
+    git commit -qm "squash of sq-cfg"
+    git push -q origin main
+)
+retire_remote sq-cfg
+printf '%s\t%s\t%s\t%s\n' sq-cfg "$cfg_tip" 108 main >>"$GH_STUB_PRS"
+
+gitdir_cfg="$(git -C "$fixture" rev-parse --absolute-git-dir)"
+touch "$gitdir_cfg/config.lock"
+cfg_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "config-lock run exited nonzero: $cfg_out"
+rm -f "$gitdir_cfg/config.lock"
+expect_contains "$cfg_out" "deleted  sq-cfg" "config lock: the evidenced deletion itself proceeds"
+expect_contains "$cfg_out" "WARN  sq-cfg was deleted but its branch.sq-cfg" "config lock: leftover config reported loudly"
+git -C "$fixture" config --local --remove-section branch.sq-cfg 2>/dev/null || true
+echo "ok: config cleanup failure is reported, never swallowed"
 
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 
