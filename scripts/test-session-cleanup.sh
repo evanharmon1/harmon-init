@@ -93,16 +93,18 @@ fi
 if [ "$cmd" = pr ] && [ "$sub" = list ]; then
     head_filter=""
     batch=false
+    limit=100000
     prev=""
     for a in "$@"; do
         [ "$prev" = "--head" ] && head_filter="$a"
+        [ "$prev" = "--limit" ] && limit="$a"
         case "$a" in *headRefName*) batch=true ;; esac
         prev="$a"
     done
     data="${GH_STUB_PRS:-}"
     if [ -n "$data" ] && [ -f "$data" ]; then
         if [ "$batch" = true ]; then
-            cat "$data"
+            head -n "$limit" "$data"
         else
             awk -F'\t' -v b="$head_filter" '$1 == b { print $3 "\t" $2 "\t" $4 }' "$data"
             # Side effect modes, firing AFTER the answer to open the window
@@ -116,6 +118,21 @@ if [ "$cmd" = pr ] && [ "$sub" = list ]; then
             fi
             if [ -n "${GH_STUB_CHECKOUT:-}" ] && [ "$head_filter" = "$GH_STUB_CHECKOUT" ]; then
                 git worktree add -q "$GH_STUB_CHECKOUT_DIR" "$head_filter"
+            fi
+            # Simulate a concurrent fetch of a REWRITTEN default: move both
+            # the origin's main and the local tracking ref to a divergent
+            # commit built on main~1 (excludes anything merged last).
+            if [ -n "${GH_STUB_REWRITE:-}" ] && [ "$head_filter" = "$GH_STUB_REWRITE" ]; then
+                rw_p="$(git rev-parse main~1)"
+                rw_t="$(git rev-parse "$rw_p^{tree}")"
+                rw_d="$(git commit-tree -p "$rw_p" -m rewritten "$rw_t")"
+                # The object lives only in this clone's odb — push it across
+                # before the origin's ref can point at it.
+                git push -q origin "$rw_d":refs/heads/rewrite-tmp
+                git -C "$GH_STUB_ORIGIN" update-ref refs/heads/main "$rw_d"
+                git -C "$GH_STUB_ORIGIN" update-ref -d refs/heads/rewrite-tmp
+                git update-ref -d refs/remotes/origin/rewrite-tmp 2>/dev/null || true
+                git update-ref refs/remotes/origin/main "$rw_d"
             fi
         fi
     fi
@@ -264,6 +281,8 @@ printf '%s\t%s\t%s\t%s\n' \
 gitdir="$(git -C "$fixture" rev-parse --absolute-git-dir)"
 mkdir -p "$gitdir/deferred-findings" "$gitdir/adjudication-ledger/dead" "$gitdir/shepherd-codex/stub/fixture"
 echo "p2 note" >"$gitdir/deferred-findings/unpushed-live"
+mkdir -p "$gitdir/worktrees/wt/deferred-findings"
+echo "linked-worktree note" >"$gitdir/worktrees/wt/deferred-findings/wt-checked"
 echo "orphan" >"$gitdir/adjudication-ledger/dead/branch"
 echo '{}' >"$gitdir/shepherd-codex/stub/fixture/42.json"
 
@@ -312,6 +331,7 @@ expect_contains "$audit_out" "tf-stale — deleted upstream" "audit: stale track
 expect_contains "$audit_out" "$test_tmp/wt — wt-checked" "audit: other worktree named"
 expect_contains "$audit_out" "active    deferred-findings/unpushed-live" "audit: live sidecar"
 expect_contains "$audit_out" "leftover  adjudication-ledger/dead/branch" "audit: orphan sidecar"
+expect_contains "$audit_out" "deferred-findings/wt-checked (branch exists) [worktrees/wt]" "audit: linked-worktree sidecar state scanned"
 expect_contains "$audit_out" "stub/fixture/42.json" "audit: shepherd cycle state listed"
 echo "ok: audit reports all artifact classes read-only"
 
@@ -364,7 +384,7 @@ cad_tip="$(make_branch sq-cad cad.txt)"
 retire_remote sq-cad
 printf '%s\t%s\t%s\t%s\n' sq-cad "$cad_tip" 104 main >>"$GH_STUB_PRS"
 
-cad_out="$(cd "$fixture" && GH_STUB_ADVANCE=sq-cad bash scripts/clean-branches.sh --delete 2>&1)" ||
+cad_out="$(cd "$fixture" && CLEAN_PR_LIMIT=1 GH_STUB_ADVANCE=sq-cad bash scripts/clean-branches.sh --delete 2>&1)" ||
     fail "CAD run exited nonzero: $cad_out"
 expect_contains "$cad_out" "tip moved since verification" "CAD: refusal is loud"
 branch_exists sq-cad || fail "CAD: sq-cad deleted although its tip moved after verification"
@@ -386,7 +406,7 @@ race_tip="$(make_branch sq-race race.txt)"
 retire_remote sq-race
 printf '%s\t%s\t%s\t%s\n' sq-race "$race_tip" 105 main >>"$GH_STUB_PRS"
 
-race_out="$(cd "$fixture" && GH_STUB_CHECKOUT=sq-race GH_STUB_CHECKOUT_DIR="$test_tmp/wt-race" \
+race_out="$(cd "$fixture" && CLEAN_PR_LIMIT=1 GH_STUB_CHECKOUT=sq-race GH_STUB_CHECKOUT_DIR="$test_tmp/wt-race" \
     bash scripts/clean-branches.sh --delete 2>&1)" ||
     fail "worktree-race run exited nonzero: $race_out"
 expect_contains "$race_out" "became checked out in a worktree since classification" "race: delete-phase re-check refused"
@@ -514,15 +534,18 @@ expect_contains "$cfg_out" "WARN  sq-cfg was deleted but its branch.sq-cfg" "con
 git -C "$fixture" config --local --remove-section branch.sq-cfg 2>/dev/null || true
 echo "ok: config cleanup failure is reported, never swallowed"
 
-# ── Case E7: worktree-record pruning refuses to orphan a detached commit ───
+# ── Case E7: worktree-record pruning pins detached commits through the prune ─
 # A stale record whose HEAD is detached at a commit no shared ref contains is
-# the only thing keeping that commit alive; a raw `git worktree prune` would
-# drop it (challenge r3). Branch-attached stale records prune normally.
+# the only thing keeping that commit alive (challenge r3); the guard is a pin
+# created BEFORE the prune, so no interleaving can strand the commit
+# (challenge r4). Branch-attached stale records prune normally; a live
+# detached worktree's pin is dropped as redundant.
 
 cp "$repo/scripts/clean-worktree-records.sh" "$fixture/scripts/"
 
 git -C "$fixture" worktree add -q -b prune-br "$test_tmp/wt-br" main
 git -C "$fixture" worktree add -q --detach "$test_tmp/wt-det" main
+git -C "$fixture" worktree add -q --detach "$test_tmp/wt-live" main
 (
     cd "$test_tmp/wt-det"
     echo det >det.txt
@@ -533,23 +556,116 @@ det_sha="$(git -C "$test_tmp/wt-det" rev-parse HEAD)"
 rm -rf "$test_tmp/wt-br" "$test_tmp/wt-det"
 
 if prune_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
-    fail "record prune succeeded while a record was the last reference to $det_sha: $prune_out"
+    fail "record prune exited zero although an orphan pin should have been kept: $prune_out"
 fi
-expect_contains "$prune_out" "detached commit $det_sha" "record prune: refusal names the at-risk commit"
-[ -d "$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees" ] &&
-    ls "$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees" | grep -q wt-det ||
-    fail "record prune: the at-risk record was pruned anyway"
-echo "ok: record prune refuses to orphan a detached commit"
+expect_contains "$prune_out" "KEPT  refs/session-cleanup/pin/wt-det" "record prune: orphan commit's pin kept and reported"
+worktrees_admin="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees"
+if ls "$worktrees_admin" 2>/dev/null | grep -Eq '^(wt-det|wt-br)$'; then
+    fail "record prune: stale records survived the prune"
+fi
+[ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-det)" = "$det_sha" ] ||
+    fail "record prune: pin does not hold the detached commit"
+git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-live >/dev/null &&
+    fail "record prune: redundant pin for a live worktree was kept"
+if git -C "$fixture" fsck --unreachable 2>/dev/null | grep -q "$det_sha"; then
+    fail "record prune: detached commit became unreachable despite the pin"
+fi
+echo "ok: record prune pins an orphan detached commit through the prune"
+
+# The audit surfaces a lingering pin as a decision waiting to be made.
+pin_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "audit exited nonzero with a pin present: $pin_audit_out"
+expect_contains "$pin_audit_out" "wt-det — pins $det_sha" "audit: leftover rescue pin reported"
+echo "ok: audit reports leftover rescue pins"
 
 git -C "$fixture" branch -q rescue-det "$det_sha"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/wt-det
 prune_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
-    fail "record prune failed after the commit was rescued: $prune_ok_out"
-expect_contains "$prune_ok_out" "stale records pruned" "record prune: proceeds once the commit is referenced"
-if ls "$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees" 2>/dev/null | grep -Eq 'wt-det|wt-br'; then
-    fail "record prune: stale records survived a safe prune"
-fi
+    fail "record prune failed after the pin was settled: $prune_ok_out"
+expect_contains "$prune_ok_out" "stale records pruned" "record prune: clean run once pins are settled"
+git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-live >/dev/null &&
+    fail "record prune: live-worktree pin left behind on the clean run"
 git -C "$fixture" cat-file -e "$det_sha" || fail "record prune: rescued commit lost from the object db"
-echo "ok: record prune clears stale records once every commit is referenced"
+echo "ok: record prune settles cleanly once every commit is referenced"
+
+# ── Case E8: a renamed remote default refuses every deletion ───────────────
+# The local origin/HEAD still names the old default; the live remote HEAD
+# must be verified before any evidence computed against the old name is
+# trusted (challenge r4).
+
+ren_tip="$(make_branch anc-ren ren.txt)"
+(
+    cd "$fixture"
+    git merge -q --ff-only anc-ren
+    git push -q origin main
+)
+retire_remote anc-ren
+
+git -C "$origin" branch trunk main
+git -C "$origin" symbolic-ref HEAD refs/heads/trunk
+ren_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "renamed-default run exited nonzero: $ren_out"
+expect_contains "$ren_out" "default branch is now 'trunk'" "rename: live default named in the note"
+expect_contains "$ren_out" "could not be verified as 'main'" "rename: deletions refused"
+branch_exists anc-ren || fail "rename: anc-ren deleted although the remote default moved"
+
+git -C "$origin" symbolic-ref HEAD refs/heads/main
+git -C "$origin" update-ref -d refs/heads/trunk
+ren_ok_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "post-rename-restore run exited nonzero: $ren_ok_out"
+expect_contains "$ren_ok_out" "deleted  anc-ren" "rename: restored default lets the deletion proceed"
+echo "ok: a renamed remote default fails every deletion closed"
+
+# ── Case E9: the capped batch falls back to per-branch verification ────────
+# With the listing capped at one row, evidence for a later branch is only
+# reachable through the fallback probe — which must still deliver a deletion.
+
+late_tip="$(make_branch sq-late late.txt)"
+(
+    cd "$fixture"
+    echo late >late.txt
+    git add late.txt
+    git commit -qm "squash of sq-late"
+    git push -q origin main
+)
+retire_remote sq-late
+printf '%s\t%s\t%s\t%s\n' sq-late "$late_tip" 110 main >>"$GH_STUB_PRS"
+
+late_out="$(cd "$fixture" && CLEAN_PR_LIMIT=1 bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "capped-batch run exited nonzero: $late_out"
+expect_contains "$late_out" "hit its 1 cap" "cap: fallback engagement announced"
+expect_contains "$late_out" "deleted  sq-late" "cap: fallback evidence still deletes"
+branch_exists sq-late && fail "cap: sq-late still exists after fallback deletion"
+branch_exists gone-tipdiff || fail "cap: fallback deleted gone-tipdiff despite its tip mismatch"
+branch_exists sq-stacked || fail "cap: fallback deleted sq-stacked despite its non-default base"
+echo "ok: capped merged-PR listing falls back per branch"
+
+# ── Case E10: ancestry is re-validated against the verified advertised tip ─
+# Mid-run, a "concurrent fetch" (stub side effect) swings both the origin
+# default and the local tracking ref to a rewritten tip that does NOT
+# contain the candidate: tip equality then passes, and only the delete-time
+# ancestry re-validation stands between the branch and deletion.
+
+race2_tip="$(make_branch anc-race race2.txt)"
+(
+    cd "$fixture"
+    git merge -q --ff-only anc-race
+    git push -q origin main
+)
+retire_remote anc-race
+
+rw_out="$(cd "$fixture" && CLEAN_PR_LIMIT=1 GH_STUB_REWRITE=gone-nopr GH_STUB_ORIGIN="$origin" \
+    bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "rewrite-race run exited nonzero: $rw_out"
+expect_contains "$rw_out" "no longer an ancestor of the verified remote default tip" "rewrite race: re-validation refused"
+branch_exists anc-race || fail "rewrite race: anc-race deleted although the verified tip no longer contains it"
+
+git -C "$origin" update-ref refs/heads/main "$(git -C "$fixture" rev-parse main)"
+git -C "$fixture" update-ref refs/remotes/origin/main "$(git -C "$fixture" rev-parse main)"
+rw_ok_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "post-rewrite-restore run exited nonzero: $rw_ok_out"
+expect_contains "$rw_ok_out" "deleted  anc-race" "rewrite race: restored default lets the deletion proceed"
+echo "ok: ancestry deletion re-validates against the verified advertised tip"
 
 # ── Case F: the evidence rule is not bypassable by force ───────────────────
 

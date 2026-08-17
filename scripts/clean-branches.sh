@@ -128,13 +128,17 @@ else
     echo "clean:branches: no 'timeout' found (brew install coreutils) — network probes are unbounded." >&2
 fi
 
-gh_pr_probe() {
-    # gh_pr_probe <args...> — bounded, stdin-closed gh invocation.
+# net_probe <cmd...> — bounded, stdin-closed network invocation (gh or git).
+net_probe() {
     if [ -n "$TIMEOUT_BIN" ]; then
-        "$TIMEOUT_BIN" -k 5 "${GH_TIMEOUT:-30}" gh "$@" </dev/null
+        "$TIMEOUT_BIN" -k 5 "${GH_TIMEOUT:-30}" "$@" </dev/null
     else
-        gh "$@" </dev/null
+        "$@" </dev/null
     fi
+}
+
+gh_pr_probe() {
+    net_probe gh "$@"
 }
 
 # PR-evidence availability: gh present and able to name the remote's repo.
@@ -146,16 +150,45 @@ if command -v gh >/dev/null 2>&1; then
         --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || gh_repo=""
 fi
 
-# merged_pr_for <branch> <tip> — echo the merged PR number whose head commit
-# is exactly <tip> AND whose base is the remote default branch; echo nothing
-# when no such PR exists; return nonzero when the probe itself failed (so a
-# network error is never mistaken for "no PR"). Tip equality is the point:
+# PR evidence means: a merged PR whose head commit is exactly the branch tip
+# AND whose base is the remote default branch. Tip equality is the point —
 # matching by branch NAME alone would let a recycled branch name inherit an
 # old PR's merged-ness and delete unrelated new work. The base filter is
 # equally load-bearing (challenge r2): a PR merged into a stacked or
 # temporary base that was later deleted still reports "merged" with this
 # head, yet its result may be reachable from no live ref — only a merge into
 # the default branch proves the work is durably delivered.
+#
+# Evidence is fetched as ONE batched listing (challenge r4): probing per
+# branch makes total stall time N * GH_TIMEOUT when the API wedges, which is
+# exactly the no-wedge contract the timeout exists for. The batch has a cap,
+# so branches it does not answer fall back to one per-branch probe each —
+# bounded by the number of unmatched gone branches, not the whole tree.
+batch_state=unfetched # unfetched | ok | capped | failed
+batch_prs() {
+    if [ "$batch_state" = unfetched ]; then
+        pr_limit="${CLEAN_PR_LIMIT:-1000}"
+        if gh_pr_probe pr list --repo "$gh_repo" --state merged --limit "$pr_limit" \
+            --json number,headRefName,headRefOid,baseRefName \
+            --jq '.[] | [.headRefName, .headRefOid, (.number | tostring), .baseRefName] | @tsv' \
+            >"$tmp/merged-prs" 2>/dev/null; then
+            if [ "$(wc -l <"$tmp/merged-prs" | tr -d ' ')" -ge "$pr_limit" ]; then
+                batch_state=capped
+                echo "NOTE  merged-PR listing hit its $pr_limit cap — unmatched branches get one per-branch probe each"
+            else
+                batch_state=ok
+            fi
+        else
+            batch_state=failed
+        fi
+    fi
+    [ "$batch_state" != failed ]
+}
+
+# merged_pr_for <branch> <tip> — the per-branch fallback probe, used only
+# when the capped batch could not answer for this branch. Echoes the PR
+# number on a tip+base match, nothing when none exists, nonzero when the
+# probe itself failed (a network error is never mistaken for "no PR").
 merged_pr_for() {
     gh_pr_probe pr list --repo "$gh_repo" --head "$1" --state merged \
         --json number,headRefOid,baseRefName \
@@ -220,10 +253,19 @@ while IFS=$'\t' read -r branch tip track symref; do
     # including one extra local commit on top of the merged head — falls
     # through to the refusals below.
     if [ "$track" = "[gone]" ] && [ -n "$gh_repo" ]; then
-        if ! pr="$(merged_pr_for "$branch" "$tip")"; then
-            echo "SKIP  $branch — upstream gone, but the merged-PR probe failed (gh/network error)"
+        if ! batch_prs; then
+            echo "SKIP  $branch — upstream gone, but the merged-PR listing failed (gh/network error)"
             refused=$((refused + 1))
             continue
+        fi
+        pr="$(awk -F'\t' -v b="$branch" -v tip="$tip" -v base="$default_branch" \
+            '$1 == b && $2 == tip && $4 == base { print $3; exit }' "$tmp/merged-prs")"
+        if [ -z "$pr" ] && [ "$batch_state" = capped ]; then
+            if ! pr="$(merged_pr_for "$branch" "$tip")"; then
+                echo "SKIP  $branch — upstream gone, but the merged-PR probe failed (gh/network error)"
+                refused=$((refused + 1))
+                continue
+            fi
         fi
         if [ -n "$pr" ]; then
             printf '%s\t%s\tpr\t%s\n' "$branch" "$tip" "$pr" >>"$tmp/candidates"
@@ -252,33 +294,49 @@ done <"$tmp/branches"
 
 # ── Act (or report) ─────────────────────────────────────────────────────────
 
-# Ancestry evidence is only as fresh as the last fetch: a force-pushed or
-# repointed remote default branch can leave refs/remotes/$remote/<default>
-# vouching for commits the remote no longer holds (challenge r1). Before any
-# ancestry-class deletion, compare the remote's ADVERTISED default tip with
-# the local tracking ref — one bounded read-only ls-remote — and fail closed
-# on mismatch or error. PR evidence does not depend on tracking refs and is
-# unaffected.
-ancestry_fresh=""
-ancestry_fresh_checked=false
-check_ancestry_freshness() {
-    if [ "$ancestry_fresh_checked" = false ]; then
-        ancestry_fresh_checked=true
-        advertised=""
-        if [ -n "$TIMEOUT_BIN" ]; then
-            advertised="$("$TIMEOUT_BIN" -k 5 "${GH_TIMEOUT:-30}" git ls-remote "$remote" \
-                "refs/heads/$default_branch" </dev/null 2>/dev/null | awk '{ print $1; exit }')" || advertised=""
-        else
-            advertised="$(git ls-remote "$remote" "refs/heads/$default_branch" </dev/null 2>/dev/null |
-                awk '{ print $1; exit }')" || advertised=""
-        fi
-        if [ -n "$advertised" ] && [ "$advertised" = "$(git rev-parse "$ancestry_target")" ]; then
-            ancestry_fresh=true
-        else
-            ancestry_fresh=false
-        fi
+# Deletion evidence is only as fresh as the local refs it was computed from,
+# so --delete mode verifies the live remote once — a single bounded read-only
+# `ls-remote --symref` — and fails closed on any mismatch or error:
+#
+#   * The remote's advertised HEAD must still name $default_branch
+#     (challenge r4): after a default-branch rename, the obsolete branch can
+#     survive remotely and pass a tip-equality check, authorizing deletions
+#     against a base that is no longer the default. A mismatch refuses EVERY
+#     deletion — PR evidence filtered on the stale base name is equally void.
+#   * For ancestry evidence, the advertised default tip must equal the local
+#     tracking ref (challenge r1): a force-pushed or repointed default can
+#     leave refs/remotes/$remote/<default> vouching for commits the remote no
+#     longer holds.
+#
+# The verified advertised OID is kept for delete_one to re-validate ancestry
+# against (challenge r4): classification ran against whatever the tracking
+# ref held THEN, and a concurrent fetch of a rewritten default can make the
+# tip-equality check pass against a tip the candidate was never proven into.
+remote_state_checked=false
+default_ok=false
+ancestry_ok=false
+ancestry_advertised_oid=""
+verify_remote_state() {
+    if [ "$remote_state_checked" = true ]; then
+        return 0
     fi
-    [ "$ancestry_fresh" = true ]
+    remote_state_checked=true
+    symref_out="$(net_probe git ls-remote --symref "$remote" HEAD \
+        "refs/heads/$default_branch" 2>/dev/null)" || symref_out=""
+    live_default="$(printf '%s\n' "$symref_out" |
+        awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }')"
+    advertised="$(printf '%s\n' "$symref_out" |
+        awk -v r="refs/heads/$default_branch" '$1 != "ref:" && $2 == r { print $1; exit }')"
+    if [ -n "$live_default" ] && [ "$live_default" = "$default_branch" ]; then
+        default_ok=true
+    elif [ -n "$live_default" ]; then
+        echo "NOTE  the remote's default branch is now '$live_default', not '$default_branch' — refusing every deletion (git remote set-head $remote --auto && git fetch --prune $remote, then re-run)"
+    fi
+    if [ "$default_ok" = true ] && [ -n "$advertised" ] &&
+        [ "$advertised" = "$(git rev-parse "$ancestry_target")" ]; then
+        ancestry_ok=true
+        ancestry_advertised_oid="$advertised"
+    fi
 }
 
 # delete_one <branch> <tip> <evidence> <why> — runs in a SUBSHELL so a lock
@@ -306,6 +364,17 @@ delete_one() (
     # respect git's checked-out guard.
     if git worktree list --porcelain | grep -Fxq "branch refs/heads/$branch"; then
         echo "SKIP  $branch — became checked out in a worktree since classification"
+        exit 3
+    fi
+    # Re-validate ancestry against the VERIFIED advertised tip (challenge
+    # r4): classification proved ancestry into whatever the tracking ref
+    # held at scan time, and a concurrent fetch of a rewritten default can
+    # satisfy the tip-equality check with a tip that no longer contains
+    # this branch. The evidence must hold against the tip the deletion is
+    # actually trusting.
+    if [ "$evidence" = ancestry ] &&
+        ! git merge-base --is-ancestor "refs/heads/$branch" "$ancestry_advertised_oid"; then
+        echo "SKIP  $branch — no longer an ancestor of the verified remote default tip (default moved since classification)"
         exit 3
     fi
     # ONE deletion mechanism for both evidence classes: a guarded
@@ -347,7 +416,13 @@ if [ -s "$tmp/candidates" ]; then
             echo "WOULD DELETE  $branch (${tip:0:12}) — $why"
             continue
         fi
-        if [ "$evidence" = ancestry ] && ! check_ancestry_freshness; then
+        verify_remote_state
+        if [ "$default_ok" != true ]; then
+            echo "SKIP  $branch — the remote's live default branch could not be verified as '$default_branch' (renamed default or unreachable remote; see NOTE above)"
+            refused=$((refused + 1))
+            continue
+        fi
+        if [ "$evidence" = ancestry ] && [ "$ancestry_ok" != true ]; then
             echo "SKIP  $branch — $remote/$default_branch is stale or unverifiable against the live remote (run 'task clean:remote-refs', then re-run)"
             refused=$((refused + 1))
             continue

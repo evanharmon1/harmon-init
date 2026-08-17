@@ -209,38 +209,76 @@ git worktree list --porcelain | awk -v self="$this_tree" '
 # ── 4. Review sidecars ──────────────────────────────────────────────────────
 
 # The gauntlet stage keeps per-branch scratch state under the git directory
-# (deliberately outside the worktree). Entries for branches that no longer
-# exist are leftovers a finished PR should have deleted (§10 ritual).
+# (deliberately outside the worktree). `git rev-parse --git-path` resolves
+# these paths PER WORKTREE, so a session working in a linked worktree writes
+# them under .git/worktrees/<id>/ — an audit reading only its own git dir
+# would silently omit that single-copy, unpushed state (challenge r4). Every
+# scan below therefore walks the common dir plus every registered worktree's
+# admin dir.
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+{
+    printf 'main\t%s\n' "$common_dir"
+    if [ -d "$common_dir/worktrees" ]; then
+        for admin_dir in "$common_dir"/worktrees/*; do
+            [ -d "$admin_dir" ] || continue
+            printf 'worktrees/%s\t%s\n' "$(basename "$admin_dir")" "$admin_dir"
+        done
+    fi
+} >"$tmp/state-roots"
+
 section "Review sidecars (deferred-findings / adjudication-ledger)"
 # Each entry is a single file whose repo-relative path IS the branch name
 # (slashes in the branch nest directories), per the gauntlet skill's layout.
 sidecars_found=false
-for treename in deferred-findings adjudication-ledger; do
-    dir="$(git rev-parse --git-path "$treename")"
-    [ -d "$dir" ] || continue
-    find "$dir" -type f 2>/dev/null >"$tmp/sidecar-list"
-    [ -s "$tmp/sidecar-list" ] || continue
-    sidecars_found=true
-    while IFS= read -r f; do
-        rel="${f#"$dir"/}"
-        if git show-ref --verify --quiet "refs/heads/$rel"; then
-            printf '  active    %s/%s (branch exists)\n' "$treename" "$rel"
-        else
-            printf '  leftover  %s/%s — no such branch; stale scratch state\n' "$treename" "$rel"
-        fi
-    done <"$tmp/sidecar-list"
-done
+while IFS=$'\t' read -r root_label root_path; do
+    for treename in deferred-findings adjudication-ledger; do
+        dir="$root_path/$treename"
+        [ -d "$dir" ] || continue
+        find "$dir" -type f 2>/dev/null >"$tmp/sidecar-list"
+        [ -s "$tmp/sidecar-list" ] || continue
+        sidecars_found=true
+        while IFS= read -r f; do
+            rel="${f#"$dir"/}"
+            if git show-ref --verify --quiet "refs/heads/$rel"; then
+                printf '  active    %s/%s (branch exists) [%s]\n' "$treename" "$rel" "$root_label"
+            else
+                printf '  leftover  %s/%s — no such branch; stale scratch state [%s]\n' "$treename" "$rel" "$root_label"
+            fi
+        done <"$tmp/sidecar-list"
+    done
+done <"$tmp/state-roots"
 [ "$sidecars_found" = true ] || echo "  none"
 
 # ── 5. Shepherd cycle state ─────────────────────────────────────────────────
 
 section "Shepherd Codex cycle-state files"
-cycles_dir="$(git rev-parse --git-path shepherd-codex)"
-if [ -d "$cycles_dir" ] && [ -n "$(find "$cycles_dir" -type f 2>/dev/null | head -n 1)" ]; then
-    find "$cycles_dir" -type f 2>/dev/null | while IFS= read -r f; do
-        printf '  %s\n' "${f#"$cycles_dir"/}"
-    done
+cycles_found=false
+while IFS=$'\t' read -r root_label root_path; do
+    cycles_dir="$root_path/shepherd-codex"
+    [ -d "$cycles_dir" ] || continue
+    find "$cycles_dir" -type f 2>/dev/null >"$tmp/cycles-list"
+    [ -s "$tmp/cycles-list" ] || continue
+    cycles_found=true
+    while IFS= read -r f; do
+        printf '  %s [%s]\n' "${f#"$cycles_dir"/}" "$root_label"
+    done <"$tmp/cycles-list"
+done <"$tmp/state-roots"
+if [ "$cycles_found" = true ]; then
     echo "  (the shepherd checker's 'reap' subcommand sweeps states whose PR has closed)"
+else
+    echo "  none"
+fi
+
+# ── 5b. Rescue pins ─────────────────────────────────────────────────────────
+
+# clean:worktree-records keeps refs/session-cleanup/pin/<record> when a
+# pruned record held the only reference to a detached commit; a lingering pin
+# is a decision waiting to be made.
+section "Rescue pins (refs/session-cleanup/pin)"
+git for-each-ref refs/session-cleanup/pin \
+    --format='  %(refname:lstrip=3) — pins %(objectname) (branch it or delete the pin)' >"$tmp/pins"
+if [ -s "$tmp/pins" ]; then
+    cat "$tmp/pins"
 else
     echo "  none"
 fi
