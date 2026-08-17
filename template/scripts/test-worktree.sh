@@ -1616,7 +1616,7 @@ echo "==> a hashed long-branch lock key stays outside the path-key namespace"
 # its own path lock and refuse itself (PR #932 cloud review). The name
 # below is derived exactly as acquire_branch_lock derives the key, so the
 # case stages the collision deterministically whatever cksum returns.
-long_branch="$(printf 'a%.0s' $(seq 1 201))"
+long_branch="$(printf '%0201d' 0 | tr '0' 'a')"
 hash_name="h$(printf 'branch=%s' "$long_branch" |
     tr '/' '%' | tr '[:upper:]' '[:lower:]' | cksum | tr ' \t' '--')"
 new "$hash_name" --branch "$long_branch" >/dev/null ||

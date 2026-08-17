@@ -542,8 +542,17 @@ cleanup() {
                 # inside the EXIT trap under set -e and a config-lock
                 # failure must never abort the trap before release_locks
                 # (challenge round 4).
-                git config --unset "branch.$branch.remote" 2>/dev/null || true
-                git config --unset "branch.$branch.merge" 2>/dev/null || true
+                # A failed unset (a concurrent process holding the config
+                # lock) leaves debris the stale-config guard will refuse at
+                # the next use of this branch name, so name the remedy NOW
+                # rather than then. Unsetting before the ref delete instead
+                # would be worse: a compare-and-delete refusal after the
+                # unsets leaves a SURVIVING branch silently untracked
+                # (PR #932 cloud review).
+                git config --unset "branch.$branch.remote" 2>/dev/null ||
+                    echo "worktree:new: could not remove branch.$branch.remote — clear it with: git config --unset branch.$branch.remote" >&2 || true
+                git config --unset "branch.$branch.merge" 2>/dev/null ||
+                    echo "worktree:new: could not remove branch.$branch.merge — clear it with: git config --unset branch.$branch.merge" >&2 || true
             else
                 echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
             fi
