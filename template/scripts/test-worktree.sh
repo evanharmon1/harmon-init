@@ -2278,8 +2278,8 @@ git -C "$fixture" commit -qm "chore: add package.json" >"$test_tmp/commit.log" 2
         fail "committing package.json in the fixture failed"
     }
 new node-tree >/dev/null || fail "worktree-new.sh failed on a Node repo"
-grep -qx "install $fixture/.worktrees/node-tree" "$pnpm_marker" 2>/dev/null ||
-    fail "worktree-new.sh did not run 'pnpm install' inside the new tree"
+grep -qx "install --frozen-lockfile $fixture/.worktrees/node-tree" "$pnpm_marker" 2>/dev/null ||
+    fail "worktree-new.sh did not run 'pnpm install --frozen-lockfile' inside the new tree"
 rm_wt node-tree >/dev/null || fail "cleanup of the node tree failed"
 
 echo "==> a pnpm workspace without a root package.json still installs"
@@ -2346,12 +2346,14 @@ det_commit() {
         }
 }
 det_assert_installer() {
-    # $1 = the manager that must have run `install` in the tree, '' for none;
-    # $2 = the tree path ('' when no tree should exist).
+    # $1 = the manager that must have installed ('' for none); $2 = the exact
+    # arguments it must have been invoked with, so the immutable-mode
+    # selection is asserted too; $3 = the tree path ('' when no tree should
+    # exist).
     for det_name in pnpm npm yarn bun; do
         if [ "$det_name" = "$1" ]; then
-            grep -qx "install $2" "$test_tmp/$det_name-invoked" 2>/dev/null ||
-                fail "worktree-new.sh did not run '$det_name install' inside $2"
+            grep -qx "$2 $3" "$test_tmp/$det_name-invoked" 2>/dev/null ||
+                fail "worktree-new.sh did not run '$det_name $2' inside $3"
         elif [ -s "$test_tmp/$det_name-invoked" ]; then
             fail "worktree-new.sh invoked $det_name in a tree whose manager is '${1:-none}'"
         fi
@@ -2364,7 +2366,7 @@ printf '{"name":"fixture","private":true}\n' >"$fixture/package.json"
 printf '{"lockfileVersion": 3}\n' >"$fixture/package-lock.json"
 det_commit "npm lockfile"
 new det-npm >/dev/null || fail "worktree-new.sh failed on an npm repo"
-det_assert_installer npm "$fixture/.worktrees/det-npm"
+det_assert_installer npm ci "$fixture/.worktrees/det-npm"
 rm_wt det-npm >/dev/null || fail "cleanup of the npm tree failed"
 
 echo "==> a yarn.lock selects Yarn"
@@ -2373,7 +2375,7 @@ printf '{"name":"fixture","private":true}\n' >"$fixture/package.json"
 printf '# yarn lockfile v1\n' >"$fixture/yarn.lock"
 det_commit "yarn lockfile"
 new det-yarn >/dev/null || fail "worktree-new.sh failed on a Yarn repo"
-det_assert_installer yarn "$fixture/.worktrees/det-yarn"
+det_assert_installer yarn "install --immutable" "$fixture/.worktrees/det-yarn"
 rm_wt det-yarn >/dev/null || fail "cleanup of the yarn tree failed"
 
 echo "==> a bun.lock selects Bun"
@@ -2382,7 +2384,7 @@ printf '{"name":"fixture","private":true}\n' >"$fixture/package.json"
 printf '{}\n' >"$fixture/bun.lock"
 det_commit "bun lockfile"
 new det-bun >/dev/null || fail "worktree-new.sh failed on a Bun repo"
-det_assert_installer bun "$fixture/.worktrees/det-bun"
+det_assert_installer bun "install --frozen-lockfile" "$fixture/.worktrees/det-bun"
 rm_wt det-bun >/dev/null || fail "cleanup of the bun tree failed"
 
 echo "==> a declared packageManager with its own lockfile wins over a stale foreign one"
@@ -2392,7 +2394,7 @@ printf '{"lockfileVersion": 3}\n' >"$fixture/package-lock.json"
 printf 'lockfileVersion: "9.0"\n' >"$fixture/pnpm-lock.yaml"
 det_commit "declared npm with its own lockfile over a stale pnpm one"
 new det-declared >/dev/null || fail "worktree-new.sh failed on a declared-manager repo"
-det_assert_installer npm "$fixture/.worktrees/det-declared"
+det_assert_installer npm ci "$fixture/.worktrees/det-declared"
 rm_wt det-declared >/dev/null || fail "cleanup of the declared-manager tree failed"
 
 echo "==> a declaration whose manager has no files here fails instead of writing a second lockfile"
@@ -2405,7 +2407,7 @@ det_out="$(new det-foreign 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded for a declaration contradicted by a foreign-only lockfile"
 printf '%s\n' "$det_out" | grep -q "carries other managers' files (pnpm) and none of npm's" ||
     fail "the foreign-only-lockfile refusal did not name the contradiction"
-det_assert_installer "" ""
+det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-foreign" "worktree-new.sh left a tree behind after refusing a contradicted declaration"
 if git -C "$fixture" show-ref --verify --quiet refs/heads/det-foreign; then
     fail "worktree-new.sh left the branch behind after refusing a contradicted declaration"
@@ -2421,7 +2423,7 @@ det_out="$(new det-verpin 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh installed under a version pin its npm does not satisfy"
 printf '%s\n' "$det_out" | grep -q "pins npm@6.14.18 but npm 10.9.2 is installed" ||
     fail "the version-pin refusal did not name the pinned and installed versions"
-det_assert_installer "" ""
+det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-verpin" "worktree-new.sh left a tree behind after refusing a version-pin mismatch"
 if git -C "$fixture" show-ref --verify --quiet refs/heads/det-verpin; then
     fail "worktree-new.sh left the branch behind after refusing a version-pin mismatch"
@@ -2436,7 +2438,7 @@ det_out="$(new det-unsupported 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded with an unsupported packageManager declaration"
 printf '%s\n' "$det_out" | grep -q "does not support" ||
     fail "the unsupported-manager refusal did not say the declaration is unsupported"
-det_assert_installer "" ""
+det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-unsupported" "worktree-new.sh left a tree behind after refusing an unsupported manager"
 if git -C "$fixture" show-ref --verify --quiet refs/heads/det-unsupported; then
     fail "worktree-new.sh left the branch behind after refusing an unsupported manager"
@@ -2453,7 +2455,7 @@ det_out="$(new det-conflict 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded with lockfiles from two package managers"
 printf '%s\n' "$det_out" | grep -q "conflicting Node package-manager signals in this tree: npm bun" ||
     fail "the conflicting-lockfile refusal did not name both managers"
-det_assert_installer "" ""
+det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-conflict" "worktree-new.sh left a tree behind after refusing conflicting lockfiles"
 if git -C "$fixture" show-ref --verify --quiet refs/heads/det-conflict; then
     fail "worktree-new.sh left the branch behind after refusing conflicting lockfiles"
@@ -2466,7 +2468,7 @@ det_commit "bare manifest, no manager signal"
 det_out="$(new det-bare 2>&1)" || fail "worktree-new.sh failed on a signal-less Node repo"
 printf '%s\n' "$det_out" | grep -q "no package-manager signal" ||
     fail "the signal-less run did not say why the install was skipped"
-det_assert_installer "" ""
+det_assert_installer "" "" ""
 rm_wt det-bare >/dev/null || fail "cleanup of the signal-less tree failed"
 
 echo "==> a packageManager declaration split across lines still parses"
@@ -2474,7 +2476,7 @@ det_reset
 printf '{\n  "name": "fixture",\n  "private": true,\n  "packageManager":\n    "yarn@4.1.0"\n}\n' >"$fixture/package.json"
 det_commit "multi-line packageManager declaration"
 new det-multiline >/dev/null || fail "worktree-new.sh failed on a multi-line packageManager declaration"
-det_assert_installer yarn "$fixture/.worktrees/det-multiline"
+det_assert_installer yarn install "$fixture/.worktrees/det-multiline"
 rm_wt det-multiline >/dev/null || fail "cleanup of the multi-line tree failed"
 
 # The shipped devcontainer post-checkout hook auto-installs Node dependencies
@@ -2504,7 +2506,7 @@ exit 0
 EOF
     chmod +x "$stub_bin/git-lfs"
     new det-hook >/dev/null || fail "worktree-new.sh failed with the devcontainer post-checkout hook installed"
-    det_assert_installer npm "$fixture/.worktrees/det-hook"
+    det_assert_installer npm ci "$fixture/.worktrees/det-hook"
     rm_wt det-hook >/dev/null || fail "cleanup of the hook tree failed"
     rm -f "$shared_hooks/post-checkout" "$stub_bin/git-lfs"
 else

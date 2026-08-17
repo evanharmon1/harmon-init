@@ -875,8 +875,49 @@ if [ "$do_install" -eq 1 ]; then
                 esac
                 ;;
             esac
-            echo "==> Installing Node dependencies ($node_pm) in the new tree"
-            (cd "$tree" && "$node_pm" install)
+            # When the selected manager's own lockfile is present, install in
+            # its immutable mode (challenge round 3): a plain install can
+            # legally REWRITE a committed lockfile — npm 11 upgrades a
+            # lockfileVersion-1 file in place — and a provisioning step must
+            # fail and roll back on drift, not report a dirty tree as ready.
+            # The devcontainer post-checkout hook set this precedent (npm ci,
+            # --frozen-lockfile). With no lockfile — a workspace-file-only
+            # root, or a declaration with no manager files yet — plain
+            # install remains: there is nothing to preserve, and the first
+            # install legitimately creates the lockfile.
+            node_pm_args=("install")
+            case "$node_pm" in
+            pnpm)
+                if [ -f "$tree/pnpm-lock.yaml" ]; then
+                    node_pm_args=("install" "--frozen-lockfile")
+                fi
+                ;;
+            npm)
+                if [ -f "$tree/package-lock.json" ] || [ -f "$tree/npm-shrinkwrap.json" ]; then
+                    node_pm_args=("ci")
+                fi
+                ;;
+            yarn)
+                # Classic (1.x) spells the immutable mode --frozen-lockfile;
+                # Berry spells it --immutable. Version-split rather than
+                # relying on Berry's deprecated alias.
+                if [ -f "$tree/yarn.lock" ]; then
+                    yarn_ver="$(yarn --version 2>/dev/null || true)"
+                    case "${yarn_ver%%.*}" in
+                    1) node_pm_args=("install" "--frozen-lockfile") ;;
+                    '' | *[!0-9]*) die "yarn.lock is present but yarn's version could not be read — reinstall yarn and re-run (or use --no-install)" ;;
+                    *) node_pm_args=("install" "--immutable") ;;
+                    esac
+                fi
+                ;;
+            bun)
+                if [ -f "$tree/bun.lock" ] || [ -f "$tree/bun.lockb" ]; then
+                    node_pm_args=("install" "--frozen-lockfile")
+                fi
+                ;;
+            esac
+            echo "==> Installing Node dependencies ($node_pm ${node_pm_args[*]}) in the new tree"
+            (cd "$tree" && "$node_pm" "${node_pm_args[@]}")
         else
             echo "==> Note: package.json carries no package-manager signal (no packageManager field, no lockfile) — skipping the Node install; declare \"packageManager\" in package.json, or install dependencies in the tree yourself"
         fi

@@ -75,8 +75,12 @@ it points here.
   unsupported `packageManager` value, and a declared numeric major that
   the installed binary does not match (a drifted major can rewrite the
   committed lockfile; corepack-shimmed binaries report the pinned version
-  and pass). A bare `package.json` with no signal skips the install with a
-  note — declare `packageManager` to make it deterministic.
+  and pass). When the selected manager's own lockfile exists the install
+  runs in its immutable mode (`npm ci`, `--frozen-lockfile`, Yarn Berry
+  `--immutable`), so lockfile drift fails and rolls back instead of
+  rewriting a committed file; with no lockfile, plain `install` runs and
+  may create one. A bare `package.json` with no signal skips the install
+  with a note — declare `packageManager` to make it deterministic.
 - **Never pass `-c core.hooksPath=.git/hooks` to git in a worktree.** In a
   linked worktree `.git` is a **file**, not a directory, so that path resolves
   to nothing and commits run **hook-less and silently**. Git's own defaults are
