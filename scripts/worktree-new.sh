@@ -778,15 +778,21 @@ if [ "$do_install" -eq 1 ]; then
         # Select the manager deterministically, in this precedence
         # (documented in docs/conventions.md § Worktrees):
         #   1. The `packageManager` field in package.json — the repo's own
-        #      declaration (the Corepack convention), so it wins even over a
-        #      contradicting lockfile, exactly as Corepack itself would.
-        #      Parsed best-effort because jq is not one of this script's
-        #      dependencies: the file is flattened first (the field's name,
-        #      colon, and value legally sit on separate lines, and values
-        #      never contain whitespace), then matched as a string-valued
-        #      key. The spec puts the field at top level with a string
-        #      value; nested objects like devEngines.packageManager carry an
-        #      object value, which this pattern does not match.
+        #      declaration (the Corepack convention). It wins over a stale
+        #      foreign lockfile when the declared manager's own
+        #      infrastructure is present — but a declaration whose manager
+        #      has NO files here while other managers' files exist is a
+        #      contradiction, refused before any install: the declared
+        #      manager would succeed by writing a second lockfile into the
+        #      fresh tree, reporting ready with a dirty worktree
+        #      (challenge round 2). Parsed best-effort because jq is not
+        #      one of this script's dependencies: the file is flattened
+        #      first (the field's name, colon, and value legally sit on
+        #      separate lines, and values never contain whitespace), then
+        #      matched as a string-valued key. The spec puts the field at
+        #      top level with a string value; nested objects like
+        #      devEngines.packageManager carry an object value, which this
+        #      pattern does not match.
         #   2. Exactly one manager's own files at the tree root:
         #      pnpm-lock.yaml or pnpm-workspace.yaml → pnpm;
         #      package-lock.json or npm-shrinkwrap.json → npm;
@@ -806,26 +812,32 @@ if [ "$do_install" -eq 1 ]; then
             # SIGPIPE under pipefail).
             pm_decl="$(tr -d '\n\r\t ' <"$tree/package.json" | sed -n 's/.*"packageManager":"\([^"]*\)".*/\1/p')"
         fi
+        node_signals=""
+        if [ -f "$tree/pnpm-lock.yaml" ] || [ -f "$tree/pnpm-workspace.yaml" ]; then
+            node_signals="$node_signals pnpm"
+        fi
+        if [ -f "$tree/package-lock.json" ] || [ -f "$tree/npm-shrinkwrap.json" ]; then
+            node_signals="$node_signals npm"
+        fi
+        if [ -f "$tree/yarn.lock" ]; then
+            node_signals="$node_signals yarn"
+        fi
+        if [ -f "$tree/bun.lock" ] || [ -f "$tree/bun.lockb" ]; then
+            node_signals="$node_signals bun"
+        fi
         if [ -n "$pm_decl" ]; then
             node_pm=${pm_decl%%@*}
             case "$node_pm" in
             pnpm | npm | yarn | bun) ;;
             *) die "package.json declares packageManager '$pm_decl', which this script does not support (pnpm, npm, yarn, bun) — install dependencies with it yourself, or re-run with --no-install" ;;
             esac
+            if [ -n "$node_signals" ]; then
+                case " $node_signals " in
+                *" $node_pm "*) : ;;
+                *) die "package.json declares packageManager '$pm_decl' but the tree carries other managers' files (${node_signals# }) and none of $node_pm's — remove the stale file(s), or install and commit $node_pm's lockfile in the main checkout, then re-run (or use --no-install)" ;;
+                esac
+            fi
         else
-            node_signals=""
-            if [ -f "$tree/pnpm-lock.yaml" ] || [ -f "$tree/pnpm-workspace.yaml" ]; then
-                node_signals="$node_signals pnpm"
-            fi
-            if [ -f "$tree/package-lock.json" ] || [ -f "$tree/npm-shrinkwrap.json" ]; then
-                node_signals="$node_signals npm"
-            fi
-            if [ -f "$tree/yarn.lock" ]; then
-                node_signals="$node_signals yarn"
-            fi
-            if [ -f "$tree/bun.lock" ] || [ -f "$tree/bun.lockb" ]; then
-                node_signals="$node_signals bun"
-            fi
             node_pm_count=0
             for node_pm_candidate in $node_signals; do
                 node_pm_count=$((node_pm_count + 1))
@@ -837,6 +849,32 @@ if [ "$do_install" -eq 1 ]; then
         fi
         if [ -n "$node_pm" ]; then
             have "$node_pm" || die "this repo's Node package manager is $node_pm but it is not installed — install $node_pm (for pnpm, 'task bootstrap' does) and re-run"
+            # Honor a numeric major in the declaration's version pin
+            # (challenge round 2): a drifted major can rewrite the committed
+            # lockfile in a fresh tree. A corepack-shimmed binary reports the
+            # pinned version itself, so corepack-managed repos pass; a pin
+            # with no numeric major (or none at all) leaves nothing to
+            # verify and skips — signal-selected managers carry no pin.
+            pm_pin=""
+            case "$pm_decl" in
+            *@*)
+                pm_pin=${pm_decl#*@}
+                pm_pin=${pm_pin%%+*}
+                ;;
+            esac
+            pm_pin_major=${pm_pin%%.*}
+            case "$pm_pin_major" in
+            '' | *[!0-9]*) : ;;
+            *)
+                installed_ver="$("$node_pm" --version 2>/dev/null || true)"
+                installed_ver=${installed_ver#v}
+                installed_major=${installed_ver%%.*}
+                case "$installed_major" in
+                '' | *[!0-9]*) die "packageManager pins $node_pm@$pm_pin but the installed $node_pm's version could not be read — reinstall $node_pm and re-run (or use --no-install)" ;;
+                *) [ "$installed_major" = "$pm_pin_major" ] || die "packageManager pins $node_pm@$pm_pin but $node_pm $installed_ver is installed — a different major can rewrite the committed lockfile; install the pinned major (corepack does this) or update the declaration, then re-run (or use --no-install)" ;;
+                esac
+                ;;
+            esac
             echo "==> Installing Node dependencies ($node_pm) in the new tree"
             (cd "$tree" && "$node_pm" install)
         else

@@ -2258,6 +2258,10 @@ echo "==> a Node repo gets its dependencies installed in the NEW tree"
 pnpm_marker="$test_tmp/pnpm-invoked"
 cat >"$stub_bin/pnpm" <<EOF
 #!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+    echo 9.0.0
+    exit 0
+fi
 printf '%s %s\n' "\$*" "\$PWD" >>"$pnpm_marker"
 exit 0
 EOF
@@ -2304,9 +2308,20 @@ LEFTHOOK=0 git -C "$fixture" commit -qm "chore: restore the root manifest" >"$te
 # cleared first) and asserts BOTH halves of the invariant: the selected
 # installer ran in the tree, and every competitor stayed silent — the second
 # half is what catches a regression to the old unconditional pnpm.
+# Each stub answers --version without logging (worktree-new.sh reads it to
+# verify a declared version pin) and records every other invocation.
 for det_name in npm yarn bun; do
+    case "$det_name" in
+    npm) det_stub_ver=10.9.2 ;;
+    yarn) det_stub_ver=4.1.0 ;;
+    bun) det_stub_ver=1.2.10 ;;
+    esac
     cat >"$stub_bin/$det_name" <<EOF
 #!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+    echo $det_stub_ver
+    exit 0
+fi
 printf '%s %s\n' "\$*" "\$PWD" >>"$test_tmp/$det_name-invoked"
 exit 0
 EOF
@@ -2370,14 +2385,47 @@ new det-bun >/dev/null || fail "worktree-new.sh failed on a Bun repo"
 det_assert_installer bun "$fixture/.worktrees/det-bun"
 rm_wt det-bun >/dev/null || fail "cleanup of the bun tree failed"
 
-echo "==> a declared packageManager wins over a contradicting lockfile"
+echo "==> a declared packageManager with its own lockfile wins over a stale foreign one"
 det_reset
 printf '{"name":"fixture","private":true,"packageManager":"npm@10.9.2+sha512.0123abcdef"}\n' >"$fixture/package.json"
+printf '{"lockfileVersion": 3}\n' >"$fixture/package-lock.json"
 printf 'lockfileVersion: "9.0"\n' >"$fixture/pnpm-lock.yaml"
-det_commit "declared npm over a pnpm lockfile"
+det_commit "declared npm with its own lockfile over a stale pnpm one"
 new det-declared >/dev/null || fail "worktree-new.sh failed on a declared-manager repo"
 det_assert_installer npm "$fixture/.worktrees/det-declared"
 rm_wt det-declared >/dev/null || fail "cleanup of the declared-manager tree failed"
+
+echo "==> a declaration whose manager has no files here fails instead of writing a second lockfile"
+det_reset
+printf '{"name":"fixture","private":true,"packageManager":"npm@10.9.2"}\n' >"$fixture/package.json"
+printf 'lockfileVersion: "9.0"\n' >"$fixture/pnpm-lock.yaml"
+det_commit "declared npm against a foreign-only lockfile"
+det_status=0
+det_out="$(new det-foreign 2>&1)" || det_status=$?
+[ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded for a declaration contradicted by a foreign-only lockfile"
+printf '%s\n' "$det_out" | grep -q "carries other managers' files (pnpm) and none of npm's" ||
+    fail "the foreign-only-lockfile refusal did not name the contradiction"
+det_assert_installer "" ""
+refute_exists "$fixture/.worktrees/det-foreign" "worktree-new.sh left a tree behind after refusing a contradicted declaration"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/det-foreign; then
+    fail "worktree-new.sh left the branch behind after refusing a contradicted declaration"
+fi
+
+echo "==> a declared version pin with a drifted major fails instead of installing"
+det_reset
+printf '{"name":"fixture","private":true,"packageManager":"npm@6.14.18"}\n' >"$fixture/package.json"
+printf '{"lockfileVersion": 1}\n' >"$fixture/package-lock.json"
+det_commit "declared npm@6 against a newer installed npm"
+det_status=0
+det_out="$(new det-verpin 2>&1)" || det_status=$?
+[ "$det_status" -ne 0 ] || fail "worktree-new.sh installed under a version pin its npm does not satisfy"
+printf '%s\n' "$det_out" | grep -q "pins npm@6.14.18 but npm 10.9.2 is installed" ||
+    fail "the version-pin refusal did not name the pinned and installed versions"
+det_assert_installer "" ""
+refute_exists "$fixture/.worktrees/det-verpin" "worktree-new.sh left a tree behind after refusing a version-pin mismatch"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/det-verpin; then
+    fail "worktree-new.sh left the branch behind after refusing a version-pin mismatch"
+fi
 
 echo "==> an unsupported packageManager fails loudly, installs nothing, rolls back"
 det_reset
@@ -2442,6 +2490,7 @@ if [ -f "$repo/.devcontainer/hooks/post-checkout" ]; then
     echo "==> the devcontainer post-checkout hook defers to the detector"
     det_reset
     printf '{"name":"fixture","private":true,"packageManager":"npm@10.9.2"}\n' >"$fixture/package.json"
+    printf '{"lockfileVersion": 3}\n' >"$fixture/package-lock.json"
     printf 'lockfileVersion: "9.0"\n' >"$fixture/pnpm-lock.yaml"
     det_commit "declared npm with a stale pnpm lockfile"
     cp "$repo/.devcontainer/hooks/post-checkout" "$shared_hooks/post-checkout"

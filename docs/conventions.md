@@ -64,14 +64,19 @@ it points here.
 - **The Node installer is selected from the repo's own signals** — a
   `package.json` alone proves "Node repo", never "pnpm repo". Precedence:
   the `packageManager` field in `package.json` (the Corepack declaration)
-  wins outright, even over a contradicting lockfile; otherwise exactly one
-  manager's files at the tree root — `pnpm-lock.yaml`/`pnpm-workspace.yaml`
-  → pnpm, `package-lock.json`/`npm-shrinkwrap.json` → npm, `yarn.lock` →
-  Yarn, `bun.lock`/`bun.lockb` → Bun. Files from two managers at once fail
-  loudly rather than guess, an unsupported `packageManager` value fails
-  loudly without touching the tree, and a bare `package.json` with no signal
-  skips the install with a note — declare `packageManager` to make it
-  deterministic.
+  wins — including over a stale foreign lockfile, when its own manager's
+  files are present; otherwise exactly one manager's files at the tree
+  root — `pnpm-lock.yaml`/`pnpm-workspace.yaml` → pnpm,
+  `package-lock.json`/`npm-shrinkwrap.json` → npm, `yarn.lock` → Yarn,
+  `bun.lock`/`bun.lockb` → Bun. Every contradiction fails loudly before
+  any install touches the tree: files from two managers with no
+  declaration, a declaration whose manager has no files here while other
+  managers' files exist (installing would write a second lockfile), an
+  unsupported `packageManager` value, and a declared numeric major that
+  the installed binary does not match (a drifted major can rewrite the
+  committed lockfile; corepack-shimmed binaries report the pinned version
+  and pass). A bare `package.json` with no signal skips the install with a
+  note — declare `packageManager` to make it deterministic.
 - **Never pass `-c core.hooksPath=.git/hooks` to git in a worktree.** In a
   linked worktree `.git` is a **file**, not a directory, so that path resolves
   to nothing and commits run **hook-less and silently**. Git's own defaults are
