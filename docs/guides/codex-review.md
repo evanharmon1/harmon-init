@@ -366,34 +366,43 @@ it says when Codex's output format moves.
 That prompt reaches the **local** tasks only. Codex **cloud** review runs on
 its own instructions and has been seen badging a finding off this scale (a
 real `P3` on `harmon-init#918`, before P3 was defined here). So the scale
-closes with an invariant rather than a list: **a finding badged off this
-scale, or not badged at all, is adjudicated as at least a P2** — a future
-`P4` is triaged, never dropped for being unrecognized.
+closes with a property rather than a list.
 
-That invariant is about **provenance, not spelling**. A P3 produced under the
-prompt above inherits the definition: adjudicated in the round it arrives and
-going no further, since it is cosmetic by construction — it neither gates a
-stage nor earns a sidecar entry. Fix one in place if it is worth the
-keystrokes, or say why not.
+**A label is a hypothesis; the adjudicated severity is the verdict.** This
+holds for every finding from every reviewer, and P3 is not an exception to it:
 
-A P3 from **cloud** review inherits nothing, because cloud never read that
-prompt. Defining P3 locally must not silently reclassify it: the `P3` on
-harmon-init#918 was a real parsing defect, and the floor is what caught it.
-So a cloud badge keeps the at-least-P2 floor — deferred like a P2 — until
-adjudication on evidence establishes it is genuinely cosmetic. Matching a
-level this repo happens to define is not that evidence.
+- The severity that counts is the one **you** adjudicate on evidence, never
+  the one the reviewer wrote. That is already how P0 and P1 are handled; the
+  scale just makes it explicit at the bottom too.
+- **Adjudication alone decides deferral.** A finding leaves no sidecar entry
+  only once adjudication has established it is genuinely cosmetic. A `P3`
+  badge is grounds to suspect that, never grounds to skip the check — and the
+  `P3` on harmon-init#918 was a real parsing defect, so this is an observed
+  failure mode, not a hypothetical one.
+- A badge **off** the scale, or absent entirely, starts at **at least a P2**.
+  A future `P4` is triaged, never dropped for being unrecognized.
 
-That invariant is **adjudication guidance, not a tooling contract**. The
-pinned shepherd checker still matches severities as `p[0-2]`, so a P3 the
-*cloud* reviewer posts is invisible to it in both directions: posted as its
-own comment it classifies as findings that `settle` then refuses to record a
-disposition for, and appended to a clean verdict it passes unnoticed. Until
-that is fixed upstream and re-pinned (evanharmon1/harmon-devkit#530), a
-standalone cloud P3 has **no settlement path at all**: `settle` is the only
-sanctioned mechanism and it refuses the badge, so the cycle cannot reach a
-terminal-clean result for that head. Treat it as a blocker — report it on the
-pull request and leave the PR draft. A comment is not a disposition the
-checker can read, and promoting past it would defeat the readiness gate.
+Nothing in that depends on which reviewer produced the badge, so no
+provenance rule is needed: an under-labelled finding is caught by adjudicating
+it, wherever it came from.
+
+**The mechanism belongs to the checker, not to this prose.** How a cloud
+finding is answered depends on the surface it landed on, and
+`.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the authority
+on that — its exit codes are the contract, and the shepherd stage acts on
+them. Two things about it are worth knowing here because they are not
+symmetric:
+
+- An **inline** finding is classified independently of its badge and is
+  answered by a trusted in-thread reply, so an inline cloud P3 is on the
+  ordinary reply path with everything else.
+- A badged finding stated **outside** an inline thread has no reply linkage,
+  and `settle` currently refuses a badge it does not recognize as `p[0-2]`.
+  So an unfixed, non-inline cloud P3 has no way to be recorded as settled:
+  fix it and push (which starts a fresh-head cycle and resolves it), or if it
+  genuinely needs no change, report the blocker and leave the PR draft. That
+  gap is being fixed upstream in evanharmon1/harmon-devkit#530 and re-pinned
+  here; it is a limitation of the current pin, not a rule.
 
 P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
 to the PR-shepherd stage, where they are fixed, declined with reasoning, or

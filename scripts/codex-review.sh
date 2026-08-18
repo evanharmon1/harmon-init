@@ -447,8 +447,7 @@ Label EVERY finding with a priority, as the first token of the finding:
        unlikely preconditions, maintainability, non-critical test gaps.
   P3 — cosmetic or purely informational: a naming or wording choice that
        will mislead a reader, an observation with no defect behind it.
-       Never gating, and not carried into the pull request description the
-       way a P2 is. The no-style-nits rule above still binds — P3 is the
+       Never gating. The no-style-nits rule above still binds — P3 is the
        floor for findings worth stating, not a licence to report nits.
 
 Only P0 and P1 decide whether this review passes. Still report P2s in full —
@@ -459,7 +458,9 @@ carried into the pull request description, so an unreported one is lost
 outright. The same holds one level down: report a P3 as a P3 rather than
 inflating it to P2 or dropping it for being small. Use these four labels and
 no others — a finding that arrives off this scale, or with no label at all,
-is adjudicated as at least a P2. If there are no P0 or P1 findings, say so
+is adjudicated as at least a P2. Every label you apply is a hypothesis the
+reader adjudicates on evidence, P3 included; none of them decides its own
+disposition. If there are no P0 or P1 findings, say so
 explicitly and in those terms."
 
 if [ -n "$focus" ]; then

@@ -801,14 +801,15 @@ that has become empty is abandoned, not reviewed clean.
 an existing contract), `P1` (a real defect or materially wrong design
 decision with a plausible trigger), `P2` (worth knowing, not
 merge-blocking: hardening, unlikely edge cases, maintainability, non-critical
-test gaps), or `P3` (cosmetic or informational — reported and adjudicated,
-never gating and never deferred to the PR body). The scale is defined in
+test gaps), or `P3` (cosmetic or informational — reported and adjudicated, never
+gating). The scale is defined in
 `scripts/codex-review.sh`, not inherited from the Codex CLI's own labels, so
 the gate keeps its meaning if Codex changes its output; a finding badged off
-that scale, or not badged at all, is adjudicated as **at least a P2**. That
-floor is keyed to **provenance, not spelling**: only a P3 produced under that
-prompt is cosmetic by construction, so a cloud-review badge — which never read
-it — keeps the at-least-P2 floor until evidence says otherwise.
+that scale, or not badged at all, is adjudicated as **at least a P2**. A label
+is a hypothesis and the **adjudicated** severity is the verdict — P3 included,
+whatever reviewer produced it. So a P3 earns no sidecar entry only once
+adjudication has established it is genuinely cosmetic; the badge is grounds to
+suspect that, never grounds to skip the check.
 **Only P0 and P1 gate the local loops.** Adjudicate P2s too — never suppress
 or ignore one — but carry them to the PR-shepherd stage rather than spending
 a local round on them. A P2 you judge worth fixing
