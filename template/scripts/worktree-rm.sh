@@ -481,6 +481,13 @@ else
         tree_git_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-dir)"
         for op_state in rebase-merge rebase-apply MERGE_HEAD MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
             if [ -e "$tree_git_dir/$op_state" ]; then
+                # "finish or abort" is impossible advice for a marker-only
+                # autostash: with MERGE_HEAD absent, `git merge --continue` and
+                # `--abort` both refuse, and `git merge --quit` is the command
+                # that moves the referenced work to refs/stash.
+                if [ "$op_state" = MERGE_AUTOSTASH ]; then
+                    die "$tree has an autostash from an interrupted merge ($op_state) — run 'git merge --quit' there to move it to the stash, then 'git stash pop' to recover the work, or re-run with --force to discard it"
+                fi
                 die "$tree has an in-progress git operation ($op_state) — finish or abort it, or re-run with --force to discard it"
             fi
         done
