@@ -752,7 +752,7 @@ echo "==> gh's own credential line reports the state the section already probed"
 # From the one bounded probe at the top of the script — no second `gh auth
 # status` call, which is why this line survives a logged-out gh at all.
 case "$out" in
-*"[ ] GitHub CLI (gh) — gh auth login"*) ;;
+*"[ ] GitHub CLI (gh) - gh auth login"*) ;;
 *) fail "expected the gh credential line to name its remedy, got: ${out}" ;;
 esac
 
@@ -769,7 +769,7 @@ make_codex_stub out
 out="$(run_setup_section unauthenticated)"
 case "$out" in
 *"[x] Codex CLI"*) fail "a logged-out codex must not read as ok: ${out}" ;;
-*"[ ] Codex CLI — codex login"*) ;;
+*"[ ] Codex CLI - codex login"*) ;;
 *) fail "expected a logged-out codex to name its remedy, got: ${out}" ;;
 esac
 
@@ -822,8 +822,8 @@ make_stub unauthenticated
 make_codex_stub in
 out="$(run_setup_without gh)"
 case "$out" in
-*"GitHub CLI (gh) — gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
-*"[ ] GitHub CLI (gh) — brew install gh"*) ;;
+*"GitHub CLI (gh) - gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
+*"[ ] GitHub CLI (gh) - brew install gh"*) ;;
 *) fail "expected an install remedy for a missing gh, got: ${out}" ;;
 esac
 # The rest of the run must still behave: an absent gh is not an authenticated
@@ -1069,7 +1069,7 @@ echo "==> status:creds reports a logged-out gh with the login remedy"
 make_codex_stub in
 out="$(run_creds_section unauthenticated)"
 case "$out" in
-*"[ ] GitHub CLI (gh) — gh auth login"*) ;;
+*"[ ] GitHub CLI (gh) - gh auth login"*) ;;
 *) fail "expected a missing-login line from status:creds, got: ${out}" ;;
 esac
 
@@ -1107,7 +1107,7 @@ make_codex_stub out
 out="$(run_creds_section project)"
 case "$out" in
 *"[x] Codex CLI"*) fail "a logged-out codex must not read as ok: ${out}" ;;
-*"[ ] Codex CLI — codex login"*) ;;
+*"[ ] Codex CLI - codex login"*) ;;
 *) fail "expected a logged-out codex line from status:creds, got: ${out}" ;;
 esac
 
@@ -1119,7 +1119,7 @@ make_claude_stub out
 out="$(run_creds_section project)"
 case "$out" in
 *"[x] Claude Code CLI"*) fail "a logged-out claude must not read as ok: ${out}" ;;
-*"[ ] Claude Code CLI — claude auth login"*) ;;
+*"[ ] Claude Code CLI - claude auth login"*) ;;
 *) fail "expected a logged-out claude line, got: ${out}" ;;
 esac
 
@@ -1166,8 +1166,8 @@ make_codex_stub in
 make_isolated_bin gh
 out="$(PATH="${TMP}/bin-iso" NO_COLOR=1 "${WITH_CODEX}" creds 2>&1)"
 case "$out" in
-*"GitHub CLI (gh) — gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
-*"[ ] GitHub CLI (gh) — brew install gh"*) ;;
+*"GitHub CLI (gh) - gh auth login"*) fail "an absent gh must not be told to log in: ${out}" ;;
+*"[ ] GitHub CLI (gh) - brew install gh"*) ;;
 *) fail "expected an install remedy for a missing gh, got: ${out}" ;;
 esac
 

@@ -15,9 +15,12 @@ case "$plain" in
 *$'\033'*) fail "NO_COLOR output contains ANSI escapes" ;;
 esac
 case "$plain" in
-*'==> Action'*'[x] Step — complete'*'DONE: finished'*) ;;
+*'==> Action'*'[x] Step - complete'*'DONE: finished'*) ;;
 *) fail "plain output omitted the stable heading, outcome, or summary" ;;
 esac
+printf '%s\n' "$plain" | LC_ALL=C od -An -tu1 -v | awk '
+    { for (i = 1; i <= NF; i++) if ($i != 9 && $i != 10 && $i != 13 && ($i < 32 || $i > 126)) exit 1 }
+' || fail "plain output contains non-ASCII bytes"
 
 echo "==> a capable terminal gets ANSI color and Unicode"
 color="$(env -u NO_COLOR PATH=/usr/bin:/bin LANG=C.UTF-8 TERM=xterm-256color OUTPUT_TEST_TTY=1 \

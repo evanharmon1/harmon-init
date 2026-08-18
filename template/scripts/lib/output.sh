@@ -109,12 +109,14 @@ if $USE_UNICODE; then
     I_UNKNOWN="$(c '1;33' '?')"
     I_NA="$(c '2' '–')"
     I_INFO="$(c '1;36' '•')"
+    DETAIL_SEPARATOR=' — '
 else
     I_OK='[x]'
     I_NO='[ ]'
     I_UNKNOWN='[?]'
     I_NA='[-]'
     I_INFO=' * '
+    DETAIL_SEPARATOR=' - '
 fi
 
 subhead() {
@@ -162,7 +164,7 @@ checkline() {
         ;;
     esac
     if [ -n "$detail" ]; then
-        output_emit '  %s %s — %s\n' "$icon" "$label" "$detail"
+        output_emit '  %s %s%s%s\n' "$icon" "$label" "$DETAIL_SEPARATOR" "$detail"
     else
         output_emit '  %s %s\n' "$icon" "$label"
     fi

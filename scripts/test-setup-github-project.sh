@@ -190,6 +190,16 @@ grep -q "cannot fit Low" "$tmp/out" || fail "expected a capacity warning naming 
 grep -q "WARN: GitHub Project needs attention" "$tmp/out" ||
     fail "expected a warning final outcome at the option cap"
 
+echo "==> a field deleted during reconciliation cannot produce a ready outcome"
+without_status=$(printf '%s' "$complete" | jq -c '
+    .data.node.fields.nodes |= map(select(.name != "Status"))')
+run_with "$complete" "$without_status"
+grep -q "field 'Status' disappeared" "$tmp/out" || fail "expected a concurrent-disappearance warning"
+grep -q "WARN: GitHub Project needs attention" "$tmp/out" ||
+    fail "expected a warning final outcome after a field disappeared"
+! grep -q "DONE: GitHub Project is ready" "$tmp/out" ||
+    fail "a skipped field reconciliation claimed the project was ready"
+
 echo "==> an option added after the startup snapshot survives the append"
 # The re-read immediately before the write is what saves it: the replacement is
 # built from the fresh list, not the stale one.

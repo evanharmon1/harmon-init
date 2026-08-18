@@ -320,6 +320,9 @@ incompatible=""
 # Fields that are missing a starter option but have no room left for it.
 at_capacity=""
 
+# Fields that vanished between the discovery snapshot and their guarded write.
+disappeared=""
+
 # GitHub's cap on options in one single-select field.
 max_options=50
 
@@ -356,7 +359,7 @@ report_incompatible() {
 }
 
 finish_project() {
-    if [ -n "$incompatible" ] || [ -n "$at_capacity" ]; then
+    if [ -n "$incompatible" ] || [ -n "$at_capacity" ] || [ -n "$disappeared" ]; then
         checkline unknown "Project" "#$project_number · $title — reconciliation needs attention"
         output_warning "GitHub Project needs attention; resolve the warnings above and re-run"
     else
@@ -382,6 +385,7 @@ append_options() {
     refresh_fields
     if [ -z "$(field_id "$name")" ]; then
         echo "    WARNING: field '$name' disappeared while this script was running — skipping" >&2
+        disappeared="${disappeared}${disappeared:+, }$name"
         return 0
     fi
     existing=$(existing_options "$name")
