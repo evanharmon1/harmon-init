@@ -227,7 +227,10 @@ if [ "$tree_exists" -eq 0 ]; then
             # metacharacters) rather than one corner of it; the test suite
             # executes this emitted command verbatim.
             stale_marker_q="$(printf '%q' "$stale_admin/MERGE_AUTOSTASH")"
-            die "$tree is gone but its record still holds a merge autostash ($stale_admin/MERGE_AUTOSTASH) — keep the work with: git stash store \"\$(cat $stale_marker_q)\" — or re-run with --force to discard it"
+            # Storing does not remove the marker, so a plain re-run refuses
+            # again — the completing sequence is store, THEN --force (safe:
+            # the work now lives in refs/stash).
+            die "$tree is gone but its record still holds a merge autostash ($stale_admin/MERGE_AUTOSTASH) — keep the work with: git stash store \"\$(cat $stale_marker_q)\" — then re-run with --force to clear the record (the stored work survives in refs/stash); --force without storing discards it"
         fi
         if [ -n "$stale_admin" ] && [ -f "$stale_admin/HEAD" ]; then
             stale_head="$(cat "$stale_admin/HEAD" 2>/dev/null || true)"

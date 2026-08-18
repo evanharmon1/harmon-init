@@ -749,29 +749,41 @@ rm_wt autostash >/dev/null || fail "worktree-rm.sh failed once the autostash sta
 # The same marker must also block STALE-RECORD cleanup: with the directory
 # already gone, the record's admin dir holds the only MERGE_AUTOSTASH
 # reference, and pruning the record would drop it (#951, challenge r2).
+# The fixture path deliberately carries a single quote AND a space so the
+# emitted recovery recipe (executed verbatim below) proves its printf %q
+# escaping under exactly the characters that broke earlier revisions.
 echo "==> worktree:rm refuses to prune a stale record holding MERGE_AUTOSTASH"
-new stalestash >/dev/null || fail "worktree-new.sh failed for the stale-autostash case"
-stalestash_git="$(git -C "$fixture/.worktrees/stalestash" rev-parse --path-format=absolute --git-dir)"
+qfix="$test_tmp/q'uote fixture"
+mkdir -p "$qfix/scripts"
+cp "$repo/scripts/worktree-rm.sh" "$repo/scripts/worktree-lock.sh" "$qfix/scripts/"
+git -C "$qfix" init -q
+git -C "$qfix" config user.name "Worktree Test"
+git -C "$qfix" config user.email "worktree-test@example.invalid"
+git -C "$qfix" config commit.gpgsign false
+printf 'fixture\n' >"$qfix/README.md"
+git -C "$qfix" add -A
+git -C "$qfix" commit -qm "chore: quote fixture"
+git -C "$qfix" worktree add -q "$qfix/.worktrees/stalestash" -b stalestash
+stalestash_git="$(git -C "$qfix/.worktrees/stalestash" rev-parse --path-format=absolute --git-dir)"
 # A real autostash OID, not a bare HEAD: `git stash store` (the emitted
 # recovery recipe, executed below) refuses commits that are not stash-shaped.
-printf 'dirty\n' >>"$fixture/.worktrees/stalestash/README.md"
-printf '%s\n' "$(git -C "$fixture/.worktrees/stalestash" stash create)" >"$stalestash_git/MERGE_AUTOSTASH"
-rm -rf "$fixture/.worktrees/stalestash"
-stalestash_err="$(rm_wt stalestash 2>&1 >/dev/null)" &&
+printf 'dirty\n' >>"$qfix/.worktrees/stalestash/README.md"
+printf '%s\n' "$(git -C "$qfix/.worktrees/stalestash" stash create)" >"$stalestash_git/MERGE_AUTOSTASH"
+rm -rf "$qfix/.worktrees/stalestash"
+stalestash_err="$(rm_in "$qfix" scripts/worktree-rm.sh stalestash 2>&1 >/dev/null)" &&
     fail "worktree-rm.sh pruned a stale record whose admin dir holds a merge autostash"
 [ -s "$stalestash_git/MERGE_AUTOSTASH" ] || fail "the stale record's autostash reference was dropped despite the refusal"
 # The refusal's recovery recipe must be RUNNABLE as emitted — a malformed
 # quoting of the marker path once shipped a recipe that failed even on
 # space-free paths (#951 review r1). Execute it verbatim.
-stalestash_cmd="$(printf '%s\n' "$stalestash_err" | sed -n 's/.*keep the work with: \(.*\) — or re-run.*/\1/p')"
+stalestash_cmd="$(printf '%s\n' "$stalestash_err" | sed -n 's/.*keep the work with: \(.*\) — then re-run.*/\1/p')"
 [ -n "$stalestash_cmd" ] || fail "the stale-autostash refusal did not carry a recovery command"
-(cd "$fixture" && eval "$stalestash_cmd" >/dev/null 2>&1) ||
+(cd "$qfix" && eval "$stalestash_cmd" >/dev/null 2>&1) ||
     fail "the emitted stale-autostash recovery command is not runnable: $stalestash_cmd"
-[ "$(git -C "$fixture" rev-parse refs/stash)" = "$(cat "$stalestash_git/MERGE_AUTOSTASH")" ] ||
+[ "$(git -C "$qfix" rev-parse refs/stash)" = "$(cat "$stalestash_git/MERGE_AUTOSTASH")" ] ||
     fail "the recovery command did not store the autostash commit in refs/stash"
-git -C "$fixture" update-ref -d refs/stash
-rm_wt stalestash --force >/dev/null || fail "worktree-rm.sh --force failed on the stale autostash record"
-git -C "$fixture" branch -D stalestash >/dev/null 2>&1 || true
+rm_in "$qfix" scripts/worktree-rm.sh stalestash --force >/dev/null ||
+    fail "worktree-rm.sh --force failed on the stale autostash record"
 
 echo "==> worktree:rm refuses a detached HEAD no branch contains"
 new detached >/dev/null || fail "worktree-new.sh failed for the detached case"
