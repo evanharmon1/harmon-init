@@ -40,8 +40,11 @@ echo "==> private repositories report success plus the reason for a skip"
 GH_PRIVATE=true run_case --repo owner/private
 [ "$run_rc" -eq 0 ] || fail "private path exited $run_rc"
 grep -Fq '[x] Dependabot alerts - enabled' "$tmp/out" || fail "missing Dependabot success"
-grep -Fq '[-] Private vulnerability reporting - skipped — private repository' "$tmp/out" || fail "missing private-repo skip reason"
+grep -Fq '[-] Private vulnerability reporting - skipped: private repository' "$tmp/out" || fail "missing private-repo skip reason"
 grep -Fq 'DONE: GitHub repository settings are ready for owner/private' "$tmp/out" || fail "missing final outcome"
+LC_ALL=C od -An -tu1 -v "$tmp/out" | awk '
+    { for (i = 1; i <= NF; i++) if ($i != 9 && $i != 10 && $i != 13 && ($i < 32 || $i > 126)) exit 1 }
+' || fail "plain setup output contains non-ASCII presentation bytes"
 if grep -q 'private-vulnerability-reporting' "$stub_calls"; then
     fail "private repository attempted to enable public-only reporting"
 fi

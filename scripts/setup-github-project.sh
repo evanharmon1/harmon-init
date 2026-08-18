@@ -360,10 +360,10 @@ report_incompatible() {
 
 finish_project() {
     if [ -n "$incompatible" ] || [ -n "$at_capacity" ] || [ -n "$disappeared" ]; then
-        checkline unknown "Project" "#$project_number · $title — reconciliation needs attention"
+        checkline unknown "Project" "#$project_number / $title: reconciliation needs attention"
         output_warning "GitHub Project needs attention; resolve the warnings above and re-run"
     else
-        checkline ok "Project" "#$project_number · $title"
+        checkline ok "Project" "#$project_number / $title"
         output_done "GitHub Project is ready"
     fi
 }

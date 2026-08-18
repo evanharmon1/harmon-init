@@ -77,7 +77,7 @@ if [ "$repo_private" = false ]; then
         exit "$rc"
     fi
 else
-    checkline na "Private vulnerability reporting" "skipped — private repository; feature is public-repo-only"
+    checkline na "Private vulnerability reporting" "skipped: private repository; feature is public-repo-only"
 fi
 
 if [ -n "$bot_collaborator" ]; then
