@@ -87,13 +87,7 @@ jobs:
           # overwrites a foreign same-named entry point (e.g. a stale pipx shim)
           # instead of aborting, keeping reruns idempotent on a persistent
           # self-hosted CI_RUNS_ON runner.
-          # Pinned to the same release the devcontainer image bakes in and
-          # scripts/install-copier.sh installs, so the gate exercises the
-          # copier the fleet actually runs rather than whatever is latest that
-          # day. scripts/test-copier-validators.sh fails if the three drift.
-          # renovate: datasource=pypi depName=copier
-          COPIER_VERSION=9.17.1
-          uv tool install --force "copier==${COPIER_VERSION}"
+          uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Dogfood structure (template sections/tasks exist in the root layer)
         run: task test:dogfood-structure

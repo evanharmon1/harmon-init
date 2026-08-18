@@ -96,18 +96,25 @@ else
     hint_stale_worktree
 fi
 
-# copier is installed from three places that cannot see each other: the shared
-# devcontainer image (images/devcontainer/Dockerfile, baked in), the CI lint
-# job (.github/workflows/build.yml, which cannot use install-copier.sh because
-# GitHub's ubuntu images ship linuxbrew and that script no-ops under brew), and
+# copier is installed from two places that cannot see each other: the shared
+# devcontainer image (images/devcontainer/Dockerfile, baked in) and
 # scripts/install-copier.sh (`task install` on every other brew-less host).
 # Renovate bumps each independently, so nothing else catches them drifting
-# apart — and a CI pin that lags the image pin is the worst case, because the
-# gate would then green-light a copier the fleet never runs. This check lives
-# here (root-only, no template/ twin) rather than in scripts/test-tasks.sh,
-# which IS a byte-identical twin shipped to generated repos that have none of
-# these files. See #921.
-echo "==> copier version pins agree across the image, CI, and install-copier.sh"
+# apart — a stale image pin would silently ship every devcontainer an older
+# copier than every other host installs. Both files sit in Renovate's
+# "Devcontainer" group (images/devcontainer/** and scripts/**), so a release
+# bumps both in ONE PR and this check passes or fails as a unit.
+#
+# Scope note: CI installs copier unpinned, here and in the template-test
+# matrix, and this guard is not wired into required CI (`test:copier-validators`
+# is in local `task verify` only). Both are deliberate — pinning every copier
+# execution across the CI workflows, and binding verify's target list to the
+# workflow's, are their own units of work. See the follow-up issue and #962.
+#
+# This check lives here (root-only, no template/ twin) rather than in
+# scripts/test-tasks.sh, which IS a byte-identical twin shipped to generated
+# repos that have neither file. See #921.
+echo "==> copier version pins agree between the devcontainer image and install-copier.sh"
 pin_from() {
     # $1 = file, $2 = ERE capturing the whole `NAME=<version>` assignment.
     # `|| true` on the pipeline so a no-match returns EMPTY rather than killing
@@ -119,18 +126,16 @@ pin_from() {
     grep -oE "$2" "$1" | head -n1 | cut -d= -f2 | tr -d '"' || true
 }
 image_pin="$(pin_from "$repo/images/devcontainer/Dockerfile" '^ARG COPIER_VERSION=[^[:space:]]+')"
-ci_pin="$(pin_from "$repo/.github/workflows/build.yml" 'COPIER_VERSION=[^[:space:]"]+')"
 install_pin="$(pin_from "$repo/scripts/install-copier.sh" '^COPIER_VERSION=[^[:space:]]+')"
 
 [ -n "$image_pin" ] || fail "images/devcontainer/Dockerfile: no 'ARG COPIER_VERSION=' found"
-[ -n "$ci_pin" ] || fail ".github/workflows/build.yml: no 'COPIER_VERSION=' found"
 [ -n "$install_pin" ] || fail "scripts/install-copier.sh: no 'COPIER_VERSION=' found"
 
-if [ -n "$image_pin" ] && [ -n "$ci_pin" ] && [ -n "$install_pin" ]; then
-    if [ "$image_pin" != "$ci_pin" ] || [ "$image_pin" != "$install_pin" ]; then
-        fail "copier version pins disagree: image=${image_pin}, ci=${ci_pin}, install-copier.sh=${install_pin}"
+if [ -n "$image_pin" ] && [ -n "$install_pin" ]; then
+    if [ "$image_pin" != "$install_pin" ]; then
+        fail "copier version pins disagree: image=${image_pin}, install-copier.sh=${install_pin}"
     else
-        echo "  ok — all three pin ${image_pin}"
+        echo "  ok — both pin ${image_pin}"
     fi
 fi
 
