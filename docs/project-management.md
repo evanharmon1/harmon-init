@@ -557,9 +557,12 @@ so provisioning and documentation cannot fork from each other.
 > carries. Do not seed `agent:*` into new repos; a repo carrying neither
 > family tracks a claim by assignee and claim comment alone.
 
-The `layer:` and `domain:` families are the *only* surface for this
+The `layer:`, `domain:`, and `area:` families are the *only* surface for this
 taxonomy (see Fields) — there is no more paired project/issue field to keep
-in step with, so extend the label lists alone as the product grows.
+in step with, so extend the label lists alone as the product grows. `domain:`
+(problem space) and `area:` (solution space) are both per-repository
+vocabulary whose starter values are a floor; `layer:` is product-independent
+and normally needs no edits.
 
 The `claim:` and `suggest:` families share a vocabulary and *nothing else*.
 `suggest:` is the planned implementer, `claim:` is the active one — see
