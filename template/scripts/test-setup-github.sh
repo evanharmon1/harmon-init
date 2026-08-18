@@ -22,6 +22,10 @@ case "$*" in
 *"${GH_FAIL_MATCH:-__never__}"*) exit "${GH_FAIL_RC:-1}" ;;
 esac
 case "$*" in
+*"/permission --jq .permission")
+    [ -n "${GH_PERMISSION:-}" ] || exit 1
+    printf '%s\n' "$GH_PERMISSION"
+    ;;
 *" --jq .private") printf '%s\n' "${GH_PRIVATE:-true}" ;;
 esac
 STUB
@@ -50,12 +54,24 @@ if grep -q 'private-vulnerability-reporting' "$stub_calls"; then
 fi
 
 echo "==> public repositories enable every requested setting and collaborator"
-GH_PRIVATE=false run_case --repo owner/public --bot-collaborator owner-bot
+GH_PRIVATE=false GH_PERMISSION=write run_case --repo owner/public --bot-collaborator owner-bot
 [ "$run_rc" -eq 0 ] || fail "public path exited $run_rc"
 grep -Fq '[x] Private vulnerability reporting - enabled' "$tmp/out" || fail "missing reporting success"
 grep -Fq '[x] Bot collaborator - owner-bot has push access' "$tmp/out" || fail "missing collaborator success"
 grep -q 'private-vulnerability-reporting --method PUT' "$stub_calls" || fail "reporting API was not called"
 grep -q 'collaborators/owner-bot --method PUT -f permission=push' "$stub_calls" || fail "collaborator API was not called"
+grep -q 'collaborators/owner-bot/permission --jq .permission' "$stub_calls" || fail "collaborator access was not verified"
+
+echo "==> a new collaborator invitation is reported as pending until accepted"
+GH_PRIVATE=false GH_PERMISSION= run_case --repo owner/public --bot-collaborator owner-bot
+[ "$run_rc" -eq 0 ] || fail "pending invitation path exited $run_rc"
+grep -Fq '[?] Bot collaborator - invitation sent to owner-bot; access starts after acceptance' "$tmp/out" ||
+    fail "missing pending-invitation outcome"
+grep -Fq 'WARN: GitHub repository settings are ready; bot collaborator acceptance is pending' "$tmp/out" ||
+    fail "missing pending-invitation summary"
+if grep -q 'owner-bot has push access' "$tmp/out"; then
+    fail "pending invitation falsely claimed active push access"
+fi
 
 echo "==> failures are formatted, preserve status, and never claim completion"
 GH_PRIVATE=false GH_FAIL_MATCH=vulnerability-alerts GH_FAIL_RC=23 \

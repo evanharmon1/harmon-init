@@ -9,6 +9,7 @@ OUTPUT_FD=2
 
 repo=""
 bot_collaborator=""
+bot_pending=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --repo)
@@ -83,7 +84,17 @@ fi
 if [ -n "$bot_collaborator" ]; then
     if output_run "Adding bot collaborator" \
         gh api "repos/$repo/collaborators/$bot_collaborator" --method PUT -f permission=push; then
-        checkline ok "Bot collaborator" "$bot_collaborator has push access"
+        permission="$(gh api "repos/$repo/collaborators/$bot_collaborator/permission" \
+            --jq '.permission' 2>/dev/null || true)"
+        case "$permission" in
+        admin | maintain | push | write)
+            checkline ok "Bot collaborator" "$bot_collaborator has push access"
+            ;;
+        *)
+            bot_pending=true
+            checkline unknown "Bot collaborator" "invitation sent to $bot_collaborator; access starts after acceptance"
+            ;;
+        esac
     else
         rc=$?
         fail_step "$rc" "Bot collaborator" "could not grant push access to $bot_collaborator"
@@ -91,4 +102,8 @@ if [ -n "$bot_collaborator" ]; then
     fi
 fi
 
-output_done "GitHub repository settings are ready for $repo"
+if $bot_pending; then
+    output_warning "GitHub repository settings are ready; bot collaborator acceptance is pending"
+else
+    output_done "GitHub repository settings are ready for $repo"
+fi
