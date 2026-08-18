@@ -187,9 +187,15 @@ remove_one_record() (
     fi
     # A surviving worktree DIRECTORY whose .git link is gone still holds
     # the user's files; sweeping its record would orphan them as a plain
-    # directory nothing tracks (challenge r7).
+    # directory nothing tracks (challenge r7). A gitdir value that does not
+    # end in /.git is malformed — and would silently skip this very guard —
+    # so it refuses outright (shepherd r1).
     tree_dir="${wt_gitfile%/.git}"
-    if [ "$tree_dir" != "$wt_gitfile" ] && [ -d "$tree_dir" ]; then
+    if [ "$tree_dir" = "$wt_gitfile" ]; then
+        echo "SKIP  record '$record' — its gitdir value does not end in /.git (malformed); refusing to sweep an unvalidatable record (inspect $admin_dir/gitdir)"
+        exit 3 # malformed gitdir suffix refuses
+    fi
+    if [ -d "$tree_dir" ]; then
         echo "SKIP  record '$record' — its worktree directory still exists ($tree_dir) though the .git link is gone; restore the link or move the directory aside first"
         exit 3 # surviving tree dir refuses
     fi
@@ -268,6 +274,13 @@ remove_one_record() (
             ;;
         deferred-findings | adjudication-ledger | shepherd-codex | refs | rebase-merge | rebase-apply | MERGE_HEAD | MERGE_AUTOSTASH | CHERRY_PICK_HEAD | REVERT_HEAD | BISECT_LOG | config.worktree) : ;; # carried-state names: the scan above refused them when non-empty
         info)
+            # As a regular file or symlink, the child globs below match
+            # nothing and the entry would be accepted uninspected
+            # (shepherd r1) — the same type gate the other slots carry.
+            if [ ! -d "$entry" ] || [ -L "$entry" ]; then
+                echo "SKIP  record '$record' — entry 'info' is not the directory git writes there; refusing to sweep malformed state (inspect $admin_dir)"
+                exit 3 # info type mismatch refuses
+            fi
             for info_entry in "$entry"/* "$entry"/.[!.]* "$entry"/..?*; do
                 [ -e "$info_entry" ] || [ -L "$info_entry" ] || continue
                 case "${info_entry##*/}" in
@@ -453,7 +466,7 @@ remove_one_record() (
             # -d with an old value is compare-and-delete, so a stale command
             # re-run after record-name reuse cannot delete a newer pin
             # (challenge r3).
-            echo "PINNED  $pin_ref — $record_head was reachable from shared refs at prune time; re-verify before dropping (git --no-replace-objects for-each-ref --contains $record_head refs/heads refs/tags refs/remotes), then: git update-ref -d $(shell_quote "$pin_ref") $record_head"
+            echo "PINNED  $pin_ref — $record_head was reachable from shared refs at prune time; re-verify before dropping (GIT_GRAFT_FILE=/dev/null git --no-replace-objects for-each-ref --contains $record_head refs/heads refs/tags refs/remotes), then: git update-ref -d $(shell_quote "$pin_ref") $record_head"
         else
             echo "KEPT  $pin_ref — pruned record '$record' held the only reference to detached commit $record_head; branch it (git branch $(shell_quote "rescue/$record") $record_head) or discard it (git update-ref -d $(shell_quote "$pin_ref") $record_head)"
         fi

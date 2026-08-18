@@ -638,7 +638,7 @@ if reuse_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)
 fi
 expect_contains "$reuse_ok_out" "pruned record 'pin-reuse'" "pin reuse: settled pin lets the removal proceed"
 expect_contains "$reuse_ok_out" "PINNED  refs/session-cleanup/pin/pin-reuse" "pin reuse: fresh pin reported for explicit settlement"
-expect_contains "$reuse_ok_out" "re-verify before dropping" "pin reuse: drop remedy demands execution-time re-verification, not a stale snapshot"
+expect_contains "$reuse_ok_out" "re-verify before dropping (GIT_GRAFT_FILE=/dev/null git --no-replace-objects" "pin reuse: the re-verification command itself disables grafts and replacements"
 [ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/pin-reuse)" = "$(git -C "$fixture" rev-parse main)" ] ||
     fail "pin reuse: fresh pin missing or wrong — pins must never be auto-dropped"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/pin-reuse
@@ -854,28 +854,38 @@ echo "ok: a pin dropped mid-run by a racing settlement is re-asserted"
 
 # ── Case E7k: a failed record removal is loud and never lock-labeled ───────
 # A partial rm is corrupt state needing inspection; reporting it as lock
-# contention hands the operator the wrong remedy.
+# contention hands the operator the wrong remedy. An rm shim forces the
+# failure deterministically — chmod tricks do not survive running as root
+# (containers commonly do).
 
-mkdir -p "$gitdir/worktrees/stuckrec/logs/blocker"
+mkdir -p "$gitdir/worktrees/stuckrec"
 printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/stuckrec/HEAD"
 printf '%s\n' "/nonexistent/stuckrec/.git" >"$gitdir/worktrees/stuckrec/gitdir"
-touch "$gitdir/worktrees/stuckrec/logs/blocker/held"
-chmod 000 "$gitdir/worktrees/stuckrec/logs/blocker"
+real_rm="$(command -v rm)"
+cat >"$shim_dir/rm" <<SHIM
+#!/usr/bin/env bash
+for a in "\$@"; do
+    if [[ "\$a" == *"/worktrees/stuckrec" ]]; then
+        echo "rm: simulated I/O failure" >&2
+        exit 1
+    fi
+done
+exec "$real_rm" "\$@"
+SHIM
+chmod +x "$shim_dir/rm"
 
-if stuck_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
-    chmod 755 "$gitdir/worktrees/stuckrec/logs/blocker" 2>/dev/null || true
+if stuck_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    rm -f "$shim_dir/rm"
     fail "record prune exited zero although removal failed: $stuck_out"
 fi
-chmod 755 "$gitdir/worktrees/stuckrec/logs/blocker" 2>/dev/null || true
+rm -f "$shim_dir/rm"
 expect_contains "$stuck_out" "removal failed midway" "rm failure: reported as its own outcome"
 expect_not_contains "$stuck_out" "lifecycle lock refused" "rm failure: never mislabeled as lock contention"
+[ -d "$gitdir/worktrees/stuckrec" ] || fail "rm failure: record vanished although rm was refused"
 
-# The partial rm may have taken HEAD/gitdir (deletion order is undefined);
-# restore them so the recovery run exercises a validatable record.
-printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/stuckrec/HEAD"
-printf '%s\n' "/nonexistent/stuckrec/.git" >"$gitdir/worktrees/stuckrec/gitdir"
 stuck_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the blocker was cleared: $stuck_ok_out"
+expect_contains "$stuck_ok_out" "pruned record 'stuckrec'" "rm failure: unshimmed re-run prunes normally"
 echo "ok: a failed record removal is loud and never lock-labeled"
 
 # ── Case E7m: an unreachable ORIG_HEAD refuses the sweep ───────────────────
@@ -1143,6 +1153,21 @@ rm -rf "$test_tmp/live-dir"
 livedir_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the directory was moved aside: $livedir_ok_out"
 expect_contains "$livedir_ok_out" "pruned record 'livedir-rec'" "live-dir: cleared record prunes normally"
+
+# A gitdir value without the /.git suffix is malformed AND would skip the
+# surviving-directory guard above — it must refuse outright.
+mkdir -p "$gitdir/worktrees/badsuffix-rec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/badsuffix-rec/HEAD"
+printf '%s\n' "/nonexistent/badsuffix-rec/.gi" >"$gitdir/worktrees/badsuffix-rec/gitdir"
+if badsuffix_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a malformed gitdir suffix present: $badsuffix_out"
+fi
+expect_contains "$badsuffix_out" "gitdir value does not end in /.git" "bad-suffix: malformed gitdir refused"
+[ -d "$gitdir/worktrees/badsuffix-rec" ] || fail "bad-suffix: record swept despite its malformed gitdir"
+printf '%s\n' "/nonexistent/badsuffix-rec/.git" >"$gitdir/worktrees/badsuffix-rec/gitdir"
+badsuffix_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the gitdir was repaired: $badsuffix_ok_out"
+expect_contains "$badsuffix_ok_out" "pruned record 'badsuffix-rec'" "bad-suffix: repaired record prunes normally"
 echo "ok: an unreadable gitdir or a surviving tree directory refuses the sweep"
 
 # ── Case E7w: resolve-undo state in a stage-0-clean index refuses ──────────
@@ -1245,6 +1270,17 @@ expect_contains "$typerec_out" "entry 'ORIG_HEAD' is not the regular file git wr
 [ -d "$gitdir/worktrees/typerec" ] || fail "type gate: record swept despite malformed state"
 
 rm -rf "$gitdir/worktrees/typerec/ORIG_HEAD"
+
+# info as a regular FILE matches no child glob and would otherwise be
+# accepted uninspected — the same gate, one level up.
+echo "not-a-directory" >"$gitdir/worktrees/typerec/info"
+if typeinfo_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a non-directory info entry present: $typeinfo_out"
+fi
+expect_contains "$typeinfo_out" "entry 'info' is not the directory git writes there" "type gate: non-directory info refused"
+[ -d "$gitdir/worktrees/typerec" ] || fail "type gate: record swept despite a non-directory info entry"
+rm -f "$gitdir/worktrees/typerec/info"
+
 typerec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
     fail "record prune failed after the malformed entry was cleared: $typerec_ok_out"
 expect_contains "$typerec_ok_out" "pruned record 'typerec'" "type gate: well-formed record prunes normally"
