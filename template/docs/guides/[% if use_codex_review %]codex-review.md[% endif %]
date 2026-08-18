@@ -379,8 +379,12 @@ pinned shepherd checker still matches severities as `p[0-2]`, so a P3 the
 *cloud* reviewer posts is invisible to it in both directions: posted as its
 own comment it classifies as findings that `settle` then refuses to record a
 disposition for, and appended to a clean verdict it passes unnoticed. Until
-that is fixed upstream and re-pinned (evanharmon1/harmon-devkit#530), settle a
-cloud P3 by hand and say so on the pull request.
+that is fixed upstream and re-pinned (evanharmon1/harmon-devkit#530), a
+standalone cloud P3 has **no settlement path at all**: `settle` is the only
+sanctioned mechanism and it refuses the badge, so the cycle cannot reach a
+terminal-clean result for that head. Treat it as a blocker — report it on the
+pull request and leave the PR draft. A comment is not a disposition the
+checker can read, and promoting past it would defeat the readiness gate.
 
 P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
 to the PR-shepherd stage, where they are fixed, declined with reasoning, or

@@ -445,9 +445,11 @@ Label EVERY finding with a priority, as the first token of the finding:
        trigger. Merge-blocking unless argued down with evidence.
   P2 — worth knowing, but not merge-blocking: hardening, edge cases behind
        unlikely preconditions, maintainability, non-critical test gaps.
-  P3 — cosmetic or purely informational: wording, naming, formatting, an
-       observation with no defect behind it. Never gating, and not carried
-       into the pull request description the way a P2 is.
+  P3 — cosmetic or purely informational: a naming or wording choice that
+       will mislead a reader, an observation with no defect behind it.
+       Never gating, and not carried into the pull request description the
+       way a P2 is. The no-style-nits rule above still binds — P3 is the
+       floor for findings worth stating, not a licence to report nits.
 
 Only P0 and P1 decide whether this review passes. Still report P2s in full —
 they are triaged later, once the pull request is open — but do not let them
