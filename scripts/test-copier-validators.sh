@@ -105,11 +105,13 @@ fi
 # "Devcontainer" group (images/devcontainer/** and scripts/**), so a release
 # bumps both in ONE PR and this check passes or fails as a unit.
 #
-# Scope note: CI installs copier unpinned, here and in the template-test
-# matrix, and this guard is not wired into required CI (`test:copier-validators`
-# is in local `task verify` only). Both are deliberate — pinning every copier
-# execution across the CI workflows, and binding verify's target list to the
-# workflow's, are their own units of work. See the follow-up issue and #962.
+# This runs in required CI too (build.yml's lint job lists it explicitly, after
+# the copier install) — a guard that only runs locally would miss the case it
+# exists for: a Renovate bump that moves one pin and not the other arrives as a
+# PR. Scope note: CI still installs copier UNPINNED, here and in the
+# template-test matrix, so the version CI renders with is not the pinned one.
+# Pinning every copier execution across the workflows is its own unit of work
+# (#966), as is binding verify's target list to the workflow's (#962).
 #
 # This check lives here (root-only, no template/ twin) rather than in
 # scripts/test-tasks.sh, which IS a byte-identical twin shipped to generated
