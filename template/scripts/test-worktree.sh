@@ -2231,6 +2231,23 @@ for badbr in 'rollcfg$x' '../evil' '/abs' '-lead' 'a b' 'a//b' 'a/./b'; do
         fail "worktree-new.sh accepted the invalid --branch '$badbr'"
     case "$badbr_out" in *"invalid --branch"*) : ;; *) fail "the invalid --branch '$badbr' was refused for the wrong reason: $badbr_out" ;; esac
 done
+# Charset-clean values git's ref grammar still rejects (leading-dot
+# component, trailing dot, .lock suffix) must fail the check-ref-format
+# guard, early, not `git worktree add` (#929 challenge r1).
+for badbr in '.topic' 'topic.' 'topic.lock' 'topic/.child'; do
+    badbr_out="$(new brcheck --branch "$badbr" 2>&1)" &&
+        fail "worktree-new.sh accepted the grammar-invalid --branch '$badbr'"
+    # The distinctive prefix matters: git's own LATE failure ("fatal: ...
+    # not a valid branch name / hint: See 'git help check-ref-format'")
+    # also mentions check-ref-format, and a loose match let a mutant with
+    # the early guard deleted pass this very case.
+    case "$badbr_out" in *"rejected by git check-ref-format --branch"*) : ;; *) fail "the grammar-invalid --branch '$badbr' was not refused by the early guard: $badbr_out" ;; esac
+done
+# An explicitly EMPTY --branch must be refused, not silently defaulted to
+# the worktree name (#929 challenge r1).
+empty_out="$(new brcheck --branch '' 2>&1)" &&
+    fail "worktree-new.sh accepted an explicitly empty --branch"
+case "$empty_out" in *"non-empty"*) : ;; *) fail "the empty --branch was refused for the wrong reason: $empty_out" ;; esac
 refute_exists "$fixture/.worktrees/brcheck" "an invalid --branch refusal left a tree behind"
 if git -C "$fixture" show-ref --verify --quiet refs/heads/brcheck; then
     fail "an invalid --branch refusal left the name branch behind"

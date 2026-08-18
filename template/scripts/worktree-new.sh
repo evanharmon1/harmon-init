@@ -51,7 +51,10 @@ do_install=1
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --branch)
-        [ "$#" -ge 2 ] || die "--branch needs a value"
+        # Non-empty is checked HERE, not by the later default: an empty
+        # supplied value would otherwise fall through `branch=name` and
+        # silently create a branch the caller never asked for (#929).
+        [ "$#" -ge 2 ] && [ -n "$2" ] || die "--branch needs a non-empty value"
         branch="$2"
         shift 2
         ;;
@@ -127,6 +130,13 @@ esac
 case "/$branch/" in
 *//* | */./*) die "invalid --branch '$branch': path components must not be empty or '.'" ;;
 esac
+# The charset is policy; git's ref grammar is stricter still in corners the
+# charset cannot see (a component starting with '.', a trailing '.', a
+# '.lock' suffix). check-ref-format is local and side-effect-free, so the
+# full grammar is settled here too — before any lock, reservation, or ref
+# write — instead of failing late inside `git worktree add`.
+git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
+    die "invalid branch name '$branch' (from --branch, or the worktree name it defaults to): rejected by git check-ref-format --branch"
 
 # Anchor .worktrees/ to the MAIN worktree, never to whichever linked tree the
 # caller happens to be standing in — otherwise running this from inside a
