@@ -21,30 +21,30 @@ ARG YQ_VERSION=4.53.3
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.44.3
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.235
+ARG WORKMUX_VERSION=0.1.238
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.14.0
+ARG AOE_VERSION=1.14.1
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.224
+ARG CLAUDE_CODE_VERSION=2.1.233
 # renovate: datasource=npm depName=@openai/codex
 ARG CODEX_VERSION=0.147.0
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.54.4
+ARG GEMINI_CLI_VERSION=0.55.1
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.11.0
+ARG AGENT_DECK_VERSION=1.12.0
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.28.0
 # renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
 # Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
 ARG HERDR_VERSION=0.8.0
 # renovate: datasource=npm depName=dmux
-ARG DMUX_VERSION=5.10.0
+ARG DMUX_VERSION=5.11.0
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.172.0
+ARG SEMGREP_VERSION=1.173.0
 # renovate: datasource=npm depName=@playwright/test
 ARG PLAYWRIGHT_VERSION=1.62.1
 # renovate: datasource=npm depName=@playwright/cli
@@ -60,7 +60,7 @@ ARG FX_VERSION=39.2.0
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=2.1.2
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
-ARG LAZYGIT_VERSION=0.64.0
+ARG LAZYGIT_VERSION=0.64.1
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
@@ -82,7 +82,7 @@ ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
-ARG UV_VERSION=0.12.2
+ARG UV_VERSION=0.12.5
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
 ARG STARSHIP_VERSION=1.26.0
 
