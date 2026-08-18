@@ -323,7 +323,7 @@ else
 fi
 
 # ── 4. provisioning-script binding ─────────────────────────────────────────
-# Run the provisioning script with `gh` stubbed to echo the label name and
+# Run the provisioning script with `gh` stubbed to record the label name and
 # confirm it provisions exactly the renderer's set — both directions, so
 # neither a dropped delegation nor a re-added hand-list can fork.
 if [ -f scripts/setup-github-labels.sh ]; then
@@ -333,13 +333,16 @@ if [ -f scripts/setup-github-labels.sh ]; then
         fail "setup-github-labels.sh hard-lists a name|color|description label line — the vocabulary lives in label-registry.json"
     fi
     stub_dir="$(mktemp -d)"
+    emitted_file="$stub_dir/emitted"
     cat >"$stub_dir/gh" <<'STUB'
 #!/usr/bin/env bash
-[ "$1" = label ] && { shift 2; printf '%s\n' "$1"; exit 0; }
+[ "$1" = label ] && { shift 2; printf '%s\n' "$1" >>"$STUB_EMITTED"; exit 0; }
 exit 0
 STUB
     chmod +x "$stub_dir/gh"
-    emitted="$(PATH="$stub_dir:$PATH" bash scripts/setup-github-labels.sh --repo drift/check --foreman 2>/dev/null | grep -v '^==>' | sort)"
+    STUB_EMITTED="$emitted_file" PATH="$stub_dir:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --foreman >/dev/null 2>&1
+    emitted="$(sort "$emitted_file")"
     rm -rf "$stub_dir"
     want_names="$(node scripts/label-registry-render.mjs labels --foreman | sed 's/|.*//' | sort)"
     [ "$emitted" = "$want_names" ] || {
