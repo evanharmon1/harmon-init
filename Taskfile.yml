@@ -853,31 +853,37 @@ tasks:
   # ── Status ────────────────────────────────────────────────────
   status:
     desc: Project status dashboard
+    interactive: true
     cmds:
       - ./scripts/status.sh
 
   status:git:
     desc: Git status section
+    interactive: true
     cmds:
       - ./scripts/status.sh git
 
   status:gh:
     desc: GitHub status section
+    interactive: true
     cmds:
       - ./scripts/status.sh gh
 
   status:creds:
     desc: Credential section (gh, Codex, Claude Code logins + gh token scopes — local probes plus one bounded scope check; STATUS_NO_NETWORK=1 skips it)
+    interactive: true
     cmds:
       - ./scripts/status.sh creds
 
   status:code:
     desc: Codebase stats section
+    interactive: true
     cmds:
       - ./scripts/status.sh code
 
   status:env:
     desc: Environment info section
+    interactive: true
     cmds:
       - ./scripts/status.sh env
 
@@ -888,6 +894,7 @@ tasks:
 
   status:setup:
     desc: Setup completeness audit (GitHub, toolchain, devcontainer, dev env)
+    interactive: true
     cmds:
       - ./scripts/status.sh setup
 

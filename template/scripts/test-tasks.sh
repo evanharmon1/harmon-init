@@ -307,7 +307,7 @@ case "$out" in
 *"$secret_value"*) fail "secret:set:gh printed the secret value" ;;
 esac
 
-echo "==> tasks whose script demands a TTY are marked interactive, in both twins"
+echo "==> terminal-aware tasks stay interactive through Task grouping, in both twins"
 # A run-time-only regression, and a total one: this Taskfile sets `output:
 # group` GLOBALLY, so Task pipes each task's stdout. A script guarding on
 # `[ -t 1 ]` then sees a pipe and refuses even in a real terminal, which made
@@ -323,12 +323,14 @@ echo "==> tasks whose script demands a TTY are marked interactive, in both twins
 #
 # Keyed to a fatal `-t 1` check specifically. A `-t 0` guard (secret:set:*,
 # codex:gate:disable) is untouched by output grouping, which redirects stdout
-# only, and status.sh's `-t 1` merely selects colour and never refuses.
+# only. The status tasks do not refuse without a TTY, but their intentionally
+# visual dashboard would otherwise lose color, Unicode, and gum through its
+# documented Task entrypoints.
 # Both layers where they exist. A GENERATED repo has only the first — it is the
 # rendered output, with no template/ of its own — so a missing file is skipped
 # rather than failed, and the counter below keeps "skipped everything" from
 # passing silently.
-tty_gated_tasks="setup:gh-scopes"
+tty_gated_tasks="setup:gh-scopes status status:git status:gh status:creds status:code status:env status:setup"
 checked_taskfiles=0
 for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
     [ -f "$taskfile" ] || continue
@@ -347,7 +349,7 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         printf '%s\n' "$block" |
             grep -vE '^[[:space:]]*#' |
             grep -qE '^[[:space:]]*interactive:[[:space:]]*true[[:space:]]*$' ||
-            fail "${taskfile}: ${t} lacks 'interactive: true' — global 'output: group' pipes its stdout, so its TTY guard refuses in a real terminal"
+            fail "${taskfile}: ${t} lacks 'interactive: true' — global 'output: group' hides its terminal from the script"
     done
 done
 
