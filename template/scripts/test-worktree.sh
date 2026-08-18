@@ -746,6 +746,21 @@ fi
 rm -f "$autostash_git/MERGE_AUTOSTASH"
 rm_wt autostash >/dev/null || fail "worktree-rm.sh failed once the autostash state was cleared"
 
+# The same marker must also block STALE-RECORD cleanup: with the directory
+# already gone, the record's admin dir holds the only MERGE_AUTOSTASH
+# reference, and pruning the record would drop it (#951, challenge r2).
+echo "==> worktree:rm refuses to prune a stale record holding MERGE_AUTOSTASH"
+new stalestash >/dev/null || fail "worktree-new.sh failed for the stale-autostash case"
+stalestash_git="$(git -C "$fixture/.worktrees/stalestash" rev-parse --path-format=absolute --git-dir)"
+printf '%s\n' "$(git -C "$fixture/.worktrees/stalestash" rev-parse HEAD)" >"$stalestash_git/MERGE_AUTOSTASH"
+rm -rf "$fixture/.worktrees/stalestash"
+if rm_wt stalestash >/dev/null 2>&1; then
+    fail "worktree-rm.sh pruned a stale record whose admin dir holds a merge autostash"
+fi
+[ -s "$stalestash_git/MERGE_AUTOSTASH" ] || fail "the stale record's autostash reference was dropped despite the refusal"
+rm_wt stalestash --force >/dev/null || fail "worktree-rm.sh --force failed on the stale autostash record"
+git -C "$fixture" branch -D stalestash >/dev/null 2>&1 || true
+
 echo "==> worktree:rm refuses a detached HEAD no branch contains"
 new detached >/dev/null || fail "worktree-new.sh failed for the detached case"
 git -C "$fixture/.worktrees/detached" checkout -q --detach

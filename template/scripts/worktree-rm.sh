@@ -217,6 +217,14 @@ if [ "$tree_exists" -eq 0 ]; then
     # radius without giving this path the guard the live one has.)
     if [ "$force" -eq 0 ] && [ "$stale_record" -eq 1 ]; then
         stale_admin="$(record_admin_dir "$tree" || true)"
+        # An interrupted `git merge --autostash` can leave the stashed work
+        # referenced by the record's MERGE_AUTOSTASH file and nothing else —
+        # the same marker the live-tree guard below refuses, reachable here
+        # with the directory already gone. Dropping the record drops the
+        # only reference.
+        if [ -n "$stale_admin" ] && [ -s "$stale_admin/MERGE_AUTOSTASH" ]; then
+            die "$tree is gone but its record still holds a merge autostash ($stale_admin/MERGE_AUTOSTASH) — keep the work with 'git stash store \"\$(cat $stale_admin/MERGE_AUTOSTASH)\"', or re-run with --force to discard it"
+        fi
         if [ -n "$stale_admin" ] && [ -f "$stale_admin/HEAD" ]; then
             stale_head="$(cat "$stale_admin/HEAD" 2>/dev/null || true)"
             case "$stale_head" in
@@ -486,7 +494,7 @@ else
                 # `--abort` both refuse, and `git merge --quit` is the command
                 # that moves the referenced work to refs/stash.
                 if [ "$op_state" = MERGE_AUTOSTASH ]; then
-                    die "$tree has an autostash from an interrupted merge ($op_state) — run 'git merge --quit' there to move it to the stash, then 'git stash pop' to recover the work, or re-run with --force to discard it"
+                    die "$tree has an autostash from an interrupted merge ($op_state) — run 'git merge --quit' there to move it to the stash, then recover it from 'git stash list' (the stash is repository-wide, so pop that entry, not blindly the newest), or re-run with --force to discard it"
                 fi
                 die "$tree has an in-progress git operation ($op_state) — finish or abort it, or re-run with --force to discard it"
             fi
