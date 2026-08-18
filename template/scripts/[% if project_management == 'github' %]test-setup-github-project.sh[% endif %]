@@ -113,6 +113,21 @@ run_with "$complete"
 grep -q "leaving it as-is" "$tmp/out" || fail "expected 'leaving it as-is' output"
 grep -q "DONE: GitHub Project is ready" "$tmp/out" || fail "expected an explicit ready outcome"
 
+echo "==> visual progress stays on one ordered stream under Task grouping"
+printf '%s' "$complete" >"$STUB_FIELDS_FILE"
+rm -f "$tmp_seen"
+: >"$MUTATIONS"
+NO_COLOR=1 "$script" --owner someuser --title "Test Project" \
+    >"$tmp/stdout" 2>"$tmp/stderr" || fail "ordered-stream run exited non-zero"
+[ ! -s "$tmp/stdout" ] || fail "action progress leaked onto Task's buffered stdout"
+banner_line="$(grep -n '== SETUP :: GitHub Project ==' "$tmp/stderr" | cut -d: -f1 || true)"
+progress_line="$(grep -n "Resolving owner 'someuser'" "$tmp/stderr" | cut -d: -f1 || true)"
+done_line="$(grep -n 'DONE: GitHub Project is ready' "$tmp/stderr" | cut -d: -f1 || true)"
+[ -n "$banner_line" ] && [ -n "$progress_line" ] && [ -n "$done_line" ] ||
+    fail "ordered stream is missing its banner, progress, or final outcome"
+[ "$banner_line" -lt "$progress_line" ] && [ "$progress_line" -lt "$done_line" ] ||
+    fail "action stream did not preserve banner -> progress -> outcome chronology"
+
 echo "==> a failed ORG_PROJECT_ID write degrades the final outcome"
 STUB_OWNER_TYPE=Organization
 STUB_VARIABLE_RC=19

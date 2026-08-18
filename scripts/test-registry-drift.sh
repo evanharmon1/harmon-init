@@ -124,13 +124,16 @@ if [ -f "$labels_script" ]; then
     # running it observes what would really be provisioned. --foreman exercises
     # both renderer modes regardless of whether this profile arms Foreman.
     stub_dir="$(mktemp -d)"
+    emitted_file="$stub_dir/emitted"
     cat >"$stub_dir/gh" <<'STUB'
 #!/usr/bin/env bash
-[ "$1" = label ] && { shift 2; printf '%s\n' "$1"; exit 0; }
+[ "$1" = label ] && { shift 2; printf '%s\n' "$1" >>"$STUB_EMITTED"; exit 0; }
 exit 0
 STUB
     chmod +x "$stub_dir/gh"
-    emitted="$(PATH="$stub_dir:$PATH" bash "$labels_script" --repo drift/check --foreman 2>/dev/null | sort -u)"
+    STUB_EMITTED="$emitted_file" PATH="$stub_dir:$PATH" \
+        bash "$labels_script" --repo drift/check --foreman >/dev/null 2>&1
+    emitted="$(sort -u "$emitted_file")"
     rm -rf "$stub_dir"
     missing="$(comm -23 <(printf '%s\n' "$names" | sort -u) <(printf '%s\n' "$emitted"))"
     if [ -n "$missing" ]; then

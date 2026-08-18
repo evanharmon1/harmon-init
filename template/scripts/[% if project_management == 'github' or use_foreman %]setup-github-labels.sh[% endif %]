@@ -93,7 +93,7 @@ labels="$(node "$renderer" "${render_args[@]}")"
 
 while IFS='|' read -r name color desc; do
     [ -z "$name" ] && continue
-    if gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force; then
+    if gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force >/dev/null; then
         checkline ok "Label" "$name"
     else
         rc=$?

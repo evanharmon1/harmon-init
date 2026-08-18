@@ -35,6 +35,9 @@ command -v gh >/dev/null 2>&1 || fail "gh CLI is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+# Task buffers stdout in grouped mode. Keep legacy progress and the visual
+# outcome on one live stream so their chronology cannot be reversed.
+exec 1>&2
 OUTPUT_FD=2
 # shellcheck source=scripts/lib/output.sh
 . "$script_dir/lib/output.sh"
