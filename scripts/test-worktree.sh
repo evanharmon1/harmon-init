@@ -732,6 +732,59 @@ fi
 rm -rf "$midrebase_git/rebase-merge"
 rm_wt midrebase >/dev/null || fail "worktree-rm.sh failed once the rebase state was cleared"
 
+# MERGE_AUTOSTASH can be the ONLY marker: a `git merge --autostash` killed
+# after the autostash is written but before MERGE_HEAD exists leaves the
+# user's dirty work referenced by that one file alone (#951).
+echo "==> worktree:rm refuses a tree holding only MERGE_AUTOSTASH"
+new autostash >/dev/null || fail "worktree-new.sh failed for the autostash case"
+autostash_git="$(git -C "$fixture/.worktrees/autostash" rev-parse --path-format=absolute --git-dir)"
+printf '%s\n' "$(git -C "$fixture/.worktrees/autostash" rev-parse HEAD)" >"$autostash_git/MERGE_AUTOSTASH"
+if rm_wt autostash >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an interrupted merge --autostash"
+fi
+[ -d "$fixture/.worktrees/autostash" ] || fail "the autostash tree was removed despite the refusal"
+rm -f "$autostash_git/MERGE_AUTOSTASH"
+rm_wt autostash >/dev/null || fail "worktree-rm.sh failed once the autostash state was cleared"
+
+# The same marker must also block STALE-RECORD cleanup: with the directory
+# already gone, the record's admin dir holds the only MERGE_AUTOSTASH
+# reference, and pruning the record would drop it (#951, challenge r2).
+# The fixture path deliberately carries a single quote AND a space so the
+# emitted recovery recipe (executed verbatim below) proves its printf %q
+# escaping under exactly the characters that broke earlier revisions.
+echo "==> worktree:rm refuses to prune a stale record holding MERGE_AUTOSTASH"
+qfix="$test_tmp/q'uote fixture"
+mkdir -p "$qfix/scripts"
+cp "$repo/scripts/worktree-rm.sh" "$repo/scripts/worktree-lock.sh" "$qfix/scripts/"
+git -C "$qfix" init -q
+git -C "$qfix" config user.name "Worktree Test"
+git -C "$qfix" config user.email "worktree-test@example.invalid"
+git -C "$qfix" config commit.gpgsign false
+printf 'fixture\n' >"$qfix/README.md"
+git -C "$qfix" add -A
+git -C "$qfix" commit -qm "chore: quote fixture"
+git -C "$qfix" worktree add -q "$qfix/.worktrees/stalestash" -b stalestash
+stalestash_git="$(git -C "$qfix/.worktrees/stalestash" rev-parse --path-format=absolute --git-dir)"
+# A real autostash OID, not a bare HEAD: `git stash store` (the emitted
+# recovery recipe, executed below) refuses commits that are not stash-shaped.
+printf 'dirty\n' >>"$qfix/.worktrees/stalestash/README.md"
+printf '%s\n' "$(git -C "$qfix/.worktrees/stalestash" stash create)" >"$stalestash_git/MERGE_AUTOSTASH"
+rm -rf "$qfix/.worktrees/stalestash"
+stalestash_err="$(rm_in "$qfix" scripts/worktree-rm.sh stalestash 2>&1 >/dev/null)" &&
+    fail "worktree-rm.sh pruned a stale record whose admin dir holds a merge autostash"
+[ -s "$stalestash_git/MERGE_AUTOSTASH" ] || fail "the stale record's autostash reference was dropped despite the refusal"
+# The refusal's recovery recipe must be RUNNABLE as emitted — a malformed
+# quoting of the marker path once shipped a recipe that failed even on
+# space-free paths (#951 review r1). Execute it verbatim.
+stalestash_cmd="$(printf '%s\n' "$stalestash_err" | sed -n 's/.*keep the work with: \(.*\) — then re-run.*/\1/p')"
+[ -n "$stalestash_cmd" ] || fail "the stale-autostash refusal did not carry a recovery command"
+(cd "$qfix" && eval "$stalestash_cmd" >/dev/null 2>&1) ||
+    fail "the emitted stale-autostash recovery command is not runnable: $stalestash_cmd"
+[ "$(git -C "$qfix" rev-parse refs/stash)" = "$(cat "$stalestash_git/MERGE_AUTOSTASH")" ] ||
+    fail "the recovery command did not store the autostash commit in refs/stash"
+rm_in "$qfix" scripts/worktree-rm.sh stalestash --force >/dev/null ||
+    fail "worktree-rm.sh --force failed on the stale autostash record"
+
 echo "==> worktree:rm refuses a detached HEAD no branch contains"
 new detached >/dev/null || fail "worktree-new.sh failed for the detached case"
 git -C "$fixture/.worktrees/detached" checkout -q --detach
@@ -2216,11 +2269,55 @@ fi
 [ "$(git -C "$fixture" config --get branch.rollcfg.pushRemote || true)" = "myfork" ] ||
     fail "the stale-config refusal modified an unrelated branch config key"
 
+echo "==> an invalid --branch is refused early, before any lock or side effect"
+# The front door of the creation path: an explicit --branch used to bypass
+# validation entirely and fail late, inside git, with the path reserved and
+# locks held (#929). The validator is git's own branch grammar
+# (check-ref-format), deliberately NOT the worktree-name charset: branch
+# names legally carry metacharacters, and create-or-attach must keep
+# accepting an existing 'feature+flag' (challenge r2).
+for badbr in '../evil' '/abs' '-lead' 'a b' 'a//b' 'a/./b' '.topic' 'topic.' 'topic.lock' 'topic/.child'; do
+    badbr_out="$(new brcheck --branch "$badbr" 2>&1)" &&
+        fail "worktree-new.sh accepted the invalid --branch '$badbr'"
+    # The distinctive prefix matters: git's own LATE failure ("fatal: ...
+    # not a valid branch name / hint: See 'git help check-ref-format'")
+    # also mentions check-ref-format, and a loose match let a mutant with
+    # the early guard deleted pass this very case.
+    case "$badbr_out" in *"rejected by git check-ref-format --branch"*) : ;; *) fail "the invalid --branch '$badbr' was not refused by the early guard: $badbr_out" ;; esac
+done
+# Checkout SHORTHAND must be refused even though check-ref-format accepts
+# it: with checkout history, `--branch '@{-1}'` exits 0 there while
+# expanding to the previous branch — the literal value would then feed the
+# branch lock and worktree add (#929 challenge r3). Needs real history, or
+# the shorthand fails the validator for the wrong reason.
+git -C "$fixture" switch -qc shorthand-prev
+git -C "$fixture" switch -q - >/dev/null 2>&1
+short_out="$(new brcheck --branch '@{-1}' 2>&1)" &&
+    fail "worktree-new.sh accepted the checkout shorthand @{-1} as a branch"
+case "$short_out" in *"checkout shorthand is not accepted"*) : ;; *) fail "the @{-1} shorthand was refused for the wrong reason: $short_out" ;; esac
+git -C "$fixture" branch -qD shorthand-prev
+# An explicitly EMPTY --branch must be refused, not silently defaulted to
+# the worktree name (#929 challenge r1).
+empty_out="$(new brcheck --branch '' 2>&1)" &&
+    fail "worktree-new.sh accepted an explicitly empty --branch"
+case "$empty_out" in *"non-empty"*) : ;; *) fail "the empty --branch was refused for the wrong reason: $empty_out" ;; esac
+refute_exists "$fixture/.worktrees/brcheck" "an invalid --branch refusal left a tree behind"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/brcheck; then
+    fail "an invalid --branch refusal left the name branch behind"
+fi
+echo "==> the default branch = name path is unchanged"
+new brcheck >/dev/null || fail "worktree-new.sh failed with the default branch after --branch refusals"
+rm_wt brcheck >/dev/null || fail "cleanup of the default-branch tree failed"
+git -C "$fixture" branch -D brcheck >/dev/null 2>&1 || true
+
 echo "==> the stale-config remedy is shell-quoted for a metacharacter branch name"
 # Branch names — unlike whitelisted worktree names — legally carry \$, ;,
 # and quotes, so the pasted remedy must quote the key: unquoted,
 # branch.rollcfg\$x.remote expands \$x away in the user's shell and clears
-# the wrong key, or worse (PR #932 cloud review).
+# the wrong key, or worse (PR #932 cloud review). This also pins the
+# create-or-attach contract: a git-valid metacharacter branch passes the
+# early --branch validation and reaches the deeper guards (#929
+# challenge r2).
 git -C "$fixture" config 'branch.rollcfg$x.remote' oldrem
 git -C "$fixture" push -q origin 'HEAD:refs/heads/rollcfg$x'
 git -C "$fixture" update-ref -d 'refs/remotes/origin/rollcfg$x' 2>/dev/null || true

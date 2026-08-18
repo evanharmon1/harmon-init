@@ -217,6 +217,21 @@ if [ "$tree_exists" -eq 0 ]; then
     # radius without giving this path the guard the live one has.)
     if [ "$force" -eq 0 ] && [ "$stale_record" -eq 1 ]; then
         stale_admin="$(record_admin_dir "$tree" || true)"
+        # An interrupted `git merge --autostash` can leave the stashed work
+        # referenced by the record's MERGE_AUTOSTASH file and nothing else —
+        # the same marker the live-tree guard below refuses, reachable here
+        # with the directory already gone. Dropping the record drops the
+        # only reference.
+        if [ -n "$stale_admin" ] && [ -s "$stale_admin/MERGE_AUTOSTASH" ]; then
+            # printf %q escapes the WHOLE quoting class (whitespace, quotes,
+            # metacharacters) rather than one corner of it; the test suite
+            # executes this emitted command verbatim.
+            stale_marker_q="$(printf '%q' "$stale_admin/MERGE_AUTOSTASH")"
+            # Storing does not remove the marker, so a plain re-run refuses
+            # again — the completing sequence is store, THEN --force (safe:
+            # the work now lives in refs/stash).
+            die "$tree is gone but its record still holds a merge autostash ($stale_admin/MERGE_AUTOSTASH) — keep the work with: git stash store \"\$(cat $stale_marker_q)\" — then re-run with --force to clear the record (the stored work survives in refs/stash); --force without storing discards it"
+        fi
         if [ -n "$stale_admin" ] && [ -f "$stale_admin/HEAD" ]; then
             stale_head="$(cat "$stale_admin/HEAD" 2>/dev/null || true)"
             case "$stale_head" in
@@ -473,10 +488,21 @@ else
     # --amend` at that stop, a commit reachable from nothing else. Removing the
     # tree drops that state, and gc eventually collects the commit. Likewise a
     # detached HEAD ahead of every branch: nothing else references it.
+    # MERGE_AUTOSTASH is listed on its own because it can exist alone: a
+    # `git merge --autostash` killed after the autostash is written but before
+    # MERGE_HEAD exists leaves the user's dirty work referenced by that one
+    # file and nothing else.
     if [ "$force" -eq 0 ]; then
         tree_git_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-dir)"
-        for op_state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+        for op_state in rebase-merge rebase-apply MERGE_HEAD MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
             if [ -e "$tree_git_dir/$op_state" ]; then
+                # "finish or abort" is impossible advice for a marker-only
+                # autostash: with MERGE_HEAD absent, `git merge --continue` and
+                # `--abort` both refuse, and `git merge --quit` is the command
+                # that moves the referenced work to refs/stash.
+                if [ "$op_state" = MERGE_AUTOSTASH ]; then
+                    die "$tree has an autostash from an interrupted merge ($op_state) — run 'git merge --quit' there to move it to the stash, then recover it from 'git stash list' (the stash is repository-wide, so pop that entry, not blindly the newest), or re-run with --force to discard it"
+                fi
                 die "$tree has an in-progress git operation ($op_state) — finish or abort it, or re-run with --force to discard it"
             fi
         done
