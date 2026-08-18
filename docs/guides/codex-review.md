@@ -356,7 +356,7 @@ silently drop one:
 | `P0` | Breaks correctness, security, or data integrity in ordinary use, or breaks an existing contract | Yes |
 | `P1` | A real defect or materially wrong design decision with a plausible trigger | Yes |
 | `P2` | Worth knowing, not merge-blocking: hardening, unlikely edge cases, maintainability, non-critical test gaps | No |
-| `P3` | Cosmetic or purely informational: wording, naming, formatting, an observation with no defect behind it | No |
+| `P3` | Cosmetic or purely informational: a naming or wording choice that will mislead a reader, an observation with no defect behind it. The no-style-nits rule still binds — P3 is the floor for findings worth stating, not a licence to report nits | No |
 
 The scale lives in the prompt that `scripts/codex-review.sh` builds — not in
 the Codex CLI's own priority labels, which are an undocumented convention
