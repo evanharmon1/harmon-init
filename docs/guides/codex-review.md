@@ -370,9 +370,18 @@ closes with an invariant rather than a list: **a finding badged off this
 scale, or not badged at all, is adjudicated as at least a P2** — a future
 `P4` is triaged, never dropped for being unrecognized.
 
-P3s are adjudicated in the round they arrive and go no further: they are
-cosmetic by definition, so they neither gate a stage nor earn a sidecar
-entry. Fix one in place if it is worth the keystrokes, or say why not.
+That invariant is about **provenance, not spelling**. A P3 produced under the
+prompt above inherits the definition: adjudicated in the round it arrives and
+going no further, since it is cosmetic by construction — it neither gates a
+stage nor earns a sidecar entry. Fix one in place if it is worth the
+keystrokes, or say why not.
+
+A P3 from **cloud** review inherits nothing, because cloud never read that
+prompt. Defining P3 locally must not silently reclassify it: the `P3` on
+harmon-init#918 was a real parsing defect, and the floor is what caught it.
+So a cloud badge keeps the at-least-P2 floor — deferred like a P2 — until
+adjudication on evidence establishes it is genuinely cosmetic. Matching a
+level this repo happens to define is not that evidence.
 
 That invariant is **adjudication guidance, not a tooling contract**. The
 pinned shepherd checker still matches severities as `p[0-2]`, so a P3 the
