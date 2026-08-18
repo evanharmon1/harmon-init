@@ -752,12 +752,24 @@ rm_wt autostash >/dev/null || fail "worktree-rm.sh failed once the autostash sta
 echo "==> worktree:rm refuses to prune a stale record holding MERGE_AUTOSTASH"
 new stalestash >/dev/null || fail "worktree-new.sh failed for the stale-autostash case"
 stalestash_git="$(git -C "$fixture/.worktrees/stalestash" rev-parse --path-format=absolute --git-dir)"
-printf '%s\n' "$(git -C "$fixture/.worktrees/stalestash" rev-parse HEAD)" >"$stalestash_git/MERGE_AUTOSTASH"
+# A real autostash OID, not a bare HEAD: `git stash store` (the emitted
+# recovery recipe, executed below) refuses commits that are not stash-shaped.
+printf 'dirty\n' >>"$fixture/.worktrees/stalestash/README.md"
+printf '%s\n' "$(git -C "$fixture/.worktrees/stalestash" stash create)" >"$stalestash_git/MERGE_AUTOSTASH"
 rm -rf "$fixture/.worktrees/stalestash"
-if rm_wt stalestash >/dev/null 2>&1; then
+stalestash_err="$(rm_wt stalestash 2>&1 >/dev/null)" &&
     fail "worktree-rm.sh pruned a stale record whose admin dir holds a merge autostash"
-fi
 [ -s "$stalestash_git/MERGE_AUTOSTASH" ] || fail "the stale record's autostash reference was dropped despite the refusal"
+# The refusal's recovery recipe must be RUNNABLE as emitted — a malformed
+# quoting of the marker path once shipped a recipe that failed even on
+# space-free paths (#951 review r1). Execute it verbatim.
+stalestash_cmd="$(printf '%s\n' "$stalestash_err" | sed -n 's/.*keep the work with: \(.*\) — or re-run.*/\1/p')"
+[ -n "$stalestash_cmd" ] || fail "the stale-autostash refusal did not carry a recovery command"
+(cd "$fixture" && eval "$stalestash_cmd" >/dev/null 2>&1) ||
+    fail "the emitted stale-autostash recovery command is not runnable: $stalestash_cmd"
+[ "$(git -C "$fixture" rev-parse refs/stash)" = "$(cat "$stalestash_git/MERGE_AUTOSTASH")" ] ||
+    fail "the recovery command did not store the autostash commit in refs/stash"
+git -C "$fixture" update-ref -d refs/stash
 rm_wt stalestash --force >/dev/null || fail "worktree-rm.sh --force failed on the stale autostash record"
 git -C "$fixture" branch -D stalestash >/dev/null 2>&1 || true
 
