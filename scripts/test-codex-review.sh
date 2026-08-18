@@ -107,6 +107,15 @@ echo "$out" | grep -q "Still report P2s" || fail "challenge prompt missing the r
 echo "$out" | grep -q "carried into the pull request description" || fail "challenge prompt missing the P2 handoff clause: $out"
 # P3 is cosmetic and the cloud reviewer emits badges this prompt never sent,
 # so both the fourth level and the off-scale floor have to survive edits.
+# The prompt assertions below read the RENDERED instructions, so they cannot
+# see a stale claim in the script's own header comment — which is exactly how
+# one survived the P3 rewording (harmon-init#923 shepherd r3). Assert against
+# the SOURCE too, so a summary that contradicts the prompt fails here rather
+# than in review.
+if grep -q "never deferred" "${repo}/scripts/codex-review.sh"; then
+    fail "codex-review.sh's header still claims a P3 is never deferred — deferral is decided by adjudication, not by the badge"
+fi
+
 echo "$out" | grep -q "P3 — cosmetic" || fail "challenge prompt missing the P3 level: $out"
 echo "$out" | grep -q "adjudicated as at least a P2" || fail "challenge prompt missing the off-scale badge floor: $out"
 echo "$out" | grep -q "hypothesis the" ||

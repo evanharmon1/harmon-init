@@ -21,8 +21,10 @@
 # Codex reviews read-only; findings are advisory hypotheses for the primary
 # agent/human to adjudicate (AGENTS.md "Second-Model Review") — this is never
 # part of `verify`/`ci`. Both modes ask for P0/P1/P2/P3-labelled findings;
-# only P0/P1 gate the local loop, P2s are reported and deferred to the PR
-# stage, and P3s are cosmetic — reported and adjudicated, never deferred.
+# only P0/P1 gate the local loop and P2s are reported and deferred to the PR
+# stage. A label is a hypothesis and the ADJUDICATED severity is the verdict,
+# P3 included: a P3 skips the sidecar only once adjudication establishes it is
+# genuinely cosmetic, and one adjudicated up to P2 is deferred like any other.
 # A finding badged off that scale, or not badged at all, is adjudicated as at
 # least a P2, never dropped for being unrecognized.
 # No target path may invoke Codex with an empty scope; every one of them
