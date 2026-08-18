@@ -55,11 +55,16 @@ fi
 USE_UNICODE=false
 if $OUTPUT_UTF8 && $USE_COLOR; then USE_UNICODE=true; fi
 
-# Every gum call is piped. This keeps gum from probing the terminal background
-# with OSC 11 and waiting several seconds on terminals that do not answer. Its
-# stderr still sees the terminal, while CLICOLOR_FORCE restores styling.
+# Gum's stdout is captured, so it cannot probe the terminal background with
+# OSC 11 and wait several seconds on terminals that do not answer. Preserve
+# its status: gum is optional presentation, and callers fall back to the
+# built-in renderer when an installed binary is broken or incompatible.
 gum_style() {
-    CLICOLOR_FORCE=1 gum style "$@" | cat
+    local styled
+    if ! styled="$(CLICOLOR_FORCE=1 gum style "$@")"; then
+        return 1
+    fi
+    printf '%s\n' "$styled"
 }
 
 # action_banner KIND TITLE [DETAIL] — a task-family masthead for mutating
@@ -68,7 +73,7 @@ gum_style() {
 # the reader reaches its title. The word always remains visible, so color and
 # emoji reinforce meaning without carrying it alone.
 action_banner() {
-    local kind="$1" title="$2" detail="${3:-}" icon="✦" sgr="1;35" gum_color=212
+    local kind="$1" title="$2" detail="${3:-}" icon="✦" sgr="1;35" gum_color=212 styled=""
     case "$kind" in
     setup) icon="⚙" && sgr="1;36" && gum_color=39 ;;
     secret) icon="🔐" && sgr="1;35" && gum_color=135 ;;
@@ -79,14 +84,17 @@ action_banner() {
     esac
     if ! $USE_UNICODE; then icon="*"; fi
 
-    if $HAS_GUM && output_is_tty; then
-        {
+    if $HAS_GUM && output_is_tty &&
+        styled="$({
             printf '%s  %s\n' "$icon" "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')"
             printf '%s\n' "$title"
             [ -z "$detail" ] || printf '%s\n' "$detail"
         } | gum_style --bold --foreground "$gum_color" --border double \
-            --border-foreground "$gum_color" --padding "0 2" --margin "0 0 1 0" | output_write
-    elif $USE_COLOR; then
+            --border-foreground "$gum_color" --padding "0 2" --margin "0 0 1 0")"; then
+        output_emit '%s\n' "$styled"
+        return 0
+    fi
+    if $USE_COLOR; then
         output_emit '\n\033[%sm%s  %s\033[0m  \033[1m%s\033[0m\n' "$sgr" "$icon" \
             "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')" "$title"
         [ -z "$detail" ] || output_emit '\033[2m   %s\033[0m\n' "$detail"
@@ -104,11 +112,14 @@ action_banner() {
 }
 
 section_header() {
-    local title="$1"
-    if $HAS_GUM && output_is_tty; then
-        gum_style --bold --foreground 212 --border-foreground 240 \
-            --border rounded --padding "0 1" -- "$title" | output_write
-    elif $USE_COLOR; then
+    local title="$1" styled=""
+    if $HAS_GUM && output_is_tty &&
+        styled="$(gum_style --bold --foreground 212 --border-foreground 240 \
+            --border rounded --padding "0 1" -- "$title")"; then
+        output_emit '%s\n' "$styled"
+        return 0
+    fi
+    if $USE_COLOR; then
         output_emit '\n\033[1;35m◆ %s\033[0m\n' "$title"
         output_emit '\033[2;90m────────────────────────────────────────\033[0m\n'
     else
@@ -118,22 +129,25 @@ section_header() {
 }
 
 section_box() {
-    local content
+    local content styled=""
     content="$(cat)"
-    if $HAS_GUM && output_is_tty; then
-        printf '%s\n' "$content" | gum_style --border rounded \
-            --border-foreground 240 --padding "0 1" --margin "0 0" | output_write
-    else
-        output_emit '%s\n\n' "$content"
+    if $HAS_GUM && output_is_tty &&
+        styled="$(printf '%s\n' "$content" | gum_style --border rounded \
+            --border-foreground 240 --padding "0 1" --margin "0 0")"; then
+        output_emit '%s\n' "$styled"
+        return 0
     fi
+    output_emit '%s\n\n' "$content"
 }
 
 kv() {
     local key="$1" val="$2" styled_key
-    if $HAS_GUM && output_is_tty; then
-        styled_key="$(gum_style --bold --foreground 39 "$key:")"
+    if $HAS_GUM && output_is_tty &&
+        styled_key="$(gum_style --bold --foreground 39 "$key:")"; then
         output_emit '  %s  %s\n' "$styled_key" "$val"
-    elif $USE_COLOR; then
+        return 0
+    fi
+    if $USE_COLOR; then
         output_emit '  \033[1;36m%-20s\033[0m %s\n' "$key:" "$val"
     else
         output_emit '  %-20s %s\n' "$key:" "$val"

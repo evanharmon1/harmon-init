@@ -1274,9 +1274,10 @@ echo "==> every gum call keeps its stdout off the terminal"
 # in every test above because they all run under NO_COLOR with no terminal at
 # all. gum_style is the single place that keeps stdout off the terminal; a call
 # site that bypasses it reintroduces the stall on exactly the terminals that
-# cannot answer, which are the ones nobody develops on.
-grep -qF 'CLICOLOR_FORCE=1 gum style "$@" | cat' "${output_lib}" ||
-    fail "gum_style no longer pipes gum's stdout with CLICOLOR_FORCE — the terminal probe and the colour both depend on it"
+# cannot answer, which are the ones nobody develops on. Command substitution
+# also preserves gum's failure status so this optional renderer can fall back.
+grep -qF 'styled="$(CLICOLOR_FORCE=1 gum style "$@")"' "${output_lib}" ||
+    fail "gum_style no longer captures gum's stdout with CLICOLOR_FORCE — the terminal probe, colour, and fallback depend on it"
 grep -q 'gum_style ' "${status}" ||
     fail "nothing calls gum_style — the check below would pass vacuously"
 stray="$({

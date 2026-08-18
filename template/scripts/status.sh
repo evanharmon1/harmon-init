@@ -266,10 +266,12 @@ done
 # ── Header ──────────────────────────────────────────────────────────────────
 
 if [[ -z "${SECTION}" ]]; then
-    if $HAS_GUM && output_is_tty; then
-        gum_style --bold --foreground 212 --border double \
+    styled_header=""
+    if $HAS_GUM && output_is_tty &&
+        styled_header="$(gum_style --bold --foreground 212 --border double \
             --border-foreground 99 --padding "0 2" --margin "1 0" \
-            -- "${PROJECT_NAME}"
+            -- "${PROJECT_NAME}")"; then
+        printf '%s\n' "${styled_header}"
     else
         echo ""
         echo "=== ${PROJECT_NAME} ==="

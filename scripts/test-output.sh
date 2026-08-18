@@ -47,6 +47,28 @@ printf '%s\n' "$non_utf8" | LC_ALL=C od -An -tu1 -v | awk '
     { for (i = 1; i <= NF; i++) if ($i > 127) exit 1 }
 ' || fail "non-UTF-8 presentation contains Unicode bytes"
 
+echo "==> a broken optional gum falls back without aborting the task"
+fake_bin="$(mktemp -d)"
+trap 'rm -rf "$fake_bin"' EXIT
+cat >"${fake_bin}/gum" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+chmod +x "${fake_bin}/gum"
+gum_fallback="$(env -u NO_COLOR PATH="${fake_bin}:/usr/bin:/bin" LANG=C.UTF-8 \
+    TERM=xterm-256color OUTPUT_TEST_TTY=1 bash -euo pipefail -c '
+        . "$1"
+        action_banner setup "Repository" "configure"
+        section_header "Details"
+        printf "inside\n" | section_box
+        kv "State" "ready"
+        printf "REACHED-END\n"
+    ' _ "$lib")"
+case "$gum_fallback" in
+*$'\033[1;36m'*'Repository'*'Details'*'inside'*'State:'*'ready'*'REACHED-END'*) ;;
+*) fail "broken gum did not fall back to the complete built-in presentation" ;;
+esac
+
 echo "==> TERM=dumb wins over forced color"
 dumb="$(TERM=dumb CLICOLOR_FORCE=1 LANG=C.UTF-8 \
     bash -c '. "$1"; checkline ok "Step"' _ "$lib")"
