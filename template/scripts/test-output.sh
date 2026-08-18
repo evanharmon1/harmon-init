@@ -39,6 +39,14 @@ secret_color="$(env -u NO_COLOR PATH=/usr/bin:/bin LANG=C.UTF-8 TERM=xterm-256co
 case "$setup_color" in *$'\033[1;36m'*) ;; *) fail "setup banner lost its cyan accent" ;; esac
 case "$secret_color" in *$'\033[1;35m'*) ;; *) fail "secret banner lost its magenta accent" ;; esac
 
+echo "==> a non-UTF-8 locale disables gum and Unicode presentation"
+non_utf8="$(env -u NO_COLOR LC_ALL=C TERM=xterm-256color CLICOLOR_FORCE=1 OUTPUT_TEST_TTY=1 \
+    bash -c '. "$1"; printf "capabilities=%s/%s\n" "$HAS_GUM" "$USE_UNICODE"; action_banner setup "Repository"' _ "$lib")"
+case "$non_utf8" in *'capabilities=false/false'*'*  SETUP'*) ;; *) fail "non-UTF-8 terminal did not select the ASCII presentation" ;; esac
+printf '%s\n' "$non_utf8" | LC_ALL=C od -An -tu1 -v | awk '
+    { for (i = 1; i <= NF; i++) if ($i > 127) exit 1 }
+' || fail "non-UTF-8 presentation contains Unicode bytes"
+
 echo "==> TERM=dumb wins over forced color"
 dumb="$(TERM=dumb CLICOLOR_FORCE=1 LANG=C.UTF-8 \
     bash -c '. "$1"; checkline ok "Step"' _ "$lib")"
@@ -80,6 +88,21 @@ esac
 case "$spinner" in
 *$'\r\033[2K') ;;
 *) fail "spinner did not erase its final frame" ;;
+esac
+
+echo "==> command diagnostics render only after the spinner is erased"
+set +e
+diagnostic="$(env -u CI -u NO_COLOR OUTPUT_FD=2 OUTPUT_TEST_TTY=1 OUTPUT_TEST_SPINNER=1 OUTPUT_SPINNER_DELAY=0.01 \
+    LANG=C.UTF-8 TERM=xterm-256color bash -c '
+        . "$1"
+        output_run "Working" bash -c "sleep 0.04; echo API-failed >&2; exit 29"
+    ' _ "$lib" 2>&1)"
+diagnostic_rc=$?
+set -e
+[ "$diagnostic_rc" -eq 29 ] || fail "diagnostic spinner path returned $diagnostic_rc instead of 29"
+case "$diagnostic" in
+*$'\r\033[2KAPI-failed') ;;
+*) fail "command diagnostic was not serialized after spinner cleanup" ;;
 esac
 
 echo "==> NO_COLOR disables animation even on a terminal"

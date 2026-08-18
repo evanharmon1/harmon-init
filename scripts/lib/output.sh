@@ -32,10 +32,16 @@ output_write() {
     fi
 }
 
+OUTPUT_UTF8=false
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+*[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*) OUTPUT_UTF8=true ;;
+esac
+
 # NO_COLOR disables gum as well as ANSI. Besides respecting the convention,
-# that makes logs and test snapshots plain, greppable text.
+# that makes logs and test snapshots plain, greppable text. Gum's borders are
+# Unicode, so a non-UTF-8 locale also selects the built-in ASCII presentation.
 HAS_GUM=false
-if [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ] && command -v gum >/dev/null 2>&1; then
+if $OUTPUT_UTF8 && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ] && command -v gum >/dev/null 2>&1; then
     HAS_GUM=true
 fi
 
@@ -47,11 +53,7 @@ if [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
 fi
 
 USE_UNICODE=false
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-*[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*)
-    if $USE_COLOR; then USE_UNICODE=true; fi
-    ;;
-esac
+if $OUTPUT_UTF8 && $USE_COLOR; then USE_UNICODE=true; fi
 
 # Every gum call is piped. This keeps gum from probing the terminal background
 # with OSC 11 and waiting several seconds on terminals that do not answer. Its
@@ -75,6 +77,7 @@ action_banner() {
     sync) icon="↻" && sgr="1;34" && gum_color=75 ;;
     install) icon="⬡" && sgr="1;32" && gum_color=42 ;;
     esac
+    if ! $USE_UNICODE; then icon="*"; fi
 
     if $HAS_GUM && output_is_tty; then
         {
@@ -87,7 +90,11 @@ action_banner() {
         output_emit '\n\033[%sm%s  %s\033[0m  \033[1m%s\033[0m\n' "$sgr" "$icon" \
             "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')" "$title"
         [ -z "$detail" ] || output_emit '\033[2m   %s\033[0m\n' "$detail"
-        output_emit '\033[2;90m%s\033[0m\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        if $USE_UNICODE; then
+            output_emit '\033[2;90m%s\033[0m\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        else
+            output_emit '\033[2;90m%s\033[0m\n' '----------------------------------------'
+        fi
     else
         output_emit '\n== %s :: %s ==\n' \
             "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')" "$title"
@@ -265,7 +272,7 @@ output_spinner_loop() {
 # frame, and returns COMMAND's exact status. Redirected/CI output runs COMMAND
 # directly and emits no control sequences.
 output_run() (
-    local label="$1" spinner_pid="" rc
+    local label="$1" spinner_pid="" diagnostics="" rc
     shift
 
     if [ "${OUTPUT_FD}" != 2 ] || { ! output_is_tty && [ "${OUTPUT_TEST_SPINNER:-0}" != 1 ]; } ||
@@ -274,6 +281,7 @@ output_run() (
         return
     fi
 
+    diagnostics="$(mktemp "${TMPDIR:-/tmp}/harmon-output.XXXXXX")" || return 1
     output_spinner_loop "$label" &
     spinner_pid=$!
     output_spinner_cleanup() {
@@ -284,13 +292,20 @@ output_run() (
         fi
         printf '\r\033[2K' >&2
     }
-    trap 'output_spinner_cleanup' EXIT
+    output_run_cleanup() {
+        output_spinner_cleanup
+        [ -z "$diagnostics" ] || rm -f "$diagnostics"
+    }
+    trap 'output_run_cleanup' EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    if "$@"; then rc=0; else rc=$?; fi
+    if "$@" 2>"$diagnostics"; then rc=0; else rc=$?; fi
     output_spinner_cleanup
+    if [ -s "$diagnostics" ]; then cat "$diagnostics" >&2; fi
+    rm -f "$diagnostics"
+    diagnostics=""
     trap - EXIT HUP INT TERM
     return "$rc"
 )
