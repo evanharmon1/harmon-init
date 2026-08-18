@@ -223,9 +223,11 @@ if [ "$tree_exists" -eq 0 ]; then
         # with the directory already gone. Dropping the record drops the
         # only reference.
         if [ -n "$stale_admin" ] && [ -s "$stale_admin/MERGE_AUTOSTASH" ]; then
-            # Single-quote the path so the recipe survives whitespace when
-            # pasted; the test suite executes this emitted command verbatim.
-            die "$tree is gone but its record still holds a merge autostash ($stale_admin/MERGE_AUTOSTASH) — keep the work with: git stash store \"\$(cat '$stale_admin/MERGE_AUTOSTASH')\" — or re-run with --force to discard it"
+            # printf %q escapes the WHOLE quoting class (whitespace, quotes,
+            # metacharacters) rather than one corner of it; the test suite
+            # executes this emitted command verbatim.
+            stale_marker_q="$(printf '%q' "$stale_admin/MERGE_AUTOSTASH")"
+            die "$tree is gone but its record still holds a merge autostash ($stale_admin/MERGE_AUTOSTASH) — keep the work with: git stash store \"\$(cat $stale_marker_q)\" — or re-run with --force to discard it"
         fi
         if [ -n "$stale_admin" ] && [ -f "$stale_admin/HEAD" ]; then
             stale_head="$(cat "$stale_admin/HEAD" 2>/dev/null || true)"
