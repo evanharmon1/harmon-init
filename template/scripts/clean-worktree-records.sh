@@ -133,7 +133,11 @@ finish_no_work() {
 
 # git's own dry run is the authority on what is prunable
 # ("Removing worktrees/<name>: <reason>"); LC_ALL=C pins the message shape.
-prune_plan="$(LC_ALL=C git worktree prune --dry-run -v 2>&1)"
+# A failed dry run must surface git's own diagnostic, not a bare set -e
+# death (review r2).
+if ! prune_plan="$(LC_ALL=C git worktree prune --dry-run -v 2>&1)"; then
+    die "git worktree prune --dry-run failed: $prune_plan"
+fi
 if [ -z "$prune_plan" ]; then
     finish_no_work
 fi
@@ -495,7 +499,7 @@ if [ "$pins_pending" -gt 0 ] || [ "$skipped" -gt 0 ] || [ -n "$outstanding" ]; t
     # Total, not just this run's: a pin inherited from an earlier run is
     # exactly as much awaiting settlement as a fresh one, and printing "0"
     # beside a nonzero exit contradicts the disposition (challenge r4).
-    total_pins="$(git for-each-ref refs/session-cleanup/pin --format='%(refname)' | grep -c . || true)"
+    total_pins="$(git for-each-ref refs/session-cleanup/pin --format='%(refname)' | wc -l | tr -d ' ')" || die "cannot enumerate rescue pins (refs/session-cleanup/pin unreadable); refusing to report an unreliable settlement count"
     echo "clean:worktree-records: $removed record(s) pruned; $pins_pending new pin(s) this run, $total_pins total awaiting settlement, $skipped record(s) refused above." >&2
     exit 2
 fi

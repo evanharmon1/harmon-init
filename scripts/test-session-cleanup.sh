@@ -1263,7 +1263,8 @@ cat >"$shim_dir/cat" <<SHIM
 #!/usr/bin/env bash
 if [[ "\${1:-}" == *"/worktrees/lockswap/gitdir" && ! -e "$test_tmp/lockswap-hit" ]]; then
     touch "$test_tmp/lockswap-hit"
-    exit 1
+    echo "$fixture/.worktrees/other-tree/.git"
+    exit 0
 fi
 exec /bin/cat "\$@"
 SHIM
@@ -1303,6 +1304,46 @@ expect_contains "$enum_out" "cannot enumerate rescue pins" "pin enumeration: fai
 expect_not_contains "$enum_out" "nothing to prune." "pin enumeration: no false cleanup-complete report"
 rm -f "$shim_dir/git"
 echo "ok: pin-enumeration failure never reports cleanup complete"
+
+# A failed dry run surfaces git's own diagnostic, never a bare set -e death.
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == *"worktree prune --dry-run"* ]]; then
+    echo "fatal: simulated metadata corruption" >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+if planfail_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the dry-run failed: $planfail_out"
+fi
+expect_contains "$planfail_out" "worktree prune --dry-run failed" "plan failure: named as the failing step"
+expect_contains "$planfail_out" "simulated metadata corruption" "plan failure: git's own diagnostic preserved"
+rm -f "$shim_dir/git"
+echo "ok: a failed dry run surfaces its diagnostic"
+
+# A failed FULL pin enumeration must not print an unreliable settlement
+# total beside the summary.
+git -C "$fixture" update-ref refs/session-cleanup/pin/stale-old "$(git -C "$fixture" rev-parse main)"
+mkdir -p "$gitdir/worktrees/enumrec"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/enumrec/HEAD"
+printf '%s\n' "/nonexistent/enumrec/.git" >"$gitdir/worktrees/enumrec/gitdir"
+cat >"$shim_dir/git" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == *"for-each-ref refs/session-cleanup/pin"* && "\$*" != *"--count=1"* ]]; then
+    exit 1
+fi
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$shim_dir/git"
+if totalfail_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the total-pin enumeration failed: $totalfail_out"
+fi
+expect_contains "$totalfail_out" "refusing to report an unreliable settlement count" "total enumeration: failure refused, no fabricated count"
+rm -f "$shim_dir/git"
+git -C "$fixture" update-ref -d refs/session-cleanup/pin/stale-old
+echo "ok: a failed total-pin enumeration never fabricates a count"
 
 # ── Case E8: a renamed remote default refuses every deletion ───────────────
 # The local origin/HEAD still names the old default; the live remote HEAD
