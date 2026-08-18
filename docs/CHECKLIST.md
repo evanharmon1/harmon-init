@@ -229,9 +229,11 @@ this comment. -->
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
       families from `label-registry.json` (see the generated taxonomy table in
       [project-management.md](project-management.md)) — grow `domain:` values
-      there as the product's own vocabulary. Labels are per-repo, so run it in
-      each repo; org default labels (org Settings → Repository, UI-only) only
-      seed new repos.
+      there as the product's own problem-space vocabulary and `area:` values as
+      its solution-space subsystems; both starter lists are a floor. `layer:`
+      is product-independent and normally needs no edits. Labels are per-repo,
+      so run it in each repo; org default labels (org Settings → Repository,
+      UI-only) only seed new repos.
 - [ ] **After a `copier update` that adds label families** (e.g. `tier:*` /
       `method:*`), re-run `task setup:github-labels` to provision the new
       labels here — it is additive and never deletes, so existing labels and
