@@ -374,9 +374,11 @@ holds for every finding from every reviewer, and P3 is not an exception to it:
 - The severity that counts is the one **you** adjudicate on evidence, never
   the one the reviewer wrote. That is already how P0 and P1 are handled; the
   scale just makes it explicit at the bottom too.
-- **Adjudication alone decides deferral.** A finding leaves no sidecar entry
-  only once adjudication has established it is genuinely cosmetic. A `P3`
-  badge is grounds to suspect that, never grounds to skip the check — and the
+- **Adjudication alone decides deferral.** The sidecar records what is
+  *deferred*, so an entry is owed only for a finding that is both unresolved
+  and carried forward: one fixed in place leaves nothing to defer, and one
+  adjudicated genuinely cosmetic leaves nothing to carry. What the badge may
+  never do is skip the adjudication that decides which of those it is — the
   `P3` on harmon-init#918 was a real parsing defect, so this is an observed
   failure mode, not a hypothetical one.
 - A badge **off** the scale, or absent entirely, starts at **at least a P2**.
