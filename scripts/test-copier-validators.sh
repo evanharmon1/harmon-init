@@ -25,7 +25,14 @@ cd "$repo"
 # (scripts/install-copier.sh), so there is no supported environment where it
 # is legitimately absent — fail loudly instead of silently skipping. See #921.
 if ! command -v copier >/dev/null 2>&1; then
-    echo "FAIL: copier not found — run 'task install' (or: uv tool install copier)" >&2
+    # `task install` is the only remedy correct on every host: it installs the
+    # Brewfile's copier under Homebrew and the pinned uv one otherwise
+    # (scripts/install-copier.sh no-ops under brew by design, so naming it
+    # directly would silently do nothing on a Mac). Deliberately NOT a bare
+    # `uv tool install copier`: that resolves to whatever is latest, so
+    # following the advice would satisfy this check and then run the render
+    # gates on an unreviewed version, defeating the pin this repo just added.
+    echo "FAIL: copier not found — run 'task install'" >&2
     exit 1
 fi
 
