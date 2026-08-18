@@ -45,6 +45,8 @@ ARG HERDR_VERSION=0.8.0
 ARG DMUX_VERSION=5.10.0
 # renovate: datasource=pypi depName=semgrep
 ARG SEMGREP_VERSION=1.172.0
+# renovate: datasource=pypi depName=copier
+ARG COPIER_VERSION=9.17.1
 # renovate: datasource=npm depName=@playwright/test
 ARG PLAYWRIGHT_VERSION=1.62.1
 # renovate: datasource=npm depName=@playwright/cli
@@ -355,8 +357,14 @@ RUN npm install -g \
     && npm cache clean --force
 
 RUN uv pip install --system --break-system-packages --no-cache toml aiogram
-RUN UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
-    uv tool install "semgrep==${SEMGREP_VERSION}" \
+# `export` rather than a command-prefix assignment: a `VAR=x cmd1 && cmd2`
+# prefix applies to cmd1 ONLY, so every tool after the first would silently
+# install under root's ~/.local instead of the system paths — invisible to the
+# `vscode` runtime user. Exporting covers the whole chain and keeps the next
+# tool added here correct by default.
+RUN export UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
+    && uv tool install "semgrep==${SEMGREP_VERSION}" \
+    && uv tool install "copier==${COPIER_VERSION}" \
     && rm -rf /root/.cache/uv
 
 # Keep frequently updated agent CLIs in the final expensive-tool layer.
@@ -410,6 +418,7 @@ RUN chmod 0755 \
         "herdr=${HERDR_VERSION}" \
         "dmux=${DMUX_VERSION}" \
         "semgrep=${SEMGREP_VERSION}" \
+        "copier=${COPIER_VERSION}" \
         "playwright=${PLAYWRIGHT_VERSION}" \
         "playwright-cli=${PLAYWRIGHT_CLI_VERSION}" \
         "sops=${SOPS_VERSION}" \
