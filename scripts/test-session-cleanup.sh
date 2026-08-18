@@ -1250,6 +1250,37 @@ typerec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"
 expect_contains "$typerec_ok_out" "pruned record 'typerec'" "type gate: well-formed record prunes normally"
 echo "ok: an allowlisted name of the wrong type refuses the sweep"
 
+# ── Case E7z: a gitdir that changed across the lock refuses the sweep ──────
+# The lifecycle lock is keyed off a pre-lock gitdir read; a record replaced
+# while the lock is approached could otherwise be validated under no lock
+# (or the wrong key) and swept mid-creation.
+
+mkdir -p "$gitdir/worktrees/lockswap"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/lockswap/HEAD"
+printf '%s\n' "$fixture/.worktrees/lockswap/.git" >"$gitdir/worktrees/lockswap/gitdir"
+rm -f "$test_tmp/lockswap-hit"
+cat >"$shim_dir/cat" <<SHIM
+#!/usr/bin/env bash
+if [[ "\${1:-}" == *"/worktrees/lockswap/gitdir" && ! -e "$test_tmp/lockswap-hit" ]]; then
+    touch "$test_tmp/lockswap-hit"
+    exit 1
+fi
+exec /bin/cat "\$@"
+SHIM
+chmod +x "$shim_dir/cat"
+
+if lockswap_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero although the lock key drifted: $lockswap_out"
+fi
+rm -f "$shim_dir/cat"
+expect_contains "$lockswap_out" "gitdir changed while the lock was being acquired" "lock-key drift: refused for a re-run"
+[ -d "$gitdir/worktrees/lockswap" ] || fail "lock-key drift: record swept under a missing or wrong lock"
+
+lockswap_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed on the stable re-run: $lockswap_ok_out"
+expect_contains "$lockswap_ok_out" "pruned record 'lockswap'" "lock-key drift: stable re-run prunes normally"
+echo "ok: a gitdir that changed across the lock refuses the sweep"
+
 # ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
 # A broken ref backend is not an empty pin namespace; the empty-plan path
 # must fail closed instead of printing "nothing to prune" with exit 0.

@@ -167,6 +167,14 @@ remove_one_record() (
         echo "SKIP  record '$record' — cannot read its gitdir file; refusing to sweep an unvalidatable record (inspect $admin_dir)"
         exit 3 # unreadable gitdir refuses
     fi
+    # The lock above was keyed off a PRE-lock read; if the gitdir changed
+    # while the lock was being approached (a record replaced mid-plan), the
+    # held key may be wrong or missing — refuse, and let a re-run evaluate
+    # the new record under the right lock (review r1).
+    if [ "${wt_gitfile%/.git}" != "$tree_path" ]; then
+        echo "SKIP  record '$record' — its gitdir changed while the lock was being acquired; re-run to re-evaluate"
+        exit 3 # lock-key drift refuses
+    fi
     # If the gitdir target exists again (a worktree recreated at the old
     # path), the record is live — leave it.
     if [ -e "$wt_gitfile" ]; then
