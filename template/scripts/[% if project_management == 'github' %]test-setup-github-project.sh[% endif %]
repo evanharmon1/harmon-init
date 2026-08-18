@@ -107,6 +107,7 @@ echo "==> a re-run against an already-synced project writes nothing"
 run_with "$complete"
 [ "$(updates)" = 0 ] || fail "expected no mutations on an unchanged project, got $(updates)"
 grep -q "leaving it as-is" "$tmp/out" || fail "expected 'leaving it as-is' output"
+grep -q "DONE: GitHub Project is ready" "$tmp/out" || fail "expected an explicit ready outcome"
 
 echo "==> the retired Agent field is never created"
 # The fixture above deliberately has no Agent field, so any mutation naming one
@@ -171,6 +172,10 @@ grep -q "field 'Status' already exists as TEXT" "$tmp/out" ||
     fail "expected a data-type warning naming Status and its actual type"
 grep -q "Status (is TEXT, wanted SINGLE_SELECT)" "$tmp/out" ||
     fail "expected Status in the end-of-run incompatible summary"
+grep -q "WARN: GitHub Project needs attention" "$tmp/out" ||
+    fail "expected a warning final outcome for incomplete reconciliation"
+! grep -q "DONE: GitHub Project is ready" "$tmp/out" ||
+    fail "incomplete reconciliation claimed the project was ready"
 
 echo "==> a field at the option cap warns instead of attempting an oversized write"
 capped=$(printf '%s' "$complete" | jq -c '
@@ -182,6 +187,8 @@ capped=$(printf '%s' "$complete" | jq -c '
 run_with "$capped"
 [ "$(updates)" = 0 ] || fail "an over-capacity append must be skipped, not attempted"
 grep -q "cannot fit Low" "$tmp/out" || fail "expected a capacity warning naming the missing option"
+grep -q "WARN: GitHub Project needs attention" "$tmp/out" ||
+    fail "expected a warning final outcome at the option cap"
 
 echo "==> an option added after the startup snapshot survives the append"
 # The re-read immediately before the write is what saves it: the replacement is

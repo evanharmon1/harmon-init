@@ -140,7 +140,8 @@ if [ -n "$incompatible" ]; then
     echo "    These fields already exist with a different data type: $incompatible" >&2
     echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
     echo "    issue-field settings and re-run this script to get the intended options." >&2
+    output_warning "GitHub issue fields need attention; resolve the warnings above and re-run"
 else
     checkline ok "Issue fields" "Product (Priority/Effort/dates are GitHub built-ins)"
+    output_done "GitHub issue fields are ready on $org"
 fi
-output_done "GitHub issue fields are ready on $org"

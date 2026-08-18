@@ -355,6 +355,16 @@ report_incompatible() {
     fi
 }
 
+finish_project() {
+    if [ -n "$incompatible" ] || [ -n "$at_capacity" ]; then
+        checkline unknown "Project" "#$project_number · $title — reconciliation needs attention"
+        output_warning "GitHub Project needs attention; resolve the warnings above and re-run"
+    else
+        checkline ok "Project" "#$project_number · $title"
+        output_done "GitHub Project is ready"
+    fi
+}
+
 # append_options NAME STARTERS — reconcile one existing single-select field: add
 # whatever starter option it lacks, keep everything else exactly as it is, and
 # write nothing when there is nothing to add. Used for Status and the custom
@@ -494,8 +504,7 @@ create_number "Size"
 if [ "$owner_type" = "Organization" ]; then
     echo "==> Other metadata are org issue fields (Priority/Effort built-ins, left at their defaults; run setup-github-issue-fields.sh for Product)"
     report_incompatible
-    checkline ok "Project" "#$project_number · $title"
-    output_done "GitHub Project is ready"
+    finish_project
     exit 0
 fi
 
@@ -517,5 +526,4 @@ create_text "Product"
 # are the only surface now. See docs/project-management.md, "Label or field?".
 
 report_incompatible
-checkline ok "Project" "#$project_number · $title"
-output_done "GitHub Project is ready"
+finish_project

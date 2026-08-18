@@ -176,6 +176,14 @@ output_done() {
     fi
 }
 
+output_warning() {
+    if $USE_UNICODE; then
+        output_emit '\n%s %s\n' "$(c '1;33' '⚠')" "$(c '1;33' "$1")"
+    else
+        output_emit '\nWARN: %s\n' "$1"
+    fi
+}
+
 output_spinner_loop() {
     local label="$1" i=0 frame
     local unicode_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
