@@ -388,6 +388,58 @@ if [ -f .github/workflows/build.yml ]; then
         err "required CI does not run test:worktree"
 fi
 
+# ── 1a-ter. Every profile RUNS its docs-presence gate, not just proves
+#            it's wired ──────────────────────────────────────────────
+# harmon-init#883 AC-2: the reachability checks above only prove a target is
+# reachable from `task verify` via a `--dry` grep — never that it PASSES.
+# That gap is exactly how #873 shipped: test:label-registry's docs-presence
+# check misfired on every linear-profile render (it assumed
+# docs/project-management.md always carries the GitHub taxonomy markers,
+# which the Linear variant never renders), and the render matrix plus five
+# local CI mirrors stayed green because nothing here ever EXECUTED the gate
+# against a rendered repo — only cloud review caught it.
+#
+# Reachability and execution catch different regressions, so keep both: the
+# `--dry` grep proves `verify` calls the target, the run proves the target
+# passes. There was no reachability grep for test:label-registry either, so
+# this adds one.
+#
+# Unconditional, like every sibling check in this section:
+# scripts/test-label-registry.sh and the `test:label-registry` task render in
+# every profile with no copier conditional, so there is nothing to gate on.
+# The `meta` profile is what makes this catch #873 specifically — it is the
+# only one rendering project_management=linear — but a github-variant
+# regression is worth catching just as much, and running everywhere is cheap
+# (measured under 1s: `time` on the dry-run grep plus the execution, against
+# a real --skip-tasks render).
+#
+# Deliberately NOT the whole of `task verify`. Measured directly (`time task
+# --color=false verify`) against a real --skip-tasks meta render: 2:45
+# (165.73s) wall-clock, offline, with no `task install` run. Every other
+# target in a full `verify` (lint:*, test:hooks, test:statusline,
+# test:session-cleanup, test:codex-review, etc.) is profile-INDEPENDENT — it
+# would pass or fail identically whatever project_management renders — so
+# running it here would quietly make this script the template's only
+# end-to-end regression suite for code unrelated to #883, roughly doubling
+# each profile's runtime for coverage the issue never asked for.
+# test:label-registry is the opposite: its PASS/FAIL depends on the rendered
+# project-management variant, and it needs only node+jq+python3 against
+# already-rendered JSON/Markdown (no `task install`, no git history beyond
+# `git init`, no network).
+if have task; then
+    verify_dry="$(task --color=false --dry verify 2>&1 || true)"
+    grep -qF './scripts/test-label-registry.sh' <<<"$verify_dry" ||
+        err "task verify does not reach test:label-registry"
+    task --color=false test:label-registry >/dev/null 2>&1 ||
+        err "task test:label-registry fails in the rendered repo (the #873/#883 class of regression: a docs-presence check misfiring on the rendered project_management variant)"
+else
+    required task "label-registry verify reachability + execution" || fail=1
+fi
+if [ -f .github/workflows/build.yml ]; then
+    grep -qF 'task test:label-registry' .github/workflows/build.yml ||
+        err "required CI does not run test:label-registry"
+fi
+
 # ── 1b. Free security policy renders as a coherent stack ───────────
 [ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"
