@@ -112,6 +112,7 @@ tasks:
       - task: test:label-registry
       - task: test:tasks
       - task: test:ci-results
+      - task: test:output
       - task: test:status
       - task: test:gh-scopes
       - task: test:meta-install
@@ -122,6 +123,7 @@ tasks:
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
+      - task: test:setup-github
 [% if project_management == 'github' %]
       - task: test:setup-github-project
 [% endif %]
@@ -721,6 +723,11 @@ tasks:
     cmds:
       - ./scripts/test-ci-results.sh
 
+  test:output:
+    desc: Unit-test shared color/Unicode fallbacks and spinner cleanup
+    cmds:
+      - ./scripts/test-output.sh
+
   test:status:
     desc: Unit-test the status board-writes + local-credential checks (stubbed CLIs, no network)
     cmds:
@@ -754,6 +761,11 @@ tasks:
     cmds:
       - ./scripts/test-release-title.sh
 [% endif %]
+
+  test:setup-github:
+    desc: Unit-test repository-setting outcomes and failure propagation (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-github.sh
 [% if project_management == 'github' %]
 
   test:setup-github-project:
@@ -1035,19 +1047,7 @@ tasks:
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
-      - gh api "repos/{{.REPO}}/vulnerability-alerts" --method PUT
-      # Private vulnerability reporting is a public-repo-only feature; harmon-init
-      # creates repos --private, so guard on visibility to avoid a 404 that would
-      # abort the task. Applies cleanly if the repo is later made public.
-      - |
-        if [ "$(gh api "repos/{{.REPO}}" --jq '.private')" = "false" ]; then
-          gh api "repos/{{.REPO}}/private-vulnerability-reporting" --method PUT
-        else
-          echo "Skipping private vulnerability reporting ({{.REPO}} is private; public-repo-only feature)."
-        fi
-[% if github_org != author_git_provider_username %]
-      - gh api "repos/{{.REPO}}/collaborators/[[ author_git_provider_username ]]-bot" --method PUT -f permission=push
-[% endif %]
+      - ./scripts/setup-github.sh --repo "{{.REPO}}"[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %]
 [% if project_management == 'github' %]
 
   setup:github-project:

@@ -71,6 +71,12 @@ done
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 renderer="$script_dir/label-registry-render.mjs"
+OUTPUT_FD=2
+# shellcheck source=scripts/lib/output.sh
+. "$script_dir/lib/output.sh"
+
+section_header "GitHub labels"
+kv "Repository" "$repo"
 
 render_args=(labels)
 if [ "$foreman" = 1 ]; then
@@ -87,8 +93,13 @@ labels="$(node "$renderer" "${render_args[@]}")"
 
 printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do
     [ -z "$name" ] && continue
-    echo "==> label: $name"
-    gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force
+    if gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force; then
+        checkline ok "Label" "$name"
+    else
+        rc=$?
+        checkline no "Label" "$name (exit $rc)"
+        exit "$rc"
+    fi
 done
 
-echo "==> Done — starter labels on $repo (existing labels left as-is)"
+output_done "Starter labels are ready on $repo (existing labels left as-is)"

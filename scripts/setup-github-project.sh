@@ -57,6 +57,15 @@ for tool in gh jq; do
     fi
 done
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+OUTPUT_FD=2
+# shellcheck source=scripts/lib/output.sh
+. "$script_dir/lib/output.sh"
+
+section_header "GitHub Project"
+kv "Owner" "$owner"
+kv "Project" "$title"
+
 # ── Scope preflight ─────────────────────────────────────────────────────────
 # Every mutation below needs the 'project' scope, which `gh auth login` does not
 # grant by default. Without it the run still fails — `gh api graphql` exits
@@ -485,7 +494,8 @@ create_number "Size"
 if [ "$owner_type" = "Organization" ]; then
     echo "==> Other metadata are org issue fields (Priority/Effort built-ins, left at their defaults; run setup-github-issue-fields.sh for Product)"
     report_incompatible
-    echo "==> Done — project #$project_number: $title"
+    checkline ok "Project" "#$project_number · $title"
+    output_done "GitHub Project is ready"
     exit 0
 fi
 
@@ -507,4 +517,5 @@ create_text "Product"
 # are the only surface now. See docs/project-management.md, "Label or field?".
 
 report_incompatible
-echo "==> Done — project #$project_number: $title"
+checkline ok "Project" "#$project_number · $title"
+output_done "GitHub Project is ready"

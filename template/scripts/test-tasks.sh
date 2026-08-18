@@ -328,6 +328,25 @@ awk '
 ' Taskfile.yml ||
     fail "Taskfile.yml no longer selects 'output: group' — re-derive whether the interactive: true assertion above still describes a real hazard"
 
+echo "==> setup:github delegates action logic to the tested script in both twins"
+checked_setup_tasks=0
+for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
+    [ -f "$taskfile" ] || continue
+    checked_setup_tasks=$((checked_setup_tasks + 1))
+    block="$(awk '
+        $0 == "  setup:github:" { inblock = 1; next }
+        inblock && /^  [a-zA-Z0-9]/ { inblock = 0 }
+        inblock { print }
+    ' "$taskfile")"
+    [ -n "$block" ] || fail "${taskfile}: setup:github task not found"
+    printf '%s\n' "$block" | grep -Fq './scripts/setup-github.sh --repo "{{.REPO}}"' ||
+        fail "${taskfile}: setup:github does not delegate to scripts/setup-github.sh"
+    if printf '%s\n' "$block" | grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*\|'; then
+        fail "${taskfile}: setup:github contains inline action logic instead of a trivial script command"
+    fi
+done
+[ "$checked_setup_tasks" -gt 0 ] || fail "no Taskfile setup:github wiring was checked"
+
 if [ -x ./scripts/test-terraform-provider-locks.sh ]; then
     echo "==> Terraform provider locks cover developer and CI platforms"
     ./scripts/test-terraform-provider-locks.sh

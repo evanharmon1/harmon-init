@@ -84,6 +84,7 @@ tasks:
       - task: test:label-registry
       - task: test:tasks
       - task: test:ci-results
+      - task: test:output
       - task: test:status
       - task: test:gh-scopes
       - task: test:meta-install
@@ -91,6 +92,7 @@ tasks:
       - task: test:renovate-pins
       - task: test:lint-hygiene
       - task: test:release-title
+      - task: test:setup-github
       - task: test:setup-github-project
       - task: test:sync-devkit-release
       - task: test:devcontainer:image:automation
@@ -398,6 +400,11 @@ tasks:
     cmds:
       - ./scripts/test-ci-results.sh
 
+  test:output:
+    desc: Unit-test shared color/Unicode fallbacks and spinner cleanup
+    cmds:
+      - ./scripts/test-output.sh
+
   test:devflow-config:
     desc: Validate the Dev Loop round-cap levels + tier/method axes in .devflow.toml (both copies)
     cmds:
@@ -438,6 +445,11 @@ tasks:
     desc: Unit-test the release-content title guard (require-release-title.sh)
     cmds:
       - ./scripts/test-release-title.sh
+
+  test:setup-github:
+    desc: Unit-test repository-setting outcomes and failure propagation (stubbed gh, no network)
+    cmds:
+      - ./scripts/test-setup-github.sh
 
   test:setup-github-project:
     desc: Unit-test the GitHub Project field reconciliation (stubbed gh, no network)
@@ -699,16 +711,7 @@ tasks:
     vars:
       REPO: "evanharmon1/harmon-init"
     cmds:
-      - gh api "repos/{{.REPO}}/vulnerability-alerts" --method PUT
-      # Private vulnerability reporting is a public-repo-only feature; harmon-init
-      # creates repos --private, so guard on visibility to avoid a 404 that would
-      # abort the task. Applies cleanly if the repo is later made public.
-      - |
-        if [ "$(gh api "repos/{{.REPO}}" --jq '.private')" = "false" ]; then
-          gh api "repos/{{.REPO}}/private-vulnerability-reporting" --method PUT
-        else
-          echo "Skipping private vulnerability reporting ({{.REPO}} is private; public-repo-only feature)."
-        fi
+      - ./scripts/setup-github.sh --repo "{{.REPO}}"
   setup:github-project:
     desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires the Projects scopes — `task setup:gh-scopes`.
     cmds:
