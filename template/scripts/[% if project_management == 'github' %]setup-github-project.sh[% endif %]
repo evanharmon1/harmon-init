@@ -62,7 +62,7 @@ OUTPUT_FD=2
 # shellcheck source=scripts/lib/output.sh
 . "$script_dir/lib/output.sh"
 
-section_header "GitHub Project"
+action_banner setup "GitHub Project" "Board, delivery pipeline, and planning fields"
 kv "Owner" "$owner"
 kv "Project" "$title"
 
@@ -253,14 +253,20 @@ fi
 # at all, and the workflows' title-lookup fallback resolves to that same
 # half-reconciled board. Reconciliation is additive and re-runnable, so the
 # remedy for a partial run is to re-run this script either way.
+org_variable_problem=""
 if [ "$owner_type" = "Organization" ]; then
     echo "==> Recording project id in the ORG_PROJECT_ID org variable"
     if ! gh variable set ORG_PROJECT_ID --org "$owner" --visibility all --body "$project_id"; then
+        org_variable_problem="ORG_PROJECT_ID was not written"
         echo "WARNING: could not set the ORG_PROJECT_ID org variable (needs org admin)." >&2
         echo "         Set it by hand: gh variable set ORG_PROJECT_ID --org \"$owner\" --body \"$project_id\"" >&2
+        checkline unknown "Organization variable" "ORG_PROJECT_ID was not written; set it manually"
+    else
+        checkline ok "Organization variable" "ORG_PROJECT_ID points to project #$project_number"
     fi
 else
     echo "==> Owner is a user account — skipping ORG_PROJECT_ID (no user-level variable scope; personal status automation is a separate follow-up)"
+    checkline na "Organization variable" "not available for personal accounts"
 fi
 
 # ── Snapshot current fields (reused for existence checks; re-read immediately
@@ -359,11 +365,14 @@ report_incompatible() {
 }
 
 finish_project() {
-    if [ -n "$incompatible" ] || [ -n "$at_capacity" ] || [ -n "$disappeared" ]; then
+    if [ -n "$incompatible" ] || [ -n "$at_capacity" ] || [ -n "$disappeared" ] ||
+        [ -n "$org_variable_problem" ]; then
         checkline unknown "Project" "#$project_number / $title: reconciliation needs attention"
+        output_summary "Project reconciliation"
         output_warning "GitHub Project needs attention; resolve the warnings above and re-run"
     else
         checkline ok "Project" "#$project_number / $title"
+        output_summary "Project reconciliation"
         output_done "GitHub Project is ready"
     fi
 }

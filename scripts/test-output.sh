@@ -10,12 +10,12 @@ fail() {
 }
 
 echo "==> redirected output is stable ASCII"
-plain="$(NO_COLOR=1 bash -c '. "$1"; section_header "Action"; checkline ok "Step" "complete"; output_done "finished"' _ "$lib")"
+plain="$(NO_COLOR=1 bash -c '. "$1"; action_banner secret "Credential" "stdin only"; checkline ok "Step" "complete"; checkline na "Optional" "skipped"; output_summary "Write"; output_done "finished"' _ "$lib")"
 case "$plain" in
 *$'\033'*) fail "NO_COLOR output contains ANSI escapes" ;;
 esac
 case "$plain" in
-*'==> Action'*'[x] Step - complete'*'DONE: finished'*) ;;
+*'== SECRET :: Credential =='*'[x] Step - complete'*'SUMMARY: Write - succeeded=1 failed=0 attention=0 skipped=1 total=2'*'DONE: finished'*) ;;
 *) fail "plain output omitted the stable heading, outcome, or summary" ;;
 esac
 printf '%s\n' "$plain" | LC_ALL=C od -An -tu1 -v | awk '
@@ -24,11 +24,20 @@ printf '%s\n' "$plain" | LC_ALL=C od -An -tu1 -v | awk '
 
 echo "==> a capable terminal gets ANSI color and Unicode"
 color="$(env -u NO_COLOR PATH=/usr/bin:/bin LANG=C.UTF-8 TERM=xterm-256color OUTPUT_TEST_TTY=1 \
-    bash -c '. "$1"; section_header "Action"; checkline ok "Step" "complete"' _ "$lib")"
+    bash -c '. "$1"; action_banner setup "Repository" "configure"; checkline ok "Step" "complete"; checkline unknown "Review" "pending"; output_summary "Setup"; output_done "ready"' _ "$lib")"
 case "$color" in *$'\033['*) ;; *) fail "terminal output did not include ANSI color" ;; esac
-case "$color" in *'◆ Action'*'✓'*'Step — complete'*) ;;
+case "$color" in *'⚙  SETUP'*'✓'*'Step — complete'*'╭─ Setup'*'Attention'*'╰─ ✨'*'ready'*) ;;
 *) fail "terminal output did not include the Unicode presentation" ;;
 esac
+
+echo "==> task families have visually distinct semantic accents"
+setup_color="$(env -u NO_COLOR PATH=/usr/bin:/bin LANG=C.UTF-8 TERM=xterm-256color OUTPUT_TEST_TTY=1 \
+    bash -c '. "$1"; action_banner setup "One"' _ "$lib")"
+secret_color="$(env -u NO_COLOR PATH=/usr/bin:/bin LANG=C.UTF-8 TERM=xterm-256color OUTPUT_TEST_TTY=1 \
+    bash -c '. "$1"; action_banner secret "Two"' _ "$lib")"
+[ "$setup_color" != "$secret_color" ] || fail "setup and secret banners rendered identically"
+case "$setup_color" in *$'\033[1;36m'*) ;; *) fail "setup banner lost its cyan accent" ;; esac
+case "$secret_color" in *$'\033[1;35m'*) ;; *) fail "secret banner lost its magenta accent" ;; esac
 
 echo "==> TERM=dumb wins over forced color"
 dumb="$(TERM=dumb CLICOLOR_FORCE=1 LANG=C.UTF-8 \

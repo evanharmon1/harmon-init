@@ -75,7 +75,7 @@ OUTPUT_FD=2
 # shellcheck source=scripts/lib/output.sh
 . "$script_dir/lib/output.sh"
 
-section_header "GitHub labels"
+action_banner setup "GitHub labels" "Registry-driven taxonomy with non-destructive updates"
 kv "Repository" "$repo"
 
 render_args=(labels)
@@ -91,7 +91,7 @@ fi
 # reaches GitHub, so a bad vocabulary never half-provisions.
 labels="$(node "$renderer" "${render_args[@]}")"
 
-printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do
+while IFS='|' read -r name color desc; do
     [ -z "$name" ] && continue
     if gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force; then
         checkline ok "Label" "$name"
@@ -100,6 +100,7 @@ printf '%s\n' "$labels" | while IFS='|' read -r name color desc; do
         checkline no "Label" "$name (exit $rc)"
         exit "$rc"
     fi
-done
+done < <(printf '%s\n' "$labels")
 
+output_summary "Label provisioning"
 output_done "Starter labels are ready on $repo (existing labels left as-is)"

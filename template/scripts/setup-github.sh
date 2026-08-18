@@ -10,6 +10,7 @@ OUTPUT_FD=2
 repo=""
 bot_collaborator=""
 bot_pending=false
+bot_unverified=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --repo)
@@ -41,7 +42,7 @@ fail_step() {
     checkline no "$label" "$detail (exit $rc)"
 }
 
-section_header "GitHub repository setup"
+action_banner setup "GitHub repository" "Safety, vulnerability reporting, and automation access"
 kv "Repository" "$repo"
 
 if output_run "Enabling Dependabot alerts" \
@@ -82,19 +83,30 @@ else
 fi
 
 if [ -n "$bot_collaborator" ]; then
-    if output_run "Adding bot collaborator" \
-        gh api "repos/$repo/collaborators/$bot_collaborator" --method PUT -f permission=push; then
-        permission="$(gh api "repos/$repo/collaborators/$bot_collaborator/permission" \
-            --jq '.permission' 2>/dev/null || true)"
-        case "$permission" in
-        admin | maintain | push | write)
-            checkline ok "Bot collaborator" "$bot_collaborator has push access"
-            ;;
-        *)
+    # GitHub's response itself is authoritative here: 201 + an invitation body
+    # means acceptance is pending; 204 + no body means access is already active.
+    # A follow-up permission lookup cannot distinguish a pending invite from a
+    # lookup failure, which was the old implementation's misleading fallback.
+    if collaborator_response="$(output_run "Adding bot collaborator" \
+        gh api "repos/$repo/collaborators/$bot_collaborator" --method PUT -f permission=push)"; then
+        if [ -n "$collaborator_response" ]; then
             bot_pending=true
             checkline unknown "Bot collaborator" "invitation sent to $bot_collaborator; access starts after acceptance"
-            ;;
-        esac
+        elif permission="$(gh api "repos/$repo/collaborators/$bot_collaborator/permission" \
+            --jq '.permission' 2>/dev/null)"; then
+            case "$permission" in
+            admin | maintain | push | write)
+                checkline ok "Bot collaborator" "$bot_collaborator has $permission access"
+                ;;
+            *)
+                bot_unverified=true
+                checkline unknown "Bot collaborator" "access response was '$permission'; verify $bot_collaborator manually"
+                ;;
+            esac
+        else
+            bot_unverified=true
+            checkline unknown "Bot collaborator" "GitHub accepted the request, but permission verification failed"
+        fi
     else
         rc=$?
         fail_step "$rc" "Bot collaborator" "could not grant push access to $bot_collaborator"
@@ -102,8 +114,11 @@ if [ -n "$bot_collaborator" ]; then
     fi
 fi
 
+output_summary "Repository setup"
 if $bot_pending; then
     output_warning "GitHub repository settings are ready; bot collaborator acceptance is pending"
+elif $bot_unverified; then
+    output_warning "GitHub repository settings changed, but collaborator access needs verification"
 else
     output_done "GitHub repository settings are ready for $repo"
 fi

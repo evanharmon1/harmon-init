@@ -37,6 +37,9 @@ if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
     [ -n "${STUB_SCOPES:-}" ] && echo "  - Token scopes: ${STUB_SCOPES}"
     exit 0
 fi
+if [ "$1" = "variable" ] && [ "$2" = "set" ]; then
+    exit "${STUB_VARIABLE_RC:-0}"
+fi
 q=""
 for a in "$@"; do case "$a" in query=*) q="${a#query=}" ;; esac; done
 case "$q" in
@@ -48,7 +51,7 @@ case "$q" in
         cat "$STUB_FIELDS_FILE"
     fi
     ;;
-*repositoryOwner*__typename*) echo '{"data":{"repositoryOwner":{"__typename":"User","id":"U_1"}}}' ;;
+*repositoryOwner*__typename*) printf '{"data":{"repositoryOwner":{"__typename":"%s","id":"U_1"}}}\n' "${STUB_OWNER_TYPE:-User}" ;;
 *projectsV2*) echo '{"data":{"repositoryOwner":{"projectsV2":{"pageInfo":{"hasNextPage":false},"nodes":[{"id":"P_1","number":7,"title":"Test Project"}]}}}}' ;;
 *ProjectV2Field*) printf '%s\n' "$q" >>"$MUTATIONS"; echo '{"data":{}}' ;;
 *) echo "fake gh: unexpected query: $q" >&2; exit 1 ;;
@@ -64,6 +67,7 @@ MUTATIONS="$tmp/mutations"
 STUB_FIELDS_FILE="$tmp/fields.json"
 STUB_FIELDS_FILE2="$tmp/fields2.json"
 export MUTATIONS STUB_FIELDS_FILE STUB_FIELDS_FILE2
+export STUB_OWNER_TYPE STUB_VARIABLE_RC
 
 # run_with FIELDS_JSON — run the script against that project snapshot.
 run_with() {
@@ -108,6 +112,19 @@ run_with "$complete"
 [ "$(updates)" = 0 ] || fail "expected no mutations on an unchanged project, got $(updates)"
 grep -q "leaving it as-is" "$tmp/out" || fail "expected 'leaving it as-is' output"
 grep -q "DONE: GitHub Project is ready" "$tmp/out" || fail "expected an explicit ready outcome"
+
+echo "==> a failed ORG_PROJECT_ID write degrades the final outcome"
+STUB_OWNER_TYPE=Organization
+STUB_VARIABLE_RC=19
+run_with "$complete"
+grep -q "ORG_PROJECT_ID was not written" "$tmp/out" ||
+    fail "expected the failed org-variable write in the outcome rows"
+grep -q "WARN: GitHub Project needs attention" "$tmp/out" ||
+    fail "expected a warning final outcome after the org-variable write failed"
+! grep -q "DONE: GitHub Project is ready" "$tmp/out" ||
+    fail "failed org-variable write claimed the project was ready"
+STUB_OWNER_TYPE=User
+STUB_VARIABLE_RC=0
 
 echo "==> the retired Agent field is never created"
 # The fixture above deliberately has no Agent field, so any mutation naming one

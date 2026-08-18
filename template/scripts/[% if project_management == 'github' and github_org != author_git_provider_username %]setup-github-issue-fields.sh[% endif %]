@@ -64,7 +64,7 @@ OUTPUT_FD=2
 # shellcheck source=scripts/lib/output.sh
 . "$script_dir/lib/output.sh"
 
-section_header "GitHub issue fields"
+action_banner setup "GitHub issue fields" "Durable organization metadata"
 kv "Organization" "$org"
 
 # Preview REST API version for issue fields; bump if GitHub moves the endpoint.
@@ -140,8 +140,10 @@ if [ -n "$incompatible" ]; then
     echo "    These fields already exist with a different data type: $incompatible" >&2
     echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
     echo "    issue-field settings and re-run this script to get the intended options." >&2
+    output_summary "Issue field provisioning"
     output_warning "GitHub issue fields need attention; resolve the warnings above and re-run"
 else
     checkline ok "Issue fields" "Product (Priority/Effort/dates are GitHub built-ins)"
+    output_summary "Issue field provisioning"
     output_done "GitHub issue fields are ready on $org"
 fi

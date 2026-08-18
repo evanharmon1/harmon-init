@@ -49,7 +49,7 @@ OUTPUT_FD=2
 # shellcheck source=scripts/lib/output.sh
 . "$script_dir/lib/output.sh"
 
-section_header "GitHub issue types"
+action_banner setup "GitHub issue types" "Organization-wide work classification"
 kv "Organization" "$org"
 
 # Desired issue types — mirror the issue forms. Colors are GitHub's issue-type
@@ -90,4 +90,5 @@ printf '%s' "$desired" | jq -c '.[]' | while IFS= read -r t; do
 done
 
 checkline ok "Issue types" "Bug, Feature, Task, Research"
+output_summary "Issue type provisioning"
 output_done "GitHub issue types are ready on $org"

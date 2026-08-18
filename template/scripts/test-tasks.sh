@@ -267,6 +267,46 @@ for category in SSH_KEY SSHKEY; do
     fi
 done
 
+echo "==> secret helpers print styled outcomes without echoing secret values"
+secret_value='sensitive-value-must-not-appear'
+rm -f "$op_edit_called"
+out=$(printf '%s' "$secret_value" |
+    PATH="${op_bin}:${PATH}" OP_FIXTURE_CATEGORY=LOGIN \
+        OP_EDIT_CALLED="$op_edit_called" VAULT=test ITEM=test FIELD=password \
+        ./scripts/secret-set-1p.sh 2>&1) || fail "secret:set:1p success fixture failed: $out"
+[ -e "$op_edit_called" ] || fail "secret:set:1p success fixture never edited the item"
+case "$out" in
+*'DONE: 1Password secret updated'*) ;;
+*) fail "secret:set:1p omitted its final outcome: $out" ;;
+esac
+case "$out" in
+*"$secret_value"*) fail "secret:set:1p printed the secret value" ;;
+esac
+
+gh_bin="${test_tmp}/gh-bin"
+gh_secret_capture="${test_tmp}/gh-secret"
+mkdir -p "$gh_bin"
+cat >"${gh_bin}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-} ${2:-}" = "secret set" ] || exit 1
+cat >"${GH_SECRET_CAPTURE:?}"
+EOF
+chmod +x "${gh_bin}/gh"
+out=$(printf '%s' "$secret_value" |
+    PATH="${gh_bin}:${PATH}" GH_SECRET_CAPTURE="$gh_secret_capture" \
+        NAME=DEPLOY_TOKEN REPO=owner/repo ./scripts/secret-set-gh.sh 2>&1) ||
+    fail "secret:set:gh success fixture failed: $out"
+[ "$(cat "$gh_secret_capture")" = "$secret_value" ] ||
+    fail "secret:set:gh changed the secret value sent to gh"
+case "$out" in
+*'DONE: GitHub secret updated'*) ;;
+*) fail "secret:set:gh omitted its final outcome: $out" ;;
+esac
+case "$out" in
+*"$secret_value"*) fail "secret:set:gh printed the secret value" ;;
+esac
+
 echo "==> tasks whose script demands a TTY are marked interactive, in both twins"
 # A run-time-only regression, and a total one: this Taskfile sets `output:
 # group` GLOBALLY, so Task pipes each task's stdout. A script guarding on

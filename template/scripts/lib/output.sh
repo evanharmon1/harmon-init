@@ -60,6 +60,42 @@ gum_style() {
     CLICOLOR_FORCE=1 gum style "$@" | cat
 }
 
+# action_banner KIND TITLE [DETAIL] — a task-family masthead for mutating
+# commands. KIND is deliberately semantic rather than a raw color: a setup,
+# secret, release, cleanup, sync, or install task should be recognizable before
+# the reader reaches its title. The word always remains visible, so color and
+# emoji reinforce meaning without carrying it alone.
+action_banner() {
+    local kind="$1" title="$2" detail="${3:-}" icon="✦" sgr="1;35" gum_color=212
+    case "$kind" in
+    setup) icon="⚙" && sgr="1;36" && gum_color=39 ;;
+    secret) icon="🔐" && sgr="1;35" && gum_color=135 ;;
+    release) icon="🚀" && sgr="1;33" && gum_color=220 ;;
+    clean) icon="◇" && sgr="1;33" && gum_color=214 ;;
+    sync) icon="↻" && sgr="1;34" && gum_color=75 ;;
+    install) icon="⬡" && sgr="1;32" && gum_color=42 ;;
+    esac
+
+    if $HAS_GUM && output_is_tty; then
+        {
+            printf '%s  %s\n' "$icon" "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')"
+            printf '%s\n' "$title"
+            [ -z "$detail" ] || printf '%s\n' "$detail"
+        } | gum_style --bold --foreground "$gum_color" --border double \
+            --border-foreground "$gum_color" --padding "0 2" --margin "0 0 1 0" | output_write
+    elif $USE_COLOR; then
+        output_emit '\n\033[%sm%s  %s\033[0m  \033[1m%s\033[0m\n' "$sgr" "$icon" \
+            "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')" "$title"
+        [ -z "$detail" ] || output_emit '\033[2m   %s\033[0m\n' "$detail"
+        output_emit '\033[2;90m%s\033[0m\n' '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    else
+        output_emit '\n== %s :: %s ==\n' \
+            "$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')" "$title"
+        [ -z "$detail" ] || output_emit '   %s\n' "$detail"
+        output_emit '%s\n' '----------------------------------------'
+    fi
+}
+
 section_header() {
     local title="$1"
     if $HAS_GUM && output_is_tty; then
@@ -170,9 +206,29 @@ checkline() {
     fi
 }
 
+# output_summary [TITLE] — a compact, scan-friendly outcome table. Counts are
+# collected by checkline, so action scripts get a truthful summary without
+# duplicating bookkeeping. The plain form is one stable key/value line for CI,
+# grep, and snapshots; the terminal form is intentionally more visual.
+output_summary() {
+    local title="${1:-Outcome}" total
+    total=$((SETUP_OK + SETUP_NO + SETUP_UNKNOWN + SETUP_NA))
+    if $USE_UNICODE; then
+        output_emit '\n  %s\n' "$(c '1;36' "╭─ $title")"
+        output_emit '  %s  %-12s %s\n' "$(c '1;32' '│ ✓')" "Succeeded" "$SETUP_OK"
+        output_emit '  %s  %-12s %s\n' "$(c '1;31' '│ ✗')" "Failed" "$SETUP_NO"
+        output_emit '  %s  %-12s %s\n' "$(c '1;33' '│ ?')" "Attention" "$SETUP_UNKNOWN"
+        output_emit '  %s  %-12s %s\n' "$(c '2' '│ –')" "Skipped" "$SETUP_NA"
+        output_emit '  %s\n' "$(c '1;36' "╰─ $total checks")"
+    else
+        output_emit '\nSUMMARY: %s - succeeded=%s failed=%s attention=%s skipped=%s total=%s\n' \
+            "$title" "$SETUP_OK" "$SETUP_NO" "$SETUP_UNKNOWN" "$SETUP_NA" "$total"
+    fi
+}
+
 output_done() {
     if $USE_UNICODE; then
-        output_emit '\n%s %s\n' "$(c '1;32' '✨')" "$(c '1' "$1")"
+        output_emit '\n%s %s\n' "$(c '1;32' '╰─ ✨')" "$(c '1;32' "$1")"
     else
         output_emit '\nDONE: %s\n' "$1"
     fi
@@ -180,7 +236,7 @@ output_done() {
 
 output_warning() {
     if $USE_UNICODE; then
-        output_emit '\n%s %s\n' "$(c '1;33' '⚠')" "$(c '1;33' "$1")"
+        output_emit '\n%s %s\n' "$(c '1;33' '╰─ ⚠')" "$(c '1;33' "$1")"
     else
         output_emit '\nWARN: %s\n' "$1"
     fi
