@@ -110,6 +110,24 @@ git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
 [ -n "$branch" ] || branch="$name"
 
+# An explicit --branch gets the SAME validation as the name, for the same
+# reasons: git rejects an invalid ref name only after the path is reserved
+# and locks are held (fail-late, with git's error instead of this early,
+# remedy-carrying one), and the branch-namespace lock key is derived from
+# this value, so its key space should match the name's by construction
+# rather than by clamping (#929). On the default path branch == name and
+# every check below already passed, so this cannot fire there.
+case "$branch" in
+/* | -*) die "invalid --branch '$branch': must not start with '/' or '-'" ;;
+*..*) die "invalid --branch '$branch': must not contain '..'" ;;
+esac
+case "$branch" in
+*[!A-Za-z0-9._/-]*) die "invalid --branch '$branch': use only A-Z a-z 0-9 . _ - /" ;;
+esac
+case "/$branch/" in
+*//* | */./*) die "invalid --branch '$branch': path components must not be empty or '.'" ;;
+esac
+
 # Anchor .worktrees/ to the MAIN worktree, never to whichever linked tree the
 # caller happens to be standing in — otherwise running this from inside a
 # worktree nests .worktrees/a/.worktrees/b and every tool's assumption about
