@@ -58,6 +58,7 @@ jobs:
 [% endif %]
       - run: task test:ci-results
       - run: task test:status
+      - run: task test:gh-scopes
       - run: task test:worktree
       - run: task test:lint-hygiene
 [% if use_release_please %]

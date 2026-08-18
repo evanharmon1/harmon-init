@@ -54,6 +54,7 @@ jobs:
       - run: task test:codex-review
       - run: task test:ci-results
       - run: task test:status
+      - run: task test:gh-scopes
       - run: task test:worktree
       - run: task test:renovate-pins
       - run: task test:lint-hygiene
