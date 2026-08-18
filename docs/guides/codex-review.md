@@ -388,11 +388,16 @@ Nothing in that depends on which reviewer produced the badge, so no
 provenance rule is needed: an under-labelled finding is caught by adjudicating
 it, wherever it came from.
 
-**The mechanism belongs to the checker, not to this prose.** How a cloud
-finding is answered depends on the surface it landed on, and
-`.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the authority
-on that — its exit codes are the contract, and the shepherd stage acts on
-them. Two things about it are worth knowing here because they are not
+**The mechanism belongs to the shepherd stage, not to this prose.** How a
+cloud finding is answered depends on the surface it landed on, and `AGENTS.md`
+is the authority — it carries both procedures, because a repository can answer
+`use_codex_review` yes and `use_skills_sync` no, which renders this guide with
+no vendored checker at all. Follow whichever of the two applies to your
+checkout; nothing below overrides it.
+
+**Where the pinned checker is vendored**
+(`.claude/skills/shepherd/assets/check-codex-cloud-review.sh`), its exit codes
+are the contract. Two things about it are worth knowing because they are not
 symmetric:
 
 - An **inline** finding is classified independently of its badge and is
@@ -400,11 +405,19 @@ symmetric:
   ordinary reply path with everything else.
 - A badged finding stated **outside** an inline thread has no reply linkage,
   and `settle` currently refuses a badge it does not recognize as `p[0-2]`.
-  So an unfixed, non-inline cloud P3 has no way to be recorded as settled:
-  fix it and push (which starts a fresh-head cycle and resolves it), or if it
-  genuinely needs no change, report the blocker and leave the PR draft. That
-  gap is being fixed upstream in evanharmon1/harmon-devkit#530 and re-pinned
-  here; it is a limitation of the current pin, not a rule.
+  So an unfixed, non-inline cloud P3 has no way to be recorded as settled
+  *by that checker*: fix it and push (which starts a fresh-head cycle and
+  resolves it), or if it genuinely needs no change, report the blocker and
+  leave the PR draft. That gap is being fixed upstream in
+  evanharmon1/harmon-devkit#530 and re-pinned here; it is a limitation of the
+  current pin, not a rule.
+
+**Where it is not vendored**, that limitation does not exist to work around:
+`AGENTS.md`'s checker-absent procedure governs, and a non-inline finding is
+answered and its disposition recorded on the pull request in the ordinary way.
+Do not import the paragraph above into that configuration — leaving a PR draft
+indefinitely over a `settle` call your checkout has no way to make would be
+the wrong reading.
 
 P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
 to the PR-shepherd stage, where they are fixed, declined with reasoning, or
