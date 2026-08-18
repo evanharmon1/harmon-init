@@ -374,6 +374,14 @@ P3s are adjudicated in the round they arrive and go no further: they are
 cosmetic by definition, so they neither gate a stage nor earn a sidecar
 entry. Fix one in place if it is worth the keystrokes, or say why not.
 
+That invariant is **adjudication guidance, not a tooling contract**. The
+pinned shepherd checker still matches severities as `p[0-2]`, so a P3 the
+*cloud* reviewer posts is invisible to it in both directions: posted as its
+own comment it classifies as findings that `settle` then refuses to record a
+disposition for, and appended to a clean verdict it passes unnoticed. Until
+that is fixed upstream and re-pinned (evanharmon1/harmon-devkit#530), settle a
+cloud P3 by hand and say so on the pull request.
+
 P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
 to the PR-shepherd stage, where they are fixed, declined with reasoning, or
 filed as follow-up issues. That keeps the expensive local loops focused on
