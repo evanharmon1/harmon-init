@@ -44,6 +44,17 @@ for tool in gh jq; do
     fi
 done
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+# Task buffers stdout in grouped mode. Keep legacy progress and the visual
+# outcome on one live stream so their chronology cannot be reversed.
+exec 1>&2
+OUTPUT_FD=2
+# shellcheck source=scripts/lib/output.sh
+. "$script_dir/lib/output.sh"
+
+action_banner setup "GitHub issue types" "Organization-wide work classification"
+kv "Organization" "$org"
+
 # Desired issue types — mirror the issue forms. Colors are GitHub's issue-type
 # palette: gray, blue, green, yellow, orange, red, pink, purple.
 desired='[
@@ -81,4 +92,6 @@ printf '%s' "$desired" | jq -c '.[]' | while IFS= read -r t; do
         -f description="$(printf '%s' "$t" | jq -r '.description')" >/dev/null
 done
 
-echo "==> Done — issue types on '$org': Bug, Feature, Task, Research"
+checkline ok "Issue types" "Bug, Feature, Task, Research"
+output_summary "Issue type provisioning"
+output_done "GitHub issue types are ready on $org"
