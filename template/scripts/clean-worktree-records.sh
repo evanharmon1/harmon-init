@@ -236,7 +236,24 @@ remove_one_record() (
         [ -e "$entry" ] || [ -L "$entry" ] || continue # -e dereferences: a broken symlink must still be judged
         entry_name="${entry##*/}"
         case "$entry_name" in
-        gitdir | commondir | HEAD | locked | COMMIT_EDITMSG | ORIG_HEAD | FETCH_HEAD | index | logs) : ;;                                                                                                  # validated by the guards here, disposable scratch, or reflogs (accepted loss by design)
+        gitdir | commondir | HEAD | locked | COMMIT_EDITMSG | ORIG_HEAD | FETCH_HEAD | index)
+            # Validated by the guards here or disposable scratch — but only
+            # as the regular files git writes: a directory or symlink in one
+            # of these slots would skip its -f validator yet still be
+            # rm -rf'd with the record (challenge r8).
+            if [ ! -f "$entry" ] || [ -L "$entry" ]; then
+                echo "SKIP  record '$record' — entry '$entry_name' is not the regular file git writes there; refusing to sweep malformed state (inspect $admin_dir)"
+                exit 3 # type mismatch refuses
+            fi
+            ;;
+        logs)
+            # Reflogs (accepted loss by design) — as the directory git
+            # writes, same type gate as above.
+            if [ ! -d "$entry" ] || [ -L "$entry" ]; then
+                echo "SKIP  record '$record' — entry 'logs' is not the directory git writes there; refusing to sweep malformed state (inspect $admin_dir)"
+                exit 3 # type mismatch refuses
+            fi
+            ;;
         deferred-findings | adjudication-ledger | shepherd-codex | refs | rebase-merge | rebase-apply | MERGE_HEAD | MERGE_AUTOSTASH | CHERRY_PICK_HEAD | REVERT_HEAD | BISECT_LOG | config.worktree) : ;; # carried-state names: the scan above refused them when non-empty
         info)
             for info_entry in "$entry"/* "$entry"/.[!.]* "$entry"/..?*; do
@@ -405,7 +422,13 @@ remove_one_record() (
                 exit 5
             fi
         elif [ "$pin_now" != "$record_head" ]; then
-            echo "CRITICAL  $pin_ref no longer pins $record_head (it now holds $pin_now) — rescue the detached commit NOW: git branch $(shell_quote "rescue/$record") $record_head"
+            # The record is already gone, so the commit must not ride on the
+            # human seeing the diagnostic alone: best-effort re-protect under
+            # a fresh unique name — create-only, so the foreign write to the
+            # original pin is never overwritten (challenge r8).
+            rescue_ref="refs/session-cleanup/pin/$record-rescue-$(printf '%.7s' "$record_head")"
+            LEFTHOOK=0 git update-ref "$rescue_ref" "$record_head" "" 2>/dev/null || true
+            echo "CRITICAL  $pin_ref no longer pins $record_head (it now holds $pin_now) — a rescue ref was created at $rescue_ref if possible (verify: git rev-parse $(shell_quote "$rescue_ref")); rescue the detached commit NOW: git branch $(shell_quote "rescue/$record") $record_head"
             exit 5
         fi
         # Reporting only — pins are settled by humans, never auto-dropped

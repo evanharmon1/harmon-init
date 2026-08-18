@@ -952,6 +952,10 @@ expect_not_contains "$retarg_out" "KEPT  refs/session-cleanup/pin/retarg" "pin r
 [ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/retarg)" = "$ret_main" ] ||
     fail "pin retarget: the foreign write was overwritten — settlement is human-only"
 git -C "$fixture" cat-file -e "$ret_orph" || fail "pin retarget: orphan commit lost from the object db"
+short_r="$(printf '%.7s' "$ret_orph")"
+[ "$(git -C "$fixture" rev-parse --quiet --verify "refs/session-cleanup/pin/retarg-rescue-$short_r")" = "$ret_orph" ] ||
+    fail "pin retarget: no rescue ref re-protects the orphan whose record is already gone"
+git -C "$fixture" update-ref -d "refs/session-cleanup/pin/retarg-rescue-$short_r"
 git -C "$fixture" update-ref -d refs/session-cleanup/pin/retarg
 echo "ok: a pin retargeted mid-run fails closed, never reported kept"
 
@@ -1224,6 +1228,27 @@ symrec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" 
     fail "record prune failed after the symlinks were cleared: $symrec_ok_out"
 expect_contains "$symrec_ok_out" "pruned record 'symrec'" "symlink: cleared record prunes normally"
 echo "ok: symlinked state paths are carried state and broken links are judged"
+
+# ── Case E7y: an allowlisted name of the wrong type refuses the sweep ──────
+# ORIG_HEAD as a DIRECTORY skips its -f validator yet a basename-only
+# allowlist would still admit it and rm -rf its contents.
+
+mkdir -p "$gitdir/worktrees/typerec/ORIG_HEAD"
+echo "trapped" >"$gitdir/worktrees/typerec/ORIG_HEAD/contents"
+printf 'ref: refs/heads/main\n' >"$gitdir/worktrees/typerec/HEAD"
+printf '%s\n' "/nonexistent/typerec/.git" >"$gitdir/worktrees/typerec/gitdir"
+
+if typerec_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)"; then
+    fail "record prune exited zero with a mistyped allowlisted entry present: $typerec_out"
+fi
+expect_contains "$typerec_out" "entry 'ORIG_HEAD' is not the regular file git writes there" "type gate: mistyped entry refused"
+[ -d "$gitdir/worktrees/typerec" ] || fail "type gate: record swept despite malformed state"
+
+rm -rf "$gitdir/worktrees/typerec/ORIG_HEAD"
+typerec_ok_out="$(cd "$fixture" && bash scripts/clean-worktree-records.sh 2>&1)" ||
+    fail "record prune failed after the malformed entry was cleared: $typerec_ok_out"
+expect_contains "$typerec_ok_out" "pruned record 'typerec'" "type gate: well-formed record prunes normally"
+echo "ok: an allowlisted name of the wrong type refuses the sweep"
 
 # ── Case E7s: pin-enumeration failure never reports cleanup complete ───────
 # A broken ref backend is not an empty pin namespace; the empty-plan path
