@@ -51,7 +51,10 @@ do_install=1
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --branch)
-        [ "$#" -ge 2 ] || die "--branch needs a value"
+        # Non-empty is checked HERE, not by the later default: an empty
+        # supplied value would otherwise fall through `branch=name` and
+        # silently create a branch the caller never asked for (#929).
+        [ "$#" -ge 2 ] && [ -n "$2" ] || die "--branch needs a non-empty value"
         branch="$2"
         shift 2
         ;;
@@ -109,6 +112,26 @@ esac
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
 [ -n "$branch" ] || branch="$name"
+
+# Validate the branch EARLY — git itself rejects an invalid ref name only
+# after the path is reserved and locks are held, with its own error instead
+# of this remedy-carrying one (#929). The validator is git's own branch
+# grammar, deliberately NOT the worktree-name charset: branch names are not
+# charset-restricted (create-or-attach must accept an existing
+# `feature+flag` or `release@2026` — docs/conventions.md § Worktrees), and
+# the branch-namespace lock key already byte-clamps arbitrary names safely
+# (#916). check-ref-format is local and side-effect-free, so the full
+# grammar is settled before any lock, reservation, or ref write.
+branch_canon="$(git check-ref-format --branch "$branch" 2>/dev/null)" ||
+    die "invalid branch name '$branch' (from --branch, or the worktree name it defaults to): rejected by git check-ref-format --branch"
+# check-ref-format --branch also EXPANDS checkout shorthand (`@{-1}` exits 0
+# and prints the previous branch), while everything downstream — the branch
+# lock, worktree add -b, the report — would keep the literal value: wrong
+# lock identity, and a deleted previous branch silently recreated under a
+# name the caller never wrote (challenge r3). Requiring the canonical output
+# to equal the input closes that whole class.
+[ "$branch_canon" = "$branch" ] ||
+    die "invalid branch name '$branch': checkout shorthand is not accepted here — name the branch explicitly (this resolves to '$branch_canon')"
 
 # Anchor .worktrees/ to the MAIN worktree, never to whichever linked tree the
 # caller happens to be standing in — otherwise running this from inside a
