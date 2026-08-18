@@ -732,6 +732,20 @@ fi
 rm -rf "$midrebase_git/rebase-merge"
 rm_wt midrebase >/dev/null || fail "worktree-rm.sh failed once the rebase state was cleared"
 
+# MERGE_AUTOSTASH can be the ONLY marker: a `git merge --autostash` killed
+# after the autostash is written but before MERGE_HEAD exists leaves the
+# user's dirty work referenced by that one file alone (#951).
+echo "==> worktree:rm refuses a tree holding only MERGE_AUTOSTASH"
+new autostash >/dev/null || fail "worktree-new.sh failed for the autostash case"
+autostash_git="$(git -C "$fixture/.worktrees/autostash" rev-parse --path-format=absolute --git-dir)"
+printf '%s\n' "$(git -C "$fixture/.worktrees/autostash" rev-parse HEAD)" >"$autostash_git/MERGE_AUTOSTASH"
+if rm_wt autostash >/dev/null 2>&1; then
+    fail "worktree-rm.sh removed a tree with an interrupted merge --autostash"
+fi
+[ -d "$fixture/.worktrees/autostash" ] || fail "the autostash tree was removed despite the refusal"
+rm -f "$autostash_git/MERGE_AUTOSTASH"
+rm_wt autostash >/dev/null || fail "worktree-rm.sh failed once the autostash state was cleared"
+
 echo "==> worktree:rm refuses a detached HEAD no branch contains"
 new detached >/dev/null || fail "worktree-new.sh failed for the detached case"
 git -C "$fixture/.worktrees/detached" checkout -q --detach

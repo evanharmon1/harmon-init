@@ -473,9 +473,13 @@ else
     # --amend` at that stop, a commit reachable from nothing else. Removing the
     # tree drops that state, and gc eventually collects the commit. Likewise a
     # detached HEAD ahead of every branch: nothing else references it.
+    # MERGE_AUTOSTASH is listed on its own because it can exist alone: a
+    # `git merge --autostash` killed after the autostash is written but before
+    # MERGE_HEAD exists leaves the user's dirty work referenced by that one
+    # file and nothing else.
     if [ "$force" -eq 0 ]; then
         tree_git_dir="$(git -C "$tree" rev-parse --path-format=absolute --git-dir)"
-        for op_state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+        for op_state in rebase-merge rebase-apply MERGE_HEAD MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
             if [ -e "$tree_git_dir/$op_state" ]; then
                 die "$tree has an in-progress git operation ($op_state) — finish or abort it, or re-run with --force to discard it"
             fi
