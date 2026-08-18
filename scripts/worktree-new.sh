@@ -122,8 +122,16 @@ git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 # the branch-namespace lock key already byte-clamps arbitrary names safely
 # (#916). check-ref-format is local and side-effect-free, so the full
 # grammar is settled before any lock, reservation, or ref write.
-git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
+branch_canon="$(git check-ref-format --branch "$branch" 2>/dev/null)" ||
     die "invalid branch name '$branch' (from --branch, or the worktree name it defaults to): rejected by git check-ref-format --branch"
+# check-ref-format --branch also EXPANDS checkout shorthand (`@{-1}` exits 0
+# and prints the previous branch), while everything downstream — the branch
+# lock, worktree add -b, the report — would keep the literal value: wrong
+# lock identity, and a deleted previous branch silently recreated under a
+# name the caller never wrote (challenge r3). Requiring the canonical output
+# to equal the input closes that whole class.
+[ "$branch_canon" = "$branch" ] ||
+    die "invalid branch name '$branch': checkout shorthand is not accepted here — name the branch explicitly (this resolves to '$branch_canon')"
 
 # Anchor .worktrees/ to the MAIN worktree, never to whichever linked tree the
 # caller happens to be standing in — otherwise running this from inside a

@@ -2232,6 +2232,17 @@ for badbr in '../evil' '/abs' '-lead' 'a b' 'a//b' 'a/./b' '.topic' 'topic.' 'to
     # the early guard deleted pass this very case.
     case "$badbr_out" in *"rejected by git check-ref-format --branch"*) : ;; *) fail "the invalid --branch '$badbr' was not refused by the early guard: $badbr_out" ;; esac
 done
+# Checkout SHORTHAND must be refused even though check-ref-format accepts
+# it: with checkout history, `--branch '@{-1}'` exits 0 there while
+# expanding to the previous branch — the literal value would then feed the
+# branch lock and worktree add (#929 challenge r3). Needs real history, or
+# the shorthand fails the validator for the wrong reason.
+git -C "$fixture" switch -qc shorthand-prev
+git -C "$fixture" switch -q - >/dev/null 2>&1
+short_out="$(new brcheck --branch '@{-1}' 2>&1)" &&
+    fail "worktree-new.sh accepted the checkout shorthand @{-1} as a branch"
+case "$short_out" in *"checkout shorthand is not accepted"*) : ;; *) fail "the @{-1} shorthand was refused for the wrong reason: $short_out" ;; esac
+git -C "$fixture" branch -qD shorthand-prev
 # An explicitly EMPTY --branch must be refused, not silently defaulted to
 # the worktree name (#929 challenge r1).
 empty_out="$(new brcheck --branch '' 2>&1)" &&
