@@ -113,28 +113,15 @@ git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
 [ -n "$branch" ] || branch="$name"
 
-# An explicit --branch gets the SAME validation as the name, for the same
-# reasons: git rejects an invalid ref name only after the path is reserved
-# and locks are held (fail-late, with git's error instead of this early,
-# remedy-carrying one), and the branch-namespace lock key is derived from
-# this value, so its key space should match the name's by construction
-# rather than by clamping (#929). On the default path branch == name and
-# every check below already passed, so this cannot fire there.
-case "$branch" in
-/* | -*) die "invalid --branch '$branch': must not start with '/' or '-'" ;;
-*..*) die "invalid --branch '$branch': must not contain '..'" ;;
-esac
-case "$branch" in
-*[!A-Za-z0-9._/-]*) die "invalid --branch '$branch': use only A-Z a-z 0-9 . _ - /" ;;
-esac
-case "/$branch/" in
-*//* | */./*) die "invalid --branch '$branch': path components must not be empty or '.'" ;;
-esac
-# The charset is policy; git's ref grammar is stricter still in corners the
-# charset cannot see (a component starting with '.', a trailing '.', a
-# '.lock' suffix). check-ref-format is local and side-effect-free, so the
-# full grammar is settled here too — before any lock, reservation, or ref
-# write — instead of failing late inside `git worktree add`.
+# Validate the branch EARLY — git itself rejects an invalid ref name only
+# after the path is reserved and locks are held, with its own error instead
+# of this remedy-carrying one (#929). The validator is git's own branch
+# grammar, deliberately NOT the worktree-name charset: branch names are not
+# charset-restricted (create-or-attach must accept an existing
+# `feature+flag` or `release@2026` — docs/conventions.md § Worktrees), and
+# the branch-namespace lock key already byte-clamps arbitrary names safely
+# (#916). check-ref-format is local and side-effect-free, so the full
+# grammar is settled before any lock, reservation, or ref write.
 git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
     die "invalid branch name '$branch' (from --branch, or the worktree name it defaults to): rejected by git check-ref-format --branch"
 

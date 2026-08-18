@@ -2216,32 +2216,21 @@ fi
 [ "$(git -C "$fixture" config --get branch.rollcfg.pushRemote || true)" = "myfork" ] ||
     fail "the stale-config refusal modified an unrelated branch config key"
 
-echo "==> an explicit --branch gets the same validation as the name, before any side effects"
+echo "==> an invalid --branch is refused early, before any lock or side effect"
 # The front door of the creation path: an explicit --branch used to bypass
-# every check the name gets and fail late, inside git, with locks already
-# held — and metacharacter branch names reached genuinely bad paths before
-# the #916 review hardened them (#929). The charset refusal removes the
-# whole class, which is also why the former metacharacter-branch
-# stale-config case (PR #932 cloud review) is superseded: 'rollcfg$x' can
-# no longer reach the stale-config guard at all — it is refused here, with
-# nothing created and nothing locked.
-git -C "$fixture" config 'branch.rollcfg$x.remote' oldrem
-for badbr in 'rollcfg$x' '../evil' '/abs' '-lead' 'a b' 'a//b' 'a/./b'; do
+# validation entirely and fail late, inside git, with the path reserved and
+# locks held (#929). The validator is git's own branch grammar
+# (check-ref-format), deliberately NOT the worktree-name charset: branch
+# names legally carry metacharacters, and create-or-attach must keep
+# accepting an existing 'feature+flag' (challenge r2).
+for badbr in '../evil' '/abs' '-lead' 'a b' 'a//b' 'a/./b' '.topic' 'topic.' 'topic.lock' 'topic/.child'; do
     badbr_out="$(new brcheck --branch "$badbr" 2>&1)" &&
         fail "worktree-new.sh accepted the invalid --branch '$badbr'"
-    case "$badbr_out" in *"invalid --branch"*) : ;; *) fail "the invalid --branch '$badbr' was refused for the wrong reason: $badbr_out" ;; esac
-done
-# Charset-clean values git's ref grammar still rejects (leading-dot
-# component, trailing dot, .lock suffix) must fail the check-ref-format
-# guard, early, not `git worktree add` (#929 challenge r1).
-for badbr in '.topic' 'topic.' 'topic.lock' 'topic/.child'; do
-    badbr_out="$(new brcheck --branch "$badbr" 2>&1)" &&
-        fail "worktree-new.sh accepted the grammar-invalid --branch '$badbr'"
     # The distinctive prefix matters: git's own LATE failure ("fatal: ...
     # not a valid branch name / hint: See 'git help check-ref-format'")
     # also mentions check-ref-format, and a loose match let a mutant with
     # the early guard deleted pass this very case.
-    case "$badbr_out" in *"rejected by git check-ref-format --branch"*) : ;; *) fail "the grammar-invalid --branch '$badbr' was not refused by the early guard: $badbr_out" ;; esac
+    case "$badbr_out" in *"rejected by git check-ref-format --branch"*) : ;; *) fail "the invalid --branch '$badbr' was not refused by the early guard: $badbr_out" ;; esac
 done
 # An explicitly EMPTY --branch must be refused, not silently defaulted to
 # the worktree name (#929 challenge r1).
@@ -2256,7 +2245,25 @@ echo "==> the default branch = name path is unchanged"
 new brcheck >/dev/null || fail "worktree-new.sh failed with the default branch after --branch refusals"
 rm_wt brcheck >/dev/null || fail "cleanup of the default-branch tree failed"
 git -C "$fixture" branch -D brcheck >/dev/null 2>&1 || true
+
+echo "==> the stale-config remedy is shell-quoted for a metacharacter branch name"
+# Branch names — unlike whitelisted worktree names — legally carry \$, ;,
+# and quotes, so the pasted remedy must quote the key: unquoted,
+# branch.rollcfg\$x.remote expands \$x away in the user's shell and clears
+# the wrong key, or worse (PR #932 cloud review). This also pins the
+# create-or-attach contract: a git-valid metacharacter branch passes the
+# early --branch validation and reaches the deeper guards (#929
+# challenge r2).
+git -C "$fixture" config 'branch.rollcfg$x.remote' oldrem
+git -C "$fixture" push -q origin 'HEAD:refs/heads/rollcfg$x'
+git -C "$fixture" update-ref -d 'refs/remotes/origin/rollcfg$x' 2>/dev/null || true
+metacfg_out="$(new rollcfg-meta --branch 'rollcfg$x' 2>&1)" &&
+    fail "worktree-new.sh accepted a metacharacter branch with stale config"
+case "$metacfg_out" in *"stale config from a deleted branch"*) : ;; *) fail "the metacharacter branch was refused for the wrong reason: $metacfg_out" ;; esac
+case "$metacfg_out" in *"--unset-all 'branch.rollcfg\$x.remote'"*) : ;; *) fail "the stale-config remedy was not shell-quoted: $metacfg_out" ;; esac
+refute_exists "$fixture/.worktrees/rollcfg-meta" "the metacharacter refusal left a tree behind"
 git -C "$fixture" config --unset 'branch.rollcfg$x.remote'
+git -C "$fixture" push -q origin ':refs/heads/rollcfg$x'
 
 echo "==> a non-local stale branch config value does not refuse creation"
 # PR #932 cloud review: the stale-debris guard exists for LOCAL config this
