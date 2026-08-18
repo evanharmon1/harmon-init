@@ -20,8 +20,11 @@
 # so the resolved scope is written INTO the instructions instead.
 # Codex reviews read-only; findings are advisory hypotheses for the primary
 # agent/human to adjudicate (AGENTS.md "Second-Model Review") — this is never
-# part of `verify`/`ci`. Both modes ask for P0/P1/P2-labelled findings; only
-# P0/P1 gate the local loop, P2s are reported and deferred to the PR stage.
+# part of `verify`/`ci`. Both modes ask for P0/P1/P2/P3-labelled findings;
+# only P0/P1 gate the local loop, P2s are reported and deferred to the PR
+# stage, and P3s are cosmetic — reported and adjudicated, never deferred.
+# A finding badged off that scale, or not badged at all, is adjudicated as at
+# least a P2, never dropped for being unrecognized.
 # No target path may invoke Codex with an empty scope; every one of them
 # refuses and exits non-zero instead (see refuse_empty_scope).
 # Requires an authenticated Codex CLI (`codex login`);
@@ -427,6 +430,11 @@ fi
 # review output: its priority labels are an undocumented convention that can
 # change under us, and the local dev loop gates on this scale (AGENTS.md
 # "Second-Model Review"). Stating it in the prompt keeps the gate meaningful.
+# The scale is closed at four levels, but the CLOUD reviewer is not driven by
+# this prompt and has been seen emitting off-scale badges (a P3 on #918, back
+# when the scale stopped at P2), so the unrecognized-badge invariant below is
+# written for both audiences: an unknown or missing badge is worth at least a
+# P2 of adjudication.
 instructions="${instructions}
 
 Label EVERY finding with a priority, as the first token of the finding:
@@ -437,14 +445,20 @@ Label EVERY finding with a priority, as the first token of the finding:
        trigger. Merge-blocking unless argued down with evidence.
   P2 — worth knowing, but not merge-blocking: hardening, edge cases behind
        unlikely preconditions, maintainability, non-critical test gaps.
+  P3 — cosmetic or purely informational: wording, naming, formatting, an
+       observation with no defect behind it. Never gating, and not carried
+       into the pull request description the way a P2 is.
 
 Only P0 and P1 decide whether this review passes. Still report P2s in full —
 they are triaged later, once the pull request is open — but do not let them
 hold the stage open. Do not inflate a P2 to P1 to make it heard, and do not
 withhold or soften a P2 because it is non-gating: a P2 reported here is
 carried into the pull request description, so an unreported one is lost
-outright. If there are no P0 or P1 findings, say so explicitly and in those
-terms."
+outright. The same holds one level down: report a P3 as a P3 rather than
+inflating it to P2 or dropping it for being small. Use these four labels and
+no others — a finding that arrives off this scale, or with no label at all,
+is adjudicated as at least a P2. If there are no P0 or P1 findings, say so
+explicitly and in those terms."
 
 if [ -n "$focus" ]; then
     instructions="${instructions}

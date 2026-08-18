@@ -105,6 +105,10 @@ echo "$out" | grep -q "Still report P2s" || fail "challenge prompt missing the r
 # An unreported P2 never reaches the PR body, so the handoff clause is what
 # makes "reported but non-gating" different from "ignored".
 echo "$out" | grep -q "carried into the pull request description" || fail "challenge prompt missing the P2 handoff clause: $out"
+# P3 is cosmetic and the cloud reviewer emits badges this prompt never sent,
+# so both the fourth level and the off-scale floor have to survive edits.
+echo "$out" | grep -q "P3 — cosmetic" || fail "challenge prompt missing the P3 level: $out"
+echo "$out" | grep -q "adjudicated as at least a P2" || fail "challenge prompt missing the off-scale badge floor: $out"
 
 echo "==> origin/HEAD outranks a stray local main"
 git branch -q main "$(git rev-list --max-parents=0 HEAD)"
@@ -127,6 +131,8 @@ echo "$out" | grep -q "VERIFICATION-CHECKPOINT" || fail "review mode instruction
 echo "$out" | grep -q "watch the hooks" || fail "focus text missing from prompt: $out"
 echo "$out" | grep -q "Only P0 and P1 decide" || fail "review prompt missing the P0/P1 gating rule: $out"
 echo "$out" | grep -q "carried into the pull request description" || fail "review prompt missing the P2 handoff clause: $out"
+echo "$out" | grep -q "P3 — cosmetic" || fail "review prompt missing the P3 level: $out"
+echo "$out" | grep -q "adjudicated as at least a P2" || fail "review prompt missing the off-scale badge floor: $out"
 
 echo "==> --base warns when the ref lags an upstream HEAD already contains"
 # The reported bug: `--base main` on a checkout whose local main trails

@@ -162,7 +162,7 @@ Two things not to change when backgrounding:
   like when each one ran.
 - **The runner.** Background `task challenge` itself, not
   `/codex:adversarial-review --background`: the slash command calls Codex
-  directly, so it never receives the P0/P1/P2 scale that
+  directly, so it never receives the P0/P1/P2/P3 scale that
   `scripts/codex-review.sh` writes into the prompt. Fine for an interactive
   spot-check; it cannot establish the adjudicated-clean rounds this loop gates
   on.
@@ -356,11 +356,23 @@ silently drop one:
 | `P0` | Breaks correctness, security, or data integrity in ordinary use, or breaks an existing contract | Yes |
 | `P1` | A real defect or materially wrong design decision with a plausible trigger | Yes |
 | `P2` | Worth knowing, not merge-blocking: hardening, unlikely edge cases, maintainability, non-critical test gaps | No |
+| `P3` | Cosmetic or purely informational: wording, naming, formatting, an observation with no defect behind it | No |
 
 The scale lives in the prompt that `scripts/codex-review.sh` builds — not in
 the Codex CLI's own priority labels, which are an undocumented convention
 that can change. Keeping the definition local means the gate still means what
 it says when Codex's output format moves.
+
+That prompt reaches the **local** tasks only. Codex **cloud** review runs on
+its own instructions and has been seen badging a finding off this scale (a
+real `P3` on `harmon-init#918`, before P3 was defined here). So the scale
+closes with an invariant rather than a list: **a finding badged off this
+scale, or not badged at all, is adjudicated as at least a P2** — a future
+`P4` is triaged, never dropped for being unrecognized.
+
+P3s are adjudicated in the round they arrive and go no further: they are
+cosmetic by definition, so they neither gate a stage nor earn a sidecar
+entry. Fix one in place if it is worth the keystrokes, or say why not.
 
 P2s are **reported, adjudicated, and deferred**, never suppressed: they carry
 to the PR-shepherd stage, where they are fixed, declined with reasoning, or
