@@ -3065,7 +3065,21 @@ nl_parent="$test_tmp/nl-cone"
 mkdir -p "$nl_parent"
 nl_tree="$nl_parent/trunc
 tail"
-if git -C "$fixture" worktree add -q "$nl_tree" -b feat/newline-path 2>/dev/null; then
+# Probe the FILESYSTEM's capability directly. Treating any `git worktree add`
+# failure as "newlines unsupported" would swallow a broken hook, a branch
+# collision, or a git regression and silently drop this coverage while the
+# suite still reported a pass (challenge r2).
+nl_probe="$nl_parent/probe
+newline"
+if mkdir -p "$nl_probe" 2>/dev/null && [ -d "$nl_probe" ]; then
+    rmdir "$nl_probe" 2>/dev/null || true
+    nl_supported=1
+else
+    nl_supported=0
+fi
+if [ "$nl_supported" -eq 0 ]; then
+    echo "    (skipped: this filesystem rejects a newline in a path)"
+elif git -C "$fixture" worktree add -q "$nl_tree" -b feat/newline-path; then
     rm_trunc="$test_tmp/rm-trunc.log"
     if rm_wt trunc >"$rm_trunc" 2>&1; then
         fail "worktree:rm resolved a truncated newline path as a real worktree (#963): $(cat "$rm_trunc")"
@@ -3079,8 +3093,79 @@ if git -C "$fixture" worktree add -q "$nl_tree" -b feat/newline-path 2>/dev/null
         fail "the truncated prefix of a newline path resolved as a real worktree (#963): $(cat "$rm_trunc")"
     git -C "$fixture" worktree remove --force "$nl_tree"
 else
-    echo "    (skipped: this filesystem rejects a newline in a path)"
+    fail "could not create a newline-bearing worktree although the filesystem accepts newline paths (#963)"
 fi
+
+# Two worktrees sharing a basename make the name ambiguous. The refusal must
+# name the ones that actually collided — printing the whole registry hides
+# which two are in conflict and points at unrelated paths (challenge r2).
+amb_root="$test_tmp/amb"
+git -C "$fixture" worktree add -q "$amb_root/a/twin" -b feat/twin-a ||
+    fail "could not create the first #963 ambiguity worktree"
+git -C "$fixture" worktree add -q "$amb_root/b/twin" -b feat/twin-b ||
+    fail "could not create the second #963 ambiguity worktree"
+git -C "$fixture" worktree add -q "$amb_root/unrelated/bystander" -b feat/bystander ||
+    fail "could not create the #963 ambiguity bystander"
+rm_amb="$test_tmp/rm-ambiguous.log"
+if rm_wt twin >"$rm_amb" 2>&1; then
+    fail "worktree:rm reported success for an ambiguous name (#963): $(cat "$rm_amb")"
+fi
+grep -q 'is ambiguous' "$rm_amb" ||
+    fail "an ambiguous name did not report ambiguity (#963): $(cat "$rm_amb")"
+grep -q "$amb_root/a/twin" "$rm_amb" && grep -q "$amb_root/b/twin" "$rm_amb" ||
+    fail "the ambiguity refusal did not name both colliding worktrees (#963): $(cat "$rm_amb")"
+grep -q 'bystander' "$rm_amb" &&
+    fail "the ambiguity refusal listed an unrelated worktree as a collision (#963): $(cat "$rm_amb")"
+git -C "$fixture" worktree remove --force "$amb_root/a/twin"
+git -C "$fixture" worktree remove --force "$amb_root/b/twin"
+git -C "$fixture" worktree remove --force "$amb_root/unrelated/bystander"
+
+# An in-cone worktree whose relative path is not a name this command accepts:
+# the remedy must be git's own command, shell-escaped. Emitting
+# `task worktree:rm -- team space/leaf` would split on the space and be
+# rejected by the charset guard anyway (challenge r2).
+mkdir -p "$fixture/.worktrees/team space"
+git -C "$fixture" worktree add -q ".worktrees/team space/leaf" -b feat/spaced-cone ||
+    fail "could not create the #963 unaddressable in-cone worktree"
+rm_unaddr="$test_tmp/rm-unaddressable.log"
+if rm_wt leaf >"$rm_unaddr" 2>&1; then
+    fail "worktree:rm reported success for an unaddressable in-cone path (#963): $(cat "$rm_unaddr")"
+fi
+grep -q 'git worktree remove' "$rm_unaddr" ||
+    fail "the refusal did not fall back to git's own command for an unaddressable path (#963): $(cat "$rm_unaddr")"
+grep -q 'task worktree:rm --' "$rm_unaddr" &&
+    fail "the refusal suggested a task invocation that cannot parse (#963): $(cat "$rm_unaddr")"
+
+# The candidate listing's first column must be a name this command actually
+# takes. For a NESTED in-cone worktree that is the relative path, not the
+# basename: .worktrees/feat/deep is addressed as feat/deep, and advertising
+# "deep" sends the operator through an extra refusal to discover that.
+new nestedlist --no-install >/dev/null ||
+    fail "could not create the #963 nested-listing fixture"
+# `git worktree move` does not create the destination's parent.
+mkdir -p "$fixture/.worktrees/feat"
+git -C "$fixture" worktree move .worktrees/nestedlist ".worktrees/feat/deep" ||
+    fail "could not nest the #963 listing fixture"
+rm_list="$test_tmp/rm-listing.log"
+rm_wt definitely-absent-name >"$rm_list" 2>&1 || true
+grep -qE '^  feat/deep( |$)' "$rm_list" ||
+    fail "the listing did not offer the nested worktree's usable name (#963): $(cat "$rm_list")"
+# ...and an unaddressable path must not be advertised as if it were a name.
+grep -qE '^  \(git worktree remove\)' "$rm_list" ||
+    fail "the listing did not mark the unaddressable in-cone path as needing git's command (#963): $(cat "$rm_list")"
+# ...and specifically for an OUT-OF-CONE worktree, which the in-cone-with-space
+# case above cannot prove: classifying every path as in-cone would advertise an
+# absolute path as though it were a name this command takes.
+outcone_list="$test_tmp/outcone-list"
+git -C "$fixture" worktree add -q "$outcone_list/stray" -b feat/outcone-listing ||
+    fail "could not create the #963 out-of-cone listing fixture"
+rm_list2="$test_tmp/rm-listing-outcone.log"
+rm_wt definitely-absent-name >"$rm_list2" 2>&1 || true
+grep -qE "^  \(git worktree remove\)  .*$outcone_list/stray" "$rm_list2" ||
+    fail "the listing advertised an out-of-cone worktree under a name this command cannot take (#963): $(cat "$rm_list2")"
+git -C "$fixture" worktree remove --force "$outcone_list/stray"
+git -C "$fixture" worktree remove --force ".worktrees/feat/deep"
+git -C "$fixture" worktree remove --force ".worktrees/team space/leaf"
 
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 

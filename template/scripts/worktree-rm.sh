@@ -229,8 +229,10 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         fi
     }
 
-    resolved=""
-    resolved_count=0
+    # Matches are COLLECTED rather than counted, so the ambiguity branch can
+    # name the worktrees that actually collided instead of reprinting the whole
+    # registry (challenge r2).
+    matches=()
     while IFS= read -r -d '' candidate_tree; do
         [ -n "$candidate_tree" ] || continue
         # The main checkout is registered but is not a linked worktree, and this
@@ -244,34 +246,56 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         candidate_record=""
         candidate_admin="$(record_admin_dir "$candidate_tree" 2>/dev/null || true)"
         [ -n "$candidate_admin" ] && candidate_record="${candidate_admin##*/}"
+        # Basename and admin-record name only. A candidate's path RELATIVE to
+        # .worktrees/ is deliberately NOT compared: it can equal $name only when
+        # the constructed path IS this candidate's path, and that case never
+        # reaches here — the conventional-path check above already accounted for
+        # it. Matching on it was unreachable code (found verifying challenge r2).
         if [ "$candidate_name" = "$name" ] || [ "$candidate_record" = "$name" ]; then
-            resolved="$candidate_tree"
-            resolved_count=$((resolved_count + 1))
+            matches+=("$candidate_tree")
         fi
     done < <(emit_worktree_paths)
+    resolved_count=${#matches[@]}
 
     if [ "$resolved_count" -eq 1 ]; then
+        resolved="${matches[0]}"
         # Two different situations, two different remedies. In-cone means this
-        # command CAN remove it and the caller simply used the wrong name for
-        # it — a record keeps its creation-time name across a move, so the
-        # record name and the directory name diverge and only the directory
-        # name works here. Out-of-cone means no argument to this command will
-        # reach it, because every path below is written against
-        # <main_root>/.worktrees/, so the remedy is git's own command.
+        # command CAN remove it and the caller simply used a name that no longer
+        # points at it — a record keeps its creation-time name across a move.
+        # Out-of-cone means no argument to this command will reach it, because
+        # every path below is written against <main_root>/.worktrees/, so the
+        # remedy is git's own command.
+        resolved_rel=""
         case "$resolved" in
-        "$main_root"/.worktrees/*)
-            die "no worktree at $tree, but '$name' names the worktree at $resolved — its admin record and its directory have different names (a move does that), and only the directory name resolves here: task worktree:rm -- ${resolved#"$main_root"/.worktrees/}"
-            ;;
-        *)
-            die "no worktree at $tree, but '$name' names the worktree at $resolved — that is outside $main_root/.worktrees/, which this command never removes from, so remove it with: git worktree remove $(printf '%q' "$resolved")"
-            ;;
+        "$main_root"/.worktrees/*) resolved_rel="${resolved#"$main_root"/.worktrees/}" ;;
         esac
+        # An in-cone path is only reachable through THIS command when its
+        # relative form is a name this command would accept. A hand-registered
+        # `.worktrees/team space/foo` is in-cone yet unnameable here: the
+        # suggested `task worktree:rm -- team space/foo` would split on the
+        # space and be rejected by the charset guard anyway. Fall back to git's
+        # command, shell-escaped, rather than emitting a remedy that cannot work
+        # (challenge r2).
+        rel_is_nameable=0
+        if [ -n "$resolved_rel" ]; then
+            rel_is_nameable=1
+            case "$resolved_rel" in
+            *[!A-Za-z0-9._/-]*) rel_is_nameable=0 ;;
+            esac
+            case "/$resolved_rel/" in
+            *//* | */./*) rel_is_nameable=0 ;;
+            esac
+        fi
+        if [ "$rel_is_nameable" -eq 1 ]; then
+            die "no worktree at $tree, but '$name' names the worktree at $resolved — its admin record and its directory have different names (a move does that), and only its current name resolves here: task worktree:rm -- $resolved_rel"
+        else
+            die "no worktree at $tree, but '$name' names the worktree at $resolved — that path is not addressable by this command, so remove it with: git worktree remove $(printf '%q' "$resolved")"
+        fi
     elif [ "$resolved_count" -gt 1 ]; then
         echo "worktree:rm: '$name' is ambiguous — it matches more than one registered worktree:" >&2
-        while IFS= read -r -d '' amb_tree; do
-            [ "$amb_tree" = "$main_root" ] && continue
+        for amb_tree in "${matches[@]}"; do
             printf '  %s\n' "$(printf '%q' "$amb_tree")" >&2
-        done < <(emit_worktree_paths)
+        done
         die "name the worktree by its path instead: git worktree remove <path>"
     fi
 
@@ -287,12 +311,27 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         # linked worktrees only, so offering it as a candidate is a dead end.
         [ "$live_tree" = "$main_root" ] && continue
         live_admin="$(record_admin_dir "$live_tree" 2>/dev/null || true)"
+        live_rel=""
+        case "$live_tree" in
+        "$main_root"/.worktrees/*)
+            live_rel="${live_tree#"$main_root"/.worktrees/}"
+            case "$live_rel" in
+            *[!A-Za-z0-9._/-]*) live_rel="" ;;
+            esac
+            ;;
+        esac
+        if [ -n "$live_rel" ]; then
+            live_label="$live_rel"
+        else
+            # Not addressable through this command at all, so do not print
+            # something that looks like a name it would take.
+            live_label="(git worktree remove)"
+        fi
         if [ -n "$live_admin" ] && [ "${live_admin##*/}" != "${live_tree##*/}" ]; then
             printf '  %s  (record: %s)  %s\n' \
-                "$(printf '%q' "${live_tree##*/}")" "${live_admin##*/}" "$(printf '%q' "$live_tree")" >&2
+                "$live_label" "${live_admin##*/}" "$(printf '%q' "$live_tree")" >&2
         else
-            printf '  %s  %s\n' \
-                "$(printf '%q' "${live_tree##*/}")" "$(printf '%q' "$live_tree")" >&2
+            printf '  %s  %s\n' "$live_label" "$(printf '%q' "$live_tree")" >&2
         fi
     done < <(emit_worktree_paths)
     die "nothing was removed"
