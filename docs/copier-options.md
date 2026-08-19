@@ -85,7 +85,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | `codeql_languages` | ≥1 language when `use_codeql` |
 | `use_codex_cloud_review` | requires `use_codex_review` |
 | `devcontainer` | rejects `use_foreman and not devcontainer` — deliberately declared **here**, not on `use_foreman`: a validator on the earlier question reads this one's raw default and lets the forbidden combination through |
-| `devcontainer_coder_folder_uri` | empty, or a captured `vscode-remote://dev-container+<even-length hex>@ssh-remote+<host>/workspaces/<workspace>` folder URI; rejects generic/local Dev Containers commands, non-hex authorities, and incomplete captures |
+| `devcontainer_coder_folder_uri` | empty, or a captured `vscode-remote://dev-container+<even-length hex>@ssh-remote+<host>/workspaces/<workspace>` folder URI (`+` may be captured as `%2B`); rejects generic/local commands, non-hex authorities, noncanonical schemes, and incomplete captures |
 | `use_antigravity_cli` | requires `devcontainer` |
 | `bunches_directory` | rejects any of `` ' " : # $ ` \ `` — the path renders into a Taskfile command, where those break the YAML scalar or the shell quoting around it |
 | `obsidian_directory` | same character rule |

@@ -96,8 +96,21 @@ else
 fi
 
 echo "==> the Coder README badge accepts only a captured Dev Containers URI"
+if render_coder_uri 'vscode-remote://dev-container%2B7b7d@ssh-remote+coder.dev/workspaces/test' "$work/escaped-coder-uri"; then
+    if grep -Fq 'vscode.dev/redirect?url=vscode%3A//vscode-remote/dev-container%252B7b7d' "$work/escaped-coder-uri/README.md"; then
+        pass "accepted and safely wrapped the capture helper's percent-encoded separator"
+    else
+        fail "accepted the percent-encoded separator but rendered the wrong external protocol URL"
+    fi
+else
+    fail "rejected the capture helper's percent-encoded separator"
+    sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
+fi
+
 for bad_coder_uri in \
     'vscode://ms-vscode-remote.remote-containers/cloneInVolume' \
+    'VSCODE-REMOTE://dev-container+7b7d@ssh-remote+coder.dev/workspaces/test' \
     'vscode-remote://dev-container+7b7d' \
     'vscode-remote://dev-container+zz@ssh-remote+coder.dev/workspaces/test' \
     'vscode-remote://dev-container+7b7@ssh-remote+coder.dev/workspaces/test' \

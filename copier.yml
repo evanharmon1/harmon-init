@@ -295,9 +295,14 @@ devcontainer_coder_folder_uri:
   when: "[[ devcontainer ]]"
   validator: >-
     [%- set uri = devcontainer_coder_folder_uri -%]
-    [%- set prefix = 'vscode-remote://dev-container+' -%]
+    [%- set scheme = 'vscode-remote://' -%]
+    [%- set literal_prefix = scheme + 'dev-container+' -%]
+    [%- set escaped_prefix = scheme + 'dev-container%2b' -%]
     [%- set marker = '@ssh-remote+' -%]
-    [%- set encoded = uri.split(marker, 1)[0][prefix|length:] -%]
+    [%- set has_literal_prefix = uri.startswith(literal_prefix) -%]
+    [%- set has_escaped_prefix = uri.startswith(scheme) and uri.lower().startswith(escaped_prefix) -%]
+    [%- set prefix_length = literal_prefix|length if has_literal_prefix else escaped_prefix|length -%]
+    [%- set encoded = uri.split(marker, 1)[0][prefix_length:] -%]
     [%- set target = uri.split(marker, 1)[1] if marker in uri else '' -%]
     [%- set invalid_hex = namespace(value=false) -%]
     [%- for char in encoded.lower() -%]
@@ -305,7 +310,7 @@ devcontainer_coder_folder_uri:
     [%- set invalid_hex.value = true -%]
     [%- endif -%]
     [%- endfor -%]
-    [%- if uri and (not uri.lower().startswith(prefix)
+    [%- if uri and (not has_literal_prefix and not has_escaped_prefix
     or uri.count(marker) != 1
     or not encoded
     or (encoded|length) % 2 != 0
@@ -313,7 +318,7 @@ devcontainer_coder_folder_uri:
     or '/workspaces/' not in target
     or not target.split('/workspaces/', 1)[0]
     or not target.split('/workspaces/', 1)[1]) -%]
-    Expected a captured vscode-remote://dev-container+<hex>@ssh-remote+<host>/workspaces/<workspace> folder URI, or leave empty.
+    Expected a captured vscode-remote://dev-container+<hex>@ssh-remote+<host>/workspaces/<workspace> folder URI (the captured + may be %2B), or leave empty.
     [%- endif -%]
 
 use_antigravity_cli:
