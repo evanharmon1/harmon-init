@@ -249,22 +249,38 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
     # fallback, where it is emitting NUL rather than consuming it, and only
     # once the check above has established no path spans lines.
     # Reached only when -z is available: the guard above refused otherwise.
+    #
+    # The trailing sentinel is this enumeration's success marker, mirroring
+    # flagged_enum_ok and sparse_rules_ok below: bash does not propagate a
+    # process-substitution failure, so without it a git error or a truncated
+    # stream would fail OPEN — the consumer would treat a partial registry as
+    # the whole registry and could call a name unique, or absent, on evidence
+    # it never finished reading (review r6). It is unforgeable: every real
+    # entry is an absolute path, and this marker contains no slash.
+    registry_enum_ok_marker="__WORKTREE_RM_REGISTRY_OK__"
     emit_worktree_paths() {
-        if true; then
-            git worktree list --porcelain -z | while IFS= read -r -d '' wt_record; do
-                case "$wt_record" in
-                "worktree "*) printf '%s\0' "${wt_record#worktree }" ;;
-                esac
-            done
-        fi
+        (
+            git worktree list --porcelain -z || exit 1
+            printf '%s\0' "$registry_enum_ok_marker"
+        ) | while IFS= read -r -d '' wt_record; do
+            case "$wt_record" in
+            "worktree "*) printf '%s\0' "${wt_record#worktree }" ;;
+            "$registry_enum_ok_marker") printf '%s\0' "$wt_record" ;;
+            esac
+        done
     }
 
     # Matches are COLLECTED rather than counted, so the ambiguity branch can
     # name the worktrees that actually collided instead of reprinting the whole
     # registry (challenge r2).
     matches=()
+    registry_enum_ok=0
     while IFS= read -r -d '' candidate_tree; do
         [ -n "$candidate_tree" ] || continue
+        if [ "$candidate_tree" = "$registry_enum_ok_marker" ]; then
+            registry_enum_ok=1
+            continue
+        fi
         # The main checkout is registered but is not a linked worktree, and this
         # command removes only linked worktrees. Counting it made
         # `worktree:rm <repo-basename>` report the main checkout as an
@@ -285,6 +301,8 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
             matches+=("$candidate_tree")
         fi
     done < <(emit_worktree_paths)
+    [ "$registry_enum_ok" -eq 1 ] ||
+        die "could not read the worktree registry completely, so '$name' cannot be resolved against it — refusing rather than acting on a partial list"
     resolved_count=${#matches[@]}
 
     if [ "$resolved_count" -eq 1 ]; then
@@ -339,7 +357,12 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
     # truncates a newline-bearing path and prints a raw newline into the middle
     # of the candidate list. printf %q renders such a path visibly instead of
     # mangling the output, and leaves ordinary paths untouched.
+    listing_enum_ok=0
     while IFS= read -r -d '' live_tree; do
+        if [ "$live_tree" = "$registry_enum_ok_marker" ]; then
+            listing_enum_ok=1
+            continue
+        fi
         # Skip the main checkout: it is registered, but this command removes
         # linked worktrees only, so offering it as a candidate is a dead end.
         [ "$live_tree" = "$main_root" ] && continue
@@ -371,6 +394,8 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
             printf '  %s  %s\n' "$live_label" "$(printf '%q' "$live_tree")" >&2
         fi
     done < <(emit_worktree_paths)
+    [ "$listing_enum_ok" -eq 1 ] ||
+        echo "worktree:rm: (the registry could not be read completely — this list may be partial)" >&2
     die "nothing was removed"
 fi
 

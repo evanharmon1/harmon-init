@@ -3335,6 +3335,58 @@ ning"
     rm -rf "$oldgit_shim"
 fi
 
+# A registry read that fails or truncates must not read as a complete one.
+# bash does not propagate a process-substitution failure, so without a success
+# sentinel the resolver would treat a partial list as the whole registry and
+# could call a name unique, or absent, on evidence it never finished reading
+# (review r6). Simulated with a shim that exits nonzero for the enumeration.
+trunc_shim="$test_tmp/trunc-shim"
+mkdir -p "$trunc_shim"
+trunc_real_git="$(command -v git)"
+cat >"$trunc_shim/git" <<TRUNCSHIM
+#!/usr/bin/env bash
+# The capability probe and the real enumeration are the SAME invocation, so
+# they cannot be told apart by arguments — count instead. The first armed
+# -z call (the probe) succeeds so the command clears its version gate; the
+# next one (the enumeration it actually reads) fails.
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+    for arg in "\$@"; do
+        if [ "\$arg" = "-z" ] && [ -n "\$WT_TRUNC_ARMED" ]; then
+            if [ -e "\$WT_TRUNC_ARMED" ]; then
+                exit 1
+            fi
+            : >"\$WT_TRUNC_ARMED"
+            exec "$trunc_real_git" "\$@"
+        fi
+    done
+fi
+exec "$trunc_real_git" "\$@"
+TRUNCSHIM
+chmod +x "$trunc_shim/git"
+# Prove the shim behaves as described before relying on it.
+trunc_marker="$test_tmp/trunc-marker"
+rm -f "$trunc_marker"
+PATH="$trunc_shim:$PATH" git worktree list --porcelain -z >/dev/null 2>&1 ||
+    fail "the truncation shim broke the unarmed enumeration (#963)"
+PATH="$trunc_shim:$PATH" WT_TRUNC_ARMED="$trunc_marker" git worktree list --porcelain -z >/dev/null 2>&1 ||
+    fail "the truncation shim failed the FIRST armed call, which must succeed as the capability probe (#963)"
+PATH="$trunc_shim:$PATH" WT_TRUNC_ARMED="$trunc_marker" git worktree list --porcelain -z >/dev/null 2>&1 &&
+    fail "the truncation shim did not fail the SECOND armed call (#963)"
+rm -f "$trunc_marker"
+
+new truncprobe --no-install >/dev/null || fail "could not create the #963 truncation fixture"
+rm -rf "$fixture/.worktrees/truncprobe"
+git -C "$fixture" worktree prune
+rm_trunc_log="$test_tmp/rm-truncated.log"
+(cd "$fixture" && PATH="$trunc_shim:$PATH" WT_TRUNC_ARMED="$trunc_marker" bash scripts/worktree-rm.sh some-absent-name) \
+    >"$rm_trunc_log" 2>&1 &&
+    fail "worktree:rm succeeded on a registry read that failed (#963): $(cat "$rm_trunc_log")"
+grep -q 'could not read the worktree registry completely' "$rm_trunc_log" ||
+    fail "a failed registry read did not fail closed (#963): $(cat "$rm_trunc_log")"
+grep -qi 'removed' "$rm_trunc_log" &&
+    fail "a failed registry read still claimed a removal (#963): $(cat "$rm_trunc_log")"
+rm -rf "$trunc_shim"
+
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
