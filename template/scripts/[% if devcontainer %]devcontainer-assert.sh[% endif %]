@@ -519,19 +519,34 @@ assert_unit() {
 
     # 9. The GitHub CLI browser bridge must use the VS Code host opener when it
     #    works, and print the exact URL when that command is absent or fails.
+    #    Remote VS Code's `code --open-url` is a false friend: it can ignore the
+    #    option and exit 0, so prefer its bundled browser helper and capability-
+    #    check any desktop CLI fallback.
     #    Generic discovery is intentionally forbidden: terminal browsers are
     #    installed in the image and would trap the OAuth flow in-container.
-    local browser_bin browser_log browser_sentinel browser_out browser_url
+    local browser_bin browser_helpers browser_log browser_sentinel browser_out browser_url
     browser_bin="${work_dir}/browser-bin"
+    browser_helpers="${work_dir}/helpers"
     browser_log="${work_dir}/browser-args"
     browser_sentinel="${work_dir}/terminal-browser-ran"
     browser_url='https://github.com/login/device?user_code=ABCD-EFGH&source=gh'
-    mkdir -p "$browser_bin"
+    mkdir -p "$browser_bin" "$browser_helpers"
     ln -s "$bash_bin" "${browser_bin}/bash"
+    for browser_dependency in dirname grep readlink; do
+        ln -s "$(command -v "$browser_dependency")" "${browser_bin}/${browser_dependency}"
+    done
+    printf '%s\n' '#!/bin/sh' \
+        'if [ "${1:-}" = "--help" ]; then' \
+        '    [ "${GH_BROWSER_TEST_OPEN_URL_SUPPORT:-0}" = "1" ] && echo "  --open-url"' \
+        '    exit 0' \
+        'fi' \
+        'printf "%s\\n" "$@" >"$GH_BROWSER_TEST_LOG"' \
+        'exit "${GH_BROWSER_TEST_CODE_RC:-0}"' >"${browser_bin}/code"
+    chmod 0755 "${browser_bin}/code"
     printf '%s\n' '#!/bin/sh' \
         'printf "%s\\n" "$@" >"$GH_BROWSER_TEST_LOG"' \
-        'exit "${GH_BROWSER_TEST_RC:-0}"' >"${browser_bin}/code"
-    chmod 0755 "${browser_bin}/code"
+        'exit "${GH_BROWSER_TEST_HELPER_RC:-0}"' >"${browser_helpers}/browser.sh"
+    chmod 0755 "${browser_helpers}/browser.sh"
     for terminal_browser in w3m lynx sensible-browser xdg-open; do
         printf '%s\n' '#!/bin/sh' \
             'printf "%s\\n" "$0" >"$GH_BROWSER_TEST_SENTINEL"' \
@@ -542,22 +557,37 @@ assert_unit() {
     GH_BROWSER_TEST_LOG="$browser_log" \
         GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
         PATH="$browser_bin" "$gh_browser" "$browser_url"
-    [ "$(sed -n '1p' "$browser_log")" = "--open-url" ] &&
-        [ "$(sed -n '2p' "$browser_log")" = "$browser_url" ] &&
-        [ "$(wc -l <"$browser_log" | tr -d ' ')" = "2" ] ||
-        fail "GitHub browser bridge did not pass the exact URL to code --open-url"
+    [ "$(cat "$browser_log")" = "$browser_url" ] ||
+        fail "GitHub browser bridge did not pass the exact URL to the remote helper"
     [ ! -e "$browser_sentinel" ] ||
-        fail "GitHub browser bridge invoked a terminal browser after code succeeded"
+        fail "GitHub browser bridge invoked a terminal browser after the remote helper succeeded"
 
-    browser_out="$(GH_BROWSER_TEST_RC=1 GH_BROWSER_TEST_LOG="$browser_log" \
+    browser_out="$(GH_BROWSER_TEST_HELPER_RC=1 GH_BROWSER_TEST_LOG="$browser_log" \
         GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
         PATH="$browser_bin" "$gh_browser" "$browser_url" 2>&1)"
     case "$browser_out" in
     *"$browser_url"*) ;;
-    *) fail "GitHub browser bridge did not print the URL after code failed: ${browser_out}" ;;
+    *) fail "GitHub browser bridge did not print the URL after the remote helper failed: ${browser_out}" ;;
     esac
     [ ! -e "$browser_sentinel" ] ||
-        fail "GitHub browser bridge invoked a terminal browser after code failed"
+        fail "GitHub browser bridge invoked a terminal browser after the remote helper failed"
+
+    rm "${browser_helpers}/browser.sh"
+    GH_BROWSER_TEST_OPEN_URL_SUPPORT=1 GH_BROWSER_TEST_LOG="$browser_log" \
+        GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
+        PATH="$browser_bin" "$gh_browser" "$browser_url"
+    [ "$(sed -n '1p' "$browser_log")" = "--open-url" ] &&
+        [ "$(sed -n '2p' "$browser_log")" = "$browser_url" ] &&
+        [ "$(wc -l <"$browser_log" | tr -d ' ')" = "2" ] ||
+        fail "GitHub browser bridge did not pass the exact URL to a supported code --open-url"
+
+    browser_out="$(GH_BROWSER_TEST_OPEN_URL_SUPPORT=0 GH_BROWSER_TEST_LOG="$browser_log" \
+        GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
+        PATH="$browser_bin" "$gh_browser" "$browser_url" 2>&1)"
+    case "$browser_out" in
+    *"$browser_url"*) ;;
+    *) fail "GitHub browser bridge trusted an unsupported code --open-url: ${browser_out}" ;;
+    esac
 
     rm "${browser_bin}/code"
     browser_out="$(GH_BROWSER_TEST_LOG="$browser_log" \

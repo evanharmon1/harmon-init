@@ -13,9 +13,22 @@ if [ -z "$url" ]; then
 fi
 
 if command -v code >/dev/null 2>&1; then
-    if code --open-url "$url"; then
+    code_path="$(command -v code)"
+    code_path="$(readlink -f "$code_path")"
+    remote_browser="$(dirname "$(dirname "$code_path")")/helpers/browser.sh"
+
+    if [ -x "$remote_browser" ] && "$remote_browser" "$url"; then
         exit 0
     fi
+
+    # Desktop CLIs expose --open-url, while the remote CLI may accept and
+    # ignore it with exit 0. Check the advertised capability before using it.
+    if code --help 2>&1 | grep -q -- '--open-url'; then
+        if code --open-url "$url"; then
+            exit 0
+        fi
+    fi
+
     echo "gh-browser: VS Code could not open the URL on the host." >&2
 fi
 
