@@ -54,7 +54,7 @@ runs:
 [% endif %]
     # uv provides uvx for pinned Semgrep CE[% if use_foreman %] and the pinned
     # foreman CLI (see taskfiles/foreman.yml)[% endif %].
-    - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+    - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 [% if include_terraform %]
     - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
     # TFLint backs `task lint:terraform` (via lint:terraform:tflint). The gate
