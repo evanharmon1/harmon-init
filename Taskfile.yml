@@ -517,14 +517,16 @@ tasks:
     cmds:
       - ./scripts/test-starship-glyphs.sh
 
-  # Root-only: a generated repo has no template/ to scan. Makes the Hard Rule in
-  # AGENTS.md enforceable — the maintainer's personal dotfiles repo is not
-  # readable by a consumer, so shipped output must never name it or chezmoi.
+  # Root-only: test-template.sh is the harness that renders the template, so it
+  # has no template/ twin and the helpers under test ship to nobody.
   test:template-helpers:
-    desc: Unit-test test-template.sh's quiet-command capture helpers (offline; guards seven rendered-repo gates against becoming silent no-ops)
+    desc: Unit-test test-template.sh's quiet-command capture helpers (offline; guards the rendered-repo gates against becoming silent no-ops)
     cmds:
       - ./scripts/test-template-helpers.sh
 
+  # Root-only: a generated repo has no template/ to scan. Makes the Hard Rule in
+  # AGENTS.md enforceable — the maintainer's personal dotfiles repo is not
+  # readable by a consumer, so shipped output must never name it or chezmoi.
   test:template-independence:
     desc: "Guard: consumer-facing output names neither harmon-dotfiles nor chezmoi"
     cmds:

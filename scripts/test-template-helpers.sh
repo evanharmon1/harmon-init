@@ -2,13 +2,17 @@
 # Hermetic unit tests for test-template.sh's quiet-command capture helpers
 # (harmon-init#934).
 #
-# Why this suite exists at all. `run_quiet` replaced seven bare
+# Why this suite exists at all. `run_quiet` replaced the bare
 # `>/dev/null 2>&1 || err "..."` call sites, so every one of those rendered-repo
 # gates now reaches `err` only if run_quiet propagates a nonzero status. A
 # run_quiet that returned 0 unconditionally would not fail loudly — it would
-# turn all seven gates into silent no-ops while `task verify` stayed green. The
-# exit-status case below is therefore the load-bearing one, and the call-site
-# case guards the wiring those gates depend on.
+# turn every one of them into a silent no-op while `task verify` stayed green.
+# The exit-status case below is therefore the load-bearing one, and the
+# call-site case guards the wiring those gates depend on.
+#
+# Counts are deliberately absent from this prose: the number of converted
+# gates is asserted mechanically below, and a figure repeated in comments
+# goes stale the moment one is added (review r2 found exactly that).
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -63,7 +67,7 @@ case "$replay" in
 *) fail "run_quiet omitted the closing boundary that delimits captured output" ;;
 esac
 
-# ── Exit-status propagation: the case seven gates depend on ──────────────────
+# ── Exit-status propagation: the case every converted gate depends on ───────
 #
 # Asserted across several distinct nonzero values, not just one, so a helper
 # that collapsed every failure to a constant would still be caught.
