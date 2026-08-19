@@ -69,6 +69,7 @@ echo "==> a re-run against an already-synced org writes nothing"
 run_with "$complete"
 [ ! -s "$POSTS" ] || fail "expected no field creation on an unchanged org"
 grep -q "already exists — leaving it as-is" "$tmp/out" || fail "expected 'leaving it as-is' output for Product"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected an explicit ready outcome"
 
 echo "==> the retired Agent field is never created"
 grep -q '"name":"Agent"' "$POSTS" &&
@@ -94,5 +95,7 @@ run_with "$wrong"
 grep -q "already exists as 'single_select', not 'text'" "$tmp/out" ||
     fail "expected a data-type warning for Product"
 grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "expected the run to end with warnings"
+grep -q "WARN: GitHub issue fields need attention" "$tmp/out" || fail "expected a warning final outcome"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "incompatible fields claimed readiness"
 
 echo "PASS: setup-github-issue-fields.sh field creation"

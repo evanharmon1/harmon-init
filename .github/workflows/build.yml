@@ -91,6 +91,15 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Dogfood structure (template sections/tasks exist in the root layer)
         run: task test:dogfood-structure
+      # Listed here for the same reason as the category/parity guards above:
+      # this job enumerates its steps by hand, so a check that lives only in
+      # `verify` never runs in CI. It renders the template, so it has to follow
+      # the copier install. It carries the copier pin-agreement gate, whose
+      # whole purpose is to catch a Renovate bump that moves one pin and not
+      # the other — precisely the case that arrives as a PR and must not pass
+      # required checks while drifted (#921).
+      - name: Copier answer validators (+ copier version pin agreement)
+        run: task test:copier-validators
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
       - run: task test:hooks
