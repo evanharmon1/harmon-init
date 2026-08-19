@@ -136,24 +136,38 @@ elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remot
         default_branch="$live_default"
     fi
     awk '$1 != "ref:" && $2 != "HEAD"' "$tmp/remote-heads-raw" >"$tmp/remote-heads"
-    # Full refname with a dynamic strip, not %(refname:lstrip=3): a remote
-    # name may itself contain slashes, and a fixed strip depth would mangle
-    # every tracking ref into a false "deleted upstream" (review r2).
-    git for-each-ref "refs/remotes/$remote" \
-        --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
-        >"$tmp/tracking"
-    while IFS=$'\t' read -r tref toid tsymref; do
-        [ "$tsymref" = "-" ] || continue
-        tname="${tref#refs/remotes/$remote/}"
-        live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"
-        if [ -z "$live_oid" ]; then
-            printf '  stale  %s — deleted upstream; local tracking ref survives until a prune\n' "$tname"
-            stale=$((stale + 1))
-        elif [ "$live_oid" != "$toid" ]; then
-            printf '  stale  %s — moved upstream (local tracking is behind or diverged)\n' "$tname"
-            stale=$((stale + 1))
-        fi
-    done <"$tmp/tracking"
+    # A tracking ref names `refs/heads/<same name>` only under the identity
+    # fetch refspec. Under `refs/heads/*:refs/remotes/origin/upstream/*`, or
+    # with extra refspecs pulling in e.g. pull refs, the local name is a
+    # DESTINATION — comparing it marks fresh refs stale and recommends a prune
+    # that can never clear the report. Say nothing rather than something false
+    # (found in clean:branches by challenge r1 on #958; the same expression was
+    # copied from here, so both are corrected together).
+    audit_fetch_specs="$(git config --get-all "remote.$remote.fetch" 2>/dev/null || true)"
+    if [ "$audit_fetch_specs" != "+refs/heads/*:refs/remotes/$remote/*" ] &&
+        [ "$audit_fetch_specs" != "refs/heads/*:refs/remotes/$remote/*" ]; then
+        echo "  n/a — $remote is fetched under a non-identity refspec, so a tracking name does not identify a remote branch"
+        : >"$tmp/tracking"
+    else
+        # Full refname with a dynamic strip, not %(refname:lstrip=3): a remote
+        # name may itself contain slashes, and a fixed strip depth would mangle
+        # every tracking ref into a false "deleted upstream" (review r2).
+        git for-each-ref "refs/remotes/$remote" \
+            --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
+            >"$tmp/tracking"
+        while IFS=$'\t' read -r tref toid tsymref; do
+            [ "$tsymref" = "-" ] || continue
+            tname="${tref#refs/remotes/$remote/}"
+            live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"
+            if [ -z "$live_oid" ]; then
+                printf '  stale  %s — deleted upstream; local tracking ref survives until a prune\n' "$tname"
+                stale=$((stale + 1))
+            elif [ "$live_oid" != "$toid" ]; then
+                printf '  stale  %s — moved upstream (local tracking is behind or diverged)\n' "$tname"
+                stale=$((stale + 1))
+            fi
+        done <"$tmp/tracking"
+    fi
     if [ "$stale" -eq 0 ]; then
         echo "  fresh — local tracking refs match the remote's advertised heads"
     else

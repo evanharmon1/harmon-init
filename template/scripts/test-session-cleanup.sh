@@ -1445,6 +1445,32 @@ ren_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)"
     fail "audit exited nonzero inside the renamed-default window: $ren_audit_out"
 expect_contains "$ren_audit_out" "default branch is now 'trunk'" "rename: audit resolves the live default over stale origin/HEAD"
 
+# The DRY RUN must say so too. verify_remote_state — which produces the note
+# above — runs only on the delete path, so before #958 a dry run under a
+# renamed default reported figures computed against the stale local default
+# with no caveat at all. The freshness probe covers that, and it only can
+# because it asks for the HEAD symref: `--heads` alone omits it (challenge r1).
+ren_dry_out="$(cd "$fixture" && bash scripts/clean-branches.sh 2>&1)" ||
+    fail "renamed-default dry run exited nonzero: $ren_dry_out"
+expect_contains "$ren_dry_out" "default branch is now 'trunk'" "rename: the DRY RUN names the live default too (#958)"
+
+# A non-identity fetch refspec makes a tracking name a DESTINATION, not a
+# remote branch — comparing them marks fresh refs stale and recommends a prune
+# that can never clear the warning. Both tasks must decline to compare and say
+# why, rather than emit something false (challenge r1). The audit copied this
+# expression first, so both are asserted.
+orig_fetch="$(git -C "$fixture" config --get remote.origin.fetch)"
+git -C "$fixture" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/upstream/*'
+spec_dry_out="$(cd "$fixture" && bash scripts/clean-branches.sh 2>&1)" ||
+    fail "non-identity-refspec dry run exited nonzero: $spec_dry_out"
+expect_contains "$spec_dry_out" "non-identity refspec" "refspec: clean:branches declines to compare (#958)"
+expect_not_contains "$spec_dry_out" "tracking ref(s) are stale" "refspec: clean:branches emits no false staleness (#958)"
+spec_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "non-identity-refspec audit exited nonzero: $spec_audit_out"
+expect_contains "$spec_audit_out" "non-identity refspec" "refspec: audit declines to compare (#958)"
+expect_not_contains "$spec_audit_out" "deleted upstream" "refspec: audit emits no false staleness (#958)"
+git -C "$fixture" config remote.origin.fetch "$orig_fetch"
+
 git -C "$origin" symbolic-ref HEAD refs/heads/main
 git -C "$origin" update-ref -d refs/heads/trunk
 ren_ok_out="$(cd "$fixture" && bash scripts/clean-branches.sh --delete 2>&1)" ||
