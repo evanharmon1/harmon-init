@@ -113,11 +113,22 @@ esac
 # gates could be reverted with the suite still green. Quantifying over the
 # file leaves no seam to slip through.
 #
-# The INVERSE shape is deliberately not matched: `if cmd >/dev/null 2>&1; then
-# err ...` asserts that a nonzero exit is the failure, so there the discard is
-# correct and a replay would fire on the expected path.
-if grep -nE '>/dev/null 2>&1\)? *\|\|$' "$subject"; then
-    fail "a rendered-repo gate above discards its output and then calls err — route it through run_quiet (#934)"
+# The discriminator is the command's KIND, not its formatting. A gate runs
+# `task` or one of the repo's own scripts and has diagnostic output worth
+# replaying; a probe (`git rev-parse HEAD`, `command -v`) answers a question
+# and has none, so discarding its output is correct. Anchoring on the command
+# instead of on the end of the line is what lets this match a gate written on
+# one line as readily as one split across two — an earlier form required `||`
+# to close the line, which excluded the probe at test-template.sh:266 only by
+# accident of where the line broke (challenge r2).
+#
+# Two shapes are correctly NOT matched, and both are load-bearing:
+#   * `if <gate> >/dev/null 2>&1; then err ...` — a NONZERO exit is the
+#     asserted outcome, so a replay would fire on the expected path.
+#   * `<non-gate> >/dev/null 2>&1 || …` — a probe or a best-effort
+#     `|| true`, neither of which produces output an operator needs.
+if grep -nE '(task |\./scripts/[A-Za-z0-9_.-]+\.sh).*>/dev/null 2>&1\)? *\|\|' "$subject"; then
+    fail "a rendered-repo gate above discards its output and then branches — route it through run_quiet (#934)"
 fi
 
 # Counted on EXECUTABLE call sites only. Counting bare occurrences let the
