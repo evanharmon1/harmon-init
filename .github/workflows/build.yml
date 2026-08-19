@@ -63,6 +63,22 @@ jobs:
       - run: task test:sync-devkit-release
       - run: task test:devcontainer:image:automation
       - run: task test:skills-pin-parity
+      # Added under #962: each of these ran in local `verify` but in no CI
+      # job, so CI was strictly weaker than the local gate. This job
+      # enumerates its steps by hand, so a check added to `verify` alone never
+      # runs here and the drift is invisible (#614, same class). Every one is
+      # a unit test needing no container, network, or credential, each ~1-2s.
+      - run: task audit:agent-instructions
+      - run: task test:agent-instructions-size
+      - run: task test:agent-skill-links
+      - run: task test:image-staleness
+      - run: task test:link-claude-json
+      - run: task test:meta-install
+      - run: task test:open-devcontainer
+      - run: task test:output
+      - run: task test:session-cleanup
+      - run: task test:setup-github
+      - run: task test:starship-glyphs
       # Meaningful only because this job checks out with fetch-depth: 0 above.
       - name: Tag hygiene (no non-release tag where git describe would select it)
         run: task test:tag-hygiene
