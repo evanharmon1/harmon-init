@@ -338,6 +338,46 @@ expect_contains "$audit_out" "deferred-findings/wt-checked (branch exists) [work
 expect_contains "$audit_out" "stub/fixture/42.json" "audit: shepherd cycle state listed"
 echo "ok: audit reports all artifact classes read-only"
 
+# ── Case B2: the audit's prunable figure equals what clean:branches deletes ──
+#
+# wt-checked has merged-PR evidence AND is checked out in a linked worktree.
+# The audit counted it as prunable and attributed the total to a task that
+# refuses it, so the operator was handed a number nothing would act on
+# (harmon-init#958). It must now be shown, classified as held, and excluded
+# from the figure.
+expect_contains "$audit_out" "held          wt-checked" "audit: worktree-checked-out branch is held, not prunable"
+expect_not_contains "$audit_out" "prunable      wt-checked" "audit: worktree-checked-out branch is not counted prunable"
+expect_contains "$audit_out" "held by a worktree" "audit: the summary names the held bucket"
+
+# The invariant is SUBSET, not equality, and the distinction is load-bearing.
+# clean:branches deletes on two evidence types — ancestry or a merged PR —
+# while the audit classifies prunable on PR evidence alone, so an
+# ancestry-merged branch is legitimately deletable without being prunable
+# (tracked separately). What #958 fixes is the other direction: nothing may be
+# called prunable that clean:branches will refuse. Asserted per branch rather
+# than on the totals, because two counts can coincide while naming different
+# branches.
+audit_prunable_names="$(printf '%s\n' "$audit_out" |
+    sed -n 's/^  prunable      \([^ ]*\) .*/\1/p' | sort)"
+clean_deletable_names="$(printf '%s\n' "$dry_out" |
+    sed -n 's/^WOULD DELETE  \([^ ]*\) .*/\1/p' | sort)"
+[ -n "$audit_prunable_names" ] || fail "the audit classified nothing prunable — the fixture no longer exercises this (#958)"
+[ -n "$clean_deletable_names" ] || fail "clean:branches found nothing deletable — the fixture no longer exercises this (#958)"
+not_deletable="$(comm -23 <(printf '%s\n' "$audit_prunable_names") <(printf '%s\n' "$clean_deletable_names"))"
+[ -z "$not_deletable" ] ||
+    fail "the audit called these prunable but clean:branches will not delete them (#958): $(printf '%s' "$not_deletable" | tr '\n' ' ')"
+echo "ok: every branch the audit calls prunable is one clean:branches would delete"
+
+# ── Case B3: clean:branches reports tracking-ref staleness ──────────────────
+#
+# Every classification reads local tracking refs, so a branch whose upstream is
+# already gone reads as neither [gone] nor unpushed and lands in `in-flight
+# kept` — a bucket that says "deliberately left alone", not "I could not tell".
+# The audit has said so since it was written; the task that actually deletes
+# did not (harmon-init#958). The fixture's tf-stale ref is exactly that shape.
+expect_contains "$dry_out" "tracking ref(s) are stale" "clean:branches: stale tracking refs are reported"
+expect_contains "$dry_out" "task clean:remote-refs" "clean:branches: the staleness note names the remedy"
+
 # Degraded mode: a failing gh probe is UNVERIFIED, never silently clean.
 audit_fail_out="$(cd "$fixture" && GH_STUB_FAIL=1 bash scripts/audit-session-artifacts.sh 2>&1)" ||
     fail "degraded audit exited nonzero: $audit_fail_out"

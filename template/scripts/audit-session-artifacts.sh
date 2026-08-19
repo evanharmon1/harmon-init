@@ -191,15 +191,41 @@ else
         if [ "$merged_seen" -ge "$pr_limit" ]; then
             echo "  (note: merged-PR listing hit its $pr_limit cap — 'no merged PR' below may be incomplete)"
         fi
+        # A branch checked out in a linked worktree is one `clean:branches`
+        # will refuse — `git branch -d` declines it, and that task guards the
+        # update-ref path explicitly. Counting it as prunable made this report
+        # hand the operator a number and name the very task that would decline
+        # part of it (harmon-init#958). Same derivation clean-branches.sh uses,
+        # so the two cannot disagree about what is checked out.
+        #
+        # A worktree PATH may contain a newline, which this line-delimited form
+        # truncates; a branch NAME cannot (git refnames forbid control
+        # characters), so the classification below is unaffected and only a
+        # displayed path could be short.
+        git worktree list --porcelain | awk '
+            /^worktree /            { path = substr($0, 10) }
+            /^branch refs\/heads\// { printf "%s\t%s\n", substr($0, 19), path }
+        ' >"$tmp/checked-out"
+
         prunable=0
+        held=0
         tip_differs=0
         no_pr=0
         while IFS=$'\t' read -r branch tip; do
             match="$(awk -F'\t' -v b="$branch" -v tip="$tip" -v base="$default_branch" \
                 '$1 == b && $2 == tip && $4 == base { print $3; exit }' "$tmp/merged-prs")"
             if [ -n "$match" ]; then
-                printf '  prunable      %s — merged PR #%s into %s (head == tip %s)\n' "$branch" "$match" "$default_branch" "${tip:0:12}"
-                prunable=$((prunable + 1))
+                held_path="$(awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }' "$tmp/checked-out")"
+                if [ -n "$held_path" ]; then
+                    # Still shown — the evidence is real and the operator
+                    # should see it — but not counted toward a total
+                    # attributed to a task that will decline it.
+                    printf '  held          %s — merged PR #%s, but checked out in worktree %s\n' "$branch" "$match" "$held_path"
+                    held=$((held + 1))
+                else
+                    printf '  prunable      %s — merged PR #%s into %s (head == tip %s)\n' "$branch" "$match" "$default_branch" "${tip:0:12}"
+                    prunable=$((prunable + 1))
+                fi
             elif awk -F'\t' -v b="$branch" '$1 == b { found = 1; exit } END { exit !found }' "$tmp/merged-prs"; then
                 printf '  tip differs   %s — a merged PR matches by name but not tip/base (a human decides)\n' "$branch"
                 tip_differs=$((tip_differs + 1))
@@ -208,8 +234,16 @@ else
                 no_pr=$((no_pr + 1))
             fi
         done <"$tmp/gone"
-        printf '  -> %s prunable (task clean:branches), %s tip-differs, %s without a merged PR\n' \
-            "$prunable" "$tip_differs" "$no_pr"
+        # The invariant this line now keeps: the figure attributed to
+        # `clean:branches` equals what that task reports as deletable on the
+        # same tree.
+        if [ "$held" -gt 0 ]; then
+            printf '  -> %s prunable (task clean:branches), %s held by a worktree, %s tip-differs, %s without a merged PR\n' \
+                "$prunable" "$held" "$tip_differs" "$no_pr"
+        else
+            printf '  -> %s prunable (task clean:branches), %s tip-differs, %s without a merged PR\n' \
+                "$prunable" "$tip_differs" "$no_pr"
+        fi
     else
         echo "  UNVERIFIED — gh unavailable or the merged-PR read failed; $gone_count gone branch(es) unclassified:"
         awk -F'\t' '{ print "    " $1 }' "$tmp/gone"

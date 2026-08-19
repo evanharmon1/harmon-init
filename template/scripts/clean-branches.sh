@@ -375,6 +375,42 @@ verify_remote_state() {
     fi
 }
 
+# Remote-tracking freshness, reported the way audit:session-artifacts already
+# reports it (harmon-init#958). Every classification below reads local tracking
+# refs, so a branch whose upstream was deleted on merge reads as neither [gone]
+# nor unpushed until a prune — and lands in `in-flight kept`, a bucket that says
+# "deliberately left alone" rather than "I could not tell". Observed: a merged
+# branch sat there until `task clean:remote-refs`, after which the same run
+# reported it deletable.
+#
+# This is deliberately its own probe rather than a widening of
+# verify_remote_state: that runs ONLY on the delete path, and the misleading
+# figure is the one the DRY RUN prints. Bounded, and skipped entirely when
+# there is no remote.
+tracking_freshness_note=""
+check_tracking_freshness() {
+    # No guard needed: this script exits early when no remote is configured, so
+    # $remote is always resolved by the time this runs.
+    if ! heads_raw="$(net_probe git ls-remote --heads "$remote" 2>/dev/null)"; then
+        tracking_freshness_note="clean:branches: could not read $remote's advertised heads — the classification above trusts possibly-stale tracking refs (run 'task clean:remote-refs', then re-run)"
+        return 0
+    fi
+    printf '%s\n' "$heads_raw" >"$tmp/live-heads"
+    stale_refs=0
+    while IFS=$'\t' read -r tref toid tsymref; do
+        [ "$tsymref" = "-" ] || continue
+        tname="${tref#refs/remotes/$remote/}"
+        live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/live-heads")"
+        if [ -z "$live_oid" ] || [ "$live_oid" != "$toid" ]; then
+            stale_refs=$((stale_refs + 1))
+        fi
+    done < <(git for-each-ref "refs/remotes/$remote" \
+        --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)')
+    if [ "$stale_refs" -gt 0 ]; then
+        tracking_freshness_note="clean:branches: $stale_refs tracking ref(s) are stale — a branch whose upstream is already gone can read as in-flight until you run 'task clean:remote-refs' and re-run"
+    fi
+}
+
 # delete_one <branch> <tip> <evidence> <why> — runs in a SUBSHELL so a lock
 # refusal (die) aborts this branch only. The whole check-then-delete sequence
 # holds the per-branch lifecycle lock shared with worktree:new / worktree:rm
@@ -480,11 +516,21 @@ if [ -s "$tmp/candidates" ]; then
     done <"$tmp/candidates"
 fi
 
+# Run once, after classification and before the summary, so the figure and the
+# caveat about it are printed together.
+check_tracking_freshness
+
 echo
 if [ "$do_delete" = true ]; then
     echo "clean:branches: $deleted deleted, $refused skipped, $active in-flight kept, $total local branches scanned."
+    if [ -n "$tracking_freshness_note" ]; then
+        echo "$tracking_freshness_note"
+    fi
 else
     echo "clean:branches (dry run): $candidates deletable, $refused skipped, $active in-flight kept, $total local branches scanned."
+    if [ -n "$tracking_freshness_note" ]; then
+        echo "$tracking_freshness_note"
+    fi
     if [ "$candidates" -gt 0 ]; then
         echo "Run 'task clean:branches -- --delete' to delete the branches listed above."
     fi
