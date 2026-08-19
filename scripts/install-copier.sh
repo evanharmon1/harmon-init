@@ -14,10 +14,18 @@
 #
 # --force overwrites any foreign same-named entry point (e.g. a stale pipx shim)
 # instead of aborting, and keeps reruns idempotent.
+#
+# Pinned to the same version images/devcontainer/Dockerfile installs, so a
+# brew-less host (this repo's devcontainer, or a bare Linux box) lands on the
+# identical, tested copier release rather than whatever uv resolves that day.
+# scripts/test-copier-validators.sh cross-checks that the two pins agree.
 set -euo pipefail
+
+# renovate: datasource=pypi depName=copier
+COPIER_VERSION=9.17.1
 
 if command -v brew >/dev/null 2>&1; then
     exit 0
 fi
 
-uv tool install --force copier
+uv tool install --force "copier==${COPIER_VERSION}"

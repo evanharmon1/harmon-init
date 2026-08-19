@@ -85,6 +85,25 @@ err() {
     fail=1
 }
 
+# copier itself is not optional here, unlike the tools gated behind
+# required() above: this script IS the template-render gate, so a local skip
+# would report `task verify` green while rendering nothing. copier is now
+# preinstalled in the devcontainer image and installed by `task install` on
+# every other host (scripts/install-copier.sh), so there is no supported
+# environment where it is legitimately absent — fail loudly instead of
+# silently skipping the thing the rest of this script depends on. See #921.
+if ! have copier; then
+    # `task install` is the only remedy correct on every host: it installs the
+    # Brewfile's copier under Homebrew and the pinned uv one otherwise
+    # (scripts/install-copier.sh no-ops under brew by design, so naming it
+    # directly would silently do nothing on a Mac). Deliberately NOT a bare
+    # `uv tool install copier`: that resolves to whatever is latest, so
+    # following the advice would satisfy this check and then run the render
+    # gates on an unreviewed version, defeating the pin this repo just added.
+    echo "FAIL: copier not found — run 'task install'" >&2
+    exit 1
+fi
+
 # Answers shared by every profile. Side-effectful answers are forced off so
 # this is safe to run anywhere (no gh repo create, no iCloud moves). The meta
 # profile re-enables bunch/obsidian but renders with --skip-tasks.
