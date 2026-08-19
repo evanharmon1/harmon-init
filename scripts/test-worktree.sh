@@ -3182,8 +3182,10 @@ rm_wt definitely-absent-name >"$rm_list" 2>&1 || true
 grep -qE '^  feat/deep( |$)' "$rm_list" ||
     fail "the listing did not offer the nested worktree's usable name (#963): $(cat "$rm_list")"
 # ...and an unaddressable path must not be advertised as if it were a name.
-grep -qE '^  \(git worktree remove\)' "$rm_list" ||
-    fail "the listing did not mark the unaddressable in-cone path as needing git's command (#963): $(cat "$rm_list")"
+grep -qE '^  \(not removable here\)' "$rm_list" ||
+    fail "the listing did not mark the unaddressable in-cone path as not removable (#963): $(cat "$rm_list")"
+grep -q 'git worktree remove' "$rm_list" &&
+    fail "the listing re-offered the unguarded command the refusal withholds (#963): $(cat "$rm_list")"
 # ...and specifically for an OUT-OF-CONE worktree, which the in-cone-with-space
 # case above cannot prove: classifying every path as in-cone would advertise an
 # absolute path as though it were a name this command takes.
@@ -3192,7 +3194,7 @@ git -C "$fixture" worktree add -q "$outcone_list/stray" -b feat/outcone-listing 
     fail "could not create the #963 out-of-cone listing fixture"
 rm_list2="$test_tmp/rm-listing-outcone.log"
 rm_wt definitely-absent-name >"$rm_list2" 2>&1 || true
-grep -qE "^  \(git worktree remove\)  .*$outcone_list/stray" "$rm_list2" ||
+grep -qE "^  \(not removable here\)  .*$outcone_list/stray" "$rm_list2" ||
     fail "the listing advertised an out-of-cone worktree under a name this command cannot take (#963): $(cat "$rm_list2")"
 git -C "$fixture" worktree remove --force "$outcone_list/stray"
 git -C "$fixture" worktree remove --force ".worktrees/feat/deep"
@@ -3225,7 +3227,7 @@ for bad_component in '-dash' 'a..b'; do
     # predicate exists to prevent.
     rm_remedy_list="$test_tmp/rm-remedy-list.log"
     rm_wt definitely-absent-name >"$rm_remedy_list" 2>&1 || true
-    grep -qE "^  \(git worktree remove\)  .*$bad_component/leaf" "$rm_remedy_list" ||
+    grep -qE "^  \(not removable here\)  .*$bad_component/leaf" "$rm_remedy_list" ||
         fail "the listing advertised '$bad_component/leaf' under a name this command rejects (#963): $(cat "$rm_remedy_list")"
     git -C "$fixture" worktree remove --force ".worktrees/$bad_component/leaf"
     rmdir "$fixture/.worktrees/$bad_component" 2>/dev/null || true
@@ -3297,7 +3299,7 @@ if [ "$nl_supported" -eq 1 ]; then
     real_git="$(command -v git)"
     cat >"$oldgit_shim/git" <<SHIM
 #!/usr/bin/env bash
-# Reject only $(worktree list ... -z); everything else is the real git.
+# Reject only the worktree-list capability probe; else the real git.
 if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
     for arg in "\$@"; do
         [ "\$arg" = "-z" ] && exit 129
@@ -3322,8 +3324,8 @@ ning"
         (cd "$fixture" && PATH="$oldgit_shim:$PATH" bash scripts/worktree-rm.sh spanning) \
             >"$rm_oldgit" 2>&1 &&
             fail "worktree:rm resolved a spanning path on a git without -z (#963): $(cat "$rm_oldgit")"
-        grep -q 'cannot enumerate worktrees unambiguously' "$rm_oldgit" ||
-            fail "the pre-2.36 path did not fail closed on a spanning worktree path (#963): $(cat "$rm_oldgit")"
+        grep -q 'cannot look up' "$rm_oldgit" ||
+            fail "the pre-2.36 path did not refuse registry lookup (#963): $(cat "$rm_oldgit")"
         grep -qi 'removed' "$rm_oldgit" &&
             fail "the pre-2.36 refusal still claimed a removal (#963): $(cat "$rm_oldgit")"
         git -C "$fixture" worktree remove --force "$oldgit_tree"

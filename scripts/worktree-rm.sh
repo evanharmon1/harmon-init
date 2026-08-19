@@ -227,19 +227,19 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
     # NUL-delimited stream where git provides it, and fall back to the LF form
     # rather than making an edge case impose a git version floor (challenge r1).
     # LF-delimited porcelain CANNOT represent a path containing a newline: the
-    # path simply continues onto the next line with nothing marking it, so a
-    # truncated prefix is indistinguishable from a real path. That is not
-    # recoverable by parsing, so on a git without `--porcelain -z` this refuses
-    # outright when it detects such a path rather than resolving the prefix as
-    # though it were a worktree (review r4). Detection is structural: every line
-    # of porcelain output is a known record key or blank, so a line that is
-    # neither means a path spanned lines.
-    if ! git worktree list --porcelain -z >/dev/null 2>&1 &&
-        git worktree list --porcelain | awk '
-            /^worktree /{next} /^(HEAD |branch )/{next}
-            /^(bare|detached)$/{next} /^(locked|prunable)/{next} /^$/{next}
-            {spanned = 1} END{exit !spanned}'; then
-        die "this git cannot enumerate worktrees unambiguously: it has no \`git worktree list --porcelain -z\` (added in git 2.36) and a registered worktree path contains a newline, which the line-delimited form cannot represent. Upgrade git to 2.36 or newer so this command can tell those paths apart instead of guessing at one"
+    # path continues onto the next line with nothing marking it. An earlier
+    # attempt detected that structurally, by treating a line that matched no
+    # record key as a continuation — but a continuation may legally LOOK like a
+    # key (`trap<LF>HEAD fake`), so the check could be walked straight past
+    # (review r5). There is no parse that recovers the truth here.
+    #
+    # So this does not parse ambiguous output at all. Without `--porcelain -z`
+    # (git 2.36+) registry resolution is simply unavailable, and the command
+    # says so. Nothing else regresses: a worktree at the conventional path is
+    # accounted for long before this block, so only the fallback lookup — the
+    # thing that cannot be done correctly here — is withdrawn.
+    if ! git worktree list --porcelain -z >/dev/null 2>&1; then
+        die "no worktree at $tree, and this git cannot look up '$name' elsewhere in the registry: that needs \`git worktree list --porcelain -z\` (git 2.36+), because the line-delimited form cannot represent a path containing a newline and offers no way to tell one apart from a truncated prefix. Upgrade git to 2.36 or newer, or name the worktree by its path with git's own commands"
     fi
 
     # awk cannot do the NUL half: its strings are NUL-terminated, so an awk fed
@@ -248,16 +248,14 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
     # so the -z stream is split in the shell; awk is used only on the LF
     # fallback, where it is emitting NUL rather than consuming it, and only
     # once the check above has established no path spans lines.
+    # Reached only when -z is available: the guard above refused otherwise.
     emit_worktree_paths() {
-        if git worktree list --porcelain -z >/dev/null 2>&1; then
+        if true; then
             git worktree list --porcelain -z | while IFS= read -r -d '' wt_record; do
                 case "$wt_record" in
                 "worktree "*) printf '%s\0' "${wt_record#worktree }" ;;
                 esac
             done
-        else
-            git worktree list --porcelain |
-                awk '/^worktree /{ printf "%s%c", substr($0, 10), 0 }'
         fi
     }
 
@@ -360,9 +358,11 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         if [ -n "$live_rel" ]; then
             live_label="$live_rel"
         else
-            # Not addressable through this command at all, so do not print
-            # something that looks like a name it would take.
-            live_label="(git worktree remove)"
+            # Not addressable through this command at all. The label is a
+            # STATUS, never a command: rendering `git worktree remove` here
+            # re-offered exactly what the refusal above withholds, and that
+            # command applies none of this script's guards (review r5).
+            live_label="(not removable here)"
         fi
         if [ -n "$live_admin" ] && [ "${live_admin##*/}" != "${live_tree##*/}" ]; then
             printf '  %s  (record: %s)  %s\n' \
