@@ -157,6 +157,7 @@ full)
         --data use_coderabbit=true
         --data use_antigravity_cli=true
         --data use_alternative_claude_providers=true
+        --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
         --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
     )
@@ -1511,11 +1512,26 @@ awk '/^on:/,/^jobs:/' .github/workflows/build.yml | grep -q 'types:' &&
 # The helper scripts are conditionally named, so a broken gate would either
 # ship dead weight into devcontainer=false repos or drop them from real ones.
 if [ "$profile" = "minimal" ]; then
+    ! grep -Fq 'vscode.dev/redirect' README.md || err "README rendered a devcontainer badge with devcontainer=false"
+    ! grep -Fq 'cloneInVolume' README.md || err "README rendered the local devcontainer fallback with devcontainer=false"
     [ ! -d .devcontainer ] || err ".devcontainer/ rendered but devcontainer=false"
     [ ! -f scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh rendered but devcontainer=false"
     [ ! -f scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh rendered but devcontainer=false"
     ! grep -q 'test:devcontainer:permissions' Taskfile.yml || err "test:devcontainer references rendered but devcontainer=false"
 else
+    grep -Fq 'label=Local%20Dev%20Container&message=Clone' README.md ||
+        err "README missing the labeled local clone-in-volume fallback"
+    grep -Fq 'vscode.dev/redirect?url=vscode%3A//ms-vscode-remote.remote-containers/cloneInVolume%3Furl%3Dhttps%3A//github.com/' README.md ||
+        err "README local fallback is missing or not URL-encoded behind vscode.dev/redirect"
+    if [ "$profile" = "full" ]; then
+        grep -Fq 'label=Coder%20Dev%20Container&message=Open' README.md ||
+            err "README missing the configured personal Coder devcontainer badge"
+        grep -Fq 'vscode.dev/redirect?url=vscode-remote%3A//dev-container%2B7b22686f' README.md ||
+            err "README personal badge does not encode the captured folder URI"
+    else
+        ! grep -Fq 'label=Coder%20Dev%20Container&message=Open' README.md ||
+            err "README rendered the personal Coder badge with no captured URI"
+    fi
     [ -d .devcontainer ] || err ".devcontainer/ missing (devcontainer on for profile '$profile')"
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"

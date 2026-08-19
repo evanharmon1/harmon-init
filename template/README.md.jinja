@@ -8,7 +8,10 @@
 [% endif %]
 [% if devcontainer %]
 [![Devcontainer Build]([[ repo_url ]]/actions/workflows/devcontainer-build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/devcontainer-build.yml)
-[![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=[[ repo_url ]])
+[% if devcontainer_coder_folder_uri %]
+[![Open Coder Dev Container](https://img.shields.io/static/v1?label=Coder%20Dev%20Container&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=[[ devcontainer_coder_folder_uri | urlencode ]])
+[% endif %]
+[![Clone in Local Dev Container](https://img.shields.io/static/v1?label=Local%20Dev%20Container&message=Clone&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=[[ ('vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=' + repo_url) | urlencode ]])
 [% endif %]
 [% if use_release_please and license != 'private' %]
 [![Latest Release](https://img.shields.io/github/v/release/[[ github_org ]]/[[ project_slug ]]?sort=semver)]([[ repo_url ]]/releases)

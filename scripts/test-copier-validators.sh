@@ -51,6 +51,16 @@ render() {
         . "$out" >"$work/render.log" 2>&1
 }
 
+render_coder_uri() {
+    local answer="$1" out="$2"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data "devcontainer_coder_folder_uri=$answer" \
+        . "$out" >"$work/render.log" 2>&1
+}
+
 echo "==> unsafe characters are rejected at answer time"
 # Each of these breaks the YAML scalar, the shell quoting, or both.
 i=0
@@ -84,6 +94,22 @@ else
     sed 's/^/      /' "$work/render.log" >&2
     hint_stale_worktree
 fi
+
+echo "==> the Coder README badge accepts only a captured Dev Containers URI"
+for bad_coder_uri in \
+    'vscode://ms-vscode-remote.remote-containers/cloneInVolume' \
+    'vscode-remote://dev-container+7b7d' \
+    'vscode-remote://dev-container+7b7d@ssh-remote+coder.dev/not-a-workspace'; do
+    if render_coder_uri "$bad_coder_uri" "$work/bad-coder-uri"; then
+        fail "accepted an incomplete captured Coder folder URI: $bad_coder_uri"
+    elif grep -q 'Validation error' "$work/render.log"; then
+        pass "rejected an incomplete captured Coder folder URI"
+    else
+        fail "rejected the incomplete captured URI for an unexpected reason"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
 
 if [ "$failures" -gt 0 ]; then
     echo "test-copier-validators: FAILED ($failures)" >&2

@@ -601,6 +601,25 @@ about which layer makes the *container* hop. The extension path, concretely:
    `alias devbox='~/bin/open-devcontainer harmon-init'`, a Raycast script
    command, a Shortcuts action — remembering that it can only replay an entry
    that exists, so step 3 is still how a repo gets its first one.
+
+   The README's **Coder Dev Container** badge is the same recommendation in a
+   clickable surface. Its target must be captured from VS Code rather than
+   reconstructed: run `~/bin/open-devcontainer` with no arguments, choose the
+   matching `[token]`, then print the exact launch without opening it:
+
+   ```sh
+   OPEN_DEVCONTAINER_DRY_RUN=1 ~/bin/open-devcontainer <token>
+   ```
+
+   Copy the `vscode-remote://dev-container+…` value after `--folder-uri` into
+   the template's `devcontainer_coder_folder_uri` answer. Before publishing
+   the README, round-trip that exact value against the currently installed
+   extension with `code --folder-uri '<captured-uri>'`; only keep the badge if
+   it opens this repo's dev profile through the Dev Containers extension. The
+   hex payload is an extension implementation detail, so repeat this capture
+   and validation whenever an extension update invalidates the link. Leaving
+   the answer empty omits the personal Coder badge and retains the clearly
+   labeled **Local Dev Container** clone-in-volume fallback.
 5. **Rebuilds** happen from the same window: "Dev Containers: Rebuild
    Container".
 
