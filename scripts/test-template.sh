@@ -85,6 +85,9 @@ err() {
     fail=1
 }
 
+# shellcheck source=scripts/lib/verify-ci-parity.sh
+. "${repo_root}/scripts/lib/verify-ci-parity.sh"
+
 # copier itself is not optional here, unlike the tools gated behind
 # required() above: this script IS the template-render gate, so a local skip
 # would report `task verify` green while rendering nothing. copier is now
@@ -669,6 +672,47 @@ if grep -q '^use_foreman:[[:space:]]*\(true\|yes\)$' .copier-answers.yml; then
     grep -q 'taskfiles\\\\/' renovate.json ||
         err "renovate.json has no Taskfile manager for the shipped FOO_VERSION pins"
 fi
+
+# ── 1f. verify/CI parity for THIS profile's rendered Taskfile/workflow ──
+# harmon-init#962's guard (scripts/test-verify-ci-parity.sh) only ever checked
+# the ROOT layer plus a single fixed template render (project_type: general,
+# matching .dogfood-answers.yml) — drift confined to a different profile's
+# branch (a use_node-gated CI job, an include_terraform-only task, …) was
+# invisible. Running the SAME comparison here, once per profile this script
+# already renders, gets full-profile coverage with no extra copier renders:
+# every non-exempt `task verify` target in THIS render's Taskfile.yml must be
+# reachable from THIS render's .github/workflows/build.yml, using the shared
+# extraction/inertness rules in scripts/lib/verify-ci-parity.sh.
+#
+# template_parity_allowed(): named exceptions for THIS check only, scoped by
+# profile (not shared with the root guard's own allowlist, and not reused
+# across profiles — a target legitimately exempt under one profile's answers
+# is not automatically exempt under another's). Add an entry only with a
+# stated, profile-scoped reason.
+template_parity_allowed() {
+    case "$profile:$1" in
+    # TRACKED as harmon-init#978, adjudicated by @evanharmon1 as follow-up
+    # work rather than #962 scope. Remove this entry when #978 lands, so the
+    # guard enforces it. project_type: iac sets include_terraform=true and
+    # include_ansible=true by default (copier.yml), so the rendered
+    # `validate` aggregate genuinely runs `lint:terraform:validate` +
+    # `validate:ansible:syntax` — real work, not the placeholder echo other
+    # profiles get. But CI only ever invokes `task validate` from the
+    # build-test job, which is gated `[% if use_node %]`, and iac is the one
+    # profile where use_node is false (project_type not in
+    # ['web-astro','web-app']). So for a real iac-type generated repo, `task
+    # verify` runs terraform/ansible validation that CI never reaches — a
+    # genuine local/CI gap, not a guard defect. Two fixes were considered and
+    # deliberately NOT made unilaterally here: (a) wire `task validate` into
+    # a CI job that isn't use_node-gated, or (b) run it unconditionally
+    # inside build-test regardless of use_node. Either changes what CI runs
+    # for every iac-type generated repo, which is a template-design call for
+    # the maintainer, not something to decide inside a parity-guard fix.
+    iac:validate) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+verify_ci_parity_check_layer Taskfile.yml .github/workflows/build.yml "template (${profile})" template_parity_allowed
 
 # ── 2. No unrendered Copier variables leaked into output ────────────
 # Go-task {{.VAR}} and GitHub Actions ${{ }} are legitimate; copier answer

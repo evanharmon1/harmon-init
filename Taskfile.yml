@@ -100,6 +100,7 @@ tasks:
       - task: test:tag-hygiene
       - task: test:dogfood-parity
       - task: test:dogfood-structure
+      - task: test:verify-ci-parity
       - task: test:devflow-config
       - task: test:starship-glyphs
       - task: test:template-independence
@@ -508,6 +509,11 @@ tasks:
     desc: Every section/task the rendered template ships must exist in the root layer
     cmds:
       - ./scripts/test-dogfood-structure.sh
+
+  test:verify-ci-parity:
+    desc: Every non-exempt `task verify` target must be reachable from the required CI workflow (root + rendered template)
+    cmds:
+      - ./scripts/test-verify-ci-parity.sh
 
   # Root-only on purpose: the powerline glyphs are harmon-init's own theme
   # choice, not an invariant to impose on generated repos (see the script).

@@ -63,6 +63,21 @@ jobs:
       - run: task test:sync-devkit-release
       - run: task test:devcontainer:image:automation
       - run: task test:skills-pin-parity
+      # Added under #962: each of these ran in local `verify` but in no CI job,
+      # so CI was strictly weaker than the local gate — the exact class the
+      # verify/CI parity guard below now prevents. Every one is a unit test
+      # needing no container, network, or credential, and each runs in ~1-2s.
+      - run: task audit:agent-instructions
+      - run: task test:agent-instructions-size
+      - run: task test:agent-skill-links
+      - run: task test:image-staleness
+      - run: task test:link-claude-json
+      - run: task test:meta-install
+      - run: task test:open-devcontainer
+      - run: task test:output
+      - run: task test:session-cleanup
+      - run: task test:setup-github
+      - run: task test:starship-glyphs
       # Meaningful only because this job checks out with fetch-depth: 0 above.
       - name: Tag hygiene (no non-release tag where git describe would select it)
         run: task test:tag-hygiene
@@ -91,6 +106,12 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Dogfood structure (template sections/tasks exist in the root layer)
         run: task test:dogfood-structure
+      # Needs copier for the same reason as the structure check above: it
+      # renders template/ (with .dogfood-answers.yml) to check the template
+      # layer's own verify<->CI reachability, since template/*.jinja source
+      # cannot be parsed as YAML directly (see the script's header comment).
+      - name: verify/CI parity (every task verify target reachable from CI)
+        run: task test:verify-ci-parity
       # Listed here for the same reason as the category/parity guards above:
       # this job enumerates its steps by hand, so a check that lives only in
       # `verify` never runs in CI. It renders the template, so it has to follow
