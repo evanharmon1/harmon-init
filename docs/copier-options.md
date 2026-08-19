@@ -424,7 +424,7 @@ top when you re-run these.
 
 ```sh
 # every question (asked + hidden)
-grep -cE '^[a-z][a-z_]*:' copier.yml                    # 57
+grep -cE '^[a-z][a-z_]*:' copier.yml                    # 58
 
 # hidden questions (when: false)
 grep -cE '^[[:space:]]+when: false' copier.yml          # 20
