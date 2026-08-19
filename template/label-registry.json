@@ -256,27 +256,27 @@
       "values": [
         {
           "value": "ci",
-          "description": "GitHub Actions workflows and CI plumbing"
+          "description": "Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area"
         },
         {
           "value": "docs",
-          "description": "Documentation content and structure"
+          "description": "Documentation content and structure; a subsystem's own docs belong to that subsystem's area"
         },
         {
           "value": "deps",
-          "description": "Renovate, version pins, dependency bumps"
+          "description": "Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area"
         },
         {
           "value": "build",
-          "description": "Build system and artifacts"
+          "description": "Shared build system and artifacts; subsystem builds belong to that subsystem's area"
         },
         {
           "value": "tests",
-          "description": "The test suite and gate assertions"
+          "description": "The shared test suite and gates; a subsystem's own tests belong to its area"
         },
         {
           "value": "tasks",
-          "description": "Taskfile targets and scripts/ glue"
+          "description": "Taskfile targets and scripts/ glue without a more specific area"
         },
         {
           "value": "release",
@@ -292,7 +292,7 @@
         },
         {
           "value": "skills",
-          "description": "Vendored/authored agent skills and the skills sync"
+          "description": "Shared agent skills and skills sync; subsystem workflow skills belong to that subsystem's area"
         },
         {
           "value": "gauntlet",

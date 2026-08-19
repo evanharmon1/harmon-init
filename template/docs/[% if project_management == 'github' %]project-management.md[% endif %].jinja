@@ -575,7 +575,10 @@ the taxonomy table below is generated from) and the starter set is created by
   where native issue Type is unavailable; the issue forms apply it, and org
   repos use native Type with no work-type label
 - **Area** — which codebase subsystem the work lives in (the *solution*
-  space). At most one each of `area:`/`domain:`/`layer:` per issue
+  space). At most one each of `area:`/`domain:`/`layer:` per issue. On these
+  exclusive axes, a generic bucket defers to the most specific matching value;
+  write that single-owner boundary into the value's registry description
+  rather than leaving it implicit
 - **Tier** — which model-routing stratum should work the issue — advisory,
   human-written, and inert until a consumer resolves it under its own trust
   model
