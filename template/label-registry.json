@@ -292,7 +292,7 @@
         },
         {
           "value": "skills",
-          "description": "Vendored/authored agent skills and the skills sync"
+          "description": "Shared agent skills and skills sync; subsystem workflow skills belong to that subsystem's area"
         },
         {
           "value": "gauntlet",

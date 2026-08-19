@@ -252,7 +252,7 @@ area:ci|0E8A16|Repository-wide CI workflows and plumbing; subsystem workflows be
 area:tasks|0E8A16|Taskfile targets and scripts/ glue without a more specific area; security targets are area:security
 area:tests|0E8A16|The shared test-*.sh suite and gates; a subsystem's own tests belong to its area
 area:deps|0E8A16|Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area
-area:skills|0E8A16|Vendored/authored agent skills and the skills sync
+area:skills|0E8A16|Shared agent skills and skills sync; subsystem workflow skills belong to that subsystem's area
 area:foreman|0E8A16|Foreman config, wrapper tasks, adapters
 area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring
 area:worktree|0E8A16|Worktree lifecycle tooling
@@ -300,7 +300,7 @@ area:tasks|0E8A16|Taskfile targets and scripts/ glue without a more specific are
 area:release|0E8A16|release-please, tags, release guards
 area:devcontainer|0E8A16|Dev containers, images, features
 area:pm|0E8A16|Labels, projects, issue tooling, PM docs
-area:skills|0E8A16|Vendored/authored agent skills and the skills sync
+area:skills|0E8A16|Shared agent skills and skills sync; subsystem workflow skills belong to that subsystem's area
 area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring"
     check_lockfile template/label-registry.json template/agent-registry.json \
         "$shared_inline
