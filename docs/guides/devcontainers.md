@@ -333,6 +333,16 @@ additions such as `admin:org` in an organization repo. Outside a checkout, use
 the literal `--scopes "workflow,project"` and then run `task setup:gh-scopes`
 once you have cloned, which adds anything missing and verifies it landed.
 
+The human profile sets `GH_BROWSER` to a small host-browser bridge. In a remote
+VS Code session, it uses the server's `bin/helpers/browser.sh` handoff; with a
+desktop CLI, it uses `code --open-url` only when that CLI advertises the option.
+On Coder, the plain CLI, or a disconnected VS Code session where neither handoff
+is available, the bridge prints the exact URL to open manually. It deliberately
+never tries `w3m`, `lynx`, or generic browser discovery, so an installed terminal
+browser cannot capture the flow. Both the initial `gh auth login --web` and the
+browser flow used by `task setup:gh-scopes` inherit this behavior from
+`GH_BROWSER`.
+
 `--scopes` is *additive* to gh's defaults (`repo`, `read:org`, `gist`). `project`
 is what Projects V2 writes need — without it `task status:gh` reports the board
 as unreachable — and `workflow` lets you edit `.github/workflows/`, which the bot
