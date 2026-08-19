@@ -21,8 +21,10 @@ if command -v code >/dev/null 2>&1; then
         remote_output="$("$remote_browser" "$url" 2>&1)"
         remote_status=$?
         [ -z "$remote_output" ] || printf '%s\n' "$remote_output" >&2
-        if [ "$remote_status" -eq 0 ] &&
-            ! printf '%s\n' "$remote_output" | grep -Fq 'Error when invoking the open external command'; then
+        # The remote CLI has returned exit 0 alongside protocol errors, and
+        # its error prose is not an API. Only silent success proves handoff;
+        # any diagnostic falls through to the actionable URL.
+        if [ "$remote_status" -eq 0 ] && [ -z "$remote_output" ]; then
             exit 0
         fi
     fi
