@@ -107,15 +107,23 @@ esac
 #
 # Guards the regression this change exists to prevent: a gate reverted to a bare
 # discard fails silently and undiagnosably, which is exactly what #934 reported.
-if grep -nE 'task --color=false [a-z:-]+ >/dev/null 2>&1' "$subject"; then
-    fail "a rendered-repo task gate above still discards its output instead of using run_quiet"
-fi
-if grep -nF 'test:worktree >/dev/null 2>&1' "$subject"; then
-    fail "the test:worktree gate still discards its output (the original #934 report)"
+# Stated as a PROPERTY over the whole file, not as a list of per-gate greps.
+# An enumeration is exactly what the challenge round defeated: `--dry check`
+# and `./scripts/foo.sh` forms evade any set of task-name patterns, so three
+# gates could be reverted with the suite still green. Quantifying over the
+# file leaves no seam to slip through.
+#
+# The INVERSE shape is deliberately not matched: `if cmd >/dev/null 2>&1; then
+# err ...` asserts that a nonzero exit is the failure, so there the discard is
+# correct and a replay would fire on the expected path.
+if grep -nE '>/dev/null 2>&1\)? *\|\|$' "$subject"; then
+    fail "a rendered-repo gate above discards its output and then calls err — route it through run_quiet (#934)"
 fi
 
-wired="$(grep -c 'run_quiet ' "$subject" || true)"
-[ "$wired" -ge 6 ] ||
-    fail "expected at least 6 run_quiet call sites in ${subject}, found ${wired}"
+# Counted on EXECUTABLE call sites only. Counting bare occurrences let the
+# three prose mentions of run_quiet satisfy the assertion on their own.
+wired="$(grep -cE '^[[:space:]]+run_quiet ' "$subject" || true)"
+[ "$wired" -ge 11 ] ||
+    fail "expected at least 11 run_quiet call sites in ${subject}, found ${wired}"
 
 echo "test-template.sh capture helpers: PASS"

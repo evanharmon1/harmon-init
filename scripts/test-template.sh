@@ -1868,7 +1868,7 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
         grep -qF -- "$lock_contract" scripts/terraform-provider-locks.sh ||
             err "scripts/terraform-provider-locks.sh does not establish '$lock_contract'"
     done
-    ./scripts/test-terraform-provider-locks.sh >/dev/null 2>&1 ||
+    run_quiet tf-provider-locks ./scripts/test-terraform-provider-locks.sh ||
         err "scripts/test-terraform-provider-locks.sh fails its hermetic lock-process checks"
     grep -q 'test-terraform-provider-locks.sh' scripts/test-tasks.sh ||
         err "test-tasks.sh does not run the provider-lock regression"
@@ -2012,7 +2012,7 @@ PY
         [ -f "$changed_script" ] || err "$changed_script missing (include_terraform=true)"
         [ -x "$changed_script" ] || err "$changed_script is not executable"
     done
-    ./scripts/test-terraform-changed.sh >/dev/null 2>&1 ||
+    run_quiet tf-changed ./scripts/test-terraform-changed.sh ||
         err "scripts/test-terraform-changed.sh fails its own change-detection checks"
     grep -q 'test-terraform-changed.sh' scripts/test-tasks.sh ||
         err "test-tasks.sh does not run the change-detection regression"
@@ -2146,7 +2146,7 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         grep -q -- '--pass-with-no-tests' scripts/e2e-run.sh ||
             err "e2e-run.sh filters out @a11y without --pass-with-no-tests — an a11y-only repo would fail the blocking e2e check"
     fi
-    ./scripts/e2e-run.sh >/dev/null 2>&1 ||
+    run_quiet e2e-skip ./scripts/e2e-run.sh ||
         err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
     # A config with the guard still unconfigured must FAIL, not skip.
     touch playwright.config.ts
@@ -2214,9 +2214,9 @@ fi
 # directions are asserted.
 if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     [ -x scripts/codegen.sh ] || err "scripts/codegen.sh missing or not executable (project_type=web-app)"
-    ./scripts/codegen.sh >/dev/null 2>&1 ||
+    run_quiet codegen-skip ./scripts/codegen.sh ||
         err "codegen.sh does not skip cleanly on a fresh render (no app/deps yet)"
-    ./scripts/codegen.sh --guard >/dev/null 2>&1 ||
+    run_quiet codegen-guard-skip ./scripts/codegen.sh --guard ||
         err "codegen.sh --guard does not skip cleanly on a fresh render (no app/deps yet)"
     grep -q 'convex codegen' scripts/codegen.sh || err "codegen.sh does not run Convex codegen"
     if have task; then
