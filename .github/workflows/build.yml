@@ -107,10 +107,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Dogfood structure (template sections/tasks exist in the root layer)
         run: task test:dogfood-structure
-      # Needs copier for the same reason as the structure check above: it
-      # renders template/ (with .dogfood-answers.yml) to check the template
-      # layer's own verify<->CI reachability, since template/*.jinja source
-      # cannot be parsed as YAML directly (see the script's header comment).
       # Listed here for the same reason as the category/parity guards above:
       # this job enumerates its steps by hand, so a check that lives only in
       # `verify` never runs in CI. It renders the template, so it has to follow
