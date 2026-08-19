@@ -26,7 +26,7 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
 fi
 
 for tool in task shfmt hadolint actionlint terraform-docs yq lefthook gitleaks sops act uv semgrep copier \
-    claude codex gemini agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
+    claude codex gemini opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
@@ -57,6 +57,7 @@ run_version copier copier --version
 run_version claude claude --version
 run_version codex codex --version
 run_version gemini gemini --version
+run_version opencode opencode --version
 run_version agy agy --version
 run_version agent-deck agent-deck --version
 run_version playwright playwright --version
@@ -91,6 +92,8 @@ done
 # env var survives, otherwise the warning silently returns to every consumer.
 [ "${DISABLE_AUTOUPDATER:-}" = "1" ] ||
     fail "DISABLE_AUTOUPDATER is not set to 1 in the image environment"
+[ "${OPENCODE_DISABLE_AUTOUPDATE:-}" = "true" ] ||
+    fail "OPENCODE_DISABLE_AUTOUPDATE is not set to true in the image environment"
 [ "${AGY_CLI_DISABLE_AUTO_UPDATE:-}" = "true" ] ||
     fail "AGY_CLI_DISABLE_AUTO_UPDATE is not set to true in the image environment"
 

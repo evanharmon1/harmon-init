@@ -27,9 +27,11 @@ The image:
 - carries OCI source, revision, version, description, and license labels;
 - contains `/usr/local/share/harmon-devcontainer/manifest.json` with its source
   revision, architecture, and important tool versions;
-- pins the agent CLI versions it ships and disables Claude Code's auto-updater
-  (`DISABLE_AUTOUPDATER=1`), so a running container cannot drift off the tested
-  version — upgrades arrive by rebuilding the image and moving the consumer pin;
+- pins the agent CLI versions it ships and disables the Claude Code and OpenCode
+  auto-updaters (`DISABLE_AUTOUPDATER=1` and
+  `OPENCODE_DISABLE_AUTOUPDATE=true`), so a running container cannot drift off
+  the tested version — upgrades arrive by rebuilding the image and moving the
+  consumer pin;
 - contains `/usr/local/sbin/install-harmon-repo-config`, the stable contract by
   which a consumer installs its checked-in policy overlay;
 - contains no repository checkout, project dependencies, credentials, secrets,
