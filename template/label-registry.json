@@ -256,7 +256,7 @@
       "values": [
         {
           "value": "ci",
-          "description": "GitHub Actions workflows and CI plumbing"
+          "description": "Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area"
         },
         {
           "value": "docs",
@@ -264,11 +264,11 @@
         },
         {
           "value": "deps",
-          "description": "Renovate, version pins, dependency bumps"
+          "description": "Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area"
         },
         {
           "value": "build",
-          "description": "Build system and artifacts"
+          "description": "Shared build system and artifacts; subsystem builds belong to that subsystem's area"
         },
         {
           "value": "tests",

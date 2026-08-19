@@ -248,10 +248,10 @@ domain:delivery|FBCA04|Releases and versioning: release-please, tags, release gu
 domain:environment|FBCA04|The ready-to-code environment: devcontainer, images, codespaces, editor setup
 area:copier|0E8A16|The templating engine: copier.yml, answers, validators, jinja, render matrix
 area:devcontainer|0E8A16|Dev containers, images, features
-area:ci|0E8A16|GitHub Actions workflows and CI plumbing
+area:ci|0E8A16|Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area
 area:tasks|0E8A16|Taskfile targets and scripts/ glue without a more specific area; security targets are area:security
 area:tests|0E8A16|The shared test-*.sh suite and gates; a subsystem's own tests belong to its area
-area:deps|0E8A16|Renovate, version pins, dependency bumps
+area:deps|0E8A16|Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area
 area:skills|0E8A16|Vendored/authored agent skills and the skills sync
 area:foreman|0E8A16|Foreman config, wrapper tasks, adapters
 area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring
@@ -291,10 +291,10 @@ $root_only_inline" "root layer"
     template_only_inline="domain:auth|FBCA04|Authentication and authorization
 domain:billing|FBCA04|Billing and payments
 domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
-area:ci|0E8A16|GitHub Actions workflows and CI plumbing
+area:ci|0E8A16|Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area
 area:docs|0E8A16|Documentation content and structure; a subsystem's own docs belong to that subsystem's area
-area:deps|0E8A16|Renovate, version pins, dependency bumps
-area:build|0E8A16|Build system and artifacts
+area:deps|0E8A16|Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area
+area:build|0E8A16|Shared build system and artifacts; subsystem builds belong to that subsystem's area
 area:tests|0E8A16|The shared test suite and gates; a subsystem's own tests belong to its area
 area:tasks|0E8A16|Taskfile targets and scripts/ glue without a more specific area
 area:release|0E8A16|release-please, tags, release guards
