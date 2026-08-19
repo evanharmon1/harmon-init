@@ -574,6 +574,13 @@ the taxonomy table below is generated from) and the starter set is created by
 - **Work type** — what kind of work the issue is, on personal-account repos
   where native issue Type is unavailable; the issue forms apply it, and org
   repos use native Type with no work-type label
+- **Area** — which codebase subsystem the work lives in (the *solution*
+  space). At most one each of `area:`/`domain:`/`layer:` per issue
+- **Tier** — which model-routing stratum should work the issue — advisory,
+  human-written, and inert until a consumer resolves it under its own trust
+  model
+- **Method** — the execution topology to work the issue under — advisory,
+  like `tier:`
 - **Rigor** — which round-cap level in [`.devflow.toml`](../.devflow.toml) an
   agent works the issue under (AGENTS.md, "Round caps are resolved, not stated
   here"). An agent reads it and never self-applies one. It is advisory rather
