@@ -143,6 +143,14 @@ gitq "$gen" add -A
 gitq "$gen" commit -qm customize
 before="$(git -C "$gen" rev-list --count HEAD)"
 
+# Existing repos can also have an active, deliberately untracked design bundle
+# under the legacy shield. Updating must neither delete it nor expose it to an
+# ordinary `git add -A` while the template relinquishes the starter scaffold.
+mkdir -p "$gen/specs/handoff-active"
+printf '%s\n' '{"consumer":"owned"}' >"$gen/specs/handoff-active/asset.json"
+git -C "$gen" check-ignore -q specs/handoff-active/asset.json ||
+    err "fixture legacy handoff bundle is not ignored before update"
+
 # A consumer may already use the cross-industry .agents standard. Adding
 # portable compatibility support must merge into that directory, never ask
 # Copier to replace the directory with a symlink.
@@ -188,6 +196,10 @@ grep -q 'repo-owned changelog entry' "$gen/CHANGELOG.md" || err "CHANGELOG.md lo
 ! [ -e "$gen/specs/_template.md" ] || err "removed template specs/_template.md survived copier update"
 grep -q '^# Consumer-owned specification$' "$gen/specs/consumer.md" ||
     err "consumer-owned spec was lost when template starter specs were removed"
+[ -f "$gen/specs/handoff-active/asset.json" ] ||
+    err "legacy consumer handoff bundle was lost when the template scaffold was removed"
+git -C "$gen" check-ignore -q specs/handoff-active/asset.json ||
+    err "legacy consumer handoff bundle became trackable after update"
 grep -q '^consumer-owned$' "$gen/.agents/skills/consumer-local/SKILL.md" ||
     err "Copier update replaced or lost an existing .agents/skills directory"
 grep -q 'template-changed-changelog' "$gen/CHANGELOG.md" && err "CHANGELOG.md received a template change despite _skip_if_exists"

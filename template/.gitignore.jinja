@@ -55,6 +55,10 @@ node_modules/
 # matches only the repository-root `.claude/`.
 .claude/worktrees/
 
+# Legacy design handoff bundles may remain in existing repos after a Copier
+# update. Keep them untracked while the template relinquishes the specs layout.
+specs/*/
+
 # Lefthook local overrides (not committed)
 .lefthook-local.yml
 
