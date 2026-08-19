@@ -17,8 +17,14 @@ if command -v code >/dev/null 2>&1; then
     code_path="$(readlink -f "$code_path")"
     remote_browser="$(dirname "$(dirname "$code_path")")/helpers/browser.sh"
 
-    if [ -x "$remote_browser" ] && "$remote_browser" "$url"; then
-        exit 0
+    if [ -x "$remote_browser" ]; then
+        remote_output="$("$remote_browser" "$url" 2>&1)"
+        remote_status=$?
+        [ -z "$remote_output" ] || printf '%s\n' "$remote_output" >&2
+        if [ "$remote_status" -eq 0 ] &&
+            ! printf '%s\n' "$remote_output" | grep -Fq 'Error when invoking the open external command'; then
+            exit 0
+        fi
     fi
 
     # Desktop CLIs expose --open-url, while the remote CLI may accept and

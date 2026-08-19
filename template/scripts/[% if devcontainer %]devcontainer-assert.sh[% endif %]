@@ -545,6 +545,9 @@ assert_unit() {
     chmod 0755 "${browser_bin}/code"
     printf '%s\n' '#!/bin/sh' \
         'printf "%s\\n" "$@" >"$GH_BROWSER_TEST_LOG"' \
+        'if [ "${GH_BROWSER_TEST_HELPER_ERROR:-0}" = "1" ]; then' \
+        '    echo "Error when invoking the open external command: disconnected" >&2' \
+        'fi' \
         'exit "${GH_BROWSER_TEST_HELPER_RC:-0}"' >"${browser_helpers}/browser.sh"
     chmod 0755 "${browser_helpers}/browser.sh"
     for terminal_browser in w3m lynx sensible-browser xdg-open; do
@@ -561,6 +564,14 @@ assert_unit() {
         fail "GitHub browser bridge did not pass the exact URL to the remote helper"
     [ ! -e "$browser_sentinel" ] ||
         fail "GitHub browser bridge invoked a terminal browser after the remote helper succeeded"
+
+    browser_out="$(GH_BROWSER_TEST_HELPER_ERROR=1 GH_BROWSER_TEST_LOG="$browser_log" \
+        GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
+        PATH="$browser_bin" "$gh_browser" "$browser_url" 2>&1)"
+    case "$browser_out" in
+    *"$browser_url"*) ;;
+    *) fail "GitHub browser bridge trusted a swallowed remote-helper error: ${browser_out}" ;;
+    esac
 
     browser_out="$(GH_BROWSER_TEST_HELPER_RC=1 GH_BROWSER_TEST_LOG="$browser_log" \
         GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
