@@ -214,6 +214,10 @@ copier copy --trust --defaults --vcs-ref=HEAD "${copier_flags[@]+"${copier_flags
 
 cd "$dest"
 
+# Generated projects start without a generic specs/ scaffold. Projects can add
+# their own task-specific specification layout when their domain calls for one.
+[ ! -e specs ] || err "rendered output unexpectedly contains the removed specs/ scaffold"
+
 # --skip-tasks profiles have no `git init` task run; some validators
 # (lefthook dump) need a git repo.
 if [ ! -d .git ]; then

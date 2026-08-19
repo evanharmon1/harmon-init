@@ -13,7 +13,6 @@ import prettier from 'eslint-config-prettier'
 // so formatting rules never fight Prettier.
 export default tseslint.config(
   {
-    // specs/*/ holds vendored design handoff bundles (deleted at sign-off);
     // routeTree.gen.ts + convex/_generated/ are generated (committed but not linted);
     // .claude/ holds vendored agent skills whose .ts/.mjs assets must never hit type-aware lint.
     ignores: [
@@ -22,7 +21,6 @@ export default tseslint.config(
       '**/.nitro/',
       'convex/_generated/',
       'src/routeTree.gen.ts',
-      'specs/',
       '.claude/'
     ]
   },

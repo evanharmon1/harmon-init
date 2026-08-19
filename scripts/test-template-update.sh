@@ -113,7 +113,7 @@ gitq "$gen" add -A
 gitq "$gen" commit -qm "initial scaffold"
 
 # 3. Customize the repo the NORMAL way: edit a template-owned file in place
-#    (add a project task) and a one-time seed (README).
+#    (add a project task), a one-time seed (README), and a consumer-owned spec.
 #
 #    The task is inserted just after `tasks:` rather than appended at EOF, and
 #    that placement is load-bearing. A repo edit sitting immediately after the
@@ -138,6 +138,7 @@ awk '
 grep -q 'project-specific task added in the repo' "$gen/Taskfile.yml" ||
     err "fixture failed to insert the repo's own task — no 'tasks:' line matched"
 echo "- repo-owned changelog entry" >>"$gen/CHANGELOG.md"
+printf '%s\n' '# Consumer-owned specification' >"$gen/specs/consumer.md"
 gitq "$gen" add -A
 gitq "$gen" commit -qm customize
 before="$(git -C "$gen" rev-list --count HEAD)"
@@ -183,6 +184,10 @@ grep -q 'update-test marker' "$gen/scripts/lint-hygiene.sh" || err "template imp
 grep -q 'project-specific task added in the repo' "$gen/Taskfile.yml" || err "repo's own edit to Taskfile.yml was lost on update"
 grep -q 'Template Added Section' "$gen/README.md" || err "new template README section did not merge into the repo"
 grep -q 'repo-owned changelog entry' "$gen/CHANGELOG.md" || err "CHANGELOG.md lost the repo's content"
+! [ -e "$gen/specs/README.md" ] || err "removed template specs/README.md survived copier update"
+! [ -e "$gen/specs/_template.md" ] || err "removed template specs/_template.md survived copier update"
+grep -q '^# Consumer-owned specification$' "$gen/specs/consumer.md" ||
+    err "consumer-owned spec was lost when template starter specs were removed"
 grep -q '^consumer-owned$' "$gen/.agents/skills/consumer-local/SKILL.md" ||
     err "Copier update replaced or lost an existing .agents/skills directory"
 grep -q 'template-changed-changelog' "$gen/CHANGELOG.md" && err "CHANGELOG.md received a template change despite _skip_if_exists"

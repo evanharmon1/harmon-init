@@ -6,7 +6,7 @@ non-code, non-how layer.
 **Belongs here:** why the product exists, who it serves, where it's going, and the
 conceptual model. **Not here:** how it's built (→ [../architecture/](../architecture/)),
 why a choice was made (→ [../decisions/](../decisions/)), or what to build next
-(→ [../../specs/](../../specs/)).
+(→ the issue tracker and planning board).
 
 - [vision.md](vision.md) — why the product exists, who it serves, the
   differentiator and strategy; the north-star POV, not a feature list.

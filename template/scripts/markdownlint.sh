@@ -25,7 +25,6 @@ default_globs=(
     '**/*.md'
     '#template/**'
     '#.claude/**'
-    '#specs/*/**'
     '#**/node_modules/**'
     '#dist/**'
     '#.worktrees/**'

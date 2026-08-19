@@ -23,9 +23,15 @@ cd "$(dirname "$0")/.."
 #               against their own reviewed lockfiles and diffs the shared
 #               family metadata, so the divergence is checked, just not
 #               byte-checked.
+#   docs/product/README.md — harmon-init retains its root-only specs/ contract
+#               (including specs/issue-strategy.md); generated repos no longer
+#               receive that generic scaffold.
+#   scripts/markdownlint.sh — root still excludes temporary design handoff
+#               bundles beneath its retained specs/ tree; generated repos no
+#               longer ship that tree or its special-case lint exclusion.
 #   (.claude/settings.json is a jinja twin now — root additionally grants the
 #   sibling-repo read permissions/sandbox dirs, reconciled by hand.)
-ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt label-registry.json scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh"
+ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt label-registry.json docs/product/README.md scripts/markdownlint.sh scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh"
 
 fail=0
 checked=0
