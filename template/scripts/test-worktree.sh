@@ -3207,6 +3207,31 @@ rm_wt '../escape' >"$rm_badname" 2>&1 && fail "worktree:rm accepted '../escape' 
 grep -q "must not contain '\.\.'" "$rm_badname" ||
     fail "the argument check stopped naming which rule failed (#963): $(cat "$rm_badname")"
 
+# The THIRD outcome the issue requires the message to distinguish: a registry
+# record whose directory is already gone. Clearing it is correct and useful,
+# but "Worktree removed" claims a directory was deleted that never existed,
+# directly contradicting the line printed just above it (review r2).
+new stalemsg --no-install >/dev/null || fail "could not create the #963 stale-record fixture"
+rm -rf "$fixture/.worktrees/stalemsg"
+rm_stale="$test_tmp/rm-stalemsg.log"
+rm_wt stalemsg >"$rm_stale" 2>&1 ||
+    fail "worktree:rm failed to clear a stale record (#963): $(cat "$rm_stale")"
+grep -q 'Stale record cleared' "$rm_stale" ||
+    fail "clearing a stale record did not say so (#963): $(cat "$rm_stale")"
+grep -q '^Worktree removed:' "$rm_stale" &&
+    fail "clearing a stale record still claimed a directory was removed (#963): $(cat "$rm_stale")"
+
+# ...and a genuine removal must still say it removed a worktree, so the fix
+# above cannot be satisfied by simply never printing the removal line.
+new realmsg --no-install >/dev/null || fail "could not create the #963 real-removal fixture"
+rm_real="$test_tmp/rm-realmsg.log"
+rm_wt realmsg >"$rm_real" 2>&1 ||
+    fail "worktree:rm failed to remove a live worktree (#963): $(cat "$rm_real")"
+grep -q '^Worktree removed:' "$rm_real" ||
+    fail "a genuine removal stopped reporting itself as one (#963): $(cat "$rm_real")"
+grep -q 'Stale record cleared' "$rm_real" &&
+    fail "a genuine removal was reported as a stale-record cleanup (#963): $(cat "$rm_real")"
+
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"

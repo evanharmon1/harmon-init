@@ -814,4 +814,15 @@ while [ "$parent" != "$main_root" ] && [ "$parent" != "/" ]; do
     parent="$(dirname "$parent")"
 done
 
-echo "Worktree removed: $tree"
+# The final line reports what actually happened, from the entry snapshot.
+# `stale_record` means the registry held a record whose directory was already
+# gone when this run started: nothing was removed from disk, and saying
+# "Worktree removed" there contradicted the line above it and claimed the
+# removal of a directory that never existed (#963 AC: the message must
+# distinguish "removed a worktree" from "cleared a stale record" from "found
+# nothing" — the third is the refusal branch above).
+if [ "$stale_record" -eq 1 ]; then
+    echo "Stale record cleared: $tree (no worktree directory existed)"
+else
+    echo "Worktree removed: $tree"
+fi
