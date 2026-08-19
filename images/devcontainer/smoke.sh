@@ -25,7 +25,7 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
         fail "manifest architecture does not match $EXPECTED_ARCHITECTURE"
 fi
 
-for tool in task shfmt hadolint actionlint terraform-docs yq lefthook gitleaks sops act uv semgrep \
+for tool in task shfmt hadolint actionlint terraform-docs yq lefthook gitleaks sops act uv semgrep copier \
     claude codex gemini opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
@@ -53,6 +53,7 @@ run_version sops sops --version
 run_version act act --version
 run_version uv uv --version
 run_version semgrep semgrep --help
+run_version copier copier --version
 run_version claude claude --version
 run_version codex codex --version
 run_version gemini gemini --version
