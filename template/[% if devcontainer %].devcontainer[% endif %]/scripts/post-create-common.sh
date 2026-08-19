@@ -192,23 +192,7 @@ if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
         rm -rf "${HOME:?}/.config/herdr"
     fi
     ln -sfn "/home/vscode/.persistent/herdr" "$HOME/.config/herdr"
-    mkdir -p "/home/vscode/.persistent/opencode-config" \
-        "/home/vscode/.persistent/opencode-data" "$HOME/.config" "$HOME/.local/share"
-    for source_target in \
-        "$HOME/.config/opencode:/home/vscode/.persistent/opencode-config" \
-        "$HOME/.local/share/opencode:/home/vscode/.persistent/opencode-data"; do
-        source_dir="${source_target%%:*}"
-        target_dir="${source_target#*:}"
-        if [ -d "$source_dir" ] && [ ! -L "$source_dir" ]; then
-            if ! cp -a "$source_dir/." "$target_dir/"; then
-                echo "ERROR: OpenCode state migration from ${source_dir} failed;" \
-                    "fix the persistent volume and rebuild" >&2
-                exit 1
-            fi
-            rm -rf "${source_dir:?}"
-        fi
-        ln -sfn "$target_dir" "$source_dir"
-    done
+    bash .devcontainer/scripts/persist-opencode.sh /home/vscode/.persistent
 fi
 
 # --- Persist ~/.claude.json into the ~/.claude volume ---
