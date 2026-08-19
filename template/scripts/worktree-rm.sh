@@ -226,11 +226,28 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
     # which would resolve the wrong worktree or none at all. Read a
     # NUL-delimited stream where git provides it, and fall back to the LF form
     # rather than making an edge case impose a git version floor (challenge r1).
-    # awk cannot do this half: its strings are NUL-terminated, so an awk fed a
-    # NUL-delimited stream stops at the first record — on macOS that silently
+    # LF-delimited porcelain CANNOT represent a path containing a newline: the
+    # path simply continues onto the next line with nothing marking it, so a
+    # truncated prefix is indistinguishable from a real path. That is not
+    # recoverable by parsing, so on a git without `--porcelain -z` this refuses
+    # outright when it detects such a path rather than resolving the prefix as
+    # though it were a worktree (review r4). Detection is structural: every line
+    # of porcelain output is a known record key or blank, so a line that is
+    # neither means a path spanned lines.
+    if ! git worktree list --porcelain -z >/dev/null 2>&1 &&
+        git worktree list --porcelain | awk '
+            /^worktree /{next} /^(HEAD |branch )/{next}
+            /^(bare|detached)$/{next} /^(locked|prunable)/{next} /^$/{next}
+            {spanned = 1} END{exit !spanned}'; then
+        die "this git cannot enumerate worktrees unambiguously: it has no \`git worktree list --porcelain -z\` (added in git 2.36) and a registered worktree path contains a newline, which the line-delimited form cannot represent. Upgrade git to 2.36 or newer so this command can tell those paths apart instead of guessing at one"
+    fi
+
+    # awk cannot do the NUL half: its strings are NUL-terminated, so an awk fed
+    # a NUL-delimited stream stops at the first record — on macOS that silently
     # yielded only the main worktree. bash's `read -d ''` handles NUL correctly,
     # so the -z stream is split in the shell; awk is used only on the LF
-    # fallback, where it is emitting NUL rather than consuming it.
+    # fallback, where it is emitting NUL rather than consuming it, and only
+    # once the check above has established no path spans lines.
     emit_worktree_paths() {
         if git worktree list --porcelain -z >/dev/null 2>&1; then
             git worktree list --porcelain -z | while IFS= read -r -d '' wt_record; do
@@ -307,14 +324,14 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         if [ "$rel_is_nameable" -eq 1 ]; then
             die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — its admin record and its directory have different names (a move does that), and only its current name resolves here: task worktree:rm -- $resolved_rel"
         else
-            die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — that path is not addressable by this command, so remove it with: git worktree remove $(printf '%q' "$resolved")"
+            die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — that path is not addressable by this command, and no removal command is suggested for it on purpose: \`git worktree remove\` performs none of the checks this task does (work hidden by skip-worktree or assume-unchanged, a merge autostash, and detached commits no branch, tag or remote-tracking ref contains — it deletes ignored files such as .env and takes an unreferenced detached HEAD without complaint), so anything removing that path has to establish those itself first"
         fi
     elif [ "$resolved_count" -gt 1 ]; then
         echo "worktree:rm: '$name' is ambiguous — it matches more than one registered worktree:" >&2
         for amb_tree in "${matches[@]}"; do
             printf '  %s\n' "$(printf '%q' "$amb_tree")" >&2
         done
-        die "name the worktree by its path instead: git worktree remove <path>"
+        die "name the worktree unambiguously — this command removes only worktrees under $main_root/.worktrees/, and reaching any other path means establishing for yourself the guards listed above that \`git worktree remove\` does not apply"
     fi
 
     # Matches nothing at all. Never report a removal for it.

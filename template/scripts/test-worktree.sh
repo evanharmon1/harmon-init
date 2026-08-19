@@ -2994,8 +2994,15 @@ grep -q "names the worktree at $outside_root/parked" "$rm_out" ||
     fail "the refusal did not name where the worktree actually is (#963): $(cat "$rm_out")"
 grep -q "names the worktree at $fixture/.worktrees/parked" "$rm_out" &&
     fail "the refusal located the worktree at the constructed path, which does not exist (#963): $(cat "$rm_out")"
-grep -q 'git worktree remove' "$rm_out" ||
-    fail "the refusal did not name a command that actually works (#963): $(cat "$rm_out")"
+# The refusal must NOT hand over `git worktree remove`: that command applies
+# none of this script's guards — it deletes ignored files such as .env and
+# takes an unreferenced detached HEAD without complaint — so advertising it
+# walks the operator past the protections this task exists to provide
+# (review r4). It must instead say what would go unchecked.
+grep -qE 'remove it with: git worktree remove|instead: git worktree remove' "$rm_out" &&
+    fail "the refusal advertised an unguarded removal command (#963): $(cat "$rm_out")"
+grep -q 'skip-worktree' "$rm_out" ||
+    fail "the refusal did not name the guards a raw removal would skip (#963): $(cat "$rm_out")"
 grep -qi 'removed:' "$rm_out" &&
     fail "the refusal still printed a removal line (#963): $(cat "$rm_out")"
 [ -d "$outside_root/parked" ] ||
@@ -3090,8 +3097,19 @@ if mkdir -p "$nl_probe" 2>/dev/null && [ -d "$nl_probe" ]; then
 else
     nl_supported=0
 fi
+# `--porcelain -z` (git 2.36+) is what makes a newline-bearing path
+# representable at all. Without it the command fails closed by design, so these
+# cases assert behaviour that git cannot deliver — gate on the capability, not
+# only on the filesystem (review r4).
+if git worktree list --porcelain -z >/dev/null 2>&1; then
+    nl_z_supported=1
+else
+    nl_z_supported=0
+fi
 if [ "$nl_supported" -eq 0 ]; then
     echo "    (skipped: this filesystem rejects a newline in a path)"
+elif [ "$nl_z_supported" -eq 0 ]; then
+    echo "    (skipped: this git has no 'worktree list --porcelain -z'; the command fails closed instead)"
 elif git -C "$fixture" worktree add -q "$nl_tree" -b feat/newline-path; then
     rm_trunc="$test_tmp/rm-trunc.log"
     if rm_wt trunc >"$rm_trunc" 2>&1; then
@@ -3198,8 +3216,8 @@ for bad_component in '-dash' 'a..b'; do
     fi
     grep -q 'task worktree:rm --' "$rm_remedy" &&
         fail "the remedy advertised a task invocation this command rejects, for '$bad_component' (#963): $(cat "$rm_remedy")"
-    grep -q 'git worktree remove' "$rm_remedy" ||
-        fail "the remedy did not fall back to git's command for '$bad_component' (#963): $(cat "$rm_remedy")"
+    grep -qE 'remove it with: git worktree remove' "$rm_remedy" &&
+        fail "the remedy advertised an unguarded removal for '$bad_component' (#963): $(cat "$rm_remedy")"
     # The LISTING must reach the same verdict about the same path, and it must
     # be checked while this worktree still exists. Both components pass the
     # charset rule and fail a different one, so a listing that applied only the
@@ -3250,7 +3268,7 @@ grep -q 'Stale record cleared' "$rm_real" &&
 # carrying a raw newline. Every diagnostic must escape the path it prints, not
 # only the remedy: an unescaped location clause splits the message across lines
 # (review r3).
-if [ "$nl_supported" -eq 1 ]; then
+if [ "$nl_supported" -eq 1 ] && [ "$nl_z_supported" -eq 1 ]; then
     esc_parent="$test_tmp/escpath"
     mkdir -p "$esc_parent"
     esc_tree="$esc_parent/trunc
@@ -3267,6 +3285,52 @@ tail"
     else
         fail "could not create the #963 escaping fixture although newlines are supported"
     fi
+fi
+
+# The pre-2.36 path is unreachable on a modern git, so it is simulated: a shim
+# makes `worktree list --porcelain -z` fail and passes everything else through
+# to the real binary. Without this the fail-closed branch is only exercisable
+# by installing an old git, which means in practice never (review r4).
+if [ "$nl_supported" -eq 1 ]; then
+    oldgit_shim="$test_tmp/oldgit-shim"
+    mkdir -p "$oldgit_shim"
+    real_git="$(command -v git)"
+    cat >"$oldgit_shim/git" <<SHIM
+#!/usr/bin/env bash
+# Reject only $(worktree list ... -z); everything else is the real git.
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+    for arg in "\$@"; do
+        [ "\$arg" = "-z" ] && exit 129
+    done
+fi
+exec "$real_git" "\$@"
+SHIM
+    chmod +x "$oldgit_shim/git"
+    # Prove the shim actually simulates the old git before relying on it — a
+    # shim that silently passed -z through would make this case vacuous.
+    PATH="$oldgit_shim:$PATH" git worktree list --porcelain -z >/dev/null 2>&1 &&
+        fail "the pre-2.36 git shim did not reject --porcelain -z (#963)"
+    PATH="$oldgit_shim:$PATH" git worktree list --porcelain >/dev/null 2>&1 ||
+        fail "the pre-2.36 git shim broke ordinary git invocations (#963)"
+
+    oldgit_parent="$test_tmp/oldgit-cone"
+    mkdir -p "$oldgit_parent"
+    oldgit_tree="$oldgit_parent/span
+ning"
+    if git -C "$fixture" worktree add -q "$oldgit_tree" -b feat/oldgit-span; then
+        rm_oldgit="$test_tmp/rm-oldgit.log"
+        (cd "$fixture" && PATH="$oldgit_shim:$PATH" bash scripts/worktree-rm.sh spanning) \
+            >"$rm_oldgit" 2>&1 &&
+            fail "worktree:rm resolved a spanning path on a git without -z (#963): $(cat "$rm_oldgit")"
+        grep -q 'cannot enumerate worktrees unambiguously' "$rm_oldgit" ||
+            fail "the pre-2.36 path did not fail closed on a spanning worktree path (#963): $(cat "$rm_oldgit")"
+        grep -qi 'removed' "$rm_oldgit" &&
+            fail "the pre-2.36 refusal still claimed a removal (#963): $(cat "$rm_oldgit")"
+        git -C "$fixture" worktree remove --force "$oldgit_tree"
+    else
+        fail "could not create the #963 pre-2.36 fixture although newlines are supported"
+    fi
+    rm -rf "$oldgit_shim"
 fi
 
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
