@@ -127,11 +127,17 @@ assert_unit() {
         fail "Codex bot-mode helper depends on yq for TOML mutation"
     fi
 
-    local bot_config dev_config
+    local bot_config dev_config shell_aliases gh_browser
     bot_config="${repo_root}/.devcontainer/devcontainer.json"
     dev_config="${repo_root}/.devcontainer/dev/devcontainer.json"
+    shell_aliases="${repo_root}/.devcontainer/config/shell-aliases.sh"
+    gh_browser="${repo_root}/.devcontainer/config/gh-browser.sh"
     [ -f "$bot_config" ] || fail "bot devcontainer.json not found at ${bot_config}"
     [ -f "$dev_config" ] || fail "dev devcontainer.json not found at ${dev_config}"
+    [ -f "$shell_aliases" ] || fail "shell-aliases.sh not found at ${shell_aliases}"
+    [ -x "$gh_browser" ] || fail "GitHub browser bridge is missing or not executable at ${gh_browser}"
+    grep -q '^unset BROWSER$' "$shell_aliases" ||
+        fail "shell-aliases.sh no longer removes generic BROWSER from interactive shells"
 
     # `task` and the rest of the shared toolchain come from the pinned public
     # image, never a devcontainer Feature: the go-task Feature resolved
@@ -511,7 +517,60 @@ assert_unit() {
         fail "human dev profile applies the bot-only Antigravity autonomy policy"
     fi
 
-    # 9. The shared post-create guidance must never steer a BOT container to an
+    # 9. The GitHub CLI browser bridge must use the VS Code host opener when it
+    #    works, and print the exact URL when that command is absent or fails.
+    #    Generic discovery is intentionally forbidden: terminal browsers are
+    #    installed in the image and would trap the OAuth flow in-container.
+    local browser_bin browser_log browser_sentinel browser_out browser_url
+    browser_bin="${work_dir}/browser-bin"
+    browser_log="${work_dir}/browser-args"
+    browser_sentinel="${work_dir}/terminal-browser-ran"
+    browser_url='https://github.com/login/device?user_code=ABCD-EFGH&source=gh'
+    mkdir -p "$browser_bin"
+    ln -s "$bash_bin" "${browser_bin}/bash"
+    printf '%s\n' '#!/bin/sh' \
+        'printf "%s\\n" "$@" >"$GH_BROWSER_TEST_LOG"' \
+        'exit "${GH_BROWSER_TEST_RC:-0}"' >"${browser_bin}/code"
+    chmod 0755 "${browser_bin}/code"
+    for terminal_browser in w3m lynx sensible-browser xdg-open; do
+        printf '%s\n' '#!/bin/sh' \
+            'printf "%s\\n" "$0" >"$GH_BROWSER_TEST_SENTINEL"' \
+            'exit 99' >"${browser_bin}/${terminal_browser}"
+        chmod 0755 "${browser_bin}/${terminal_browser}"
+    done
+
+    GH_BROWSER_TEST_LOG="$browser_log" \
+        GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
+        PATH="$browser_bin" "$gh_browser" "$browser_url"
+    [ "$(sed -n '1p' "$browser_log")" = "--open-url" ] &&
+        [ "$(sed -n '2p' "$browser_log")" = "$browser_url" ] &&
+        [ "$(wc -l <"$browser_log" | tr -d ' ')" = "2" ] ||
+        fail "GitHub browser bridge did not pass the exact URL to code --open-url"
+    [ ! -e "$browser_sentinel" ] ||
+        fail "GitHub browser bridge invoked a terminal browser after code succeeded"
+
+    browser_out="$(GH_BROWSER_TEST_RC=1 GH_BROWSER_TEST_LOG="$browser_log" \
+        GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
+        PATH="$browser_bin" "$gh_browser" "$browser_url" 2>&1)"
+    case "$browser_out" in
+    *"$browser_url"*) ;;
+    *) fail "GitHub browser bridge did not print the URL after code failed: ${browser_out}" ;;
+    esac
+    [ ! -e "$browser_sentinel" ] ||
+        fail "GitHub browser bridge invoked a terminal browser after code failed"
+
+    rm "${browser_bin}/code"
+    browser_out="$(GH_BROWSER_TEST_LOG="$browser_log" \
+        GH_BROWSER_TEST_SENTINEL="$browser_sentinel" \
+        PATH="$browser_bin" "$gh_browser" "$browser_url" 2>&1)"
+    case "$browser_out" in
+    *"$browser_url"*) ;;
+    *) fail "GitHub browser bridge did not print the URL when code was absent: ${browser_out}" ;;
+    esac
+    [ ! -e "$browser_sentinel" ] ||
+        fail "GitHub browser bridge invoked a terminal browser when code was absent"
+
+    # 10. The shared post-create guidance must never steer a BOT container to an
     #    operator `gh auth login`. Following that advice would put a human
     #    credential — `workflow` scope included — inside a bypassPermissions
     #    agent container, which is the escalation the bot PAT's denials exist to
@@ -564,7 +623,7 @@ assert_unit() {
         esac
     done
 
-    # 10. Static devcontainer.json invariants via the devcontainers CLI.
+    # 11. Static devcontainer.json invariants via the devcontainers CLI.
     assert_config_invariants "$repo_root" "$bot_config" bot
     assert_config_invariants "$repo_root" "$dev_config" dev
 
@@ -604,9 +663,15 @@ assert_config_invariants() {
         jq -r '(.configuration.initializeCommand // "") | test("TS_AUTHKEY") | if . then 1 else 0 end')"
     has_gh_init="$(printf '%s' "$cfg" |
         jq -r '(.configuration.initializeCommand // "") | test("GH_TOKEN") | if . then 1 else 0 end')"
-    local foreman_marker
+    local foreman_marker gh_browser_config terminal_browser_config
     foreman_marker="$(printf '%s' "$cfg" |
         jq -r '.configuration.containerEnv.FOREMAN_DEVCONTAINER // ""')"
+    gh_browser_config="$(printf '%s' "$cfg" |
+        jq -r '.configuration.containerEnv.GH_BROWSER // ""')"
+    terminal_browser_config="$(printf '%s' "$cfg" |
+        jq -r '.configuration.customizations.vscode.settings["terminal.integrated.env.linux"].BROWSER // "<absent>"')"
+    [ "$terminal_browser_config" = "" ] ||
+        fail "${profile} config no longer blanks generic BROWSER in VS Code terminals"
 
     if [ "$profile" = "bot" ]; then
         [ "$has_ts_feature" = "0" ] || fail "bot config has a tailscale feature"
@@ -614,6 +679,7 @@ assert_config_invariants() {
         [ "$has_tun" = "0" ] || fail "bot config requests /dev/net/tun"
         [ "$has_ts_init" = "0" ] || fail "bot config references TS_AUTHKEY in initializeCommand"
         [ "$has_gh_init" = "1" ] || fail "bot config does not reference GH_TOKEN in initializeCommand"
+        [ -z "$gh_browser_config" ] || fail "bot config sets GH_BROWSER — operator OAuth belongs only in the human profile"
         # Foreman's D2 startup tripwire: it refuses even read-only commands
         # unless FOREMAN_DEVCONTAINER=bot, so losing this marker breaks every
         # task foreman:* while verify stays green.
@@ -625,6 +691,8 @@ assert_config_invariants() {
         [ "$has_ts_init" = "1" ] || fail "dev config does not reference TS_AUTHKEY in initializeCommand"
         [ "$has_gh_init" = "0" ] || fail "dev config references GH_TOKEN in initializeCommand (a human profile must carry no bot credential)"
         [ -z "$foreman_marker" ] || fail "dev config sets FOREMAN_DEVCONTAINER — foreman must refuse to run in the human profile"
+        [ "$gh_browser_config" = "/usr/local/share/devcontainer-config/gh-browser.sh" ] ||
+            fail "dev config does not route GH_BROWSER through the host-browser bridge; found '${gh_browser_config}'"
 
         # Dropping GH_TOKEN only removes the FIRST link in gh's credential
         # chain. GITHUB_TOKEN and the enterprise aliases outrank the stored
