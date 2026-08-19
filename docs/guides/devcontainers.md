@@ -347,6 +347,16 @@ additions such as `admin:org` in an organization repo. Outside a checkout, use
 the literal `--scopes "workflow,project"` and then run `task setup:gh-scopes`
 once you have cloned, which adds anything missing and verifies it landed.
 
+The human profile sets `GH_BROWSER` to a small host-browser bridge. In a remote
+VS Code session, it uses the server's `bin/helpers/browser.sh` handoff; with a
+desktop CLI, it uses `code --open-url` only when that CLI advertises the option.
+On Coder, the plain CLI, or a disconnected VS Code session where neither handoff
+is available, the bridge prints the exact URL to open manually. It deliberately
+never tries `w3m`, `lynx`, or generic browser discovery, so an installed terminal
+browser cannot capture the flow. Both the initial `gh auth login --web` and the
+browser flow used by `task setup:gh-scopes` inherit this behavior from
+`GH_BROWSER`.
+
 `--scopes` is *additive* to gh's defaults (`repo`, `read:org`, `gist`). `project`
 is what Projects V2 writes need — without it `task status:gh` reports the board
 as unreachable — and `workflow` lets you edit `.github/workflows/`, which the bot
@@ -615,6 +625,28 @@ about which layer makes the *container* hop. The extension path, concretely:
    `alias devbox='~/bin/open-devcontainer harmon-init'`, a Raycast script
    command, a Shortcuts action — remembering that it can only replay an entry
    that exists, so step 3 is still how a repo gets its first one.
+
+   The README's **Coder Dev Container** badge is the same recommendation in a
+   clickable surface. Its target must be captured from VS Code rather than
+   reconstructed: run `~/bin/open-devcontainer` with no arguments, choose the
+   matching `[token]`, then print the exact launch without opening it:
+
+   ```sh
+   OPEN_DEVCONTAINER_DRY_RUN=1 ~/bin/open-devcontainer <token>
+   ```
+
+   Copy the `vscode-remote://dev-container+…` value after `--folder-uri` into
+   the template's `devcontainer_coder_folder_uri` answer. The README converts
+   that internal folder URI to VS Code's registered
+   `vscode://vscode-remote/…` protocol form before routing it through
+   `vscode.dev/redirect`. Before publishing the README, first round-trip the
+   captured value with `code --folder-uri '<captured-uri>'`, then click the
+   rendered badge from the README; only keep it if both paths open this repo's
+   dev profile through the currently installed Dev Containers extension. The
+   hex payload is an extension implementation detail, so repeat this capture
+   and validation whenever an extension update invalidates the link. Leaving
+   the answer empty omits the personal Coder badge and retains the clearly
+   labeled **Local Dev Container** clone-in-volume fallback.
 5. **Rebuilds** happen from the same window: "Dev Containers: Rebuild
    Container".
 

@@ -107,6 +107,10 @@
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "DEVCONTAINER_TAILSCALE": "true",
+    // gh checks GH_BROWSER before generic browser discovery. Route interactive
+    // OAuth links through the host bridge so an installed terminal browser
+    // cannot capture the flow inside the container.
+    "GH_BROWSER": "/usr/local/share/devcontainer-config/gh-browser.sh",
     "GITHUB_TOKEN": "",
     "GH_ENTERPRISE_TOKEN": "",
     "GITHUB_ENTERPRISE_TOKEN": ""

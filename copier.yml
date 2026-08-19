@@ -279,6 +279,48 @@ devcontainer:
   # the forbidden combination through.
   validator: "[% if use_foreman and not devcontainer %]Foreman runs only inside the bot devcontainer (its D2 tripwire refuses any other environment) — enable devcontainer or disable use_foreman.[% endif %]"
 
+devcontainer_coder_folder_uri:
+  type: str
+  help: >-
+    CODER README BADGE: Optional captured VS Code Dev Containers folder URI for
+    this repo's Coder-hosted dev container. Capture it from a real VS Code
+    recent entry with scripts/open-devcontainer.sh; do not construct the
+    dev-container+ hex payload by hand. Empty omits the personal badge while
+    retaining the local clone-in-volume fallback. Requires an existing Coder
+    account and workspace; Coder Community is free and self-hosted. Private
+    repositories work only when that workspace already has repository access
+    (for example, configured Git-provider OAuth or SSH credentials); this
+    badge provisions neither Coder nor repository access.
+  default: ""
+  when: "[[ devcontainer ]]"
+  validator: >-
+    [%- set uri = devcontainer_coder_folder_uri -%]
+    [%- set scheme = 'vscode-remote://' -%]
+    [%- set literal_prefix = scheme + 'dev-container+' -%]
+    [%- set escaped_prefix = scheme + 'dev-container%2b' -%]
+    [%- set marker = '@ssh-remote+' -%]
+    [%- set has_literal_prefix = uri.startswith(literal_prefix) -%]
+    [%- set has_escaped_prefix = uri.startswith(scheme) and uri.lower().startswith(escaped_prefix) -%]
+    [%- set prefix_length = literal_prefix|length if has_literal_prefix else escaped_prefix|length -%]
+    [%- set encoded = uri.split(marker, 1)[0][prefix_length:] -%]
+    [%- set target = uri.split(marker, 1)[1] if marker in uri else '' -%]
+    [%- set invalid_hex = namespace(value=false) -%]
+    [%- for char in encoded.lower() -%]
+    [%- if char not in '0123456789abcdef' -%]
+    [%- set invalid_hex.value = true -%]
+    [%- endif -%]
+    [%- endfor -%]
+    [%- if uri and (not has_literal_prefix and not has_escaped_prefix
+    or uri.count(marker) != 1
+    or not encoded
+    or (encoded|length) % 2 != 0
+    or invalid_hex.value
+    or '/workspaces/' not in target
+    or not target.split('/workspaces/', 1)[0]
+    or not target.split('/workspaces/', 1)[1]) -%]
+    Expected a captured vscode-remote://dev-container+<hex>@ssh-remote+<host>/workspaces/<workspace> folder URI (the captured + may be %2B), or leave empty.
+    [%- endif -%]
+
 use_antigravity_cli:
   type: bool
   help: >-
