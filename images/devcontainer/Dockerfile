@@ -30,6 +30,8 @@ ARG CLAUDE_CODE_VERSION=2.1.233
 ARG CODEX_VERSION=0.147.0
 # renovate: datasource=npm depName=@google/gemini-cli
 ARG GEMINI_CLI_VERSION=0.55.1
+# renovate: datasource=npm depName=opencode-ai
+ARG OPENCODE_VERSION=1.18.18
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
@@ -365,6 +367,7 @@ RUN npm install -g \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
+        "opencode-ai@${OPENCODE_VERSION}" \
         "dmux@${DMUX_VERSION}" \
     && npm cache clean --force
 
@@ -379,6 +382,10 @@ RUN npm install -g \
 # makes `claude doctor` report an accurate "disabled by env" status instead.
 # Set after the npm layer so toggling it does not bust that cache.
 ENV DISABLE_AUTOUPDATER=1
+# OpenCode is pinned and root-owned for the same reason. Its built-in updater
+# must not replace the reviewed image version or attempt to write into the
+# system-wide npm installation while the container runs as vscode.
+ENV OPENCODE_DISABLE_AUTOUPDATE=true
 # Antigravity 1.1.3+ automatically falls back to file-backed OAuth storage when
 # no D-Bus keyring is available. ~/.gemini is a named volume in both profiles,
 # so the pinned 1.1.11 build keeps an interactive login across rebuilds.
@@ -404,6 +411,7 @@ RUN chmod 0755 \
         "claude-code=${CLAUDE_CODE_VERSION}" \
         "codex=${CODEX_VERSION}" \
         "gemini-cli=${GEMINI_CLI_VERSION}" \
+        "opencode=${OPENCODE_VERSION}" \
         "antigravity-cli=${ANTIGRAVITY_CLI_VERSION}" \
         "agent-deck=${AGENT_DECK_VERSION}" \
         "sesh=${SESH_VERSION}" \

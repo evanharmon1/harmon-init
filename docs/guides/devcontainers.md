@@ -229,6 +229,20 @@ a `TERM=… docker exec` prefix changes only the client's environment. Ask for t
 terminal you want with `-e`:
 `docker exec -e TERM=xterm-256color -it <container> bash`.
 
+## OpenCode
+
+The shared image installs the stable `opencode` CLI with no repository or user
+configuration layered on top. Start it with `opencode`, then use `/connect` (or
+`opencode auth login`) to choose and authenticate a provider. OpenCode continues
+to read this repository's `AGENTS.md` as its project instructions.
+
+Both its user config (`~/.config/opencode`) and application data
+(`~/.local/share/opencode`, including authentication and conversations) use
+profile-specific named volumes; Coder maps the same paths into
+`~/.persistent`. Rebuilding the container therefore keeps future custom config,
+provider logins, and sessions. The image disables OpenCode's self-updater so the
+pinned, tested version remains stable until the shared image is rebuilt.
+
 ## Persistent agent sessions (Herdr)
 
 **Herdr** is the agent-session runtime in both profiles: it owns the panes your
@@ -270,12 +284,12 @@ state survives a rebuild: snapshot restore brings the workspace shape back —
 tabs, panes, cwds, layout — as fresh shells. Whether an agent *conversation*
 resumes inside its restored pane is a separate mechanism:
 `resume_agents_on_restore` only works for agents whose Herdr integration has
-recorded a native session reference. post-create installs the Claude Code and
-Codex integrations automatically (`herdr integration install`, idempotent) —
-Gemini has no resume integration in v0.8. The
+recorded a native session reference. post-create installs the Claude Code,
+Codex, and OpenCode integrations automatically (`herdr integration install`,
+idempotent) — Gemini has no resume integration in v0.8. The
 conversations themselves persist regardless, in the `~/.claude`, `~/.codex`,
-and `~/.gemini` volumes, so a pane that restores as a plain shell can still
-resume its agent by hand (e.g. `claude --resume`).
+`~/.gemini`, and `~/.local/share/opencode` volumes, so a pane that restores as a
+plain shell can still resume its agent by hand (e.g. `claude --resume`).
 
 The default session's server socket deliberately does **not** live in that
 volume. The image sets `HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a
