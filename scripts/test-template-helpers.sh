@@ -113,22 +113,28 @@ esac
 # gates could be reverted with the suite still green. Quantifying over the
 # file leaves no seam to slip through.
 #
-# The discriminator is the command's KIND, not its formatting. A gate runs
-# `task` or one of the repo's own scripts and has diagnostic output worth
-# replaying; a probe (`git rev-parse HEAD`, `command -v`) answers a question
-# and has none, so discarding its output is correct. Anchoring on the command
-# instead of on the end of the line is what lets this match a gate written on
-# one line as readily as one split across two — an earlier form required `||`
-# to close the line, which excluded the probe at test-template.sh:266 only by
-# accident of where the line broke (challenge r2).
+# Trigger on the SILENCING PRIMITIVE, not on control flow. Three rounds in a
+# row found one more shell shape the previous pattern missed — `|| err` on a
+# continuation line, then the same on one line, then `if ! … ; then` — because
+# each pattern enumerated the syntax that *surrounds* the discard. Enumerating
+# control flow has no fixed point. Matching `>/dev/null 2>&1` on any line that
+# invokes a gate is shape-independent: it holds for `||`, for `if`, for `if !`,
+# and for forms nobody has written yet.
 #
-# Two shapes are correctly NOT matched, and both are load-bearing:
-#   * `if <gate> >/dev/null 2>&1; then err ...` — a NONZERO exit is the
-#     asserted outcome, so a replay would fire on the expected path.
-#   * `<non-gate> >/dev/null 2>&1 || …` — a probe or a best-effort
-#     `|| true`, neither of which produces output an operator needs.
-if grep -nE '(task |\./scripts/[A-Za-z0-9_.-]+\.sh).*>/dev/null 2>&1\)? *\|\|' "$subject"; then
-    fail "a rendered-repo gate above discards its output and then branches — route it through run_quiet (#934)"
+# It needs no exemptions, which is the property worth protecting. The two
+# inverse-shape sites (a nonzero exit is the asserted outcome) were converted
+# to capture rather than exempted — an unexpectedly PASSING negative control is
+# precisely when you want its output — so nothing here is a special case.
+#
+# What it does NOT cover, stated plainly rather than implied away:
+#   * a redirection split onto a continuation line (no `\` continuations exist
+#     in the subject today);
+#   * `>/dev/null` WITHOUT `2>&1` — stdout only. Five gate lines do this; they
+#     are not silent, because err() and the suites write failures to stderr.
+# Both, and the structural-inspection approach that would settle them, are
+# tracked as follow-up work rather than grown onto this change.
+if grep -nE '(task |\./scripts/[A-Za-z0-9_.-]+\.sh).*>/dev/null 2>&1' "$subject" | grep -v run_quiet; then
+    fail "a rendered-repo gate above silences its output — capture it (run_quiet, or a log + dump_log) so a failure is diagnosable (#934)"
 fi
 
 # Counted on EXECUTABLE call sites only. Counting bare occurrences let the

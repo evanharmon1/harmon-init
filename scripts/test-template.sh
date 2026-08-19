@@ -576,7 +576,8 @@ grep -q 'task test:ci-results' .github/workflows/build.yml ||
 [ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
 EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
     err "rendered CI result helper rejected successful trusted jobs"
-if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >/dev/null 2>&1; then
+if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >"$job_tmp/ci-results-negative.log" 2>&1; then
+    dump_log ci-results-negative
     err "rendered CI result helper accepted an unexpectedly skipped trusted job"
 fi
 for aggregate_workflow in .github/workflows/build.yml .github/workflows/devcontainer-build.yml; do
@@ -2150,7 +2151,8 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
     # A config with the guard still unconfigured must FAIL, not skip.
     touch playwright.config.ts
-    if ./scripts/e2e-run.sh >/dev/null 2>&1; then
+    if ./scripts/e2e-run.sh >"$job_tmp/e2e-guard-negative.log" 2>&1; then
+        dump_log e2e-guard-negative
         err "e2e-run.sh passed with an unconfigured e2e-env-guard.sh — the guard must fail closed"
     fi
     rm -f playwright.config.ts
