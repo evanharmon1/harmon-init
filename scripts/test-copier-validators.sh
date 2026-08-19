@@ -69,6 +69,16 @@ render() {
         . "$out" >"$work/render.log" 2>&1
 }
 
+render_coder_uri() {
+    local answer="$1" out="$2"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data "devcontainer_coder_folder_uri=$answer" \
+        . "$out" >"$work/render.log" 2>&1
+}
+
 echo "==> unsafe characters are rejected at answer time"
 # Each of these breaks the YAML scalar, the shell quoting, or both.
 i=0
@@ -102,6 +112,37 @@ else
     sed 's/^/      /' "$work/render.log" >&2
     hint_stale_worktree
 fi
+
+echo "==> the Coder README badge accepts only a captured Dev Containers URI"
+if render_coder_uri 'vscode-remote://dev-container%2B7b7d@ssh-remote+coder.dev/workspaces/test' "$work/escaped-coder-uri"; then
+    if grep -Fq 'vscode.dev/redirect?url=vscode%3A//vscode-remote/dev-container%252B7b7d' "$work/escaped-coder-uri/README.md"; then
+        pass "accepted and safely wrapped the capture helper's percent-encoded separator"
+    else
+        fail "accepted the percent-encoded separator but rendered the wrong external protocol URL"
+    fi
+else
+    fail "rejected the capture helper's percent-encoded separator"
+    sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
+fi
+
+for bad_coder_uri in \
+    'vscode://ms-vscode-remote.remote-containers/cloneInVolume' \
+    'VSCODE-REMOTE://dev-container+7b7d@ssh-remote+coder.dev/workspaces/test' \
+    'vscode-remote://dev-container+7b7d' \
+    'vscode-remote://dev-container+zz@ssh-remote+coder.dev/workspaces/test' \
+    'vscode-remote://dev-container+7b7@ssh-remote+coder.dev/workspaces/test' \
+    'vscode-remote://dev-container+7b7d@ssh-remote+coder.dev/not-a-workspace'; do
+    if render_coder_uri "$bad_coder_uri" "$work/bad-coder-uri"; then
+        fail "accepted an incomplete captured Coder folder URI: $bad_coder_uri"
+    elif grep -q 'Validation error' "$work/render.log"; then
+        pass "rejected an incomplete captured Coder folder URI"
+    else
+        fail "rejected the incomplete captured URI for an unexpected reason"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
 
 # copier is installed from two places that cannot see each other: the shared
 # devcontainer image (images/devcontainer/Dockerfile, baked in) and

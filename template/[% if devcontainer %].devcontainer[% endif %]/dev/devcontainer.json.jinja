@@ -75,6 +75,8 @@
     "source=gemini-config-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.gemini,type=volume",
     "source=agent-deck-config-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.agent-deck,type=volume",
     "source=herdr-config-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.config/herdr,type=volume",
+    "source=opencode-config-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.config/opencode,type=volume",
+    "source=opencode-data-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.local/share/opencode,type=volume",
     "source=shell-history-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.shell-history,type=volume",
     "source=zoxide-data-[[ github_org ]]-[[ project_slug ]]-dev,target=/home/vscode/.local/share/zoxide,type=volume"
   ],
@@ -105,6 +107,10 @@
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "DEVCONTAINER_TAILSCALE": "true",
+    // gh checks GH_BROWSER before generic browser discovery. Route interactive
+    // OAuth links through the host bridge so an installed terminal browser
+    // cannot capture the flow inside the container.
+    "GH_BROWSER": "/usr/local/share/devcontainer-config/gh-browser.sh",
     "GITHUB_TOKEN": "",
     "GH_ENTERPRISE_TOKEN": "",
     "GITHUB_ENTERPRISE_TOKEN": ""
