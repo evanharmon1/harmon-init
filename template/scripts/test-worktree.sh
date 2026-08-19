@@ -2955,4 +2955,79 @@ else
     echo "    (skipped: running as root, a permission-held teardown cannot be simulated)"
 fi
 
+# ── Target resolution: the name must account for something (#963) ───────────
+#
+# Every fixture worktree above is created through worktree:new, which always
+# lands under .worktrees/ — so the constructed path <main_root>/.worktrees/<name>
+# is satisfied by construction and no existing case can see a name that does
+# not resolve there. These three build the shapes deliberately. Each asserts
+# BOTH halves: a nonzero exit, and that the target actually survived — a
+# refusal that still deleted something would pass an exit-code-only check.
+
+# A worktree registered to this repo but living outside .worktrees/, which
+# `git worktree add` permits and `git worktree list` reports. worktree:rm
+# cannot reach it, and must say so rather than claim a removal.
+outside_root="$test_tmp/outside-cone"
+git -C "$fixture" worktree add -q "$outside_root/parked" -b feat/parked-outside ||
+    fail "could not create a worktree outside .worktrees/ for the #963 case"
+rm_out="$test_tmp/rm-outside.log"
+if rm_wt parked >"$rm_out" 2>&1; then
+    fail "worktree:rm reported success for a worktree outside .worktrees/ (#963): $(cat "$rm_out")"
+fi
+# Anchored on the LOCATION clause, not on the path alone: the real path also
+# appears in the `git worktree remove` remedy, so a bare substring match stays
+# green even when the clause names the constructed path instead (mutant N3).
+grep -q "names the worktree at $outside_root/parked" "$rm_out" ||
+    fail "the refusal did not name where the worktree actually is (#963): $(cat "$rm_out")"
+grep -q "names the worktree at $fixture/.worktrees/parked" "$rm_out" &&
+    fail "the refusal located the worktree at the constructed path, which does not exist (#963): $(cat "$rm_out")"
+grep -q 'git worktree remove' "$rm_out" ||
+    fail "the refusal did not name a command that actually works (#963): $(cat "$rm_out")"
+grep -qi 'removed:' "$rm_out" &&
+    fail "the refusal still printed a removal line (#963): $(cat "$rm_out")"
+[ -d "$outside_root/parked" ] ||
+    fail "worktree:rm deleted a worktree it had refused to remove (#963)"
+git -C "$fixture" worktree list --porcelain | grep -qxF "worktree $outside_root/parked" ||
+    fail "worktree:rm dropped the registry record of a worktree it refused (#963)"
+git -C "$fixture" worktree remove --force "$outside_root/parked"
+
+# A moved worktree: git names the admin record from the path basename at
+# creation and NEVER renames it, while `git worktree move` rewrites the
+# record's stored path — so record name and directory name diverge by design.
+# Asking by the record name must not read as a stale record.
+# --no-install: this fixture only needs to EXIST and then move. A real
+# dependency install leaves the tree dirty, and worktree:rm then refuses it
+# on uncommitted changes — correct behaviour, wrong fixture for this case.
+new movedrec --no-install >/dev/null || fail "could not create the #963 move fixture"
+git -C "$fixture" worktree move .worktrees/movedrec .worktrees/movednew ||
+    fail "could not move the #963 fixture worktree"
+rm_moved="$test_tmp/rm-moved.log"
+if rm_wt movedrec >"$rm_moved" 2>&1; then
+    fail "worktree:rm reported success for a record name whose directory moved (#963): $(cat "$rm_moved")"
+fi
+grep -q "names the worktree at $fixture/.worktrees/movednew" "$rm_moved" ||
+    fail "the refusal did not name the moved worktree's current directory (#963): $(cat "$rm_moved")"
+grep -q 'no worktree or admin record named' "$rm_moved" &&
+    fail "the record name resolved to nothing — resolution no longer matches admin-record names (#963): $(cat "$rm_moved")"
+[ -d "$fixture/.worktrees/movednew" ] ||
+    fail "worktree:rm deleted a moved worktree it had refused to remove (#963)"
+# ...and the directory name, which is what actually resolves, still works.
+rm_movednew="$test_tmp/rm-movednew.log"
+rm_wt movednew >"$rm_movednew" 2>&1 ||
+    fail "worktree:rm could not remove a moved worktree by its directory name (#963): $(cat "$rm_movednew")"
+[ -d "$fixture/.worktrees/movednew" ] &&
+    fail "worktree:rm reported success but left the moved worktree behind (#963)"
+
+# A name matching neither a worktree nor an admin record: the original report.
+rm_none="$test_tmp/rm-nomatch.log"
+if rm_wt definitely-no-such-worktree >"$rm_none" 2>&1; then
+    fail "worktree:rm exited 0 for a name matching nothing (#963): $(cat "$rm_none")"
+fi
+grep -qi 'removed:' "$rm_none" &&
+    fail "worktree:rm claimed a removal for a name matching nothing (#963): $(cat "$rm_none")"
+grep -q 'no worktree or admin record named' "$rm_none" ||
+    fail "the no-match refusal did not say what was wrong (#963): $(cat "$rm_none")"
+
+echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
+
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"

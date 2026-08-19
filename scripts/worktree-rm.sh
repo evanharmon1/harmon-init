@@ -182,6 +182,84 @@ if [ "$tree_is_registered" -eq 1 ] && [ "$tree_exists" -eq 0 ]; then
     stale_record=1
 fi
 
+# ── The name must actually account for something (harmon-init#963) ──────────
+#
+# Everything above derives $tree by CONSTRUCTION from the argument, and never
+# consults the registry to find where the named worktree actually is. git names
+# an admin record from the path basename at creation and never renames it,
+# while `git worktree move` rewrites the record's stored path — so record name
+# and current directory name are independent BY DESIGN, and a worktree may sit
+# anywhere `git worktree add` was pointed, including outside this repo's
+# checkout entirely. A constructed path is therefore not a lookup, and when it
+# missed, the run fell into the stale-record branch and reported a removal that
+# did not happen: both output lines false, exit 0, the worktree untouched.
+#
+# The fix is a pre-flight, deliberately NOT a re-targeting. $tree keeps exactly
+# the meaning it has always had for every run that proceeds — the locks are
+# keyed on $name, and the removal, debris sweep and parent walk below are all
+# written against the constructed path — so this either lets the existing flow
+# run byte-for-byte as before, or refuses while naming the real path. Silently
+# retargeting a deletion at a path the caller did not name is the more
+# dangerous repair.
+if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
+    ! record_admin_dir "$tree" >/dev/null 2>&1; then
+    # Nothing at the conventional path. Ask the registry what this name means
+    # before claiming anything was removed.
+    resolved=""
+    resolved_count=0
+    while IFS= read -r candidate_tree; do
+        [ -n "$candidate_tree" ] || continue
+        candidate_name="${candidate_tree##*/}"
+        candidate_record=""
+        candidate_admin="$(record_admin_dir "$candidate_tree" 2>/dev/null || true)"
+        [ -n "$candidate_admin" ] && candidate_record="${candidate_admin##*/}"
+        if [ "$candidate_name" = "$name" ] || [ "$candidate_record" = "$name" ]; then
+            resolved="$candidate_tree"
+            resolved_count=$((resolved_count + 1))
+        fi
+    done <<EOF
+$registered
+EOF
+
+    if [ "$resolved_count" -eq 1 ]; then
+        # Two different situations, two different remedies. In-cone means this
+        # command CAN remove it and the caller simply used the wrong name for
+        # it — a record keeps its creation-time name across a move, so the
+        # record name and the directory name diverge and only the directory
+        # name works here. Out-of-cone means no argument to this command will
+        # reach it, because every path below is written against
+        # <main_root>/.worktrees/, so the remedy is git's own command.
+        case "$resolved" in
+        "$main_root"/.worktrees/*)
+            die "no worktree at $tree, but '$name' names the worktree at $resolved — its admin record and its directory have different names (a move does that), and only the directory name resolves here: task worktree:rm -- ${resolved#"$main_root"/.worktrees/}"
+            ;;
+        *)
+            die "no worktree at $tree, but '$name' names the worktree at $resolved — that is outside $main_root/.worktrees/, which this command never removes from, so remove it with: git worktree remove $(printf '%q' "$resolved")"
+            ;;
+        esac
+    elif [ "$resolved_count" -gt 1 ]; then
+        echo "worktree:rm: '$name' is ambiguous — it matches more than one registered worktree:" >&2
+        git worktree list --porcelain | awk -v main="$main_root" '/^worktree /{p = substr($0, 10); if (p != main) print "  " p}' >&2
+        die "name the worktree by its path instead: git worktree remove <path>"
+    fi
+
+    # Matches nothing at all. Never report a removal for it.
+    echo "worktree:rm: no worktree or admin record named '$name'" >&2
+    echo "worktree:rm: live worktrees (a record's name can differ from its directory after a move):" >&2
+    git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}' | while IFS= read -r live_tree; do
+        # Skip the main checkout: it is registered, but this command removes
+        # linked worktrees only, so offering it as a candidate is a dead end.
+        [ "$live_tree" = "$main_root" ] && continue
+        live_admin="$(record_admin_dir "$live_tree" 2>/dev/null || true)"
+        if [ -n "$live_admin" ] && [ "${live_admin##*/}" != "${live_tree##*/}" ]; then
+            echo "  ${live_tree##*/}  (record: ${live_admin##*/})  $live_tree" >&2
+        else
+            echo "  ${live_tree##*/}  $live_tree" >&2
+        fi
+    done
+    die "nothing was removed"
+fi
+
 # A worktree registered BELOW this path is a separate worktree, not this one's
 # disposable contents. `git worktree remove --force` would delete its
 # uncommitted work and the record cleanup below would drop its registry record,
