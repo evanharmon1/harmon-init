@@ -255,6 +255,19 @@ new_in() {
     shift
     run_worktree_op "worktree:new" "$op_from" scripts/worktree-new.sh "$@"
 }
+# Map a worktree path to its admin-record directory, the way worktree-rm.sh
+# does: each record's `gitdir` file names that worktree's .git file.
+record_admin_dir_probe() {
+    probe_common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)"
+    for probe_candidate in "$probe_common"/worktrees/*; do
+        [ -f "$probe_candidate/gitdir" ] || continue
+        if [ "$(cat "$probe_candidate/gitdir" 2>/dev/null || true)" = "$2/.git" ]; then
+            printf '%s\n' "$probe_candidate"
+            return 0
+        fi
+    done
+    return 1
+}
 rm_wt() { run_worktree_op "worktree:rm" "$fixture" scripts/worktree-rm.sh "$@"; }
 # Removal run from inside the tree being removed: caller directory and script
 # path both differ, and it is the last invocation that would otherwise bypass
@@ -2954,5 +2967,426 @@ if [ "$(id -u)" -ne 0 ]; then
 else
     echo "    (skipped: running as root, a permission-held teardown cannot be simulated)"
 fi
+
+# ── Target resolution: the name must account for something (#963) ───────────
+#
+# Every fixture worktree above is created through worktree:new, which always
+# lands under .worktrees/ — so the constructed path <main_root>/.worktrees/<name>
+# is satisfied by construction and no existing case can see a name that does
+# not resolve there. These three build the shapes deliberately. Each asserts
+# BOTH halves: a nonzero exit, and that the target actually survived — a
+# refusal that still deleted something would pass an exit-code-only check.
+
+# A worktree registered to this repo but living outside .worktrees/, which
+# `git worktree add` permits and `git worktree list` reports. worktree:rm
+# cannot reach it, and must say so rather than claim a removal.
+outside_root="$test_tmp/outside-cone"
+git -C "$fixture" worktree add -q "$outside_root/parked" -b feat/parked-outside ||
+    fail "could not create a worktree outside .worktrees/ for the #963 case"
+rm_out="$test_tmp/rm-outside.log"
+if rm_wt parked >"$rm_out" 2>&1; then
+    fail "worktree:rm reported success for a worktree outside .worktrees/ (#963): $(cat "$rm_out")"
+fi
+# Anchored on the LOCATION clause, not on the path alone: the real path also
+# appears in the `git worktree remove` remedy, so a bare substring match stays
+# green even when the clause names the constructed path instead (mutant N3).
+grep -q "names the worktree at $outside_root/parked" "$rm_out" ||
+    fail "the refusal did not name where the worktree actually is (#963): $(cat "$rm_out")"
+grep -q "names the worktree at $fixture/.worktrees/parked" "$rm_out" &&
+    fail "the refusal located the worktree at the constructed path, which does not exist (#963): $(cat "$rm_out")"
+# The refusal must NOT hand over `git worktree remove`: that command applies
+# none of this script's guards — it deletes ignored files such as .env and
+# takes an unreferenced detached HEAD without complaint — so advertising it
+# walks the operator past the protections this task exists to provide
+# (review r4). It must instead say what would go unchecked.
+grep -qE 'remove it with: git worktree remove|instead: git worktree remove' "$rm_out" &&
+    fail "the refusal advertised an unguarded removal command (#963): $(cat "$rm_out")"
+grep -q 'skip-worktree' "$rm_out" ||
+    fail "the refusal did not name the guards a raw removal would skip (#963): $(cat "$rm_out")"
+grep -qi 'removed:' "$rm_out" &&
+    fail "the refusal still printed a removal line (#963): $(cat "$rm_out")"
+[ -d "$outside_root/parked" ] ||
+    fail "worktree:rm deleted a worktree it had refused to remove (#963)"
+git -C "$fixture" worktree list --porcelain | grep -qxF "worktree $outside_root/parked" ||
+    fail "worktree:rm dropped the registry record of a worktree it refused (#963)"
+git -C "$fixture" worktree remove --force "$outside_root/parked"
+
+# A moved worktree: git names the admin record from the path basename at
+# creation and NEVER renames it, while `git worktree move` rewrites the
+# record's stored path — so record name and directory name diverge by design.
+# Asking by the record name must not read as a stale record.
+# --no-install: this fixture only needs to EXIST and then move. A real
+# dependency install leaves the tree dirty, and worktree:rm then refuses it
+# on uncommitted changes — correct behaviour, wrong fixture for this case.
+new movedrec --no-install >/dev/null || fail "could not create the #963 move fixture"
+git -C "$fixture" worktree move .worktrees/movedrec .worktrees/movednew ||
+    fail "could not move the #963 fixture worktree"
+rm_moved="$test_tmp/rm-moved.log"
+if rm_wt movedrec >"$rm_moved" 2>&1; then
+    fail "worktree:rm reported success for a record name whose directory moved (#963): $(cat "$rm_moved")"
+fi
+grep -q "names the worktree at $fixture/.worktrees/movednew" "$rm_moved" ||
+    fail "the refusal did not name the moved worktree's current directory (#963): $(cat "$rm_moved")"
+grep -q 'no worktree or admin record named' "$rm_moved" &&
+    fail "the record name resolved to nothing — resolution no longer matches admin-record names (#963): $(cat "$rm_moved")"
+[ -d "$fixture/.worktrees/movednew" ] ||
+    fail "worktree:rm deleted a moved worktree it had refused to remove (#963)"
+# ...and the directory name, which is what actually resolves, still works.
+rm_movednew="$test_tmp/rm-movednew.log"
+rm_wt movednew >"$rm_movednew" 2>&1 ||
+    fail "worktree:rm could not remove a moved worktree by its directory name (#963): $(cat "$rm_movednew")"
+[ -d "$fixture/.worktrees/movednew" ] &&
+    fail "worktree:rm reported success but left the moved worktree behind (#963)"
+
+# A name matching neither a worktree nor an admin record: the original report.
+rm_none="$test_tmp/rm-nomatch.log"
+if rm_wt definitely-no-such-worktree >"$rm_none" 2>&1; then
+    fail "worktree:rm exited 0 for a name matching nothing (#963): $(cat "$rm_none")"
+fi
+grep -qi 'removed:' "$rm_none" &&
+    fail "worktree:rm claimed a removal for a name matching nothing (#963): $(cat "$rm_none")"
+grep -q 'no worktree or admin record named' "$rm_none" ||
+    fail "the no-match refusal did not say what was wrong (#963): $(cat "$rm_none")"
+
+# The main checkout is registered but is not a linked worktree, so resolution
+# must skip it — otherwise `worktree:rm <repo-basename>` reports the main
+# checkout as an out-of-cone worktree and recommends a `git worktree remove`
+# that git refuses outright (challenge r1).
+main_base="${fixture##*/}"
+rm_mainbase="$test_tmp/rm-mainbase.log"
+if rm_wt "$main_base" >"$rm_mainbase" 2>&1; then
+    fail "worktree:rm accepted the main checkout's own basename (#963): $(cat "$rm_mainbase")"
+fi
+grep -q "names the worktree at $fixture " "$rm_mainbase" &&
+    fail "worktree:rm resolved the main checkout as a removable worktree (#963): $(cat "$rm_mainbase")"
+grep -q "no worktree or admin record named" "$rm_mainbase" ||
+    fail "the main checkout's basename did not fall through to the no-match branch (#963): $(cat "$rm_mainbase")"
+grep -q 'git worktree remove' "$rm_mainbase" &&
+    fail "worktree:rm recommended removing the main checkout, which git refuses (#963): $(cat "$rm_mainbase")"
+
+# ...and skipping it must not blind resolution to a LINKED worktree that
+# happens to share the main checkout's basename.
+samebase_root="$test_tmp/samebase"
+git -C "$fixture" worktree add -q "$samebase_root/$main_base" -b feat/samebase ||
+    fail "could not create the same-basename worktree for the #963 case"
+rm_samebase="$test_tmp/rm-samebase.log"
+if rm_wt "$main_base" >"$rm_samebase" 2>&1; then
+    fail "worktree:rm reported success for a same-basename linked worktree (#963): $(cat "$rm_samebase")"
+fi
+grep -q "names the worktree at $samebase_root/$main_base" "$rm_samebase" ||
+    fail "resolution missed a linked worktree sharing the main checkout's basename (#963): $(cat "$rm_samebase")"
+git -C "$fixture" worktree remove --force "$samebase_root/$main_base"
+
+# A worktree path may legally contain a newline. Line-parsed porcelain output
+# truncates it, which both hides the real worktree and invents a candidate at
+# the truncated prefix — so asking for that prefix must NOT resolve to it
+# (challenge r1).
+nl_parent="$test_tmp/nl-cone"
+mkdir -p "$nl_parent"
+nl_tree="$nl_parent/trunc
+tail"
+# Probe the FILESYSTEM's capability directly. Treating any `git worktree add`
+# failure as "newlines unsupported" would swallow a broken hook, a branch
+# collision, or a git regression and silently drop this coverage while the
+# suite still reported a pass (challenge r2).
+nl_probe="$nl_parent/probe
+newline"
+if mkdir -p "$nl_probe" 2>/dev/null && [ -d "$nl_probe" ]; then
+    rmdir "$nl_probe" 2>/dev/null || true
+    nl_supported=1
+else
+    nl_supported=0
+fi
+# `--porcelain -z` (git 2.36+) is what makes a newline-bearing path
+# representable at all. Without it the command fails closed by design, so these
+# cases assert behaviour that git cannot deliver — gate on the capability, not
+# only on the filesystem (review r4).
+if git worktree list --porcelain -z >/dev/null 2>&1; then
+    nl_z_supported=1
+else
+    nl_z_supported=0
+fi
+if [ "$nl_supported" -eq 0 ]; then
+    echo "    (skipped: this filesystem rejects a newline in a path)"
+elif [ "$nl_z_supported" -eq 0 ]; then
+    echo "    (skipped: this git has no 'worktree list --porcelain -z'; the command fails closed instead)"
+elif git -C "$fixture" worktree add -q "$nl_tree" -b feat/newline-path; then
+    rm_trunc="$test_tmp/rm-trunc.log"
+    if rm_wt trunc >"$rm_trunc" 2>&1; then
+        fail "worktree:rm resolved a truncated newline path as a real worktree (#963): $(cat "$rm_trunc")"
+    fi
+    # With the path read whole, "trunc" is nobody's basename, so the no-match
+    # branch must run. Line-parsing instead invents a candidate at the
+    # truncated prefix and resolves to it — a different branch entirely.
+    # Asserting the branch is robust; grepping a path out of a sentence that
+    # itself contains a newline is not.
+    grep -q "no worktree or admin record named 'trunc'" "$rm_trunc" ||
+        fail "the truncated prefix of a newline path resolved as a real worktree (#963): $(cat "$rm_trunc")"
+    git -C "$fixture" worktree remove --force "$nl_tree"
+else
+    fail "could not create a newline-bearing worktree although the filesystem accepts newline paths (#963)"
+fi
+
+# Two worktrees sharing a basename make the name ambiguous. The refusal must
+# name the ones that actually collided — printing the whole registry hides
+# which two are in conflict and points at unrelated paths (challenge r2).
+amb_root="$test_tmp/amb"
+git -C "$fixture" worktree add -q "$amb_root/a/twin" -b feat/twin-a ||
+    fail "could not create the first #963 ambiguity worktree"
+git -C "$fixture" worktree add -q "$amb_root/b/twin" -b feat/twin-b ||
+    fail "could not create the second #963 ambiguity worktree"
+git -C "$fixture" worktree add -q "$amb_root/unrelated/bystander" -b feat/bystander ||
+    fail "could not create the #963 ambiguity bystander"
+rm_amb="$test_tmp/rm-ambiguous.log"
+if rm_wt twin >"$rm_amb" 2>&1; then
+    fail "worktree:rm reported success for an ambiguous name (#963): $(cat "$rm_amb")"
+fi
+grep -q 'is ambiguous' "$rm_amb" ||
+    fail "an ambiguous name did not report ambiguity (#963): $(cat "$rm_amb")"
+grep -q "$amb_root/a/twin" "$rm_amb" && grep -q "$amb_root/b/twin" "$rm_amb" ||
+    fail "the ambiguity refusal did not name both colliding worktrees (#963): $(cat "$rm_amb")"
+grep -q 'bystander' "$rm_amb" &&
+    fail "the ambiguity refusal listed an unrelated worktree as a collision (#963): $(cat "$rm_amb")"
+git -C "$fixture" worktree remove --force "$amb_root/a/twin"
+git -C "$fixture" worktree remove --force "$amb_root/b/twin"
+git -C "$fixture" worktree remove --force "$amb_root/unrelated/bystander"
+
+# An in-cone worktree whose relative path is not a name this command accepts:
+# the remedy must be git's own command, shell-escaped. Emitting
+# `task worktree:rm -- team space/leaf` would split on the space and be
+# rejected by the charset guard anyway (challenge r2).
+mkdir -p "$fixture/.worktrees/team space"
+git -C "$fixture" worktree add -q ".worktrees/team space/leaf" -b feat/spaced-cone ||
+    fail "could not create the #963 unaddressable in-cone worktree"
+rm_unaddr="$test_tmp/rm-unaddressable.log"
+if rm_wt leaf >"$rm_unaddr" 2>&1; then
+    fail "worktree:rm reported success for an unaddressable in-cone path (#963): $(cat "$rm_unaddr")"
+fi
+grep -q 'git worktree remove' "$rm_unaddr" ||
+    fail "the refusal did not fall back to git's own command for an unaddressable path (#963): $(cat "$rm_unaddr")"
+grep -q 'task worktree:rm --' "$rm_unaddr" &&
+    fail "the refusal suggested a task invocation that cannot parse (#963): $(cat "$rm_unaddr")"
+
+# The candidate listing's first column must be a name this command actually
+# takes. For a NESTED in-cone worktree that is the relative path, not the
+# basename: .worktrees/feat/deep is addressed as feat/deep, and advertising
+# "deep" sends the operator through an extra refusal to discover that.
+new nestedlist --no-install >/dev/null ||
+    fail "could not create the #963 nested-listing fixture"
+# `git worktree move` does not create the destination's parent.
+mkdir -p "$fixture/.worktrees/feat"
+git -C "$fixture" worktree move .worktrees/nestedlist ".worktrees/feat/deep" ||
+    fail "could not nest the #963 listing fixture"
+rm_list="$test_tmp/rm-listing.log"
+rm_wt definitely-absent-name >"$rm_list" 2>&1 || true
+grep -qE '^  feat/deep( |$)' "$rm_list" ||
+    fail "the listing did not offer the nested worktree's usable name (#963): $(cat "$rm_list")"
+# ...and an unaddressable path must not be advertised as if it were a name.
+grep -qE '^  \(not removable here\)' "$rm_list" ||
+    fail "the listing did not mark the unaddressable in-cone path as not removable (#963): $(cat "$rm_list")"
+grep -q 'git worktree remove' "$rm_list" &&
+    fail "the listing re-offered the unguarded command the refusal withholds (#963): $(cat "$rm_list")"
+# ...and specifically for an OUT-OF-CONE worktree, which the in-cone-with-space
+# case above cannot prove: classifying every path as in-cone would advertise an
+# absolute path as though it were a name this command takes.
+outcone_list="$test_tmp/outcone-list"
+git -C "$fixture" worktree add -q "$outcone_list/stray" -b feat/outcone-listing ||
+    fail "could not create the #963 out-of-cone listing fixture"
+rm_list2="$test_tmp/rm-listing-outcone.log"
+rm_wt definitely-absent-name >"$rm_list2" 2>&1 || true
+grep -qE "^  \(not removable here\)  .*$outcone_list/stray" "$rm_list2" ||
+    fail "the listing advertised an out-of-cone worktree under a name this command cannot take (#963): $(cat "$rm_list2")"
+git -C "$fixture" worktree remove --force "$outcone_list/stray"
+git -C "$fixture" worktree remove --force ".worktrees/feat/deep"
+git -C "$fixture" worktree remove --force ".worktrees/team space/leaf"
+
+# A remedy this command would itself reject is worse than no remedy. The
+# nameability test must apply EVERY rule the argument check applies — it
+# originally applied only the charset and component rules, so an in-cone path
+# beginning with `-` or containing `..` was advertised as
+# `task worktree:rm -- …` and then refused by the parser it was handed to
+# (review r1). Both shapes are checked, because they fail different rules.
+for bad_component in '-dash' 'a..b'; do
+    new "remedycheck" --no-install >/dev/null ||
+        fail "could not create the #963 remedy fixture for '$bad_component'"
+    mkdir -p "$fixture/.worktrees/$bad_component"
+    git -C "$fixture" worktree move .worktrees/remedycheck ".worktrees/$bad_component/leaf" ||
+        fail "could not move the #963 remedy fixture into '$bad_component'"
+    rm_remedy="$test_tmp/rm-remedy.log"
+    if rm_wt remedycheck >"$rm_remedy" 2>&1; then
+        fail "worktree:rm reported success for a path under '$bad_component' (#963): $(cat "$rm_remedy")"
+    fi
+    grep -q 'task worktree:rm --' "$rm_remedy" &&
+        fail "the remedy advertised a task invocation this command rejects, for '$bad_component' (#963): $(cat "$rm_remedy")"
+    grep -qE 'remove it with: git worktree remove' "$rm_remedy" &&
+        fail "the remedy advertised an unguarded removal for '$bad_component' (#963): $(cat "$rm_remedy")"
+    # The LISTING must reach the same verdict about the same path, and it must
+    # be checked while this worktree still exists. Both components pass the
+    # charset rule and fail a different one, so a listing that applied only the
+    # charset rule would advertise them as names — the drift the shared
+    # predicate exists to prevent.
+    rm_remedy_list="$test_tmp/rm-remedy-list.log"
+    rm_wt definitely-absent-name >"$rm_remedy_list" 2>&1 || true
+    grep -qE "^  \(not removable here\)  .*$bad_component/leaf" "$rm_remedy_list" ||
+        fail "the listing advertised '$bad_component/leaf' under a name this command rejects (#963): $(cat "$rm_remedy_list")"
+    git -C "$fixture" worktree remove --force ".worktrees/$bad_component/leaf"
+    rmdir "$fixture/.worktrees/$bad_component" 2>/dev/null || true
+done
+
+# The argument check must keep naming the SPECIFIC rule that failed — routing
+# both callers through one predicate must not flatten the diagnostics.
+rm_badname="$test_tmp/rm-badname.log"
+rm_wt '../escape' >"$rm_badname" 2>&1 && fail "worktree:rm accepted '../escape' (#963)"
+grep -q "must not contain '\.\.'" "$rm_badname" ||
+    fail "the argument check stopped naming which rule failed (#963): $(cat "$rm_badname")"
+
+# The THIRD outcome the issue requires the message to distinguish: a registry
+# record whose directory is already gone. Clearing it is correct and useful,
+# but "Worktree removed" claims a directory was deleted that never existed,
+# directly contradicting the line printed just above it (review r2).
+new stalemsg --no-install >/dev/null || fail "could not create the #963 stale-record fixture"
+rm -rf "$fixture/.worktrees/stalemsg"
+rm_stale="$test_tmp/rm-stalemsg.log"
+rm_wt stalemsg >"$rm_stale" 2>&1 ||
+    fail "worktree:rm failed to clear a stale record (#963): $(cat "$rm_stale")"
+grep -q 'Stale record cleared' "$rm_stale" ||
+    fail "clearing a stale record did not say so (#963): $(cat "$rm_stale")"
+grep -q '^Worktree removed:' "$rm_stale" &&
+    fail "clearing a stale record still claimed a directory was removed (#963): $(cat "$rm_stale")"
+
+# ...and a genuine removal must still say it removed a worktree, so the fix
+# above cannot be satisfied by simply never printing the removal line.
+new realmsg --no-install >/dev/null || fail "could not create the #963 real-removal fixture"
+rm_real="$test_tmp/rm-realmsg.log"
+rm_wt realmsg >"$rm_real" 2>&1 ||
+    fail "worktree:rm failed to remove a live worktree (#963): $(cat "$rm_real")"
+grep -q '^Worktree removed:' "$rm_real" ||
+    fail "a genuine removal stopped reporting itself as one (#963): $(cat "$rm_real")"
+grep -q 'Stale record cleared' "$rm_real" &&
+    fail "a genuine removal was reported as a stale-record cleanup (#963): $(cat "$rm_real")"
+
+# git SANITIZES an admin-record name — a worktree at `trunc<LF>tail` gets the
+# record `trunc-tail` — so that record name is typeable and resolves to a path
+# carrying a raw newline. Every diagnostic must escape the path it prints, not
+# only the remedy: an unescaped location clause splits the message across lines
+# (review r3).
+if [ "$nl_supported" -eq 1 ] && [ "$nl_z_supported" -eq 1 ]; then
+    esc_parent="$test_tmp/escpath"
+    mkdir -p "$esc_parent"
+    esc_tree="$esc_parent/trunc
+tail"
+    if git -C "$fixture" worktree add -q "$esc_tree" -b feat/escaped-diagnostic; then
+        esc_record="$(basename "$(record_admin_dir_probe "$fixture" "$esc_tree")")"
+        [ -n "$esc_record" ] || fail "could not read the admin record for the #963 escaping case"
+        rm_esc="$test_tmp/rm-escaped.log"
+        rm_wt "$esc_record" >"$rm_esc" 2>&1 &&
+            fail "worktree:rm reported success for an out-of-cone newline path (#963): $(cat "$rm_esc")"
+        [ "$(wc -l <"$rm_esc" | tr -d ' ')" -eq 1 ] ||
+            fail "the diagnostic split across lines on a newline-bearing path (#963): $(cat "$rm_esc")"
+        git -C "$fixture" worktree remove --force "$esc_tree"
+    else
+        fail "could not create the #963 escaping fixture although newlines are supported"
+    fi
+fi
+
+# The pre-2.36 path is unreachable on a modern git, so it is simulated: a shim
+# makes `worktree list --porcelain -z` fail and passes everything else through
+# to the real binary. Without this the fail-closed branch is only exercisable
+# by installing an old git, which means in practice never (review r4).
+if [ "$nl_supported" -eq 1 ]; then
+    oldgit_shim="$test_tmp/oldgit-shim"
+    mkdir -p "$oldgit_shim"
+    real_git="$(command -v git)"
+    cat >"$oldgit_shim/git" <<SHIM
+#!/usr/bin/env bash
+# Reject only the worktree-list capability probe; else the real git.
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+    for arg in "\$@"; do
+        [ "\$arg" = "-z" ] && exit 129
+    done
+fi
+exec "$real_git" "\$@"
+SHIM
+    chmod +x "$oldgit_shim/git"
+    # Prove the shim actually simulates the old git before relying on it — a
+    # shim that silently passed -z through would make this case vacuous.
+    PATH="$oldgit_shim:$PATH" git worktree list --porcelain -z >/dev/null 2>&1 &&
+        fail "the pre-2.36 git shim did not reject --porcelain -z (#963)"
+    PATH="$oldgit_shim:$PATH" git worktree list --porcelain >/dev/null 2>&1 ||
+        fail "the pre-2.36 git shim broke ordinary git invocations (#963)"
+
+    oldgit_parent="$test_tmp/oldgit-cone"
+    mkdir -p "$oldgit_parent"
+    oldgit_tree="$oldgit_parent/span
+ning"
+    if git -C "$fixture" worktree add -q "$oldgit_tree" -b feat/oldgit-span; then
+        rm_oldgit="$test_tmp/rm-oldgit.log"
+        (cd "$fixture" && PATH="$oldgit_shim:$PATH" bash scripts/worktree-rm.sh spanning) \
+            >"$rm_oldgit" 2>&1 &&
+            fail "worktree:rm resolved a spanning path on a git without -z (#963): $(cat "$rm_oldgit")"
+        grep -q 'cannot look up' "$rm_oldgit" ||
+            fail "the pre-2.36 path did not refuse registry lookup (#963): $(cat "$rm_oldgit")"
+        grep -qi 'removed' "$rm_oldgit" &&
+            fail "the pre-2.36 refusal still claimed a removal (#963): $(cat "$rm_oldgit")"
+        git -C "$fixture" worktree remove --force "$oldgit_tree"
+    else
+        fail "could not create the #963 pre-2.36 fixture although newlines are supported"
+    fi
+    rm -rf "$oldgit_shim"
+fi
+
+# A registry read that fails or truncates must not read as a complete one.
+# bash does not propagate a process-substitution failure, so without a success
+# sentinel the resolver would treat a partial list as the whole registry and
+# could call a name unique, or absent, on evidence it never finished reading
+# (review r6). Simulated with a shim that exits nonzero for the enumeration.
+trunc_shim="$test_tmp/trunc-shim"
+mkdir -p "$trunc_shim"
+trunc_real_git="$(command -v git)"
+cat >"$trunc_shim/git" <<TRUNCSHIM
+#!/usr/bin/env bash
+# The capability probe and the real enumeration are the SAME invocation, so
+# they cannot be told apart by arguments — count instead. The first armed
+# -z call (the probe) succeeds so the command clears its version gate; the
+# next one (the enumeration it actually reads) fails.
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+    for arg in "\$@"; do
+        if [ "\$arg" = "-z" ] && [ -n "\$WT_TRUNC_ARMED" ]; then
+            if [ -e "\$WT_TRUNC_ARMED" ]; then
+                exit 1
+            fi
+            : >"\$WT_TRUNC_ARMED"
+            exec "$trunc_real_git" "\$@"
+        fi
+    done
+fi
+exec "$trunc_real_git" "\$@"
+TRUNCSHIM
+chmod +x "$trunc_shim/git"
+# Prove the shim behaves as described before relying on it.
+trunc_marker="$test_tmp/trunc-marker"
+rm -f "$trunc_marker"
+PATH="$trunc_shim:$PATH" git worktree list --porcelain -z >/dev/null 2>&1 ||
+    fail "the truncation shim broke the unarmed enumeration (#963)"
+PATH="$trunc_shim:$PATH" WT_TRUNC_ARMED="$trunc_marker" git worktree list --porcelain -z >/dev/null 2>&1 ||
+    fail "the truncation shim failed the FIRST armed call, which must succeed as the capability probe (#963)"
+PATH="$trunc_shim:$PATH" WT_TRUNC_ARMED="$trunc_marker" git worktree list --porcelain -z >/dev/null 2>&1 &&
+    fail "the truncation shim did not fail the SECOND armed call (#963)"
+rm -f "$trunc_marker"
+
+new truncprobe --no-install >/dev/null || fail "could not create the #963 truncation fixture"
+rm -rf "$fixture/.worktrees/truncprobe"
+git -C "$fixture" worktree prune
+rm_trunc_log="$test_tmp/rm-truncated.log"
+(cd "$fixture" && PATH="$trunc_shim:$PATH" WT_TRUNC_ARMED="$trunc_marker" bash scripts/worktree-rm.sh some-absent-name) \
+    >"$rm_trunc_log" 2>&1 &&
+    fail "worktree:rm succeeded on a registry read that failed (#963): $(cat "$rm_trunc_log")"
+grep -q 'could not read the worktree registry completely' "$rm_trunc_log" ||
+    fail "a failed registry read did not fail closed (#963): $(cat "$rm_trunc_log")"
+grep -qi 'removed' "$rm_trunc_log" &&
+    fail "a failed registry read still claimed a removal (#963): $(cat "$rm_trunc_log")"
+rm -rf "$trunc_shim"
+
+echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"

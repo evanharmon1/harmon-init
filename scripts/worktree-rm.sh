@@ -78,6 +78,27 @@ record_admin_dir() {
     return 1
 }
 
+# The SINGLE definition of "a name this command accepts". Two places need that
+# answer — the argument validation below, and the decision about whether a
+# resolved path can be advertised as a name — and they must never disagree.
+# They did: the advertised remedy applied only the charset and component rules,
+# so an in-cone path like `-dash/leaf` or `x..y` was offered as
+# `task worktree:rm -- …` and then rejected by the very parser it was offered
+# to (review r1). Echoes the problem and returns 1 when the name is not
+# acceptable; silent and 0 when it is.
+worktree_name_problem() {
+    case "$1" in
+    "") echo "must not be empty" && return 1 ;;
+    /* | -*) echo "must not start with '/' or '-'" && return 1 ;;
+    *..*) echo "must not contain '..'" && return 1 ;;
+    *[!A-Za-z0-9._/-]*) echo "use only A-Z a-z 0-9 . _ - /" && return 1 ;;
+    esac
+    case "/$1/" in
+    *//* | */./*) echo "path components must not be empty or '.'" && return 1 ;;
+    esac
+    return 0
+}
+
 name=""
 force=0
 
@@ -108,26 +129,20 @@ done
     die "a worktree name is required"
 }
 
-case "$name" in
-/* | -*) die "invalid name '$name': must not start with '/' or '-'" ;;
-*..*) die "invalid name '$name': must not contain '..'" ;;
-esac
-# The same character whitelist creation enforces. Removal used to get away
-# without it, but lock entries are derived from the name, and a name
-# carrying whitespace, glob characters, or the encoding characters would
-# corrupt the lock bookkeeping (harmon-init#784) — and no conforming
-# creation can have produced such a worktree anyway.
-case "$name" in
-*[!A-Za-z0-9._/-]*) die "invalid name '$name': use only A-Z a-z 0-9 . _ - /" ;;
-esac
-# The same component rule creation enforces, and for the same reason: every
-# decision below compares `$tree` against git's CANONICAL registry paths as
-# text. `./live` would miss the record for the live worktree at `live`, and the
-# script would then classify a checked-out tree as debris and delete its
-# gitlink. Equivalent spellings must not reach the comparisons at all.
-case "/$name/" in
-*//* | */./*) die "invalid name '$name': path components must not be empty or '.'" ;;
-esac
+if ! name_problem="$(worktree_name_problem "$name")"; then
+    die "invalid name '$name': $name_problem"
+fi
+# The character whitelist and the component rule that creation enforces both
+# live in worktree_name_problem above. Removal used to get away without them,
+# but lock entries are derived from the name, and a name carrying whitespace,
+# glob characters, or the encoding characters would corrupt the lock
+# bookkeeping (harmon-init#784) — and no conforming creation can have produced
+# such a worktree anyway.
+# The component rule matters for the same reason: every decision below compares
+# `$tree` against git's CANONICAL registry paths as text. `./live` would miss
+# the record for the live worktree at `live`, and the script would then classify
+# a checked-out tree as debris and delete its gitlink. Equivalent spellings must
+# not reach the comparisons at all.
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -180,6 +195,208 @@ tree_exists=0
 stale_record=0
 if [ "$tree_is_registered" -eq 1 ] && [ "$tree_exists" -eq 0 ]; then
     stale_record=1
+fi
+
+# ── The name must actually account for something (harmon-init#963) ──────────
+#
+# Everything above derives $tree by CONSTRUCTION from the argument, and never
+# consults the registry to find where the named worktree actually is. git names
+# an admin record from the path basename at creation and never renames it,
+# while `git worktree move` rewrites the record's stored path — so record name
+# and current directory name are independent BY DESIGN, and a worktree may sit
+# anywhere `git worktree add` was pointed, including outside this repo's
+# checkout entirely. A constructed path is therefore not a lookup, and when it
+# missed, the run fell into the stale-record branch and reported a removal that
+# did not happen: both output lines false, exit 0, the worktree untouched.
+#
+# The fix is a pre-flight, deliberately NOT a re-targeting. $tree keeps exactly
+# the meaning it has always had for every run that proceeds — the locks are
+# keyed on $name, and the removal, debris sweep and parent walk below are all
+# written against the constructed path — so this either lets the existing flow
+# run byte-for-byte as before, or refuses while naming the real path. Silently
+# retargeting a deletion at a path the caller did not name is the more
+# dangerous repair.
+if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
+    ! record_admin_dir "$tree" >/dev/null 2>&1; then
+    # Nothing at the conventional path. Ask the registry what this name means
+    # before claiming anything was removed.
+    # A worktree path may legally contain a newline — `git worktree add` accepts
+    # one even though worktree:new's charset whitelist can never produce one —
+    # and the LF-delimited porcelain form truncates such a path at the newline,
+    # which would resolve the wrong worktree or none at all. Read a
+    # NUL-delimited stream where git provides it, and fall back to the LF form
+    # rather than making an edge case impose a git version floor (challenge r1).
+    # LF-delimited porcelain CANNOT represent a path containing a newline: the
+    # path continues onto the next line with nothing marking it. An earlier
+    # attempt detected that structurally, by treating a line that matched no
+    # record key as a continuation — but a continuation may legally LOOK like a
+    # key (`trap<LF>HEAD fake`), so the check could be walked straight past
+    # (review r5). There is no parse that recovers the truth here.
+    #
+    # So this does not parse ambiguous output at all. Without `--porcelain -z`
+    # (git 2.36+) registry resolution is simply unavailable, and the command
+    # says so. Nothing else regresses: a worktree at the conventional path is
+    # accounted for long before this block, so only the fallback lookup — the
+    # thing that cannot be done correctly here — is withdrawn.
+    if ! git worktree list --porcelain -z >/dev/null 2>&1; then
+        die "no worktree at $tree, and this git cannot look up '$name' elsewhere in the registry: that needs \`git worktree list --porcelain -z\` (git 2.36+), because the line-delimited form cannot represent a path containing a newline and offers no way to tell one apart from a truncated prefix. Upgrade git to 2.36 or newer, or name the worktree by its path with git's own commands"
+    fi
+
+    # awk cannot do the NUL half: its strings are NUL-terminated, so an awk fed
+    # a NUL-delimited stream stops at the first record — on macOS that silently
+    # yielded only the main worktree. bash's `read -d ''` handles NUL correctly,
+    # so the -z stream is split in the shell; awk is used only on the LF
+    # fallback, where it is emitting NUL rather than consuming it, and only
+    # once the check above has established no path spans lines.
+    # Reached only when -z is available: the guard above refused otherwise.
+    #
+    # The trailing sentinel is this enumeration's success marker, mirroring
+    # flagged_enum_ok and sparse_rules_ok below: bash does not propagate a
+    # process-substitution failure, so without it a git error or a truncated
+    # stream would fail OPEN — the consumer would treat a partial registry as
+    # the whole registry and could call a name unique, or absent, on evidence
+    # it never finished reading (review r6). It is unforgeable: every real
+    # entry is an absolute path, and this marker contains no slash.
+    registry_enum_ok_marker="__WORKTREE_RM_REGISTRY_OK__"
+    emit_worktree_paths() {
+        (
+            git worktree list --porcelain -z || exit 1
+            printf '%s\0' "$registry_enum_ok_marker"
+        ) | while IFS= read -r -d '' wt_record; do
+            case "$wt_record" in
+            "worktree "*) printf '%s\0' "${wt_record#worktree }" ;;
+            "$registry_enum_ok_marker") printf '%s\0' "$wt_record" ;;
+            esac
+        done
+    }
+
+    # Matches are COLLECTED rather than counted, so the ambiguity branch can
+    # name the worktrees that actually collided instead of reprinting the whole
+    # registry (challenge r2).
+    matches=()
+    registry_enum_ok=0
+    while IFS= read -r -d '' candidate_tree; do
+        [ -n "$candidate_tree" ] || continue
+        if [ "$candidate_tree" = "$registry_enum_ok_marker" ]; then
+            registry_enum_ok=1
+            continue
+        fi
+        # The main checkout is registered but is not a linked worktree, and this
+        # command removes only linked worktrees. Counting it made
+        # `worktree:rm <repo-basename>` report the main checkout as an
+        # out-of-cone worktree and recommend a `git worktree remove` that git
+        # refuses — and made a same-basename linked worktree read as ambiguous.
+        # The candidate listing below already skipped it; resolution must too.
+        [ "$candidate_tree" = "$main_root" ] && continue
+        candidate_name="${candidate_tree##*/}"
+        candidate_record=""
+        candidate_admin="$(record_admin_dir "$candidate_tree" 2>/dev/null || true)"
+        [ -n "$candidate_admin" ] && candidate_record="${candidate_admin##*/}"
+        # Basename and admin-record name only. A candidate's path RELATIVE to
+        # .worktrees/ is deliberately NOT compared: it can equal $name only when
+        # the constructed path IS this candidate's path, and that case never
+        # reaches here — the conventional-path check above already accounted for
+        # it. Matching on it was unreachable code (found verifying challenge r2).
+        if [ "$candidate_name" = "$name" ] || [ "$candidate_record" = "$name" ]; then
+            matches+=("$candidate_tree")
+        fi
+    done < <(emit_worktree_paths)
+    [ "$registry_enum_ok" -eq 1 ] ||
+        die "could not read the worktree registry completely, so '$name' cannot be resolved against it — refusing rather than acting on a partial list"
+    resolved_count=${#matches[@]}
+
+    if [ "$resolved_count" -eq 1 ]; then
+        resolved="${matches[0]}"
+        # $resolved is escaped everywhere it appears, not only in the remedy.
+        # git sanitizes an admin-record name (a worktree at `trunc<LF>tail`
+        # gets the record `trunc-tail`), so invoking that record name reaches
+        # this branch with a raw newline or terminal-control byte in the path,
+        # and an unescaped location clause splits the diagnostic across lines
+        # or emits control sequences (review r3). $tree and $resolved_rel need
+        # no escaping by construction: the first is built from $name and the
+        # second has passed worktree_name_problem, so both are restricted to
+        # the name charset.
+        # Two different situations, two different remedies. In-cone means this
+        # command CAN remove it and the caller simply used a name that no longer
+        # points at it — a record keeps its creation-time name across a move.
+        # Out-of-cone means no argument to this command will reach it, because
+        # every path below is written against <main_root>/.worktrees/, so the
+        # remedy is git's own command.
+        resolved_rel=""
+        case "$resolved" in
+        "$main_root"/.worktrees/*) resolved_rel="${resolved#"$main_root"/.worktrees/}" ;;
+        esac
+        # An in-cone path is only reachable through THIS command when its
+        # relative form is a name this command would accept. A hand-registered
+        # `.worktrees/team space/foo` is in-cone yet unnameable here: the
+        # suggested `task worktree:rm -- team space/foo` would split on the
+        # space and be rejected by the charset guard anyway. Fall back to git's
+        # command, shell-escaped, rather than emitting a remedy that cannot work
+        # (challenge r2).
+        rel_is_nameable=0
+        if [ -n "$resolved_rel" ] && worktree_name_problem "$resolved_rel" >/dev/null; then
+            rel_is_nameable=1
+        fi
+        if [ "$rel_is_nameable" -eq 1 ]; then
+            die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — its admin record and its directory have different names (a move does that), and only its current name resolves here: task worktree:rm -- $resolved_rel"
+        else
+            die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — that path is not addressable by this command, and no removal command is suggested for it on purpose: \`git worktree remove\` performs none of the checks this task does (work hidden by skip-worktree or assume-unchanged, a merge autostash, and detached commits no branch, tag or remote-tracking ref contains — it deletes ignored files such as .env and takes an unreferenced detached HEAD without complaint), so anything removing that path has to establish those itself first"
+        fi
+    elif [ "$resolved_count" -gt 1 ]; then
+        echo "worktree:rm: '$name' is ambiguous — it matches more than one registered worktree:" >&2
+        for amb_tree in "${matches[@]}"; do
+            printf '  %s\n' "$(printf '%q' "$amb_tree")" >&2
+        done
+        die "name the worktree unambiguously — this command removes only worktrees under $main_root/.worktrees/, and reaching any other path means establishing for yourself the guards listed above that \`git worktree remove\` does not apply"
+    fi
+
+    # Matches nothing at all. Never report a removal for it.
+    echo "worktree:rm: no worktree or admin record named '$name'" >&2
+    echo "worktree:rm: live worktrees (a record's name can differ from its directory after a move):" >&2
+    # Same NUL-delimited source the resolution above uses: a line-parsed listing
+    # truncates a newline-bearing path and prints a raw newline into the middle
+    # of the candidate list. printf %q renders such a path visibly instead of
+    # mangling the output, and leaves ordinary paths untouched.
+    listing_enum_ok=0
+    while IFS= read -r -d '' live_tree; do
+        if [ "$live_tree" = "$registry_enum_ok_marker" ]; then
+            listing_enum_ok=1
+            continue
+        fi
+        # Skip the main checkout: it is registered, but this command removes
+        # linked worktrees only, so offering it as a candidate is a dead end.
+        [ "$live_tree" = "$main_root" ] && continue
+        live_admin="$(record_admin_dir "$live_tree" 2>/dev/null || true)"
+        live_rel=""
+        case "$live_tree" in
+        "$main_root"/.worktrees/*)
+            live_rel="${live_tree#"$main_root"/.worktrees/}"
+            # Same single definition the remedy and the argument check use: a
+            # path is only advertised under a name when that name would
+            # actually be accepted. This was a third partial copy of the rule
+            # (charset only), found while fixing the second one (review r1).
+            worktree_name_problem "$live_rel" >/dev/null || live_rel=""
+            ;;
+        esac
+        if [ -n "$live_rel" ]; then
+            live_label="$live_rel"
+        else
+            # Not addressable through this command at all. The label is a
+            # STATUS, never a command: rendering `git worktree remove` here
+            # re-offered exactly what the refusal above withholds, and that
+            # command applies none of this script's guards (review r5).
+            live_label="(not removable here)"
+        fi
+        if [ -n "$live_admin" ] && [ "${live_admin##*/}" != "${live_tree##*/}" ]; then
+            printf '  %s  (record: %s)  %s\n' \
+                "$live_label" "${live_admin##*/}" "$(printf '%q' "$live_tree")" >&2
+        else
+            printf '  %s  %s\n' "$live_label" "$(printf '%q' "$live_tree")" >&2
+        fi
+    done < <(emit_worktree_paths)
+    [ "$listing_enum_ok" -eq 1 ] ||
+        echo "worktree:rm: (the registry could not be read completely — this list may be partial)" >&2
+    die "nothing was removed"
 fi
 
 # A worktree registered BELOW this path is a separate worktree, not this one's
@@ -648,4 +865,15 @@ while [ "$parent" != "$main_root" ] && [ "$parent" != "/" ]; do
     parent="$(dirname "$parent")"
 done
 
-echo "Worktree removed: $tree"
+# The final line reports what actually happened, from the entry snapshot.
+# `stale_record` means the registry held a record whose directory was already
+# gone when this run started: nothing was removed from disk, and saying
+# "Worktree removed" there contradicted the line above it and claimed the
+# removal of a directory that never existed (#963 AC: the message must
+# distinguish "removed a worktree" from "cleared a stale record" from "found
+# nothing" — the third is the refusal branch above).
+if [ "$stale_record" -eq 1 ]; then
+    echo "Stale record cleared: $tree (no worktree directory existed)"
+else
+    echo "Worktree removed: $tree"
+fi
