@@ -85,6 +85,48 @@ err() {
     fail=1
 }
 
+# ── Quiet-but-not-silent command capture (#934) ─────────────────────────────
+#
+# A rendered-repo gate that can fail with no evidence turns an intermittent
+# failure into an unexplainable event: the render lives under $job_tmp and the
+# EXIT trap above reaps it, so once this script returns there is nothing left
+# to inspect. One local `task ci` run failed inside the rendered repo's
+# worktree suite while shepherding PR #932; every re-run passed and the cause
+# could not be recovered, because the inner output had gone to /dev/null and
+# the render was already gone.
+#
+# dump_log replays one captured log; run_quiet captures a command and replays
+# it only when the command failed, so the success path stays exactly as quiet
+# as the bare `>/dev/null 2>&1` it replaces.
+dump_log() {
+    dl_name="$1"
+    dl_status="${2:-}"
+    if [ -n "$dl_status" ]; then
+        echo "----- captured output: $dl_name (exit $dl_status) -----" >&2
+    else
+        echo "----- captured output: $dl_name -----" >&2
+    fi
+    cat "$job_tmp/$dl_name.log" >&2 || true
+    echo "----- end: $dl_name -----" >&2
+}
+
+# Usage: run_quiet [--in <dir>] <log-name> <cmd>...
+# Returns the command's own exit status, so every call site keeps the
+# `|| err "..."` shape it had when it discarded the output instead.
+run_quiet() {
+    rq_dir="."
+    if [ "${1:-}" = "--in" ]; then
+        rq_dir="$2"
+        shift 2
+    fi
+    rq_name="$1"
+    shift
+    rq_status=0
+    (cd "$rq_dir" && "$@") >"$job_tmp/$rq_name.log" 2>&1 || rq_status=$?
+    [ "$rq_status" -eq 0 ] || dump_log "$rq_name" "$rq_status"
+    return "$rq_status"
+}
+
 # copier itself is not optional here, unlike the tools gated behind
 # required() above: this script IS the template-render gate, so a local skip
 # would report `task verify` green while rendering nothing. copier is now
@@ -352,7 +394,7 @@ if have task; then
         err "task verify does not reach test:registry-docs"
     # End-to-end: run the task itself, so the env plumbing is exercised rather
     # than just asserted.
-    task --color=false test:registry-docs >/dev/null 2>&1 ||
+    run_quiet registry-docs task --color=false test:registry-docs ||
         err "task test:registry-docs fails in the rendered repo"
 else
     required task "registry-docs verify reachability" || fail=1
@@ -376,7 +418,7 @@ if have task; then
     verify_dry="$(task --color=false --dry verify 2>&1 || true)"
     grep -qF './scripts/test-worktree.sh' <<<"$verify_dry" ||
         err "task verify does not reach test:worktree"
-    task --color=false test:worktree >/dev/null 2>&1 ||
+    run_quiet worktree task --color=false test:worktree ||
         err "task test:worktree fails in the rendered repo"
 
     # ...and the issue's own acceptance path, against THIS rendered repo rather
@@ -386,19 +428,24 @@ if have task; then
     # where `.git` is a file and the working directory is not the repo root.
     # --no-install keeps it offline; lint:hygiene is the gate that needs only
     # bash, git and `file`, which this job already has.
-    if ./scripts/worktree-new.sh smoke --no-install >/dev/null 2>&1; then
-        (cd .worktrees/smoke && task --color=false --dry check >/dev/null 2>&1) ||
+    if ./scripts/worktree-new.sh smoke --no-install >"$job_tmp/smoke-new.log" 2>&1; then
+        run_quiet --in .worktrees/smoke smoke-check task --color=false --dry check ||
             err "task check does not resolve inside a worktree of the rendered repo"
-        (cd .worktrees/smoke && task --color=false lint:hygiene >/dev/null 2>&1) ||
+        run_quiet --in .worktrees/smoke smoke-hygiene task --color=false lint:hygiene ||
             err "task lint:hygiene fails inside a worktree of the rendered repo"
-        ./scripts/worktree-rm.sh smoke >/dev/null 2>&1 ||
+        run_quiet smoke-rm ./scripts/worktree-rm.sh smoke ||
             err "worktree:rm failed to remove the smoke worktree in the rendered repo"
         [ -e .worktrees/smoke ] && err "worktree:rm left the smoke worktree behind"
     else
         # A render whose _tasks were skipped has no commit for the worktree to
-        # check out; that is a property of the profile, not a failure.
-        git rev-parse HEAD >/dev/null 2>&1 &&
+        # check out; that is a property of the profile, not a failure — so the
+        # capture above is replayed only where HEAD exists and the failure is
+        # therefore real. run_quiet cannot be used here: it replays on every
+        # nonzero exit, which would make the legitimate no-commit path noisy.
+        if git rev-parse HEAD >/dev/null 2>&1; then
+            dump_log smoke-new
             err "worktree:new failed in the rendered repo"
+        fi
     fi
 else
     required task "worktree entrypoint reachability" || fail=1
@@ -450,7 +497,7 @@ if have task; then
     verify_dry="$(task --color=false --dry verify 2>&1 || true)"
     grep -qF './scripts/test-label-registry.sh' <<<"$verify_dry" ||
         err "task verify does not reach test:label-registry"
-    task --color=false test:label-registry >/dev/null 2>&1 ||
+    run_quiet label-registry task --color=false test:label-registry ||
         err "task test:label-registry fails in the rendered repo (the #873/#883 class of regression: a docs-presence check misfiring on the rendered project_management variant)"
 else
     required task "label-registry verify reachability + execution" || fail=1
@@ -529,7 +576,8 @@ grep -q 'task test:ci-results' .github/workflows/build.yml ||
 [ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
 EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
     err "rendered CI result helper rejected successful trusted jobs"
-if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >/dev/null 2>&1; then
+if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >"$job_tmp/ci-results-negative.log" 2>&1; then
+    dump_log ci-results-negative
     err "rendered CI result helper accepted an unexpectedly skipped trusted job"
 fi
 for aggregate_workflow in .github/workflows/build.yml .github/workflows/devcontainer-build.yml; do
@@ -1821,7 +1869,7 @@ if grep -Eq '^include_terraform:[[:space:]]+(true|yes)$' .copier-answers.yml; th
         grep -qF -- "$lock_contract" scripts/terraform-provider-locks.sh ||
             err "scripts/terraform-provider-locks.sh does not establish '$lock_contract'"
     done
-    ./scripts/test-terraform-provider-locks.sh >/dev/null 2>&1 ||
+    run_quiet tf-provider-locks ./scripts/test-terraform-provider-locks.sh ||
         err "scripts/test-terraform-provider-locks.sh fails its hermetic lock-process checks"
     grep -q 'test-terraform-provider-locks.sh' scripts/test-tasks.sh ||
         err "test-tasks.sh does not run the provider-lock regression"
@@ -1965,7 +2013,7 @@ PY
         [ -f "$changed_script" ] || err "$changed_script missing (include_terraform=true)"
         [ -x "$changed_script" ] || err "$changed_script is not executable"
     done
-    ./scripts/test-terraform-changed.sh >/dev/null 2>&1 ||
+    run_quiet tf-changed ./scripts/test-terraform-changed.sh ||
         err "scripts/test-terraform-changed.sh fails its own change-detection checks"
     grep -q 'test-terraform-changed.sh' scripts/test-tasks.sh ||
         err "test-tasks.sh does not run the change-detection regression"
@@ -2099,11 +2147,12 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
         grep -q -- '--pass-with-no-tests' scripts/e2e-run.sh ||
             err "e2e-run.sh filters out @a11y without --pass-with-no-tests — an a11y-only repo would fail the blocking e2e check"
     fi
-    ./scripts/e2e-run.sh >/dev/null 2>&1 ||
+    run_quiet e2e-skip ./scripts/e2e-run.sh ||
         err "e2e-run.sh does not skip cleanly on a fresh render (no playwright.config.*)"
     # A config with the guard still unconfigured must FAIL, not skip.
     touch playwright.config.ts
-    if ./scripts/e2e-run.sh >/dev/null 2>&1; then
+    if ./scripts/e2e-run.sh >"$job_tmp/e2e-guard-negative.log" 2>&1; then
+        dump_log e2e-guard-negative
         err "e2e-run.sh passed with an unconfigured e2e-env-guard.sh — the guard must fail closed"
     fi
     rm -f playwright.config.ts
@@ -2167,9 +2216,9 @@ fi
 # directions are asserted.
 if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     [ -x scripts/codegen.sh ] || err "scripts/codegen.sh missing or not executable (project_type=web-app)"
-    ./scripts/codegen.sh >/dev/null 2>&1 ||
+    run_quiet codegen-skip ./scripts/codegen.sh ||
         err "codegen.sh does not skip cleanly on a fresh render (no app/deps yet)"
-    ./scripts/codegen.sh --guard >/dev/null 2>&1 ||
+    run_quiet codegen-guard-skip ./scripts/codegen.sh --guard ||
         err "codegen.sh --guard does not skip cleanly on a fresh render (no app/deps yet)"
     grep -q 'convex codegen' scripts/codegen.sh || err "codegen.sh does not run Convex codegen"
     if have task; then
