@@ -78,6 +78,27 @@ record_admin_dir() {
     return 1
 }
 
+# The SINGLE definition of "a name this command accepts". Two places need that
+# answer — the argument validation below, and the decision about whether a
+# resolved path can be advertised as a name — and they must never disagree.
+# They did: the advertised remedy applied only the charset and component rules,
+# so an in-cone path like `-dash/leaf` or `x..y` was offered as
+# `task worktree:rm -- …` and then rejected by the very parser it was offered
+# to (review r1). Echoes the problem and returns 1 when the name is not
+# acceptable; silent and 0 when it is.
+worktree_name_problem() {
+    case "$1" in
+    "") echo "must not be empty" && return 1 ;;
+    /* | -*) echo "must not start with '/' or '-'" && return 1 ;;
+    *..*) echo "must not contain '..'" && return 1 ;;
+    *[!A-Za-z0-9._/-]*) echo "use only A-Z a-z 0-9 . _ - /" && return 1 ;;
+    esac
+    case "/$1/" in
+    *//* | */./*) echo "path components must not be empty or '.'" && return 1 ;;
+    esac
+    return 0
+}
+
 name=""
 force=0
 
@@ -108,26 +129,20 @@ done
     die "a worktree name is required"
 }
 
-case "$name" in
-/* | -*) die "invalid name '$name': must not start with '/' or '-'" ;;
-*..*) die "invalid name '$name': must not contain '..'" ;;
-esac
-# The same character whitelist creation enforces. Removal used to get away
-# without it, but lock entries are derived from the name, and a name
-# carrying whitespace, glob characters, or the encoding characters would
-# corrupt the lock bookkeeping (harmon-init#784) — and no conforming
-# creation can have produced such a worktree anyway.
-case "$name" in
-*[!A-Za-z0-9._/-]*) die "invalid name '$name': use only A-Z a-z 0-9 . _ - /" ;;
-esac
-# The same component rule creation enforces, and for the same reason: every
-# decision below compares `$tree` against git's CANONICAL registry paths as
-# text. `./live` would miss the record for the live worktree at `live`, and the
-# script would then classify a checked-out tree as debris and delete its
-# gitlink. Equivalent spellings must not reach the comparisons at all.
-case "/$name/" in
-*//* | */./*) die "invalid name '$name': path components must not be empty or '.'" ;;
-esac
+if ! name_problem="$(worktree_name_problem "$name")"; then
+    die "invalid name '$name': $name_problem"
+fi
+# The character whitelist and the component rule that creation enforces both
+# live in worktree_name_problem above. Removal used to get away without them,
+# but lock entries are derived from the name, and a name carrying whitespace,
+# glob characters, or the encoding characters would corrupt the lock
+# bookkeeping (harmon-init#784) — and no conforming creation can have produced
+# such a worktree anyway.
+# The component rule matters for the same reason: every decision below compares
+# `$tree` against git's CANONICAL registry paths as text. `./live` would miss
+# the record for the live worktree at `live`, and the script would then classify
+# a checked-out tree as debris and delete its gitlink. Equivalent spellings must
+# not reach the comparisons at all.
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -277,14 +292,8 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         # command, shell-escaped, rather than emitting a remedy that cannot work
         # (challenge r2).
         rel_is_nameable=0
-        if [ -n "$resolved_rel" ]; then
+        if [ -n "$resolved_rel" ] && worktree_name_problem "$resolved_rel" >/dev/null; then
             rel_is_nameable=1
-            case "$resolved_rel" in
-            *[!A-Za-z0-9._/-]*) rel_is_nameable=0 ;;
-            esac
-            case "/$resolved_rel/" in
-            *//* | */./*) rel_is_nameable=0 ;;
-            esac
         fi
         if [ "$rel_is_nameable" -eq 1 ]; then
             die "no worktree at $tree, but '$name' names the worktree at $resolved — its admin record and its directory have different names (a move does that), and only its current name resolves here: task worktree:rm -- $resolved_rel"
@@ -315,9 +324,11 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
         case "$live_tree" in
         "$main_root"/.worktrees/*)
             live_rel="${live_tree#"$main_root"/.worktrees/}"
-            case "$live_rel" in
-            *[!A-Za-z0-9._/-]*) live_rel="" ;;
-            esac
+            # Same single definition the remedy and the argument check use: a
+            # path is only advertised under a name when that name would
+            # actually be accepted. This was a third partial copy of the rule
+            # (charset only), found while fixing the second one (review r1).
+            worktree_name_problem "$live_rel" >/dev/null || live_rel=""
             ;;
         esac
         if [ -n "$live_rel" ]; then

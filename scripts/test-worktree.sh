@@ -3167,6 +3167,46 @@ git -C "$fixture" worktree remove --force "$outcone_list/stray"
 git -C "$fixture" worktree remove --force ".worktrees/feat/deep"
 git -C "$fixture" worktree remove --force ".worktrees/team space/leaf"
 
+# A remedy this command would itself reject is worse than no remedy. The
+# nameability test must apply EVERY rule the argument check applies — it
+# originally applied only the charset and component rules, so an in-cone path
+# beginning with `-` or containing `..` was advertised as
+# `task worktree:rm -- …` and then refused by the parser it was handed to
+# (review r1). Both shapes are checked, because they fail different rules.
+for bad_component in '-dash' 'a..b'; do
+    new "remedycheck" --no-install >/dev/null ||
+        fail "could not create the #963 remedy fixture for '$bad_component'"
+    mkdir -p "$fixture/.worktrees/$bad_component"
+    git -C "$fixture" worktree move .worktrees/remedycheck ".worktrees/$bad_component/leaf" ||
+        fail "could not move the #963 remedy fixture into '$bad_component'"
+    rm_remedy="$test_tmp/rm-remedy.log"
+    if rm_wt remedycheck >"$rm_remedy" 2>&1; then
+        fail "worktree:rm reported success for a path under '$bad_component' (#963): $(cat "$rm_remedy")"
+    fi
+    grep -q 'task worktree:rm --' "$rm_remedy" &&
+        fail "the remedy advertised a task invocation this command rejects, for '$bad_component' (#963): $(cat "$rm_remedy")"
+    grep -q 'git worktree remove' "$rm_remedy" ||
+        fail "the remedy did not fall back to git's command for '$bad_component' (#963): $(cat "$rm_remedy")"
+    # The LISTING must reach the same verdict about the same path, and it must
+    # be checked while this worktree still exists. Both components pass the
+    # charset rule and fail a different one, so a listing that applied only the
+    # charset rule would advertise them as names — the drift the shared
+    # predicate exists to prevent.
+    rm_remedy_list="$test_tmp/rm-remedy-list.log"
+    rm_wt definitely-absent-name >"$rm_remedy_list" 2>&1 || true
+    grep -qE "^  \(git worktree remove\)  .*$bad_component/leaf" "$rm_remedy_list" ||
+        fail "the listing advertised '$bad_component/leaf' under a name this command rejects (#963): $(cat "$rm_remedy_list")"
+    git -C "$fixture" worktree remove --force ".worktrees/$bad_component/leaf"
+    rmdir "$fixture/.worktrees/$bad_component" 2>/dev/null || true
+done
+
+# The argument check must keep naming the SPECIFIC rule that failed — routing
+# both callers through one predicate must not flatten the diagnostics.
+rm_badname="$test_tmp/rm-badname.log"
+rm_wt '../escape' >"$rm_badname" 2>&1 && fail "worktree:rm accepted '../escape' (#963)"
+grep -q "must not contain '\.\.'" "$rm_badname" ||
+    fail "the argument check stopped naming which rule failed (#963): $(cat "$rm_badname")"
+
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
