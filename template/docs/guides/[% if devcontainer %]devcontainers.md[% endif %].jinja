@@ -617,10 +617,13 @@ about which layer makes the *container* hop. The extension path, concretely:
    ```
 
    Copy the `vscode-remote://dev-container+…` value after `--folder-uri` into
-   the template's `devcontainer_coder_folder_uri` answer. Before publishing
-   the README, round-trip that exact value against the currently installed
-   extension with `code --folder-uri '<captured-uri>'`; only keep the badge if
-   it opens this repo's dev profile through the Dev Containers extension. The
+   the template's `devcontainer_coder_folder_uri` answer. The README converts
+   that internal folder URI to VS Code's registered
+   `vscode://vscode-remote/…` protocol form before routing it through
+   `vscode.dev/redirect`. Before publishing the README, first round-trip the
+   captured value with `code --folder-uri '<captured-uri>'`, then click the
+   rendered badge from the README; only keep it if both paths open this repo's
+   dev profile through the currently installed Dev Containers extension. The
    hex payload is an extension implementation detail, so repeat this capture
    and validation whenever an extension update invalidates the link. Leaving
    the answer empty omits the personal Coder badge and retains the clearly

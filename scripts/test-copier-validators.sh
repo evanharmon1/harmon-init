@@ -99,6 +99,8 @@ echo "==> the Coder README badge accepts only a captured Dev Containers URI"
 for bad_coder_uri in \
     'vscode://ms-vscode-remote.remote-containers/cloneInVolume' \
     'vscode-remote://dev-container+7b7d' \
+    'vscode-remote://dev-container+zz@ssh-remote+coder.dev/workspaces/test' \
+    'vscode-remote://dev-container+7b7@ssh-remote+coder.dev/workspaces/test' \
     'vscode-remote://dev-container+7b7d@ssh-remote+coder.dev/not-a-workspace'; do
     if render_coder_uri "$bad_coder_uri" "$work/bad-coder-uri"; then
         fail "accepted an incomplete captured Coder folder URI: $bad_coder_uri"

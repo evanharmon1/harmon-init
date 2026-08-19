@@ -1526,8 +1526,8 @@ else
     if [ "$profile" = "full" ]; then
         grep -Fq 'label=Coder%20Dev%20Container&message=Open' README.md ||
             err "README missing the configured personal Coder devcontainer badge"
-        grep -Fq 'vscode.dev/redirect?url=vscode-remote%3A//dev-container%2B7b22686f' README.md ||
-            err "README personal badge does not encode the captured folder URI"
+        grep -Fq 'vscode.dev/redirect?url=vscode%3A//vscode-remote/dev-container%2B7b22686f' README.md ||
+            err "README personal badge does not wrap and encode the captured folder URI for the registered VS Code protocol"
     else
         ! grep -Fq 'label=Coder%20Dev%20Container&message=Open' README.md ||
             err "README rendered the personal Coder badge with no captured URI"

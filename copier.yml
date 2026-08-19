@@ -286,15 +286,35 @@ devcontainer_coder_folder_uri:
     this repo's Coder-hosted dev container. Capture it from a real VS Code
     recent entry with scripts/open-devcontainer.sh; do not construct the
     dev-container+ hex payload by hand. Empty omits the personal badge while
-    retaining the local clone-in-volume fallback.
+    retaining the local clone-in-volume fallback. Requires an existing Coder
+    account and workspace; Coder Community is free and self-hosted. Private
+    repositories work only when that workspace already has repository access
+    (for example, configured Git-provider OAuth or SSH credentials); this
+    badge provisions neither Coder nor repository access.
   default: ""
   when: "[[ devcontainer ]]"
   validator: >-
-    [% if devcontainer_coder_folder_uri and (not
-    devcontainer_coder_folder_uri.lower().startswith('vscode-remote://dev-container+')
-    or '@ssh-remote+' not in devcontainer_coder_folder_uri
-    or '/workspaces/' not in devcontainer_coder_folder_uri)
-    %]Expected a captured vscode-remote://dev-container+… folder URI, or leave empty.[% endif %]
+    [%- set uri = devcontainer_coder_folder_uri -%]
+    [%- set prefix = 'vscode-remote://dev-container+' -%]
+    [%- set marker = '@ssh-remote+' -%]
+    [%- set encoded = uri.split(marker, 1)[0][prefix|length:] -%]
+    [%- set target = uri.split(marker, 1)[1] if marker in uri else '' -%]
+    [%- set invalid_hex = namespace(value=false) -%]
+    [%- for char in encoded.lower() -%]
+    [%- if char not in '0123456789abcdef' -%]
+    [%- set invalid_hex.value = true -%]
+    [%- endif -%]
+    [%- endfor -%]
+    [%- if uri and (not uri.lower().startswith(prefix)
+    or uri.count(marker) != 1
+    or not encoded
+    or (encoded|length) % 2 != 0
+    or invalid_hex.value
+    or '/workspaces/' not in target
+    or not target.split('/workspaces/', 1)[0]
+    or not target.split('/workspaces/', 1)[1]) -%]
+    Expected a captured vscode-remote://dev-container+<hex>@ssh-remote+<host>/workspaces/<workspace> folder URI, or leave empty.
+    [%- endif -%]
 
 use_antigravity_cli:
   type: bool

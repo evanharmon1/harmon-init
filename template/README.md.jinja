@@ -9,7 +9,7 @@
 [% if devcontainer %]
 [![Devcontainer Build]([[ repo_url ]]/actions/workflows/devcontainer-build.yml/badge.svg)]([[ repo_url ]]/actions/workflows/devcontainer-build.yml)
 [% if devcontainer_coder_folder_uri %]
-[![Open Coder Dev Container](https://img.shields.io/static/v1?label=Coder%20Dev%20Container&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=[[ devcontainer_coder_folder_uri | urlencode ]])
+[![Open Coder Dev Container](https://img.shields.io/static/v1?label=Coder%20Dev%20Container&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=[[ devcontainer_coder_folder_uri | replace('vscode-remote://', 'vscode://vscode-remote/', 1) | urlencode ]])
 [% endif %]
 [![Clone in Local Dev Container](https://img.shields.io/static/v1?label=Local%20Dev%20Container&message=Clone&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=[[ ('vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=' + repo_url) | urlencode ]])
 [% endif %]
