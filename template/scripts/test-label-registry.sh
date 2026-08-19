@@ -249,8 +249,8 @@ domain:environment|FBCA04|The ready-to-code environment: devcontainer, images, c
 area:copier|0E8A16|The templating engine: copier.yml, answers, validators, jinja, render matrix
 area:devcontainer|0E8A16|Dev containers, images, features
 area:ci|0E8A16|GitHub Actions workflows and CI plumbing
-area:tasks|0E8A16|Taskfile targets and scripts/ glue
-area:tests|0E8A16|The test-*.sh suite and gate assertions
+area:tasks|0E8A16|Taskfile targets and scripts/ glue without a more specific area; security targets are area:security
+area:tests|0E8A16|The shared test-*.sh suite and gates; a subsystem's own tests belong to its area
 area:deps|0E8A16|Renovate, version pins, dependency bumps
 area:skills|0E8A16|Vendored/authored agent skills and the skills sync
 area:foreman|0E8A16|Foreman config, wrapper tasks, adapters
@@ -259,7 +259,7 @@ area:worktree|0E8A16|Worktree lifecycle tooling
 area:release|0E8A16|release-please, tags, release guards
 area:security|0E8A16|Scanners, secret handling, hardening
 area:pm|0E8A16|Labels, projects, issue tooling, PM docs
-area:docs|0E8A16|Documentation content and structure"
+area:docs|0E8A16|Documentation content and structure; a subsystem's own docs belong to that subsystem's area"
 foreman_inline="foreman:approved|1D76DB|Arm with the repo default backend
 foreman:hold|D93F0B|Exclude from foreman dispatch (always wins)
 foreman:satisfied|0E8A16|Human override: treat this dependency as satisfied
@@ -292,11 +292,11 @@ $root_only_inline" "root layer"
 domain:billing|FBCA04|Billing and payments
 domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
 area:ci|0E8A16|GitHub Actions workflows and CI plumbing
-area:docs|0E8A16|Documentation content and structure
+area:docs|0E8A16|Documentation content and structure; a subsystem's own docs belong to that subsystem's area
 area:deps|0E8A16|Renovate, version pins, dependency bumps
 area:build|0E8A16|Build system and artifacts
-area:tests|0E8A16|The test suite and gate assertions
-area:tasks|0E8A16|Taskfile targets and scripts/ glue
+area:tests|0E8A16|The shared test suite and gates; a subsystem's own tests belong to its area
+area:tasks|0E8A16|Taskfile targets and scripts/ glue without a more specific area
 area:release|0E8A16|release-please, tags, release guards
 area:devcontainer|0E8A16|Dev containers, images, features
 area:pm|0E8A16|Labels, projects, issue tooling, PM docs

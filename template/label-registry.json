@@ -260,7 +260,7 @@
         },
         {
           "value": "docs",
-          "description": "Documentation content and structure"
+          "description": "Documentation content and structure; a subsystem's own docs belong to that subsystem's area"
         },
         {
           "value": "deps",
@@ -272,11 +272,11 @@
         },
         {
           "value": "tests",
-          "description": "The test suite and gate assertions"
+          "description": "The shared test suite and gates; a subsystem's own tests belong to its area"
         },
         {
           "value": "tasks",
-          "description": "Taskfile targets and scripts/ glue"
+          "description": "Taskfile targets and scripts/ glue without a more specific area"
         },
         {
           "value": "release",
