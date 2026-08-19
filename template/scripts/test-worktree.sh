@@ -255,6 +255,19 @@ new_in() {
     shift
     run_worktree_op "worktree:new" "$op_from" scripts/worktree-new.sh "$@"
 }
+# Map a worktree path to its admin-record directory, the way worktree-rm.sh
+# does: each record's `gitdir` file names that worktree's .git file.
+record_admin_dir_probe() {
+    probe_common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)"
+    for probe_candidate in "$probe_common"/worktrees/*; do
+        [ -f "$probe_candidate/gitdir" ] || continue
+        if [ "$(cat "$probe_candidate/gitdir" 2>/dev/null || true)" = "$2/.git" ]; then
+            printf '%s\n' "$probe_candidate"
+            return 0
+        fi
+    done
+    return 1
+}
 rm_wt() { run_worktree_op "worktree:rm" "$fixture" scripts/worktree-rm.sh "$@"; }
 # Removal run from inside the tree being removed: caller directory and script
 # path both differ, and it is the last invocation that would otherwise bypass
@@ -3231,6 +3244,30 @@ grep -q '^Worktree removed:' "$rm_real" ||
     fail "a genuine removal stopped reporting itself as one (#963): $(cat "$rm_real")"
 grep -q 'Stale record cleared' "$rm_real" &&
     fail "a genuine removal was reported as a stale-record cleanup (#963): $(cat "$rm_real")"
+
+# git SANITIZES an admin-record name — a worktree at `trunc<LF>tail` gets the
+# record `trunc-tail` — so that record name is typeable and resolves to a path
+# carrying a raw newline. Every diagnostic must escape the path it prints, not
+# only the remedy: an unescaped location clause splits the message across lines
+# (review r3).
+if [ "$nl_supported" -eq 1 ]; then
+    esc_parent="$test_tmp/escpath"
+    mkdir -p "$esc_parent"
+    esc_tree="$esc_parent/trunc
+tail"
+    if git -C "$fixture" worktree add -q "$esc_tree" -b feat/escaped-diagnostic; then
+        esc_record="$(basename "$(record_admin_dir_probe "$fixture" "$esc_tree")")"
+        [ -n "$esc_record" ] || fail "could not read the admin record for the #963 escaping case"
+        rm_esc="$test_tmp/rm-escaped.log"
+        rm_wt "$esc_record" >"$rm_esc" 2>&1 &&
+            fail "worktree:rm reported success for an out-of-cone newline path (#963): $(cat "$rm_esc")"
+        [ "$(wc -l <"$rm_esc" | tr -d ' ')" -eq 1 ] ||
+            fail "the diagnostic split across lines on a newline-bearing path (#963): $(cat "$rm_esc")"
+        git -C "$fixture" worktree remove --force "$esc_tree"
+    else
+        fail "could not create the #963 escaping fixture although newlines are supported"
+    fi
+fi
 
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 

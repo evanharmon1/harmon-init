@@ -274,6 +274,15 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
 
     if [ "$resolved_count" -eq 1 ]; then
         resolved="${matches[0]}"
+        # $resolved is escaped everywhere it appears, not only in the remedy.
+        # git sanitizes an admin-record name (a worktree at `trunc<LF>tail`
+        # gets the record `trunc-tail`), so invoking that record name reaches
+        # this branch with a raw newline or terminal-control byte in the path,
+        # and an unescaped location clause splits the diagnostic across lines
+        # or emits control sequences (review r3). $tree and $resolved_rel need
+        # no escaping by construction: the first is built from $name and the
+        # second has passed worktree_name_problem, so both are restricted to
+        # the name charset.
         # Two different situations, two different remedies. In-cone means this
         # command CAN remove it and the caller simply used a name that no longer
         # points at it — a record keeps its creation-time name across a move.
@@ -296,9 +305,9 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
             rel_is_nameable=1
         fi
         if [ "$rel_is_nameable" -eq 1 ]; then
-            die "no worktree at $tree, but '$name' names the worktree at $resolved — its admin record and its directory have different names (a move does that), and only its current name resolves here: task worktree:rm -- $resolved_rel"
+            die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — its admin record and its directory have different names (a move does that), and only its current name resolves here: task worktree:rm -- $resolved_rel"
         else
-            die "no worktree at $tree, but '$name' names the worktree at $resolved — that path is not addressable by this command, so remove it with: git worktree remove $(printf '%q' "$resolved")"
+            die "no worktree at $tree, but '$name' names the worktree at $(printf '%q' "$resolved") — that path is not addressable by this command, so remove it with: git worktree remove $(printf '%q' "$resolved")"
         fi
     elif [ "$resolved_count" -gt 1 ]; then
         echo "worktree:rm: '$name' is ambiguous — it matches more than one registered worktree:" >&2
