@@ -237,71 +237,6 @@ git for-each-ref refs/heads \
     --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
     >"$tmp/branches"
 
-# Remote-tracking freshness, reported the way audit:session-artifacts already
-# reports it (harmon-init#958). Every classification below reads local tracking
-# refs, so a branch whose upstream was deleted on merge reads as neither [gone]
-# nor unpushed until a prune — and lands in `in-flight kept`, a bucket that says
-# "deliberately left alone" rather than "I could not tell". Observed: a merged
-# branch sat there until `task clean:remote-refs`, after which the same run
-# reported it deletable.
-#
-# This is deliberately its own probe rather than a widening of
-# verify_remote_state: that runs ONLY on the delete path, and the misleading
-# figure is the one the DRY RUN prints. Bounded, and skipped entirely when
-# there is no remote.
-tracking_freshness_note=""
-check_tracking_freshness() {
-    # No guard needed: this script exits early when no remote is configured, so
-    # $remote is always resolved by the time this runs.
-    #
-    # A tracking ref only corresponds to `refs/heads/<same name>` when the
-    # remote is fetched under the identity refspec. Under
-    # `refs/heads/*:refs/remotes/origin/upstream/*`, or with extra refspecs
-    # bringing in pull refs, the local name is a destination and not a remote
-    # branch — comparing it would mark fresh refs stale and recommend a prune
-    # that can never clear the warning (challenge r1). Say nothing rather than
-    # say something false.
-    fetch_specs="$(git config --get-all "remote.$remote.fetch" 2>/dev/null || true)"
-    if [ "$fetch_specs" != "+refs/heads/*:refs/remotes/$remote/*" ] &&
-        [ "$fetch_specs" != "refs/heads/*:refs/remotes/$remote/*" ]; then
-        tracking_freshness_note="clean:branches: not checking tracking-ref freshness — $remote is fetched under a non-identity refspec, so a local tracking name does not identify a remote branch"
-        return 0
-    fi
-    # HEAD is requested alongside the heads: `--heads` alone omits it, and a
-    # renamed default branch whose old name still exists would then report
-    # every ref current while the classification above ran against a stale
-    # local default (challenge r1). The audit already probes it this way.
-    if ! heads_raw="$(net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" 2>/dev/null)"; then
-        tracking_freshness_note="clean:branches: could not read $remote's advertised heads — the classification above trusts possibly-stale tracking refs (run 'task clean:remote-refs', then re-run)"
-        return 0
-    fi
-    printf '%s\n' "$heads_raw" >"$tmp/live-heads"
-    live_default_head="$(awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2; exit }' "$tmp/live-heads")"
-    if [ -n "$live_default_head" ] && [ "$live_default_head" != "$default_branch" ]; then
-        tracking_freshness_note="clean:branches: the remote's default branch is now '$live_default_head', not '$default_branch' — the classification above used the stale local record (run 'git remote set-head $remote --auto && task clean:remote-refs', then re-run)"
-        return 0
-    fi
-    stale_refs=0
-    while IFS=$'\t' read -r tref toid tsymref; do
-        [ "$tsymref" = "-" ] || continue
-        tname="${tref#refs/remotes/$remote/}"
-        live_oid="$(awk -v r="refs/heads/$tname" '$1 != "ref:" && $2 == r { print $1; exit }' "$tmp/live-heads")"
-        if [ -z "$live_oid" ] || [ "$live_oid" != "$toid" ]; then
-            stale_refs=$((stale_refs + 1))
-        fi
-    done < <(git for-each-ref "refs/remotes/$remote" \
-        --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)')
-    if [ "$stale_refs" -gt 0 ]; then
-        tracking_freshness_note="clean:branches: $stale_refs tracking ref(s) are stale — a branch whose upstream is already gone can read as in-flight until you run 'task clean:remote-refs' and re-run"
-    fi
-}
-
-# Probed against the SAME tracking state the classification below reads. Run at
-# the end instead, a fetch landing mid-run would refresh the refs and silence
-# the caveat while the summary still described the stale ones (challenge r1).
-# The note is printed with the summary; only the measurement happens here.
-check_tracking_freshness
-
 total=0
 candidates=0
 refused=0
@@ -545,17 +480,32 @@ if [ -s "$tmp/candidates" ]; then
     done <"$tmp/candidates"
 fi
 
+# Every classification above reads LOCAL tracking refs, so a branch whose
+# upstream was deleted on merge reads as neither [gone] nor unpushed and lands
+# in `in-flight kept` — a bucket that means "deliberately left alone" rather
+# than "I could not tell". Say so whenever that bucket is non-empty.
+#
+# Deliberately NOT a live probe. An earlier revision asked the remote which
+# refs were stale, and the exactness cost more than it bought: the answer has
+# to be captured atomically with the classification snapshot or a concurrent
+# fetch silences it, it needs the HEAD symref to notice a renamed default, and
+# it is meaningless under a non-identity fetch refspec. Six findings across two
+# review rounds, all in the probe, none in the reporting this issue is about.
+# The issue asks only that the task "performs, or explicitly reports the
+# absence of" the check, and says a one-line note would be enough. This is that
+# note: deterministic, no network, and impossible to race.
+tracking_caveat() {
+    [ "$active" -gt 0 ] || return 0
+    echo "clean:branches: $active branch(es) kept as in-flight are classified from local tracking refs — if you have not pruned recently, run 'task clean:remote-refs' and re-run, since a branch whose upstream is already gone reads as in-flight until then."
+}
+
 echo
 if [ "$do_delete" = true ]; then
     echo "clean:branches: $deleted deleted, $refused skipped, $active in-flight kept, $total local branches scanned."
-    if [ -n "$tracking_freshness_note" ]; then
-        echo "$tracking_freshness_note"
-    fi
+    tracking_caveat
 else
     echo "clean:branches (dry run): $candidates deletable, $refused skipped, $active in-flight kept, $total local branches scanned."
-    if [ -n "$tracking_freshness_note" ]; then
-        echo "$tracking_freshness_note"
-    fi
+    tracking_caveat
     if [ "$candidates" -gt 0 ]; then
         echo "Run 'task clean:branches -- --delete' to delete the branches listed above."
     fi

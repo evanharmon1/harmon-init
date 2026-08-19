@@ -113,6 +113,7 @@ fi
 # here until a fetch --prune — its local branch reads neither [gone] nor
 # unpushed (challenge r2). One bounded read of the remote's advertised heads
 # makes that staleness explicit instead of silent.
+freshness_indeterminate=0
 section "Remote-tracking freshness"
 if [ "$has_remote" = false ]; then
     echo "  n/a — no remote configured"
@@ -148,6 +149,7 @@ elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remot
         [ "$audit_fetch_specs" != "refs/heads/*:refs/remotes/$remote/*" ]; then
         echo "  n/a — $remote is fetched under a non-identity refspec, so a tracking name does not identify a remote branch"
         : >"$tmp/tracking"
+        freshness_indeterminate=1
     else
         # Full refname with a dynamic strip, not %(refname:lstrip=3): a remote
         # name may itself contain slashes, and a fixed strip depth would mangle
@@ -168,7 +170,11 @@ elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remot
             fi
         done <"$tmp/tracking"
     fi
-    if [ "$stale" -eq 0 ]; then
+    if [ "${freshness_indeterminate:-0}" -eq 1 ]; then
+        # Nothing was compared, so "fresh" would contradict the n/a above and
+        # claim a verification that did not happen (challenge r2).
+        :
+    elif [ "$stale" -eq 0 ]; then
         echo "  fresh — local tracking refs match the remote's advertised heads"
     else
         echo "  -> $stale stale tracking ref(s): run 'task clean:remote-refs' (git fetch --prune), then re-run this audit"

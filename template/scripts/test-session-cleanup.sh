@@ -375,8 +375,8 @@ echo "ok: every branch the audit calls prunable is one clean:branches would dele
 # kept` — a bucket that says "deliberately left alone", not "I could not tell".
 # The audit has said so since it was written; the task that actually deletes
 # did not (harmon-init#958). The fixture's tf-stale ref is exactly that shape.
-expect_contains "$dry_out" "tracking ref(s) are stale" "clean:branches: stale tracking refs are reported"
-expect_contains "$dry_out" "task clean:remote-refs" "clean:branches: the staleness note names the remedy"
+expect_contains "$dry_out" "kept as in-flight are classified from local tracking refs" "clean:branches: the in-flight bucket carries its caveat"
+expect_contains "$dry_out" "task clean:remote-refs" "clean:branches: the caveat names the remedy"
 
 # Degraded mode: a failing gh probe is UNVERIFIED, never silently clean.
 audit_fail_out="$(cd "$fixture" && GH_STUB_FAIL=1 bash scripts/audit-session-artifacts.sh 2>&1)" ||
@@ -1445,15 +1445,6 @@ ren_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)"
     fail "audit exited nonzero inside the renamed-default window: $ren_audit_out"
 expect_contains "$ren_audit_out" "default branch is now 'trunk'" "rename: audit resolves the live default over stale origin/HEAD"
 
-# The DRY RUN must say so too. verify_remote_state — which produces the note
-# above — runs only on the delete path, so before #958 a dry run under a
-# renamed default reported figures computed against the stale local default
-# with no caveat at all. The freshness probe covers that, and it only can
-# because it asks for the HEAD symref: `--heads` alone omits it (challenge r1).
-ren_dry_out="$(cd "$fixture" && bash scripts/clean-branches.sh 2>&1)" ||
-    fail "renamed-default dry run exited nonzero: $ren_dry_out"
-expect_contains "$ren_dry_out" "default branch is now 'trunk'" "rename: the DRY RUN names the live default too (#958)"
-
 # A non-identity fetch refspec makes a tracking name a DESTINATION, not a
 # remote branch — comparing them marks fresh refs stale and recommends a prune
 # that can never clear the warning. Both tasks must decline to compare and say
@@ -1461,14 +1452,16 @@ expect_contains "$ren_dry_out" "default branch is now 'trunk'" "rename: the DRY 
 # expression first, so both are asserted.
 orig_fetch="$(git -C "$fixture" config --get remote.origin.fetch)"
 git -C "$fixture" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/upstream/*'
-spec_dry_out="$(cd "$fixture" && bash scripts/clean-branches.sh 2>&1)" ||
-    fail "non-identity-refspec dry run exited nonzero: $spec_dry_out"
-expect_contains "$spec_dry_out" "non-identity refspec" "refspec: clean:branches declines to compare (#958)"
-expect_not_contains "$spec_dry_out" "tracking ref(s) are stale" "refspec: clean:branches emits no false staleness (#958)"
 spec_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
     fail "non-identity-refspec audit exited nonzero: $spec_audit_out"
 expect_contains "$spec_audit_out" "non-identity refspec" "refspec: audit declines to compare (#958)"
 expect_not_contains "$spec_audit_out" "deleted upstream" "refspec: audit emits no false staleness (#958)"
+# ...and must then reach NO verdict at all. Both of the section's conclusions
+# are claims about a comparison that did not happen — "fresh" asserts the refs
+# match, and "-> N stale" asserts a count from an empty scan. An assertion
+# naming only one of them passes while the other fires (found by mutant M8).
+expect_not_contains "$spec_audit_out" "fresh — local tracking refs match" "refspec: audit does not claim fresh after skipping the comparison (#958)"
+expect_not_contains "$spec_audit_out" "stale tracking ref(s):" "refspec: audit does not report a stale count after skipping the comparison (#958)"
 git -C "$fixture" config remote.origin.fetch "$orig_fetch"
 
 git -C "$origin" symbolic-ref HEAD refs/heads/main
