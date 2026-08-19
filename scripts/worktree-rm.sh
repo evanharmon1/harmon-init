@@ -205,10 +205,41 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
     ! record_admin_dir "$tree" >/dev/null 2>&1; then
     # Nothing at the conventional path. Ask the registry what this name means
     # before claiming anything was removed.
+    # A worktree path may legally contain a newline — `git worktree add` accepts
+    # one even though worktree:new's charset whitelist can never produce one —
+    # and the LF-delimited porcelain form truncates such a path at the newline,
+    # which would resolve the wrong worktree or none at all. Read a
+    # NUL-delimited stream where git provides it, and fall back to the LF form
+    # rather than making an edge case impose a git version floor (challenge r1).
+    # awk cannot do this half: its strings are NUL-terminated, so an awk fed a
+    # NUL-delimited stream stops at the first record — on macOS that silently
+    # yielded only the main worktree. bash's `read -d ''` handles NUL correctly,
+    # so the -z stream is split in the shell; awk is used only on the LF
+    # fallback, where it is emitting NUL rather than consuming it.
+    emit_worktree_paths() {
+        if git worktree list --porcelain -z >/dev/null 2>&1; then
+            git worktree list --porcelain -z | while IFS= read -r -d '' wt_record; do
+                case "$wt_record" in
+                "worktree "*) printf '%s\0' "${wt_record#worktree }" ;;
+                esac
+            done
+        else
+            git worktree list --porcelain |
+                awk '/^worktree /{ printf "%s%c", substr($0, 10), 0 }'
+        fi
+    }
+
     resolved=""
     resolved_count=0
-    while IFS= read -r candidate_tree; do
+    while IFS= read -r -d '' candidate_tree; do
         [ -n "$candidate_tree" ] || continue
+        # The main checkout is registered but is not a linked worktree, and this
+        # command removes only linked worktrees. Counting it made
+        # `worktree:rm <repo-basename>` report the main checkout as an
+        # out-of-cone worktree and recommend a `git worktree remove` that git
+        # refuses — and made a same-basename linked worktree read as ambiguous.
+        # The candidate listing below already skipped it; resolution must too.
+        [ "$candidate_tree" = "$main_root" ] && continue
         candidate_name="${candidate_tree##*/}"
         candidate_record=""
         candidate_admin="$(record_admin_dir "$candidate_tree" 2>/dev/null || true)"
@@ -217,9 +248,7 @@ if [ "$tree_exists" -eq 0 ] && [ "$tree_is_registered" -eq 0 ] &&
             resolved="$candidate_tree"
             resolved_count=$((resolved_count + 1))
         fi
-    done <<EOF
-$registered
-EOF
+    done < <(emit_worktree_paths)
 
     if [ "$resolved_count" -eq 1 ]; then
         # Two different situations, two different remedies. In-cone means this
@@ -239,24 +268,33 @@ EOF
         esac
     elif [ "$resolved_count" -gt 1 ]; then
         echo "worktree:rm: '$name' is ambiguous — it matches more than one registered worktree:" >&2
-        git worktree list --porcelain | awk -v main="$main_root" '/^worktree /{p = substr($0, 10); if (p != main) print "  " p}' >&2
+        while IFS= read -r -d '' amb_tree; do
+            [ "$amb_tree" = "$main_root" ] && continue
+            printf '  %s\n' "$(printf '%q' "$amb_tree")" >&2
+        done < <(emit_worktree_paths)
         die "name the worktree by its path instead: git worktree remove <path>"
     fi
 
     # Matches nothing at all. Never report a removal for it.
     echo "worktree:rm: no worktree or admin record named '$name'" >&2
     echo "worktree:rm: live worktrees (a record's name can differ from its directory after a move):" >&2
-    git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}' | while IFS= read -r live_tree; do
+    # Same NUL-delimited source the resolution above uses: a line-parsed listing
+    # truncates a newline-bearing path and prints a raw newline into the middle
+    # of the candidate list. printf %q renders such a path visibly instead of
+    # mangling the output, and leaves ordinary paths untouched.
+    while IFS= read -r -d '' live_tree; do
         # Skip the main checkout: it is registered, but this command removes
         # linked worktrees only, so offering it as a candidate is a dead end.
         [ "$live_tree" = "$main_root" ] && continue
         live_admin="$(record_admin_dir "$live_tree" 2>/dev/null || true)"
         if [ -n "$live_admin" ] && [ "${live_admin##*/}" != "${live_tree##*/}" ]; then
-            echo "  ${live_tree##*/}  (record: ${live_admin##*/})  $live_tree" >&2
+            printf '  %s  (record: %s)  %s\n' \
+                "$(printf '%q' "${live_tree##*/}")" "${live_admin##*/}" "$(printf '%q' "$live_tree")" >&2
         else
-            echo "  ${live_tree##*/}  $live_tree" >&2
+            printf '  %s  %s\n' \
+                "$(printf '%q' "${live_tree##*/}")" "$(printf '%q' "$live_tree")" >&2
         fi
-    done
+    done < <(emit_worktree_paths)
     die "nothing was removed"
 fi
 

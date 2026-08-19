@@ -3028,6 +3028,60 @@ grep -qi 'removed:' "$rm_none" &&
 grep -q 'no worktree or admin record named' "$rm_none" ||
     fail "the no-match refusal did not say what was wrong (#963): $(cat "$rm_none")"
 
+# The main checkout is registered but is not a linked worktree, so resolution
+# must skip it — otherwise `worktree:rm <repo-basename>` reports the main
+# checkout as an out-of-cone worktree and recommends a `git worktree remove`
+# that git refuses outright (challenge r1).
+main_base="${fixture##*/}"
+rm_mainbase="$test_tmp/rm-mainbase.log"
+if rm_wt "$main_base" >"$rm_mainbase" 2>&1; then
+    fail "worktree:rm accepted the main checkout's own basename (#963): $(cat "$rm_mainbase")"
+fi
+grep -q "names the worktree at $fixture " "$rm_mainbase" &&
+    fail "worktree:rm resolved the main checkout as a removable worktree (#963): $(cat "$rm_mainbase")"
+grep -q "no worktree or admin record named" "$rm_mainbase" ||
+    fail "the main checkout's basename did not fall through to the no-match branch (#963): $(cat "$rm_mainbase")"
+grep -q 'git worktree remove' "$rm_mainbase" &&
+    fail "worktree:rm recommended removing the main checkout, which git refuses (#963): $(cat "$rm_mainbase")"
+
+# ...and skipping it must not blind resolution to a LINKED worktree that
+# happens to share the main checkout's basename.
+samebase_root="$test_tmp/samebase"
+git -C "$fixture" worktree add -q "$samebase_root/$main_base" -b feat/samebase ||
+    fail "could not create the same-basename worktree for the #963 case"
+rm_samebase="$test_tmp/rm-samebase.log"
+if rm_wt "$main_base" >"$rm_samebase" 2>&1; then
+    fail "worktree:rm reported success for a same-basename linked worktree (#963): $(cat "$rm_samebase")"
+fi
+grep -q "names the worktree at $samebase_root/$main_base" "$rm_samebase" ||
+    fail "resolution missed a linked worktree sharing the main checkout's basename (#963): $(cat "$rm_samebase")"
+git -C "$fixture" worktree remove --force "$samebase_root/$main_base"
+
+# A worktree path may legally contain a newline. Line-parsed porcelain output
+# truncates it, which both hides the real worktree and invents a candidate at
+# the truncated prefix — so asking for that prefix must NOT resolve to it
+# (challenge r1).
+nl_parent="$test_tmp/nl-cone"
+mkdir -p "$nl_parent"
+nl_tree="$nl_parent/trunc
+tail"
+if git -C "$fixture" worktree add -q "$nl_tree" -b feat/newline-path 2>/dev/null; then
+    rm_trunc="$test_tmp/rm-trunc.log"
+    if rm_wt trunc >"$rm_trunc" 2>&1; then
+        fail "worktree:rm resolved a truncated newline path as a real worktree (#963): $(cat "$rm_trunc")"
+    fi
+    # With the path read whole, "trunc" is nobody's basename, so the no-match
+    # branch must run. Line-parsing instead invents a candidate at the
+    # truncated prefix and resolves to it — a different branch entirely.
+    # Asserting the branch is robust; grepping a path out of a sentence that
+    # itself contains a newline is not.
+    grep -q "no worktree or admin record named 'trunc'" "$rm_trunc" ||
+        fail "the truncated prefix of a newline path resolved as a real worktree (#963): $(cat "$rm_trunc")"
+    git -C "$fixture" worktree remove --force "$nl_tree"
+else
+    echo "    (skipped: this filesystem rejects a newline in a path)"
+fi
+
 echo "    worktree:rm target resolution: outside-cone, moved-record, and no-match all refuse without claiming a removal (#963)"
 
 echo "worktree entrypoint OK: create → hooks verified → deps installed → removed"
