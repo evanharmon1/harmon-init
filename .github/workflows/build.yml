@@ -79,6 +79,7 @@ jobs:
       - run: task test:session-cleanup
       - run: task test:setup-github
       - run: task test:starship-glyphs
+      - run: task test:template-helpers
       # Meaningful only because this job checks out with fetch-depth: 0 above.
       - name: Tag hygiene (no non-release tag where git describe would select it)
         run: task test:tag-hygiene

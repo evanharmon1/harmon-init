@@ -112,6 +112,7 @@ tasks:
       - task: test:image-staleness
       - task: test:open-devcontainer
       - task: test:codex-review
+      - task: test:template-helpers
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -519,6 +520,11 @@ tasks:
   # Root-only: a generated repo has no template/ to scan. Makes the Hard Rule in
   # AGENTS.md enforceable — the maintainer's personal dotfiles repo is not
   # readable by a consumer, so shipped output must never name it or chezmoi.
+  test:template-helpers:
+    desc: Unit-test test-template.sh's quiet-command capture helpers (offline; guards seven rendered-repo gates against becoming silent no-ops)
+    cmds:
+      - ./scripts/test-template-helpers.sh
+
   test:template-independence:
     desc: "Guard: consumer-facing output names neither harmon-dotfiles nor chezmoi"
     cmds:
