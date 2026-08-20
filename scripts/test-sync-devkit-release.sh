@@ -838,6 +838,23 @@ grep -qF '.agents/skills/issue-title-support/evil' "$LAST_OUT" ||
     fail "the nested path was not named in the rejection: $(cat "$LAST_OUT")"
 ! pushed "$fix" || fail "a nested-path sync still pushed"
 
+start "a noncanonical AGENT_SKILLS_DIR spelling still matches its links"
+# Finding: an equivalent repo-relative AGENT_SKILLS_DIR (a "./" prefix or a
+# trailing "/") left the portable dir noncanonical while git reports changed
+# paths canonically, so the literal prefix match missed every legitimate link
+# and the sync aborted on valid consumer config. Normalize the spelling before
+# the match so the links approve as they do for the canonical default.
+fix="$(new_fixture scope_portable_normalize)"
+STUB_SYNC_ADD_SKILL="issue-title-support"
+AGENT_SKILLS_DIR="./.agents/skills"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "a noncanonical AGENT_SKILLS_DIR spelling was rejected: $(cat "$LAST_OUT")"
+pushed_tree="$(git -C "$fix.origin.git" ls-tree -r --name-only "$SYNC_BRANCH")"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/issue-title-support' ||
+    fail "the new skill's portable link is missing under a noncanonical pdir: $(cat "$LAST_OUT")"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/standardize-repo' ||
+    fail "an existing skill's portable link is missing under a noncanonical pdir: $(cat "$LAST_OUT")"
+
 start "an AGENT_SKILLS_DIR overlapping the skills dest fails closed"
 # Finding: a syntactically-safe but overlapping AGENT_SKILLS_DIR routes the
 # portable-link allowance inside a tree the sync promises never to touch. The

@@ -289,6 +289,21 @@ assert_expected_scope() {
     # trusting it: portable links then read as rogue writes and abort, which is
     # the safe failure.
     _aes_pdir="${AGENT_SKILLS_DIR:-.agents/skills}"
+    # Normalize the spelling before matching it against git's canonical changed
+    # paths: strip a leading "./", collapse "//" (empty components), and drop a
+    # trailing "/" so an equivalent repo-relative value (./.agents/skills,
+    # .agents/skills/, .agents//skills) matches as it should. "." and ".."
+    # components are left for the safety case below — a `..` traversal must stay
+    # rejected, not be normalized away.
+    while case "$_aes_pdir" in ./*) true ;; *) false ;; esac do
+        _aes_pdir="${_aes_pdir#./}"
+    done
+    while case "$_aes_pdir" in *//*) true ;; *) false ;; esac do
+        _aes_pdir="${_aes_pdir//\/\//\/}"
+    done
+    while case "$_aes_pdir" in */) true ;; *) false ;; esac do
+        _aes_pdir="${_aes_pdir%/}"
+    done
     case "$_aes_pdir" in
     "" | "/" | "." | ".." | /* | ../* | */../* | */..) _aes_pdir="" ;;
     esac
