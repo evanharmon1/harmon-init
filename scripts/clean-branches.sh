@@ -234,7 +234,7 @@ merged_pr_for() {
 # whitespace, so `read` would otherwise COLLAPSE an empty middle field and
 # shift %(symref) into the track column.
 git for-each-ref refs/heads \
-    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)%09%(if)%(upstream)%(then)u%(else)-%(end)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)%09%(if)%(upstream)%(then)%(upstream)%(else)-%(end)' \
     >"$tmp/branches"
 
 total=0
@@ -243,7 +243,7 @@ refused=0
 active=0
 active_tracked=0
 
-while IFS=$'\t' read -r branch tip track symref has_upstream; do
+while IFS=$'\t' read -r branch tip track symref upstream_ref; do
     total=$((total + 1))
 
     [ "$branch" = "$current_branch" ] && continue
@@ -333,10 +333,19 @@ while IFS=$'\t' read -r branch tip track symref has_upstream; do
     # branches, which no prune can affect — a warning that fires in the common
     # case is one nobody reads (Codex review on PR #991).
     #
-    # Upstream PRESENCE, not %(upstream:track): that is empty for a branch in
-    # sync with its upstream, so it cannot tell "no upstream" from "up to date"
-    # — which is exactly the distinction needed here.
-    [ "$has_upstream" = "-" ] || active_tracked=$((active_tracked + 1))
+    # The upstream REF, not merely its presence, and not %(upstream:track):
+    # track is empty for a branch in sync with its upstream, so it cannot tell
+    # "no upstream" from "up to date"; and presence alone counts a branch that
+    # tracks another LOCAL branch (branch.<name>.remote=.), whose upstream is
+    # under refs/heads/ and which no prune can affect.
+    #
+    # refs/remotes/ is the terminal test rather than another narrowing in a
+    # series: `task clean:remote-refs` is `git fetch --all --prune`, so it
+    # affects exactly the refs under that prefix — every one of them, and
+    # nothing else. Whichever remote they belong to.
+    case "$upstream_ref" in
+    refs/remotes/*) active_tracked=$((active_tracked + 1)) ;;
+    esac
 done <"$tmp/branches"
 
 # ── Act (or report) ─────────────────────────────────────────────────────────

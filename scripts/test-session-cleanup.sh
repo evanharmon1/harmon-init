@@ -245,6 +245,20 @@ git -C "$fixture" worktree add -q "$test_tmp/wt" wt-checked
 #     no upstream for a prune to affect (Codex review on PR #991).
 make_branch tracked-live tracked.txt >/dev/null
 
+# 5c. local-upstream: tracks another LOCAL branch (branch.<name>.remote=.).
+#     %(upstream) is non-empty, but it is under refs/heads/, so
+#     `task clean:remote-refs` cannot affect how this branch is classified and
+#     the freshness caveat must not count it (Codex review on PR #991).
+(
+    cd "$fixture"
+    git checkout -q -b local-upstream main
+    echo localup >localup.txt
+    git add localup.txt
+    git commit -qm "work tracking a local branch"
+    git branch --set-upstream-to=main local-upstream >/dev/null 2>&1
+    git checkout -q main
+)
+
 # 6. unpushed-live: never pushed anywhere — ordinary in-flight work, silent
 #    survival.
 (
@@ -394,6 +408,17 @@ caveat_total="$(printf '%s\n' "$dry_out" |
 [ -n "$caveat_tracked" ] || fail "the in-flight caveat did not report a tracked count (#958)"
 [ "$caveat_tracked" -lt "$caveat_total" ] ||
     fail "the caveat counted every in-flight branch ($caveat_tracked of $caveat_total) — unpushed-live has no upstream and must be excluded (#958)"
+# local-upstream HAS an upstream, so presence alone would count it — but that
+# upstream is under refs/heads/ and no prune can affect it. Only a
+# remote-tracking upstream belongs in this figure.
+localup_upstream="$(git -C "$fixture" for-each-ref refs/heads/local-upstream --format='%(upstream)')"
+[ -n "$localup_upstream" ] ||
+    fail "the local-upstream fixture lost its upstream — the case cannot distinguish anything (#958)"
+case "$localup_upstream" in
+refs/remotes/*) fail "the local-upstream fixture tracks a REMOTE ref; it must track a local branch (#958)" ;;
+esac
+[ "$caveat_tracked" -le 2 ] ||
+    fail "the caveat counted a locally-tracking branch ($caveat_tracked) — only remote-backed upstreams belong in it (#958)"
 
 # Degraded mode: a failing gh probe is UNVERIFIED, never silently clean.
 audit_fail_out="$(cd "$fixture" && GH_STUB_FAIL=1 bash scripts/audit-session-artifacts.sh 2>&1)" ||
