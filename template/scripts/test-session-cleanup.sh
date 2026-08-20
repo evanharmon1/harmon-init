@@ -239,6 +239,12 @@ wt_tip="$(make_branch wt-checked wt.txt)"
 retire_remote wt-checked
 git -C "$fixture" worktree add -q "$test_tmp/wt" wt-checked
 
+# 5b. tracked-live: pushed, upstream still present, not merged — ordinary
+#     in-flight work that WAS classified from a tracking ref. The freshness
+#     caveat counts this one and must not count unpushed-live below, which has
+#     no upstream for a prune to affect (Codex review on PR #991).
+make_branch tracked-live tracked.txt >/dev/null
+
 # 6. unpushed-live: never pushed anywhere — ordinary in-flight work, silent
 #    survival.
 (
@@ -375,8 +381,19 @@ echo "ok: every branch the audit calls prunable is one clean:branches would dele
 # kept` — a bucket that says "deliberately left alone", not "I could not tell".
 # The audit has said so since it was written; the task that actually deletes
 # did not (harmon-init#958). The fixture's tf-stale ref is exactly that shape.
-expect_contains "$dry_out" "kept as in-flight are classified from local tracking refs" "clean:branches: the in-flight bucket carries its caveat"
+expect_contains "$dry_out" "have an upstream and were classified from local tracking refs" "clean:branches: the in-flight bucket carries its caveat"
 expect_contains "$dry_out" "task clean:remote-refs" "clean:branches: the caveat names the remedy"
+# The caveat must count only branches an upstream could have misclassified.
+# The fixture's unpushed-live has none, so it must not be included: keying on
+# the aggregate in-flight count warned about ordinary local-only branches, and
+# a caveat that fires in the common case is one nobody reads (Codex, PR #991).
+caveat_tracked="$(printf '%s\n' "$dry_out" |
+    sed -n 's/^clean:branches: \([0-9][0-9]*\) of the \([0-9][0-9]*\) branch(es).*/\1/p' | head -1)"
+caveat_total="$(printf '%s\n' "$dry_out" |
+    sed -n 's/^clean:branches: \([0-9][0-9]*\) of the \([0-9][0-9]*\) branch(es).*/\2/p' | head -1)"
+[ -n "$caveat_tracked" ] || fail "the in-flight caveat did not report a tracked count (#958)"
+[ "$caveat_tracked" -lt "$caveat_total" ] ||
+    fail "the caveat counted every in-flight branch ($caveat_tracked of $caveat_total) — unpushed-live has no upstream and must be excluded (#958)"
 
 # Degraded mode: a failing gh probe is UNVERIFIED, never silently clean.
 audit_fail_out="$(cd "$fixture" && GH_STUB_FAIL=1 bash scripts/audit-session-artifacts.sh 2>&1)" ||

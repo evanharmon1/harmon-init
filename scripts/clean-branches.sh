@@ -234,15 +234,16 @@ merged_pr_for() {
 # whitespace, so `read` would otherwise COLLAPSE an empty middle field and
 # shift %(symref) into the track column.
 git for-each-ref refs/heads \
-    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)%09%(if)%(upstream)%(then)u%(else)-%(end)' \
     >"$tmp/branches"
 
 total=0
 candidates=0
 refused=0
 active=0
+active_tracked=0
 
-while IFS=$'\t' read -r branch tip track symref; do
+while IFS=$'\t' read -r branch tip track symref has_upstream; do
     total=$((total + 1))
 
     [ "$branch" = "$current_branch" ] && continue
@@ -326,6 +327,16 @@ while IFS=$'\t' read -r branch tip track symref; do
         continue
     fi
     active=$((active + 1))
+    # Only a branch with an upstream can have been classified from a tracking
+    # ref, so only those make the freshness caveat relevant. Keying the caveat
+    # on the aggregate count instead warned about ordinary local-only feature
+    # branches, which no prune can affect — a warning that fires in the common
+    # case is one nobody reads (Codex review on PR #991).
+    #
+    # Upstream PRESENCE, not %(upstream:track): that is empty for a branch in
+    # sync with its upstream, so it cannot tell "no upstream" from "up to date"
+    # — which is exactly the distinction needed here.
+    [ "$has_upstream" = "-" ] || active_tracked=$((active_tracked + 1))
 done <"$tmp/branches"
 
 # ── Act (or report) ─────────────────────────────────────────────────────────
@@ -495,8 +506,8 @@ fi
 # absence of" the check, and says a one-line note would be enough. This is that
 # note: deterministic, no network, and impossible to race.
 tracking_caveat() {
-    [ "$active" -gt 0 ] || return 0
-    echo "clean:branches: $active branch(es) kept as in-flight are classified from local tracking refs — if you have not pruned recently, run 'task clean:remote-refs' and re-run, since a branch whose upstream is already gone reads as in-flight until then."
+    [ "$active_tracked" -gt 0 ] || return 0
+    echo "clean:branches: $active_tracked of the $active branch(es) kept as in-flight have an upstream and were classified from local tracking refs — if you have not pruned recently, run 'task clean:remote-refs' and re-run, since a branch whose upstream is already gone reads as in-flight until then."
 }
 
 echo
