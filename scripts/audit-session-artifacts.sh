@@ -269,7 +269,13 @@ else
         # `clean:branches` equals what that task reports as deletable on the
         # same tree.
         if [ "$held" -gt 0 ]; then
-            printf '  -> %s prunable (task clean:branches), %s held by a worktree, %s tip-differs, %s without a merged PR\n' \
+            # "held" covers two distinct reasons — a worktree checkout and a
+            # symbolic ref — so the bucket is labelled generically. Saying
+            # "held by a worktree" told the operator the wrong reason whenever
+            # a symbolic hold was in the count, or the only thing in it (Codex
+            # review on PR #991). Each entry names its own reason above; the
+            # aggregate does not have to guess at one.
+            printf '  -> %s prunable (task clean:branches), %s held (see above), %s tip-differs, %s without a merged PR\n' \
                 "$prunable" "$held" "$tip_differs" "$no_pr"
         else
             printf '  -> %s prunable (task clean:branches), %s tip-differs, %s without a merged PR\n' \

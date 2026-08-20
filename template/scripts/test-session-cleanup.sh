@@ -367,7 +367,11 @@ echo "ok: audit reports all artifact classes read-only"
 # from the figure.
 expect_contains "$audit_out" "held          wt-checked" "audit: worktree-checked-out branch is held, not prunable"
 expect_not_contains "$audit_out" "prunable      wt-checked" "audit: worktree-checked-out branch is not counted prunable"
-expect_contains "$audit_out" "held by a worktree" "audit: the summary names the held bucket"
+# Generic on purpose: "held" covers a worktree checkout AND a symbolic ref, so
+# a summary naming only one gives the wrong reason whenever the other is in the
+# count (Codex, PR #991). Each entry states its own reason.
+expect_contains "$audit_out" "held (see above)" "audit: the summary names the held bucket without guessing its reason"
+expect_not_contains "$audit_out" "held by a worktree" "audit: the aggregate does not claim a single reason (#958)"
 
 # The invariant is SUBSET, not equality, and the distinction is load-bearing.
 # clean:branches deletes on two evidence types — ancestry or a merged PR —
