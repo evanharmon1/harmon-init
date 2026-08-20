@@ -466,13 +466,24 @@ assert_unit() {
     ' --arg workspace "$agy_workspace" "$agy_settings" >/dev/null ||
         fail "Antigravity dev container policy was not merged correctly"
     jq -e '
-        .schemaVersion == 3 and
+        .schemaVersion == 4 and
         .present == ["toolPermission"] and
         .values.toolPermission == "request-review" and
         .introducedWorkspaces == [$workspace] and
         .trustedWorkspacesKeyWasPresent == false
     ' --arg workspace "$agy_workspace" "$agy_backup" >/dev/null ||
         fail "Antigravity policy rollback state was not recorded correctly"
+
+    # Test migration of a legacy schemaVersion 3 backup
+    printf '%s\n' '{"schemaVersion":3,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":["/tmp/old"],"trustedWorkspacesKeyWasPresent":false}' >"$agy_backup"
+    printf '%s\n' '{"statusLine":{"type":"command","command":"/custom/statusline.sh"}}' >"$agy_settings"
+    HOME="$agy_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace" >/dev/null
+    jq -e '
+        .schemaVersion == 4 and
+        (.present | index("statusLine") != null) and
+        .values.statusLine.command == "/custom/statusline.sh"
+    ' "$agy_backup" >/dev/null ||
+        fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 4 with custom statusLine captured"
 
     HOME="$agy_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace_moved" >/dev/null
     jq -e '.trustedWorkspaces == [$first, $second]' \
