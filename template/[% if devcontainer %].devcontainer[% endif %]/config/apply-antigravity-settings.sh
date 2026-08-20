@@ -136,7 +136,7 @@ restore)
         exit 0
     fi
     if ! jq -e --argjson keys "$managed_keys" '
-        type == "object" and .schemaVersion == 4 and
+        type == "object" and (.schemaVersion == 4 or .schemaVersion == 3) and
         (.present | type == "array") and (.values | type == "object") and
         (.introducedWorkspaces | type == "array") and
         ([.introducedWorkspaces[] | select(type != "string")] | length == 0) and
