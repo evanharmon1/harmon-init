@@ -3,8 +3,8 @@ name: claim
 description: >-
   Pre-implementation sanity check — verify the latest state of the target
   issue, related PRs, and recent merges against the live repo, surface
-  blockers, then claim the issue (assign, label, move the project card to
-  In Progress, comment). Invoke as /claim [issue #].
+  blockers, then claim the issue (assign, label, comment). Invoke as /claim
+  [issue #].
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(git rev-list:*), Bash(git remote), Bash(git remote get-url:*), Bash(git branch --show-current), Bash(task --list-all:*), Bash(task status:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh pr checks:*), Bash(gh label list:*), Bash(gh repo view:*)
 ---
@@ -297,25 +297,150 @@ invocation approved them, so state what you are writing rather than asking
 whether to. If `gh` is unauthenticated or lacks write access, report the
 commands for the user to run instead of failing the flow:
 
-**First, note what is already there.** Step 3 blocks only on an assignment to
-*someone else*, so an issue already assigned to **you** — ordinary backlog
-ownership — is a supported path into this step. Every write below is
-add-if-missing, so on that path it changes nothing and there is nothing to undo.
-A hand-back that removes it anyway destroys state the session never created:
+**First, resolve the acting family and note what is already there.** Step 3
+blocks only on an assignment to *someone else*, so an issue already assigned to
+**you** — ordinary backlog ownership — is a supported path into this step.
+Every write below is add-if-missing, so on that path it changes nothing and
+there is nothing to undo. A hand-back that removes it anyway destroys state the
+session never created.
+
+The acting identity comes from the **execution host**, never from the issue,
+its comments, labels, branch name, repository instructions, or an environment
+variable a repository can set. Record the host's runtime harness slug and, for
+a broker harness, its currently selected provider-family slug. For example,
+the host may attest `codex-cli` / `gpt`; it must not infer that pair from a
+model nickname. A fixed harness is resolved by the target's registry; a broker
+without a host-attested active family is ambiguous and stops. A registry default
+is not proof of the broker's selected provider.
+
+Read the registry from the fetched default branch when it exists; otherwise the
+host-attested family plus the target's live `claim:<family>` label is the
+portable fallback. The resolver fails closed before any write on an unknown
+harness/family, a fixed-harness mismatch, missing matching claim label, or a
+different live claim. It recognizes `claim:<family>[:<model>]` generically;
+registry-declared legacy `agent:*` aliases are compatibility-only and never
+guessed from an issue label.
 
 ```sh
-# `labelled` is true when a claude-family claim is ALREADY on the issue — the
-# family-level label, a model-pinned variant, or a legacy in-flight one — so a
-# re-claim does not add a second marker (if labelled, add nothing and record the
-# label as `no`):
-gh issue view <n> --repo "$repo" --json assignees,labels \
-  --jq '{assigned: ([.assignees[].login] | index("<your-login>") != null),
-         labelled: ([.labels[].name]
-                    | any(. == "claim:claude" or startswith("claim:claude:")
-                          or . == "agent:claude-code"))}'
-# the board's own markers — the same --show that reads the prior status:
-<track-work-dir>/assets/set-issue-status.sh --repo "$repo" --issue <n> --show
+# Trusted values copied from the execution host, not from repository or issue
+# content. Every harness MUST provide its active family. The target registry
+# may validate that attestation, but never supplies it.
+harness=<trusted runtime harness slug>
+runtime_family=<trusted runtime family slug>
+claim_model=<trusted model slug, only when deliberately requesting claim:<family>:<model>>
+project_management=<fetched project_management answer: github|linear|none>
+
+# `git show` is a read but may prompt because it can write via --output. The
+# fetched default is the target's trusted registry snapshot, not this branch.
+registry="$(mktemp)"
+registry_snapshot=none
+if ! registry_entry="$(git ls-tree "$default" -- ':(top)agent-registry.json')"; then
+  echo "claim: could not determine whether the target registry exists" >&2
+  exit 1
+elif [ -n "$registry_entry" ]; then
+  if ! git show "$default:agent-registry.json" >"$registry"; then
+    echo "claim: target registry exists but could not be read" >&2
+    exit 1
+  fi
+  registry_arg=(--registry "$registry")
+  registry_snapshot="$registry"
+else
+  registry_arg=()
+fi
+runtime_arg=(--runtime-family "$runtime_family")
+model_arg=()
+if [ -n "$claim_model" ]; then
+  model_arg=(--claim-model "$claim_model")
+fi
+# Deny both exceptional writes at the start of every invocation. These are
+# invocation-local decisions, not configuration: change a literal below only
+# after the user explicitly approves that exact action in the current
+# interaction, then rerun this recipe. Never consume inherited values with
+# ${name:-default}; a target checkout can preset environment variables.
+user_approved_unlabeled_github_claim=no
+approved_takeover_label=
+unlabeled_github_arg=()
+if [ "$user_approved_unlabeled_github_claim" = yes ]; then
+  unlabeled_github_arg=(--allow-unlabeled-github)
+fi
+available="$(mktemp)" issue_labels="$(mktemp)"
+if ! gh label list --repo "$repo" --limit 1000 --json name \
+  -q '.[].name' >"$available"; then
+  echo "claim: could not read the target label vocabulary" >&2
+  exit 1
+fi
+if ! gh issue view <n> --repo "$repo" --json labels \
+  --jq '.labels[].name' >"$issue_labels"; then
+  echo "claim: could not read the issue's live labels" >&2
+  exit 1
+fi
+
+# Exit 0: target_label is safe to add (unless existing_label is non-empty,
+# which is idempotent). Exit 10: exactly one other family owns the issue and
+# needs explicit user approval to replace. Exit 11: multiple foreign ownership
+# markers make takeover unsafe. Exit 20: identity or vocabulary is unverified
+# — stop before every write.
+set +e
+plan="$(<claim-skill-dir>/assets/resolve-claim-label.sh \
+  --harness "$harness" "${registry_arg[@]}" \
+  "${runtime_arg[@]}" "${model_arg[@]}" "${unlabeled_github_arg[@]}" \
+  --project-management "$project_management" \
+  --available-labels "$available" --issue-labels "$issue_labels")"
+resolver_status=$?
+set -e
+case "$resolver_status" in
+0) ;;
+10)
+  if [ -z "$approved_takeover_label" ]; then
+    echo 'claim: one competing ownership marker requires explicit user approval' >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$plan" | grep -Fqx "conflict_label=$approved_takeover_label"; then
+    echo 'claim: approval does not name the resolver conflict exactly' >&2
+    exit 1
+  fi
+  ;;
+11) echo 'claim: multiple competing ownership markers make takeover unsafe' >&2; exit 1 ;;
+*) echo 'claim: identity, project mode, or vocabulary is unverified' >&2; exit 1 ;;
+esac
+
+# Read each single-valued field literally. Do not use eval: the resolver plan
+# is data, not shell source. conflict_label is the only repeatable field and is
+# consumed only through the exact approved value above.
+plan_value() {
+  plan_key="$1"
+  plan_count="$(printf '%s\n' "$plan" | grep -c "^${plan_key}=" || true)"
+  [ "$plan_count" -eq 1 ] || {
+    echo "claim: resolver plan must contain exactly one $plan_key field" >&2
+    return 1
+  }
+  printf '%s\n' "$plan" | sed -n "s/^${plan_key}=//p"
+}
+family="$(plan_value family)" || exit 1
+target="$(plan_value target_label)" || exit 1
+existing="$(plan_value existing_label)" || exit 1
+family_target="$(plan_value family_label)" || exit 1
+model_target="$(plan_value model_label)" || exit 1
+displaced=none
+[ "$resolver_status" -ne 10 ] || displaced="$approved_takeover_label"
+
+# Portable operational context only: this helper deliberately emits no raw
+# hostname or workspace identifier. Its output is informational, not input to
+# the claim-label plan or any later cleanup.
+runtime_environment="$(<claim-skill-dir>/assets/resolve-runtime-environment.sh)" || {
+  echo 'claim: runtime environment could not be classified' >&2
+  exit 1
+}
 ```
+
+Do not use `eval` to read the plan. Extract `family`, `target_label`, and
+`existing_label` as literal single-line values, then carry them through the
+commands and claim record below. Exit 10 may emit more than one
+`conflict_label`; preserve the literal line. An `existing_label` in the same
+family is idempotent; a different family is the blocker above. A registry is
+also structural input: the resolver validates its selected family and every
+legacy alias before using either. When the target registry is absent, every
+harness still must pass its host-attested family.
 
 **A claim never writes the `Agent` field — it is retired.** Advisory routing
 (*which* family/model *should* do the work) is now the human-authored
@@ -336,105 +461,87 @@ is not among the writes the invocation approved. A `suggest:*`
 label naming another family is **not** a blocker: it is advice, and picking up
 work suggested for another family is a legitimate, visible choice — note it in
 the findings and carry on. If the repo has no `claim:*`/`agent:*` label family
-at all, ownership is **unverifiable** — say so and get the user's go-ahead
-rather than treating silence as "unclaimed". That is the third exempt
-escalation: the invocation approved claiming an issue *checked* to be
-unclaimed, not one whose ownership nothing could check.
+at all, ownership is **unverifiable** in `project_management: github` — the
+resolver fails closed without `--allow-unlabeled-github`; say so, get the
+user's go-ahead, and rerun with that trusted flag rather than treating silence
+as "unclaimed". That is the third exempt escalation: the invocation approved
+claiming an issue *checked* to be unclaimed, not one whose ownership nothing
+could check. The approved plan returns `target_label=n/a`. In a fetched
+`project_management: none` or `linear` profile, label absence is expected and
+the resolver returns `target_label=n/a` directly. In every mode the assignee
+and durable comment remain authoritative, and an unassigned claim is forbidden.
 
 Carry every answer into the claim comment. `/wrap` undoes only what the claim
-actually added.
+actually added. **Do not run the routine assignee, label, and comment writes as
+independent commands.** The claim asset `assets/claim-transaction.sh` is their
+executable state machine: it snapshots the exact pre-write markers and comments,
+validates the record against that state, applies only missing markers, treats the
+record append as the commit point, and never reads or writes Project state.
+Resolve it from `.agents/skills/claim`, then `.claude/skills/claim`, then
+`ai/skills/universal/claim` in harmon-devkit itself. The helper is deliberately
+not in `allowed-tools`: its write approval must display the exact user-named
+`--repo` and `--issue`, and those arguments must match this invocation's target.
+Never approve or run a silently inferred or substituted target.
 
-- **Assign:** `gh issue edit <n> --repo "$repo" --add-assignee @me`
+- **Assign:** the helper adds the authenticated login only when it was absent
+  from its pre-write snapshot. The same authenticated assignee must be present
+  immediately before publication, including on a repository with no claim-label
+  family. A pre-existing assignee is recorded as `no` and is never removed by
+  the helper.
 - **Label** — the `claim:<family>[:<model>]` family names *which* intelligence
-  has it. Claim at the family level (`claim:claude`) unless you mean to pin the
-  model (`claim:claude:opus`); the harness that ran it (Claude Code, the Action,
-  the codex CLI) is operational detail for the claim comment, not the label.
-  Apply a label only when the pre-check above found no claude-family claim
-  already present, and **prefer `claim:*`, falling back to the legacy `agent:*`
-  label** on a repo whose provisioning has not migrated. A currently-provisioned
-  repo — where `setup-github-labels.sh` still ships only `agent:*` until
-  harmon-init#661/#663 land the registry-driven provisioning that owns the label
-  migration — would otherwise *regress* from a labeled claim to an unlabeled
-  one, and skills sync independently of provisioning so the two are never atomic
-  (`--limit` matters — the default returns only 30 labels):
+  has it. Claim at the family level (`claim:<family>`). A trusted session may
+  deliberately request a provisioned `claim:<family>:<model>` refinement; the
+  resolver requires its family marker to coexist and never treats that marker
+  as a takeover conflict. The harness that ran it is
+  operational detail for the claim comment, not the label. Apply a label only
+  when the resolver found no same-family `existing_label`. **Prefer `claim:*`,
+  falling back only to a registry-declared legacy `agent:*` alias** when the
+  matching family label is not provisioned. This preserves a migrated skill on
+  a not-yet-migrated consumer without inventing a harness-to-label mapping.
+  Do not create labels here; the registry/provisioning owns that vocabulary.
 
-  ```sh
-  target=claim:claude                 # or claim:claude:<model> to pin the model
-  labels="$(gh label list --repo "$repo" --limit 1000 --json name -q '.[].name')"
-  if printf '%s\n' "$labels" | grep -qx "$target"; then
-    gh issue edit <n> --repo "$repo" --add-label "$target"
-  elif printf '%s\n' "$labels" | grep -qx agent:claude-code; then
-    gh issue edit <n> --repo "$repo" --add-label agent:claude-code   # legacy, until claim:* is provisioned
-  fi
-  ```
+  Carry `target_label` and `existing_label` into the record and helper
+  invocation. The helper adds `target_label` only when its snapshot confirms it
+  absent. When `existing_label` is already the same-family marker, pass that
+  exact label as `--claim-label` and record `no`; the helper leaves it alone.
+  A model refinement may coexist with a legacy alias only for the fixed
+  pre-registry aliases that event-driven release can independently bind to a
+  family. A registry-only custom alias remains a supported family-level claim,
+  but must migrate to its canonical `claim:<family>` marker before a model
+  refinement is claimed; the routine helper rejects the unreleasable pairing.
 
   **Record the exact label applied** in the claim record below — the release
-  parser removes exactly that one, so a legacy fallback is recorded as
-  `agent:claude-code`, not `claim:claude`. A repo with **neither** family — one
-  seeded before either existed, or any repo with `project_management: none` —
-  skips the label (the claim is still tracked by its authoritative assignee and
-  comment); say so once and carry on. **Do not create the label here** — the
-  taxonomy belongs to `task setup:github-labels` (driven by the agent registry),
-  and inventing a label per repo is how vocabularies fork.
+  parser removes exactly that one, so a legacy fallback is recorded as its
+  actual family-owned `agent:*` alias, not a synthesized `claim:<family>`. A repo
+  with no resolvable family marker in GitHub is **unverifiable**, not silently
+  unlabeled: stop and ask as described above. A verified `linear` or `none`
+  project mode intentionally resolves `n/a`; its assignee plus durable record
+  are the complete supported claim signal.
 
-  **If the user approved proceeding past another owner's claim label**, *replace*
-  it rather than adding alongside: `--add-label` alone leaves the issue
-  advertising two owners, which is worse than the conflict it was meant to
-  resolve. Remove the other one in the same edit and record it, so the hand-back
-  can put it back:
+  **Exceptional plans stay outside the routine executable boundary.** The
+  transaction helper accepts a normal labeled claim or an explicit
+  `--claim-label none --allow-label-less` plan. The latter is routine for a
+  verified `linear`/`none` mode and requires the user's explicit exception
+  approval for an unverifiable GitHub vocabulary. The helper remains outside
+  the allowed-tools boundary, so its target and this flag are visible at the
+  write approval. It does not accept `--displaced-label`; a user-approved exact
+  takeover remains manual and separately prompted. A takeover removes only the
+  approved conflict; exit 11 remains refused. Treat any ambiguous write
+  response as indeterminate and leave the visible state for recovery—never
+  infer ownership or compensate from current marker presence. Record the exact direct and chain provenance
+  that the approved manual writes actually established.
 
-  ```sh
-  gh issue edit <n> --repo "$repo" \
-    --add-label <the label the pre-check above selected> --remove-label <the ACTUAL competing label>   # e.g. add claim:claude (or agent:claude-code on a provisioned-only repo); remove claim:codex or a legacy agent:codex
-  ```
-
-  The displaced label may itself be legacy (`agent:codex`) on a not-yet-migrated
-  repo. Remove and record the label that is *actually there*, so the hand-back
-  restores the same one.
-
-- **Board** — the assignee and the label are both invisible on the project
-  board, which is where the work is actually watched, so move the card there
-  too. `Status` only — the `Agent` field is retired (`set-issue-status.sh` no
-  longer writes it). **Do this after the
-  comment below**, not here in list order: the comment is what preserves the
-  status this write destroys. The script ships with `track-work`, so
-  `<track-work-dir>` is `.agents/skills/track-work` when the portable path is
-  present, `.claude/skills/track-work` in a Claude-first consumer, and
-  `ai/skills/universal/track-work` in harmon-devkit itself:
-
-  ```sh
-  <track-work-dir>/assets/set-issue-status.sh \
-    --repo "$repo" --issue <n> --status "In Progress"
-  ```
-
-  Read the exit code rather than the noise: **0** applied, **3** nothing to do
-  (the issue is on no board, or the board lacks the field/option) — benign,
-  note it and move on, **1** the write failed, **2** it could not verify,
-  usually a missing token scope (`gh auth refresh -s read:project,project`).
-  Never retry a 3. A card still sitting outside `In Progress` must not be
-  reported as moved.
-- **Comment** via stdin with a quoted heredoc so the branch/session values are
+- **Comment**: build the exact body in a temporary file with a quoted heredoc
+  so the branch/session values are
   never re-evaluated by the shell (a branch name can contain `$(…)`). Use a
   delimiter that cannot occur in the body — quoting disables expansion, not
   termination, so a body containing a literal `EOF` line would end a
   fixed-`EOF` heredoc early:
 
-  **Record the status you are overwriting, and record it first.**
-  `--status "In Progress"` destroys whatever the card held — `Ready`,
-  `Shaping`, `Next`, `Agent Queue` — and nothing anywhere else remembers it, so
-  an abandoned session cannot put the issue back and has to guess. Read it with
-  `--show` and write the comment **before** the board write. Ordered the other
-  way, an interruption or a failed `gh issue comment` between the two loses the
-  old value permanently:
-
   ```sh
-  # 1. read (writes nothing)
-  <track-work-dir>/assets/set-issue-status.sh --repo "$repo" --issue <n> --show
-  # -> Status=Ready
-  #    board=<owner> Project
-
-  # 2. persist it, still before touching the board
-  gh issue comment <n> --repo "$repo" --body-file - <<'CLAIM_BODY_9f3k'
+  # 1. prepare the exact record; the helper publishes it after marker writes
+  record_file="$(mktemp)"
+  cat >"$record_file" <<'CLAIM_BODY_9f3k'
   Claiming — starting implementation on branch <branch> (session <name>).
 
   Preflight (§3):
@@ -444,14 +551,35 @@ actually added.
   - stale references: <none | what drifted | unproven — what could not be classified and why (a stale or unavailable source checkout, a tag-valued `_commit`)>
 
   Claim record (for `/wrap` — undo only what this claim added):
-  - board: <board title from --show, or "none">
-  - prior board status: <status | "none" (unset) | "unknown" (unreadable)>
+  - harness: <the current execution harness, e.g. Claude Code or Codex CLI>
+  - model: <the exact model identifier exposed by the harness, or "unknown">
+  - family: <the resolver's literal `family` value>
+  - runtime environment: <host|devcontainer|coder|codespace|github-actions|unknown>
+  - session: <the `/kickoff` session name, or "unknown">
   - assignee added by this claim: <yes|no>
-  - `claim:` label added by this claim: <the exact label applied — claim:claude, a model-pinned claim:claude:opus, or legacy agent:claude-code | no | n/a>
-  - `claim:` label displaced by this claim: <claim:codex | agent:codex (legacy) | none>
+  - `claim:` label added by this claim: <the exact label applied — claim:<family>, a model-pinned claim:<family>:<model>, or a registry-declared family-owned legacy agent:* label | no | n/a>
+  - `claim:` model label added by this claim: <the exact claim:<family>:<model> refinement applied | no | n/a>
+  - `claim:` label displaced by this claim: <the exact competing claim:<family>[:<model>] or family-owned legacy agent:* label | none>
+  - assignee logins owned by this claim chain: <canonical comma-separated lowercase logins | none>
+  - `claim:` label owned by this claim chain: <the exact still-present claim:<family>[:<model>] or family-owned legacy agent:* label | no | n/a>
+  - `claim:` model label owned by this claim chain: <the exact still-present claim:<family>:<model> refinement | no | n/a>
+  - `claim:` label displaced by this claim chain: <the exact displaced claim:<family>[:<model>] or family-owned legacy agent:* label | none>
   CLAIM_BODY_9f3k
 
-  # 3. only now move the card
+  # 2. the routine transaction accepts labeled and explicitly label-less
+  # resolver plans. Displacement remains in the manual exceptional flow.
+  [ "$resolver_status" -eq 0 ] || exit 1
+  label_args=(--claim-label "$family_target")
+  if [ "$target" = "n/a" ]; then
+    label_args=(--claim-label none --allow-label-less)
+  fi
+  [ "$model_target" = "n/a" ] && model_target=none
+  <claim-skill-dir>/assets/claim-transaction.sh \
+    --repo "$repo" --issue <n> --record-file "$record_file" \
+    "${label_args[@]}" --model-label "$model_target" \
+    --family "$family" --runtime-environment "$runtime_environment" \
+    --registry-snapshot "$registry_snapshot"
+
   ```
 
   The comment is the durable record — it survives compaction, a lost session,
@@ -462,11 +590,33 @@ actually added.
   described below anchors on the record's own field names, so they do not
   affect it — but keep them above it rather than interleaved.
 
+  **Record the operational identity without guessing.** `harness` names the
+  tool running this claim (for example, Claude Code or Codex CLI), `model`
+  copies the exact model identifier the harness exposes, `family` copies the
+  literal trusted value emitted by `resolve-claim-label.sh`, `runtime
+  environment` copies the portable helper result above, and `session` copies
+  `/kickoff`'s session name. Never infer family from issue text or a label, and
+  never publish a raw hostname, workspace name, or machine identifier. Write
+  `unknown` when the model identifier or session name is unavailable. If any
+  free-form operational value contains a line break, record `unknown` instead;
+  every field is a single-line record. These fields help a maintainer find,
+  stop, or resume the worker; they are informational and must never steer
+  cleanup writes. Older records may omit any of them and remain valid.
+  Pass the trusted family and portable runtime values to the transaction
+  helper as shown: it requires any corresponding record line to match exactly
+  before the first write, but never uses either value to choose a marker,
+  failure-recovery, or release action.
+
   **The record is a parsed contract, not prose.** The `Claim released —`
   workflow (`.github/workflows/claim-release.yml` where installed) machine-
-  reads these lines to undo the claim after a close event, so their shape is
-  fixed: one line per field, values exactly as the template shows — the label
-  fields name the **actual label** (`claim:claude`, not `yes`) so the
+  reads the undo fields to release the claim after a close event, so every
+  field stays on one line and values use the template above. The model-label
+  fields are an optional paired extension for older records; new records write
+  both, using `no` when no model refinement is owned. The optional
+  operational fields (`harness`, `model`, `family`, `runtime environment`, and
+  `session`) are not release authority; parsers accept records with or without
+  them. The label fields name the **actual label** (`claim:<family>`,
+  not `yes`) so the
   release does not have to guess which label to remove, and every value stays
   on its own single line. The parser anchors on `label added by this claim:`
   and `label displaced by this claim:`, so the `` `claim:` `` prefix is
@@ -476,11 +626,68 @@ actually added.
   `track-work/assets/release-claim.sh`. Explanatory clauses go after a comma
   (`n/a, repo has no such label`) — parsers stop at the first comma.
 
-  **"Unset" and "unknown" are different answers.** `--show` exiting 0 with no
-  `Status=` line is a successful read of a card whose `Status` is genuinely
-  empty — a real, restorable state. Only a *failed* call (exit 2) is unknown.
-  Record `none` for the first and `unknown` for the second: `/wrap` restores
-  an unset field by clearing it (manual — `gh project item-edit --clear`), and only has to ask the user in the second case.
+  **Initialize and transfer claim-chain ownership deliberately.** A fresh
+  claim copies its direct marker values into the chain fields and records its
+  own login in the assignee set when it owns the assignment. A branch/scope
+  refresh or crash-recovery takeover posts one new record; that append
+  supersedes the earlier record atomically for readers. The transaction helper
+  derives the assignee set; never author target logins from memory. It takes
+  the immediate latest trusted predecessor's proven set,
+  retains only members still assigned, adds the authenticated login only when
+  this attempt directly assigned it, then lowercases, deduplicates, sorts, and
+  validates the submitted field against that result. Thus A→B→C records
+  `a,b,c` instead of letting C erase A when it directly adds itself, while an
+  unrelated assignee can never become a cleanup target merely by appearing in
+  the new record. A still-present claim label transfers only when the immediate
+  predecessor proves it was claim-owned. Otherwise write `no`, `n/a`, or
+  `none`, because current state cannot prove a same-text marker was not
+  independently re-added later.
+  A displaced label is different: it is expected to be absent while the
+  takeover is live, so carry it after proving the predecessor displaced it;
+  that preserves an open-issue hand-back. Keep the assignee set and two label
+  chain fields together — a partial group is rejected by the releaser — and
+  write `none` when the chain owns no assignee.
+
+  **Publication failure is reconciled without destructive recovery.** The helper
+  snapshots comment IDs before writing. If the comment command fails, it
+  re-reads all comments and accepts only a new comment by the authenticated
+  login whose body exactly matches the submitted record. A confirmed match is
+  committed only when it remains the exact current record on an OPEN issue
+  with every required marker live. Any unreadable or absent reconciliation is
+  indeterminate (exit 6) and leaves visible markers in place for recovery. The
+  helper never removes a marker or assignee: no GitHub conditional edit can
+  close the race between a final lineage read and a destructive compensation
+  write, so a same-identity claim could otherwise adopt a marker just before it
+  is deleted. The helper also performs that lineage and marker recheck
+  immediately before publication; drift stops without appending a stale
+  record. A failed refresh writes no new current record, so the
+  predecessor remains current and inherited markers remain untouched.
+
+  The transaction also re-enforces the live claim blockers itself: the issue
+  must remain open, every other assignee must be proven by the predecessor
+  chain, and every live `claim:*`/`agent:*` marker must be one of the exact
+  resolved family or model values. A carried chain-owned displaced label must
+  come from the immediate predecessor; a routine record cannot create one.
+  A `claim:*` family marker must equal the trusted
+  `claim:<family>` resolver output; model refinements use the separate model
+  argument and cannot masquerade as that family marker. A legacy `agent:*`
+  marker is independently matched to the trusted family through the exact
+  fetched default-branch registry snapshot already passed to the resolver,
+  with only the resolver's finite pre-registry alias table as the explicit
+  `none` compatibility fallback. Never pass the working-tree registry.
+
+  The helper performs no destructive recovery. The exact committed record is
+  an idempotence token only while the issue remains OPEN and its claimant,
+  family, optional model, and displaced-label absence are all live: re-running
+  that same transaction then performs no marker, comment, or Project write.
+
+  Failed marker commands do not gain ownership from the resulting marker
+  snapshot alone. If changed state cannot be attributed to this attempt, the
+  transaction leaves it visible and reports an indeterminate result.
+  Successful and ambiguous-failure comment responses both finish through the
+  same fresh reconciliation: the exact record must be the current trusted
+  predecessor and the OPEN issue, claimant, family/model markers, and displaced
+  absence must still be live before the helper reports success.
 
 After claiming, re-fetch the assignees
 (`gh issue view <n> --repo "$repo" --json assignees`):
@@ -491,11 +698,12 @@ running as the same user converges on the same assignee and label, and is
 invisible to this check. The claim is a signal, not a lock
 (`track-work` §6).
 
-A claim is a promise to release it. `/shepherd` advances the card as the PR
-moves and releases the `claim:*` label at its stop-at-green; where the
+A claim is a promise to release it. `/shepherd` releases the `claim:*` label at
+its stop-at-green; where the
 claim-release workflow is installed, the close event releases the rest; and
-`/wrap` flags a session that ends with an issue left at `In Progress` and
-nothing in flight (see `track-work/references/claim-lifecycle.md`).
+`/wrap` flags a session that ends with live claim markers and nothing in flight
+(see `track-work/references/claim-lifecycle.md`). Project status is a manual,
+non-authoritative delivery view and `/claim` never reads or writes it.
 
 ## 6. Hand off
 

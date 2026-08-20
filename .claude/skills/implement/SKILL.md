@@ -90,9 +90,10 @@ issue, and two agents start implementing.
 3. **Claimed by you** — and the markers are **not equally good evidence of
    who**, so rank them rather than accepting any one:
    - **Strong** — a claim comment naming *this session*, **authored by you**,
-     not superseded by a later `Claim released —`. `/claim` writes exactly
-     that record, which is why it is the one marker that answers "who", not
-     merely "someone". The session name alone; the branch it records is **not**
+     the latest trusted `Claiming —` comment after the latest trusted `Claim
+     released —` comment. `/claim` writes exactly that record, which is why it
+     is the one marker that answers "who", not merely "someone". The session
+     name alone; the branch it records is **not**
      identity evidence, for the reason below.
 
      **Check the author, not just the text.** A claim comment is ordinary issue
@@ -123,9 +124,8 @@ issue, and two agents start implementing.
    - **Corroborating** — a `claim:*` (or legacy `agent:*`) label for this agent. It names the agent
      but not the session, and a repo with no such label family cannot have one
      at all (`/claim` treats that as benign), so its absence proves nothing.
-   - **Not ownership on its own** — a card at `In Progress`. `Status` is the
-     delivery stage, not an identity; a human triaging the board sets it too.
-     Never proceed on this marker alone.
+   - **Not ownership** — Project status is a manual, non-authoritative delivery
+     view outside the claim contract. Never proceed on it.
 
    Proceed when a strong marker matches this session, or a corroborating one
    does and the user confirms it is theirs. **Say plainly what this cannot
@@ -210,10 +210,19 @@ recorded, refresh the claim.** `/claim` usually ran before this step
 existed, so its comment names the default branch or an intended name — and
 that line is a parsed contract now: the claim-release workflow releases an
 unmerged PR's claim only when the PR's head matches it
-(`track-work/references/claim-lifecycle.md`). Post a new `Claiming —` comment
-with the real branch and the same record values (latest trusted claim wins,
-so this becomes the claim of record; nothing else changed, so the record
-lines carry over verbatim). **Copy the `Preflight (§3):` block over verbatim
+(`track-work/references/claim-lifecycle.md`). Route every routine branch or
+scope refresh through `/claim`'s `assets/claim-transaction.sh`; never append a
+`Claiming —` comment directly. Re-enter `/claim` §5 for the same issue: resolve
+the trusted runtime family/model, fetch the default-branch registry snapshot,
+build the candidate record with the real branch and refreshed preflight, and
+obtain the same explicit target-bound approval for the helper invocation (the
+helper remains outside this skill's allowed-tools boundary). The helper is the
+only publisher: it rechecks blockers, derives and validates chain ownership,
+proves timeline continuity, and performs fresh pre- and post-publication
+lineage checks. A failed refresh therefore leaves the predecessor current;
+manual reads never authorize a direct append. Project status remains outside
+the record and claim contract.
+**Copy the `Preflight (§3):` block over verbatim
 too**, where the claim comment carries one: it is the durable record of the
 credential gaps and human-only steps that claim found, and the refreshed
 comment is the one a maintainer or a later session reads. Skip this when the
@@ -227,7 +236,8 @@ block, rather than leaving the claim of record asserting `n/a` over a provider
 or a human prerequisite the issue has since grown. This is not conditional on
 the branch name: a claim that already named the eventual branch is exactly the
 case where the copy-forward above never runs and the stale block would survive
-untouched.
+untouched. Publish that refreshed block only through the same transaction route
+above.
 
 The default branch is not always named `main`, which is why it is resolved
 rather than assumed.

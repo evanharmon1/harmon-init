@@ -55,8 +55,8 @@ that made the claim:
 gh issue list --repo <owner/repo> --assignee @me --state all --limit 200 \
   --json number,title,state,labels,url
 # ...and by marker, because a claim can outlive its assignee. `gh issue list
-# --label` is exact-match (no prefix), so enumerate the claude-family claim
-# labels the repo actually carries — family-level, model-pinned, and legacy —
+# --label` is exact-match (no prefix), so enumerate every live claim namespace
+# label the repo actually carries — family-level, model-pinned, and legacy —
 # and query each. This must be a CHECKED read: a bare `for lbl in $(gh label
 # list ...)` runs zero iterations and falsely reports a clean sweep on an
 # expired token or rate limit, hiding the marker-only claim this exists to find
@@ -65,13 +65,14 @@ gh issue list --repo <owner/repo> --assignee @me --state all --limit 200 \
 # current assignee), so this sweep is the only backstop — do not skip it on a
 # failed enumeration, surface it:
 if ! claim_labels="$(gh label list --repo <owner/repo> --limit 1000 --json name -q \
-    '.[].name | select(. == "claim:claude" or startswith("claim:claude:") or . == "agent:claude-code")')"; then
+    '.[].name | select(startswith("claim:") or startswith("agent:"))')"; then
   echo "warning: could not list claim labels — the marker-only sweep is INCOMPLETE; retry or check auth" >&2
 fi
-for lbl in $claim_labels; do
+while IFS= read -r lbl; do
+  [ -n "$lbl" ] || continue
   gh issue list --repo <owner/repo> --label "$lbl" --state all --limit 200 \
     --json number,title,state,assignees,url
-done
+done <<<"$claim_labels"
 ```
 
 **Query both, and union the results.** `/wrap` runs its cleanup as separate
@@ -96,9 +97,11 @@ claim comment survives its own release — and where the issue was already
 assigned to you, `/wrap` correctly leaves that assignment in place too. Both
 markers then persist forever, and treating the comment alone as current would
 make every future `/kickoff` re-report the same long-released claim. So the
-comment counts only when **no later `Claim released —` comment supersedes it**.
+comment counts only when it is the **latest trusted `Claiming —` comment after
+the latest trusted `Claim released —` comment**. A newer trusted claim record
+supersedes an earlier refresh record without releasing the active claim.
 Prefer the live markers (`claim:*` label, card at `In Progress`); fall back to
-the comment only after checking what follows it.
+that one current comment only after checking what follows it.
 
 Report what survives that test as loose ends and point at `/wrap` for the
 release commands. Do not clear anything here: this step orients, it does not

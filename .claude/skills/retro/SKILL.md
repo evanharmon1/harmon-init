@@ -29,9 +29,10 @@ remembered status — re-verify each one live:
 - `gh issue view <n> --json state,stateReason,assignees,labels,url,title`
 
 **Read the claim off the markers, not off the issue.** A live claim is an
-`claim:*` (or legacy `agent:*`) label, a card at `In Progress`, or a claim comment **not superseded by
-a later `Claim released —` comment** (the claim comment outlives its own
-release, so on its own it proves nothing about now).
+`claim:*` (or legacy `agent:*`) label, a card at `In Progress`, or the
+**latest trusted `Claiming —` comment after the latest trusted `Claim released —` comment**.
+A newer trusted claim supersedes an earlier refresh record without releasing
+the active claim; an older comment alone proves nothing about now.
 
 Neither `state` nor `assignees` may gate that check. Both exclude real stale
 claims: a closing PR auto-closes the issue while the label and card stay set,
@@ -45,6 +46,14 @@ label cannot exist. Report it as "open — claimed,
 in progress", then check it is still true: a claim with no open PR and no work
 in flight is a loose end for §2, not a status. `/wrap` offers the commands to
 hand it back.
+
+**Discovery trust is deliberately read-only and broader than cleanup trust.**
+For this stale sweep, accept a claim author whose comment-time association is
+`OWNER`, `MEMBER`, or `COLLABORATOR` even when that author is no longer a
+current assignee; otherwise the partial-cleanup shape above disappears with
+its assignment. This rule may surface a candidate but never authorizes a
+write. `/wrap` and `release-claim.sh` must re-read current state and apply the
+stricter cleanup trust gate before removing anything.
 
 **A claim awaiting release is not a stale claim.** Two live claims read
 identically off the markers and mean opposite things — distinguish them
@@ -102,8 +111,9 @@ List each as a concrete next action.
 
 - Skills worth writing or updating based on friction hit this session.
 - Settings, hooks, or environment improvements.
-- GitHub issues worth filing — draft a title and one-line body for each, but
-  do **not** create them unless asked.
+- GitHub issues worth filing — draft a `(<free-form scope>): <imperative
+  outcome>` title and one-line body for each, following `track-work`'s complete
+  title contract, but do **not** create them unless asked.
 
 ## 4. Status tables
 
