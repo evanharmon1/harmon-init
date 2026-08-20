@@ -8,6 +8,44 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.35.0](https://github.com/evanharmon1/harmon-init/compare/v4.34.0...v4.35.0) (2026-08-20)
+
+
+### Features
+
+* add captured Coder devcontainer README badge ([#976](https://github.com/evanharmon1/harmon-init/issues/976)) ([bdbe337](https://github.com/evanharmon1/harmon-init/commit/bdbe3375f63c23142c68db23196d9781e61f75d9))
+* add guarded clean:worktree-records task for safe worktree admin-record pruning ([#950](https://github.com/evanharmon1/harmon-init/issues/950)) ([3a4b8a5](https://github.com/evanharmon1/harmon-init/commit/3a4b8a56c666b6c5a19e6845952656e714091e8c))
+* add OpenCode to the shared devcontainer ([#975](https://github.com/evanharmon1/harmon-init/issues/975)) ([2c42be9](https://github.com/evanharmon1/harmon-init/commit/2c42be9d2755f663fa027d3d2d11ed2a16f712b6))
+* add safe session-cleanup task surface (audit:session-artifacts, clean:branches) ([#946](https://github.com/evanharmon1/harmon-init/issues/946)) ([d6094ab](https://github.com/evanharmon1/harmon-init/commit/d6094abb59b47eb2a22e9a509b126b1c2538417a))
+* allow additional Foreman trusted actors ([#931](https://github.com/evanharmon1/harmon-init/issues/931)) ([915ffb6](https://github.com/evanharmon1/harmon-init/commit/915ffb6048386c11a4e64917d50dfd58c4420ab3))
+* **devcontainer:** configure antigravity statusline in devcontainer ([#993](https://github.com/evanharmon1/harmon-init/issues/993)) ([3e26422](https://github.com/evanharmon1/harmon-init/commit/3e264228cc139315e549fc7b19fe95ea8dbbc4d9))
+* devflow tier/method tables, validation, and AGENTS resolution rules ([#855](https://github.com/evanharmon1/harmon-init/issues/855)) ([#925](https://github.com/evanharmon1/harmon-init/issues/925)) ([93fb305](https://github.com/evanharmon1/harmon-init/commit/93fb30579f562e4e0d8f4d2f56f6ef22c3509419))
+* extend the Codex severity scale with a non-gating P3 ([#961](https://github.com/evanharmon1/harmon-init/issues/961)) ([9faafc5](https://github.com/evanharmon1/harmon-init/commit/9faafc547173543ca55e6b216a5f5f7155643ffc)), closes [#923](https://github.com/evanharmon1/harmon-init/issues/923)
+* make action task output colorful and explicit ([#971](https://github.com/evanharmon1/harmon-init/issues/971)) ([600ddc8](https://github.com/evanharmon1/harmon-init/commit/600ddc8a2c4cfe74df33d55a5e984de4690b6bb9))
+
+
+### Bug Fixes
+
+* close the known verify/CI target-list gaps in both layers ([#981](https://github.com/evanharmon1/harmon-init/issues/981)) ([5ccd73d](https://github.com/evanharmon1/harmon-init/commit/5ccd73d75161dc3786540fa53fd4beaa0c8e3ec1)), closes [#962](https://github.com/evanharmon1/harmon-init/issues/962) [#978](https://github.com/evanharmon1/harmon-init/issues/978)
+* cover area: values in the per-repo label customization guidance ([#959](https://github.com/evanharmon1/harmon-init/issues/959)) ([2f01da1](https://github.com/evanharmon1/harmon-init/commit/2f01da15922458d382acce7509c368da9bad7543)), closes [#943](https://github.com/evanharmon1/harmon-init/issues/943)
+* disambiguate generic area label buckets ([#984](https://github.com/evanharmon1/harmon-init/issues/984)) ([5d6252d](https://github.com/evanharmon1/harmon-init/commit/5d6252dc39e798527a62055c2ba6e13fae8b1628))
+* document area tier and method label families ([#979](https://github.com/evanharmon1/harmon-init/issues/979)) ([8445e3c](https://github.com/evanharmon1/harmon-init/commit/8445e3c9df6fbc83816e8641f8bd08050a4a9777))
+* execute the rendered label-registry gate in the render matrix ([#967](https://github.com/evanharmon1/harmon-init/issues/967)) ([42d1699](https://github.com/evanharmon1/harmon-init/commit/42d16998a28912e73ac5784166fd6eb2d2f3274a)), closes [#883](https://github.com/evanharmon1/harmon-init/issues/883)
+* harden worktree:new branch publication, freshness evidence, and rollback ([#932](https://github.com/evanharmon1/harmon-init/issues/932)) ([224ddcb](https://github.com/evanharmon1/harmon-init/commit/224ddcbffa506ed0864e1bfd245e82a4c584fd57))
+* make test:worktree teardown failures loud and named ([#926](https://github.com/evanharmon1/harmon-init/issues/926)) ([8833e48](https://github.com/evanharmon1/harmon-init/commit/8833e484a476b9c3096a17503bec9c5e05f2adfb)), closes [#899](https://github.com/evanharmon1/harmon-init/issues/899)
+* pin and preinstall copier, and fail loudly when it is missing ([#970](https://github.com/evanharmon1/harmon-init/issues/970)) ([a099d1c](https://github.com/evanharmon1/harmon-init/commit/a099d1c76cf0d15e8a68efe6ebd27f6dc7352922)), closes [#921](https://github.com/evanharmon1/harmon-init/issues/921)
+* reconcile project management guidance ([#933](https://github.com/evanharmon1/harmon-init/issues/933)) ([f6ec0a6](https://github.com/evanharmon1/harmon-init/commit/f6ec0a6807040b82c6a4b0dc3d2c1b6da2540ccb))
+* refuse worktree removal and stale-record pruning over a merge autostash ([#954](https://github.com/evanharmon1/harmon-init/issues/954)) ([9fd30c8](https://github.com/evanharmon1/harmon-init/commit/9fd30c8ee39bee1ebd9f26015dacb5784d3c8d2d))
+* refuse worktree removal over a deleted in-cone sparse flagged file ([#949](https://github.com/evanharmon1/harmon-init/issues/949)) ([1830989](https://github.com/evanharmon1/harmon-init/commit/1830989f9ce345a0c4f8239fff13d8162fd7bf23)), closes [#919](https://github.com/evanharmon1/harmon-init/issues/919)
+* replay captured output when a rendered-repo gate fails ([#987](https://github.com/evanharmon1/harmon-init/issues/987)) ([a5ed0bd](https://github.com/evanharmon1/harmon-init/commit/a5ed0bda9d1a3591e15b37e1250053bd45a4509a)), closes [#934](https://github.com/evanharmon1/harmon-init/issues/934)
+* report only what clean:branches will act on, and flag stale inputs ([#991](https://github.com/evanharmon1/harmon-init/issues/991)) ([b63847f](https://github.com/evanharmon1/harmon-init/commit/b63847f9a69aef31e22e465ab568cfa7f675433f)), closes [#958](https://github.com/evanharmon1/harmon-init/issues/958)
+* resolve worktree:rm's target from the registry instead of constructing it ([#988](https://github.com/evanharmon1/harmon-init/issues/988)) ([5156d12](https://github.com/evanharmon1/harmon-init/commit/5156d124ea430d364be919b69fdb335a65468999)), closes [#963](https://github.com/evanharmon1/harmon-init/issues/963)
+* route gh authentication to the host browser ([#977](https://github.com/evanharmon1/harmon-init/issues/977)) ([36cb29b](https://github.com/evanharmon1/harmon-init/commit/36cb29b9328d2d020676552edf176a42059f954b))
+* run test:gh-scopes in the required CI lint job ([#960](https://github.com/evanharmon1/harmon-init/issues/960)) ([6f6fb71](https://github.com/evanharmon1/harmon-init/commit/6f6fb71d01b599dcc92cd9ba0b9b36547eab309e)), closes [#909](https://github.com/evanharmon1/harmon-init/issues/909)
+* select the worktree Node installer from the repo's declared package manager ([#938](https://github.com/evanharmon1/harmon-init/issues/938)) ([0e6c842](https://github.com/evanharmon1/harmon-init/commit/0e6c842f47b588a4a249afba33de5621621008ad))
+* **template:** allow .agents/skills/ symlinks in the sync scope guard ([#997](https://github.com/evanharmon1/harmon-init/issues/997)) ([a31534f](https://github.com/evanharmon1/harmon-init/commit/a31534f5b553910eab7b1db61140a047204b52b5))
+* validate worktree:new --branch early with git's own ref grammar ([#955](https://github.com/evanharmon1/harmon-init/issues/955)) ([933972e](https://github.com/evanharmon1/harmon-init/commit/933972eabae4772a28860670ba13551f74e826ca))
+
 ## [4.34.0](https://github.com/evanharmon1/harmon-init/compare/v4.33.0...v4.34.0) (2026-08-16)
 
 
