@@ -9,7 +9,7 @@ description: >-
   writing anything to GitHub. Invoke as /breakdown [topic, doc path, or issue
   reference].
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(gh label list:*), Bash(gh repo view:*), Bash(task --list-all:*)
+allowed-tools: Read, Glob, Grep, Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(gh label list:*), Bash(gh repo view:*), Bash(task --list-all:*), Bash(node ./ai/skills/universal/breakdown/assets/discover-label-vocabulary.mjs:*), Bash(node ./.agents/skills/breakdown/assets/discover-label-vocabulary.mjs:*), Bash(node ./.claude/skills/breakdown/assets/discover-label-vocabulary.mjs:*)
 ---
 
 # Breakdown
@@ -205,6 +205,12 @@ judgment. The bar, concretely:
   decision already made). A spec that names the variable names is too deep; a
   spec whose acceptance criteria could pass on the wrong implementation is too
   shallow.
+- **Scoped title**: every parent, child, and flat issue uses
+  `(<scope>): <imperative outcome>` from `track-work` §5. Generate the
+  free-form scope from the chunk's concern, independently of labels; the scope
+  is not a request to mint or find a matching taxonomy value. Keep the complete
+  title within 70 Unicode code points and reject a proposed chunk whose title
+  does not pass the canonical title checker.
 - **Acceptance criteria as `- [ ]` task-list items** — what `track-work`'s
   tick machinery and its closing-keyword guard read. Each criterion must be
   adjudicable from the PR's diff and gates; "works well" is not a criterion.
@@ -263,7 +269,10 @@ not per-issue. Before writing anything to GitHub, present:
   not size confidently.
 
 Then stop and get explicit approval. Scope changes here are cheap — retitle,
-resplit, reorder, and re-present if the edits are structural. Approval of the
+resplit, reorder, and re-present if the edits are structural. A requested
+retitle is still constrained by `track-work`'s scoped-title grammar: show the
+revised scoped title and validate it before treating the proposal as final.
+Approval of the
 proposal is approval of the *set* of writes in §7; it does not extend to
 chunks added afterward.
 
@@ -271,27 +280,24 @@ chunks added afterward.
 
 All writes follow the approved proposal, in dependency-safe order: milestones
 first (create or reuse — an issue can only join a milestone that already
-exists, so `--milestone` at create depends on this; only *membership* is
-deferred, and only where it is the arming signal), then issues — parents
-before sub-issues, blockers before blocked, each issue's
-relationships written immediately after its create returns (creating blockers
-first is what makes that possible: every edge's far end already exists when
-its near end is created) — and **arming last**. Between an issue's create and
+exists), then issues — parents before sub-issues, blockers before blocked,
+each issue's relationships written immediately after its create returns
+(creating blockers first is what makes that possible: every edge's far end
+already exists when its near end is created). Between an issue's create and
 its edges it looks independent and ready, and no ordering of API calls makes
 create-plus-edge atomic — even create-time relationship flags apply the
 relationship in follow-up mutations after the issue exists, so `issues.opened`
-automation can observe the bare issue regardless. What actually closes the
-race is sequencing what the automation *consumes*: identify the gating input
+automation can observe the bare issue regardless. Identify the gating input
 the target's dispatcher actually reads — from its configuration in the target
-repo, never by assumption (foreman's, for one, varies by configured input
-mode, and guessing wrong either arms blocked work early or leaves every
-approved unit undispatchable) — and apply that signal last, after every
-relationship is attached. A target that dispatches unconditionally on
+repo, never by assumption — and **withhold it for the entire breakdown run**.
+Breakdown records that input in the handoff but never applies it; a human or
+trusted dispatch control performs the separate arming transition only after
+the graph is verified. A target that dispatches unconditionally on
 `issues.opened`, with nothing that can be withheld, cannot be sequenced
 safely at all: that is a §6 finding for the human to decide on (pause the
 automation, or accept the race), not something ordering can paper over.
 Where nothing automates dispatch, the window is only cosmetic — immediate
-attachment is still the rule, arming order just stops mattering.
+attachment is still the rule.
 
 **Preflight every target repo before the first write.** A cross-repo plan
 executed with credentials that can write only some of its targets mutates the
@@ -324,6 +330,13 @@ run switching shape after approval). Any
 target failing the preflight blocks the whole execution: report it and
 return to §6 rather than filing a partial decomposition.
 
+The same preflight validates **every final issue draft**, including parents,
+children, and flat issues, with `track-work`'s
+`check-issue-metadata.sh` against the checkout and metadata for its target
+repository. This is the last check after any approved retitle and before any
+`gh issue create`; a malformed or legacy unscoped title blocks the entire
+execution rather than publishing a partial decomposition.
+
 **A partial failure halts the run — it does not improvise recovery.** This
 skill executes interactively, under a §6 approval, with the human reachable;
 it is not an unattended transaction system and must not pretend to be one. On
@@ -345,37 +358,97 @@ chunk exists is a report back to the human, not a license to retry.
 
 **Labels and fields come from the repo's vocabulary — never mint any**
 (`track-work` §6: vocabularies belong to the repo's own setup tasks, and
-minting per-repo is how they fork). Labels are not the whole vocabulary:
-repos on the harmon conventions treat labels and issue fields as orthogonal,
-so read every surface the target actually uses before proposing:
+minting per-repo is how they fork). Discover labels with the asset next to
+this skill, once per target repo:
 
 ```sh
-gh label list --repo <owner/repo> --limit 1000 --json name,description
+node <breakdown-skill-dir>/assets/discover-label-vocabulary.mjs \
+  --repo <host>/<owner>/<repo>
+```
+
+The asset binds discovery to the target's current default branch, reads its
+`label-registry.json` as data, and intersects every concrete candidate with
+the live GitHub label inventory. It never executes a renderer, validator, or
+other code from the target. A successful `mode: registry` result is the
+verified planning vocabulary:
+
+- Propose only labels listed under its `families`; the asset has already
+  applied effective family/per-value writers and lifecycle metadata and
+  excluded retired, arming, transient, claim-release, tool-managed, and
+  non-agent-writable entries. `provision: false` is not permission to mint:
+  a tool-owned or open value appears only when the concrete live label exists.
+- Select candidates by matching the chunk against the family's `purpose` and
+  `axis`, then the candidate's live `description`; do not infer applicability
+  from a label name alone. Copy the candidate's `name` exactly as emitted so
+  the proposal preserves the live label's spelling.
+- `exclusive: true` means propose at most one value from that family.
+  `exclusive: false` permits multiple values only when each one is
+  independently applicable to the chunk; it is not an instruction to apply
+  the whole family, and it does not override the exactly-one `work-type` rule
+  below. This is how repository-specific `area` vocabularies and their
+  exclusivity rule are consumed; never embed an `area:*` roster here.
+- Every emitted `requires` entry is a companion label, not a hint. Include all
+  of them whenever proposing that candidate, using their exact emitted names.
+- `suggest` is advisory routing, never ownership or execution. A
+  `suggest-model` entry carries `requires`; propose that family label alongside
+  the model refinement, never the model label alone. Neither suggestion is an
+  arming signal.
+
+Only an absent registry produces `mode: live-label-fallback`. Its labels are
+bounded to the live inventory and exclude the `claim:`, legacy `agent:`, and
+`foreman:` namespaces, but their writer, lifecycle, and exclusivity semantics
+are explicitly unverified. Use that list conservatively: do not infer a family
+roster or apply anything that resembles ownership, execution, or transient
+workflow state. Any other asset failure means a present registry is malformed,
+ambiguous, unavailable, or unsafe to interpret: report the diagnostic in §6
+and treat **no label proposal as verified** for that target. Never silently
+retry it as though the registry were absent.
+
+Labels are not the whole vocabulary: repos on the harmon conventions treat
+labels and issue fields as orthogonal, so read the other surfaces the target
+actually uses before proposing:
+
+```sh
 # org-owned targets may also carry issue types (Task, Bug, Feature, …):
 gh api repos/<owner>/<repo> --jq .organization.login   # org repo?
 gh api orgs/<org>/issue-types --jq '.[].name'          # the type vocabulary
 ```
 
-Apply the families that fit: an issue **type** where the org defines them
-(`gh issue create --type`, or the issue-type edit endpoint after create),
-label families for priority and layer/domain, and **agent routing in
-whichever vocabulary the target actually has** — this one is in transition
-(evanharmon1/harmon-init#620 replaces the `Agent` planning field with
-`suggest:<family>[:<model>]` labels, "this chunk suits this model class").
-Where the target carries the `suggest:*` label family, use it. Where it still
-runs the `Agent` *field*, that field is a triage-time planning assignment —
-which is exactly what a breakdown produces, so proposing values for it in §6
-is legitimate here (unlike at claim time, where writing it destroys the plan —
-`track-work` §6); write it only where the target's tooling can (it is not
-writable via Projects V2 on org repos — there, report the proposed value
-instead). Neither vocabulary present: skip routing, noted once. Project-board
-fields (`Size`, `Status` options and the like) are Projects V2 state: propose
-them in §6, but write only what the target's own tooling exposes for the
-purpose — `track-work`'s `set-issue-status.sh` for `Status`, nothing
-hand-rolled — and report any proposed field the tooling cannot write instead
-of improvising a GraphQL mutation for it. And never set a claim marker
-(`claim:*` label, assignee, `In Progress`) — a breakdown plans work,
-`/claim` claims it.
+Apply the families that fit. Every issue gets exactly one work classification,
+regardless of the registry family's `exclusive` value:
+
+- On an organization-owned repository, choose exactly one valid native issue
+  **Type** (`gh issue create --type`, or the issue-type edit endpoint after
+  create). Do not duplicate or substitute it with a registry family whose
+  `axis` is `work-type`.
+- On a personal-account repository, where native organization issue Types are
+  unavailable, choose exactly one `work-type` label. In `mode: registry`, take
+  it from the verified `work-type` axis even when that family has
+  `exclusive: false`; the asset marks this `work_type_selection:
+  registry-semantics`. In `mode: live-label-fallback`, the asset marks
+  `work_type_selection: human-confirmation-required` because the bounded live
+  list has no trustworthy axis semantics. Do not infer, rank, or nominate a
+  work type from that list: `priority`, `security`, and any other live label
+  are equally unclassified. Before approval or writes, ask the human to name
+  the exact live label that this repository uses as its work type. Treat only
+  that explicit response as the semantic classification, then require
+  `track-work`'s canonical pre-create metadata checker to accept the same live
+  spelling. The checker validates admissibility; it is not a work-type
+  classifier.
+
+Choose the single best match for the chunk. If no choice is defensible, or more
+than one remains equally defensible, stop before approval or writes and ask the
+human to clarify; never omit the classification or apply multiple candidates.
+In either case, also apply other registry families that fit the chunk.
+Project-board fields (`Size`,
+`Status` options and the like) are Projects V2 state: propose them in §6, but
+write only what the target's own tooling exposes for the purpose —
+`track-work`'s `set-issue-status.sh` for `Status`, nothing hand-rolled — and
+report any proposed field the tooling cannot write instead of improvising a
+GraphQL mutation for it. Never write the retired `Agent` field, a claim marker
+(`claim:*` or legacy `agent:*`), an assignee, `In Progress`, a transient or
+tool-managed lifecycle label, or any arming label — a breakdown plans work;
+`/claim`, lifecycle tools, and trusted dispatch controls own those writes.
 
 **The recipes below are written for the default host.** They are the §1 host
 rule's one blind spot when copied verbatim: on any other host, every `gh api`
@@ -389,14 +462,16 @@ are routine and crafted shell syntax is possible; carry each value in a
 quoted variable or a file, never spliced into a single-quoted command string.
 
 - **Milestone**: `gh api repos/<owner>/<repo>/milestones -f title="$title"
-  -f description="$desc"`. Issues may take `--milestone` at create — except
-  where milestone membership is the dispatcher's gating input, in which case
-  it is the arming signal and comes last.
+  -f description="$desc"`. Issues may take `--milestone` at create only when
+  membership is not the dispatcher's gating input. Where membership arms
+  dispatch, omit it and record the intended membership for the trusted arming
+  handoff.
 - **Issues**: `gh issue create --repo <owner/repo> --title "$title"
   --body-file "$bodyfile" --label …` — where the label list **excludes the
   dispatcher's gating label**, if that is the target's arming signal: a label
   applied at create arms the issue before its relationships exist, exactly
-  the race the arming-last rule closes; add it in the arming step instead.
+  the race the withheld-input rule closes. Do not add it later in this skill;
+  record it for the trusted arming handoff.
   Write each body to a temp file — bodies
   contain backticks and `$`, and must reach the shell as data. A quoted
   heredoc is safe only when its delimiter provably does not occur as a line
@@ -448,22 +523,24 @@ quoted variable or a file, never spliced into a single-quoted command string.
 After the writes, verify the result against the **approved proposal, in
 full** — every chunk has its issue, every approved edge reads back
 (`gh issue view` / the dependencies endpoint), sub-issue counts match, and
-the non-issue writes read back too: milestone membership, the arming signal,
-types and fields, and the source issue's disposition. A completion check
-that covers only issue existence passes while units sit undispatchable or
-the source issue survives as a second claimable copy. Report the mapping,
-the ready set, and anything that fell back or failed. The ready set is
-computed from the edges **as recorded**, never from the proposal: a chunk
-whose edges did not all land is not ready, whatever the plan said.
+the non-issue writes read back too: non-arming milestone membership, types and
+fields, and the source issue's disposition. Confirm the identified arming
+input remains absent. A completion check that covers only issue existence can
+pass while the source issue survives as a second claimable copy. Report the
+mapping, the ready-to-arm set, the withheld arming input, and anything that
+fell back or failed. The ready-to-arm set is computed from the edges **as
+recorded**, never from the proposal: a chunk whose edges did not all land is
+not ready, whatever the plan said.
 
 ## 8. Hand off
 
-Report the milestone, the issue numbers in dependency order, and the ready
-set — the chunks with no unmet blockers, which is where implementation starts.
-On a foreman repo, suggest `task foreman:vet` as the independent check that
-the produced units are well-formed. Then the session suite takes over, one
-chunk at a time: `/claim` the first ready issue, `/implement`, `/shepherd`,
-`/wrap`.
+Report the milestone, the issue numbers in dependency order, and the
+ready-to-arm set — the chunks with no unmet blockers — plus the arming input
+that breakdown deliberately withheld. A human or trusted dispatch control may
+arm those units after reviewing the handoff. On a foreman repo, suggest
+`task foreman:vet` as the independent check that the produced units are
+well-formed. Then the session suite takes over, one chunk at a time: `/claim`
+the first ready issue, `/implement`, `/shepherd`, `/wrap`.
 
 ## Scope
 

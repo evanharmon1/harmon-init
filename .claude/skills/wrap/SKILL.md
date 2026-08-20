@@ -30,9 +30,10 @@ read it in the UI) — never guess.
   unpushed commits (guard for branches with no upstream).
 - If `/retro` has not run this session, offer to run it first.
 - **Release any claim this session made.** If `/claim` claimed an issue
-  (assignee, `claim:*` label, card at `In Progress`), check what actually
-  became of it — a claim left standing over abandoned or finished work is a lie
-  the board tells the next reader, and it outlives the session that told it:
+  (trusted claim record plus its owned assignee and `claim:*` labels), check
+  what actually became of it — a claim left standing over abandoned or
+  finished work is a lie the issue tells the next reader, and it outlives the
+  session that told it:
 
   ```sh
   gh issue view <n> --repo <owner/repo> \
@@ -53,12 +54,13 @@ read it in the UI) — never guess.
   referencing the issue, or activity newer than this session's claim comment,
   means the claim may not be yours alone to release — say so and let the user
   decide rather than presenting cleanup as obviously safe. One exemption: the
-  closing PR's own trail. A merged PR that delivered this claim's work
-  necessarily leaves cross-reference, merge, and closure events newer than the
-  claim comment — that is the claim's expected end of life, not somebody
-  else's work, and counting it would make the merged path below ask every
-  time. What counts is *unrelated* newer activity: another open PR, a claim
-  comment you did not write, someone else's hands on the markers.
+  qualifying delivery PR's own trail. A merged PR that delivered this claim's
+  work necessarily leaves cross-reference and merge events newer than the
+  claim comment, plus a closure event when it closed the issue — that is the
+  claim's expected end of life, not somebody else's work, and counting it
+  would make both merged outcomes below ask every time. What counts is
+  *unrelated* newer activity: another open PR, a claim comment you did not
+  write, someone else's hands on the markers.
 
   **Every path that clears a marker must say it released the claim.**
   Whichever outcome applies below, any cleanup that removes or restores a
@@ -72,14 +74,11 @@ read it in the UI) — never guess.
   issue keeps reading as a live claim to every future `/kickoff` and `/retro`
   — clearing the markers without it recreates exactly the state this step
   exists to prevent. Post it **last, and only when every applicable marker
-  write succeeded**: a supersede comment over a marker that survived — a
-  board restore that failed on a missing `project` scope, say — tells every
-  future sweep the claim is settled while stale state remains, which is worse
-  than no comment. For the board write, "succeeded" means the card actually
-  reached the intended status (`set-issue-status.sh` exit 0): a card that
-  exists but whose board lacks the target option comes back exit 3 without
-  moving, and that is an *incomplete* cleanup for this rule — only "the
-  issue is on no board at all" is genuinely nothing-to-do. If any write fails, report the partial cleanup to the user
+  write succeeded**: a supersede comment over an owned assignee or label that
+  survived tells every future sweep the claim is settled while searchable
+  state remains, which is worse than no comment. Project status is not a claim
+  marker or cleanup authority and never gates this release. If any marker write
+  fails, report the partial cleanup to the user
   instead of posting the release line. The converse failure — markers cleared
   but the release comment refusing to post — must not end silent either:
   retry the post, and if it still fails restore **a searchable marker that
@@ -88,21 +87,87 @@ read it in the UI) — never guess.
   `n/a`); a displaced label you already restored counts too, and never
   re-add your own `claim:*` label beside it, which would leave the issue
   claiming two owners. The point is that the half-released claim stays
-  findable by `/kickoff`'s sweep instead of surviving only as a card and an
-  unsuperseded comment. If that restore also fails, nothing was writable —
+  findable by `/kickoff`'s sweep. If that restore also fails, nothing was writable —
   say exactly that; the user is present on this path.
 
-  Three outcomes:
-  - **PR open** — the claim is accurate; `/shepherd` owns the card from here.
-    Nothing to do.
+  New records may also carry optional `harness`, `model`, `family`, `runtime
+  environment`, and `session` lines. Read them as operational context when
+  present, and accept older records that omit any or all of them. They are
+  single-line, informational values and never cleanup authority: do not use
+  their values to select, construct, or suppress any write in any outcome
+  below. In particular, family metadata does not replace the recorded label
+  ownership fields, and runtime metadata never selects a cleanup path.
+
+  Four outcomes:
+  - **PR open** — the claim is accurate; nothing to release.
+  - **Partial delivery / issue open** — one PR deliberately landed part of the
+    claim, and the issue remains open for named remaining work.
+    Confirm no work is currently in flight. This is a completed release of
+    *this claim*, not a
+    completed issue and not a generic mid-flight hand-back. Assemble the same
+    claim-owned cleanup commands as the hand-back block below and present them
+    as the default single-confirmation action, but streamline to that action
+    only when **all** of this attributable evidence agrees:
+
+    - the current trusted claim record is authored by the account returned by
+      `gh api user --jq .login`, is complete, and accounts for
+      every marker the cleanup would touch through its direct and current
+      `claim chain` ownership fields;
+    - the issue is still open, and its timeline identifies exactly one
+      qualifying cross-reference from a PR in this same repository; re-read
+      that PR with `gh pr view --repo <owner/repo>` and require it to be
+      merged after the current claim comment, authored by the authenticated account,
+      to have a head branch exactly matching the branch recorded by the current
+      claim,
+      and to carry an explicit `Refs #<n>` (or repository-qualified `Refs`)
+      reference while not naming the issue in `closingIssuesReferences`;
+    - no other open PR cross-references the issue, no later trusted
+      `Claiming —` comment or unrelated post-claim activity indicates replacement
+      work, and the current assignees and claim labels are
+      consistent with the record rather than another worker's ownership; and
+    - the release explanation can name both sides from attributable evidence:
+      the merged PR and what it landed, plus the specific work the still-open
+      issue retains. Do not infer either side from a branch name or commit
+      summary.
+
+    `Refs` text alone is not evidence: bind it to the issue's cross-reference
+    event and the same-repository PR read. A merged PR alone is not evidence
+    either: an old, pre-claim, fork, closing-keyword, or differently-authored PR
+    does not qualify. Zero or multiple qualifying PRs, a missing or incomplete
+    claim record, an unreadable PR/timeline, or any newer activity that
+    cannot be attributed to the qualifying PR all
+    **fail closed to maintainer confirmation**.
+
+    Immediately before the first cleanup write, re-run the issue, timeline,
+    comments, and qualifying-PR reads used above and
+    require the same current claim record, PR attribution, marker state, and absence of competing
+    work. Any changed or unreadable evidence returns to maintainer confirmation;
+    a confirmation based on the earlier snapshot never authorizes cleanup of
+    newer state.
+
+    On the qualifying path, restore the exact displaced `claim:*` or legacy `agent:*` label the
+    current claim chain proves it inherited. Remove only claim-owned assignees
+    and the live claim label: that can mean both the inherited chain assignee
+    login and the current author when the direct record says this claim added a
+    distinct assignment. Do not collapse those two proven markers into one.
+    Keep the partial-failure rules above. The final release comment must explain the transition before
+    its supersede line, for example:
+
+    ```text
+    Partial delivery: <PR URL and what landed>. Remaining: <specific open work>.
+
+    Claim released — partial delivery landed and the remaining work is not in flight. (Supersedes the claim record above.)
+    ```
+
+    Post that comment last, only after every applicable restore/removal
+    succeeds. Unlike completed closure below, restoring the displaced label is
+    required because the issue is still open; omitting it would erase the
+    predecessor ownership that this claim temporarily displaced.
   - **Merged / issue closed** — *not* "nothing to release". GitHub clears no
-    marker on merge, and a personal-account project has no automation to move
-    the card, so the work finishes and the board shows an agent still holding
-    it. (Where the `claim-release.yml` workflow is installed, the close event
+    marker on merge. Where the `claim-release.yml` workflow is installed, the close event
     already released the label, assignee, and claim comment — the probes
-    above will show a `Claim released —` supersede; what remains for this
-    step is the board, which the workflow never touches. See
-    `track-work/references/claim-lifecycle.md`.) This outcome does not stop
+    above will show a `Claim released —` supersede. Project state is neither a
+    claim marker nor residual cleanup. This outcome does not stop
     at describing the problem: **assemble the
     full cleanup — the block below, under its "undo only what the claim
     added" rule, finishing with the `Claim released —` supersede comment
@@ -131,16 +196,15 @@ read it in the UI) — never guess.
     above may be minutes old, and the analysis between them and the cleanup
     is exactly where a reopen or a fresh claim lands unseen. Re-run *both*
     §2 probes (`state,stateReason,assignees,labels` plus the timeline
-    cross-references) **and** re-fetch the comments and the card (`--show`):
+    cross-references) **and** re-fetch the comments:
     a second session on the same GitHub identity is visible only in a new
     claim comment or a new PR, never in the converging markers. Any change
     from what the conditions were judged on returns this to stop-and-ask,
     the same pre-write re-read `/claim` performs before claiming.
 
     Otherwise **stop and ask** — in particular when no claim record survives,
-    the record says `prior board status: unknown`, another agent's `claim:*`
-    (or legacy `agent:*`) label is present, another open PR still references the issue, or the card
-    sits at a status this lifecycle never writes.
+    another agent's `claim:*` (or legacy `agent:*`) label is present, or another
+    open PR still references the issue.
 
     (The single confirmation is about *judgment*, not tool permissions: the
     agent does not debate whether cleanup is wanted, and every write below
@@ -155,106 +219,41 @@ read it in the UI) — never guess.
     finished, closed work would advertise a live claim over nothing — the
     exact state this cleanup removes.
 
-    Add `--status Done` **only with evidence
-    the issue is actually finished**: it is closed as `completed`
-    (`stateReason`), or a merged PR linked it with a *closing keyword*
-    (`closedByPullRequestsReferences`). A merged PR that only says `Refs #N`
-    finished part of it, and an issue closed `not planned` was never
-    delivered — `Done` would be false in both. In those cases **restore the
-    status the claim comment recorded** rather than leaving `Status` alone:
-    `/shepherd` deliberately parks a `Refs`-only issue at `In Progress`, so
-    doing nothing here leaves the board advertising an active claim over work
-    that has stopped. (`/shepherd` never sets `Done` at all: it stops before
-    the merge, so for it `Done` is a prediction rather than a record.)
   - **Neither** — the session stopped mid-flight. Offer the commands to hand
-    the work back. `/claim` set **four** markers, and clearing only some
+    the work back. Clear every attributable assignee/label marker; clearing only some
     leaves the issue still advertising itself as held — the exact failure this
     step exists to prevent:
 
-    **Undo only what the claim added.** The claim comment carries a "Claim
-    record" listing which markers `/claim` actually created. An issue can
+    **Undo only what the complete trusted claim lineage proves.** The current
+    claim comment carries a "Claim record" listing which markers `/claim`
+    actually created and which predecessor ownership it inherited. An issue can
     be assigned to you, or carry the label, *before* the claim — ordinary
     backlog ownership, which `/claim` explicitly allows — and the writes
     are all add-if-missing, so on that path they changed nothing. Removing
     them anyway destroys state the session never created, and no amount of
     user approval recovers it, because by then nobody can tell which it was.
-    Skip any line the record marks `no`; if no record survives, ask rather
-    than assume the claim created everything.
+    Never turn the leaf record's chain fields directly into commands. Run the
+    release helper, which walks the trusted A→B→C lineage and proves every
+    inherited assignee, owned label, and displaced-label restoration against
+    its immediate predecessor before any write. A forged or edited leaf fails
+    closed. If no record survives, ask rather than assume the claim created
+    anything.
 
     ```sh
-    # Separate commands on purpose: the label is optional (/claim skips it
-    # where the family does not exist), and `--remove-label` on a label the
-    # repo lacks fails the whole `gh issue edit` — taking the assignee removal
-    # down with it and leaving the claim standing. A marker already released
-    # by /shepherd's green stop or the claim-release workflow makes its
-    # command a harmless no-op — skip its line rather than re-releasing.
-    #
-    # Board FIRST, searchable markers LAST. The board write is the one that
-    # fails for environmental reasons (missing `project` scope), and the
-    # assignee and `claim:*` label are what /kickoff's stale-claim sweep
-    # queries — clear them before a failed board write and the leftover card
-    # becomes undiscoverable (the board-only gap, harmon-devkit#183).
-    # The recorded board title and status are external data — a project title
-    # can contain `$(…)` or backticks, and pasting it inside double quotes
-    # executes it before the helper runs. Paste both inside single quotes
-    # exactly as recorded. A title that itself contains a single quote cannot
-    # be single-quoted: load it without any shell evaluation via a quoted
-    # heredoc, then pass the variable —
-    #   IFS= read -r TITLE <<'RECORDED_TITLE_EOF'
-    #   <paste the title verbatim>
-    #   RECORDED_TITLE_EOF
-    # and use --project "$TITLE". Status options are custom text too — the
-    # same form (a second heredoc into STATUS) covers a recorded status
-    # containing a quote.
-    <track-work-dir>/assets/set-issue-status.sh --repo <owner/repo> --issue <n> \
-      --project '<the board the claim comment recorded>' \
-      --status '<the status the claim comment recorded>'
-    # If the record names a displaced label, put it back — the claim removed it:
-    gh issue edit <n> --repo <owner/repo> --add-label <the displaced label the record names>
-    gh issue edit <n> --repo <owner/repo> --remove-label <the exact label the record says the claim added>  # e.g. claim:claude, model-pinned claim:claude:opus, or legacy agent:claude-code
-    gh issue edit <n> --repo <owner/repo> --remove-assignee @me          # likewise
-    gh issue comment <n> --repo <owner/repo> --body-file -   # why it was handed back
+    # Use the exact reason appropriate to the outcome. The helper validates
+    # the whole lineage, re-reads before writing, orders destructive writes so
+    # partial failures remain retryable, and posts the fixed supersede line last.
+    <track-work-dir>/assets/release-claim.sh \
+      --repo <owner/repo> --issue <n> --reason '<why it was handed back>'
     ```
 
-    **Pass `--project`.** The record names the board the claim actually moved.
-    An issue added to a second project since then makes the helper either
-    prefer `<owner> Project` or refuse as ambiguous — restoring the wrong card
-    while the claimed one stays at `In Progress`.
-
-    **The hand-back comment is the release comment** — it must carry the
+    **The helper's final comment is the release comment** — it carries the
     `Claim released —` supersede line above, verbatim, like every other path
     that clears a marker.
 
-    **Restore, don't reset.** The claim comment records the status the claim
-    overwrote; put that back. Sending a shaped, prioritized issue to `Todo`
-    silently discards planning state and can requeue it wrongly. If the comment
-    says "unknown" or no comment survives, ask the user instead of picking —
-    `Todo` and `Agent Queue` are guesses, not defaults.
-
-    **Check the card first** (`set-issue-status.sh … --show`), because
-    project-field edits leave no trace in the issue's history — a human's
-    later decision is invisible unless you look. What you may restore depends
-    on *who* last wrote the value:
-
-    - `In Progress` — this claim wrote it. Restore. Where the record says the
-      prior status was `none`, restoring means *clearing* the field, not
-      picking a value — `set-issue-status.sh` only sets options, so that is
-      manual (`gh project item-edit --clear`, or the board UI). Only
-      `unknown` — a read that actually failed — needs the user.
-    - `Verifying`, `In Review`, `Ready to Merge` — `/shepherd` wrote these for
-      a PR. If that PR is now closed unmerged or abandoned, they are this
-      lifecycle's own leftovers and no work is in flight: restore. Refusing
-      here just strands the card mid-pipeline forever, which is the failure
-      this whole step exists to prevent.
-    - Anything else — `Icebox`, `Next`, `Shaping`, a status this lifecycle
-      never writes — someone else moved it. Leave it and say what you found.
-
-    **Leave the `Agent` field alone.** It is retired, and a claim never wrote
-    it — advisory routing now lives in the `suggest:*` label and live ownership
-    in the `claim:*` label. If a legacy `Agent` value still lingers on an old
-    board, it is a planning artifact this claim never set, so clearing it here
-    would delete a decision the claim never made. Release only what the claim
-    record says the claim added.
+    Release only what the claim record says the claim added. Project fields are
+    manual delivery metadata outside the claim contract and are never cleanup
+    authority.
 
     Do not run any of this mid-flight hand-back unasked — the work is being
     handed back, not finished, so it is the user's call: they may be resuming
