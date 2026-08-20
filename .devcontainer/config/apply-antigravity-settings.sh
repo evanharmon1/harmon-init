@@ -151,7 +151,12 @@ restore)
     trap 'rm -f "${settings_tmp:-}"' EXIT
     jq -s --argjson keys "$managed_keys" '
         .[0] as $current | .[1] as $backup |
-        reduce $keys[] as $key ($current; del(.[$key])) |
+        (if $backup.schemaVersion == 3 then
+            ["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox"]
+         else
+            $keys
+         end) as $active_keys |
+        reduce $active_keys[] as $key ($current; del(.[$key])) |
         reduce $backup.present[] as $key (.; .[$key] = $backup.values[$key]) |
         if ((.trustedWorkspaces | type) == "array") then
             .trustedWorkspaces = [

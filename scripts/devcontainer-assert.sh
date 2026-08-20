@@ -489,19 +489,19 @@ assert_unit() {
     ' "$agy_mig_backup" >/dev/null ||
         fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 4 with custom statusLine captured"
 
-    # Test that restore also handles legacy schemaVersion 3 rollback state
+    # Test that restore also handles legacy schemaVersion 3 rollback state and preserves user statusLine
     printf '%s\n' '{"schemaVersion":3,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":["/tmp/old"],"trustedWorkspacesKeyWasPresent":false}' >"$agy_mig_backup"
-    printf '%s\n' '{"toolPermission":"always-proceed","artifactReviewPolicy":"always-proceed","allowNonWorkspaceAccess":true,"enableTerminalSandbox":false,"statusLine":{"type":"command","command":"/etc/claude-code/statusline.sh"},"trustedWorkspaces":["/tmp/old"]}' >"$agy_mig_settings"
+    printf '%s\n' '{"toolPermission":"always-proceed","artifactReviewPolicy":"always-proceed","allowNonWorkspaceAccess":true,"enableTerminalSandbox":false,"statusLine":{"type":"command","command":"/custom/statusline.sh"},"trustedWorkspaces":["/tmp/old"]}' >"$agy_mig_settings"
     HOME="$agy_mig_home" bash "$agy_apply" restore >/dev/null
     jq -e '
         .toolPermission == "request-review" and
         has("artifactReviewPolicy") == false and
         has("allowNonWorkspaceAccess") == false and
         has("enableTerminalSandbox") == false and
-        has("statusLine") == false and
+        .statusLine.command == "/custom/statusline.sh" and
         has("trustedWorkspaces") == false
     ' "$agy_mig_settings" >/dev/null ||
-        fail "Antigravity policy rollback did not handle legacy schemaVersion 3 backup on restore"
+        fail "Antigravity policy rollback did not handle legacy schemaVersion 3 backup on restore while preserving statusLine"
 
     HOME="$agy_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace_moved" >/dev/null
     jq -e '.trustedWorkspaces == [$first, $second]' \
