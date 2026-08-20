@@ -101,19 +101,19 @@ fields=$(jq -r '
   # and folding that to 0 would draw two empty quota bars claiming a fresh
   # allowance the session does not have. Only a real 0 may render as 0.
   def o: if . == null then "" else (. | n) end;
-  [ ((.workspace.current_dir // .cwd)   | s)
-  , (.workspace.project_dir             | s)
-  , (.model.display_name                | s)
-  , (.effort.level                      | s)
-  , ((.fast_mode        == true)        | s)
-  , ((.thinking.enabled == true)        | s)
-  , (.version                           | s)
-  , (.output_style.name                 | s)
-  , (.session_id                        | s | .[0:8])
-  , (.session_name                      | s)
+  [ ((.workspace.current_dir // .cwd // .workspace_path) | s)
+  , (.workspace.project_dir                             | s)
+  , ((.model.display_name // .model.id // .model)       | s)
+  , ((.effort.level // .effort)                         | s)
+  , (((.fast_mode == true) or (.fast == true))          | s)
+  , (((.thinking.enabled == true) or (.thinking == true)) | s)
+  , (.version                                           | s)
+  , ((.output_style.name // .output_style)              | s)
+  , ((.session_id // .conversation_id // .conversationId) | s | .[0:8])
+  , (.session_name                                      | s)
   # The context gauge has three states, not two: a percentage, and "unknown".
-  # A payload carrying neither field — an early-session refresh, or a Claude
-  # Code that reports only token counts — must reach the renderer as absent so
+  # A payload carrying neither field — an early-session refresh, or an agent
+  # that reports only token counts — must reach the renderer as absent so
   # it draws `context n/a`. Defaulting the missing remainder to 100 would make
   # `100 - 100 = 0` and paint an empty green bar over a context window that may
   # be nearly full: the one wrong answer worse than no answer. Same rule as `o`
@@ -122,19 +122,23 @@ fields=$(jq -r '
      then (.context_window.used_percentage      | floor)
      elif (.context_window.remaining_percentage | type) == "number"
      then ((100 - .context_window.remaining_percentage) | floor)
+     elif ((.context_window.total_tokens | type) == "number" and (.context_window.context_window_size | type) == "number" and .context_window.context_window_size > 0)
+     then ((.context_window.total_tokens * 100 / .context_window.context_window_size) | floor)
+     elif ((.context_window.total_input_tokens | type) == "number" and (.context_window.total_output_tokens | type) == "number" and (.context_window.context_window_size | type) == "number" and .context_window.context_window_size > 0)
+     then (((.context_window.total_input_tokens + .context_window.total_output_tokens) * 100 / .context_window.context_window_size) | floor)
      else "" end)
   , (.context_window.context_window_size    | n)
-  , (.cost.total_cost_usd                   | (. // 0) | tostring)
+  , ((.cost.total_cost_usd // .cost)        | (. // 0) | tostring)
   , (.cost.total_lines_added                | n)
   , (.cost.total_lines_removed              | n)
   , (.cost.total_duration_ms                | n)
   , (.pr.number                             | s)
   , (.pr.url                                | s)
   , (.pr.review_state                       | s)
-  , (.rate_limits.five_hour.used_percentage | o)
-  , (.rate_limits.five_hour.resets_at       | o)
-  , (.rate_limits.seven_day.used_percentage | o)
-  , (.rate_limits.seven_day.resets_at       | o)
+  , ((.rate_limits.five_hour.used_percentage // .quota.five_hour.used_percentage) | o)
+  , ((.rate_limits.five_hour.resets_at       // .quota.five_hour.resets_at)       | o)
+  , ((.rate_limits.seven_day.used_percentage // .quota.seven_day.used_percentage) | o)
+  , ((.rate_limits.seven_day.resets_at       // .quota.seven_day.resets_at)       | o)
   ] | map(tostring) | join("\u001f")' <<<"$input" 2>/dev/null)
 
 # Split on U+001F (unit separator), not a tab: TAB is IFS *whitespace*, so

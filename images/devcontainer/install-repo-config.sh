@@ -48,8 +48,8 @@ EOF
 tic -x "${config_dir}/ghostty.terminfo"
 
 install -d -m 0755 \
+    /etc/antigravity \
     /etc/claude-code/hooks \
-    /etc/codex/hooks \
     /etc/codex/hooks \
     /home/vscode/.agent-deck \
     /home/vscode/.config/git \
@@ -70,6 +70,7 @@ install -m 0644 "${config_dir}/zshrc" /home/vscode/.zshrc
 
 install -m 0644 "${config_dir}/claude-settings.json" /etc/claude-code/managed-settings.json
 install -m 0755 "${config_dir}/claude-statusline.sh" /etc/claude-code/statusline.sh
+install -m 0755 "${config_dir}/claude-statusline.sh" /etc/antigravity/statusline.sh
 install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
 install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
 for hook in \

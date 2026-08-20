@@ -7,7 +7,7 @@ workspace="${3:-$PWD}"
 settings_dir="$HOME/.gemini/antigravity-cli"
 settings_path="$settings_dir/settings.json"
 backup_path="$settings_dir/settings.json.harmon-init-autonomy-backup"
-managed_keys='["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox"]'
+managed_keys='["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox","statusLine"]'
 
 valid_object() {
     jq -s -e 'length == 1 and (.[0] | type == "object")' "$1" >/dev/null
