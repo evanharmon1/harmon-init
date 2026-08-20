@@ -57,8 +57,11 @@ net_probe() {
 # %(refname:lstrip=2), not %(refname:short): when a tag shares a branch's
 # name, :short disambiguates to "heads/<name>" and every "refs/heads/$branch"
 # built from it dereferences nothing (challenge r1).
+# Sentinels on the optionally-empty fields: tab is IFS whitespace, so `read`
+# would COLLAPSE an empty middle field and shift %(symref) into the track
+# column. Same hazard, same fix, as clean-branches.sh.
 git for-each-ref refs/heads \
-    --format='%(refname:lstrip=2)%09%(objectname)%09%(upstream:track)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
     >"$tmp/branches"
 total_branches="$(wc -l <"$tmp/branches" | tr -d ' ')"
 
@@ -94,7 +97,7 @@ if [ "$has_remote" = false ]; then
     echo "No remote configured — every local commit is unpushed by definition; listing skipped."
 else
     unpushed_count=0
-    while IFS=$'\t' read -r branch _tip _track; do
+    while IFS=$'\t' read -r branch _tip _track _symref; do
         n="$(git rev-list --count "refs/heads/$branch" --not --remotes --)"
         if [ "$n" -gt 0 ]; then
             printf '  %s — %s commit(s) on no remote\n' "$branch" "$n"
@@ -113,6 +116,7 @@ fi
 # here until a fetch --prune — its local branch reads neither [gone] nor
 # unpushed (challenge r2). One bounded read of the remote's advertised heads
 # makes that staleness explicit instead of silent.
+freshness_indeterminate=0
 section "Remote-tracking freshness"
 if [ "$has_remote" = false ]; then
     echo "  n/a — no remote configured"
@@ -136,25 +140,44 @@ elif net_probe git ls-remote --symref "$remote" HEAD "refs/heads/*" >"$tmp/remot
         default_branch="$live_default"
     fi
     awk '$1 != "ref:" && $2 != "HEAD"' "$tmp/remote-heads-raw" >"$tmp/remote-heads"
-    # Full refname with a dynamic strip, not %(refname:lstrip=3): a remote
-    # name may itself contain slashes, and a fixed strip depth would mangle
-    # every tracking ref into a false "deleted upstream" (review r2).
-    git for-each-ref "refs/remotes/$remote" \
-        --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
-        >"$tmp/tracking"
-    while IFS=$'\t' read -r tref toid tsymref; do
-        [ "$tsymref" = "-" ] || continue
-        tname="${tref#refs/remotes/$remote/}"
-        live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"
-        if [ -z "$live_oid" ]; then
-            printf '  stale  %s — deleted upstream; local tracking ref survives until a prune\n' "$tname"
-            stale=$((stale + 1))
-        elif [ "$live_oid" != "$toid" ]; then
-            printf '  stale  %s — moved upstream (local tracking is behind or diverged)\n' "$tname"
-            stale=$((stale + 1))
-        fi
-    done <"$tmp/tracking"
-    if [ "$stale" -eq 0 ]; then
+    # A tracking ref names `refs/heads/<same name>` only under the identity
+    # fetch refspec. Under `refs/heads/*:refs/remotes/origin/upstream/*`, or
+    # with extra refspecs pulling in e.g. pull refs, the local name is a
+    # DESTINATION — comparing it marks fresh refs stale and recommends a prune
+    # that can never clear the report. Say nothing rather than something false
+    # (found in clean:branches by challenge r1 on #958; the same expression was
+    # copied from here, so both are corrected together).
+    audit_fetch_specs="$(git config --get-all "remote.$remote.fetch" 2>/dev/null || true)"
+    if [ "$audit_fetch_specs" != "+refs/heads/*:refs/remotes/$remote/*" ] &&
+        [ "$audit_fetch_specs" != "refs/heads/*:refs/remotes/$remote/*" ]; then
+        echo "  n/a — $remote is fetched under a non-identity refspec, so a tracking name does not identify a remote branch"
+        : >"$tmp/tracking"
+        freshness_indeterminate=1
+    else
+        # Full refname with a dynamic strip, not %(refname:lstrip=3): a remote
+        # name may itself contain slashes, and a fixed strip depth would mangle
+        # every tracking ref into a false "deleted upstream" (review r2).
+        git for-each-ref "refs/remotes/$remote" \
+            --format='%(refname)%09%(objectname)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
+            >"$tmp/tracking"
+        while IFS=$'\t' read -r tref toid tsymref; do
+            [ "$tsymref" = "-" ] || continue
+            tname="${tref#refs/remotes/$remote/}"
+            live_oid="$(awk -v r="refs/heads/$tname" '$2 == r { print $1; exit }' "$tmp/remote-heads")"
+            if [ -z "$live_oid" ]; then
+                printf '  stale  %s — deleted upstream; local tracking ref survives until a prune\n' "$tname"
+                stale=$((stale + 1))
+            elif [ "$live_oid" != "$toid" ]; then
+                printf '  stale  %s — moved upstream (local tracking is behind or diverged)\n' "$tname"
+                stale=$((stale + 1))
+            fi
+        done <"$tmp/tracking"
+    fi
+    if [ "${freshness_indeterminate:-0}" -eq 1 ]; then
+        # Nothing was compared, so "fresh" would contradict the n/a above and
+        # claim a verification that did not happen (challenge r2).
+        :
+    elif [ "$stale" -eq 0 ]; then
         echo "  fresh — local tracking refs match the remote's advertised heads"
     else
         echo "  -> $stale stale tracking ref(s): run 'task clean:remote-refs' (git fetch --prune), then re-run this audit"
@@ -166,7 +189,7 @@ fi
 # ── 2. Gone-upstream classification ─────────────────────────────────────────
 
 section "Branches whose upstream is gone"
-awk -F'\t' '$3 == "[gone]" { print $1 "\t" $2 }' "$tmp/branches" >"$tmp/gone"
+awk -F'\t' '$3 == "[gone]" { print $1 "\t" $2 "\t" $4 }' "$tmp/branches" >"$tmp/gone"
 gone_count="$(wc -l <"$tmp/gone" | tr -d ' ')"
 if [ "$gone_count" -eq 0 ]; then
     echo "  none"
@@ -191,15 +214,49 @@ else
         if [ "$merged_seen" -ge "$pr_limit" ]; then
             echo "  (note: merged-PR listing hit its $pr_limit cap — 'no merged PR' below may be incomplete)"
         fi
+        # A branch checked out in a linked worktree is one `clean:branches`
+        # will refuse — `git branch -d` declines it, and that task guards the
+        # update-ref path explicitly. Counting it as prunable made this report
+        # hand the operator a number and name the very task that would decline
+        # part of it (harmon-init#958). Same derivation clean-branches.sh uses,
+        # so the two cannot disagree about what is checked out.
+        #
+        # A worktree PATH may contain a newline, which this line-delimited form
+        # truncates; a branch NAME cannot (git refnames forbid control
+        # characters), so the classification below is unaffected and only a
+        # displayed path could be short.
+        git worktree list --porcelain | awk '
+            /^worktree /            { path = substr($0, 10) }
+            /^branch refs\/heads\// { printf "%s\t%s\n", substr($0, 19), path }
+        ' >"$tmp/checked-out"
+
         prunable=0
+        held=0
         tip_differs=0
         no_pr=0
-        while IFS=$'\t' read -r branch tip; do
+        while IFS=$'\t' read -r branch tip symref; do
             match="$(awk -F'\t' -v b="$branch" -v tip="$tip" -v base="$default_branch" \
                 '$1 == b && $2 == tip && $4 == base { print $3; exit }' "$tmp/merged-prs")"
-            if [ -n "$match" ]; then
-                printf '  prunable      %s — merged PR #%s into %s (head == tip %s)\n' "$branch" "$match" "$default_branch" "${tip:0:12}"
-                prunable=$((prunable + 1))
+            if [ -n "$match" ] && [ "$symref" != "-" ]; then
+                # clean:branches skips every symbolic ref rather than
+                # dereferencing it, so evidence about its TARGET says nothing
+                # about the alias. Counting it prunable named a task that
+                # refuses it — the same defect as the worktree case above, in a
+                # second form (Codex review on PR #991).
+                printf '  held          %s — merged PR #%s, but it is a symbolic ref to %s (never dereferenced)\n' "$branch" "$match" "$symref"
+                held=$((held + 1))
+            elif [ -n "$match" ]; then
+                held_path="$(awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }' "$tmp/checked-out")"
+                if [ -n "$held_path" ]; then
+                    # Still shown — the evidence is real and the operator
+                    # should see it — but not counted toward a total
+                    # attributed to a task that will decline it.
+                    printf '  held          %s — merged PR #%s, but checked out in worktree %s\n' "$branch" "$match" "$held_path"
+                    held=$((held + 1))
+                else
+                    printf '  prunable      %s — merged PR #%s into %s (head == tip %s)\n' "$branch" "$match" "$default_branch" "${tip:0:12}"
+                    prunable=$((prunable + 1))
+                fi
             elif awk -F'\t' -v b="$branch" '$1 == b { found = 1; exit } END { exit !found }' "$tmp/merged-prs"; then
                 printf '  tip differs   %s — a merged PR matches by name but not tip/base (a human decides)\n' "$branch"
                 tip_differs=$((tip_differs + 1))
@@ -208,8 +265,22 @@ else
                 no_pr=$((no_pr + 1))
             fi
         done <"$tmp/gone"
-        printf '  -> %s prunable (task clean:branches), %s tip-differs, %s without a merged PR\n' \
-            "$prunable" "$tip_differs" "$no_pr"
+        # The invariant this line now keeps: the figure attributed to
+        # `clean:branches` equals what that task reports as deletable on the
+        # same tree.
+        if [ "$held" -gt 0 ]; then
+            # "held" covers two distinct reasons — a worktree checkout and a
+            # symbolic ref — so the bucket is labelled generically. Saying
+            # "held by a worktree" told the operator the wrong reason whenever
+            # a symbolic hold was in the count, or the only thing in it (Codex
+            # review on PR #991). Each entry names its own reason above; the
+            # aggregate does not have to guess at one.
+            printf '  -> %s prunable (task clean:branches), %s held (see above), %s tip-differs, %s without a merged PR\n' \
+                "$prunable" "$held" "$tip_differs" "$no_pr"
+        else
+            printf '  -> %s prunable (task clean:branches), %s tip-differs, %s without a merged PR\n' \
+                "$prunable" "$tip_differs" "$no_pr"
+        fi
     else
         echo "  UNVERIFIED — gh unavailable or the merged-PR read failed; $gone_count gone branch(es) unclassified:"
         awk -F'\t' '{ print "    " $1 }' "$tmp/gone"

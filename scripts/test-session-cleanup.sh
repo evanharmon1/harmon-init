@@ -239,6 +239,26 @@ wt_tip="$(make_branch wt-checked wt.txt)"
 retire_remote wt-checked
 git -C "$fixture" worktree add -q "$test_tmp/wt" wt-checked
 
+# 5b. tracked-live: pushed, upstream still present, not merged — ordinary
+#     in-flight work that WAS classified from a tracking ref. The freshness
+#     caveat counts this one and must not count unpushed-live below, which has
+#     no upstream for a prune to affect (Codex review on PR #991).
+make_branch tracked-live tracked.txt >/dev/null
+
+# 5c. local-upstream: tracks another LOCAL branch (branch.<name>.remote=.).
+#     %(upstream) is non-empty, but it is under refs/heads/, so
+#     `task clean:remote-refs` cannot affect how this branch is classified and
+#     the freshness caveat must not count it (Codex review on PR #991).
+(
+    cd "$fixture"
+    git checkout -q -b local-upstream main
+    echo localup >localup.txt
+    git add localup.txt
+    git commit -qm "work tracking a local branch"
+    git branch --set-upstream-to=main local-upstream >/dev/null 2>&1
+    git checkout -q main
+)
+
 # 6. unpushed-live: never pushed anywhere — ordinary in-flight work, silent
 #    survival.
 (
@@ -338,6 +358,96 @@ expect_contains "$audit_out" "deferred-findings/wt-checked (branch exists) [work
 expect_contains "$audit_out" "stub/fixture/42.json" "audit: shepherd cycle state listed"
 echo "ok: audit reports all artifact classes read-only"
 
+# ── Case B2: the audit's prunable figure equals what clean:branches deletes ──
+#
+# wt-checked has merged-PR evidence AND is checked out in a linked worktree.
+# The audit counted it as prunable and attributed the total to a task that
+# refuses it, so the operator was handed a number nothing would act on
+# (harmon-init#958). It must now be shown, classified as held, and excluded
+# from the figure.
+expect_contains "$audit_out" "held          wt-checked" "audit: worktree-checked-out branch is held, not prunable"
+expect_not_contains "$audit_out" "prunable      wt-checked" "audit: worktree-checked-out branch is not counted prunable"
+# Generic on purpose: "held" covers a worktree checkout AND a symbolic ref, so
+# a summary naming only one gives the wrong reason whenever the other is in the
+# count (Codex, PR #991). Each entry states its own reason.
+expect_contains "$audit_out" "held (see above)" "audit: the summary names the held bucket without guessing its reason"
+expect_not_contains "$audit_out" "held by a worktree" "audit: the aggregate does not claim a single reason (#958)"
+
+# The invariant is SUBSET, not equality, and the distinction is load-bearing.
+# clean:branches deletes on two evidence types — ancestry or a merged PR —
+# while the audit classifies prunable on PR evidence alone, so an
+# ancestry-merged branch is legitimately deletable without being prunable
+# (tracked separately). What #958 fixes is the other direction: nothing may be
+# called prunable that clean:branches will refuse. Asserted per branch rather
+# than on the totals, because two counts can coincide while naming different
+# branches.
+audit_prunable_names="$(printf '%s\n' "$audit_out" |
+    sed -n 's/^  prunable      \([^ ]*\) .*/\1/p' | sort)"
+clean_deletable_names="$(printf '%s\n' "$dry_out" |
+    sed -n 's/^WOULD DELETE  \([^ ]*\) .*/\1/p' | sort)"
+[ -n "$audit_prunable_names" ] || fail "the audit classified nothing prunable — the fixture no longer exercises this (#958)"
+[ -n "$clean_deletable_names" ] || fail "clean:branches found nothing deletable — the fixture no longer exercises this (#958)"
+not_deletable="$(comm -23 <(printf '%s\n' "$audit_prunable_names") <(printf '%s\n' "$clean_deletable_names"))"
+[ -z "$not_deletable" ] ||
+    fail "the audit called these prunable but clean:branches will not delete them (#958): $(printf '%s' "$not_deletable" | tr '\n' ' ')"
+echo "ok: every branch the audit calls prunable is one clean:branches would delete"
+
+# ── Case B3: clean:branches reports tracking-ref staleness ──────────────────
+#
+# Every classification reads local tracking refs, so a branch whose upstream is
+# already gone reads as neither [gone] nor unpushed and lands in `in-flight
+# kept` — a bucket that says "deliberately left alone", not "I could not tell".
+# The audit has said so since it was written; the task that actually deletes
+# did not (harmon-init#958). The fixture's tf-stale ref is exactly that shape.
+expect_contains "$dry_out" "were classified from local tracking refs" "clean:branches: the in-flight bucket carries its caveat"
+expect_contains "$dry_out" "skipFetchAll" "clean:branches: the remedy names the remote fetch --all passes over"
+expect_contains "$dry_out" "task clean:remote-refs" "clean:branches: the caveat names the remedy"
+# The caveat must count only branches an upstream could have misclassified.
+# The fixture's unpushed-live has none, so it must not be included: keying on
+# the aggregate in-flight count warned about ordinary local-only branches, and
+# a caveat that fires in the common case is one nobody reads (Codex, PR #991).
+# The caveat no longer prints a count — the figure needed redefining four
+# times and a skipFetchAll remote would have broken it again. What must hold is
+# that it fires only when a remote-backed upstream is in play: unpushed-live
+# and local-upstream must not, on their own, be able to trigger it.
+expect_not_contains "$dry_out" " of the " "clean:branches: the caveat asserts no count (#958)"
+
+# Suppression needs its OWN repository: the main fixture always has a
+# remote-tracking in-flight branch, so it can only ever show the caveat firing.
+# Without this, keying the caveat back on the aggregate in-flight count passes
+# every assertion above (mutant M9).
+untracked_only="$test_tmp/untracked-only"
+untracked_origin="$test_tmp/untracked-only-origin.git"
+git init -q --bare --initial-branch=main "$untracked_origin"
+git init -q --initial-branch=main "$untracked_only"
+(
+    cd "$untracked_only"
+    git config user.name "Session Cleanup Test"
+    git config user.email "session-cleanup@example.invalid"
+    git config commit.gpgsign false
+    git remote add origin "$untracked_origin"
+    echo seed >seed.txt
+    git add seed.txt
+    git commit -qm "chore: seed"
+    git push -q origin main
+    # Its OWN unmerged commit: a branch sitting at main's tip is deletable by
+    # ancestry, not kept in-flight, and would exercise nothing here.
+    git checkout -q -b local-only-work
+    echo local >local.txt
+    git add local.txt
+    git commit -qm "local-only work"
+    git checkout -q main
+)
+mkdir -p "$untracked_only/scripts"
+cp "$repo/scripts/clean-branches.sh" "$untracked_only/scripts/"
+untracked_out="$(cd "$untracked_only" && bash scripts/clean-branches.sh 2>&1)" ||
+    fail "untracked-only dry run exited nonzero: $untracked_out"
+# The summary line prints "N in-flight kept" even when N is zero, so match the
+# count, not the phrase — otherwise this passes against a fixture that keeps
+# nothing and the suppression below proves nothing.
+expect_contains "$untracked_out" "1 in-flight kept" "untracked-only: the local branch is kept in-flight"
+expect_not_contains "$untracked_out" "classified from local tracking refs" \
+    "clean:branches: no caveat when no in-flight branch has a remote-backed upstream (#958)"
 # Degraded mode: a failing gh probe is UNVERIFIED, never silently clean.
 audit_fail_out="$(cd "$fixture" && GH_STUB_FAIL=1 bash scripts/audit-session-artifacts.sh 2>&1)" ||
     fail "degraded audit exited nonzero: $audit_fail_out"
@@ -1404,6 +1514,25 @@ branch_exists anc-ren || fail "rename: anc-ren deleted although the remote defau
 ren_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
     fail "audit exited nonzero inside the renamed-default window: $ren_audit_out"
 expect_contains "$ren_audit_out" "default branch is now 'trunk'" "rename: audit resolves the live default over stale origin/HEAD"
+
+# A non-identity fetch refspec makes a tracking name a DESTINATION, not a
+# remote branch — comparing them marks fresh refs stale and recommends a prune
+# that can never clear the warning. Both tasks must decline to compare and say
+# why, rather than emit something false (challenge r1). The audit copied this
+# expression first, so both are asserted.
+orig_fetch="$(git -C "$fixture" config --get remote.origin.fetch)"
+git -C "$fixture" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/upstream/*'
+spec_audit_out="$(cd "$fixture" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
+    fail "non-identity-refspec audit exited nonzero: $spec_audit_out"
+expect_contains "$spec_audit_out" "non-identity refspec" "refspec: audit declines to compare (#958)"
+expect_not_contains "$spec_audit_out" "deleted upstream" "refspec: audit emits no false staleness (#958)"
+# ...and must then reach NO verdict at all. Both of the section's conclusions
+# are claims about a comparison that did not happen — "fresh" asserts the refs
+# match, and "-> N stale" asserts a count from an empty scan. An assertion
+# naming only one of them passes while the other fires (found by mutant M8).
+expect_not_contains "$spec_audit_out" "fresh — local tracking refs match" "refspec: audit does not claim fresh after skipping the comparison (#958)"
+expect_not_contains "$spec_audit_out" "stale tracking ref(s):" "refspec: audit does not report a stale count after skipping the comparison (#958)"
+git -C "$fixture" config remote.origin.fetch "$orig_fetch"
 
 git -C "$origin" symbolic-ref HEAD refs/heads/main
 git -C "$origin" update-ref -d refs/heads/trunk

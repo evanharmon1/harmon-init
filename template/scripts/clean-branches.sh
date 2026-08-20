@@ -234,15 +234,16 @@ merged_pr_for() {
 # whitespace, so `read` would otherwise COLLAPSE an empty middle field and
 # shift %(symref) into the track column.
 git for-each-ref refs/heads \
-    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)%09%(if)%(upstream)%(then)%(upstream)%(else)-%(end)' \
     >"$tmp/branches"
 
 total=0
 candidates=0
 refused=0
 active=0
+active_tracked=0
 
-while IFS=$'\t' read -r branch tip track symref; do
+while IFS=$'\t' read -r branch tip track symref upstream_ref; do
     total=$((total + 1))
 
     [ "$branch" = "$current_branch" ] && continue
@@ -326,6 +327,25 @@ while IFS=$'\t' read -r branch tip track symref; do
         continue
     fi
     active=$((active + 1))
+    # Only a branch with an upstream can have been classified from a tracking
+    # ref, so only those make the freshness caveat relevant. Keying the caveat
+    # on the aggregate count instead warned about ordinary local-only feature
+    # branches, which no prune can affect — a warning that fires in the common
+    # case is one nobody reads (Codex review on PR #991).
+    #
+    # The upstream REF, not merely its presence, and not %(upstream:track):
+    # track is empty for a branch in sync with its upstream, so it cannot tell
+    # "no upstream" from "up to date"; and presence alone counts a branch that
+    # tracks another LOCAL branch (branch.<name>.remote=.), whose upstream is
+    # under refs/heads/ and which no prune can affect.
+    #
+    # refs/remotes/ is the terminal test rather than another narrowing in a
+    # series: `task clean:remote-refs` is `git fetch --all --prune`, so it
+    # affects exactly the refs under that prefix — every one of them, and
+    # nothing else. Whichever remote they belong to.
+    case "$upstream_ref" in
+    refs/remotes/*) active_tracked=$((active_tracked + 1)) ;;
+    esac
 done <"$tmp/branches"
 
 # ── Act (or report) ─────────────────────────────────────────────────────────
@@ -480,11 +500,39 @@ if [ -s "$tmp/candidates" ]; then
     done <"$tmp/candidates"
 fi
 
+# Every classification above reads LOCAL tracking refs, so a branch whose
+# upstream was deleted on merge reads as neither [gone] nor unpushed and lands
+# in `in-flight kept` — a bucket that means "deliberately left alone" rather
+# than "I could not tell". Say so whenever that bucket is non-empty.
+#
+# Deliberately NOT a live probe. An earlier revision asked the remote which
+# refs were stale, and the exactness cost more than it bought: the answer has
+# to be captured atomically with the classification snapshot or a concurrent
+# fetch silences it, it needs the HEAD symref to notice a renamed default, and
+# it is meaningless under a non-identity fetch refspec. Six findings across two
+# review rounds, all in the probe, none in the reporting this issue is about.
+# The issue asks only that the task "performs, or explicitly reports the
+# absence of" the check, and says a one-line note would be enough. This is that
+# note: deterministic, no network, and impossible to race.
+tracking_caveat() {
+    [ "$active_tracked" -gt 0 ] || return 0
+    # No count. The predicate below decides WHETHER this is relevant, and that
+    # is worth getting right; the figure is not. It needed redefining four
+    # times — the aggregate in-flight count, then upstream presence, then
+    # %(upstream:track) versus presence, then local-upstream branches — and a
+    # remote configured `skipFetchAll` would have made it wrong again, since
+    # the remedy below is `fetch --all --prune` and that skips such a remote.
+    # A sentence that names the condition needs none of those distinctions.
+    echo "clean:branches: some branches kept as in-flight were classified from local tracking refs, and a branch whose upstream is already gone reads as in-flight until you prune. If in doubt, run 'task clean:remote-refs' — plus an explicit fetch for any remote set to skipFetchAll, which 'fetch --all' passes over — and re-run."
+}
+
 echo
 if [ "$do_delete" = true ]; then
     echo "clean:branches: $deleted deleted, $refused skipped, $active in-flight kept, $total local branches scanned."
+    tracking_caveat
 else
     echo "clean:branches (dry run): $candidates deletable, $refused skipped, $active in-flight kept, $total local branches scanned."
+    tracking_caveat
     if [ "$candidates" -gt 0 ]; then
         echo "Run 'task clean:branches -- --delete' to delete the branches listed above."
     fi
