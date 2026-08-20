@@ -57,8 +57,11 @@ net_probe() {
 # %(refname:lstrip=2), not %(refname:short): when a tag shares a branch's
 # name, :short disambiguates to "heads/<name>" and every "refs/heads/$branch"
 # built from it dereferences nothing (challenge r1).
+# Sentinels on the optionally-empty fields: tab is IFS whitespace, so `read`
+# would COLLAPSE an empty middle field and shift %(symref) into the track
+# column. Same hazard, same fix, as clean-branches.sh.
 git for-each-ref refs/heads \
-    --format='%(refname:lstrip=2)%09%(objectname)%09%(upstream:track)' \
+    --format='%(refname:lstrip=2)%09%(objectname)%09%(if)%(upstream:track)%(then)%(upstream:track)%(else)-%(end)%09%(if)%(symref)%(then)%(symref)%(else)-%(end)' \
     >"$tmp/branches"
 total_branches="$(wc -l <"$tmp/branches" | tr -d ' ')"
 
@@ -94,7 +97,7 @@ if [ "$has_remote" = false ]; then
     echo "No remote configured — every local commit is unpushed by definition; listing skipped."
 else
     unpushed_count=0
-    while IFS=$'\t' read -r branch _tip _track; do
+    while IFS=$'\t' read -r branch _tip _track _symref; do
         n="$(git rev-list --count "refs/heads/$branch" --not --remotes --)"
         if [ "$n" -gt 0 ]; then
             printf '  %s — %s commit(s) on no remote\n' "$branch" "$n"
@@ -186,7 +189,7 @@ fi
 # ── 2. Gone-upstream classification ─────────────────────────────────────────
 
 section "Branches whose upstream is gone"
-awk -F'\t' '$3 == "[gone]" { print $1 "\t" $2 }' "$tmp/branches" >"$tmp/gone"
+awk -F'\t' '$3 == "[gone]" { print $1 "\t" $2 "\t" $4 }' "$tmp/branches" >"$tmp/gone"
 gone_count="$(wc -l <"$tmp/gone" | tr -d ' ')"
 if [ "$gone_count" -eq 0 ]; then
     echo "  none"
@@ -231,10 +234,18 @@ else
         held=0
         tip_differs=0
         no_pr=0
-        while IFS=$'\t' read -r branch tip; do
+        while IFS=$'\t' read -r branch tip symref; do
             match="$(awk -F'\t' -v b="$branch" -v tip="$tip" -v base="$default_branch" \
                 '$1 == b && $2 == tip && $4 == base { print $3; exit }' "$tmp/merged-prs")"
-            if [ -n "$match" ]; then
+            if [ -n "$match" ] && [ "$symref" != "-" ]; then
+                # clean:branches skips every symbolic ref rather than
+                # dereferencing it, so evidence about its TARGET says nothing
+                # about the alias. Counting it prunable named a task that
+                # refuses it — the same defect as the worktree case above, in a
+                # second form (Codex review on PR #991).
+                printf '  held          %s — merged PR #%s, but it is a symbolic ref to %s (never dereferenced)\n' "$branch" "$match" "$symref"
+                held=$((held + 1))
+            elif [ -n "$match" ]; then
                 held_path="$(awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }' "$tmp/checked-out")"
                 if [ -n "$held_path" ]; then
                     # Still shown — the evidence is real and the operator

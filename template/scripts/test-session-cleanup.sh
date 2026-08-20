@@ -395,31 +395,55 @@ echo "ok: every branch the audit calls prunable is one clean:branches would dele
 # kept` — a bucket that says "deliberately left alone", not "I could not tell".
 # The audit has said so since it was written; the task that actually deletes
 # did not (harmon-init#958). The fixture's tf-stale ref is exactly that shape.
-expect_contains "$dry_out" "have an upstream and were classified from local tracking refs" "clean:branches: the in-flight bucket carries its caveat"
+expect_contains "$dry_out" "were classified from local tracking refs" "clean:branches: the in-flight bucket carries its caveat"
+expect_contains "$dry_out" "skipFetchAll" "clean:branches: the remedy names the remote fetch --all passes over"
 expect_contains "$dry_out" "task clean:remote-refs" "clean:branches: the caveat names the remedy"
 # The caveat must count only branches an upstream could have misclassified.
 # The fixture's unpushed-live has none, so it must not be included: keying on
 # the aggregate in-flight count warned about ordinary local-only branches, and
 # a caveat that fires in the common case is one nobody reads (Codex, PR #991).
-caveat_tracked="$(printf '%s\n' "$dry_out" |
-    sed -n 's/^clean:branches: \([0-9][0-9]*\) of the \([0-9][0-9]*\) branch(es).*/\1/p' | head -1)"
-caveat_total="$(printf '%s\n' "$dry_out" |
-    sed -n 's/^clean:branches: \([0-9][0-9]*\) of the \([0-9][0-9]*\) branch(es).*/\2/p' | head -1)"
-[ -n "$caveat_tracked" ] || fail "the in-flight caveat did not report a tracked count (#958)"
-[ "$caveat_tracked" -lt "$caveat_total" ] ||
-    fail "the caveat counted every in-flight branch ($caveat_tracked of $caveat_total) — unpushed-live has no upstream and must be excluded (#958)"
-# local-upstream HAS an upstream, so presence alone would count it — but that
-# upstream is under refs/heads/ and no prune can affect it. Only a
-# remote-tracking upstream belongs in this figure.
-localup_upstream="$(git -C "$fixture" for-each-ref refs/heads/local-upstream --format='%(upstream)')"
-[ -n "$localup_upstream" ] ||
-    fail "the local-upstream fixture lost its upstream — the case cannot distinguish anything (#958)"
-case "$localup_upstream" in
-refs/remotes/*) fail "the local-upstream fixture tracks a REMOTE ref; it must track a local branch (#958)" ;;
-esac
-[ "$caveat_tracked" -le 2 ] ||
-    fail "the caveat counted a locally-tracking branch ($caveat_tracked) — only remote-backed upstreams belong in it (#958)"
+# The caveat no longer prints a count — the figure needed redefining four
+# times and a skipFetchAll remote would have broken it again. What must hold is
+# that it fires only when a remote-backed upstream is in play: unpushed-live
+# and local-upstream must not, on their own, be able to trigger it.
+expect_not_contains "$dry_out" " of the " "clean:branches: the caveat asserts no count (#958)"
 
+# Suppression needs its OWN repository: the main fixture always has a
+# remote-tracking in-flight branch, so it can only ever show the caveat firing.
+# Without this, keying the caveat back on the aggregate in-flight count passes
+# every assertion above (mutant M9).
+untracked_only="$test_tmp/untracked-only"
+untracked_origin="$test_tmp/untracked-only-origin.git"
+git init -q --bare --initial-branch=main "$untracked_origin"
+git init -q --initial-branch=main "$untracked_only"
+(
+    cd "$untracked_only"
+    git config user.name "Session Cleanup Test"
+    git config user.email "session-cleanup@example.invalid"
+    git config commit.gpgsign false
+    git remote add origin "$untracked_origin"
+    echo seed >seed.txt
+    git add seed.txt
+    git commit -qm "chore: seed"
+    git push -q origin main
+    # Its OWN unmerged commit: a branch sitting at main's tip is deletable by
+    # ancestry, not kept in-flight, and would exercise nothing here.
+    git checkout -q -b local-only-work
+    echo local >local.txt
+    git add local.txt
+    git commit -qm "local-only work"
+    git checkout -q main
+)
+mkdir -p "$untracked_only/scripts"
+cp "$repo/scripts/clean-branches.sh" "$untracked_only/scripts/"
+untracked_out="$(cd "$untracked_only" && bash scripts/clean-branches.sh 2>&1)" ||
+    fail "untracked-only dry run exited nonzero: $untracked_out"
+# The summary line prints "N in-flight kept" even when N is zero, so match the
+# count, not the phrase — otherwise this passes against a fixture that keeps
+# nothing and the suppression below proves nothing.
+expect_contains "$untracked_out" "1 in-flight kept" "untracked-only: the local branch is kept in-flight"
+expect_not_contains "$untracked_out" "classified from local tracking refs" \
+    "clean:branches: no caveat when no in-flight branch has a remote-backed upstream (#958)"
 # Degraded mode: a failing gh probe is UNVERIFIED, never silently clean.
 audit_fail_out="$(cd "$fixture" && GH_STUB_FAIL=1 bash scripts/audit-session-artifacts.sh 2>&1)" ||
     fail "degraded audit exited nonzero: $audit_fail_out"

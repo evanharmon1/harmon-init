@@ -516,7 +516,14 @@ fi
 # note: deterministic, no network, and impossible to race.
 tracking_caveat() {
     [ "$active_tracked" -gt 0 ] || return 0
-    echo "clean:branches: $active_tracked of the $active branch(es) kept as in-flight have an upstream and were classified from local tracking refs — if you have not pruned recently, run 'task clean:remote-refs' and re-run, since a branch whose upstream is already gone reads as in-flight until then."
+    # No count. The predicate below decides WHETHER this is relevant, and that
+    # is worth getting right; the figure is not. It needed redefining four
+    # times — the aggregate in-flight count, then upstream presence, then
+    # %(upstream:track) versus presence, then local-upstream branches — and a
+    # remote configured `skipFetchAll` would have made it wrong again, since
+    # the remedy below is `fetch --all --prune` and that skips such a remote.
+    # A sentence that names the condition needs none of those distinctions.
+    echo "clean:branches: some branches kept as in-flight were classified from local tracking refs, and a branch whose upstream is already gone reads as in-flight until you prune. If in doubt, run 'task clean:remote-refs' — plus an explicit fetch for any remote set to skipFetchAll, which 'fetch --all' passes over — and re-run."
 }
 
 echo
