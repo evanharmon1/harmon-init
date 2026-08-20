@@ -312,6 +312,24 @@ assert_expected_scope() {
     case "$_aes_pdir" in
     "" | "/" | "." | ".." | /* | ../* | */../* | */..) _aes_pdir="" ;;
     esac
+    # An AGENT_SKILLS_DIR overlapping the skills or agents dest would route the
+    # portable-link allowance inside a tree the sync promises never to touch
+    # (or, containing a dest, approve paths the dest's own block already
+    # rejected), so disarm it: those paths then read as rogue writes and abort
+    # — fail-closed. Both directions matter: pdir inside a dest, and a dest
+    # inside pdir.
+    if [ -n "$_aes_pdir" ]; then
+        case "$_aes_pdir" in "$_aes_dest" | "$_aes_dest"/*) _aes_pdir="" ;; esac
+    fi
+    if [ -n "$_aes_pdir" ]; then
+        case "$_aes_dest" in "$_aes_pdir" | "$_aes_pdir"/*) _aes_pdir="" ;; esac
+    fi
+    if [ -n "$_aes_pdir" ] && [ -n "$_aes_adest" ]; then
+        case "$_aes_pdir" in "$_aes_adest" | "$_aes_adest"/*) _aes_pdir="" ;; esac
+    fi
+    if [ -n "$_aes_pdir" ] && [ -n "$_aes_adest" ]; then
+        case "$_aes_adest" in "$_aes_pdir" | "$_aes_pdir"/*) _aes_pdir="" ;; esac
+    fi
     # Delimited membership test (no `grep` subprocess): a pipeline whose reader
     # exits early can report SIGPIPE under `pipefail` and reject a legitimate
     # path.
@@ -372,8 +390,15 @@ assert_expected_scope() {
             case "$_aes_p" in
             "$_aes_pdir"/*)
                 _aes_pname="${_aes_p#"$_aes_pdir"/}"
-                _aes_pname="${_aes_pname%%/*}"
+                # Only a flat .agents/skills/<name> symlink is the link step's
+                # output. A nested path beneath a managed name is not something
+                # it writes — and an entry replaced with a directory or an
+                # arbitrary-target symlink is a rogue object the link step's
+                # divergent-name check does not catch for a dropped skill — so
+                # do not blanket-approve <name>/anything: leave _aes_ok at 0
+                # and let it read as a rogue write (fail-closed).
                 case "$_aes_pname" in
+                */*) ;; # nested path → not a flat symlink → reject
                 "" | "." | "..") ;;
                 *)
                     case "$_aes_haystack" in
