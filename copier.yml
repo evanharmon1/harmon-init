@@ -331,9 +331,9 @@ use_antigravity_cli:
     feature restriction: the CLI operates on the mounted local workspace, so
     review its terms/data handling before using proprietary code. The bot then
     trusts its workspace, always proceeds with tools/artifacts, allows
-    non-workspace access, and disables Antigravity's inner terminal sandbox
-    because the container is the isolation boundary. The human dev profile
-    keeps Antigravity's normal prompts.
+    non-workspace access, disables Antigravity's inner terminal sandbox
+    because the container is the isolation boundary, and configures the
+    statusLine renderer. The human dev profile keeps Antigravity's normal prompts.
   default: no
   when: "[[ devcontainer ]]"
   validator: "[% if use_antigravity_cli and not devcontainer %]Enable DEVCONTAINER before ANTIGRAVITY CLI.[% endif %]"

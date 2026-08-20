@@ -43,15 +43,16 @@ remain the bot's boundaries.
 **Antigravity autonomy is an explicit opt-in.** This repo enables
 `use_antigravity_cli`, so its bot profile applies `always-proceed`, always
 accepts artifact reviews, allows non-workspace access, disables Antigravity's
-inner terminal sandbox, and trusts the current container workspace. The human
-profile keeps Antigravity's normal prompts. Run `agy` interactively once to
-complete Google sign-in; the pinned CLI falls back to file-backed credentials
-when the headless container has no D-Bus keyring, and the `~/.gemini` named
-volume persists that login. A checksum-verified compatibility installer covers
-the interval before the shared-image pin advances, then becomes a network-free
-no-op. The settings helper backs up the four policy keys it owns and tracks its
-workspace-trust entry, so turning the Copier option off restores both while
-preserving unrelated settings.
+inner terminal sandbox, configures the devcontainer status line renderer, and
+trusts the current container workspace. The human profile keeps Antigravity's
+normal prompts. Run `agy` interactively once to complete Google sign-in; the
+pinned CLI falls back to file-backed credentials when the headless container has
+no D-Bus keyring, and the `~/.gemini` named volume persists that login. A
+checksum-verified compatibility installer covers the interval before the
+shared-image pin advances, then becomes a network-free no-op. The settings helper
+backs up the five policy keys it owns and tracks its workspace-trust entry, so
+turning the Copier option off restores all five while preserving unrelated
+settings.
 
 ## Run it locally
 

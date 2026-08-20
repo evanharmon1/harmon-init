@@ -458,17 +458,50 @@ assert_unit() {
         .artifactReviewPolicy == "always-proceed" and
         .allowNonWorkspaceAccess == true and
         .enableTerminalSandbox == false and
+        .statusLine.type == "command" and
+        .statusLine.command == "/etc/claude-code/statusline.sh" and
+        .statusLine.enabled == true and
+        .statusLine.stack_with_default == false and
         .trustedWorkspaces == [$workspace]
     ' --arg workspace "$agy_workspace" "$agy_settings" >/dev/null ||
         fail "Antigravity dev container policy was not merged correctly"
     jq -e '
-        .schemaVersion == 3 and
+        .schemaVersion == 4 and
         .present == ["toolPermission"] and
         .values.toolPermission == "request-review" and
         .introducedWorkspaces == [$workspace] and
         .trustedWorkspacesKeyWasPresent == false
     ' --arg workspace "$agy_workspace" "$agy_backup" >/dev/null ||
         fail "Antigravity policy rollback state was not recorded correctly"
+
+    local agy_mig_home agy_mig_settings agy_mig_backup
+    agy_mig_home="${work_dir}/agy-mig-home"
+    agy_mig_settings="${agy_mig_home}/.gemini/antigravity-cli/settings.json"
+    agy_mig_backup="${agy_mig_home}/.gemini/antigravity-cli/settings.json.harmon-init-autonomy-backup"
+    mkdir -p "${agy_mig_home}/.gemini/antigravity-cli"
+    printf '%s\n' '{"schemaVersion":3,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":["/tmp/old"],"trustedWorkspacesKeyWasPresent":false}' >"$agy_mig_backup"
+    printf '%s\n' '{"statusLine":{"type":"command","command":"/custom/statusline.sh"}}' >"$agy_mig_settings"
+    HOME="$agy_mig_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace" >/dev/null
+    jq -e '
+        .schemaVersion == 4 and
+        (.present | index("statusLine") != null) and
+        .values.statusLine.command == "/custom/statusline.sh"
+    ' "$agy_mig_backup" >/dev/null ||
+        fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 4 with custom statusLine captured"
+
+    # Test that restore also handles legacy schemaVersion 3 rollback state and preserves user statusLine
+    printf '%s\n' '{"schemaVersion":3,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":["/tmp/old"],"trustedWorkspacesKeyWasPresent":false}' >"$agy_mig_backup"
+    printf '%s\n' '{"toolPermission":"always-proceed","artifactReviewPolicy":"always-proceed","allowNonWorkspaceAccess":true,"enableTerminalSandbox":false,"statusLine":{"type":"command","command":"/custom/statusline.sh"},"trustedWorkspaces":["/tmp/old"]}' >"$agy_mig_settings"
+    HOME="$agy_mig_home" bash "$agy_apply" restore >/dev/null
+    jq -e '
+        .toolPermission == "request-review" and
+        has("artifactReviewPolicy") == false and
+        has("allowNonWorkspaceAccess") == false and
+        has("enableTerminalSandbox") == false and
+        .statusLine.command == "/custom/statusline.sh" and
+        has("trustedWorkspaces") == false
+    ' "$agy_mig_settings" >/dev/null ||
+        fail "Antigravity policy rollback did not handle legacy schemaVersion 3 backup on restore while preserving statusLine"
 
     HOME="$agy_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace_moved" >/dev/null
     jq -e '.trustedWorkspaces == [$first, $second]' \
@@ -489,6 +522,7 @@ assert_unit() {
         has("artifactReviewPolicy") == false and
         has("allowNonWorkspaceAccess") == false and
         has("enableTerminalSandbox") == false and
+        has("statusLine") == false and
         has("trustedWorkspaces") == false
     ' "$agy_settings" >/dev/null ||
         fail "Antigravity policy rollback did not restore only the managed keys"

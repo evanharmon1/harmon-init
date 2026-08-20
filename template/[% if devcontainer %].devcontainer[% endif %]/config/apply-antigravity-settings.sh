@@ -7,7 +7,7 @@ workspace="${3:-$PWD}"
 settings_dir="$HOME/.gemini/antigravity-cli"
 settings_path="$settings_dir/settings.json"
 backup_path="$settings_dir/settings.json.harmon-init-autonomy-backup"
-managed_keys='["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox"]'
+managed_keys='["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox","statusLine"]'
 
 valid_object() {
     jq -s -e 'length == 1 and (.[0] | type == "object")' "$1" >/dev/null
@@ -50,7 +50,7 @@ apply)
             . as $settings |
             reduce $keys[] as $key (
                 {
-                    schemaVersion: 3,
+                    schemaVersion: 4,
                     present: [],
                     values: {},
                     introducedWorkspaces: (
@@ -68,8 +68,20 @@ apply)
             )
         ' "$settings_path" >"$backup_tmp"
         atomic_replace "$backup_tmp" "$backup_path"
-    elif ! jq -e --argjson keys "$managed_keys" '
-        type == "object" and .schemaVersion == 3 and
+    elif jq -e '.schemaVersion == 3' "$backup_path" >/dev/null 2>&1; then
+        backup_tmp="$(mktemp "${settings_dir}/settings.backup.tmp.XXXXXX")"
+        trap 'rm -f "${backup_tmp:-}" "${settings_tmp:-}"' EXIT
+        jq --slurpfile settings "$settings_path" '
+            .schemaVersion = 4 |
+            if ($settings[0] | type == "object" and has("statusLine")) and (.present | index("statusLine") == null) then
+                .present += ["statusLine"] | .values.statusLine = $settings[0].statusLine
+            else . end
+        ' "$backup_path" >"$backup_tmp"
+        atomic_replace "$backup_tmp" "$backup_path"
+    fi
+
+    if ! jq -e --argjson keys "$managed_keys" '
+        type == "object" and .schemaVersion == 4 and
         (.present | type == "array") and (.values | type == "object") and
         (.introducedWorkspaces | type == "array") and
         ([.introducedWorkspaces[] | select(type != "string")] | length == 0) and
@@ -124,7 +136,7 @@ restore)
         exit 0
     fi
     if ! jq -e --argjson keys "$managed_keys" '
-        type == "object" and .schemaVersion == 3 and
+        type == "object" and (.schemaVersion == 4 or .schemaVersion == 3) and
         (.present | type == "array") and (.values | type == "object") and
         (.introducedWorkspaces | type == "array") and
         ([.introducedWorkspaces[] | select(type != "string")] | length == 0) and
@@ -139,7 +151,12 @@ restore)
     trap 'rm -f "${settings_tmp:-}"' EXIT
     jq -s --argjson keys "$managed_keys" '
         .[0] as $current | .[1] as $backup |
-        reduce $keys[] as $key ($current; del(.[$key])) |
+        (if $backup.schemaVersion == 3 then
+            ["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox"]
+         else
+            $keys
+         end) as $active_keys |
+        reduce $active_keys[] as $key ($current; del(.[$key])) |
         reduce $backup.present[] as $key (.; .[$key] = $backup.values[$key]) |
         if ((.trustedWorkspaces | type) == "array") then
             .trustedWorkspaces = [
