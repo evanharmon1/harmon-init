@@ -89,6 +89,10 @@ EOF
 
     cp "$REPO_ROOT/$HELPER" "$_nf_dir/scripts/"
     cp "$REPO_ROOT/scripts/require-release-title.sh" "$_nf_dir/scripts/"
+    # link-agent-skills.sh is the second command in `task sync:skills`; the stub
+    # below runs the REAL one so the scope guard is exercised against the
+    # .agents/skills/ compatibility symlinks it writes, not a mock of them.
+    cp "$REPO_ROOT/scripts/link-agent-skills.sh" "$_nf_dir/scripts/"
 
     git init --quiet --initial-branch=main "$_nf_dir"
     git -C "$_nf_dir" config user.name "fixture"
@@ -275,6 +279,12 @@ sync:skills)
     fi
     [ -z "${STUB_SYNC_TOUCH_UNRELATED:-}" ] || echo "oops" >"${STUB_SYNC_TOUCH_UNRELATED}"
     [ -z "${STUB_SYNC_DELETE_LOCAL:-}" ] || rm -rf .claude/skills/local-only
+    # The real `task sync:skills` runs scripts/link-agent-skills.sh sync as its
+    # second command, creating one .agents/skills/<name> symlink per Claude
+    # skill. Run the real script (copied into the fixture) so the scope guard is
+    # exercised against those symlinks — the previous stub omitted this, which
+    # is exactly why the v0.34.0 sync failure reached CI uncaught.
+    ./scripts/link-agent-skills.sh sync
     ;;
 esac
 exit 0
@@ -401,9 +411,11 @@ logged "gh pr view 42 --json headRefOid,isDraft" ||
 logged "fix(template): sync harmon-devkit skills to v0.9.0" || fail "PR title is not releasing"
 logged "task verify" || fail "verification never ran"
 [ "$(git -C "$fix" rev-parse main)" = "$main_before" ] || fail "main was modified"
-# The commit must contain exactly the expected paths.
+# The commit must contain exactly the expected paths — including the
+# .agents/skills/ compatibility symlinks link-agent-skills.sh wrote for every
+# Claude skill (the managed one AND the local one).
 changed="$(git -C "$fix" diff --no-renames --name-only main "$SYNC_BRANCH" | sort | tr '\n' '|')"
-[ "$changed" = ".claude/skills/.SKILLS_PROVENANCE|.claude/skills/standardize-repo/SKILL.md|.skills-sync.yaml|template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|" ] ||
+[ "$changed" = ".agents/skills/local-only|.agents/skills/standardize-repo|.claude/skills/.SKILLS_PROVENANCE|.claude/skills/standardize-repo/SKILL.md|.skills-sync.yaml|template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|" ] ||
     fail "unexpected commit contents: $changed"
 
 start "a created PR that lands ready is returned to draft and re-confirmed"
@@ -763,6 +775,25 @@ STUB_SYNC_ADD_SKILL=""
 STUB_SYNC_DROP_SKILL="standardize-repo"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "dropping a previously managed skill was rejected: $(cat "$LAST_OUT")"
+
+start "a new managed skill's portable .agents/skills link stays in scope"
+# The exact CI failure: harmon-devkit v0.34.0 added issue-title-support,
+# label-registry-support and triage, the sync vendored them, and
+# link-agent-skills.sh created their .agents/skills/ symlinks — which the guard
+# rejected as out-of-scope writes, aborting before the PR. A newly added
+# managed skill must carry its portable link into the pushed commit, and the
+# link step links the local skill too.
+fix="$(new_fixture scope_portable_link)"
+STUB_SYNC_ADD_SKILL="issue-title-support"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "a new managed skill's portable link was rejected: $(cat "$LAST_OUT")"
+pushed_tree="$(git -C "$fix.origin.git" ls-tree -r --name-only "$SYNC_BRANCH")"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/issue-title-support' ||
+    fail "the new skill's portable link is missing from the pushed commit"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/standardize-repo' ||
+    fail "an existing skill's portable link is missing from the pushed commit"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/local-only' ||
+    fail "the local skill's portable link is missing from the pushed commit"
 
 start "a failing sync never pushes or opens a PR"
 fix="$(new_fixture sync_fail)"
