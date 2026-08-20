@@ -89,6 +89,10 @@ EOF
 
     cp "$REPO_ROOT/$HELPER" "$_nf_dir/scripts/"
     cp "$REPO_ROOT/scripts/require-release-title.sh" "$_nf_dir/scripts/"
+    # link-agent-skills.sh is the second command in `task sync:skills`; the stub
+    # below runs the REAL one so the scope guard is exercised against the
+    # .agents/skills/ compatibility symlinks it writes, not a mock of them.
+    cp "$REPO_ROOT/scripts/link-agent-skills.sh" "$_nf_dir/scripts/"
 
     git init --quiet --initial-branch=main "$_nf_dir"
     git -C "$_nf_dir" config user.name "fixture"
@@ -275,6 +279,34 @@ sync:skills)
     fi
     [ -z "${STUB_SYNC_TOUCH_UNRELATED:-}" ] || echo "oops" >"${STUB_SYNC_TOUCH_UNRELATED}"
     [ -z "${STUB_SYNC_DELETE_LOCAL:-}" ] || rm -rf .claude/skills/local-only
+    # The real `task sync:skills` runs scripts/link-agent-skills.sh sync as its
+    # second command, creating one .agents/skills/<name> symlink per Claude
+    # skill. Run the real script (copied into the fixture) so the scope guard is
+    # exercised against those symlinks — the previous stub omitted this, which
+    # is exactly why the v0.34.0 sync failure reached CI uncaught.
+    ./scripts/link-agent-skills.sh sync
+    if [ -n "${STUB_SYNC_PORTABLE_NESTED:-}" ]; then
+        # Simulate a malformed portable entry the link step's divergent-name
+        # check would not catch for a dropped skill: the <name> symlink is
+        # replaced with a directory holding a rogue nested file. The scope
+        # guard must reject the nested path — only flat symlinks are in scope.
+        rm -f ".agents/skills/${STUB_SYNC_PORTABLE_NESTED}"
+        mkdir -p ".agents/skills/${STUB_SYNC_PORTABLE_NESTED}"
+        echo rogue >".agents/skills/${STUB_SYNC_PORTABLE_NESTED}/evil"
+    fi
+    if [ -n "${STUB_SYNC_OVERLAP_ROGUE:-}" ]; then
+        # The link step's portable symlinks use a depth-2 relative target, so
+        # an AGENT_SKILLS_DIR overlapping a dest writes no links there (the
+        # targets dangle and the cleanup loop unlinks them). The overlap is
+        # still a hole: a managed-name path that did appear under the
+        # overlapping dir would be approved by the portable allowance though
+        # the skills block rightly rejected its first segment. Simulate that
+        # managed-name path here — post-link, so it cannot collide with the
+        # link step's own writes — to exercise the overlap disarm, which
+        # blanks the pdir so the path reads as rogue (fail-closed).
+        mkdir -p "$(dirname "${STUB_SYNC_OVERLAP_ROGUE}")"
+        echo rogue >"${STUB_SYNC_OVERLAP_ROGUE}"
+    fi
     ;;
 esac
 exit 0
@@ -321,10 +353,13 @@ run_helper() {
             STUB_SYNC_ADD_AGENT="${STUB_SYNC_ADD_AGENT:-}" \
             STUB_SYNC_DELETE_LOCAL_AGENT="${STUB_SYNC_DELETE_LOCAL_AGENT:-}" \
             STUB_SYNC_DROP_SKILL="${STUB_SYNC_DROP_SKILL:-}" \
+            STUB_SYNC_PORTABLE_NESTED="${STUB_SYNC_PORTABLE_NESTED:-}" \
+            STUB_SYNC_OVERLAP_ROGUE="${STUB_SYNC_OVERLAP_ROGUE:-}" \
             GH_APP_SLUG="${GH_APP_SLUG:-}" \
             GH_TOKEN="${GH_TOKEN:-}" \
             SYNC_DEVKIT_TAG="${SYNC_DEVKIT_TAG:-}" \
             SYNC_DEVKIT_ALLOW_DOWNGRADE="${SYNC_DEVKIT_ALLOW_DOWNGRADE:-}" \
+            AGENT_SKILLS_DIR="${AGENT_SKILLS_DIR:-}" \
             ./scripts/sync-devkit-release.sh "$@"
     ) >"$LAST_OUT" 2>&1 || _rh_rc=$?
     echo "$_rh_rc"
@@ -361,10 +396,13 @@ v1.0.0 true false"
     STUB_SYNC_DELETE_LOCAL=""
     STUB_SYNC_ADD_SKILL=""
     STUB_SYNC_DROP_SKILL=""
+    STUB_SYNC_PORTABLE_NESTED=""
+    STUB_SYNC_OVERLAP_ROGUE=""
     GH_APP_SLUG=""
     GH_TOKEN=""
     SYNC_DEVKIT_TAG=""
     SYNC_DEVKIT_ALLOW_DOWNGRADE=""
+    AGENT_SKILLS_DIR=""
 }
 
 # start NAME — begin a case; echoes a fresh fixture path.
@@ -401,9 +439,11 @@ logged "gh pr view 42 --json headRefOid,isDraft" ||
 logged "fix(template): sync harmon-devkit skills to v0.9.0" || fail "PR title is not releasing"
 logged "task verify" || fail "verification never ran"
 [ "$(git -C "$fix" rev-parse main)" = "$main_before" ] || fail "main was modified"
-# The commit must contain exactly the expected paths.
+# The commit must contain exactly the expected paths — including the
+# .agents/skills/ compatibility symlinks link-agent-skills.sh wrote for every
+# Claude skill (the managed one AND the local one).
 changed="$(git -C "$fix" diff --no-renames --name-only main "$SYNC_BRANCH" | sort | tr '\n' '|')"
-[ "$changed" = ".claude/skills/.SKILLS_PROVENANCE|.claude/skills/standardize-repo/SKILL.md|.skills-sync.yaml|template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|" ] ||
+[ "$changed" = ".agents/skills/local-only|.agents/skills/standardize-repo|.claude/skills/.SKILLS_PROVENANCE|.claude/skills/standardize-repo/SKILL.md|.skills-sync.yaml|template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja|" ] ||
     fail "unexpected commit contents: $changed"
 
 start "a created PR that lands ready is returned to draft and re-confirmed"
@@ -763,6 +803,80 @@ STUB_SYNC_ADD_SKILL=""
 STUB_SYNC_DROP_SKILL="standardize-repo"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "dropping a previously managed skill was rejected: $(cat "$LAST_OUT")"
+
+start "a new managed skill's portable .agents/skills link stays in scope"
+# The exact CI failure: harmon-devkit v0.34.0 added issue-title-support,
+# label-registry-support and triage, the sync vendored them, and
+# link-agent-skills.sh created their .agents/skills/ symlinks — which the guard
+# rejected as out-of-scope writes, aborting before the PR. A newly added
+# managed skill must carry its portable link into the pushed commit, and the
+# link step links the local skill too.
+fix="$(new_fixture scope_portable_link)"
+STUB_SYNC_ADD_SKILL="issue-title-support"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "a new managed skill's portable link was rejected: $(cat "$LAST_OUT")"
+pushed_tree="$(git -C "$fix.origin.git" ls-tree -r --name-only "$SYNC_BRANCH")"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/issue-title-support' ||
+    fail "the new skill's portable link is missing from the pushed commit"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/standardize-repo' ||
+    fail "an existing skill's portable link is missing from the pushed commit"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/local-only' ||
+    fail "the local skill's portable link is missing from the pushed commit"
+
+start "a nested path beneath a managed portable link fails closed"
+# Finding: the portable allowance truncated to the first segment, approving
+# <name>/anything beneath a managed link. Only flat .agents/skills/<name>
+# symlinks are the link step's output; a nested path is a rogue object (a
+# symlink replaced with a directory holding a file) and must be rejected.
+fix="$(new_fixture scope_portable_nested)"
+STUB_SYNC_ADD_SKILL="issue-title-support"
+STUB_SYNC_PORTABLE_NESTED="issue-title-support"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "a nested portable path was accepted"
+grep -q "paths it does not own" "$LAST_OUT" || fail "nested-path rejection was not reported: $(cat "$LAST_OUT")"
+grep -qF '.agents/skills/issue-title-support/evil' "$LAST_OUT" ||
+    fail "the nested path was not named in the rejection: $(cat "$LAST_OUT")"
+! pushed "$fix" || fail "a nested-path sync still pushed"
+
+start "a noncanonical AGENT_SKILLS_DIR spelling still matches its links"
+# Finding: an equivalent repo-relative AGENT_SKILLS_DIR (a "./" prefix or a
+# trailing "/") left the portable dir noncanonical while git reports changed
+# paths canonically, so the literal prefix match missed every legitimate link
+# and the sync aborted on valid consumer config. Normalize the spelling before
+# the match so the links approve as they do for the canonical default.
+fix="$(new_fixture scope_portable_normalize)"
+STUB_SYNC_ADD_SKILL="issue-title-support"
+AGENT_SKILLS_DIR="./.agents/skills"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "a noncanonical AGENT_SKILLS_DIR spelling was rejected: $(cat "$LAST_OUT")"
+pushed_tree="$(git -C "$fix.origin.git" ls-tree -r --name-only "$SYNC_BRANCH")"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/issue-title-support' ||
+    fail "the new skill's portable link is missing under a noncanonical pdir: $(cat "$LAST_OUT")"
+printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/standardize-repo' ||
+    fail "an existing skill's portable link is missing under a noncanonical pdir: $(cat "$LAST_OUT")"
+
+start "an AGENT_SKILLS_DIR overlapping the skills dest fails closed"
+# Finding: a syntactically-safe but overlapping AGENT_SKILLS_DIR routes the
+# portable-link allowance inside a tree the sync promises never to touch. The
+# link step itself writes no links to an overlapping dir — its portable
+# symlinks use a depth-2 relative target, so at a deeper portable dir the
+# targets dangle and the cleanup loop unlinks them (verified separately). The
+# overlap is still a hole: a managed-name path that did appear there is
+# rejected by the skills block on its first segment (local-only is not
+# managed) but re-approved by the portable allowance on its managed tail. The
+# disarm blanks the overlapping pdir so that path reads as rogue instead.
+# Simulate the managed-name path post-link (it cannot collide with the link
+# step, which wrote nothing here) to exercise the disarm — without it the
+# portable block approves the path and the sync pushes.
+fix="$(new_fixture scope_overlapping_pdir)"
+AGENT_SKILLS_DIR=".claude/skills/local-only"
+STUB_SYNC_OVERLAP_ROGUE=".claude/skills/local-only/standardize-repo"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "an overlapping AGENT_SKILLS_DIR was accepted"
+grep -q "paths it does not own" "$LAST_OUT" || fail "overlap rejection was not reported: $(cat "$LAST_OUT")"
+grep -qF '.claude/skills/local-only/standardize-repo' "$LAST_OUT" ||
+    fail "the overlapping path was not named in the rejection: $(cat "$LAST_OUT")"
+! pushed "$fix" || fail "an overlapping-pdir sync still pushed"
 
 start "a failing sync never pushes or opens a PR"
 fix="$(new_fixture sync_fail)"
