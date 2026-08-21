@@ -416,6 +416,7 @@ assert_unit() {
     #    keys while preserving unrelated settings in the persistent volume.
     local agy_defaults agy_apply agy_ensure agy_home agy_settings agy_backup agy_workspace agy_workspace_moved
     agy_defaults="${repo_root}/.devcontainer/config/antigravity-settings.json"
+    agy_dev_defaults="${repo_root}/.devcontainer/config/antigravity-settings-dev.json"
     agy_apply="${repo_root}/.devcontainer/config/apply-antigravity-settings.sh"
     agy_ensure="${repo_root}/.devcontainer/config/ensure-antigravity-cli.sh"
     [ -f "$agy_defaults" ] || fail "Antigravity defaults not found at ${agy_defaults}"
@@ -466,9 +467,10 @@ assert_unit() {
     ' --arg workspace "$agy_workspace" "$agy_settings" >/dev/null ||
         fail "Antigravity dev container policy was not merged correctly"
     jq -e '
-        .schemaVersion == 4 and
-        .present == ["toolPermission"] and
+        .schemaVersion == 5 and
+        .present == ["toolPermission","permissions"] and
         .values.toolPermission == "request-review" and
+        .values.permissions == {"allow":["command(task)"]} and
         .introducedWorkspaces == [$workspace] and
         .trustedWorkspacesKeyWasPresent == false
     ' --arg workspace "$agy_workspace" "$agy_backup" >/dev/null ||
@@ -483,11 +485,11 @@ assert_unit() {
     printf '%s\n' '{"statusLine":{"type":"command","command":"/custom/statusline.sh"}}' >"$agy_mig_settings"
     HOME="$agy_mig_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace" >/dev/null
     jq -e '
-        .schemaVersion == 4 and
+        .schemaVersion == 5 and
         (.present | index("statusLine") != null) and
         .values.statusLine.command == "/custom/statusline.sh"
     ' "$agy_mig_backup" >/dev/null ||
-        fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 4 with custom statusLine captured"
+        fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 5 with custom statusLine captured"
 
     # Test that restore also handles legacy schemaVersion 3 rollback state and preserves user statusLine
     printf '%s\n' '{"schemaVersion":3,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":["/tmp/old"],"trustedWorkspacesKeyWasPresent":false}' >"$agy_mig_backup"
@@ -547,8 +549,58 @@ assert_unit() {
     elif grep -q 'ensure-antigravity-cli.sh' "${repo_root}/.devcontainer/post-create.sh"; then
         fail "default-off bot profile downloads Antigravity without explicit opt-in"
     fi
-    if grep -q 'apply-antigravity-settings.sh' "${repo_root}/.devcontainer/dev/post-create.sh"; then
-        fail "human dev profile applies the bot-only Antigravity autonomy policy"
+    # ── Balanced dev-profile policy (antigravity-settings-dev.json) ──
+    # The human profile auto-accepts edits and an allowlist of common commands
+    # but still gates unlisted ones — never the bot's blanket always-proceed.
+    local agy_dev_home agy_dev_settings agy_dev_backup
+    agy_dev_home="${work_dir}/agy-dev-home"
+    agy_dev_settings="${agy_dev_home}/.gemini/antigravity-cli/settings.json"
+    agy_dev_backup="${agy_dev_settings}.harmon-init-autonomy-backup"
+    mkdir -p "$(dirname "$agy_dev_settings")"
+    printf '%s\n' '{"model":"keep"}' >"$agy_dev_settings"
+    HOME="$agy_dev_home" bash "$agy_apply" apply "$agy_dev_defaults" "$agy_workspace" >/dev/null
+    jq -e '
+        .model == "keep" and
+        .toolPermission == "request-review" and
+        .artifactReviewPolicy == "always-proceed" and
+        (.permissions.allow | index("command(task)")) != null and
+        (.permissions.deny | index("command(rm -rf /)")) != null and
+        (.trustedWorkspaces | index($workspace)) != null
+    ' --arg workspace "$agy_workspace" "$agy_dev_settings" >/dev/null ||
+        fail "balanced Antigravity dev policy was not merged correctly"
+    jq -e '.schemaVersion == 5' "$agy_dev_backup" >/dev/null ||
+        fail "balanced Antigravity dev policy did not record a schemaVersion 5 rollback"
+
+    # ── schemaVersion 4 → 5 migration must not discard user permissions ──
+    # A pre-permissions (v4) backup never owned `permissions`; migrating and
+    # later restoring must leave the user's own permissions block intact.
+    local agy_v4_home agy_v4_settings agy_v4_backup
+    agy_v4_home="${work_dir}/agy-v4-home"
+    agy_v4_settings="${agy_v4_home}/.gemini/antigravity-cli/settings.json"
+    agy_v4_backup="${agy_v4_settings}.harmon-init-autonomy-backup"
+    mkdir -p "$(dirname "$agy_v4_settings")"
+    printf '%s\n' '{"schemaVersion":4,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":[],"trustedWorkspacesKeyWasPresent":false}' >"$agy_v4_backup"
+    printf '%s\n' '{"toolPermission":"always-proceed","permissions":{"allow":["command(mine)"]}}' >"$agy_v4_settings"
+    HOME="$agy_v4_home" bash "$agy_apply" apply "$agy_dev_defaults" "$agy_workspace" >/dev/null
+    jq -e '
+        .schemaVersion == 5 and
+        (.present | index("permissions")) != null and
+        .values.permissions == {"allow":["command(mine)"]}
+    ' "$agy_v4_backup" >/dev/null ||
+        fail "schemaVersion 4 backup did not migrate to 5 while capturing the user permissions block"
+    HOME="$agy_v4_home" bash "$agy_apply" restore >/dev/null
+    jq -e '.permissions == {"allow":["command(mine)"]} and .toolPermission == "request-review"' \
+        "$agy_v4_settings" >/dev/null ||
+        fail "restore did not return the user permissions block after a 4 -> 5 migration"
+
+    # The human dev profile may apply its own BALANCED policy
+    # (antigravity-settings-dev.json); it must never apply the bot's blanket
+    # always-proceed policy (antigravity-settings.json). Strip comment lines
+    # first so an explanatory comment naming the bot file is not a false match;
+    # the regex then matches the bot defaults filename but not the "-dev.json".
+    if grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh" |
+        grep -Eq 'antigravity-settings\.json'; then
+        fail "human dev profile applies the bot-only always-proceed Antigravity policy"
     fi
 
     # 9. The GitHub CLI browser bridge must use the VS Code host opener when it
