@@ -477,6 +477,16 @@ assert_unit() {
     ' --arg workspace "$agy_workspace" "$agy_backup" >/dev/null ||
         fail "Antigravity policy rollback state was not recorded correctly"
 
+    local agy_fresh_home agy_fresh_settings
+    agy_fresh_home="${work_dir}/agy-fresh-home"
+    agy_fresh_settings="${agy_fresh_home}/.gemini/antigravity-cli/settings.json"
+    HOME="$agy_fresh_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace" >/dev/null
+    jq -e '
+        .model == "Gemini 3.7 Flash (High)" and
+        .toolPermission == "always-proceed"
+    ' "$agy_fresh_settings" >/dev/null ||
+        fail "fresh Antigravity settings did not seed default model Gemini 3.7 Flash (High)"
+
     local agy_mig_home agy_mig_settings agy_mig_backup
     agy_mig_home="${work_dir}/agy-mig-home"
     agy_mig_settings="${agy_mig_home}/.gemini/antigravity-cli/settings.json"
@@ -572,6 +582,16 @@ assert_unit() {
         fail "balanced Antigravity dev policy was not merged correctly"
     jq -e '.schemaVersion == 6' "$agy_dev_backup" >/dev/null ||
         fail "balanced Antigravity dev policy did not record a schemaVersion 6 rollback"
+
+    local agy_dev_fresh_home agy_dev_fresh_settings
+    agy_dev_fresh_home="${work_dir}/agy-dev-fresh-home"
+    agy_dev_fresh_settings="${agy_dev_fresh_home}/.gemini/antigravity-cli/settings.json"
+    HOME="$agy_dev_fresh_home" bash "$agy_apply" apply "$agy_dev_defaults" "$agy_workspace" >/dev/null
+    jq -e '
+        .model == "Gemini 3.7 Flash (High)" and
+        .toolPermission == "request-review"
+    ' "$agy_dev_fresh_settings" >/dev/null ||
+        fail "fresh balanced Antigravity dev settings did not seed default model Gemini 3.7 Flash (High)"
 
     # ── schemaVersion 5 → 6 migration must not discard user permissions ──
     # A pre-permissions (v4) backup never owned `permissions`; migrating and
