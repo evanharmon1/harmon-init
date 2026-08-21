@@ -44,46 +44,46 @@ owner="${host_owner#* }"
 
 if [ "$host" = "github.com" ]; then
     case "$owner" in
-"[[ github_org ]]" | "evanharmon1" | "harmonops" | "ponderousdev")
-    git_out="$(mktemp)"
-    gh_out="$(mktemp)"
-    creds_out="$(mktemp)"
-    timeout_cmd="timeout"
-    if command -v gtimeout >/dev/null 2>&1; then
-        timeout_cmd="gtimeout"
-    fi
-    "$timeout_cmd" 5 task status:git >"$git_out" 2>/dev/null &
-    git_pid=$!
-    "$timeout_cmd" 14 task status:gh >"$gh_out" 2>/dev/null &
-    gh_pid=$!
-    "$timeout_cmd" 17 task status:creds >"$creds_out" 2>/dev/null &
-    creds_pid=$!
+    [[ (['evanharmon1', 'harmonops', 'ponderousdev'] + [github_org]) | unique | map('tojson') | join(' | ') ]])
+        git_out="$(mktemp)"
+        gh_out="$(mktemp)"
+        creds_out="$(mktemp)"
+        timeout_cmd="timeout"
+        if command -v gtimeout >/dev/null 2>&1; then
+            timeout_cmd="gtimeout"
+        fi
+        "$timeout_cmd" 5 task status:git >"$git_out" 2>/dev/null &
+        git_pid=$!
+        "$timeout_cmd" 14 task status:gh >"$gh_out" 2>/dev/null &
+        gh_pid=$!
+        "$timeout_cmd" 17 task status:creds >"$creds_out" 2>/dev/null &
+        creds_pid=$!
 
-    git_rc=0
-    wait $git_pid || git_rc=$?
-    gh_rc=0
-    wait $gh_pid || gh_rc=$?
-    creds_rc=0
-    wait $creds_pid || creds_rc=$?
+        git_rc=0
+        wait $git_pid || git_rc=$?
+        gh_rc=0
+        wait $gh_pid || gh_rc=$?
+        creds_rc=0
+        wait $creds_pid || creds_rc=$?
 
-    if [ $git_rc -ne 0 ] || [ ! -s "$git_out" ]; then
-        git_status="(task status:git unavailable or failed)"
-    else
-        git_status="$(cat "$git_out" | strip_ansi)"
-    fi
+        if [ $git_rc -ne 0 ] || [ ! -s "$git_out" ]; then
+            git_status="(task status:git unavailable or failed)"
+        else
+            git_status="$(cat "$git_out" | strip_ansi)"
+        fi
 
-    if [ $gh_rc -ne 0 ] || [ ! -s "$gh_out" ]; then
-        gh_status="(task status:gh unavailable or failed)"
-    else
-        gh_status="$(cat "$gh_out" | strip_ansi)"
-    fi
-    if [ $creds_rc -ne 0 ] || [ ! -s "$creds_out" ]; then
-        creds_status="(task status:creds unavailable or failed)"
-    else
-        creds_status="$(cat "$creds_out" | strip_ansi)"
-    fi
-    rm -f "$git_out" "$gh_out" "$creds_out"
-    ;;
+        if [ $gh_rc -ne 0 ] || [ ! -s "$gh_out" ]; then
+            gh_status="(task status:gh unavailable or failed)"
+        else
+            gh_status="$(cat "$gh_out" | strip_ansi)"
+        fi
+        if [ $creds_rc -ne 0 ] || [ ! -s "$creds_out" ]; then
+            creds_status="(task status:creds unavailable or failed)"
+        else
+            creds_status="$(cat "$creds_out" | strip_ansi)"
+        fi
+        rm -f "$git_out" "$gh_out" "$creds_out"
+        ;;
     *)
         git_status="(task status:git skipped - untrusted repository)"
         gh_status="(task status:gh skipped - untrusted repository)"
