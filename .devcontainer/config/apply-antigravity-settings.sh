@@ -125,9 +125,9 @@ apply)
 
     settings_tmp="$(mktemp "${settings_dir}/settings.json.tmp.XXXXXX")"
     trap 'rm -f "${backup_tmp:-}" "${settings_tmp:-}"' EXIT
-    if ! jq -s --arg workspace "$workspace" '
+    if ! jq -s --arg workspace "$workspace" --argjson keys "$managed_keys" '
         .[0] as $current | .[1] as $policy |
-        ($current * $policy) |
+        ($policy * $current * ($policy | with_entries(select(.key as $k | $keys | index($k) != null)))) |
         .trustedWorkspaces = (
             (if ($current.trustedWorkspaces | type) == "array"
              then $current.trustedWorkspaces else [] end) + [$workspace] |

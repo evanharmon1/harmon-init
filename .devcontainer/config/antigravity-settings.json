@@ -1,4 +1,5 @@
 {
+  "model": "Gemini 3.7 Flash (High)",
   "toolPermission": "always-proceed",
   "artifactReviewPolicy": "always-proceed",
   "allowNonWorkspaceAccess": true,
