@@ -40,19 +40,33 @@ there is no nested sandbox or interactive prompt inside Docker. Repository
 instructions, hooks, GitHub token scope, mounted volumes, and Docker itself
 remain the bot's boundaries.
 
-**Antigravity autonomy is an explicit opt-in.** This repo enables
-`use_antigravity_cli`, so its bot profile applies `always-proceed`, always
-accepts artifact reviews, allows non-workspace access, disables Antigravity's
-inner terminal sandbox, configures the devcontainer status line renderer, and
-trusts the current container workspace. The human profile keeps Antigravity's
-normal prompts. Run `agy` interactively once to complete Google sign-in; the
-pinned CLI falls back to file-backed credentials when the headless container has
-no D-Bus keyring, and the `~/.gemini` named volume persists that login. A
-checksum-verified compatibility installer covers the interval before the
-shared-image pin advances, then becomes a network-free no-op. The settings helper
-backs up the five policy keys it owns and tracks its workspace-trust entry, so
-turning the Copier option off restores all five while preserving unrelated
-settings.
+**Antigravity autonomy is enabled** (this repo sets `use_antigravity_cli`). Two
+profiles, two policies:
+
+- **Bot profile — full autonomy.** It applies `always-proceed`, always accepts
+  artifact reviews, allows non-workspace access, disables Antigravity's inner
+  terminal sandbox, configures the devcontainer status line renderer, and trusts
+  the current container workspace — the container is the isolation boundary.
+  Interactive `agy` honors that policy directly; **headless `agy -p …` ignores
+  settings allow-rules and auto-denies**, so a bot-only shell wrapper
+  (`config/agy-autonomy.sh`, active when `FOREMAN_DEVCONTAINER=bot`) injects
+  `--dangerously-skip-permissions` for agent runs. A programmatic launcher that
+  never sources a login shell must pass that flag itself.
+- **Dev (human) profile — balanced.** It auto-accepts edits/artifacts and an
+  allowlist of common commands (`task`, `git`, `gh`, linters, test runners, …)
+  so routine work is prompt-free, but still asks before anything unlisted and
+  keeps Antigravity's workspace and sandbox boundaries. Tune the allowlist in
+  `.devcontainer/config/antigravity-settings-dev.json`.
+
+Run `agy` interactively once to complete Google sign-in — Antigravity has no
+API-key environment variable, so even a disposable container needs that one
+human login; the pinned CLI falls back to file-backed credentials when the
+headless container has no D-Bus keyring, and the `~/.gemini` named volume
+persists the login across rebuilds. A checksum-verified compatibility installer
+covers the interval before the shared-image pin advances, then becomes a
+network-free no-op. The settings helper backs up the six policy keys it owns and
+tracks its workspace-trust entry, so turning the Copier option off restores them
+while preserving unrelated settings.
 
 ## Run it locally
 

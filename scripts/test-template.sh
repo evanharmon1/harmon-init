@@ -1681,6 +1681,12 @@ if [ -d .devcontainer ]; then
         err "Antigravity compatibility installer missing from devcontainer output"
     [ -f .devcontainer/config/antigravity-settings.json ] ||
         err "Antigravity policy defaults missing from devcontainer output"
+    [ -f .devcontainer/config/antigravity-settings-dev.json ] ||
+        err "balanced Antigravity dev policy defaults missing from devcontainer output"
+    [ -x .devcontainer/config/agy-autonomy.sh ] ||
+        err "Antigravity bot autonomy wrapper missing from devcontainer output"
+    grep -Fq 'agy-autonomy.sh' .devcontainer/config/shell-aliases.sh ||
+        err "shell-aliases does not source the Antigravity bot autonomy wrapper"
     if [ "$profile" = "full" ]; then
         grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/post-create.sh ||
             err "bot post-create does not enable opted-in Antigravity autonomy"
@@ -1690,6 +1696,10 @@ if [ -d .devcontainer ]; then
             err "bot runtime does not disable fallback Antigravity auto-updates"
         grep -Fq 'Antigravity autonomy is enabled' docs/guides/devcontainers.md ||
             err "devcontainer guide omits opted-in Antigravity account/policy guidance"
+        grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/dev/post-create.sh ||
+            err "dev post-create does not apply the balanced Antigravity policy"
+        grep -Fq 'antigravity-settings-dev.json' .devcontainer/dev/post-create.sh ||
+            err "dev post-create applies a policy other than the balanced dev defaults"
     else
         grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/post-create.sh ||
             err "default-off Antigravity path does not restore an earlier opt-in"
@@ -1701,9 +1711,19 @@ if [ -d .devcontainer ]; then
             err "Antigravity runtime policy rendered without explicit opt-in"
         grep -Fq 'Antigravity autonomy is off by default' docs/guides/devcontainers.md ||
             err "devcontainer guide omits default-off Antigravity posture"
+        grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/dev/post-create.sh ||
+            err "default-off dev profile does not restore an earlier balanced opt-in"
+        ! grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/dev/post-create.sh ||
+            err "balanced Antigravity dev policy rendered without explicit opt-in"
     fi
-    ! grep -Fq 'apply-antigravity-settings.sh' .devcontainer/dev/post-create.sh ||
-        err "human dev profile changes Antigravity autonomy policy"
+    # The dev profile may apply its own balanced policy (antigravity-settings-dev.json)
+    # but must never apply the bot's always-proceed policy (antigravity-settings.json).
+    # Strip comment lines first so an explanatory comment naming the bot file is
+    # not a false match; the regex then matches the bot filename but not "-dev.json".
+    if grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh |
+        grep -Eq 'antigravity-settings\.json'; then
+        err "human dev profile applies the bot-only always-proceed Antigravity policy"
+    fi
 fi
 
 # ── 9e2. alt-model providers render per use_alternative_claude_providers ──
