@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.37.1](https://github.com/evanharmon1/harmon-init/compare/v4.37.0...v4.37.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* dedupe hardcoded trusted-org list in session-start-context.sh.jinja ([#1012](https://github.com/evanharmon1/harmon-init/issues/1012)) ([15175d4](https://github.com/evanharmon1/harmon-init/commit/15175d4f56465f654aa267a5d89c75a0b09d0631))
+* let tools co-own same-name skills via a linker ignore list ([#1014](https://github.com/evanharmon1/harmon-init/issues/1014)) ([7383179](https://github.com/evanharmon1/harmon-init/commit/7383179091ed107ae351d2e5a7a2685bd8db81c7))
+* stop baking sibling org names into generated repos ([#1013](https://github.com/evanharmon1/harmon-init/issues/1013)) ([06e9684](https://github.com/evanharmon1/harmon-init/commit/06e96840d6240ebdcb62e4fb41930a84a371c099))
+
 ## [4.37.0](https://github.com/evanharmon1/harmon-init/compare/v4.36.0...v4.37.0) (2026-08-21)
 
 
