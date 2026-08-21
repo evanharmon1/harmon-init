@@ -7,7 +7,7 @@ How work is tracked for Harmon Init in **GitHub Projects**.
 The standard strategy is a single default GitHub **Project (V2)** per owner — one
 board for the organization, or (for personal-account repos) one for the user
 account — titled after the owner's GitHub login: `<owner> Project` (here:
-**evanharmon1 Project**; e.g. `harmonops Project`, `evanharmon1 Project`).
+**evanharmon1 Project**; e.g. `acme Project` for an organization, `octocat Project` for a personal account).
 Every repo the owner controls feeds that one board; an issue can belong to
 multiple projects, but this default board is its home. Reach for a second,
 focused project only when a body of work needs its own.
