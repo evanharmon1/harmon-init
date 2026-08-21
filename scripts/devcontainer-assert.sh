@@ -463,6 +463,7 @@ assert_unit() {
         .statusLine.command == "/etc/claude-code/statusline.sh" and
         .statusLine.enabled == true and
         .statusLine.stack_with_default == true and
+        .showFeedbackSurvey == false and
         .trustedWorkspaces == [$workspace]
     ' --arg workspace "$agy_workspace" "$agy_settings" >/dev/null ||
         fail "Antigravity dev container policy was not merged correctly"
@@ -525,6 +526,7 @@ assert_unit() {
         has("allowNonWorkspaceAccess") == false and
         has("enableTerminalSandbox") == false and
         has("statusLine") == false and
+        has("showFeedbackSurvey") == false and
         has("trustedWorkspaces") == false
     ' "$agy_settings" >/dev/null ||
         fail "Antigravity policy rollback did not restore only the managed keys"

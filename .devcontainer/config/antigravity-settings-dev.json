@@ -64,5 +64,6 @@
     "command": "/etc/claude-code/statusline.sh",
     "enabled": true,
     "stack_with_default": true
-  }
+  },
+  "showFeedbackSurvey": false
 }
