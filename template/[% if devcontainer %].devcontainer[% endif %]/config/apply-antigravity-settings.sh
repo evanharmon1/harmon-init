@@ -26,10 +26,12 @@ case "$mode" in
 apply)
     if [ ! -f "$defaults_src" ]; then
         echo "Antigravity defaults not found at ${defaults_src}." >&2
+
         exit 1
     fi
     if ! valid_object "$defaults_src"; then
         echo "Cannot merge invalid Antigravity defaults from ${defaults_src}." >&2
+
         exit 1
     fi
 
@@ -100,6 +102,7 @@ apply)
         ([.present[] as $key | select(($keys | index($key)) == null)] | length == 0)
     ' "$backup_path" >/dev/null; then
         echo "Cannot update Antigravity policy with invalid rollback state at ${backup_path}." >&2
+
         exit 1
     fi
 
@@ -132,6 +135,7 @@ apply)
         )
     ' "$settings_path" "$defaults_src" >"$settings_tmp"; then
         echo "Failed to merge Antigravity settings; leaving ${settings_path} unchanged." >&2
+
         exit 1
     fi
 
@@ -155,6 +159,7 @@ restore)
         ([.present[] as $key | select(($keys | index($key)) == null)] | length == 0)
     ' "$backup_path" >/dev/null; then
         echo "Cannot restore invalid Antigravity rollback state at ${backup_path}." >&2
+
         exit 1
     fi
 
