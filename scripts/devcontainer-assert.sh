@@ -468,7 +468,7 @@ assert_unit() {
     ' --arg workspace "$agy_workspace" "$agy_settings" >/dev/null ||
         fail "Antigravity dev container policy was not merged correctly"
     jq -e '
-        .schemaVersion == 5 and
+        .schemaVersion == 6 and
         .present == ["toolPermission","permissions"] and
         .values.toolPermission == "request-review" and
         .values.permissions == {"allow":["command(task)"]} and
@@ -486,11 +486,11 @@ assert_unit() {
     printf '%s\n' '{"statusLine":{"type":"command","command":"/custom/statusline.sh"}}' >"$agy_mig_settings"
     HOME="$agy_mig_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace" >/dev/null
     jq -e '
-        .schemaVersion == 5 and
+        .schemaVersion == 6 and
         (.present | index("statusLine") != null) and
         .values.statusLine.command == "/custom/statusline.sh"
     ' "$agy_mig_backup" >/dev/null ||
-        fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 5 with custom statusLine captured"
+        fail "legacy schemaVersion 3 backup was not migrated to schemaVersion 6 with custom statusLine captured"
 
     # Test that restore also handles legacy schemaVersion 3 rollback state and preserves user statusLine
     printf '%s\n' '{"schemaVersion":3,"present":["toolPermission"],"values":{"toolPermission":"request-review"},"introducedWorkspaces":["/tmp/old"],"trustedWorkspacesKeyWasPresent":false}' >"$agy_mig_backup"
@@ -570,10 +570,10 @@ assert_unit() {
         (.trustedWorkspaces | index($workspace)) != null
     ' --arg workspace "$agy_workspace" "$agy_dev_settings" >/dev/null ||
         fail "balanced Antigravity dev policy was not merged correctly"
-    jq -e '.schemaVersion == 5' "$agy_dev_backup" >/dev/null ||
-        fail "balanced Antigravity dev policy did not record a schemaVersion 5 rollback"
+    jq -e '.schemaVersion == 6' "$agy_dev_backup" >/dev/null ||
+        fail "balanced Antigravity dev policy did not record a schemaVersion 6 rollback"
 
-    # ── schemaVersion 4 → 5 migration must not discard user permissions ──
+    # ── schemaVersion 5 → 6 migration must not discard user permissions ──
     # A pre-permissions (v4) backup never owned `permissions`; migrating and
     # later restoring must leave the user's own permissions block intact.
     local agy_v4_home agy_v4_settings agy_v4_backup
@@ -585,15 +585,15 @@ assert_unit() {
     printf '%s\n' '{"toolPermission":"always-proceed","permissions":{"allow":["command(mine)"]}}' >"$agy_v4_settings"
     HOME="$agy_v4_home" bash "$agy_apply" apply "$agy_dev_defaults" "$agy_workspace" >/dev/null
     jq -e '
-        .schemaVersion == 5 and
+        .schemaVersion == 6 and
         (.present | index("permissions")) != null and
         .values.permissions == {"allow":["command(mine)"]}
     ' "$agy_v4_backup" >/dev/null ||
-        fail "schemaVersion 4 backup did not migrate to 5 while capturing the user permissions block"
+        fail "schemaVersion 5 backup did not migrate to 6 while capturing the user permissions block"
     HOME="$agy_v4_home" bash "$agy_apply" restore >/dev/null
     jq -e '.permissions == {"allow":["command(mine)"]} and .toolPermission == "request-review"' \
         "$agy_v4_settings" >/dev/null ||
-        fail "restore did not return the user permissions block after a 4 -> 5 migration"
+        fail "restore did not return the user permissions block after a 5 -> 6 migration"
 
     # The human dev profile may apply its own BALANCED policy
     # (antigravity-settings-dev.json); it must never apply the bot's blanket

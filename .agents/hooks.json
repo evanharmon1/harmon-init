@@ -6,11 +6,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./.agents/agy-adapter.sh ./.claude/hooks/block-no-verify.sh PreToolUse"
+            "command": "/Users/evan/git/harmon-init/.agents/agy-adapter.sh /Users/evan/git/harmon-init/.claude/hooks/block-no-verify.sh PreToolUse"
           },
           {
             "type": "command",
-            "command": "./.agents/agy-adapter.sh ./.claude/hooks/enforce-conventional-commits.sh PreToolUse"
+            "command": "/Users/evan/git/harmon-init/.agents/agy-adapter.sh /Users/evan/git/harmon-init/.claude/hooks/enforce-conventional-commits.sh PreToolUse"
           }
         ]
       }
