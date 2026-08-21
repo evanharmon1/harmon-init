@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.37.0](https://github.com/evanharmon1/harmon-init/compare/v4.36.0...v4.37.0) (2026-08-21)
+
+
+### Features
+
+* **antigravity:** set Gemini 3.7 Flash (High) as default model ([#1010](https://github.com/evanharmon1/harmon-init/issues/1010)) ([9299556](https://github.com/evanharmon1/harmon-init/commit/929955674199103eee7accb975d425ca73d5bbea))
+* enable stacking Gemini footer with custom status line ([#1005](https://github.com/evanharmon1/harmon-init/issues/1005)) ([b16d92a](https://github.com/evanharmon1/harmon-init/commit/b16d92aac254d983b41158d02ece2205ea43eb92))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.34.2 ([#1009](https://github.com/evanharmon1/harmon-init/issues/1009)) ([260ab65](https://github.com/evanharmon1/harmon-init/commit/260ab655cf465673fff6852f3b9d87a27bc37f2e))
+
 ## [4.36.0](https://github.com/evanharmon1/harmon-init/compare/v4.35.1...v4.36.0) (2026-08-21)
 
 
