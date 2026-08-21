@@ -63,6 +63,6 @@
     "type": "command",
     "command": "/etc/claude-code/statusline.sh",
     "enabled": true,
-    "stack_with_default": false
+    "stack_with_default": true
   }
 }

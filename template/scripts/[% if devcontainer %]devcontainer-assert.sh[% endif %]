@@ -462,7 +462,7 @@ assert_unit() {
         .statusLine.type == "command" and
         .statusLine.command == "/etc/claude-code/statusline.sh" and
         .statusLine.enabled == true and
-        .statusLine.stack_with_default == false and
+        .statusLine.stack_with_default == true and
         .trustedWorkspaces == [$workspace]
     ' --arg workspace "$agy_workspace" "$agy_settings" >/dev/null ||
         fail "Antigravity dev container policy was not merged correctly"
