@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.36.0](https://github.com/evanharmon1/harmon-init/compare/v4.35.1...v4.36.0) (2026-08-21)
+
+
+### Features
+
+* balance Antigravity (agy) dev autonomy, harden bot headless bypass ([#1003](https://github.com/evanharmon1/harmon-init/issues/1003)) ([d23cc7f](https://github.com/evanharmon1/harmon-init/commit/d23cc7f28721f11a1deca1ff947c3915939f1b15))
+
 ## [4.35.1](https://github.com/evanharmon1/harmon-init/compare/v4.35.0...v4.35.1) (2026-08-20)
 
 
