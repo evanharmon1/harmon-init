@@ -277,10 +277,11 @@ straight to review", "no more challenge rounds") is reflected in the ledger
 before any tool call starts the next stage, and silently returning to the
 default sequence is forbidden. An override is an attributable human decision
 and is followed, but it redirects the loop rather than erasing findings: any
-P0/P1 still open in the stage it ends is carried into the PR body's
-`## Deferred findings` with the override named as its disposition, never
-dropped, and the ledger records the override as the reason for the
-transition. A one-step task that touches a single stage owes no ledger.
+P0/P1 still open in the stage it ends is carried, **unchecked**, into the PR
+body's `## Deferred findings` with the override recorded as the reason it was
+carried — not as a disposition, so the shepherd stage still owes it a normal
+fix / decline-with-evidence / file-as-follow-up — and the ledger records the
+override as the reason for the transition. A one-step task that touches a single stage owes no ledger.
 
 **Round caps are resolved, not stated here.** The challenge, review, and
 shepherd stages below are each capped, but this file names no numbers: they
