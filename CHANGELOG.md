@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.37.2](https://github.com/evanharmon1/harmon-init/compare/v4.37.1...v4.37.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **claude-workflows:** let claude-code-action fetch the PR branch on private repos ([#1023](https://github.com/evanharmon1/harmon-init/issues/1023)) ([9ef2d03](https://github.com/evanharmon1/harmon-init/commit/9ef2d03e7866e2bedb714220c4e59b8edc1edbdc))
+* require a visible stage ledger for multi-stage Dev Loop work ([#1020](https://github.com/evanharmon1/harmon-init/issues/1020)) ([32e6d3f](https://github.com/evanharmon1/harmon-init/commit/32e6d3f372ccdeba9d0a69103a2d27d4eaae08b7))
+* **template:** sync harmon-devkit skills to v0.34.3 ([#1018](https://github.com/evanharmon1/harmon-init/issues/1018)) ([2256973](https://github.com/evanharmon1/harmon-init/commit/22569737df646863739f517e80283628a9626046))
+
 ## [4.37.1](https://github.com/evanharmon1/harmon-init/compare/v4.37.0...v4.37.1) (2026-08-21)
 
 
