@@ -305,6 +305,25 @@ if [ ! -L .github/copilot-instructions.md ] ||
     [ "$(readlink .github/copilot-instructions.md)" != "../AGENTS.md" ]; then
     err ".github/copilot-instructions.md should be a symlink to ../AGENTS.md"
 fi
+# The visible stage ledger (#965): the Dev Loop policy must ship the canonical
+# Stage/Round/Next table, its glyph legend, and the maintainer-override rule in
+# every profile, or a template update can silently drop it.
+grep -qF 'Post a visible stage ledger' AGENTS.md ||
+    err "rendered AGENTS.md lost the stage-ledger policy (#965)"
+for row in '| **Stage** |' '| **Round** |' '| **Next** |'; do
+    grep -qF "$row" AGENTS.md ||
+        err "rendered AGENTS.md stage ledger is missing the $row row (#965)"
+done
+grep -qF 'round n/cap' AGENTS.md ||
+    err "rendered AGENTS.md stage ledger does not show the round against its cap (#965)"
+grep -qF 'silently returning to the' AGENTS.md ||
+    err "rendered AGENTS.md stage ledger lost the maintainer-override rule (#965)"
+grep -qF 'counted and capped separately and never combined' AGENTS.md ||
+    err "rendered AGENTS.md stage ledger lost the independent-caps rule (#965)"
+for glyph in '⚔️ challenge' '🔍 review' '🚢 shepherd' '🔴 P0/P1' '🟡 P2' '⚪ P3'; do
+    grep -qF "$glyph" AGENTS.md ||
+        err "rendered AGENTS.md stage-ledger legend is missing '$glyph' (#965)"
+done
 [ -x scripts/check-agent-instructions-size.sh ] ||
     err "AGENTS.md size advisory is missing or not executable"
 [ -x scripts/test-agent-instructions-size.sh ] ||
