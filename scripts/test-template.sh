@@ -310,15 +310,33 @@ fi
 # every profile, or a template update can silently drop it.
 grep -qF 'Post a visible stage ledger' AGENTS.md ||
     err "rendered AGENTS.md lost the stage-ledger policy (#965)"
-for row in '| **Stage** |' '| **Round** |' '| **Next** |'; do
-    grep -qF "$row" AGENTS.md ||
-        err "rendered AGENTS.md stage ledger is missing the $row row (#965)"
-done
+# The canonical table must render as one contiguous block: header, rule, then
+# the Stage / Round / Next rows in that order, each carrying a stage glyph and
+# the Stage row a `round n/cap`.
+ledger_block="$(grep -A4 -F '| 📍 Ledger | |' AGENTS.md || true)"
+[ "$(printf '%s\n' "$ledger_block" | wc -l | tr -d ' ')" = "5" ] ||
+    err "rendered AGENTS.md stage-ledger table is not a contiguous 5-line block (#965)"
+printf '%s\n' "$ledger_block" | sed -n 2p | grep -qx '|---|---|' ||
+    err "rendered AGENTS.md stage-ledger table lacks its header rule (#965)"
+printf '%s\n' "$ledger_block" | sed -n 3p | grep -qE '^\| \*\*Stage\*\* \| .*round [0-9]+/[0-9]+' ||
+    err "rendered AGENTS.md stage-ledger Stage row does not show round n/cap (#965)"
+printf '%s\n' "$ledger_block" | sed -n 4p | grep -qF '| **Round** |' ||
+    err "rendered AGENTS.md stage-ledger Round row is missing or out of order (#965)"
+printf '%s\n' "$ledger_block" | sed -n 5p | grep -qF '| **Next** |' ||
+    err "rendered AGENTS.md stage-ledger Next row is missing or out of order (#965)"
+# Profile coherence: a render without the second-model reviewer must not tell
+# the agent to run a task the generated Taskfile does not define.
+if ! grep -qE '^  challenge:' Taskfile.yml; then
+    ! printf '%s\n' "$ledger_block" | grep -qF 'task challenge' ||
+        err "rendered AGENTS.md stage-ledger example cites task challenge in a profile without it (#965)"
+fi
 grep -qF 'round n/cap' AGENTS.md ||
     err "rendered AGENTS.md stage ledger does not show the round against its cap (#965)"
-grep -qF 'silently returning to the' AGENTS.md ||
+# Prose wraps, so flatten before matching the multi-word phrases.
+agents_flat="$(tr '\n' ' ' <AGENTS.md)"
+printf '%s' "$agents_flat" | grep -qF 'silently returning to the default sequence is forbidden' ||
     err "rendered AGENTS.md stage ledger lost the maintainer-override rule (#965)"
-grep -qF 'counted and capped separately and never combined' AGENTS.md ||
+printf '%s' "$agents_flat" | grep -qF 'counted and capped separately and never combined' ||
     err "rendered AGENTS.md stage ledger lost the independent-caps rule (#965)"
 for glyph in '⚔️ challenge' '🔍 review' '🚢 shepherd' '🔴 P0/P1' '🟡 P2' '⚪ P3'; do
     grep -qF "$glyph" AGENTS.md ||

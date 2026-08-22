@@ -243,13 +243,13 @@ Creating the draft is a phase transition, not a terminal state, and every stop
 short of the readiness gate leaves the PR **draft** with a blocker report — a
 non-draft PR must always mean the automated work is done.
 
-**Post a visible stage ledger whenever two or more review or shepherd stages
-are in scope.** The loop below has independently capped stages, and after a
-few fix rounds the active one stops being obvious — to the maintainer reading
-along, and to the agent, which then runs one more challenge round after being
-told to move on. The ledger is a short table in the agent's **own
-commentary** (tool output is collapsed and does not count), always in this
-shape, with this legend, in every stage:
+**Post a visible stage ledger whenever the change passes through two or more
+of the stages below.** The loop has several stages, some independently capped,
+and after a few fix rounds the active one stops being obvious — to the
+maintainer reading along, and to the agent, which then runs one more review
+round after being told to move on. The ledger is a short table in the agent's
+**own commentary** (tool output is collapsed and does not count), always in
+this shape, with this legend, in every stage:
 
 | 📍 Ledger | |
 |---|---|
@@ -261,10 +261,11 @@ Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review �
 🚢 shepherd. Status glyphs: ✅ clean/green · 🔴 P0/P1 open · 🟡 P2 deferred ·
 ⚪ P3 noted · ⏳ waiting on CI or a reviewer · ⛔ blocked/escalating · 🏁 stage
 converged. The same glyph always means the same thing, so a reader can tell
-the state at a glance without parsing prose. `Stage` names the stage **and
-its round as `round n/cap`** from the cap resolved below — challenge, review,
-and shepherd are counted and capped separately and never combined — and says
-whether the round is a local `task challenge`/`task review` run or a cloud
+the state at a glance without parsing prose. `Stage` names the stage and,
+for a capped stage, **its round as `round n/cap`** from the cap resolved
+below — challenge, review, and shepherd are counted and capped separately and
+never combined; implement, verify, and ci have no cap and carry no round —
+and says whether a round is a local `task challenge`/`task review` run or a cloud
 PR-shepherd review cycle. `Next` names the next concrete gate or action,
 including the `task verify` a fix owes before the next round. Post it at every
 stage transition, when a round begins or ends, as the concise progress tick
@@ -273,7 +274,7 @@ during a long wait (no re-dumping unchanged command output), and
 instruction overrides the default transition at once, a terminal one ("go
 straight to review", "no more challenge rounds") is reflected in the ledger
 before any tool call starts the next stage, and silently returning to the
-default sequence is forbidden. A one-step task with no review stage in scope
+default sequence is forbidden. A one-step task that touches a single stage
 owes no ledger.
 
 **Round caps are resolved, not stated here.** The challenge, review, and
