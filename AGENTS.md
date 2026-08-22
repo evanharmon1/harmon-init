@@ -243,6 +243,46 @@ Creating the draft is a phase transition, not a terminal state, and every stop
 short of the readiness gate leaves the PR **draft** with a blocker report — a
 non-draft PR must always mean the automated work is done.
 
+**Post a visible stage ledger whenever the change passes through two or more
+of the stages below.** The loop has several stages, some independently capped,
+and after a few fix rounds the active one stops being obvious — to the
+maintainer reading along, and to the agent, which then runs one more review
+round after being told to move on. The stage ledger — distinct from the
+gauntlet's private adjudication ledger, which is a file — is a short table in
+the agent's **own commentary** (tool output is collapsed and does not count),
+always in this shape, with this legend, in every stage:
+
+| 📍 Ledger | |
+|---|---|
+| **Stage** | ⚔️ challenge · **round 2/4** · local (`task challenge`) |
+| **Round** | 🔴 1 P1 open · 🟡 2 P2 deferred · ⚪ 1 P3 noted · ✅ verify green |
+| **Next** | fix P1 → `task verify` → ⚔️ challenge round 3 |
+
+Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review · 🏗️ ci ·
+🚢 shepherd. Status glyphs: ✅ clean/green · 🔴 P0/P1 open · 🟡 P2 deferred ·
+⚪ P3 noted · ⏳ waiting on CI or a reviewer · ⛔ blocked/escalating · 🏁 stage
+converged. The same glyph always means the same thing, so a reader can tell
+the state at a glance without parsing prose. `Stage` names the stage and,
+for a capped stage, **its round as `round n/cap`** from the cap resolved
+below — challenge, review, and shepherd are counted and capped separately and
+never combined; implement, verify, and ci have no cap and carry no round —
+and says whether a round is a local `task challenge`/`task review` run or a cloud
+PR-shepherd review cycle. `Next` names the next concrete gate or action,
+including the `task verify` a fix owes before the next round. Post it at every
+stage transition, when a round begins or ends, as the concise progress tick
+during a long wait (no re-dumping unchanged command output), and
+**immediately after a maintainer changes the requested workflow** — the latest
+instruction overrides the default transition at once, a terminal one ("go
+straight to review", "no more challenge rounds") is reflected in the ledger
+before any tool call starts the next stage, and silently returning to the
+default sequence is forbidden. An override is an attributable human decision
+and is followed, but it redirects the loop rather than erasing findings: any
+P0/P1 still open in the stage it ends is carried, **unchecked**, into the PR
+body's `## Deferred findings` with the override recorded as the reason it was
+carried — not as a disposition, so the shepherd stage still owes it a normal
+fix / decline-with-evidence / file-as-follow-up — and the ledger records the
+override as the reason for the transition. A one-step task that touches a single stage owes no ledger.
+
 **Round caps are resolved, not stated here.** The challenge, review, and
 shepherd stages below are each capped, but this file names no numbers: they
 live in [`.devflow.toml`](.devflow.toml) as `rigor` levels, so there is one
@@ -283,8 +323,9 @@ the loop** — "rigor: `<level>` (`<source>`) → challenge ≤`<n>`, review ≤
 shepherd `<n>`, min_rounds `<n>`", filled in by reading the file rather than
 from memory — and
 carry it into the PR body, so a later round or a different session can see
-which budget it is spending instead of inferring one. Everything else about
-these stages is policy rather than a parameter and does not vary by level: the
+which budget it is spending instead of inferring one. The resolved cap is
+also the denominator of every `round n/cap` the stage ledger above shows.
+Everything else about these stages is policy rather than a parameter and does not vary by level: the
 exit condition,
 the round-2 scaffolding checkpoint, the escalation rule, and the deferred-P2
 sidecar all hold identically at every rigor. A cap is a ceiling, never a quota
@@ -736,10 +777,11 @@ run, and nothing waits on it.
    appropriate.
 4. Explain why any rejected finding is incorrect or irrelevant.
 5. Re-run `task verify` (and the other relevant gates) after fixes.
-6. Finish the round with an adjudication table — at minimum finding →
+6. Post the stage ledger for the round (Dev Loop above), then finish the
+   round with an adjudication table — at minimum finding →
    reviewer priority → **adjudicated** priority → classification → evidence →
    action, plus the round-2 provenance column — and record it; the skill
-   adds the per-branch ledger the rows are written to.
+   adds the per-branch adjudication ledger the rows are written to.
 
 **Between rounds, check what the findings are about.** Those six steps are all
 *per-finding*, so a reviewer can be right every round while the loop as a whole

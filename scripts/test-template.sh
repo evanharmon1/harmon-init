@@ -305,6 +305,54 @@ if [ ! -L .github/copilot-instructions.md ] ||
     [ "$(readlink .github/copilot-instructions.md)" != "../AGENTS.md" ]; then
     err ".github/copilot-instructions.md should be a symlink to ../AGENTS.md"
 fi
+# The visible stage ledger (#965): the Dev Loop policy must ship the canonical
+# Stage/Round/Next table, its full glyph legend, and the maintainer-override
+# rule in every profile — and the root dogfood copy must carry the same, since
+# this test otherwise inspects only the rendered file (see "Dogfood parity").
+assert_stage_ledger() {
+    local file="$1" label="$2" taskfile="$3" block flat glyph
+    grep -qF 'Post a visible stage ledger' "$file" ||
+        err "$label lost the stage-ledger policy (#965)"
+    # The canonical table must be one contiguous block: header, rule, then the
+    # Stage / Round / Next rows in that order, the Stage row carrying round n/cap.
+    block="$(grep -A4 -F '| 📍 Ledger | |' "$file" || true)"
+    [ "$(printf '%s\n' "$block" | wc -l | tr -d ' ')" = "5" ] ||
+        err "$label stage-ledger table is not a contiguous 5-line block (#965)"
+    printf '%s\n' "$block" | sed -n 2p | grep -qx '|---|---|' ||
+        err "$label stage-ledger table lacks its header rule (#965)"
+    printf '%s\n' "$block" | sed -n 3p | grep -qE '^\| \*\*Stage\*\* \| .*round [0-9]+/[0-9]+' ||
+        err "$label stage-ledger Stage row does not show round n/cap (#965)"
+    printf '%s\n' "$block" | sed -n 4p | grep -qF '| **Round** |' ||
+        err "$label stage-ledger Round row is missing or out of order (#965)"
+    printf '%s\n' "$block" | sed -n 5p | grep -qF '| **Next** |' ||
+        err "$label stage-ledger Next row is missing or out of order (#965)"
+    # Profile coherence: a copy without the second-model reviewer must not tell
+    # the agent to run a task its Taskfile does not define.
+    if ! grep -qE '^  challenge:' "$taskfile"; then
+        ! printf '%s\n' "$block" | grep -qF 'task challenge' ||
+            err "$label stage-ledger example cites task challenge in a profile without it (#965)"
+    fi
+    # Prose wraps, so flatten before matching the multi-word phrases.
+    flat="$(tr '\n' ' ' <"$file")"
+    printf '%s' "$flat" | grep -qF 'round n/cap' ||
+        err "$label stage ledger does not show the round against its cap (#965)"
+    printf '%s' "$flat" | grep -qF 'silently returning to the default sequence is forbidden' ||
+        err "$label stage ledger lost the maintainer-override rule (#965)"
+    printf '%s' "$flat" | grep -qF 'counted and capped separately and never combined' ||
+        err "$label stage ledger lost the independent-caps rule (#965)"
+    printf '%s' "$flat" | grep -qF 'not as a disposition' ||
+        err "$label stage ledger lets an override settle an open P0/P1 (#965)"
+    # The complete legend: every glyph keeps its one meaning.
+    for glyph in '🔨 implement' '🧪 verify' '⚔️ challenge' '🔍 review' '🏗️ ci' \
+        '🚢 shepherd' '✅ clean/green' '🔴 P0/P1 open' '🟡 P2 deferred' \
+        '⚪ P3 noted' '⏳ waiting on CI or a reviewer' '⛔ blocked/escalating' \
+        '🏁 stage converged'; do
+        printf '%s' "$flat" | grep -qF "$glyph" ||
+            err "$label stage-ledger legend is missing '$glyph' (#965)"
+    done
+}
+assert_stage_ledger AGENTS.md "rendered AGENTS.md" Taskfile.yml
+assert_stage_ledger "$repo_root/AGENTS.md" "root AGENTS.md" "$repo_root/Taskfile.yml"
 [ -x scripts/check-agent-instructions-size.sh ] ||
     err "AGENTS.md size advisory is missing or not executable"
 [ -x scripts/test-agent-instructions-size.sh ] ||
