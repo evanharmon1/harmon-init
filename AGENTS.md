@@ -247,9 +247,10 @@ non-draft PR must always mean the automated work is done.
 of the stages below.** The loop has several stages, some independently capped,
 and after a few fix rounds the active one stops being obvious — to the
 maintainer reading along, and to the agent, which then runs one more review
-round after being told to move on. The ledger is a short table in the agent's
-**own commentary** (tool output is collapsed and does not count), always in
-this shape, with this legend, in every stage:
+round after being told to move on. The stage ledger — distinct from the
+gauntlet's private adjudication ledger, which is a file — is a short table in
+the agent's **own commentary** (tool output is collapsed and does not count),
+always in this shape, with this legend, in every stage:
 
 | 📍 Ledger | |
 |---|---|
@@ -274,8 +275,12 @@ during a long wait (no re-dumping unchanged command output), and
 instruction overrides the default transition at once, a terminal one ("go
 straight to review", "no more challenge rounds") is reflected in the ledger
 before any tool call starts the next stage, and silently returning to the
-default sequence is forbidden. A one-step task that touches a single stage
-owes no ledger.
+default sequence is forbidden. An override is an attributable human decision
+and is followed, but it redirects the loop rather than erasing findings: any
+P0/P1 still open in the stage it ends is carried into the PR body's
+`## Deferred findings` with the override named as its disposition, never
+dropped, and the ledger records the override as the reason for the
+transition. A one-step task that touches a single stage owes no ledger.
 
 **Round caps are resolved, not stated here.** The challenge, review, and
 shepherd stages below are each capped, but this file names no numbers: they
@@ -775,7 +780,7 @@ run, and nothing waits on it.
    round with an adjudication table — at minimum finding →
    reviewer priority → **adjudicated** priority → classification → evidence →
    action, plus the round-2 provenance column — and record it; the skill
-   adds the per-branch ledger the rows are written to.
+   adds the per-branch adjudication ledger the rows are written to.
 
 **Between rounds, check what the findings are about.** Those six steps are all
 *per-finding*, so a reviewer can be right every round while the loop as a whole

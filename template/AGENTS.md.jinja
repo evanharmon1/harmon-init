@@ -140,9 +140,10 @@ error silently reverts the lifecycle rather than fixing anything.
 of the stages below.** The loop has several stages, some independently capped,
 and after a few fix rounds the active one stops being obvious — to the
 maintainer reading along, and to the agent, which then runs one more review
-round after being told to move on. The ledger is a short table in the agent's
-**own commentary** (tool output is collapsed and does not count), always in
-this shape, with this legend, in every stage:
+round after being told to move on. The stage ledger — distinct from the
+gauntlet's private adjudication ledger, which is a file — is a short table in
+the agent's **own commentary** (tool output is collapsed and does not count),
+always in this shape, with this legend, in every stage:
 
 [% if use_codex_review %]| 📍 Ledger | |
 |---|---|
@@ -152,8 +153,8 @@ this shape, with this legend, in every stage:
 [% else %]| 📍 Ledger | |
 |---|---|
 | **Stage** | 🚢 shepherd · **round 2/4** · cloud (PR review cycle) |
-| **Round** | 🔴 1 finding open · 🟡 2 P2 deferred · ⚪ 1 P3 noted · ⏳ CI |
-| **Next** | fix finding → `task verify` → push → 🚢 shepherd round 3 |
+| **Round** | 🔴 1 P1 open · 🟡 2 P2 deferred · ⚪ 1 P3 noted · ⏳ CI |
+| **Next** | fix P1 → `task verify` → push → 🚢 shepherd round 3 |
 [% endif %]
 
 Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review · 🏗️ ci ·
@@ -164,8 +165,9 @@ the state at a glance without parsing prose. `Stage` names the stage and,
 for a capped stage, **its round as `round n/cap`** from the cap resolved
 below — challenge, review, and shepherd are counted and capped separately and
 never combined; implement, verify, and ci have no cap and carry no round —
-and says whether a round is a local [% if use_codex_review %]`task challenge`/`task review` run[% else %]gate run[% endif %] or a cloud
-PR-shepherd review cycle. `Next` names the next concrete gate or action,
+and says [% if use_codex_review %]whether a round is a local `task challenge`/`task review` run or a cloud
+PR-shepherd review cycle[% else %]that a round is a cloud PR-shepherd review cycle — shepherd is the
+only capped stage in this repository's loop[% endif %]. `Next` names the next concrete gate or action,
 including the `task verify` a fix owes before the next round. Post it at every
 stage transition, when a round begins or ends, as the concise progress tick
 during a long wait (no re-dumping unchanged command output), and
@@ -173,11 +175,15 @@ during a long wait (no re-dumping unchanged command output), and
 instruction overrides the default transition at once, a terminal one ("go
 straight to review", "no more challenge rounds") is reflected in the ledger
 before any tool call starts the next stage, and silently returning to the
-default sequence is forbidden. A one-step task that touches a single stage
-owes no ledger.
+default sequence is forbidden. An override is an attributable human decision
+and is followed, but it redirects the loop rather than erasing findings: any
+P0/P1 still open in the stage it ends is carried into the PR body's
+`## Deferred findings` with the override named as its disposition, never
+dropped, and the ledger records the override as the reason for the
+transition. A one-step task that touches a single stage owes no ledger.
 
-**Round caps are resolved, not stated here.** The stages below are each
-capped, but this file names no numbers: the caps live in
+**Round caps are resolved, not stated here.** The capped stages below —
+[% if use_codex_review %]challenge, review, and [% endif %]shepherd — each have a cap, but this file names no numbers: the caps live in
 [`.devflow.toml`](.devflow.toml) as `rigor` levels, so there is one place to
 change them and one place to read them. Resolve in this order — an explicit
 instruction in this session, then [% if project_management == 'github' or use_foreman %]a `rigor:*` label on the issue, then [% endif %]`default_rigor`,
@@ -287,7 +293,7 @@ reviewer instead of silent.
   the backgrounding guidance in
   [docs/guides/codex-review.md](docs/guides/codex-review.md) ("Duration and
   backgrounding"), the sidecar obligation in "Deferring P2s" below, and the
-  Dev Loop's draft-PR bullet — the ledger and the extended ritual are
+  Dev Loop's draft-PR bullet — the adjudication ledger and the extended ritual are
   gauntlet enhancements a no-skill repo simply does not owe. What stays here
   is the policy they run under, and where a **vendored** skill (`/gauntlet`)
   states a different cap, floor, or exit condition, **this file wins** —
@@ -677,7 +683,7 @@ These local tasks do not imply that Codex cloud review is installed or required.
    round with an adjudication table — at minimum finding →
    reviewer priority → **adjudicated** priority → classification → evidence →
    action, plus the round-2 provenance column — and record it; where the
-   `/gauntlet` skill is vendored it adds the per-branch ledger the rows are
+   `/gauntlet` skill is vendored it adds the per-branch adjudication ledger the rows are
    written to.
 
 **Between rounds, check what the findings are about.** Those six steps are all
