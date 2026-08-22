@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.38.0](https://github.com/evanharmon1/harmon-init/compare/v4.37.2...v4.38.0) (2026-08-22)
+
+
+### Features
+
+* **pm:** add layer:infra to the default label registry ([#1026](https://github.com/evanharmon1/harmon-init/issues/1026)) ([442841b](https://github.com/evanharmon1/harmon-init/commit/442841b24a7f7fee6376ad1b4d39a6dadb9bca13))
+
 ## [4.37.2](https://github.com/evanharmon1/harmon-init/compare/v4.37.1...v4.37.2) (2026-08-22)
 
 
