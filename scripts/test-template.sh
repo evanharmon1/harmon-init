@@ -816,13 +816,17 @@ if [ -d .github/workflows ]; then
     # guarded. Any comment or unrelated `with:` block could mask a real gap the
     # same way.
     #
-    # The one legitimate exception is named, and must still prove its shape.
+    # The legitimate exceptions are named, and must still prove their shape.
     # An earlier version allowed any checkout that set `token:` — too loose:
     # `token: ${{ github.token }}` is the DEFAULT token spelled out, and
     # actions/checkout persists it just the same, so that rule would have waved
-    # through exactly what it exists to catch. Only claude-implement.yml may
-    # omit the guard, and only for a checkout using the minted App token, which
-    # it must persist so Claude's `git push` can authenticate.
+    # through exactly what it exists to catch. Only the three Claude workflows
+    # may omit the guard, each for exactly one checkout using the minted App
+    # token: claude-implement.yml must persist it so Claude's `git push` can
+    # authenticate, and claude-review.yml / claude-plan.yml must persist it
+    # because claude-code-action's tag mode `git fetch`es the PR head branch
+    # before configuring its own git auth (anthropics/claude-code-action#1236),
+    # which fails on a private repo with no persisted credential.
     if have yq; then
         # This is a security audit, so it must fail CLOSED. An earlier version
         # ended each query with `|| echo 0`, which turned any evaluator error
@@ -858,11 +862,13 @@ if [ -d .github/workflows ]; then
                     continue
                 fi
                 allowed=0
-                if [ "$(basename "$workflow")" = "claude-implement.yml" ]; then
-                    # Exactly ONE checkout may claim this exemption. Match the
-                    # token expression exactly: this workflow mints two App
-                    # tokens (`app-token` and `app-token-projects`), so a
-                    # substring test would exempt either.
+                case "$(basename "$workflow")" in
+                claude-implement.yml | claude-review.yml | claude-plan.yml)
+                    # Exactly ONE checkout per workflow may claim this
+                    # exemption. Match the token expression exactly: these
+                    # workflows mint two App tokens (`app-token` and
+                    # `app-token-projects`), so a substring test would exempt
+                    # either.
                     if ! exempt=$(yq_count "$workflow" '
                         [ .jobs[]?.steps[]?
                           | select((.uses // "") | test("actions/checkout@"))
@@ -870,14 +876,15 @@ if [ -d .github/workflows ]; then
                           | select((.with.token // "") == "${{ steps.app-token.outputs.token }}")
                         ] | length
                     '); then
-                        err "claude-implement.yml: could not evaluate the exemption query (see above)"
+                        err "$(basename "$workflow"): could not evaluate the exemption query (see above)"
                         continue
                     fi
                     if [ "$exempt" -gt 1 ]; then
-                        err "claude-implement.yml: ${exempt} checkouts claim the single documented persisted-credentials exception"
+                        err "$(basename "$workflow"): ${exempt} checkouts claim the single documented persisted-credentials exception"
                     fi
                     [ "$exempt" -ge 1 ] && allowed=1
-                fi
+                    ;;
+                esac
                 if [ "$unguarded" -gt "$allowed" ]; then
                     err "$(basename "$workflow"): $((unguarded - allowed)) checkout step(s) persist credentials without setting persist-credentials:false"
                 fi
