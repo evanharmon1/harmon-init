@@ -174,9 +174,16 @@ jobs:
           permission-contents: read
           permission-pull-requests: write
           permission-issues: write
+      # Exception to the repo-wide `persist-credentials: false` hardening:
+      # on a PR comment, claude-code-action itself runs
+      # `git fetch origin <pr-branch>` before reviewing, so the checkout must
+      # carry a git credential or the run dies with "could not read Username
+      # for 'https://github.com'". Persist the short-lived CI App token minted
+      # above — least-privilege (contents: read) and expired with the job —
+      # exactly as claude-implement does for its push.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
+          token: ${{ steps.app-token.outputs.token }}
       - uses: anthropics/claude-code-action@d40ddef4c030e508327d6e35a9c45f3368482c50 # v1.0.195
         # Step-level cap. A JOB timeout kills the runner outright and the
         # always() release below never runs; a STEP timeout fails only this
