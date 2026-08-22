@@ -207,6 +207,10 @@
         {
           "value": "integration",
           "description": "External boundary: webhooks, API clients, credentials"
+        },
+        {
+          "value": "infra",
+          "description": "Hosts, networking, containers, provisioning — IaC and config rather than app code"
         }
       ]
     },

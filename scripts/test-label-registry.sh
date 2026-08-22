@@ -223,6 +223,7 @@ layer:ui|1D76DB|Components, styling, interaction, tokens, a11y. No data change
 layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
+layer:infra|1D76DB|Hosts, networking, containers, provisioning — IaC and config rather than app code
 rigor:light|D4C5F9|Dev Loop caps: trivial, low-blast-radius change
 rigor:standard|D4C5F9|Dev Loop caps: the default budget
 rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
