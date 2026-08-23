@@ -197,8 +197,10 @@ belongs in a separate user, container, or VM, not a sibling pane.
    a reused pane's previous sentinel satisfies the next wait and hands you
    the old report. Then
    `agent prompt … --wait --until working --timeout 30000`. If it returns
-   with the worker still `idle`, delivery may have silently missed (it
-   happens when the harness is mid-render) — but before re-sending, check
+   with the worker still `idle`, delivery may have silently missed — Herdr
+   0.8.0 (the devcontainer pin) can report `agent start` ready before the
+   pane's first-run prompts have settled (fixed in 0.8.2), and a harness
+   mid-render swallows input the same way — but before re-sending, check
    the pane and the report path: a fast worker can finish and return to
    `idle` inside the window, and re-sending a brief that performs side
    effects (GitHub writes, deploys) is at-least-once delivery. Re-send only
@@ -273,9 +275,13 @@ Per-harness notes that shape the launch line:
   (often broad `Bash(git:*)`/`Bash(gh:*)` allows) merge in. Detection is
   clean; gate variables belong on the pane (`--env`).
 - **`codex`** — `-- -a never -s workspace-write -c sandbox_workspace_write.network_access=true`
-  for unattended runs, **plus** a rules file that allows every command the
-  task will run: with `-a never`, any command a rule marks as prompt-worthy is
-  rejected before a shell spawns (`Rejected("approval required by policy, but
+  for unattended runs, **plus** rules for exactly the commands Codex's policy
+  would otherwise prompt on (typically network-touching writes like
+  `gh issue edit`) — nothing more. Ordinary build/test commands run inside
+  `workspace-write` without any rule, and an `allow` rule executes its
+  matches *outside* the sandbox, so blanket-allowing the task's whole command
+  set trades the sandbox away. The failure mode to know: with `-a never`,
+  any command a rule marks as prompt-worthy is rejected before a shell spawns (`Rejected("approval required by policy, but
   AskForApproval is set to Never")`) with no stderr. Rules match a leading
   prefix of the argv — `["gh"]` matches every `gh` invocation, `["git",
   "status"]` matches `git status …` — so keep `allow` patterns argument-level
@@ -306,7 +312,7 @@ herdr agent read NAME --source recent-unwrapped --lines 120
 herdr agent explain NAME                      # why Herdr thinks it is in that state
 herdr agent send-keys NAME esc                # logical keys, validated before writing
 herdr tab close T                             # closes panes, kills their processes
-herdr workspace close W                       # same, for a whole workspace; files stay
+herdr workspace close W                       # same, for a whole workspace; files and detached processes stay
 herdr worktree open --path P --label L --no-focus
 herdr worktree remove --workspace W           # ALSO deletes the checkout — Herdr-created trees only
 herdr notification show "title" --body "…"

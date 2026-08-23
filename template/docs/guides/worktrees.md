@@ -73,9 +73,12 @@ dependencies, proves the git hooks fire inside it (`.git` is a *file* in a
 linked worktree, so `-c core.hooksPath=.git/hooks` silently resolves to
 nothing — a breaker the task exists to catch), prints the ready path, and
 rolls the tree back if any step fails. One default to know: a **new** branch
-is based on the *main worktree's* HEAD — so if the main checkout is sitting
-on another feature branch, an "independent" branch created now stacks on it
-and carries its commits into the PR. For an independent PR, have the main
+is based on the *main worktree's* HEAD — first verified against that branch's
+configured upstream, so a merely *stale* main is upgraded to the fresh
+upstream tip (announced) while a *diverged* one refuses with a `--base`
+remedy. The trap is a main checkout sitting on another feature branch: an
+"independent" branch created now stacks on it and carries its commits into
+the PR. For an independent PR, have the main
 worktree on `main` first, or pass the base explicitly
 (`--base origin/main`). The full option semantics and refusal cases are in
 [../conventions.md](../conventions.md) § Worktrees.
