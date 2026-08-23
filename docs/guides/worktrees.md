@@ -18,10 +18,13 @@ Ask three questions. If any answer is **yes**, make a worktree.
    out somewhere to commit on. This is the "one worktree per intended PR"
    heuristic — per unit of *committable* work.
 2. **Will it run repo tooling that assumes a private, stable tree?**
-   `task verify`, test suites, dev servers on fixed ports, builds that write
-   `dist/`, codegen, git hooks. They read the working tree at a moment in
-   time; if something else is mid-edit you get phantom failures, and two
-   `task verify` runs in one checkout fight over ports and caches.
+   `task verify`, test suites, builds that write `dist/`, codegen, git hooks.
+   They read the working tree at a moment in time; if something else is
+   mid-edit you get phantom failures. Note what a worktree does *not*
+   isolate: the host's ports, network, and shared home/global caches. Two
+   parallel units whose tests bind a fixed port, or that share a package
+   cache, still race — give each worker its own port/cache allocation on top
+   of its own tree.
 3. **Will it outlive a single turn, or need to be resumable?** A worktree is
    durable, *addressable* state: if the session dies, the branch and its
    edits survive on disk and another session can pick them up by name. A pane

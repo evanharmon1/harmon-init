@@ -1,7 +1,8 @@
 # Herdr — workspaces, panes, agents, and multi-harness orchestration
 
-Herdr is the agent-session runtime in this repo's devcontainers and on your
-laptop: a terminal workspace manager that recognizes the coding agent running
+Herdr is the agent-session runtime for this repo's agents — in the
+devcontainers where the profile ships them, and on your own machine: a
+terminal workspace manager that recognizes the coding agent running
 in each pane, tracks its state, and exposes the whole thing through the
 `herdr` CLI. This guide is how to *use* it for real work — the mental model,
 the everyday workflows, how it pairs with the repo's worktree tooling, running
@@ -141,10 +142,11 @@ Reserve `herdr worktree remove` for throwaway trees Herdr itself created.
 If you use `herdr worktree create` directly, provision before any agent
 starts: `herdr pane run <root-pane> "task install"` and `wait-output` for it,
 then `agent start`. Environment variables are the only "setup" Herdr itself
-offers — `worktree create`, `tab create`, and `pane split` all take
-`--env KEY=VALUE` — which is the right place for gate variables an
-orchestrator sets under explicit human authorization (never in the worker's
-prompt). When to reach for a worktree at all is [worktrees.md](worktrees.md).
+offers — `workspace create`, `tab create`, and `pane split` take
+`--env KEY=VALUE` (`worktree create` does **not**; give a worktree-backed
+workspace its variables on the tabs/panes you create inside it) — and they
+are the right place for gate variables an orchestrator sets under explicit
+human authorization (never in the worker's prompt). When to reach for a worktree at all is [worktrees.md](worktrees.md).
 
 ## Fan-out: orchestrating many workers from one session
 
@@ -170,6 +172,14 @@ Use subagents for cheap, fast, structured fan-outs you do not need to watch;
 use pane workers when you want visibility, steerability, longer-running work,
 or a **different harness** than the orchestrator's.
 
+**Panes are not a security boundary.** Every pane worker runs as the same OS
+user in the same Herdr session: any of them can read, type into, or close any
+other pane by explicit ID, and they share the filesystem and every credential
+on it. "Its own permissions" means each harness's own tool-approval settings,
+not isolation. Fan out only mutually trusted workers over trusted inputs;
+work that chews on untrusted content (third-party repos, inbound issue text)
+belongs in a separate user, container, or VM, not a sibling pane.
+
 **The loop** (each step is a `herdr` command the orchestrator runs):
 
 1. **Lay out** — a fresh tab for the fan-out, one pane per unit, each with
@@ -179,8 +189,12 @@ or a **different harness** than the orchestrator's.
 2. **Start** — `agent start <name> --kind <kind> --pane <id> -- <native args>`
    with a distinctive name per unit (`triage-omator`, `prune-site`).
 3. **Prompt** — one self-contained brief per worker, ending with a
-   **file-based report** at a known path and a **sentinel line** (a unique
-   string such as `TRIAGE-WORKER-DONE omator`) printed last. Then
+   **file-based report** at a known path and a **sentinel line** printed
+   last. Make both unique per *attempt*, not just per worker — a nonce such
+   as `TRIAGE-DONE omator 7f3a` in the sentinel and the report filename —
+   because `pane wait-output` matches the existing snapshot immediately, so
+   a reused pane's previous sentinel satisfies the next wait and hands you
+   the old report. Then
    `agent prompt … --wait --until working --timeout 30000`. If it returns
    with the worker still `idle`, delivery may have silently missed (it
    happens when the harness is mid-render) — but before re-sending, check
@@ -204,9 +218,12 @@ or a **different harness** than the orchestrator's.
    to mark it seen and look, `agent attach` to take over, or prompt it again
    with its context intact (the reason to keep a pane alive).
 7. **Retire** — close what you created: `tab close` (which closes its panes
-   and kills their processes) or `worktree remove --workspace` for
-   worktree-backed units. Never close panes, tabs, or workspaces you did not
-   create unless asked; never `herdr server stop` from a live session.
+   and kills their processes), or for worktree-backed units `workspace close`
+   followed by `task worktree:rm` — the guarded path from § Worktrees.
+   `worktree remove --workspace` is only for throwaway trees Herdr itself
+   created, since it deletes the checkout unguarded. Never close panes,
+   tabs, or workspaces you did not create unless asked; never
+   `herdr server stop` from a live session.
 8. **Sweep** — the durable leftovers Herdr does not remove: worktrees
    (`worktree list` + `task worktree:rm`), branches (`task clean:branches`),
    scratch files and sidecars, and anything a worker deliberately detached.
