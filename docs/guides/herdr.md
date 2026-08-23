@@ -79,15 +79,17 @@ logs), panes within a tab for things you want side by side.
 ```bash
 herdr pane split --current --direction right --cwd "$PWD" --no-focus
 #   → read .result.pane.pane_id
-herdr pane run <id> "task verify"
-herdr pane wait-output <id> --match "verify: ok" --timeout 600000
+herdr pane run <id> "task verify && echo VERIFY-OK-7f3a || echo VERIFY-FAILED-7f3a"
+herdr pane wait-output <id> --regex "VERIFY-(OK|FAILED)-7f3a" --timeout 600000
 herdr pane read <id> --source recent-unwrapped --lines 120
 ```
 
 Split a wide pane right and a tall one down; avoid repeated same-direction
 splits that leave unusable slivers. `pane run` sends text plus Enter
 atomically; `wait-output` matches the current snapshot immediately, so output
-that already exists counts.
+that already exists counts. Wait on a marker *you* append (unique per run, one
+alternative per outcome, as above) — most tasks print no stable "done" line of
+their own, and a wait that only matches success sits silent through a failure.
 
 **Starting and steering an agent in that pane:**
 

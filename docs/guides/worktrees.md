@@ -10,7 +10,9 @@ from Herdr is [herdr.md](herdr.md).
 
 ## The decision rule
 
-Ask three questions. If any answer is **yes**, make a worktree.
+Ask three questions. If any answer is **yes**, default to a worktree — the
+refinements below name the exceptions (chiefly: serial work on an otherwise
+idle checkout).
 
 1. **Will this work change tracked files and need to be committed?** Two
    sessions editing the same checkout step on each other's diffs, staged
