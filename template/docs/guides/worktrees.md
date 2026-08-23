@@ -23,9 +23,10 @@ Ask three questions. If any answer is **yes**, make a worktree.
    time; if something else is mid-edit you get phantom failures, and two
    `task verify` runs in one checkout fight over ports and caches.
 3. **Will it outlive a single turn, or need to be resumable?** A worktree is
-   durable state: if the session dies, the branch and its edits survive on
-   disk and another session can pick them up. Scratch in a pane dies with the
-   pane.
+   durable, *addressable* state: if the session dies, the branch and its
+   edits survive on disk and another session can pick them up by name. A pane
+   job's terminal context dies with the pane; whatever it wrote to disk
+   (reports, scratch) persists but is nobody's responsibility — see the sweep.
 
 If all three are **no**, you do not need a worktree. Work that *reads* the
 repo and *writes somewhere else* — auditing, reviewing, research, reports,
@@ -90,15 +91,23 @@ herdr worktree open --path .worktrees/feat-x --label feat-x --no-focus
 
 `worktree open` binds the existing checkout to a new Herdr workspace whose
 root pane is ready for `herdr agent start`. When the work is verified and
-pushed, `herdr worktree remove --workspace <id>` tears down the workspace
-(tabs, panes, sessions) and `task worktree:rm -- feat-x` prunes the repo's
-bookkeeping. See [herdr.md](herdr.md) § Worktrees for the alternatives and
-the sweep.
+pushed, close the Herdr side first and let the **repo** remove the tree:
+
+```bash
+herdr workspace close <id>      # panes + sessions only; the checkout stays
+task worktree:rm -- feat-x      # guarded removal, registry prune
+```
+
+Do **not** use `herdr worktree remove` on a tree the repo created: it runs a
+plain `git worktree remove`, which deletes ignored local files such as a
+`.env` without the refusal `task worktree:rm` exists to give, and then the
+task finds nothing left to guard. See [herdr.md](herdr.md) § Worktrees for
+the alternatives and the sweep.
 
 ## The sweep
 
-Closing a pane or workspace kills the processes in it, but nothing about a
-worktree, its branch, or scratch files is removed for you. End every fan-out
+Closing a pane or workspace kills the processes in it, but nothing on disk —
+a worktree, its branch, report or scratch files — is removed for you. End every fan-out
 with: verify the results → close the panes/tabs you created → `git worktree
 list` (or `herdr worktree list`, which also shows non-Herdr trees) → remove
 what is finished → delete merged branches (`task clean:branches` where the

@@ -8,7 +8,8 @@ the everyday workflows, how it pairs with the repo's worktree tooling, running
 several agents (and several harnesses) at once, and the lifecycle and cleanup
 that keep the sidebar meaningful. Installation, the devcontainer volumes, and
 attaching from a laptop are in [devcontainers.md](devcontainers.md) § Persistent
-agent sessions; the decision rule for worktrees is [worktrees.md](worktrees.md).
+agent sessions; the
+decision rule for worktrees is [worktrees.md](worktrees.md).
 
 The installed binary is the authority for syntax: `herdr --help`, then a
 command group without a subcommand (`herdr agent`, `herdr pane`, …) prints its
@@ -115,7 +116,8 @@ under `[worktrees] directory` (default `~/.herdr/worktrees/<repo>/<branch>`);
 `worktree open` binds an *existing* checkout to a new workspace; `worktree
 list` shows worktrees for the repo, including ones Herdr did not create;
 `worktree remove --workspace ID [--force]` tears down the workspace — tabs,
-panes, sessions — and the checkout together. There is **no post-create
+panes, sessions — **and deletes the checkout** with a plain `git worktree
+remove` (no ignored-file guard). There is **no post-create
 hook**: a fresh tree has no dependencies installed, no local env, and no
 hooks proof, which is the failure everyone hits first.
 
@@ -126,9 +128,14 @@ binds**:
 task worktree:new -- feat-x --branch feat/x
 herdr worktree open --path .worktrees/feat-x --label feat-x --no-focus
 # …work…
-herdr worktree remove --workspace <id>     # panes + sessions
-task worktree:rm -- feat-x                 # repo bookkeeping, gitlink prune
+herdr workspace close <id>                 # panes + sessions; checkout stays
+task worktree:rm -- feat-x                 # guarded removal, gitlink prune
 ```
+
+Order matters: `herdr worktree remove` would delete the checkout before
+`task worktree:rm` could refuse on ignored local state such as a `.env`, so a
+repo-created tree is closed on the Herdr side and removed by the repo task.
+Reserve `herdr worktree remove` for throwaway trees Herdr itself created.
 
 If you use `herdr worktree create` directly, provision before any agent
 starts: `herdr pane run <root-pane> "task install"` and `wait-output` for it,
@@ -173,12 +180,22 @@ or a **different harness** than the orchestrator's.
 3. **Prompt** — one self-contained brief per worker, ending with a
    **file-based report** at a known path and a **sentinel line** (a unique
    string such as `TRIAGE-WORKER-DONE omator`) printed last. Then
-   `agent prompt … --wait --until working` and re-send if the worker stays
-   `idle` — delivery can silently miss when the harness is mid-render.
-4. **Wait** — `agent wait <name>` per worker (background it; rounds run
-   minutes), or `pane wait-output --match <sentinel>` where detection is
-   weak. `done`/`idle` means *stopped*, not *succeeded*: the sentinel and
-   the report file are the success signals.
+   `agent prompt … --wait --until working --timeout 30000`. If it returns
+   with the worker still `idle`, delivery may have silently missed (it
+   happens when the harness is mid-render) — but before re-sending, check
+   the pane and the report path: a fast worker can finish and return to
+   `idle` inside the window, and re-sending a brief that performs side
+   effects (GitHub writes, deploys) is at-least-once delivery. Re-send only
+   when the pane shows the prompt never landed; make briefs idempotent where
+   you can.
+4. **Wait** — `agent wait <name> --timeout <ms>` per worker (background it;
+   rounds run minutes), or `pane wait-output --match <sentinel> --timeout
+   <ms>` where detection is weak. Always bound the wait: a worker whose
+   detection stays `unknown` or whose harness hangs would otherwise block
+   the orchestrator forever. On timeout, `agent get` / `agent read` /
+   `agent explain` it and decide — nudge, take over, or retire — rather than
+   waiting again blind. `done`/`idle` means *stopped*, not *succeeded*: the
+   sentinel and the report file are the success signals.
 5. **Harvest and verify** — `agent read` / read the report files, then
    **verify ground truth yourself** (the diff, the labels on GitHub, the test
    run). Never trust a transcript's claim of success.
@@ -201,10 +218,11 @@ checkout with the workspace. What is on you: steps 5 and 8.
 ## Multiple harnesses — supported and sanctioned
 
 The orchestration surface is harness-agnostic. `--kind` accepts every agent
-Herdr can recognize (`herdr agent` lists them: `claude`, `codex`, `gemini`,
-`agy` (Antigravity), `opencode`, `copilot`, `cursor`, `amp`, `droid`, `kimi`,
-`qwen`, `kilo`, `cline`, …), and nothing about the loop above changes except
-the kind and the native arguments after `--`. A Claude Code orchestrator can
+the installed Herdr can recognize — run `herdr agent` to see the exact list for
+your version; `claude`, `codex`, `gemini`, `agy` (Antigravity), and `opencode`
+are in the 0.8.0 image the devcontainers pin, newer releases add more — and
+nothing about the loop above changes except the kind and the native arguments
+after `--`. A Claude Code orchestrator can
 therefore drive Codex, Antigravity, or OpenCode workers — each a separate,
 official client running under **its own provider login and subscription**.
 
@@ -247,15 +265,20 @@ the variable to get unstuck.
 ## Cheat sheet
 
 ```bash
-herdr workspace list | tab list --workspace W | pane list --workspace W | agent list
+herdr workspace list
+herdr tab list --workspace W
+herdr pane list --workspace W
+herdr agent list
 herdr pane split --current --direction right --cwd "$PWD" --no-focus
-herdr agent start NAME --kind KIND --pane ID [--timeout MS] -- ARGS…
-herdr agent prompt NAME "…" --wait [--until working|blocked] --timeout MS
-herdr agent wait NAME [--until STATE] --timeout MS
+herdr agent start NAME --kind KIND --pane ID --timeout MS -- ARGS…
+herdr agent prompt NAME "…" --wait --until working --timeout MS
+herdr agent wait NAME --timeout MS            # add --until STATE for a specific state
 herdr agent read NAME --source recent-unwrapped --lines 120
-herdr agent explain NAME          # why Herdr thinks it is in that state
-herdr agent send-keys NAME esc    # logical keys, validated before writing
-herdr tab close T                 # closes panes, kills their processes
-herdr worktree open --path P --label L --no-focus | herdr worktree remove --workspace W
+herdr agent explain NAME                      # why Herdr thinks it is in that state
+herdr agent send-keys NAME esc                # logical keys, validated before writing
+herdr tab close T                             # closes panes, kills their processes
+herdr workspace close W                       # same, for a whole workspace; files stay
+herdr worktree open --path P --label L --no-focus
+herdr worktree remove --workspace W           # ALSO deletes the checkout — Herdr-created trees only
 herdr notification show "title" --body "…"
 ```
