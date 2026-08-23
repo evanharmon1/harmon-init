@@ -225,7 +225,9 @@ belongs in a separate user, container, or VM, not a sibling pane.
    tabs, or workspaces you did not create unless asked; never
    `herdr server stop` from a live session.
 8. **Sweep** — the durable leftovers Herdr does not remove: worktrees
-   (`worktree list` + `task worktree:rm`), branches (`task clean:branches`),
+   (`worktree list` + `task worktree:rm`), branches (`task clean:branches`
+   to review, then `task clean:branches -- --delete` — the bare form is a
+   dry run),
    scratch files and sidecars, and anything a worker deliberately detached.
    `herdr notification show` can announce the result.
 
@@ -261,16 +263,24 @@ API billing.
 
 Per-harness notes that shape the launch line:
 
-- **`claude`** — `-- --model <m> --allowedTools '<exact list>'` pre-approves
-  the tools the task needs and nothing else, so no permission prompt appears.
-  Detection is clean; gate variables belong on the pane (`--env`).
+- **`claude`** — `-- --model <m> --tools '<exact list>' --allowedTools '<the
+  same list>'`. The two flags do different halves of least privilege:
+  `--tools` restricts which tools *exist* in the session, `--allowedTools`
+  pre-approves them so no prompt blocks an unattended worker. `--allowedTools`
+  alone is not a restriction — every other tool is still there behind a
+  prompt, and the repo's and devcontainer's `settings.json` permissions
+  (often broad `Bash(git:*)`/`Bash(gh:*)` allows) merge in. Detection is
+  clean; gate variables belong on the pane (`--env`).
 - **`codex`** — `-- -a never -s workspace-write -c sandbox_workspace_write.network_access=true`
   for unattended runs, **plus** a rules file that allows every command the
   task will run: with `-a never`, any command a rule marks as prompt-worthy is
   rejected before a shell spawns (`Rejected("approval required by policy, but
-  AskForApproval is set to Never")`) with no stderr, and prefix rules match
-  the first token only, so a wrapped invocation and a bare one can behave
-  differently. Detection is clean (`osc_title_working`); always confirm
+  AskForApproval is set to Never")`) with no stderr. Rules match a leading
+  prefix of the argv — `["gh"]` matches every `gh` invocation, `["git",
+  "status"]` matches `git status …` — so keep `allow` patterns argument-level
+  and narrow (an `allow` also runs its matches outside the sandbox), and note
+  that a script invoking `gh` internally has the script as `argv[0]` and
+  bypasses a bare-command rule entirely. Detection is clean (`osc_title_working`); always confirm
   `working` after a prompt.
 - **`agy`, `opencode`, others** — same loop; check detection with
   `agent explain` on first use, and fall back to the file report + sentinel

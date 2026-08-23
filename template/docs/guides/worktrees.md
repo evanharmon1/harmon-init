@@ -33,13 +33,16 @@ Ask three questions. If any answer is **yes**, make a worktree.
 
 If all three are **no**, you do not need a worktree. Work that *reads* the
 repo and *writes somewhere else* — auditing, reviewing, research, reports,
-label or issue hygiene via `gh`, `terraform plan`, anything whose output is a
-file in a scratch directory or a change upstream on GitHub — is a **pane
-job**: a sibling terminal with the repo as its cwd and no branch of its own.
+label or issue hygiene via `gh`, anything whose output is a file in a scratch
+directory or a change upstream on GitHub — is a **pane job**: a sibling
+terminal with the repo as its cwd and no branch of its own. Commands that
+write checkout-local state even though they feel read-only (`terraform plan`
+writes `.terraform/`, builds write caches) count as *running the repo's
+tooling*, question 2 — not as pane jobs in a shared checkout.
 
-Compressed: **writes to the repo or runs its tools → worktree (one per PR-sized
-unit); reads the repo and writes elsewhere → pane.** The tell is whether the
-work will ever run `git commit`.
+Compressed: **writes to the repo or runs its tooling → worktree (one per
+PR-sized unit); reads the repo and writes elsewhere → pane.** The tell is
+whether the work will ever run `git commit` **or** the repo's own tools.
 
 ## Refinements
 
@@ -67,8 +70,13 @@ branch on the main worktree's verified HEAD, installs **this tree's**
 dependencies, proves the git hooks fire inside it (`.git` is a *file* in a
 linked worktree, so `-c core.hooksPath=.git/hooks` silently resolves to
 nothing — a breaker the task exists to catch), prints the ready path, and
-rolls the tree back if any step fails. The full option semantics and refusal
-cases are in [../conventions.md](../conventions.md) § Worktrees.
+rolls the tree back if any step fails. One default to know: a **new** branch
+is based on the *main worktree's* HEAD — so if the main checkout is sitting
+on another feature branch, an "independent" branch created now stacks on it
+and carries its commits into the PR. For an independent PR, have the main
+worktree on `main` first, or pass the base explicitly
+(`--base origin/main`). The full option semantics and refusal cases are in
+[../conventions.md](../conventions.md) § Worktrees.
 
 **Work in it as a normal checkout.** `cd .worktrees/<name>`, then the ordinary
 Dev Loop from `AGENTS.md`: edit → `task check` → `task verify` → the review
@@ -113,6 +121,7 @@ Closing a pane or workspace kills the processes in it, but nothing on disk —
 a worktree, its branch, report or scratch files — is removed for you. End every fan-out
 with: verify the results → close the panes/tabs you created → `git worktree
 list` (or `herdr worktree list`, which also shows non-Herdr trees) → remove
-what is finished → delete merged branches (`task clean:branches` where the
-repo ships it) → clear scratch. Anything a worker deliberately detached
+what is finished → delete merged branches where the repo ships the task
+(`task clean:branches` to review — it is a dry run by default — then
+`task clean:branches -- --delete`) → clear scratch. Anything a worker deliberately detached
 (`nohup`, a background server) survives its pane and is part of the sweep too.
