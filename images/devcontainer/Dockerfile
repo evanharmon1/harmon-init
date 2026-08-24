@@ -7,7 +7,7 @@ ARG IMAGE_REVISION
 # ---------- version pins ----------
 # The producer is the one canonical owner of shared devcontainer tool pins.
 # renovate: datasource=github-releases depName=go-task/task extractVersion=^v?(?<version>.+)$
-ARG TASK_VERSION=3.52.0
+ARG TASK_VERSION=3.53.1
 # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
 ARG SHFMT_VERSION=3.13.1
 # renovate: datasource=github-releases depName=hadolint/hadolint extractVersion=^v?(?<version>.+)$
@@ -17,38 +17,38 @@ ARG ACTIONLINT_VERSION=1.7.12
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
-ARG YQ_VERSION=4.53.3
+ARG YQ_VERSION=4.53.6
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
-ARG ZELLIJ_VERSION=0.44.3
+ARG ZELLIJ_VERSION=0.45.0
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.238
+ARG WORKMUX_VERSION=0.1.242
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.14.1
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.233
+ARG CLAUDE_CODE_VERSION=2.1.238
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.147.0
+ARG CODEX_VERSION=0.149.0
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.55.1
+ARG GEMINI_CLI_VERSION=0.56.0
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.18
+ARG OPENCODE_VERSION=1.18.19
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.12.0
+ARG AGENT_DECK_VERSION=1.13.0
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.28.0
 # renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
 # Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
 ARG HERDR_VERSION=0.8.0
 # renovate: datasource=npm depName=dmux
-ARG DMUX_VERSION=5.11.0
+ARG DMUX_VERSION=5.11.1
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.173.0
+ARG SEMGREP_VERSION=1.174.0
 # renovate: datasource=pypi depName=copier
-ARG COPIER_VERSION=9.17.1
+ARG COPIER_VERSION=9.17.2
 # renovate: datasource=npm depName=@playwright/test
 ARG PLAYWRIGHT_VERSION=1.62.1
 # renovate: datasource=npm depName=@playwright/cli

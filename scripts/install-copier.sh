@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # renovate: datasource=pypi depName=copier
-COPIER_VERSION=9.17.1
+COPIER_VERSION=9.17.2
 
 if command -v brew >/dev/null 2>&1; then
     exit 0
