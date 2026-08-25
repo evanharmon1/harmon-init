@@ -23,6 +23,7 @@ command -v jq >/dev/null 2>&1 || {
     echo "TEST FAIL: jq is required by the status line and by this suite" >&2
     exit 1
 }
+bash_bin=$(command -v bash)
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -33,20 +34,16 @@ fail() {
 # to / so the git probe finds nothing and the output stays identical wherever
 # the suite runs (a checkout's own branch would leak into line 1 otherwise).
 render() {
-    NO_COLOR=1 STATUSLINE_HYPERLINK=0 bash "$sl" <<<"$1"
+    NO_COLOR=1 STATUSLINE_HYPERLINK=0 "$bash_bin" "$sl" <<<"$1"
 }
 
 render_hyperlinked() {
-    env -u NO_COLOR STATUSLINE_COLOR=1 STATUSLINE_HYPERLINK=1 bash "$sl" <<<"$1"
+    env -u NO_COLOR STATUSLINE_COLOR=1 STATUSLINE_HYPERLINK=1 "$bash_bin" "$sl" <<<"$1"
 }
 
-echo "==> status line refreshes every five seconds"
-if ! jq -e '
-    (.statusLine.refreshInterval | type) == "number" and
-    .statusLine.refreshInterval == 5 and
-    (.statusLine.refreshInterval | floor) == .statusLine.refreshInterval
-' "$defaults" >/dev/null; then
-    fail "expected statusLine.refreshInterval to be the integer 5 in $defaults"
+echo "==> status line defaults do not force refreshInterval into user settings"
+if jq -e '.statusLine | has("refreshInterval")' "$defaults" >/dev/null; then
+    fail "statusLine.refreshInterval must not be seeded into user settings"
 fi
 
 # ---- pull request: present, draft, and absent ----
@@ -70,6 +67,137 @@ case "$out" in *"$link"*) ;; *) fail "expected OSC-8 link for $pr_url around #10
 echo "==> an absent pr omits the PR segment"
 out=$(render '{"workspace":{"current_dir":"/"}}')
 case "$out" in *'PR #'*) fail "absent PR rendered a PR segment: $out" ;; esac
+
+echo "==> an opted-in missing payload PR uses a bounded synchronous gh cache"
+statusline_tmp=$(mktemp -d "${TMPDIR:-/tmp}/statusline.XXXXXX")
+trap 'rm -rf "$statusline_tmp"' EXIT
+fixture_repo="$statusline_tmp/repo"
+stub_dir="$statusline_tmp/bin"
+mkdir -p "$fixture_repo/.git" "$stub_dir"
+printf '%s\n' 'ref: refs/heads/statusline/test-branch' >"$fixture_repo/.git/HEAD"
+
+# The stubs prove the renderer asks `timeout` to cap every lookup at one second,
+# never permits an interactive gh prompt, and keeps the query branch-specific.
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    '[ "${GH_PROMPT_DISABLED:-}" = 1 ] || exit 42' \
+    'printf "%s\n" "$*" >>"$STATUSLINE_GH_LOG"' \
+    'case "${STATUSLINE_GH_MODE:-ok}" in' \
+    'ok) printf "%s\n" "${STATUSLINE_GH_RESPONSE:?}" ;;' \
+    'fail) exit 1 ;;' \
+    '*) exit 64 ;;' \
+    'esac' >"$stub_dir/gh"
+chmod +x "$stub_dir/gh"
+
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    '[ "${1:-}" = -s ] && [ "${2:-}" = KILL ] && [ "${3:-}" = 1 ] || exit 64' \
+    'printf "%s\n" "$*" >>"$STATUSLINE_TIMEOUT_LOG"' \
+    'case "${STATUSLINE_TIMEOUT_MODE:-run}" in' \
+    'run) shift 3; exec "$@" ;;' \
+    'fail) exit 124 ;;' \
+    '*) exit 64 ;;' \
+    'esac' >"$stub_dir/timeout"
+chmod +x "$stub_dir/timeout"
+
+# render_cached <cache-dir> <ttl-seconds> <json>
+render_cached() {
+    local cache_dir=$1 ttl=$2 payload=$3
+    PATH="$stub_dir:$PATH" STATUSLINE_PR_LOOKUP_ENABLED=1 \
+        STATUSLINE_PR_CACHE_DIR="$cache_dir" STATUSLINE_PR_CACHE_TTL="$ttl" \
+        NO_COLOR=1 STATUSLINE_HYPERLINK=0 "$bash_bin" "$sl" <<<"$payload"
+}
+
+render_cached_hyperlinked() {
+    local cache_dir=$1 ttl=$2 payload=$3
+    env -u NO_COLOR PATH="$stub_dir:$PATH" STATUSLINE_PR_LOOKUP_ENABLED=1 \
+        STATUSLINE_PR_CACHE_DIR="$cache_dir" STATUSLINE_PR_CACHE_TTL="$ttl" \
+        STATUSLINE_COLOR=1 STATUSLINE_HYPERLINK=1 "$bash_bin" "$sl" <<<"$payload"
+}
+
+payload=$(printf '{"workspace":{"current_dir":"%s"}}' "$fixture_repo")
+cache_dir="$statusline_tmp/cache"
+export STATUSLINE_GH_LOG="$statusline_tmp/gh.log"
+export STATUSLINE_TIMEOUT_LOG="$statusline_tmp/timeout.log"
+export STATUSLINE_GH_MODE=ok STATUSLINE_TIMEOUT_MODE=run
+export STATUSLINE_GH_RESPONSE='[{"number":1042,"url":"https://example.test/pull/1042","isDraft":false,"reviewDecision":"APPROVED"}]'
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+
+out=$(render_cached_hyperlinked "$cache_dir" 30 "$payload")
+case "$out" in *'#1042'*'✓'*) ;; *) fail "expected cached fallback PR #1042 approval, got: $out" ;; esac
+pr_url="https://example.test/pull/1042"
+osc8=$'\033'
+link="${osc8}]8;;${pr_url}${osc8}\\#1042${osc8}]8;;${osc8}\\"
+case "$out" in *"$link"*) ;; *) fail "expected fallback OSC-8 link for $pr_url around #1042" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "expected one gh lookup on a cache miss"
+[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "expected one one-second timeout wrapper"
+grep -qx 'pr list --head statusline/test-branch --state open --limit 1 --json number,url,isDraft,reviewDecision' "$STATUSLINE_GH_LOG" ||
+    fail "lookup did not query the current branch"
+
+echo "==> a fresh positive cache makes no second gh call"
+out=$(render_cached "$cache_dir" 30 "$payload")
+case "$out" in *'PR #1042 ✓'*) ;; *) fail "fresh fallback cache did not render PR #1042: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "fresh cache made a second gh call"
+[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "fresh cache invoked timeout again"
+
+echo "==> branch and repository cache keys do not reuse another PR"
+printf '%s\n' 'ref: refs/heads/statusline/other-branch' >"$fixture_repo/.git/HEAD"
+export STATUSLINE_GH_RESPONSE='[{"number":1043,"url":"https://example.test/pull/1043","isDraft":false,"reviewDecision":"REVIEW_REQUIRED"}]'
+out=$(render_cached "$cache_dir" 30 "$payload")
+case "$out" in *'PR #1043 ⋯'*) ;; *) fail "branch-keyed cache reused the old PR: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 2 ] || fail "new branch did not make one lookup"
+fixture_other_repo="$statusline_tmp/other-repo"
+mkdir -p "$fixture_other_repo/.git"
+printf '%s\n' 'ref: refs/heads/statusline/other-branch' >"$fixture_other_repo/.git/HEAD"
+other_payload=$(printf '{"workspace":{"current_dir":"%s"}}' "$fixture_other_repo")
+export STATUSLINE_GH_RESPONSE='[{"number":1044,"url":"https://example.test/pull/1044","isDraft":true,"reviewDecision":"APPROVED"}]'
+out=$(render_cached "$cache_dir" 30 "$other_payload")
+case "$out" in *'PR #1044'*) ;; *) fail "repository-keyed cache reused another repository's PR: $out" ;; esac
+case "$out" in *'✓'* | *'✗'* | *'⋯'*) fail "draft fallback invented a review glyph: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 3 ] || fail "new repository did not make one lookup"
+
+echo "==> failures are capped and negative-cached"
+failure_cache="$statusline_tmp/failure-cache"
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+export STATUSLINE_TIMEOUT_MODE=fail
+out=$(render_cached "$failure_cache" 30 "$payload")
+case "$out" in *'PR #'*) fail "bounded lookup failure rendered a PR: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 0 ] || fail "timed-out lookup reached gh"
+[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "failure did not use the one-second timeout"
+out=$(render_cached "$failure_cache" 30 "$payload")
+case "$out" in *'PR #'*) fail "negative cache rendered a PR: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "negative cache retried before its ten-second TTL"
+export STATUSLINE_TIMEOUT_MODE=run
+
+echo "==> payload PR remains authoritative and runtime disable skips lookup"
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+payload_with_pr=$(printf '{"workspace":{"current_dir":"%s"},"pr":{"number":999}}' "$fixture_repo")
+out=$(render_cached "$statusline_tmp/payload-cache" 30 "$payload_with_pr")
+case "$out" in *'PR #999'*) ;; *) fail "payload PR did not win over fallback: $out" ;; esac
+[ ! -s "$STATUSLINE_GH_LOG" ] || fail "payload PR unexpectedly queried gh"
+[ ! -s "$STATUSLINE_TIMEOUT_LOG" ] || fail "payload PR unexpectedly invoked timeout"
+PATH="$stub_dir:$PATH" STATUSLINE_PR_LOOKUP_ENABLED=0 \
+    STATUSLINE_PR_CACHE_DIR="$statusline_tmp/disabled-cache" NO_COLOR=1 \
+    STATUSLINE_HYPERLINK=0 "$bash_bin" "$sl" <<<"$payload" >/dev/null
+[ ! -s "$STATUSLINE_GH_LOG" ] || fail "runtime-disabled fallback unexpectedly queried gh"
+[ ! -s "$STATUSLINE_TIMEOUT_LOG" ] || fail "runtime-disabled fallback unexpectedly invoked timeout"
+
+echo "==> missing gh and timeout leave the PR segment empty"
+missing_tools_dir="$statusline_tmp/missing-tools"
+mkdir -p "$missing_tools_dir"
+for tool in jq date sha256sum shasum; do
+    tool_path=$(command -v "$tool" || true)
+    [ -z "$tool_path" ] || ln -s "$tool_path" "$missing_tools_dir/$tool"
+done
+out=$(PATH="$missing_tools_dir" STATUSLINE_PR_LOOKUP_ENABLED=1 \
+    STATUSLINE_PR_CACHE_DIR="$statusline_tmp/missing-tools-cache" NO_COLOR=1 \
+    STATUSLINE_HYPERLINK=0 "$bash_bin" "$sl" <<<"$payload")
+case "$out" in *'PR #'*) fail "missing lookup tools rendered a PR: $out" ;; esac
 
 # ---- context window: present, derivable, and unknown ----
 

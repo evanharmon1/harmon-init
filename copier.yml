@@ -279,6 +279,19 @@ devcontainer:
   # the forbidden combination through.
   validator: "[% if use_foreman and not devcontainer %]Foreman runs only inside the bot devcontainer (its D2 tripwire refuses any other environment) — enable devcontainer or disable use_foreman.[% endif %]"
 
+use_statusline_pr_lookup:
+  type: bool
+  help: >-
+    STATUSLINE PR LOOKUP: When Claude Code omits PR data, let the devcontainer
+    status line make a bounded, cached read-only `gh pr list` lookup for the
+    current branch? Requires a GitHub account and authenticated GitHub CLI.
+    GitHub Free is sufficient for public repositories and private repositories
+    the account can already read, but this grants no access: missing repository
+    permission, token scopes, or SSO authorization leaves the PR segment empty.
+    The lookup is disabled by default and never prompts for authentication.
+  default: no
+  when: "[[ devcontainer ]]"
+
 devcontainer_coder_folder_uri:
   type: str
   help: >-

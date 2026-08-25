@@ -138,18 +138,23 @@ honored, and `STATUSLINE_CTX_WIDTH`, `STATUSLINE_RL_WIDTH`, `STATUSLINE_RL_PCT`
 (exact limit percentages) and `STATUSLINE_HYPERLINK` (the OSC-8 link behind the
 PR number) tune the rest.
 
-It is built to be cheap, because it re-renders constantly: two forks per render
-(`jq` and `date`), no `git` subprocess — the branch is read from `.git/HEAD`
-directly, worktrees included — and nothing written to disk.
+It is built to be cheap: ordinary renders use `jq` and `date`, no `git`
+subprocess — the branch is read from `.git/HEAD` directly, worktrees included.
 
-Claude Code's `pr.*` fields are absent until it discovers the open PR.
-`statusLine.refreshInterval` is set to 5, so the status line reruns every five
-seconds and PRs created by background or other panes appear without waiting for
-a main-session event. This improves freshness but cannot manufacture PR data
-when Claude or GitHub discovery fails.
+Claude Code's `pr.*` fields are absent until it discovers the open PR. The
+optional **STATUSLINE PR LOOKUP** Copier answer (off by default) lets the
+renderer fill that gap with a read-only `gh pr list` lookup when it was enabled
+at scaffold time. It is a single-flight cache keyed by git directory and branch:
+cached positive results live for 30 seconds and negative/failure results for 10.
+On a cache miss or expiry, the current render can wait for one read-only,
+`GH_PROMPT_DISABLED=1` lookup, hard-capped at one second; ordinary cached renders
+stay local. Payload PR data always wins. Missing `gh`/`timeout`, failed GitHub
+discovery, or absent repository access simply leave the segment empty; the
+lookup cannot manufacture PR data.
+Set `STATUSLINE_PR_LOOKUP_ENABLED=0` to disable an enabled fallback at runtime.
 
 To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
-at it — the seed merge will not overwrite it.
+at it — the seed merge will not overwrite it or add `refreshInterval`.
 
 ## Codex CLI settings in the container
 
