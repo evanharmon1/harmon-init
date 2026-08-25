@@ -167,6 +167,13 @@ def malformed_fixture(tmp):
 rejects("a malformed conformance fixture", malformed_fixture, "cannot read fixture")
 
 
+def malformed_schema(tmp):
+    for rel in (".devflow.schema.json", "template/.devflow.schema.json"):
+        p = os.path.join(tmp, rel)
+        open(p, "w").write("{")
+rejects("a malformed v1 structural schema", malformed_schema, "cannot parse devflow schema JSON")
+
+
 def wrong_fixture_expectation(tmp):
     def mutate(fixture):
         fixture["cases"][0]["expect"]["result"]["selections"]["rigor"]["source"] = "explicit"

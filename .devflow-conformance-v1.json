@@ -116,6 +116,21 @@
       }
     },
     {
+      "name": "retired-method-label-is-ignored",
+      "basis": "branch",
+      "labels": ["method:council"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": { "value": "standard", "source": "default" },
+            "strategy": { "value": "plan", "source": "default" }
+          },
+          "warnings": []
+        }
+      }
+    },
+    {
       "name": "explicit-nondefault-strategy-projects-fields",
       "basis": "branch",
       "overrides": ["strategy=orchestrate"],

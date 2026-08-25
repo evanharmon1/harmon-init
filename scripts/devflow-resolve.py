@@ -102,12 +102,12 @@ actually requested (`adaptive`) for trust purposes, not from whatever
 adaptive is exactly as confirmation-worthy as one asking for any other
 off-profile tier once it resolves to something concrete.
 
-This is a ROOT-ONLY reference implementation, not the versioned,
-cross-consumer conformance contract — that is harmon-init#1048
-(schema_version, language-neutral fixtures, a fixture corpus). It exists so
-scripts/test-devflow-config.sh has something executable to run the
-resolution-order case table against, and so an agent or Foreman has a
-starting point rather than re-deriving the algorithm from prose each time.
+This is the shipped v1 reference implementation for the versioned,
+cross-consumer conformance contract: `schema_version`, the language-neutral
+fixture corpus, and this executable resolver agree on the normalized result.
+It also gives scripts/test-devflow-config.sh an executable resolution-order
+case table and lets an agent or Foreman start from a shared algorithm rather
+than re-deriving one from prose.
 
 Usage:
     devflow-resolve.py --config .devflow.toml \\
@@ -1326,9 +1326,8 @@ def main():
             # of scope for a config-only resolver. `null` means genuinely
             # UNKNOWN here, not "no" — a caller must not treat a missing
             # same-family disclosure as "different family confirmed" just
-            # because this resolver said false. A fuller resolver (#1048)
-            # that is handed actual configured families could compute this
-            # for real.
+            # because this resolver said false. A consumer that is handed
+            # actual configured families can compute this for real.
             "same_family_reviewer": None,
         },
         "requires_confirmation": requires_confirmation,
