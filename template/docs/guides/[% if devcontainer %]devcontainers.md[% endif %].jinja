@@ -149,6 +149,12 @@ It is built to be cheap, because it re-renders constantly: two forks per render
 (`jq` and `date`), no `git` subprocess — the branch is read from `.git/HEAD`
 directly, worktrees included — and nothing written to disk.
 
+Claude Code's `pr.*` fields are absent until it discovers the open PR.
+`statusLine.refreshInterval` is set to 5, so the status line reruns every five
+seconds and PRs created by background or other panes appear without waiting for
+a main-session event. This improves freshness but cannot manufacture PR data
+when Claude or GitHub discovery fails.
+
 To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
 at it — the seed merge will not overwrite it.
 

@@ -9,9 +9,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 sl=".devcontainer/config/claude-statusline.sh"
+defaults=".devcontainer/config/claude-user-defaults.json"
 
 [ -r "$sl" ] || {
     echo "TEST FAIL: $sl not found" >&2
+    exit 1
+}
+[ -r "$defaults" ] || {
+    echo "TEST FAIL: $defaults not found" >&2
     exit 1
 }
 command -v jq >/dev/null 2>&1 || {
@@ -30,6 +35,41 @@ fail() {
 render() {
     NO_COLOR=1 STATUSLINE_HYPERLINK=0 bash "$sl" <<<"$1"
 }
+
+render_hyperlinked() {
+    env -u NO_COLOR STATUSLINE_COLOR=1 STATUSLINE_HYPERLINK=1 bash "$sl" <<<"$1"
+}
+
+echo "==> status line refreshes every five seconds"
+if ! jq -e '
+    (.statusLine.refreshInterval | type) == "number" and
+    .statusLine.refreshInterval == 5 and
+    (.statusLine.refreshInterval | floor) == .statusLine.refreshInterval
+' "$defaults" >/dev/null; then
+    fail "expected statusLine.refreshInterval to be the integer 5 in $defaults"
+fi
+
+# ---- pull request: present, draft, and absent ----
+
+echo "==> a numeric pr.number renders the PR segment"
+out=$(render '{"workspace":{"current_dir":"/"},"pr":{"number":1042}}')
+case "$out" in *'PR #1042'*) ;; *) fail "expected PR #1042, got: $out" ;; esac
+
+echo "==> pr.url and draft review_state are accepted without a review glyph"
+out=$(render '{"workspace":{"current_dir":"/"},"pr":{"number":1042,"url":"https://github.com/evanharmon1/harmon-init/pull/1042","review_state":"draft"}}')
+case "$out" in *'PR #1042'*) ;; *) fail "expected PR #1042 with URL and draft state, got: $out" ;; esac
+case "$out" in *'✓'* | *'✗'* | *'⋯'*) fail "draft PR invented a review glyph: $out" ;; esac
+
+echo "==> pr.url wraps the number in an OSC-8 hyperlink"
+pr_url="https://github.com/evanharmon1/harmon-init/pull/1042"
+out=$(render_hyperlinked "{\"workspace\":{\"current_dir\":\"/\"},\"pr\":{\"number\":1042,\"url\":\"$pr_url\"}}")
+osc8=$'\033'
+link="${osc8}]8;;${pr_url}${osc8}\\#1042${osc8}]8;;${osc8}\\"
+case "$out" in *"$link"*) ;; *) fail "expected OSC-8 link for $pr_url around #1042" ;; esac
+
+echo "==> an absent pr omits the PR segment"
+out=$(render '{"workspace":{"current_dir":"/"}}')
+case "$out" in *'PR #'*) fail "absent PR rendered a PR segment: $out" ;; esac
 
 # ---- context window: present, derivable, and unknown ----
 

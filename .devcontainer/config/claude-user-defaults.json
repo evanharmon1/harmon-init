@@ -3,6 +3,7 @@
   "statusLine": {
     "type": "command",
     "command": "/etc/claude-code/statusline.sh",
+    "refreshInterval": 5,
     "padding": 0
   }
 }
