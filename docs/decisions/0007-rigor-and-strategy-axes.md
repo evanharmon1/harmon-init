@@ -83,13 +83,14 @@ floor of "challenge and review are >= 2, because the exit condition needs
 two consecutive adjudicated-clean rounds." That floor existed only to
 protect a design where a single low cap made any one finding an instant
 escalation; the general rule replacing it — `0 <= min_rounds <=
-min(challenge, review, shepherd)` — makes a capped-clean final round its
-own valid exit at any cap, including 1, and makes an all-zero policy
-(nothing enabled) simply skip the heuristic stage rather than trip a floor
-meant for a different failure mode. Zero AI review rounds is a legitimate
-choice at low rigor precisely because the heuristic layer was never the
-thing enforcing correctness — the deterministic gates still run
-unconditionally (D8).
+min(challenge, review)` (D9 has the full bound, including why `shepherd` is
+never part of it) — makes a capped-clean final round its own valid exit at
+any cap, including 1, and makes an all-zero `challenge`/`review` policy
+(nothing self-generated enabled) simply skip the heuristic stage rather
+than trip a floor meant for a different failure mode. Zero AI review rounds
+is a legitimate choice at low rigor precisely because the heuristic layer
+was never the thing enforcing correctness — the deterministic gates still
+run unconditionally (D8).
 
 ### D4 — Shepherd varies by review policy
 
@@ -184,14 +185,24 @@ PR, the agent has no budget left to answer them: the PR simply stays
 draft, and those findings are left for the human who raised them, exactly
 as any other unresolved readiness-gate condition would leave it.
 
-### D9 — `min_rounds` is bounded by the enabled caps, not pinned to 1 or 2
+### D9 — `min_rounds` is bounded by challenge and review, not pinned to 1 or 2
 
-`0 <= min_rounds <= min(challenge, review, shepherd)` for every review
-policy. **Not:** the prior fixed range of "1 or 2, never more," which was
-an artifact of every level sharing the same small cap values. With caps
-now ranging 0–6 and varying per stage per policy (D4), the general bound is
-the minimum of that policy's own stage caps — an all-zero policy forces
+`0 <= min_rounds <= min(challenge, review)` for every review policy —
+`shepherd` is never part of that bound. **Not:** the prior fixed range of
+"1 or 2, never more," which was an artifact of every level sharing the same
+small cap values. With caps now ranging 0–6 and varying per stage per
+policy (D4), the general bound is the minimum of the policy's
+self-generated stage caps — an all-zero `challenge`/`review` pair forces
 `min_rounds` to 0 by the same rule, rather than needing a special case.
+**Not, either:** including `shepherd` in that minimum, which is where an
+earlier version of this bound started and which D4 already establishes as
+the wrong shape for a different reason — `shepherd` bounds *other people's*
+findings (CI, human review, Codex), not rounds the agent runs on its own
+initiative, so it cannot MANUFACTURE a round to satisfy a floor the way a
+self-generated challenge/review pass can. A policy whose `shepherd` happens
+to be smaller than `min(challenge, review)` must not have that smaller
+number silently tighten `min_rounds`, since there is no sense in which the
+agent could "run more shepherd rounds" to comply.
 
 ### D10 — Budget envelopes are a new, portable resource-ceiling vocabulary
 

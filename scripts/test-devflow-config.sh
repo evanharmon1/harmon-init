@@ -555,6 +555,38 @@ for path in config_paths:
                 f"(got topology={topology!r})"
             )
 
+        # These four fields are meaningful only on the topologies whose
+        # shape they describe — permitted there, not merely valid wherever
+        # present. `selection`/`synthesis` describe how independent
+        # proposals get judged, so only independent-proposals (council)
+        # defines them. `min_agents` is the multi-agent floor, so it is
+        # legal on independent-proposals AND lead-and-workers (orchestrate)
+        # — the two topologies with a floor at all — never on single-agent
+        # or human-directed. `coordination` governs scheduling among
+        # DELEGATED agents, so it is legal on either multi-agent topology
+        # too, even though only orchestrate uses it today.
+        MULTI_AGENT_TOPOLOGIES = {"lead-and-workers", "independent-proposals"}
+        if "coordination" in tbl and topology not in MULTI_AGENT_TOPOLOGIES:
+            failures.append(
+                f"{path}: [strategy.{name}].coordination is only valid on a multi-agent topology "
+                f"{sorted(MULTI_AGENT_TOPOLOGIES)} (got topology={topology!r})"
+            )
+        if "selection" in tbl and topology != "independent-proposals":
+            failures.append(
+                f"{path}: [strategy.{name}].selection is only valid on topology=independent-proposals "
+                f"(got topology={topology!r})"
+            )
+        if "synthesis" in tbl and topology != "independent-proposals":
+            failures.append(
+                f"{path}: [strategy.{name}].synthesis is only valid on topology=independent-proposals "
+                f"(got topology={topology!r})"
+            )
+        if "min_agents" in tbl and topology not in MULTI_AGENT_TOPOLOGIES:
+            failures.append(
+                f"{path}: [strategy.{name}].min_agents is only valid on a multi-agent topology "
+                f"{sorted(MULTI_AGENT_TOPOLOGIES)} (got topology={topology!r})"
+            )
+
         if "coordination" in tbl and tbl["coordination"] not in COORDINATION_ENUM:
             failures.append(
                 f"{path}: [strategy.{name}].coordination={tbl['coordination']!r} "
@@ -617,16 +649,23 @@ for path in config_paths:
 
     # ── strategy × rigor compatibility matrix ───────────────────────────
     # min_agents COUNTS DIFFERENTLY per topology (comment beside
-    # [strategy.*] above), so the budget it needs does too:
+    # [strategy.*] above), so ONLY council's arithmetic changes — every
+    # topology is still checked against BOTH ceilings directly, no
+    # subtraction anywhere:
     #   independent-proposals (council): min_agents counts PROPOSERS only —
     #     the coordinator that judges them afterward is one MORE run but
     #     does not need a concurrent slot (it runs after the proposers
     #     finish). Needs max_agent_runs >= min_agents + 1 and
     #     max_parallel_agents >= min_agents.
     #   lead-and-workers (orchestrate): min_agents counts the lead PLUS its
-    #     workers. The lead does not consume a parallel slot of its own —
-    #     only the workers run concurrently. Needs max_agent_runs >=
-    #     min_agents and max_parallel_agents >= min_agents - 1.
+    #     workers — the WHOLE minimum roster, lead included. Needs
+    #     max_agent_runs >= min_agents and max_parallel_agents >=
+    #     min_agents, exactly like the generic fallback below — no "the
+    #     lead doesn't count" discount on either ceiling.
+    #     specs/issue-strategy.md states the plain "min_agents exceeds
+    #     max_agent_runs or max_parallel_agents" rule with no per-topology
+    #     discount; orchestrate does not special-case away from that the
+    #     way council's different COUNTING convention does.
     #   anything else: no topology-specific formula is defined, so fall
     #     back to the conservative same-value check.
     #
@@ -646,7 +685,7 @@ for path in config_paths:
             if topology == "independent-proposals":
                 required_runs, required_parallel = min_agents + 1, min_agents
             elif topology == "lead-and-workers":
-                required_runs, required_parallel = min_agents, min_agents - 1
+                required_runs = required_parallel = min_agents  # no lead discount — see above
             else:
                 required_runs = required_parallel = min_agents
         for rname, rtbl in levels.items():
@@ -954,6 +993,12 @@ check("council under trivial is a reported incompatibility",
 code, out = run("--override", "rigor=trivial", "--override", "strategy=orchestrate")
 check("orchestrate under trivial is also a reported incompatibility",
       code == 1 and any(e["code"] == "incompatible_strategy" for e in out["errors"]))
+check("... and the message shows NO lead subtraction — both ceilings need min_agents directly",
+      code == 1 and any(
+          e["code"] == "incompatible_strategy"
+          and "max_agent_runs>=2" in e["detail"] and "max_parallel_agents>=2" in e["detail"]
+          for e in out["errors"]
+      ))
 
 # multiple tier labels for the SAME role resolve strongest-wins by ladder
 # rank, regardless of input order — the literal apex/economy example from
@@ -1004,7 +1049,9 @@ check("interactive + on-default result -> no confirmation needed (nothing off-de
 code, out = run("--override", "rigor=standard", "--label", "tier:implementer:economy")
 check("scoped tier:implementer:economy refines just the implementer, off-profile disclosed",
       code == 0
-      and out["tiers"]["implementer"] == {"value": "economy", "source": "label", "off_profile": True}
+      and out["tiers"]["implementer"]["value"] == "economy"
+      and out["tiers"]["implementer"]["source"] == "label"
+      and out["tiers"]["implementer"]["off_profile"] is True
       and out["tiers"]["orchestrator"]["off_profile"] is False
       and out["tiers"]["reviewer"]["off_profile"] is False
       and out["disclosure"]["off_profile"] is True)
@@ -1016,6 +1063,48 @@ check("unqualified tier:economy refines the implementer only",
       and out["tiers"]["implementer"]["value"] == "economy"
       and out["tiers"]["orchestrator"]["source"] == "profile"
       and out["tiers"]["reviewer"]["source"] == "profile")
+
+# tier:adaptive is a VALID provisioned value, never "unknown" — three
+# resolution paths: (a) --adaptive-result wins outright, (b) absent it,
+# preflight_required + the rigor profile's own tier as a provisional
+# placeholder, (c) a concrete tier label on the same role beats adaptive.
+code, out = run("--override", "rigor=standard", "--label", "tier:reviewer:adaptive",
+                "--adaptive-result", "economy")
+check("(a) --adaptive-result wins outright for a role that resolved to adaptive",
+      code == 0
+      and out["tiers"]["reviewer"]["value"] == "economy"
+      and out["tiers"]["reviewer"]["requested"] == "adaptive"
+      and out["tiers"]["reviewer"]["preflight_required"] is False
+      and out["preflight_required"] is False)
+
+code, out = run("--override", "rigor=standard", "--label", "tier:reviewer:adaptive")
+check("(b) no --adaptive-result -> preflight_required, provisional = rigor profile's own tier",
+      code == 0
+      and out["tiers"]["reviewer"]["preflight_required"] is True
+      and out["tiers"]["reviewer"]["value"] == "frontier"  # rigor.standard's own reviewer_tier
+      and out["tiers"]["reviewer"]["off_profile"] is False  # provisional != a real deviation
+      and out["preflight_required"] is True)
+
+code, out = run("--override", "rigor=standard",
+                "--label", "tier:reviewer:adaptive", "--label", "tier:reviewer:economy")
+check("(c) a concrete tier label on the same role beats adaptive",
+      code == 0
+      and out["tiers"]["reviewer"]["value"] == "economy"
+      and out["tiers"]["reviewer"]["preflight_required"] is False)
+
+# requires_confirmation stays honest through adaptive resolution: it must
+# be computed from what was actually REQUESTED (adaptive), not from
+# whatever --adaptive-result later resolved it to, or trust-checking would
+# look for a label that was never applied.
+code, out = run("--label", "tier:reviewer:adaptive", "--adaptive-result", "economy")
+check("requires_confirmation fires for an UNTRUSTED adaptive label once resolved off-profile",
+      code == 0 and out["tiers"]["reviewer"]["off_profile"] is True
+      and out["requires_confirmation"] is True)
+code, out = run("--label", "tier:reviewer:adaptive", "--trusted-label", "tier:reviewer:adaptive",
+                "--adaptive-result", "economy")
+check("... but not for the identical TRUSTED adaptive label",
+      code == 0 and out["tiers"]["reviewer"]["off_profile"] is True
+      and out["requires_confirmation"] is False)
 
 # explicit override beats label
 code, out = run("--label", "rigor:light", "--override", "rigor=deep")

@@ -247,6 +247,19 @@ rejects("delegation=none with a non-single-agent topology", sub(
     'topology    = "human-directed"\nplanning    = "collaborative"\ndelegation  = "optional"',
     'topology    = "human-directed"\nplanning    = "collaborative"\ndelegation  = "none"',
 ), "delegation=none is only valid with topology=single-agent")
+
+# council-only fields (selection/synthesis) are permitted only on
+# topology=independent-proposals; min_agents also on lead-and-workers;
+# coordination on either multi-agent topology. Not merely "valid wherever
+# present" — meaningless, and rejected, on a topology they don't describe.
+rejects("selection on plan (topology=single-agent, not independent-proposals)", sub(
+    '[strategy.plan]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = []',
+    '[strategy.plan]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nselection   = "judge"\nhuman_gates = []',
+), "selection is only valid on topology=independent-proposals")
+rejects("synthesis on orchestrate (topology=lead-and-workers, not independent-proposals)", sub(
+    'coordination = "parallel-when-independent"\nmin_agents   = 2\nhuman_gates  = []',
+    'coordination = "parallel-when-independent"\nmin_agents   = 2\nsynthesis    = true\nhuman_gates  = []',
+), "synthesis is only valid on topology=independent-proposals")
 rejects("a constitutional gate in human_gates", sub(
     '[strategy.plan-approved]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = ["after-plan"]',
     '[strategy.plan-approved]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = ["after-plan", "merge"]',
@@ -309,17 +322,35 @@ def shrink_light_budget_to_two_runs(tmp):
     # min_agents + 1 = 3, not just >= 2. A 2-runs/2-parallel budget has
     # enough PARALLEL capacity (2 >= min_agents) but not enough TOTAL RUN
     # capacity — exactly the gap the "+1" formula exists to catch, and
-    # exactly what the old (pre-fix) same-value formula would have missed
+    # exactly what a same-value-on-both-ceilings formula would have missed
     # (2 >= 2 would have looked fine). orchestrate's min_agents=2 already
-    # counts its lead, so it needs only max_agent_runs >= 2 — unaffected by
-    # this same mutation, proving the two formulas are genuinely different,
-    # not just differently worded.
+    # counts its lead, and (unlike council) is checked with NO subtraction
+    # or addition on either ceiling — it needs max_agent_runs >= 2 AND
+    # max_parallel_agents >= 2, both of which this exact budget already
+    # satisfies — so this same mutation leaves orchestrate compatible,
+    # proving the two formulas are genuinely different, not just
+    # differently worded.
     edit_toml(tmp, lambda t: t.replace(
         '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2',
         '[budget.light]\nmax_agent_runs        = 2\nmax_parallel_agents   = 2',
     ))
 rejects("council under a 2-runs/2-parallel budget is incompatible (needs the coordinator's +1 run)",
         shrink_light_budget_to_two_runs, "not in KNOWN_INCOMPATIBLE")
+
+
+def shrink_light_budget_parallel_only(tmp):
+    # orchestrate's min_agents=2 counts the lead PLUS its worker — the
+    # WHOLE roster — and is checked with NO "the lead doesn't count"
+    # subtraction on max_parallel_agents. A 3-runs/1-parallel budget has
+    # enough TOTAL RUN capacity (3 >= 2) but not enough PARALLEL capacity
+    # (1 < 2) — exactly what a formula that subtracted 1 for the lead
+    # would have missed (1 >= 2-1 would have looked fine).
+    edit_toml(tmp, lambda t: t.replace(
+        '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2',
+        '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 1',
+    ))
+rejects("orchestrate under a 3-runs/1-parallel budget is incompatible (no lead subtraction)",
+        shrink_light_budget_parallel_only, "not in KNOWN_INCOMPATIBLE")
 
 # ── tier model maps (unchanged surface, ADR 0006) ───────────────────────
 rejects("unknown model slug", sub('claude   = "sonnet"', 'claude   = "notamodel"'),

@@ -56,6 +56,23 @@ branch does NOT touch .devflow.toml at all, so the merge-base rule does not
 apply and reading --config directly is correct. Zero or more than one of
 these three is an invalid_input error.
 
+`adaptive` (unscoped `tier:adaptive` or scoped `tier:<role>:adaptive`, as a
+label OR an override value) is a VALID provisioned tier value, never
+"unknown" — it just resolves differently than a concrete ladder rung.
+--adaptive-result <ladder tier> represents the caller's own preflight
+classifier having already decided a concrete answer; when given, it wins
+outright for every role that resolved to `adaptive`. Absent it, an
+adaptive-resolved role reports preflight_required=true (also aggregated at
+the top level) and provisionally uses the rigor profile's own tier for that
+role — never a claim that preflight has already run. A concrete tier label
+on the same role still beats `adaptive` (ADR 0006 D5) before any of this
+applies, exactly as a stronger concrete label beats a weaker one.
+requires_confirmation stays honest throughout: it is computed from what was
+actually requested (`adaptive`) for trust purposes, not from whatever
+--adaptive-result later resolved it to, so an untrusted label asking for
+adaptive is exactly as confirmation-worthy as one asking for any other
+off-profile tier once it resolves to something concrete.
+
 This is a ROOT-ONLY reference implementation, not the versioned,
 cross-consumer conformance contract — that is harmon-init#1048
 (schema_version, language-neutral fixtures, a fixture corpus). It exists so
@@ -68,6 +85,7 @@ Usage:
         (--merge-base-config PATH | --merge-base-absent | --config-unchanged) \\
         [--label rigor:deep] [--label strategy:council] \\
         [--label tier:economy] [--label tier:implementer:economy] \\
+        [--label tier:reviewer:adaptive] [--adaptive-result economy] \\
         [--trusted-label rigor:deep] \\
         [--override rigor=deep] [--override tier.implementer=economy] \\
         [--unattended]
@@ -134,7 +152,14 @@ Inputs, precisely:
                              repository content). KEY is one of: rigor,
                              strategy, tier (unqualified, implementer only),
                              tier.orchestrator, tier.implementer,
-                             tier.reviewer.
+                             tier.reviewer. A tier VALUE of `adaptive` is
+                             valid here too — see the module docstring above.
+  --adaptive-result TIER    the caller's own preflight classifier's already-
+                             decided concrete answer (one of the ladder
+                             tiers, never `adaptive` itself) — applies to
+                             EVERY role that resolved to `adaptive`, not a
+                             single role. Absent, an adaptive-resolved role
+                             reports preflight_required instead of guessing.
   --unattended               two effects, both from ADR 0006 D6.1: an
                              ambiguous strategy conflict falls back to
                              default_strategy with a warning instead of
@@ -388,12 +413,15 @@ def validate_trusted_labels_against_builtin(trusted_labels, errors):
 
 
 def _add_tier_candidate(tier_candidates, role, value, raw, warnings):
-    if value in LADDER:
+    # `adaptive` is a valid provisioned tier value, not "unknown" — it just
+    # resolves differently than a concrete ladder rung (see resolve_tiers).
+    if value in LADDER or value == "adaptive":
         tier_candidates[role].append(value)
     else:
         warnings.append({
             "code": "unknown_label",
-            "detail": f"{raw!r} is not a concrete ladder tier ({', '.join(LADDER)}), ignored",
+            "detail": f"{raw!r} is not a concrete ladder tier or `adaptive` "
+                      f"({', '.join(LADDER)}, adaptive), ignored",
         })
 
 
@@ -441,12 +469,20 @@ def strongest_tier_per_role(tier_candidates):
     same conflict rule rigor itself uses (ADR 0006 D5: "a label only ever
     buys more capability or oversight"): a conflict can only ever raise the
     tier, never silently weaken it by depending on which label happened to
-    be seen, or applied, last."""
-    return {
-        role: max(values, key=lambda v: LADDER_RANK[v])
-        for role, values in tier_candidates.items()
-        if values
-    }
+    be seen, or applied, last.
+
+    A CONCRETE tier always beats `adaptive` for the same role (ADR 0006 D5)
+    — `adaptive` is not on the ladder, so it never wins a rank comparison
+    against something that is. A role whose candidates are ALL `adaptive`
+    resolves to `adaptive` itself, for resolve_tiers to handle (preflight
+    result, or preflight_required)."""
+    result = {}
+    for role, values in tier_candidates.items():
+        if not values:
+            continue
+        concrete = [v for v in values if v != "adaptive"]
+        result[role] = max(concrete, key=lambda v: LADDER_RANK[v]) if concrete else "adaptive"
+    return result
 
 
 def parse_overrides(raw_overrides, errors):
@@ -475,20 +511,23 @@ def parse_overrides(raw_overrides, errors):
 def validate_override_tier_values(unqualified, scoped, errors):
     """Overrides are explicit and attributable, so an invalid tier value here
     is a hard error (never a silently-dropped candidate the way a bad label
-    is) — `adaptive` included, since a role always resolves to a concrete
-    rung or not at all (ADR 0006 D7, re-scoped by ADR 0007 D2/D5 from
-    `default_tier` to every role tier and override target)."""
-    if unqualified is not None and unqualified not in LADDER:
+    is). `adaptive` is a VALID value here too — an operator may explicitly
+    ask for a role to be preflight-classified, exactly as a `tier:adaptive`
+    label may (see resolve_tiers) — only something that is neither a
+    concrete ladder rung nor `adaptive` is rejected."""
+    if unqualified is not None and unqualified not in LADDER and unqualified != "adaptive":
         errors.append({
             "code": "invalid_override",
-            "detail": f"tier={unqualified!r} is not a concrete ladder tier ({', '.join(LADDER)})",
+            "detail": f"tier={unqualified!r} is not a concrete ladder tier or `adaptive` "
+                      f"({', '.join(LADDER)}, adaptive)",
         })
         unqualified = None
     for role in list(scoped):
-        if scoped[role] not in LADDER:
+        if scoped[role] not in LADDER and scoped[role] != "adaptive":
             errors.append({
                 "code": "invalid_override",
-                "detail": f"tier.{role}={scoped[role]!r} is not a concrete ladder tier ({', '.join(LADDER)})",
+                "detail": f"tier.{role}={scoped[role]!r} is not a concrete ladder tier or "
+                          f"`adaptive` ({', '.join(LADDER)}, adaptive)",
             })
             del scoped[role]
     return unqualified, scoped
@@ -561,39 +600,79 @@ def resolve_strategy(cfg, strategy_labels, explicit_strategy, unattended, warnin
     return cfg.get("default_strategy"), "default"
 
 
-def resolve_tiers(rigor_tbl, overrides_label, overrides_explicit):
+def resolve_tiers(rigor_tbl, overrides_label, overrides_explicit, adaptive_result):
+    """`requested` is what was actually asked for (may be `"adaptive"`);
+    `value` is what the role resolves TO. When requested is `adaptive`:
+      - adaptive_result given (--adaptive-result, the caller's preflight
+        classification): value = adaptive_result, resolved exactly like an
+        explicitly-requested concrete tier would be.
+      - adaptive_result absent: preflight_required = True and value falls
+        back to the rigor profile's OWN tier for that role — a provisional
+        placeholder, not a claim that this is the final answer. off_profile
+        is computed off the RESOLVED value, so a role sitting on its own
+        provisional fallback is never flagged off-profile just for being
+        unresolved; a role adaptive-resolved to something concrete IS
+        checked against the profile like any other value.
+    `requested` (not `value`) is what trust-checking must reconstruct the
+    original raw label/override from — see tier_drove_untrusted_off_profile.
+    """
     tiers = {}
     for role in ROLES:
         profile_value = rigor_tbl[f"{role}_tier"]
-        value, source = profile_value, "profile"
+        requested, source = profile_value, "profile"
         if role in overrides_label:
-            value, source = overrides_label[role], "label"
+            requested, source = overrides_label[role], "label"
         if role in overrides_explicit:
-            value, source = overrides_explicit[role], "explicit"
-        tiers[role] = {"value": value, "source": source, "off_profile": value != profile_value}
+            requested, source = overrides_explicit[role], "explicit"
+
+        preflight_required = False
+        if requested == "adaptive":
+            if adaptive_result is not None:
+                value = adaptive_result
+            else:
+                preflight_required = True
+                value = profile_value
+        else:
+            value = requested
+
+        tiers[role] = {
+            "value": value,
+            "requested": requested,
+            "source": source,
+            "off_profile": value != profile_value,
+            "preflight_required": preflight_required,
+        }
     return tiers
 
 
 def required_agent_runs_and_parallel(topology, min_agents):
-    """min_agents means something different per topology, so the budget it
-    needs does too:
+    """min_agents means something different per topology (docs/guides/
+    devflow.md, "Strategy: how the work is organized"), so the budget it
+    needs does too — but ONLY council's counting convention changes the
+    compatibility ARITHMETIC; every topology is checked against BOTH
+    ceilings directly, with no subtraction:
       independent-proposals (council): min_agents counts PROPOSERS only —
         the coordinator that judges them afterward is one MORE run, but
         does not need a concurrent slot of its own (it runs once the
         proposers have finished). Needs max_agent_runs >= min_agents + 1
         and max_parallel_agents >= min_agents.
       lead-and-workers (orchestrate): min_agents counts the lead PLUS its
-        workers (ADR 0007 D2's "a lead plus at least one worker"). The lead
-        does not consume a parallel slot of its own — only the workers run
-        concurrently. Needs max_agent_runs >= min_agents and
-        max_parallel_agents >= min_agents - 1.
+        workers (ADR 0007 D2's "a lead plus at least one worker") — the
+        WHOLE minimum roster, lead included. Needs max_agent_runs >=
+        min_agents and max_parallel_agents >= min_agents, exactly like the
+        generic fallback below — there is no "the lead doesn't count"
+        subtraction on either ceiling; specs/issue-strategy.md states the
+        plain "min_agents exceeds max_agent_runs or max_parallel_agents"
+        rule with no per-topology discount, and orchestrate does not
+        special-case away from that the way council's different counting
+        convention does.
       anything else: no topology-specific formula is defined, so fall back
         to the conservative same-value check.
     """
     if topology == "independent-proposals":
         return min_agents + 1, min_agents
     if topology == "lead-and-workers":
-        return min_agents, min_agents - 1
+        return min_agents, min_agents
     return min_agents, min_agents
 
 
@@ -641,8 +720,14 @@ def strategy_drove_untrusted_off_default(strategy_name, strategy_source, cfg, tr
 def tier_drove_untrusted_off_profile(role, tier, trusted_set):
     if tier["source"] != "label" or not tier["off_profile"]:
         return False
-    raw_scoped = f"tier:{role}:{tier['value']}"
-    raw_unqualified = f"tier:{tier['value']}" if role == "implementer" else None
+    # Reconstructed from `requested`, NOT `value`: when the label was
+    # `tier:<role>:adaptive` and --adaptive-result resolved it to a concrete
+    # tier, `value` is that concrete tier but the label that was actually
+    # APPLIED — and whose trust this checks — still reads "adaptive".
+    # Checking trust against the resolved value would look for a label that
+    # was never there.
+    raw_scoped = f"tier:{role}:{tier['requested']}"
+    raw_unqualified = f"tier:{tier['requested']}" if role == "implementer" else None
     trusted = raw_scoped in trusted_set or (raw_unqualified is not None and raw_unqualified in trusted_set)
     return not trusted
 
@@ -661,11 +746,23 @@ def main():
     ap.add_argument("--label", action="append", default=[], dest="labels")
     ap.add_argument("--trusted-label", action="append", default=[], dest="trusted_labels")
     ap.add_argument("--override", action="append", default=[], dest="overrides")
+    ap.add_argument("--adaptive-result")
     ap.add_argument("--unattended", action="store_true")
     args = ap.parse_args()
 
     warnings = []
     errors = []
+
+    if args.adaptive_result is not None and args.adaptive_result not in LADDER:
+        errors.append({
+            "code": "invalid_input",
+            "detail": f"--adaptive-result {args.adaptive_result!r} is not a concrete ladder tier "
+                      f"({', '.join(LADDER)}) — it names what the caller's preflight classifier "
+                      "already decided, so it can never itself be `adaptive`",
+        })
+        emit({"config_path": None, "config_source": None, "config_sha256": None,
+              "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     # Exactly one config-basis flag is required — reading --config is NEVER
     # a silent default (see the module docstring). argparse's own
@@ -691,7 +788,8 @@ def main():
             ),
         })
         emit({"config_path": None, "config_source": None, "config_sha256": None,
-              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+              "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     if args.merge_base_absent:
         # The caller has explicitly CONFIRMED the merge-base commit has no
@@ -717,7 +815,8 @@ def main():
                 ),
             })
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": None,
-                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
     else:
         # The only remaining possibility, given basis_given has exactly one
         # member: --config-unchanged. The branch does not touch
@@ -734,7 +833,8 @@ def main():
         except ConfigReadError as exc:
             errors.append({"code": "invalid_config", "detail": str(exc)})
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": None,
-                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     config_absent = cfg is None
     if config_absent:
@@ -766,10 +866,12 @@ def main():
                 "detail": f"{read_path}: missing required key(s)/table(s): {', '.join(detail_bits)}",
             })
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
         if not validate_config_references(cfg, errors):
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     resolution_cfg = BUILTIN_CFG if config_absent else cfg
     trusted_labels = filter_to_devflow_namespace(args.trusted_labels)
@@ -779,7 +881,8 @@ def main():
         validate_trusted_labels_against_builtin(trusted_labels, errors)
         if errors:
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     devflow_labels = filter_to_devflow_namespace(args.labels)
     effective_labels = filter_labels_by_trust(
@@ -789,13 +892,15 @@ def main():
         args.overrides, errors)
     if errors:
         emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+              "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     tier_override_unqualified, tier_override_scoped = validate_override_tier_values(
         tier_override_unqualified, tier_override_scoped, errors)
     if errors:
         emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+              "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     rigor_name, rigor_source = resolve_rigor(resolution_cfg, rigor_labels, explicit_rigor, warnings, errors)
     if config_absent and rigor_source == "default":
@@ -804,7 +909,8 @@ def main():
         emit({
             "config_path": read_path, "config_source": config_source, "config_sha256": digest,
             "selections": {"rigor": {"value": None, "source": rigor_source}},
-            "requires_confirmation": False, "warnings": warnings, "errors": errors,
+            "requires_confirmation": False, "preflight_required": False,
+            "warnings": warnings, "errors": errors,
         }, errors)
 
     strategy_name, strategy_source = resolve_strategy(
@@ -818,7 +924,11 @@ def main():
         budget_name = None
         budget_tbl = None
         strategy_tbl = None
-        tiers = {role: {"value": None, "source": "builtin", "off_profile": False} for role in ROLES}
+        tiers = {
+            role: {"value": None, "requested": None, "source": "builtin",
+                   "off_profile": False, "preflight_required": False}
+            for role in ROLES
+        }
     else:
         check_incompatible(cfg, rigor_name, strategy_name, errors)
         rigor_tbl = cfg["rigor"][rigor_name]
@@ -829,11 +939,12 @@ def main():
         strategy_tbl = cfg["strategy"][strategy_name] if strategy_name is not None else None
         overrides_label = strongest_tier_per_role(tier_candidates)
         overrides_explicit = merge_tier_overrides(tier_override_unqualified, tier_override_scoped)
-        tiers = resolve_tiers(rigor_tbl, overrides_label, overrides_explicit)
+        tiers = resolve_tiers(rigor_tbl, overrides_label, overrides_explicit, args.adaptive_result)
 
     off_default = rigor_name != resolution_cfg.get("default_rigor") or (
         strategy_name is not None and strategy_name != resolution_cfg.get("default_strategy"))
     off_profile = any(t["off_profile"] for t in tiers.values())
+    preflight_required = any(t["preflight_required"] for t in tiers.values())
 
     # Interactive-only (ADR 0006 D6.2): an off-default/off-profile result is
     # fine when it came from an explicit override or a TRUSTED label — both
@@ -886,6 +997,7 @@ def main():
             "same_family_reviewer": None,
         },
         "requires_confirmation": requires_confirmation,
+        "preflight_required": preflight_required,
         "warnings": warnings,
         "errors": errors,
     }, errors)

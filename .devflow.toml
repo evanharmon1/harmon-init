@@ -355,17 +355,21 @@ allow_tier_escalation = true
 # A strategy whose min_agents needs more than the resolved rigor's budget
 # provides is INCOMPATIBLE, and resolution reports that rather than
 # silently substituting a different topology. What "more than the budget
-# provides" means is topology-specific, because min_agents itself counts
-# differently (above):
+# provides" means is topology-specific ONLY for council — every topology is
+# checked against BOTH ceilings directly, with no subtraction or addition
+# on either one, except where noted:
 #   independent-proposals (council)   needs max_parallel_agents >=
 #     min_agents (the proposers run concurrently) AND max_agent_runs >=
 #     min_agents + 1 (the coordinator's judging pass is one more run, after
 #     the proposers finish, so it does not need a concurrent slot but DOES
 #     count toward the total).
 #   lead-and-workers (orchestrate)    needs max_agent_runs >= min_agents
-#     (the lead is already counted in min_agents, so no "+1") AND
-#     max_parallel_agents >= min_agents - 1 (the lead does not consume a
-#     parallel slot of its own — only the workers running concurrently do).
+#     AND max_parallel_agents >= min_agents — plainly, no "+1" the way
+#     council needs and no "-1" for the lead either: min_agents already
+#     counts the lead PLUS its workers (the WHOLE minimum roster), and
+#     specs/issue-strategy.md states this as the general rule with no
+#     per-topology discount, so orchestrate does not special-case away
+#     from it the way council's different COUNTING convention does.
 # e.g. council OR orchestrate under trivial (budget.trivial: 1 and 1, above)
 # — trivial's whole point is a single agent doing a single pass, which
 # neither topology can honestly represent, by either formula.
@@ -439,6 +443,18 @@ description = "Strategy: human owns central decisions; AI does bounded pieces"
 # explicitly. Neither form is a new top-level default; absent any override,
 # every role comes from the rigor profile alone.
 #
+# `tier:adaptive` (unscoped, or scoped to a role) is a VALID refinement
+# value — never "unknown" — even though `[rigor.*]` role tiers themselves
+# must stay concrete (below): a human or a label may legitimately ask for a
+# role to be classified by preflight rather than pinned. A concrete tier
+# label for the same role still beats `adaptive` (ADR 0006 D5 — a conflict
+# only ever buys more capability, and `adaptive` isn't a capability level to
+# compare against). Resolving `adaptive` needs a concrete answer from
+# somewhere: the resolver's `--adaptive-result` represents that answer when
+# a caller's own preflight step has already run; absent it, the role
+# reports needing preflight and provisionally uses the rigor profile's own
+# tier rather than guessing.
+#
 # These tables are INERT ROUTING PREFERENCES, never dependencies (ADR 0006
 # D1): a generated repo invokes no model and runs no workflow because a
 # table exists, and an acting consumer may select only among vendors and
@@ -459,8 +475,11 @@ description = "Strategy: human owns central decisions; AI does bounded pieces"
 #
 # The tier ladder is `local → economy → standard → frontier → apex` (ADR
 # 0006 D2); `adaptive` is off-ladder and never a concrete map, and never a
-# legal value for a [rigor.*] role tier or an override — a role always
-# resolves to a concrete rung. `frontier` is opus-class, `apex` is
+# legal value for a [rigor.*] role tier — the SHIPPED profile always names a
+# concrete rung. `adaptive` IS legal as a label/override refinement value
+# (above) — that role then resolves via preflight rather than the profile
+# directly, but the profile itself never leaves a role unresolved by
+# default. `frontier` is opus-class, `apex` is
 # mythos-class (fable, sol). Families appear at a tier only where they have
 # a model of that stratum — the top strata are genuinely narrow, so most
 # families top out at `standard`. `escalate_to` climbs toward `apex` and
