@@ -485,6 +485,11 @@ tasks:
       - ./scripts/sync-skills.sh sync
       - ./scripts/link-agent-skills.sh sync
 
+  skills:status:
+    desc: "Report the vendoring state (network unless --offline)"
+    cmds:
+      - ./scripts/sync-skills.sh status {{.CLI_ARGS}}
+
   verify:skills:
     desc: "Skill drift check (network): fail if vendored skills differ from the pinned ref"
     cmds:
