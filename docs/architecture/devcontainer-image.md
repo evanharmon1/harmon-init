@@ -86,9 +86,6 @@ variants for one repository's needs.
 answer — a normal `copier update` advances the approved pin. Within
 harmon-init, the rolling `bot/sync-harmon-devcontainer` PR is the reviewed
 bridge from "image bytes exist" to "harmon-init recommends those bytes".
-Terraform and TFLint are likewise image-owned: generated devcontainers do not
-add a Terraform feature that could replace the verified versions with floating
-ones.
 
 **Rollback:** revert the `FROM` line to the previous reviewed `tag@digest`.
 Source-commit tags are immutable, so a rollback cannot silently resolve to

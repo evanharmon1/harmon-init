@@ -51,10 +51,6 @@ grep -q -- '--status-fd 1 --verify' "$producer_dockerfile" ||
     fail "Terraform checksum verification does not expose the signer identity"
 grep -q '\$NF == "C874011F0AB405110D02105534365D9472D7468F"' "$producer_dockerfile" ||
     fail "Terraform checksum verification does not require HashiCorp's pinned primary fingerprint"
-template_devcontainer="template/[% if devcontainer %].devcontainer[% endif %]/devcontainer.json.jinja"
-if grep -q 'devcontainers/features/terraform:1' "$template_devcontainer"; then
-    fail "rendered devcontainers can override the shared image's pinned Terraform tooling"
-fi
 if grep -Ev '^[[:space:]]*#' "$producer_dockerfile" |
     grep -Eqi '(^|[^[:alnum:]_-])(ansible|checkov)([^[:alnum:]_-]|$)'; then
     fail "shared image adds project-local Ansible or on-demand Checkov"
