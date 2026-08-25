@@ -207,6 +207,7 @@ full)
         --data include_terraform=true
         --data include_ansible=true
         --data devcontainer=true
+        --data use_statusline_pr_lookup=true
         --data ci_runner=self-hosted
         --data github_org=test-org
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
@@ -1665,6 +1666,13 @@ else
     [ -d .devcontainer ] || err ".devcontainer/ missing (devcontainer on for profile '$profile')"
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
+    if [ "$profile" = "full" ]; then
+        [ -f .devcontainer/config/statusline-pr-lookup.enabled ] ||
+            err "status-line PR lookup marker missing (use_statusline_pr_lookup=true)"
+    else
+        [ ! -f .devcontainer/config/statusline-pr-lookup.enabled ] ||
+            err "status-line PR lookup marker rendered without explicit opt-in"
+    fi
     [ -f .devcontainer/config/codex-managed-config.toml ] ||
         err "Codex managed baseline missing from devcontainer output"
     [ -x .devcontainer/config/codex-hooks/claude-compat.sh ] ||

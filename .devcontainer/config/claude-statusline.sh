@@ -46,9 +46,14 @@ IFS= read -r -d '' input || true
 : "${STATUSLINE_RL_WIDTH:=7}" # deliberately under half the context bar
 : "${STATUSLINE_RL_PCT:=0}"   # 1 also prints the exact limit percentage
 # The marker is generated only for the explicit Copier opt-in. An environment
-# value always wins, so an enabled image can still disable it at runtime.
+# value always wins, so an enabled image can still disable it at runtime. The
+# installed path is the normal production location; the sibling check keeps the
+# packaged script and marker together if an image moves that config directory.
 if [ -z "${STATUSLINE_PR_LOOKUP_ENABLED+x}" ]; then
-    if [ -r /usr/local/share/devcontainer-config/statusline-pr-lookup.enabled ]; then
+    statusline_script_dir=${BASH_SOURCE[0]%/*}
+    [ "$statusline_script_dir" = "${BASH_SOURCE[0]}" ] && statusline_script_dir=.
+    if [ -r /usr/local/share/devcontainer-config/statusline-pr-lookup.enabled ] ||
+        [ -r "$statusline_script_dir/statusline-pr-lookup.enabled" ]; then
         STATUSLINE_PR_LOOKUP_ENABLED=1
     else
         STATUSLINE_PR_LOOKUP_ENABLED=0
@@ -342,17 +347,16 @@ pr_cache_fresh() {
     ((now - PR_CACHE_AT < ttl))
 }
 
-# A lock prevents simultaneously refreshed panes from each spending the one
-# allowed network call. It is held only by this synchronous, one-second lookup;
-# no renderer starts a child intended to outlive its statusLine process.
+# A cache miss runs synchronously and is hard-capped at one second. Atomic
+# replacement keeps readers from observing a partial cache row; simultaneous
+# misses may duplicate one bounded lookup, rather than leaving persistent
+# single-flight state behind a short-lived status-line process.
 pr_cache_refresh() {
-    local cache_dir=$1 cache_file=$2 lock_dir=$3 repo_dir=$4 branch_name=$5 cache_now=$6
+    local cache_dir=$1 cache_file=$2 repo_dir=$3 branch_name=$4 cache_now=$5
     (
         umask 077
         mkdir -p -- "$cache_dir" 2>/dev/null || exit 0
-        mkdir -- "$lock_dir" 2>/dev/null || exit 0
-        trap 'rmdir -- "$lock_dir" 2>/dev/null || true' EXIT
-        if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr list --head "$branch_name" --state open --limit 1 --json number,url,isDraft,reviewDecision 2>/dev/null | jq -r '
+        if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr list --head "$branch_name" --state open --json number,url,isDraft,reviewDecision,isCrossRepository 2>/dev/null | jq -r '
           def clean: (. // "") | tostring | explode
                      | map(select(. > 31 and . != 127 and (. < 128 or . > 159))) | implode;
           def review_state:
@@ -361,7 +365,8 @@ pr_cache_refresh() {
             elif .reviewDecision == "CHANGES_REQUESTED" then "changes_requested"
             elif .reviewDecision == "REVIEW_REQUIRED" then "pending"
             else "" end;
-          if type == "array" and length > 0 and (.[0].number | type) == "number"
+          (if type == "array" then map(select(.isCrossRepository == false and (.number | type) == "number")) else [] end)
+          | if length > 0
           then .[0] | [(.number | floor | tostring), (.url | clean), review_state] | @tsv
           else "" end'); then
             [ -n "$result" ] && kind=positive || kind=negative
@@ -377,10 +382,9 @@ pr_cache_refresh() {
 if [ "$STATUSLINE_PR_LOOKUP_ENABLED" = 1 ] && [ "${pr_present:-false}" != true ] && ! num "${pr_num:-}" && [ -n "$gitdir" ] && [ -n "$pr_branch_ref" ]; then
     if pr_cache_key "$gitdir"$'\037'"$branch"; then
         pr_cache_file="$STATUSLINE_PR_CACHE_DIR/$REPLY"
-        pr_cache_lock_dir="$pr_cache_file.lock"
         pr_cache_load "$pr_cache_file" || true
         if ! pr_cache_fresh && command -v gh >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-            pr_cache_refresh "$STATUSLINE_PR_CACHE_DIR" "$pr_cache_file" "$pr_cache_lock_dir" "$d" "$branch" "$now"
+            pr_cache_refresh "$STATUSLINE_PR_CACHE_DIR" "$pr_cache_file" "$d" "$branch" "$now"
             pr_cache_load "$pr_cache_file" || true
         fi
         if [ "$PR_CACHE_KIND" = positive ] && num "$PR_CACHE_NUM"; then
