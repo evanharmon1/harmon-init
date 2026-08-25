@@ -173,6 +173,24 @@ run_helper "$root/baked" "$root/checkout"
 printf '%s\n' "$out" | grep -qi 'indeterminate' ||
     fail "a broken comparison did not announce itself as indeterminate: ${out}"
 
+echo "==> BSD diff stderr with exit 0 makes the check speak too"
+root="$(fixture bsd-diff)"
+mkdir "$root/bin"
+cat >"$root/bin/diff" <<'EOF'
+#!/usr/bin/env bash
+echo "diff: simulated BSD dangling-symlink diagnostic" >&2
+exit 0
+EOF
+chmod +x "$root/bin/diff"
+set +e
+out="$(PATH="$root/bin:$PATH" DEVCONTAINER_BAKED_CONFIG_DIR="$root/baked" \
+    DEVCONTAINER_REPO_CONFIG_DIR="$root/checkout" bash "$helper" 2>&1)"
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "BSD diff diagnostic exited ${rc}, not 0"
+printf '%s\n' "$out" | grep -qi 'indeterminate' ||
+    fail "BSD diff diagnostic was reported as a clean tree: ${out}"
+
 # ---- 2d. diagnostic setup failure is still warn-only ----
 # The helper runs from set -e lifecycle callers.  It therefore cannot let an
 # unwritable temporary directory turn its informational warning into a failed
