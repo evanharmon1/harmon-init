@@ -285,7 +285,12 @@ def _schema_violations(value, schema, root, path="$"):
         if isinstance(items, dict):
             for index, item in enumerate(value):
                 violations.extend(_schema_violations(item, items, root, f"{path}[{index}]"))
-        if schema.get("uniqueItems"):
+        # A preceding item-schema violation (for example a TOML date where
+        # the schema requires a string) must still yield normalized
+        # invalid_config JSON. Do not feed TOML-native values to json.dumps
+        # merely to check uniqueness; the type violation already rejects the
+        # instance and json_safe keeps this path crash-free.
+        if schema.get("uniqueItems") and all(json_safe(item) for item in value):
             encoded = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value]
             if len(encoded) != len(set(encoded)):
                 violations.append((path, "must have unique items"))

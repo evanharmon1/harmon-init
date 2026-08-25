@@ -70,19 +70,30 @@ def diagnostics_match(actual, expected, case: str, kind: str) -> list[str]:
     """Require stable diagnostic code/subject pairs without pinning prose."""
     if not isinstance(expected, list):
         return [f"{case}: {kind}_diagnostics must be an array"]
-    actual_pairs = {
-        (item.get("code"), item.get("subject"))
-        for item in actual
-        if isinstance(item, dict)
-    }
     failures = []
+    if not isinstance(actual, list):
+        return [f"{case}: output {kind}s must be an array"]
+    actual_pairs = set()
+    for item in actual:
+        if not isinstance(item, dict) or not all(isinstance(item.get(key), str) for key in ("code", "subject")):
+            failures.append(f"{case}: output {kind} must contain string code/subject fields")
+        else:
+            actual_pairs.add((item["code"], item["subject"]))
+    expected_pairs = set()
     for item in expected:
         if not isinstance(item, dict) or set(item) != {"code", "subject"} or not all(
             isinstance(item.get(key), str) for key in ("code", "subject")
         ):
             failures.append(f"{case}: every {kind}_diagnostics item must be a code/subject object")
-        elif (item["code"], item["subject"]) not in actual_pairs:
-            failures.append(f"{case}: {kind} diagnostic {item!r} missing")
+        else:
+            expected_pairs.add((item["code"], item["subject"]))
+    if actual_pairs != expected_pairs:
+        missing = sorted(expected_pairs - actual_pairs)
+        unexpected = sorted(actual_pairs - expected_pairs)
+        if missing:
+            failures.append(f"{case}: missing {kind} diagnostic pairs {missing!r}")
+        if unexpected:
+            failures.append(f"{case}: unexpected {kind} diagnostic pairs {unexpected!r}")
     return failures
 
 
@@ -166,6 +177,11 @@ def main() -> int:
                     command.extend(["--override", override])
                 if case.get("unattended") is True:
                     command.append("--unattended")
+                if "adaptive_result" in case:
+                    adaptive_result = case["adaptive_result"]
+                    if not isinstance(adaptive_result, str):
+                        raise ValueError(f"{name}: adaptive_result must be a string")
+                    command.extend(["--adaptive-result", adaptive_result])
                 result = subprocess.run(command, capture_output=True, text=True)
                 output = json.loads(result.stdout)
         except (OSError, ValueError, json.JSONDecodeError) as exc:

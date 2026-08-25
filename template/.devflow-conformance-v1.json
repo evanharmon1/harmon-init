@@ -217,6 +217,29 @@
       }
     },
     {
+      "name": "adaptive-tier-uses-consumer-preflight-result",
+      "basis": "branch",
+      "labels": ["tier:adaptive"],
+      "adaptive_result": "apex",
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "apex",
+              "requested": "adaptive",
+              "source": "label",
+              "off_profile": true,
+              "preflight_required": false
+            }
+          },
+          "requires_confirmation": true,
+          "preflight_required": false,
+          "disclosure": { "off_profile": true }
+        }
+      }
+    },
+    {
       "name": "scoped-and-unqualified-tier-conflict-is-strongest-wins",
       "basis": "branch",
       "labels": ["tier:economy", "tier:implementer:frontier"],

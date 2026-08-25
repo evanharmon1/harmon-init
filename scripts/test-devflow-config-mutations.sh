@@ -188,6 +188,18 @@ def malformed_expectation(tmp):
     edit_fixture(tmp, mutate)
 rejects("a malformed conformance expectation", malformed_expectation, "defaults: expect must be an object")
 
+
+def omitted_expected_diagnostic(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "unattended-unauthorized-label-is-ignored":
+                case["expect"]["warning_diagnostics"] = []
+                return
+        raise AssertionError("unattended warning case missing")
+    edit_fixture(tmp, mutate)
+rejects("an omitted expected diagnostic", omitted_expected_diagnostic,
+        "unexpected warning diagnostic pairs")
+
 # ── Removed top-level shape (ADR 0007) ──────────────────────────────────────
 rejects("default_tier still present", sub(
     'default_strategy = "plan"', 'default_strategy = "plan"\ndefault_tier = "standard"'

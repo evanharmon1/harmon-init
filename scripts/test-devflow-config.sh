@@ -1256,6 +1256,32 @@ check("a schema-v1 config missing [tier.*] is invalid to the resolver",
       result.returncode == 1
       and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
 
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial-tier-ladder.toml")
+    open(partial_path, "w").write(open(config).read().split("[tier.economy]", 1)[0])
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 config missing concrete tier maps is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "economy" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    native_path = os.path.join(tmp, "native-tier-value.toml")
+    open(native_path, "w").write(open(config).read().replace(
+        'escalate_to = ["economy"]', 'escalate_to = [2026-08-25]', 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", native_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a TOML-native uniqueItems value is invalid_config, never a traceback",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "tier.local.escalate_to" in e["detail"]
+                  for e in out["errors"]))
+
 # Required nested fields are part of the same v1 structural contract. A
 # missing cap must not make a resolver silently emit a policy that a consumer
 # can mistake for a zero/default cap.

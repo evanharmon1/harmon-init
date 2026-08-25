@@ -43,7 +43,15 @@
     },
     "tier": {
       "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/tier" }
+      "additionalProperties": false,
+      "required": ["local", "economy", "standard", "frontier", "apex"],
+      "properties": {
+        "local": { "$ref": "#/$defs/tier" },
+        "economy": { "$ref": "#/$defs/tier" },
+        "standard": { "$ref": "#/$defs/tier" },
+        "frontier": { "$ref": "#/$defs/tier" },
+        "apex": { "$ref": "#/$defs/tier" }
+      }
     }
   },
   "$defs": {
