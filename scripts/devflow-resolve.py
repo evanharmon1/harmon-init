@@ -213,6 +213,10 @@ import tomllib
 LADDER = ("local", "economy", "standard", "frontier", "apex")
 LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
 SUPPORTED_SCHEMA_VERSION = 1
+TOP_LEVEL_KEYS = {
+    "schema_version", "default_rigor", "default_strategy", "rigor_order",
+    "rigor", "review", "budget", "strategy", "tier",
+}
 
 _JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
 
@@ -302,7 +306,7 @@ def load_config(path):
     return cfg, hashlib.sha256(raw).hexdigest()
 
 
-def validate_config_references(cfg, errors):
+def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
     """Defensive validation this resolver needs to avoid a raw traceback on
     a malformed-but-syntactically-valid TOML config — see the module
     docstring on how this differs from scripts/test-devflow-config.sh.
@@ -330,8 +334,14 @@ def validate_config_references(cfg, errors):
     strategies = cfg.get("strategy")
     strategies = strategies if isinstance(strategies, dict) else {}
 
+    unknown = sorted(set(cfg) - TOP_LEVEL_KEYS)
+    if unknown:
+        fail(f"unknown top-level key(s): {', '.join(unknown)}")
+
     schema_version = cfg.get("schema_version")
-    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+    if schema_version is None and allow_legacy_merge_base:
+        pass
+    elif not isinstance(schema_version, int) or isinstance(schema_version, bool):
         fail(f"schema_version must be an integer (got {schema_version!r})")
     elif schema_version != SUPPORTED_SCHEMA_VERSION:
         fail(
@@ -882,6 +892,7 @@ def emit(output, errors):
         "ambiguous_strategy": "strategy",
         "incompatible_strategy": "strategy",
         "config_absent": "config",
+        "legacy_merge_base_config": "config",
     }
     for collection in (output.get("warnings", []), output.get("errors", [])):
         for diagnostic in collection:
@@ -1049,6 +1060,18 @@ def main():
             detail = f"{read_path} does not exist — resolved from the built-in fallback"
         warnings.append({"code": "config_absent", "detail": detail})
 
+    legacy_merge_base = (
+        not config_absent and config_source == "merge-base" and "schema_version" not in cfg
+    )
+    if legacy_merge_base:
+        warnings.append({
+            "code": "legacy_merge_base_config",
+            "detail": (
+                "merge-base .devflow.toml predates schema v1; using the legacy compatibility "
+                "basis only for this self-edit transition"
+            ),
+        })
+
     if not config_absent:
         required_tables = ("rigor", "strategy", "review", "budget")
         missing = [t for t in required_tables if t not in cfg]
@@ -1062,7 +1085,7 @@ def main():
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
                   "requires_confirmation": False, "preflight_required": False,
               "warnings": warnings, "errors": errors}, errors)
-        if not validate_config_references(cfg, errors):
+        if not validate_config_references(cfg, errors, allow_legacy_merge_base=legacy_merge_base):
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
                   "requires_confirmation": False, "preflight_required": False,
               "warnings": warnings, "errors": errors}, errors)
@@ -1162,7 +1185,7 @@ def main():
         "config_path": read_path,
         "config_source": config_source,
         "config_sha256": digest,
-        "config_schema_version": None if config_absent else cfg["schema_version"],
+        "config_schema_version": None if config_absent else cfg.get("schema_version", 0),
         "selections": {
             "rigor": {"value": rigor_name, "source": rigor_source},
             "strategy": {"value": strategy_name, "source": strategy_source},

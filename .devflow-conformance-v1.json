@@ -11,6 +11,7 @@
       "expect": {
         "exit": 0,
         "result": {
+          "result_schema_version": 1,
           "config_source": "branch",
           "config_schema_version": 1,
           "selections": {
@@ -21,9 +22,58 @@
             "challenge": 3,
             "review": 3,
             "shepherd": 4,
-            "min_rounds": 1
+            "min_rounds": 1,
+            "min_rounds_scope": ["challenge", "review"],
+            "policy": "standard",
+            "source": "profile"
           },
-          "disclosure": { "off_default": false, "off_profile": false }
+          "tiers": {
+            "orchestrator": {
+              "value": "frontier",
+              "requested": "frontier",
+              "source": "profile",
+              "off_profile": false,
+              "preflight_required": false
+            },
+            "implementer": {
+              "value": "standard",
+              "requested": "standard",
+              "source": "profile",
+              "off_profile": false,
+              "preflight_required": false
+            },
+            "reviewer": {
+              "value": "frontier",
+              "requested": "frontier",
+              "source": "profile",
+              "off_profile": false,
+              "preflight_required": false
+            }
+          },
+          "budget": {
+            "name": "standard",
+            "source": "profile",
+            "max_agent_runs": 6,
+            "max_parallel_agents": 3,
+            "wall_clock_min": 120,
+            "allow_tier_escalation": true
+          },
+          "strategy_fields": {
+            "topology": "single-agent",
+            "planning": "explicit",
+            "delegation": "optional",
+            "human_gates": [],
+            "description": "Strategy: agent plans then implements; no human plan gate"
+          },
+          "disclosure": {
+            "off_default": false,
+            "off_profile": false,
+            "same_family_reviewer": null
+          },
+          "requires_confirmation": false,
+          "preflight_required": false,
+          "warnings": [],
+          "errors": []
         }
       }
     },
@@ -180,6 +230,15 @@
       }
     },
     {
+      "name": "unknown-top-level-key-is-rejected",
+      "basis": "branch",
+      "config_replacements": [["schema_version = 1", "schema_version = 1\nunknown_v1_key = true"]],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "invalid_config", "subject": "config" }]
+      }
+    },
+    {
       "name": "malformed-config-is-rejected",
       "basis": "branch",
       "config_replacements": [["schema_version = 1", "schema_version = ["]],
@@ -202,14 +261,17 @@
       "basis": "merge-base",
       "config_replacements": [["default_rigor    = \"standard\"", "default_rigor    = \"deep\""]],
       "merge_base_replacements": [
+        ["schema_version = 1\n\n", ""],
         ["default_rigor    = \"standard\"", "default_rigor    = \"trivial\""]
       ],
       "expect": {
         "exit": 0,
         "result": {
           "config_source": "merge-base",
+          "config_schema_version": 0,
           "selections": { "rigor": { "value": "trivial", "source": "default" } }
-        }
+        },
+        "warning_diagnostics": [{ "code": "legacy_merge_base_config", "subject": "config" }]
       }
     }
   ]

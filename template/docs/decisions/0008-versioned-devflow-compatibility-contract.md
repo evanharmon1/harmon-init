@@ -26,9 +26,10 @@ Schema version 1 is the first compatibility contract.
   registry references, and semantic cross-references. Both root and template
   copies are authoritative twins.
 - `.devflow-conformance-v1.json` is the language-neutral fixture corpus. It
-  pins inputs, config-basis selection, partial normalized projections, stable
-  diagnostic codes/subjects, and expected error/warning states. Consumers may
-  add fields or diagnostic prose, but may not reinterpret the pinned values.
+  pins inputs, config-basis selection, a complete baseline normalized
+  projection, stable diagnostic codes/subjects, and expected error/warning
+  states. Consumers may add fields or diagnostic prose, but may not reinterpret
+  the pinned values.
 - Resolution order is explicit operator override, then eligible `rigor:*` /
   `strategy:*` / `tier:*` labels, then defaults, then the built-in fallback.
   Rigor conflicts are strongest-wins by `rigor_order`; strategy conflicts are
@@ -37,7 +38,10 @@ Schema version 1 is the first compatibility contract.
 - Absent config is a supported fallback state; a partial, malformed, or
   unsupported present config is an error. A change that edits `.devflow.toml`
   resolves from the merge-base copy unless an attributable operator override
-  applies.
+  applies. The one transition exception is an unversioned merge-base when the
+  branch introduces v1: it is accepted only as that historical basis, reported
+  as schema version `0` with a stable warning, and never accepted as a normal
+  consumer configuration.
 - GitHub actor provenance and trusted-label verification are supplied by the
   consumer. The resolver records and applies those inputs but never authenticates
   actors, dispatches models, or takes ownership of platform trust policy.

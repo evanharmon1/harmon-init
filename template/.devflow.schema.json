@@ -125,6 +125,7 @@
     },
     "tier": {
       "type": "object",
+      "required": ["escalate_to"],
       "additionalProperties": { "type": "string" },
       "properties": {
         "endpoint": { "const": "local" },

@@ -34,6 +34,12 @@ for TOML parsing, cross-references to the label and agent registries, and the
 v1 value matrix. `additionalProperties: false` at the top level is deliberate:
 an unknown top-level key is a compatibility error, not an extension point.
 
+The one migration exception is a branch that introduces `schema_version = 1`
+while its merge-base has the preceding unversioned file. The resolver reads
+that historical merge-base only to preserve the self-edit guard, identifies it
+as schema version `0`, and emits `legacy_merge_base_config`; a normal branch
+or consumer config without a supported version is still rejected.
+
 The language-neutral vectors in
 [`.devflow-conformance-v1.json`](../../.devflow-conformance-v1.json) define
 the normalized result contract. A consumer demonstrates conformance by
