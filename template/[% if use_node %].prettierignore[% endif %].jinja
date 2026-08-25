@@ -14,6 +14,10 @@
 
 # Machine-/agent-specific, generated, or vendored — not ours to format.
 .claude/
+# Installer-owned portable skill mirrors and BMad assets may be overwritten on
+# reinstall, so their upstream formatting is not ours to rewrite.
+.agents/skills/
+_bmad/
 node_modules/
 dist/
 [% if project_type == 'web-app' %]
