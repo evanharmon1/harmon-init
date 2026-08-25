@@ -153,11 +153,12 @@ printf '%s\n' "$out" | grep -qF 'settings and hooks.json' ||
     fail "the ' and '-bearing filename was truncated: ${out}"
 
 # ---- 2c. a broken comparison is indeterminate, never fresh ----
-# A dangling symlink (or any unreadable entry) makes diff exit 2 with only
-# stderr diagnostics. Discarding that used to leave count=0 and report a
-# possibly-stale image as clean — the helper's one forbidden answer. It must
-# say something (indeterminate), and still exit 0 (Codex cloud-review finding
-# on the PR that added this helper; same class as the deferred symlink P2).
+# A dangling symlink (or any unreadable entry) can make diff exit 2 with only
+# stderr diagnostics. BSD diff can instead emit that diagnostic with exit 0.
+# Discarding stderr in either case leaves count=0 and reports a possibly-stale
+# image as clean — the helper's one forbidden answer. It must say something
+# (indeterminate), and still exit 0 (Codex cloud-review finding on the PR that
+# added this helper; same class as the deferred symlink P2).
 
 echo "==> a dangling symlink makes the check speak, not report fresh"
 root="$(fixture dangling)"
