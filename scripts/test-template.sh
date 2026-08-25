@@ -924,7 +924,7 @@ if have npx; then
     # about which markdownlint the project is linted with.
     md_version="$(sed -n 's/^MARKDOWNLINT_VERSION=//p' scripts/markdownlint.sh)"
     [ -n "$md_version" ] || err "rendered scripts/markdownlint.sh has no MARKDOWNLINT_VERSION pin"
-    if ! md_out=$(npx --yes "markdownlint-cli2@${md_version}" '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
+    if ! md_out=$(npx --yes "markdownlint-cli2@${md_version}" '**/*.md' '#.claude/**' '#.agents/skills/**' '#_bmad/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
         printf '%s\n' "$md_out" >&2
         err "rendered Markdown fails markdownlint"
     fi
