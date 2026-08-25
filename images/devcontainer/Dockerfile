@@ -260,8 +260,9 @@ RUN case "${TARGETARCH}" in \
         -o "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
     && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
         -o "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
-    && gpg --batch --verify "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
-        "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+    && gpg --batch --status-fd 1 --verify "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
+        "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS" 2>/dev/null \
+        | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && $NF == "C874011F0AB405110D02105534365D9472D7468F" { valid = 1 } END { exit !valid }' \
     && cd /tmp \
     && grep " terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip$" \
         "terraform_${TERRAFORM_VERSION}_SHA256SUMS" \

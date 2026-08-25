@@ -173,6 +173,28 @@ run_helper "$root/baked" "$root/checkout"
 printf '%s\n' "$out" | grep -qi 'indeterminate' ||
     fail "a broken comparison did not announce itself as indeterminate: ${out}"
 
+# ---- 2d. diagnostic setup failure is still warn-only ----
+# The helper runs from set -e lifecycle callers.  It therefore cannot let an
+# unwritable temporary directory turn its informational warning into a failed
+# container startup.
+
+echo "==> a failed diagnostic tempfile remains warn-only"
+root="$(fixture mktemp-failure)"
+mkdir "$root/bin"
+cat >"$root/bin/mktemp" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$root/bin/mktemp"
+set +e
+out="$(PATH="$root/bin:$PATH" DEVCONTAINER_BAKED_CONFIG_DIR="$root/baked" \
+    DEVCONTAINER_REPO_CONFIG_DIR="$root/checkout" bash "$helper" 2>&1)"
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "a failed diagnostic tempfile exited ${rc}, not 0"
+printf '%s\n' "$out" | grep -qi 'indeterminate' ||
+    fail "a failed diagnostic tempfile did not announce itself as indeterminate: ${out}"
+
 # ---- 3. no baked directory: absence is not staleness ----
 # True outside the container and in an image built without this convention.
 # Warning there would be noise nobody can act on.

@@ -47,6 +47,10 @@ for tool in terraform tflint; do
     grep -q "run_version ${tool} ${tool}" images/devcontainer/smoke.sh ||
         fail "shared image smoke test does not execute ${tool}"
 done
+grep -q -- '--status-fd 1 --verify' "$producer_dockerfile" ||
+    fail "Terraform checksum verification does not expose the signer identity"
+grep -q '\$NF == "C874011F0AB405110D02105534365D9472D7468F"' "$producer_dockerfile" ||
+    fail "Terraform checksum verification does not require HashiCorp's pinned primary fingerprint"
 if grep -Ev '^[[:space:]]*#' "$producer_dockerfile" |
     grep -Eqi '(^|[^[:alnum:]_-])(ansible|checkov)([^[:alnum:]_-]|$)'; then
     fail "shared image adds project-local Ansible or on-demand Checkov"

@@ -72,7 +72,10 @@ rel_to_root() {
 # BSD diff can emit a dangling-symlink diagnostic while still exiting 0, so the
 # exit code alone is not a portable integrity signal.
 diff_rc=0
-diff_err="$(mktemp)"
+if ! diff_err="$(mktemp)"; then
+    echo "devcontainer config staleness is indeterminate: unable to create a diagnostic file" >&2
+    exit 0
+fi
 diff_out="$(LC_ALL=C diff -q -r "${baked}" "${checkout}" 2>"${diff_err}")" || diff_rc=$?
 diff_err_out="$(cat "${diff_err}")"
 rm -f "${diff_err}"
