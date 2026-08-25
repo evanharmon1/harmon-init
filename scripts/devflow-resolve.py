@@ -24,7 +24,8 @@ always trusted by definition — it is the explicit, attributable instruction
 channel ADR 0006 D5 describes, never repository content.
 
 Only labels in the rigor:/strategy:/tier: namespaces are this resolver's
-business — anything else (a plain `bug`, an `area:ci`) is filtered out
+business — anything else (including retired `method:*`, a plain `bug`, or an
+`area:ci`) is filtered out
 before either the trust filter or the label parser ever see it, silently:
 it was never a devflow input, so it produces no warning of any kind.
 
@@ -211,6 +212,7 @@ import tomllib
 
 LADDER = ("local", "economy", "standard", "frontier", "apex")
 LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
+SUPPORTED_SCHEMA_VERSION = 1
 
 _JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
 
@@ -327,6 +329,15 @@ def validate_config_references(cfg, errors):
     budgets = budgets if isinstance(budgets, dict) else {}
     strategies = cfg.get("strategy")
     strategies = strategies if isinstance(strategies, dict) else {}
+
+    schema_version = cfg.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        fail(f"schema_version must be an integer (got {schema_version!r})")
+    elif schema_version != SUPPORTED_SCHEMA_VERSION:
+        fail(
+            f"schema_version={schema_version!r} is unsupported — this resolver supports "
+            f"schema version {SUPPORTED_SCHEMA_VERSION}; upgrade the consumer or use a compatible config"
+        )
 
     # Every reference below is type-checked as a scalar string BEFORE any
     # dictionary-membership test (`x not in some_dict`) — dict membership
@@ -854,6 +865,27 @@ def tier_drove_untrusted_off_profile(role, tier, trusted_set):
 
 
 def emit(output, errors):
+    # The resolver's output itself is a versioned interoperability surface.
+    # Keep this separate from config_schema_version: a resolver can report a
+    # malformed or unsupported config without pretending it successfully
+    # resolved that config's contract.
+    output.setdefault("result_schema_version", SUPPORTED_SCHEMA_VERSION)
+    # Diagnostic prose is deliberately actionable but not a compatibility
+    # surface. Every v1 diagnostic carries a stable code and broad subject so
+    # consumers can branch without parsing English text.
+    subject_by_code = {
+        "invalid_config": "config",
+        "invalid_input": "input",
+        "invalid_override": "override",
+        "unknown_label": "label",
+        "untrusted_label_ignored": "label",
+        "ambiguous_strategy": "strategy",
+        "incompatible_strategy": "strategy",
+        "config_absent": "config",
+    }
+    for collection in (output.get("warnings", []), output.get("errors", [])):
+        for diagnostic in collection:
+            diagnostic.setdefault("subject", subject_by_code.get(diagnostic.get("code"), "resolution"))
     print(json.dumps(output, indent=2, sort_keys=True))
     sys.exit(1 if errors else 0)
 
@@ -1130,6 +1162,7 @@ def main():
         "config_path": read_path,
         "config_source": config_source,
         "config_sha256": digest,
+        "config_schema_version": None if config_absent else cfg["schema_version"],
         "selections": {
             "rigor": {"value": rigor_name, "source": rigor_source},
             "strategy": {"value": strategy_name, "source": strategy_source},

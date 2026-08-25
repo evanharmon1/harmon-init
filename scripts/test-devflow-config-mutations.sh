@@ -16,6 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 python3 - "$PWD" <<'PY'
+import json
 import os
 import re
 import shutil
@@ -33,12 +34,17 @@ LAYOUT = [
     "agent-registry.json",
     "AGENTS.md",
     ".devflow.toml",
+    ".devflow.schema.json",
+    ".devflow-conformance-v1.json",
     "scripts/test-devflow-config.sh",
+    "scripts/test-devflow-conformance.py",
     "scripts/devflow-resolve.py",
     "docs/guides/devflow.md",
     "template/label-registry.json",
     "template/agent-registry.json",
     "template/.devflow.toml",
+    "template/.devflow.schema.json",
+    "template/.devflow-conformance-v1.json",
     "template/AGENTS.md.jinja",
 ]
 
@@ -130,6 +136,57 @@ def sub(old, new):
 
 # Control: the unmutated layout must pass, or every rejection below is vacuous.
 accepts("the checked-in configuration")
+
+# ── Compatibility version + contract surface ─────────────────────────────
+rejects("a missing schema_version", sub(
+    'schema_version = 1\n\n', ''
+), "schema_version must be an integer")
+rejects("a non-integer schema_version", sub(
+    'schema_version = 1', 'schema_version = "1"'
+), "schema_version must be an integer")
+rejects("an unsupported schema_version", sub(
+    'schema_version = 1', 'schema_version = 2'
+), "schema_version=2 is unsupported")
+rejects("an unknown top-level config key", sub(
+    'schema_version = 1', 'schema_version = 1\nunsupported_v1_key = true'
+), "unknown top-level key")
+
+
+def edit_fixture(tmp, fn):
+    for rel in (".devflow-conformance-v1.json", "template/.devflow-conformance-v1.json"):
+        p = os.path.join(tmp, rel)
+        fixture = json.load(open(p))
+        fn(fixture)
+        json.dump(fixture, open(p, "w"), indent=2)
+
+
+def malformed_fixture(tmp):
+    for rel in (".devflow-conformance-v1.json", "template/.devflow-conformance-v1.json"):
+        p = os.path.join(tmp, rel)
+        open(p, "w").write("{")
+rejects("a malformed conformance fixture", malformed_fixture, "cannot read fixture")
+
+
+def wrong_fixture_expectation(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["expect"]["result"]["selections"]["rigor"]["source"] = "explicit"
+    edit_fixture(tmp, mutate)
+rejects("an incorrect normalized-result expectation", wrong_fixture_expectation,
+        "defaults: result.selections.rigor.source")
+
+
+def duplicate_fixture_name(tmp):
+    def mutate(fixture):
+        fixture["cases"].append(fixture["cases"][0])
+    edit_fixture(tmp, mutate)
+rejects("duplicate conformance fixture names", duplicate_fixture_name, "fixture case names must be unique")
+
+
+def malformed_expectation(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["expect"] = []
+    edit_fixture(tmp, mutate)
+rejects("a malformed conformance expectation", malformed_expectation, "defaults: expect must be an object")
 
 # ── Removed top-level shape (ADR 0007) ──────────────────────────────────────
 rejects("default_tier still present", sub(

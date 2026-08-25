@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": 1,
+  "kind": "harmon-init.devflow.conformance",
+  "description": "Language-neutral v1 inputs and normalized-result expectations for .devflow.toml consumers.",
+  "result_schema_version": 1,
+  "cases": [
+    {
+      "name": "defaults",
+      "basis": "branch",
+      "expect": {
+        "exit": 0,
+        "result": {
+          "config_source": "branch",
+          "config_schema_version": 1,
+          "selections": {
+            "rigor": { "value": "standard", "source": "default" },
+            "strategy": { "value": "plan", "source": "default" }
+          },
+          "review": {
+            "challenge": 3,
+            "review": 3,
+            "shepherd": 4,
+            "min_rounds": 1
+          },
+          "disclosure": { "off_default": false, "off_profile": false }
+        }
+      }
+    },
+    {
+      "name": "explicit-overrides-win",
+      "basis": "branch",
+      "overrides": ["rigor=deep", "strategy=plan"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": { "value": "deep", "source": "explicit" },
+            "strategy": { "value": "plan", "source": "explicit" }
+          },
+          "disclosure": { "off_default": true }
+        }
+      }
+    },
+    {
+      "name": "interactive-untrusted-label-needs-confirmation",
+      "basis": "branch",
+      "labels": ["rigor:deep"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "rigor": { "value": "deep", "source": "label" } },
+          "requires_confirmation": true,
+          "disclosure": { "off_default": true }
+        }
+      }
+    },
+    {
+      "name": "unattended-unauthorized-label-is-ignored",
+      "basis": "branch",
+      "labels": ["rigor:trivial"],
+      "unattended": true,
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": { "value": "standard", "source": "default" }
+          }
+        },
+        "warning_diagnostics": [{ "code": "untrusted_label_ignored", "subject": "label" }]
+      }
+    },
+    {
+      "name": "unattended-authorized-label-applies",
+      "basis": "branch",
+      "labels": ["rigor:deep"],
+      "trusted_labels": ["rigor:deep"],
+      "unattended": true,
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "rigor": { "value": "deep", "source": "label" } },
+          "requires_confirmation": false
+        }
+      }
+    },
+    {
+      "name": "multiple-rigor-labels-strongest-wins",
+      "basis": "branch",
+      "labels": ["rigor:light", "rigor:deep"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "rigor": { "value": "deep", "source": "label" } }
+        }
+      }
+    },
+    {
+      "name": "multiple-strategy-labels-are-ambiguous",
+      "basis": "branch",
+      "labels": ["strategy:plan", "strategy:orchestrate"],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "ambiguous_strategy", "subject": "strategy" }]
+      }
+    },
+    {
+      "name": "concrete-tier-beats-adaptive",
+      "basis": "branch",
+      "labels": ["tier:adaptive", "tier:economy"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "requested": "economy",
+              "source": "label"
+            }
+          },
+          "disclosure": { "off_profile": true }
+        }
+      }
+    },
+    {
+      "name": "scoped-and-unqualified-tier-conflict-is-strongest-wins",
+      "basis": "branch",
+      "labels": ["tier:economy", "tier:implementer:frontier"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "requested": "frontier",
+              "source": "label"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "absent-config-uses-built-in-fallback",
+      "basis": "absent",
+      "expect": {
+        "exit": 0,
+        "result": {
+          "config_source": "absent",
+          "config_schema_version": null,
+          "selections": {
+            "rigor": { "value": "standard", "source": "builtin" },
+            "strategy": { "value": "plan", "source": "builtin" }
+          },
+          "review": {
+            "challenge": 3,
+            "review": 3,
+            "shepherd": 4,
+            "min_rounds": 1
+          }
+        },
+        "warning_diagnostics": [{ "code": "config_absent", "subject": "config" }]
+      }
+    },
+    {
+      "name": "partial-config-is-rejected",
+      "basis": "branch",
+      "config_replacements": [["default_strategy = \"plan\"", ""]],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "invalid_config", "subject": "config" }]
+      }
+    },
+    {
+      "name": "unsupported-schema-version-is-rejected",
+      "basis": "branch",
+      "config_replacements": [["schema_version = 1", "schema_version = 2"]],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "invalid_config", "subject": "config" }]
+      }
+    },
+    {
+      "name": "malformed-config-is-rejected",
+      "basis": "branch",
+      "config_replacements": [["schema_version = 1", "schema_version = ["]],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "invalid_config", "subject": "config" }]
+      }
+    },
+    {
+      "name": "incompatible-strategy-is-rejected",
+      "basis": "branch",
+      "overrides": ["rigor=trivial", "strategy=council"],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "incompatible_strategy", "subject": "strategy" }]
+      }
+    },
+    {
+      "name": "self-edit-reads-merge-base-config",
+      "basis": "merge-base",
+      "config_replacements": [["default_rigor    = \"standard\"", "default_rigor    = \"deep\""]],
+      "merge_base_replacements": [
+        ["default_rigor    = \"standard\"", "default_rigor    = \"trivial\""]
+      ],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "config_source": "merge-base",
+          "selections": { "rigor": { "value": "trivial", "source": "default" } }
+        }
+      }
+    }
+  ]
+}
