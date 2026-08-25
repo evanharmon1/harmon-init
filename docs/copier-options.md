@@ -58,10 +58,10 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 24 | `use_codex_cloud_review` | bool | no | `use_codex_review` | Makes a terminal Codex review a **required shepherd signal** — **validator** |
 | 25 | `use_coderabbit` | bool | no | always | `.coderabbit.yaml` + bot trust |
 | 26 | `devcontainer` | bool | **yes** | always | The whole dual-profile `.devcontainer/`, `devcontainer-build.yml`, 3 scripts, 4 guides — **validator** rejects `use_foreman` without it |
-| 27 | `devcontainer_coder_folder_uri` | str | `""` | `devcontainer` | Optional captured `vscode-remote://dev-container+…` URI for the personal Coder README badge; **validator**, empty keeps only the local fallback |
-| 28 | `use_antigravity_cli` | bool | no | `devcontainer` | Prompt-free Google Antigravity CLI in the bot profile — **validator** |
-| 29 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into *both* profiles |
-| 30 | `use_statusline_pr_lookup` | bool | no | `devcontainer` | `statusline-pr-lookup.enabled`; read-only, bounded cached `gh pr view` fallback when Claude omits PR data — requires authenticated GitHub CLI and never prompts |
+| 27 | `use_statusline_pr_lookup` | bool | no | `devcontainer` | `statusline-pr-lookup.enabled`; read-only, bounded cached `gh pr view` fallback when Claude omits PR data — requires authenticated GitHub CLI and never prompts |
+| 28 | `devcontainer_coder_folder_uri` | str | `""` | `devcontainer` | Optional captured `vscode-remote://dev-container+…` URI for the personal Coder README badge; **validator**, empty keeps only the local fallback |
+| 29 | `use_antigravity_cli` | bool | no | `devcontainer` | Prompt-free Google Antigravity CLI in the bot profile — **validator** |
+| 30 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into *both* profiles |
 | 31 | `project_management` | choice `none`/`github`/`linear` | `none` | always | `docs/project-management.md`, `setup:github-project` / `-labels`, `close-milestone-on-release.yml` |
 | 32 | `git_init` | bool | **yes** | always | `_tasks`: `git init` + scaffold commit (copy only); also the fresh-scaffold signal for the other side effects |
 | 33 | `github_remote_create` | bool | no | always | `_tasks`: `gh repo create --private --push` (copy only) |
@@ -146,14 +146,16 @@ analysis; do not restate it here.
 
 ## Derived file/dir switches
 
-**28 distinct conditions** gate 82 paths under `template/`, 4 of which are whole
-directories (`terraform`, `ansible`, `taskfiles`, `.devcontainer`). The
+**29 distinct conditions** gate 87 paths under `template/`, 5 of which are
+directories: `terraform`, `ansible`, `taskfiles`, the main `.devcontainer`, and
+the separately gated `.devcontainer` tree containing the status-line marker. The
 condition lives in the *filename*, so a false condition renders the name empty
 and copier drops the path.
 
 | Condition | Renders (selection) |
 |---|---|
 | `devcontainer` | `.devcontainer/`, `devcontainer-build.yml`, 3 devcontainer scripts, 4 guides |
+| `devcontainer and use_statusline_pr_lookup` | `.devcontainer/config/statusline-pr-lookup.enabled` |
 | `use_release_please` | `release.yml`, `release-please-config.json`, `.release-please-manifest.json`, `.markdownlint-cli2.jsonc`, 3 release scripts |
 | `use_node` | `.env.example`, `pnpm-workspace.yaml`, `prettier.config.cjs`, `.prettierignore`, 3 pnpm/e2e scripts |
 | `include_terraform` | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |

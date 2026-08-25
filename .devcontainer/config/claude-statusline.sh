@@ -346,7 +346,7 @@ pr_cache_fresh() {
     negative | failure) ttl=$STATUSLINE_PR_NEGATIVE_CACHE_TTL ;;
     *) return 1 ;;
     esac
-    ((now - PR_CACHE_AT < ttl))
+    ((now >= PR_CACHE_AT && now - PR_CACHE_AT < ttl))
 }
 
 # A cache miss runs synchronously and is hard-capped at one second. Atomic

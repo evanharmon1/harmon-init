@@ -177,6 +177,23 @@ case "$out" in *'PR #1042 ✓'*) ;; *) fail "fresh fallback cache did not render
 [ ! -s "$STATUSLINE_GH_LOG" ] || fail "fresh cache made a second gh call"
 [ ! -s "$STATUSLINE_TIMEOUT_LOG" ] || fail "fresh cache invoked timeout again"
 
+echo "==> future-dated cache rows are stale after a clock rollback"
+future_cache="$statusline_tmp/future-cache"
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+export STATUSLINE_GH_RESPONSE='{"number":1045,"url":"https://example.test/pull/1045","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
+out=$(render_cached "$future_cache" 30 "$payload")
+case "$out" in *'PR #1045 ✓'*) ;; *) fail "future-cache setup did not render PR #1045: $out" ;; esac
+future_files=("$future_cache"/*)
+[ "${#future_files[@]}" -eq 1 ] || fail "future-cache setup did not write exactly one cache row"
+IFS=$'\t' read -r _ future_kind future_number future_url future_state <"${future_files[0]}"
+future_at=$(($(date +%s) + 3600))
+printf '%s\t%s\t%s\t%s\t%s\n' "$future_at" "$future_kind" "$future_number" "$future_url" "$future_state" >"${future_files[0]}"
+export STATUSLINE_GH_RESPONSE='{"number":1046,"url":"https://example.test/pull/1046","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
+out=$(render_cached "$future_cache" 30 "$payload")
+case "$out" in *'PR #1046 ✓'*) ;; *) fail "future-dated cache row was reused: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 2 ] || fail "future-dated cache row did not refresh"
+
 echo "==> merged pull requests are negative-cached and never rendered"
 closed_cache="$statusline_tmp/closed-cache"
 : >"$STATUSLINE_GH_LOG"
