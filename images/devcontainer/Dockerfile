@@ -248,7 +248,8 @@ RUN case "${TARGETARCH}" in \
         "arm64") export TERRAFORM_ARCH="arm64" ;; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
-    && export GNUPGHOME="$(mktemp -d)" \
+    && terraform_gnupg_home="$(mktemp -d)" \
+    && export GNUPGHOME="${terraform_gnupg_home}" \
     && curl -fsSL https://keybase.io/hashicorp/pgp_keys.asc -o /tmp/hashicorp-pgp-keys.asc \
     && gpg --batch --import /tmp/hashicorp-pgp-keys.asc \
     && gpg --batch --with-colons --fingerprint 34365D9472D7468F \

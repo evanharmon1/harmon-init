@@ -51,6 +51,8 @@ grep -q -- '--status-fd 1 --verify' "$producer_dockerfile" ||
     fail "Terraform checksum verification does not expose the signer identity"
 grep -q '\$NF == "C874011F0AB405110D02105534365D9472D7468F"' "$producer_dockerfile" ||
     fail "Terraform checksum verification does not require HashiCorp's pinned primary fingerprint"
+grep -q 'terraform_gnupg_home="$(mktemp -d)"' "$producer_dockerfile" ||
+    fail "Terraform verification does not fail if its temporary GPG home cannot be created"
 if grep -Ev '^[[:space:]]*#' "$producer_dockerfile" |
     grep -Eqi '(^|[^[:alnum:]_-])(ansible|checkov)([^[:alnum:]_-]|$)'; then
     fail "shared image adds project-local Ansible or on-demand Checkov"
