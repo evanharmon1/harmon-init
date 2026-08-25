@@ -9,11 +9,16 @@
 # resolution examples, the natural-language interface, and the registry/
 # Foreman ownership boundaries — it links back here rather than restating
 # values. Rationale specific to one setting lives as a comment beside that
-# setting. ADR 0007 (docs/decisions/0007-rigor-and-strategy-axes.md) records
-# the design decisions and their "not" reasoning; it supersedes ADR 0006 D4
-# (the old method-rank model) and amends D5 (resolution order, restated below
-# for strategy). `[tier.*]` at the bottom of this file is unchanged from the
-# model ADR 0006 introduced.
+# setting. ADR 0007
+# (https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/0007-rigor-and-strategy-axes.md)
+# records the design decisions and their "not" reasoning; it supersedes ADR
+# 0006
+# (https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/0006-method-and-tier-axes.md)
+# D4 (the old method-rank model) and amends D5 (resolution order, restated
+# below for strategy). Both are root-only — a generated repo does not ship
+# `docs/decisions/`, so these are stable upstream URLs, not relative paths
+# that would 404 once copied. `[tier.*]` at the bottom of this file is
+# unchanged from the model ADR 0006 introduced.
 #
 # Two top-level defaults, nothing else:
 default_rigor    = "standard"
@@ -367,9 +372,12 @@ allow_tier_escalation = true
 #     AND max_parallel_agents >= min_agents — plainly, no "+1" the way
 #     council needs and no "-1" for the lead either: min_agents already
 #     counts the lead PLUS its workers (the WHOLE minimum roster), and
-#     specs/issue-strategy.md states this as the general rule with no
-#     per-topology discount, so orchestrate does not special-case away
-#     from it the way council's different COUNTING convention does.
+#     specs/issue-strategy.md
+#     (https://github.com/evanharmon1/harmon-init/blob/main/specs/issue-strategy.md
+#     — root-only, not shipped to generated repos) states this as the
+#     general rule with no per-topology discount, so orchestrate does not
+#     special-case away from it the way council's different COUNTING
+#     convention does.
 # e.g. council OR orchestrate under trivial (budget.trivial: 1 and 1, above)
 # — trivial's whole point is a single agent doing a single pass, which
 # neither topology can honestly represent, by either formula.
@@ -429,9 +437,11 @@ description = "Strategy: human owns central decisions; AI does bounded pieces"
 # ─────────────────────────────────────────────────────────────────────────────
 # Model tiers — which stratum works a role. Added under harmon-init#855, per
 # ADR 0006; re-scoped to per-role resolution under harmon-init#1047, per
-# ADR 0007. This config is self-contained: the ADRs (recorded in the
-# harmon-init repository) hold the rationale a consumer does not need to
-# resolve the axis.
+# ADR 0007. This config is self-contained: the ADRs
+# (https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/0006-method-and-tier-axes.md,
+# https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/0007-rigor-and-strategy-axes.md
+# — root-only, not shipped to generated repos) hold the rationale a
+# consumer does not need to resolve the axis.
 #
 # There is no top-level `default_tier` here: the default for all three roles
 # (orchestrator/implementer/reviewer) is whatever the resolved [rigor.*]

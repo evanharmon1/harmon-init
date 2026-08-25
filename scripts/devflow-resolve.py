@@ -35,14 +35,24 @@ dangle (an unknown default_rigor, a rigor level naming a missing
 review/budget, a rigor_order entry with no matching table, rigor_order itself
 missing an entry or holding a duplicate, and so on) — validated BEFORE
 anything is dereferenced. The same net catches a value TOML can represent but
-JSON cannot: a bare date/datetime/time literal (`human_gates = 2026-08-25`
-parses as a real datetime.date, not a string) anywhere inside a [review.*],
-[budget.*], or [strategy.*] table is invalid_config too, checked before that
-table can ever reach json.dumps() and raise. This is a crash-safety net, not a
-restatement of scripts/test-devflow-config.sh's exhaustive static validation
-(enums, cross-registry checks, description equality) — that script is the
-authority on whether a config is well-formed; this resolver only needs
-enough checking to fail cleanly on one that isn't.
+JSON cannot serialize CLEANLY: a bare date/datetime/time literal
+(`human_gates = 2026-08-25` parses as a real datetime.date, not a string)
+anywhere inside a [review.*], [budget.*], or [strategy.*] table is
+invalid_config too, checked before that table can ever reach json.dumps()
+and raise — and so is a non-finite float (`max_usd = nan` or `= inf`),
+which json.dumps() does NOT raise on (Python emits the bareword tokens
+NaN/Infinity by default) but which is not valid JSON per RFC 8259 either;
+math.isfinite() catches what a raw isinstance(x, float) check would miss.
+An existing --config/--merge-base-config path that is not a regular file
+(a directory, a socket) is invalid_input rather than either of those —
+distinct again from genuine absence, since it is almost certainly a
+caller/path mistake, not a signal that no config exists. This is a
+crash-safety net, not a restatement of scripts/test-devflow-config.sh's
+exhaustive static validation (enums, cross-registry checks, description
+equality) — that script is the authority on whether a config is
+well-formed; this resolver only needs enough checking to fail cleanly on
+one that isn't (or on an invocation that doesn't even resolve to one, per
+argparse's own overridden error() below).
 
 Reading the branch's own --config copy is NEVER a silent default: exactly
 one of three config-basis flags is required on every invocation, because a
@@ -194,6 +204,7 @@ Inputs, precisely:
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import tomllib
@@ -205,12 +216,21 @@ _JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
 
 
 def json_safe(value):
-    """True if `value` will serialize cleanly with json.dumps(). TOML has
-    native date/datetime/time literals with no JSON equivalent (tomllib
-    parses `2026-08-25` as a real datetime.date, not a string) — checked
-    structurally, recursively through any list/dict, since this is a crash
-    safety net for WHATEVER shape a table takes, not a restatement of
-    scripts/test-devflow-config.sh's exhaustive per-field validation."""
+    """True if `value` will serialize cleanly with json.dumps() to output
+    that is actually valid JSON. TOML has native date/datetime/time
+    literals with no JSON equivalent (tomllib parses `2026-08-25` as a real
+    datetime.date, not a string) — those make json.dumps() raise outright.
+    TOML also has nan/inf/-inf float literals; json.dumps() does NOT raise
+    on those (Python's own extension emits the bareword tokens NaN/
+    Infinity/-Infinity by default), but that output is not valid JSON per
+    RFC 8259 — a strict downstream parser would reject it, so this counts
+    them as unsafe too, checked with math.isfinite() rather than a raw
+    isinstance. Checked structurally, recursively through any list/dict,
+    since this is a crash/malformed-output safety net for WHATEVER shape a
+    table takes, not a restatement of scripts/test-devflow-config.sh's
+    exhaustive per-field validation."""
+    if isinstance(value, float):
+        return math.isfinite(value)
     if isinstance(value, _JSON_SAFE_SCALARS):
         return True
     if isinstance(value, list):
@@ -393,14 +413,14 @@ def validate_config_references(cfg, errors):
         if not isinstance(tbl, dict):
             fail(f"[review.{name}] is not a table")
         elif not json_safe(tbl):
-            fail(f"[review.{name}] contains a value with no JSON equivalent (a TOML date/time?)")
+            fail(f"[review.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
 
     for name, tbl in budgets.items():
         if not isinstance(tbl, dict):
             fail(f"[budget.{name}] is not a table")
             continue
         if not json_safe(tbl):
-            fail(f"[budget.{name}] contains a value with no JSON equivalent (a TOML date/time?)")
+            fail(f"[budget.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
         for field in ("max_agent_runs", "max_parallel_agents"):
             if field not in tbl or not isinstance(tbl[field], int) or isinstance(tbl[field], bool):
                 fail(f"[budget.{name}].{field} must be an integer")
@@ -409,7 +429,7 @@ def validate_config_references(cfg, errors):
         if not isinstance(tbl, dict):
             fail(f"[strategy.{name}] is not a table")
         elif not json_safe(tbl):
-            fail(f"[strategy.{name}] contains a value with no JSON equivalent (a TOML date/time?)")
+            fail(f"[strategy.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
 
     return ok
 
@@ -838,8 +858,27 @@ def emit(output, errors):
     sys.exit(1 if errors else 0)
 
 
+class DevflowArgumentParser(argparse.ArgumentParser):
+    """argparse's default .error() prints a usage message to STDERR and
+    exits 2 — bypassing this script's entire contract that every invocation
+    emits one normalized JSON object to stdout and exits 0 or 1 (see the
+    module docstring). A missing --config, an unknown flag, or an option
+    missing its value would otherwise look like a crash — empty stdout, an
+    exit code the documented contract never mentions — to a caller that
+    only reads stdout and checks for 0/1. Overridden so those failures are
+    reported exactly like any other invalid_input."""
+
+    def error(self, message):
+        errors = [{"code": "invalid_input", "detail": message}]
+        emit({
+            "config_path": None, "config_source": None, "config_sha256": None,
+            "requires_confirmation": False, "preflight_required": False,
+            "warnings": [], "errors": errors,
+        }, errors)
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = DevflowArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
     ap.add_argument("--merge-base-config")
     ap.add_argument("--merge-base-absent", action="store_true")
@@ -905,7 +944,7 @@ def main():
     elif args.merge_base_config:
         read_path = args.merge_base_config
         config_source = "merge-base"
-        if not os.path.isfile(read_path):
+        if not os.path.exists(read_path):
             errors.append({
                 "code": "invalid_input",
                 "detail": (
@@ -925,6 +964,28 @@ def main():
         # is the right thing to read directly.
         read_path = args.config
         config_source = "branch"
+
+    # A path that EXISTS but is not a regular file (a directory, a socket, a
+    # FIFO, ...) is a caller/path mistake, not genuine absence — checked
+    # here, uniformly, for whichever branch above produced read_path.
+    # load_config()'s own os.path.isfile() check would otherwise treat it
+    # exactly like a missing path and silently fall back to the built-in,
+    # which is wrong for --config-unchanged (a typo'd directory path is not
+    # "this repo has no .devflow.toml") and would be a misleading message
+    # for --merge-base-config (already caught above as "does not exist",
+    # which is inaccurate for something that does exist, just not as a
+    # file). Only a path absent from the filesystem entirely may resolve as
+    # absent.
+    if read_path is not None and os.path.exists(read_path) and not os.path.isfile(read_path):
+        errors.append({
+            "code": "invalid_input",
+            "detail": f"{read_path} exists but is not a regular file (a directory? a socket?) — "
+                      "this looks like a caller/path mistake, not genuine absence; only a path "
+                      "that does not exist at all may resolve as absent",
+        })
+        emit({"config_path": read_path, "config_source": config_source, "config_sha256": None,
+              "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
 
     if read_path is None:
         cfg, digest = None, None

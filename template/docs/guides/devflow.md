@@ -515,9 +515,11 @@ floor at all, so it resolves under any rigor level, at any budget.
 
 Every strategy's `min_agents` is checked against both budget fields
 directly, with **one** documented exception, not a general per-topology
-discount — `specs/issue-strategy.md` states the plain rule (`min_agents`
-exceeds `max_agent_runs` or `max_parallel_agents`) for every strategy
-alike, and only `council` departs from it:
+discount — [`specs/issue-strategy.md`](https://github.com/evanharmon1/harmon-init/blob/main/specs/issue-strategy.md)
+(harmon-init-only; generated repositories do not receive it, hence the
+upstream link) states the plain rule (`min_agents` exceeds
+`max_agent_runs` or `max_parallel_agents`) for every strategy alike, and
+only `council` departs from it:
 
 | Topology | `min_agents` counts | Required `max_agent_runs` | Required `max_parallel_agents` |
 | --- | --- | --- | --- |

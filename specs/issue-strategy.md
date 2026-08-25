@@ -75,8 +75,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       actor-verifying consumer additionally authenticates, e.g. foreman arming inputs; the
       label itself still carries no permission, the class names which consumer-side check
       applies),
-      lifecycle, exclusivity, values, `source: inline | agent-registry | tool-owned` — with
-      **per-value overrides** of `writers`, `lifecycle`, and `color`, because mixed
+      lifecycle, exclusivity, values,
+      `source: inline | agent-registry | tool-owned | devflow` (`devflow` marks a family
+      whose values are authored in, and validated against, `.devflow.toml`'s tables rather
+      than directly in this file — `rigor`/`strategy`, checked by `task test:devflow-config`)
+      — with **per-value overrides** of `writers`, `lifecycle`, and `color`, because mixed
       namespaces exist (`foreman:*`: arming selectors and `approved` are trusted-human
       inputs, `hold` is human, `dispatched`/`ready-for-review` are tool-owned outputs — and
       the four protocol labels ship four different colors today, which family-level color

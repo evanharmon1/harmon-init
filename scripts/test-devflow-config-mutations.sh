@@ -222,6 +222,18 @@ rejects("a non-boolean allow_tier_escalation", sub(
 rejects("a zero max_agent_runs", sub(
     '[budget.trivial]\nmax_agent_runs        = 1', '[budget.trivial]\nmax_agent_runs        = 0',
 ), "must be an integer > 0")
+rejects("a non-finite max_usd (nan)", sub(
+    '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1\n'
+    'wall_clock_min        = 15\nallow_tier_escalation = false',
+    '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1\n'
+    'wall_clock_min        = 15\nallow_tier_escalation = false\nmax_usd               = nan',
+), "must be finite (not nan/inf)")
+rejects("a non-finite max_usd (+inf, which the > 0 check alone would miss)", sub(
+    '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1\n'
+    'wall_clock_min        = 15\nallow_tier_escalation = false',
+    '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1\n'
+    'wall_clock_min        = 15\nallow_tier_escalation = false\nmax_usd               = inf',
+), "must be finite (not nan/inf)")
 
 
 def add_shrinking_max_tokens(tmp):

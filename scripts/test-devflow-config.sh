@@ -51,6 +51,7 @@ python3 - "$LABEL_REGISTRY_ROOT" "$LABEL_REGISTRY_TEMPLATE" \
     "$AGENT_REGISTRY_ROOT" "$AGENT_REGISTRY_TEMPLATE" "$AGENTS_ROOT" "$AGENTS_TEMPLATE" \
     "$DEVFLOW_GUIDE" .devflow.toml template/.devflow.toml <<'PY'
 import json
+import math
 import re
 import sys
 import tomllib
@@ -541,6 +542,12 @@ for path in config_paths:
             v = tbl["max_usd"]
             if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
                 failures.append(f"{path}: [budget.{name}].max_usd={v!r} must be a number > 0")
+            elif not math.isfinite(v):
+                # TOML has nan/inf/-inf float literals; NaN and +inf both
+                # slip past the "> 0" check above (NaN compares False to
+                # everything, +inf compares True to "> 0") without this —
+                # neither is a JSON-safe value nor a sane USD ceiling.
+                failures.append(f"{path}: [budget.{name}].max_usd={v!r} must be finite (not nan/inf)")
 
     # ── [strategy.*] ─────────────────────────────────────────────────────
     for name, tbl in sorted(strategies.items()):
@@ -1296,6 +1303,14 @@ run_malformed(
     "no JSON equivalent",
 )
 run_malformed(
+    "a non-finite max_usd (nan) -> invalid_config, not a value json.dumps() would mangle",
+    '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2\n'
+    'wall_clock_min        = 45\nallow_tier_escalation = false',
+    '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2\n'
+    'wall_clock_min        = 45\nallow_tier_escalation = false\nmax_usd               = nan',
+    "no JSON equivalent",
+)
+run_malformed(
     "a rigor naming a missing budget profile -> invalid_config, not a traceback",
     'budget             = "trivial"', 'budget             = "nonexistent-budget-profile"',
     "names no [budget.*] profile",
@@ -1379,6 +1394,52 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         check("a present config that fails to parse as TOML -> invalid_config, not a traceback",
               result.returncode == 1 and any(e["code"] == "invalid_config" for e in out["errors"]))
+
+    # --config naming something that EXISTS but is not a regular file (here,
+    # the temp directory itself) must never be silently treated the same as
+    # a genuinely missing path — that would mask a caller/path mistake as
+    # "this repo has no .devflow.toml".
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", tmp, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("--config naming a directory is invalid_input, never treated as absent",
+          result.returncode == 1
+          and any(e["code"] == "invalid_input" and "not a regular file" in e["detail"] for e in out["errors"])
+          and out.get("config_source") != "absent")
+
+# argparse-level failures (missing --config, an unrecognized flag, a missing
+# option value) must ALSO honor the "always emit normalized JSON to stdout,
+# exit 0 or 1" contract — never argparse's own default of a bare usage
+# message on stderr and exit 2, which would look like a crash to a caller
+# that only reads stdout.
+result = subprocess.run([sys.executable, resolver, "--config-unchanged"], capture_output=True, text=True)
+try:
+    out = json.loads(result.stdout)
+except json.JSONDecodeError:
+    failures.append(
+        f"missing --config: stdout was not JSON — argparse bypassed the contract? "
+        f"returncode={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+else:
+    check("a missing required --config is invalid_input via stdout JSON, not a bare argparse exit",
+          result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
+
+result = subprocess.run(
+    [sys.executable, resolver, "--config", config, "--config-unchanged", "--not-a-real-flag"],
+    capture_output=True, text=True,
+)
+try:
+    out = json.loads(result.stdout)
+except json.JSONDecodeError:
+    failures.append(
+        f"unrecognized flag: stdout was not JSON — argparse bypassed the contract? "
+        f"returncode={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+else:
+    check("an unrecognized flag is invalid_input via stdout JSON, not a bare argparse exit",
+          result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
 
 if failures:
     print()
