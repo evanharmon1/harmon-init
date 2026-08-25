@@ -27,6 +27,14 @@ The image:
 - carries OCI source, revision, version, description, and license labels;
 - contains `/usr/local/share/harmon-devcontainer/manifest.json` with its source
   revision, architecture, and important tool versions;
+- includes pinned Terraform CLI and TFLint releases, with their archives
+  checksum-verified before installation. HashiCorp's Terraform checksum catalog
+  is additionally verified with its pinned PGP fingerprint; TFLint uses reviewed
+  architecture-specific SHA-256 pins alongside its Renovate-managed version;
+- deliberately does **not** include Ansible or Checkov. Ansible remains in each
+  repository's project-owned uv environment, while Checkov remains an on-demand
+  pinned `uvx` scan, so the shared image does not own repository Python
+  dependency graphs;
 - pins the agent CLI versions it ships and disables the Claude Code and OpenCode
   auto-updaters (`DISABLE_AUTOUPDATER=1` and
   `OPENCODE_DISABLE_AUTOUPDATE=true`), so a running container cannot drift off

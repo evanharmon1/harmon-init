@@ -16,6 +16,14 @@ ARG HADOLINT_VERSION=2.15.1
 ARG ACTIONLINT_VERSION=1.7.12
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
+# renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
+ARG TERRAFORM_VERSION=1.15.9
+# renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
+ARG TFLINT_VERSION=0.64.0
+# TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
+# update these reviewed, architecture-specific digests with each release.
+ARG TFLINT_SHA256_AMD64=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb
 # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
 ARG YQ_VERSION=4.53.6
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
@@ -227,6 +235,55 @@ RUN case "${TARGETARCH}" in \
         | tar -xz -C /usr/local/bin gitleaks
 
 # ---------- infrastructure and secrets tools ----------
+# Terraform and TFLint are standalone, cross-project IaC CLIs. Verify their
+# upstream release metadata before installing them: HashiCorp signs the
+# Terraform checksum catalog, and TFLint's reviewed per-architecture checksums
+# are pinned alongside its Renovate-managed release version.
+#
+# Ansible intentionally stays in each project's uv environment, where its
+# Python dependencies are project-owned. Checkov likewise remains an on-demand,
+# explicitly pinned `uvx` tool rather than a shared-image dependency.
+RUN case "${TARGETARCH}" in \
+        "amd64") export TERRAFORM_ARCH="amd64" ;; \
+        "arm64") export TERRAFORM_ARCH="arm64" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && export GNUPGHOME="$(mktemp -d)" \
+    && curl -fsSL https://keybase.io/hashicorp/pgp_keys.asc -o /tmp/hashicorp-pgp-keys.asc \
+    && gpg --batch --import /tmp/hashicorp-pgp-keys.asc \
+    && gpg --batch --with-colons --fingerprint 34365D9472D7468F \
+        | awk -F: '$1 == "fpr" { print $10; exit }' \
+        | grep -qx 'C874011F0AB405110D02105534365D9472D7468F' \
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip" \
+        -o "/tmp/terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip" \
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+        -o "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
+        -o "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
+    && gpg --batch --verify "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig" \
+        "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+    && cd /tmp \
+    && grep " terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip$" \
+        "terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+        | sha256sum --check - \
+    && unzip -q "/tmp/terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip" -d /usr/local/bin \
+    && rm -rf "$GNUPGHOME" /tmp/hashicorp-pgp-keys.asc \
+        "/tmp/terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip" \
+        "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+        "/tmp/terraform_${TERRAFORM_VERSION}_SHA256SUMS.sig"
+
+RUN case "${TARGETARCH}" in \
+        "amd64") export TFLINT_ARCH="amd64" TFLINT_SHA256="${TFLINT_SHA256_AMD64}" ;; \
+        "arm64") export TFLINT_ARCH="arm64" TFLINT_SHA256="${TFLINT_SHA256_ARM64}" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_${TFLINT_ARCH}.zip" \
+        -o "/tmp/tflint_linux_${TFLINT_ARCH}.zip" \
+    && echo "${TFLINT_SHA256}  /tmp/tflint_linux_${TFLINT_ARCH}.zip" | sha256sum --check - \
+    && unzip -p "/tmp/tflint_linux_${TFLINT_ARCH}.zip" tflint >/usr/local/bin/tflint \
+    && chmod 0755 /usr/local/bin/tflint \
+    && rm -f "/tmp/tflint_linux_${TFLINT_ARCH}.zip"
+
 RUN case "${TARGETARCH}" in \
         "amd64") export TFDOCS_ARCH="amd64" YQ_ARCH="amd64" SOPS_ARCH="amd64" ACT_ARCH="x86_64" ;; \
         "arm64") export TFDOCS_ARCH="arm64" YQ_ARCH="arm64" SOPS_ARCH="arm64" ACT_ARCH="arm64" ;; \
@@ -412,6 +469,8 @@ RUN chmod 0755 \
         "hadolint=${HADOLINT_VERSION}" \
         "actionlint=${ACTIONLINT_VERSION}" \
         "terraform-docs=${TERRAFORM_DOCS_VERSION}" \
+        "terraform=${TERRAFORM_VERSION}" \
+        "tflint=${TFLINT_VERSION}" \
         "yq=${YQ_VERSION}" \
         "zellij=${ZELLIJ_VERSION}" \
         "workmux=${WORKMUX_VERSION}" \
