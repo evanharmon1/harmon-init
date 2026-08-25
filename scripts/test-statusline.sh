@@ -119,9 +119,10 @@ render_cached_hyperlinked() {
         STATUSLINE_COLOR=1 STATUSLINE_HYPERLINK=1 "$bash_bin" "$sl" <<<"$payload"
 }
 
-# With no environment override, the marker shipped beside the status-line
-# script enables the opt-in. This exercises the rendered file-layout contract
-# without adding a test-only production switch.
+# With no environment override, either production marker location enables the
+# opt-in: the installed config directory or the marker shipped beside the
+# status-line script. This exercises renderer discovery without duplicating
+# scripts/test-template.sh's rendered-asset assertions.
 render_marker_default() {
     local cache_dir=$1 ttl=$2 payload=$3
     env -u STATUSLINE_PR_LOOKUP_ENABLED PATH="$stub_dir:$PATH" \
@@ -149,13 +150,14 @@ case "$out" in *"$link"*) ;; *) fail "expected fallback OSC-8 link for $pr_url a
 grep -qx 'pr view --json number,url,isDraft,reviewDecision,state' "$STATUSLINE_GH_LOG" ||
     fail "lookup did not resolve the current checkout's PR"
 
-echo "==> an adjacent opt-in marker controls no-override lookup"
+echo "==> either production opt-in marker controls no-override lookup"
 marker_cache="$statusline_tmp/marker-cache"
 : >"$STATUSLINE_GH_LOG"
 : >"$STATUSLINE_TIMEOUT_LOG"
 out=$(render_marker_default "$marker_cache" 30 "$payload")
-if [ -r "${sl%/*}/statusline-pr-lookup.enabled" ]; then
-    case "$out" in *'PR #1042 ✓'*) ;; *) fail "adjacent marker did not enable fallback: $out" ;; esac
+if [ -r /usr/local/share/devcontainer-config/statusline-pr-lookup.enabled ] ||
+    [ -r "${sl%/*}/statusline-pr-lookup.enabled" ]; then
+    case "$out" in *'PR #1042 ✓'*) ;; *) fail "production marker did not enable fallback: $out" ;; esac
     [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "marker-enabled fallback did not make one gh lookup"
     [ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "marker-enabled fallback did not use timeout"
 else
