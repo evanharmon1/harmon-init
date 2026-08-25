@@ -2355,9 +2355,11 @@ if have gitleaks; then
     rendered_gitleaks_config="$PWD/.gitleaks.toml"
     gitleaks_fixture="$job_tmp/gitleaks-fixture"
     mkdir -p "$gitleaks_fixture/_bmad/_config"
+    printf '%s\n' 'BMad content-hash regression fixture' >"$gitleaks_fixture/hash-source"
+    manifest_hash="$(git hash-object "$gitleaks_fixture/hash-source")"
     printf '%s\n' \
         'type,name,module,path,hash' \
-        '"md","key-screens","bmm","bmm/plan/bmad-ux/assets/key-screens.md","ff1c5060673dd595edd61e76806bae876264ec68"' \
+        "\"md\",\"key-screens\",\"bmm\",\"bmm/plan/bmad-ux/assets/key-screens.md\",\"$manifest_hash\"" \
         >"$gitleaks_fixture/_bmad/_config/files-manifest.csv"
     if ! run_quiet --in "$gitleaks_fixture" gitleaks-manifest-allowlisted \
         gitleaks detect --no-banner --redact --no-git --source . \
