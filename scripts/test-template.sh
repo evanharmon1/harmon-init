@@ -924,7 +924,7 @@ if have npx; then
     # about which markdownlint the project is linted with.
     md_version="$(sed -n 's/^MARKDOWNLINT_VERSION=//p' scripts/markdownlint.sh)"
     [ -n "$md_version" ] || err "rendered scripts/markdownlint.sh has no MARKDOWNLINT_VERSION pin"
-    if ! md_out=$(npx --yes "markdownlint-cli2@${md_version}" '**/*.md' '#.claude/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
+    if ! md_out=$(npx --yes "markdownlint-cli2@${md_version}" '**/*.md' '#.claude/**' '#.agents/skills/**' '#_bmad/**' '#**/node_modules/**' '#dist/**' '#.worktrees/**' '#**/.terraform/**' '#**/.venv/**' '#**/.task/**' 2>&1); then
         printf '%s\n' "$md_out" >&2
         err "rendered Markdown fails markdownlint"
     fi
@@ -2348,6 +2348,33 @@ PY
 # ── 10. No secrets in the rendered tree (gitleaks) ──────────────────
 if have gitleaks; then
     gitleaks detect --no-banner --redact --no-git --source . || err "gitleaks findings in rendered output"
+
+    # The BMad installer records content hashes in this one manifest. Exercise
+    # the exception with the generic-api-key shape that prompted it, then prove
+    # the allowlist does not turn off scanning for the rest of `_bmad/`.
+    rendered_gitleaks_config="$PWD/.gitleaks.toml"
+    gitleaks_fixture="$job_tmp/gitleaks-fixture"
+    mkdir -p "$gitleaks_fixture/_bmad/_config"
+    printf '%s\n' 'BMad content-hash regression fixture' >"$gitleaks_fixture/hash-source"
+    manifest_hash="$(git hash-object "$gitleaks_fixture/hash-source")"
+    printf '%s\n' \
+        'type,name,module,path,hash' \
+        "\"md\",\"key-screens\",\"bmm\",\"bmm/plan/bmad-ux/assets/key-screens.md\",\"$manifest_hash\"" \
+        >"$gitleaks_fixture/_bmad/_config/files-manifest.csv"
+    if ! run_quiet --in "$gitleaks_fixture" gitleaks-manifest-allowlisted \
+        gitleaks detect --no-banner --redact --no-git --source . \
+        --config "$rendered_gitleaks_config"; then
+        err "gitleaks rejected the allowlisted BMad content-hash manifest"
+    fi
+
+    mkdir -p "$gitleaks_fixture/_bmad/other"
+    cp "$gitleaks_fixture/_bmad/_config/files-manifest.csv" \
+        "$gitleaks_fixture/_bmad/other/files-manifest.csv"
+    if run_quiet --in "$gitleaks_fixture" gitleaks-manifest-narrow \
+        gitleaks detect --no-banner --redact --no-git --source . \
+        --config "$rendered_gitleaks_config"; then
+        err "gitleaks allowlist is broader than _bmad/_config/files-manifest.csv"
+    fi
 else
     required gitleaks "secrets scan" || fail=1
 fi

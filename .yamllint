@@ -5,6 +5,11 @@ extends: default
 # valid YAML until rendered; the rendered output is linted by test:template:*.
 ignore:
   - template/
+  # Vendored agent assets are installer-owned and may be overwritten on
+  # reinstall; their YAML follows upstream conventions, not this repo's.
+  - .claude/skills/
+  - .agents/skills/
+  - _bmad/
   - node_modules/
   - .task/
   - .worktrees/
