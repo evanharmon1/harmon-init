@@ -277,6 +277,21 @@ environment — against the items below
       still has one."
 [% endif %]
 [% if project_management == 'github' or use_foreman %]
+- [ ] **Upgrading from a release before harmon-init#1047
+      (`method:*` → `strategy:*`)?** Rename every live `method:*` label to
+      its `strategy:*` counterpart **before** either `task setup:github-labels`
+      step below, not after: provisioning creates the `strategy:*`
+      destinations first, and `gh label edit --name` refuses to rename onto a
+      name that already exists — renaming afterward is rejected, stranding
+      existing issues on the retired `method:*` label, which the resolver
+      ignores. Start with an explicit `--limit 1000` on `gh label list` and
+      treat an exactly-full result as capped (double the limit and re-run
+      until the count is below the cap before renaming anything) — the same
+      caution as the `agent:*` cleanup below. For each live value among
+      `oneshot`, `plan`, `plan-approved`, `orchestrate`, `council`,
+      `human-led`, run `gh label edit method:<v> --name strategy:<v>`
+      (association-preserving: every issue keeps the label, just under its
+      new name).
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
       families from `label-registry.json`[% if project_management == 'github' %]
       (see the generated taxonomy table in
@@ -286,11 +301,13 @@ environment — against the items below
       is product-independent and normally needs no edits. Labels are per-repo,
       so run it in each repo; org default labels (org Settings → Repository,
       UI-only) only seed new repos.
-- [ ] **After a `copier update` that adds label families** (e.g. `tier:*` /
-      `method:*`), re-run `task setup:github-labels` to provision the new
+- [ ] **After a `copier update` that adds label families** (e.g. `tier:*` — a
+      pure addition), re-run `task setup:github-labels` to provision the new
       labels here — it is additive and never deletes, so existing labels and
       the issues they sit on are untouched — then classify open issues with the
-      added families.
+      added families. A RENAMED family (like `method:*` → `strategy:*` above)
+      is not a pure addition — migrate it first, the same way, before
+      provisioning.
 - [ ] **[human-only] Retire any legacy `agent:*` claim labels** — needed only
       where `gh label list --limit 1000` still shows the harness-named family
       (`agent:claude-code`, `agent:gemini-cli`, …) a pre-registry harmon-init

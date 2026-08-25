@@ -10,6 +10,10 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
 - [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
   problems (broken build, failing local setup). Distinct from runbooks, which
   cover prod incidents.
+- [devflow.md](devflow.md) — the `rigor`/`strategy` execution-policy model
+  behind `.devflow.toml`: what each axis means, how they resolve and
+  conflict, role-tier overrides, budgets, reviewer selection, registry
+  ownership boundaries, and the natural-language interface.
 - [bot-account.md](bot-account.md) — the `evanharmon1-bot` machine account: how
   it gets repo access, how to mint and rotate its fine-grained PAT, and why the
   collaborator grant — not the token — is where per-repo granularity lives.

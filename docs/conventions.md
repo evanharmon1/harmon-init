@@ -191,6 +191,11 @@ it points here.
 - **`AGENTS.md` is the single source of truth** for AI guidance; `CLAUDE.md`,
   `GEMINI.md`, and `.github/copilot-instructions.md` are **symlinks** to it —
   edit only `AGENTS.md`.
+- **`.devflow.toml` is the single source of truth for rigor/strategy
+  execution-policy values** (review-pass caps, role tiers, budgets,
+  topologies); [docs/guides/devflow.md](guides/devflow.md) expands the model
+  and the resolution rules, `AGENTS.md` states only resolution mechanics, and
+  neither restates the config's numbers.
 - **Vendored vs local skills:** the skills sync manages ONLY the directories
   listed on the `# managed:` line of `.claude/skills/.SKILLS_PROVENANCE`. Any
   other directory under `.claude/skills/` is a **local skill owned by this

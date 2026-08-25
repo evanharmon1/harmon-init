@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.40.0](https://github.com/evanharmon1/harmon-init/compare/v4.39.1...v4.40.0) (2026-08-25)
+
+
+### Features
+
+* **devflow:** rigor and strategy as the primary execution-policy axes ([#1057](https://github.com/evanharmon1/harmon-init/issues/1057)) ([ca03a94](https://github.com/evanharmon1/harmon-init/commit/ca03a945ad3c9be7f56e21c491dde49d7c6e8faf))
+
+
+### Bug Fixes
+
+* **template:** allowlist BMad content-hash manifest ([#1056](https://github.com/evanharmon1/harmon-init/issues/1056)) ([4ba209b](https://github.com/evanharmon1/harmon-init/commit/4ba209bd8221b41fa6de0045871ae93813881473))
+* **template:** exclude installer-owned agent trees from content lints ([#1053](https://github.com/evanharmon1/harmon-init/issues/1053)) ([f84c266](https://github.com/evanharmon1/harmon-init/commit/f84c266d17d053507c41f1b7083c31688129fb8e))
+* **template:** sync harmon-devkit skills to v0.36.0 ([#1060](https://github.com/evanharmon1/harmon-init/issues/1060)) ([7207f48](https://github.com/evanharmon1/harmon-init/commit/7207f48e610eb1360921cee8466fb8422e527b80))
+
 ## [4.39.1](https://github.com/evanharmon1/harmon-init/compare/v4.39.0...v4.39.1) (2026-08-25)
 
 
