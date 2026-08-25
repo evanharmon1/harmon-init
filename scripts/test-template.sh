@@ -1103,10 +1103,10 @@ minimal) # project_management=github on a PERSONAL account, use_foreman=false
         err "project-management.md omits the area: solution-space label-family guidance"
     grep -qF 'At most one each of `area:`/`domain:`/`layer:` per issue' docs/project-management.md ||
         err "project-management.md omits the area/domain/layer cardinality guidance"
-    grep -qF '**Tier** — which model-routing stratum should work the issue' docs/project-management.md ||
+    grep -qF '**Tier** — which model-routing stratum works a specific **role**' docs/project-management.md ||
         err "project-management.md omits the tier: label-family guidance"
-    grep -qF '**Method** — the execution topology to work the issue under' docs/project-management.md ||
-        err "project-management.md omits the method: label-family guidance"
+    grep -qF '**Strategy** — the primary topology/workflow axis' docs/project-management.md ||
+        err "project-management.md omits the strategy: label-family guidance"
     [ -f scripts/setup-github-project.sh ] || err "scripts/setup-github-project.sh did not render for project_management=github"
     [ -f scripts/setup-github-labels.sh ] || err "scripts/setup-github-labels.sh did not render for project_management=github"
     # Personal account -> the org-only scripts must stay out.

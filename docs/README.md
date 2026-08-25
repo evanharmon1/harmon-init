@@ -32,7 +32,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 | Product — vision, roadmap, domain | [product/](product/) |
 | Architecture (subject hubs) | [architecture/](architecture/) — ci-cd, security, branch-protection, tests |
 | Decisions (ADRs) | [decisions/](decisions/) |
-| Guides (calm how-tos) | [guides/](guides/) — onboarding, deploying, troubleshooting, devcontainers |
+| Guides (calm how-tos) | [guides/](guides/) — onboarding, deploying, troubleshooting, devcontainers, devflow |
 | Runbooks (crisis procedures) | [runbooks/](runbooks/) |
 | Project management (GitHub Projects) | [project-management.md](project-management.md) |
 | Post-generation setup | [CHECKLIST.md](CHECKLIST.md) |

@@ -116,6 +116,9 @@ switch (mutation) {
   case 'closed-family-without-values':
     family('concern').values = []
     break
+  case 'closed-devflow-family-without-values':
+    family('rigor').values = []
+    break
   default:
     throw new Error(`unknown mutation: ${mutation}`)
 }
@@ -154,6 +157,8 @@ rejects "a per-value provision switched on" 'per-value-provision-true' \
     'must equal false'
 rejects "a closed inline family with no values" 'closed-family-without-values' \
     'closed inline family'
+rejects "a closed devflow-sourced family with no values" 'closed-devflow-family-without-values' \
+    'closed devflow family'
 
 # ── 2. cross-file checks ───────────────────────────────────────────────────
 # rigor values ↔ .devflow.toml levels: the label selects a [rigor.*] table, so
@@ -224,21 +229,39 @@ layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 layer:infra|1D76DB|Hosts, networking, containers, provisioning — IaC and config rather than app code
-rigor:light|D4C5F9|Dev Loop caps: trivial, low-blast-radius change
-rigor:standard|D4C5F9|Dev Loop caps: the default budget
-rigor:deep|D4C5F9|Dev Loop caps: security, migrations, irreversible paths
+rigor:trivial|D4C5F9|Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes
+rigor:minimal|D4C5F9|Rigor: a quick driveby review, standard orchestrator/reviewer, economy implementer, light budget
+rigor:light|D4C5F9|Rigor: light review, frontier orchestrator/reviewer, economy implementer, light budget
+rigor:standard|D4C5F9|Rigor: standard review, frontier orchestrator/reviewer, standard implementer — the default
+rigor:thorough|D4C5F9|Rigor: thorough review, apex orchestrator/reviewer, standard implementer, thorough budget
+rigor:deep|D4C5F9|Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget
 tier:local|7057FF|Model tier: self-hosted endpoint first; may escalate to economy
 tier:economy|7057FF|Model tier: cheapest qualified hosted model first; escalation allowed
 tier:standard|7057FF|Model tier: reliable general-purpose coding model first
 tier:frontier|7057FF|Model tier: opus-class heavyweights; no warm-up on weaker models
 tier:apex|7057FF|Model tier: mythos-class leading edge (fable, sol)
 tier:adaptive|7057FF|Model tier: cheap preflight classifies, then chooses or escalates
-method:oneshot|BF3989|Execution: single agent, no separate plan phase
-method:plan|BF3989|Execution: agent plans then implements; no human plan gate
-method:plan-approved|BF3989|Execution: plan requires human approval before implementation
-method:orchestrate|BF3989|Execution: conductor session drives subagents, possibly across related issues
-method:council|BF3989|Execution: N independent implementations; judged, best or synthesis wins
-method:human-led|BF3989|Execution: human owns central decisions; AI does bounded pieces"
+tier:orchestrator:local|7057FF|Tier override: pin the orchestrator to local — self-hosted endpoint first
+tier:orchestrator:economy|7057FF|Tier override: pin the orchestrator to economy — cheapest qualified hosted model
+tier:orchestrator:standard|7057FF|Tier override: pin the orchestrator to standard — reliable general-purpose coding model
+tier:orchestrator:frontier|7057FF|Tier override: pin the orchestrator to frontier — opus-class heavyweight, no warm-up
+tier:orchestrator:apex|7057FF|Tier override: pin the orchestrator to apex — mythos-class leading edge
+tier:implementer:local|7057FF|Tier override: pin the implementer to local — self-hosted endpoint first
+tier:implementer:economy|7057FF|Tier override: pin the implementer to economy — cheapest qualified hosted model
+tier:implementer:standard|7057FF|Tier override: pin the implementer to standard — reliable general-purpose coding model
+tier:implementer:frontier|7057FF|Tier override: pin the implementer to frontier — opus-class heavyweight, no warm-up
+tier:implementer:apex|7057FF|Tier override: pin the implementer to apex — mythos-class leading edge
+tier:reviewer:local|7057FF|Tier override: pin the reviewer to local — self-hosted endpoint first
+tier:reviewer:economy|7057FF|Tier override: pin the reviewer to economy — cheapest qualified hosted model
+tier:reviewer:standard|7057FF|Tier override: pin the reviewer to standard — reliable general-purpose coding model
+tier:reviewer:frontier|7057FF|Tier override: pin the reviewer to frontier — opus-class heavyweight, no warm-up
+tier:reviewer:apex|7057FF|Tier override: pin the reviewer to apex — mythos-class leading edge
+strategy:oneshot|BF3989|Strategy: single agent, no separate plan phase
+strategy:plan|BF3989|Strategy: agent plans then implements; no human plan gate
+strategy:plan-approved|BF3989|Strategy: plan requires human approval before implementation
+strategy:orchestrate|BF3989|Strategy: lead agent delegates bounded work to parallel workers
+strategy:council|BF3989|Strategy: independent proposals, judged; best or synthesis wins (2+ agents)
+strategy:human-led|BF3989|Strategy: human owns central decisions; AI does bounded pieces"
 root_only_inline="domain:template|FBCA04|Generating a new repo from the template — the copier copy journey
 domain:standardization|FBCA04|Keeping existing repos current — copier update, drift audits, migrations, adoption
 domain:dev-loop|FBCA04|The daily developer workflow: gates, hooks, tasks, worktrees, review stages
