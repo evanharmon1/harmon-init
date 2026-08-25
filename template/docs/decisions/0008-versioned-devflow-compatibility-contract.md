@@ -4,7 +4,8 @@ Date: 2026-08-25
 
 ## Status
 
-Proposed — requires Evan's explicit approval before this ADR is accepted.
+Proposed — requires the owning repository's maintainer to approve it before
+this ADR is accepted.
 
 ## Context
 

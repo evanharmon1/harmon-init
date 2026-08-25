@@ -1240,6 +1240,22 @@ with tempfile.TemporaryDirectory() as tmp:
           and out["config_source"] == "merge-base"
           and out["selections"]["rigor"] == {"value": "trivial", "source": "default"})
 
+# A v1 config that loses any required table is invalid to the resolver too,
+# not merely to the root-only validator. The tier tables sit last in the
+# shipped file, so this creates a syntactically valid partial config without
+# disturbing the other profile references.
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial.toml")
+    open(partial_path, "w").write(open(config).read().split("[tier.local]", 1)[0])
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 config missing [tier.*] is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
+
 # absent config -> builtin (--config-unchanged: the branch's OWN copy is
 # the one that's absent, not a merge-base extraction)
 result = subprocess.run(

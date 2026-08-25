@@ -80,6 +80,7 @@
     {
       "name": "explicit-overrides-win",
       "basis": "branch",
+      "labels": ["rigor:trivial", "strategy:orchestrate"],
       "overrides": ["rigor=deep", "strategy=plan"],
       "expect": {
         "exit": 0,
@@ -87,6 +88,49 @@
           "selections": {
             "rigor": { "value": "deep", "source": "explicit" },
             "strategy": { "value": "plan", "source": "explicit" }
+          },
+          "review": {
+            "challenge": 5,
+            "review": 5,
+            "shepherd": 6,
+            "min_rounds": 1,
+            "policy": "deep",
+            "source": "profile"
+          },
+          "tiers": {
+            "orchestrator": { "value": "apex", "requested": "apex", "source": "profile" },
+            "implementer": { "value": "frontier", "requested": "frontier", "source": "profile" },
+            "reviewer": { "value": "apex", "requested": "apex", "source": "profile" }
+          },
+          "budget": {
+            "name": "deep",
+            "source": "profile",
+            "max_agent_runs": 20,
+            "max_parallel_agents": 4,
+            "wall_clock_min": 480,
+            "allow_tier_escalation": true
+          },
+          "disclosure": { "off_default": true },
+          "requires_confirmation": false
+        }
+      }
+    },
+    {
+      "name": "explicit-nondefault-strategy-projects-fields",
+      "basis": "branch",
+      "overrides": ["strategy=orchestrate"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "strategy": { "value": "orchestrate", "source": "explicit" } },
+          "strategy_fields": {
+            "topology": "lead-and-workers",
+            "planning": "explicit",
+            "delegation": "required",
+            "human_gates": [],
+            "coordination": "parallel-when-independent",
+            "min_agents": 2,
+            "description": "Strategy: lead agent delegates bounded work to parallel workers"
           },
           "disclosure": { "off_default": true }
         }

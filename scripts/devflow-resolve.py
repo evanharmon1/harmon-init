@@ -1073,7 +1073,7 @@ def main():
         })
 
     if not config_absent:
-        required_tables = ("rigor", "strategy", "review", "budget")
+        required_tables = ("rigor", "strategy", "review", "budget", "tier")
         missing = [t for t in required_tables if t not in cfg]
         if missing or "default_rigor" not in cfg or "default_strategy" not in cfg:
             detail_bits = missing + (["default_rigor"] if "default_rigor" not in cfg else []) + (

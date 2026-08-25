@@ -40,7 +40,17 @@ def matches(actual, expected, path="result") -> list[str]:
             else:
                 failures.extend(matches(actual[key], value, f"{path}.{key}"))
         return failures
-    if actual != expected:
+    if isinstance(expected, list):
+        if not isinstance(actual, list):
+            return [f"{path}: expected array, got {actual!r}"]
+        if len(actual) != len(expected):
+            return [f"{path}: expected {len(expected)} item(s), got {len(actual)}"]
+        return [
+            failure
+            for index, value in enumerate(expected)
+            for failure in matches(actual[index], value, f"{path}[{index}]")
+        ]
+    if type(actual) is not type(expected) or actual != expected:
         return [f"{path}: expected {expected!r}, got {actual!r}"]
     return []
 
