@@ -354,11 +354,11 @@ pr_cache_fresh() {
 # misses may duplicate one bounded lookup, rather than leaving persistent
 # single-flight state behind a short-lived status-line process.
 pr_cache_refresh() {
-    local cache_dir=$1 cache_file=$2 repo_dir=$3 cache_now=$4
+    local cache_dir=$1 cache_file=$2 repo_dir=$3 cache_now=$4 git_dir=$5 expected_head=$6 current_head
     (
         umask 077
         mkdir -p -- "$cache_dir" 2>/dev/null || exit 0
-        if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr view --json number,url,isDraft,reviewDecision 2>/dev/null | jq -r '
+        if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr view --json number,url,isDraft,reviewDecision,state 2>/dev/null | jq -r '
           def clean: (. // "") | tostring | explode
                      | map(select(. > 31 and . != 127 and (. < 128 or . > 159))) | implode;
           def review_state:
@@ -367,7 +367,7 @@ pr_cache_refresh() {
             elif .reviewDecision == "CHANGES_REQUESTED" then "changes_requested"
             elif .reviewDecision == "REVIEW_REQUIRED" then "pending"
             else "" end;
-          if type == "object" and (.number | type) == "number"
+          if type == "object" and .state == "OPEN" and (.number | type) == "number"
           then [(.number | floor | tostring), (.url | clean), review_state] | @tsv
           else "" end'); then
             [ -n "$result" ] && kind=positive || kind=negative
@@ -375,6 +375,8 @@ pr_cache_refresh() {
             kind=failure
             result=''
         fi
+        read -r current_head <"$git_dir/HEAD" 2>/dev/null || exit 0
+        [ "$current_head" = "$expected_head" ] || exit 0
         printf '%s\t%s\t%s\n' "$cache_now" "$kind" "$result" >"$cache_file.tmp.$$" 2>/dev/null || exit 0
         mv -f -- "$cache_file.tmp.$$" "$cache_file" 2>/dev/null || exit 0
     ) >/dev/null 2>&1
@@ -385,7 +387,7 @@ if [ "$STATUSLINE_PR_LOOKUP_ENABLED" = 1 ] && [ "${pr_present:-false}" != true ]
         pr_cache_file="$STATUSLINE_PR_CACHE_DIR/$REPLY"
         pr_cache_load "$pr_cache_file" || true
         if ! pr_cache_fresh && command -v gh >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-            pr_cache_refresh "$STATUSLINE_PR_CACHE_DIR" "$pr_cache_file" "$d" "$now"
+            pr_cache_refresh "$STATUSLINE_PR_CACHE_DIR" "$pr_cache_file" "$d" "$now" "$gitdir" "$pr_branch_ref"
             pr_cache_load "$pr_cache_file" || true
         fi
         if pr_cache_fresh && [ "$PR_CACHE_KIND" = positive ] && num "$PR_CACHE_NUM"; then

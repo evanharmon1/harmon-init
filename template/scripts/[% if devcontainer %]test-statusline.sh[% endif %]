@@ -86,6 +86,7 @@ printf '%s\n' \
     'printf "%s\n" "$*" >>"$STATUSLINE_GH_LOG"' \
     'case "${STATUSLINE_GH_MODE:-ok}" in' \
     'ok) printf "%s\n" "${STATUSLINE_GH_RESPONSE:?}" ;;' \
+    'switch) printf "%s\n" "${STATUSLINE_GH_RESPONSE:?}"; printf "%s\n" "${STATUSLINE_GH_SWITCH_HEAD:?}" >"${STATUSLINE_GIT_HEAD:?}" ;;' \
     'fail) exit 1 ;;' \
     '*) exit 64 ;;' \
     'esac' >"$stub_dir/gh"
@@ -133,7 +134,7 @@ cache_dir="$statusline_tmp/cache"
 export STATUSLINE_GH_LOG="$statusline_tmp/gh.log"
 export STATUSLINE_TIMEOUT_LOG="$statusline_tmp/timeout.log"
 export STATUSLINE_GH_MODE=ok STATUSLINE_TIMEOUT_MODE=run
-export STATUSLINE_GH_RESPONSE='{"number":1042,"url":"https://example.test/pull/1042","isDraft":false,"reviewDecision":"APPROVED"}'
+export STATUSLINE_GH_RESPONSE='{"number":1042,"url":"https://example.test/pull/1042","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
 : >"$STATUSLINE_GH_LOG"
 : >"$STATUSLINE_TIMEOUT_LOG"
 
@@ -145,7 +146,7 @@ link="${osc8}]8;;${pr_url}${osc8}\\#1042${osc8}]8;;${osc8}\\"
 case "$out" in *"$link"*) ;; *) fail "expected fallback OSC-8 link for $pr_url around #1042" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "expected one gh lookup on a cache miss"
 [ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "expected one one-second timeout wrapper"
-grep -qx 'pr view --json number,url,isDraft,reviewDecision' "$STATUSLINE_GH_LOG" ||
+grep -qx 'pr view --json number,url,isDraft,reviewDecision,state' "$STATUSLINE_GH_LOG" ||
     fail "lookup did not resolve the current checkout's PR"
 
 echo "==> an adjacent opt-in marker controls no-override lookup"
@@ -174,9 +175,44 @@ case "$out" in *'PR #1042 ✓'*) ;; *) fail "fresh fallback cache did not render
 [ ! -s "$STATUSLINE_GH_LOG" ] || fail "fresh cache made a second gh call"
 [ ! -s "$STATUSLINE_TIMEOUT_LOG" ] || fail "fresh cache invoked timeout again"
 
+echo "==> merged pull requests are negative-cached and never rendered"
+closed_cache="$statusline_tmp/closed-cache"
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+export STATUSLINE_GH_RESPONSE='{"number":1046,"url":"https://example.test/pull/1046","isDraft":false,"reviewDecision":"APPROVED","state":"MERGED"}'
+out=$(render_cached "$closed_cache" 30 "$payload")
+case "$out" in *'PR #'*) fail "merged pull request rendered as active: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "merged pull request did not make one lookup"
+out=$(render_cached "$closed_cache" 30 "$payload")
+case "$out" in *'PR #'*) fail "negative-cached merged pull request rendered as active: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "negative-cached merged pull request retried before its TTL"
+
+echo "==> a branch change during gh lookup cannot cache or render the old branch PR"
+switch_cache="$statusline_tmp/switch-cache"
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+export STATUSLINE_GH_MODE=switch
+export STATUSLINE_GIT_HEAD="$fixture_repo/.git/HEAD"
+export STATUSLINE_GH_SWITCH_HEAD='ref: refs/heads/statusline/switched-branch'
+export STATUSLINE_GH_RESPONSE='{"number":1047,"url":"https://example.test/pull/1047","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
+out=$(render_cached "$switch_cache" 30 "$payload")
+case "$out" in *'PR #'*) fail "branch-switch race rendered the old branch PR: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "branch-switch race did not make one lookup"
+if find "$switch_cache" -type f -print -quit | grep -q .; then
+    fail "branch-switch race wrote a cache row for the old branch"
+fi
+export STATUSLINE_GH_MODE=ok
+export STATUSLINE_GH_RESPONSE='{"number":1048,"url":"https://example.test/pull/1048","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
+out=$(render_cached "$switch_cache" 30 "$payload")
+case "$out" in *'PR #1048 ✓'*) ;; *) fail "new branch did not refresh its own PR after a discarded lookup: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 2 ] || fail "new branch reused a discarded old-branch lookup"
+unset STATUSLINE_GIT_HEAD STATUSLINE_GH_SWITCH_HEAD
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+
 echo "==> branch and repository cache keys do not reuse another PR"
 printf '%s\n' 'ref: refs/heads/statusline/other-branch' >"$fixture_repo/.git/HEAD"
-export STATUSLINE_GH_RESPONSE='{"number":1043,"url":"https://example.test/pull/1043","isDraft":false,"reviewDecision":"REVIEW_REQUIRED"}'
+export STATUSLINE_GH_RESPONSE='{"number":1043,"url":"https://example.test/pull/1043","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","state":"OPEN"}'
 out=$(render_cached "$cache_dir" 30 "$payload")
 case "$out" in *'PR #1043 ⋯'*) ;; *) fail "branch-keyed cache reused the old PR: $out" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "new branch did not make one lookup"
@@ -184,7 +220,7 @@ fixture_other_repo="$statusline_tmp/other-repo"
 mkdir -p "$fixture_other_repo/.git"
 printf '%s\n' 'ref: refs/heads/statusline/other-branch' >"$fixture_other_repo/.git/HEAD"
 other_payload=$(printf '{"workspace":{"current_dir":"%s"}}' "$fixture_other_repo")
-export STATUSLINE_GH_RESPONSE='{"number":1044,"url":"https://example.test/pull/1044","isDraft":true,"reviewDecision":"APPROVED"}'
+export STATUSLINE_GH_RESPONSE='{"number":1044,"url":"https://example.test/pull/1044","isDraft":true,"reviewDecision":"APPROVED","state":"OPEN"}'
 out=$(render_cached "$cache_dir" 30 "$other_payload")
 case "$out" in *'PR #1044'*) ;; *) fail "repository-keyed cache reused another repository's PR: $out" ;; esac
 case "$out" in *'✓'* | *'✗'* | *'⋯'*) fail "draft fallback invented a review glyph: $out" ;; esac
@@ -208,7 +244,7 @@ echo "==> expired positive cache is never reused when refresh cannot run"
 stale_cache="$statusline_tmp/stale-cache"
 : >"$STATUSLINE_GH_LOG"
 : >"$STATUSLINE_TIMEOUT_LOG"
-export STATUSLINE_GH_RESPONSE='{"number":1045,"url":"https://example.test/pull/1045","isDraft":false,"reviewDecision":"APPROVED"}'
+export STATUSLINE_GH_RESPONSE='{"number":1045,"url":"https://example.test/pull/1045","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
 out=$(render_cached "$stale_cache" 30 "$payload")
 case "$out" in *'PR #1045 ✓'*) ;; *) fail "fresh cache did not seed the stale-cache regression: $out" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "stale-cache setup did not call gh"
