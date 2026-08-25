@@ -281,6 +281,20 @@ for path in config_paths:
                             f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
                             f"review.{stage} drops {wv} -> {sv}"
                         )
+                # min_rounds is checked separately from STAGE_KEYS above — it
+                # is bounded by min(challenge, review) per-policy (below),
+                # not itself a stage cap, but it must still never decrease
+                # along rigor_order for the same reason challenge/review/
+                # shepherd can't: a "stronger" rigor level requiring FEWER
+                # confirming rounds than a weaker one would mean climbing
+                # rigor_order doesn't actually buy strictly more of
+                # everything the level composes.
+                wv, sv = w_review.get("min_rounds"), s_review.get("min_rounds")
+                if isinstance(wv, int) and isinstance(sv, int) and sv < wv:
+                    failures.append(
+                        f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
+                        f"review.min_rounds drops {wv} -> {sv}"
+                    )
 
             for role in ("orchestrator_tier", "implementer_tier", "reviewer_tier"):
                 wv, sv = w_tbl.get(role), s_tbl.get(role)
@@ -1064,47 +1078,73 @@ check("unqualified tier:economy refines the implementer only",
       and out["tiers"]["orchestrator"]["source"] == "profile"
       and out["tiers"]["reviewer"]["source"] == "profile")
 
-# tier:adaptive is a VALID provisioned value, never "unknown" — three
-# resolution paths: (a) --adaptive-result wins outright, (b) absent it,
+# tier:adaptive is a VALID provisioned value ONLY via the unqualified
+# tier:<value> label shape (implementer-targeting) — three resolution paths
+# from there: (a) --adaptive-result wins outright, (b) absent it,
 # preflight_required + the rigor profile's own tier as a provisional
 # placeholder, (c) a concrete tier label on the same role beats adaptive.
-code, out = run("--override", "rigor=standard", "--label", "tier:reviewer:adaptive",
+# tier:<role>:adaptive is a DIFFERENT, unprovisioned shape — covered as
+# "unknown" further below, not exercised here.
+code, out = run("--override", "rigor=standard", "--label", "tier:adaptive",
                 "--adaptive-result", "economy")
 check("(a) --adaptive-result wins outright for a role that resolved to adaptive",
       code == 0
-      and out["tiers"]["reviewer"]["value"] == "economy"
-      and out["tiers"]["reviewer"]["requested"] == "adaptive"
-      and out["tiers"]["reviewer"]["preflight_required"] is False
+      and out["tiers"]["implementer"]["value"] == "economy"
+      and out["tiers"]["implementer"]["requested"] == "adaptive"
+      and out["tiers"]["implementer"]["preflight_required"] is False
       and out["preflight_required"] is False)
 
-code, out = run("--override", "rigor=standard", "--label", "tier:reviewer:adaptive")
+code, out = run("--override", "rigor=standard", "--label", "tier:adaptive")
 check("(b) no --adaptive-result -> preflight_required, provisional = rigor profile's own tier",
       code == 0
-      and out["tiers"]["reviewer"]["preflight_required"] is True
-      and out["tiers"]["reviewer"]["value"] == "frontier"  # rigor.standard's own reviewer_tier
-      and out["tiers"]["reviewer"]["off_profile"] is False  # provisional != a real deviation
+      and out["tiers"]["implementer"]["preflight_required"] is True
+      and out["tiers"]["implementer"]["value"] == "standard"  # rigor.standard's own implementer_tier
+      and out["tiers"]["implementer"]["off_profile"] is False  # provisional != a real deviation
       and out["preflight_required"] is True)
 
 code, out = run("--override", "rigor=standard",
-                "--label", "tier:reviewer:adaptive", "--label", "tier:reviewer:economy")
+                "--label", "tier:adaptive", "--label", "tier:economy")
 check("(c) a concrete tier label on the same role beats adaptive",
       code == 0
-      and out["tiers"]["reviewer"]["value"] == "economy"
-      and out["tiers"]["reviewer"]["preflight_required"] is False)
+      and out["tiers"]["implementer"]["value"] == "economy"
+      and out["tiers"]["implementer"]["preflight_required"] is False)
+
+# tier:<role>:adaptive is NOT a provisioned label shape — label-registry.json's
+# tier-role family holds only the 15 concrete role x ladder combinations, never
+# a role-scoped adaptive variant (a role can't be pinned to "let a preflight
+# classifier decide"). Treated as unknown and ignored, same as any other
+# unrecognized value — not a second route to preflight classification.
+code, out = run("--label", "tier:reviewer:adaptive")
+check("tier:<role>:adaptive is not provisioned -- unknown, ignored, reviewer stays on profile",
+      code == 0
+      and out["tiers"]["reviewer"]["value"] == "frontier"  # rigor.standard's own reviewer_tier
+      and out["tiers"]["reviewer"]["preflight_required"] is False
+      and any(w["code"] == "unknown_label" and "tier:reviewer:adaptive" in w["detail"]
+              for w in out["warnings"]))
 
 # requires_confirmation stays honest through adaptive resolution: it must
 # be computed from what was actually REQUESTED (adaptive), not from
 # whatever --adaptive-result later resolved it to, or trust-checking would
 # look for a label that was never applied.
-code, out = run("--label", "tier:reviewer:adaptive", "--adaptive-result", "economy")
+code, out = run("--label", "tier:adaptive", "--adaptive-result", "economy")
 check("requires_confirmation fires for an UNTRUSTED adaptive label once resolved off-profile",
-      code == 0 and out["tiers"]["reviewer"]["off_profile"] is True
+      code == 0 and out["tiers"]["implementer"]["off_profile"] is True
       and out["requires_confirmation"] is True)
-code, out = run("--label", "tier:reviewer:adaptive", "--trusted-label", "tier:reviewer:adaptive",
+code, out = run("--label", "tier:adaptive", "--trusted-label", "tier:adaptive",
                 "--adaptive-result", "economy")
 check("... but not for the identical TRUSTED adaptive label",
-      code == 0 and out["tiers"]["reviewer"]["off_profile"] is True
+      code == 0 and out["tiers"]["implementer"]["off_profile"] is True
       and out["requires_confirmation"] is False)
+
+# --override is the explicit, attributable instruction channel — "defer to
+# a preflight classifier" is not a concrete instruction, so adaptive is
+# rejected here even though the identical value is fine as a LABEL.
+code, out = run("--override", "tier=adaptive")
+check("--override tier=adaptive is rejected as invalid_input, not accepted",
+      code == 1 and any(e["code"] == "invalid_input" and "adaptive" in e["detail"] for e in out["errors"]))
+code, out = run("--override", "tier.reviewer=adaptive")
+check("--override tier.reviewer=adaptive is ALSO rejected as invalid_input (scoped, too)",
+      code == 1 and any(e["code"] == "invalid_input" and "adaptive" in e["detail"] for e in out["errors"]))
 
 # explicit override beats label
 code, out = run("--label", "rigor:light", "--override", "rigor=deep")
@@ -1178,13 +1218,13 @@ check("absent config + a plain (untrusted) label naming the same thing just warn
 DEVFLOW_TOML_TEXT = open(config).read()
 
 
-def run_malformed(description, old, new, expect_substring):
+def run_malformed(description, old, new, expect_substring, *extra_args):
     with tempfile.TemporaryDirectory() as tmp:
         bad_path = os.path.join(tmp, "bad.toml")
         assert old in DEVFLOW_TOML_TEXT, f"anchor text not found for {description!r}"
         open(bad_path, "w").write(DEVFLOW_TOML_TEXT.replace(old, new))
         result = subprocess.run(
-            [sys.executable, resolver, "--config", bad_path, "--config-unchanged"],
+            [sys.executable, resolver, "--config", bad_path, "--config-unchanged", *extra_args],
             capture_output=True, text=True,
         )
         try:
@@ -1212,7 +1252,24 @@ run_malformed(
 run_malformed(
     "a rigor_order entry with no matching table -> invalid_config, not a traceback",
     '"thorough", "deep"]', '"thorough", "nonexistent-level"]',
-    "names no [rigor.*] level",
+    "rigor_order is not a permutation of [rigor.*]",
+)
+# deep stays a defined [rigor.*] level but drops out of rigor_order entirely
+# — resolve_rigor builds {name: i for i, name in enumerate(rigor_order)} and
+# falls back to rank -1 for anything missing, so without this check "deep"
+# would silently rank WEAKEST and lose a conflict it should win, rather than
+# failing loudly. rigor:deep + rigor:standard is exactly that conflict.
+run_malformed(
+    "deep missing from rigor_order (but still defined) -> invalid_config, not a silent wrong winner",
+    '"trivial", "minimal", "light", "standard", "thorough", "deep"]',
+    '"trivial", "minimal", "light", "standard", "thorough"]',
+    "rigor_order is not a permutation of [rigor.*]",
+    "--label", "rigor:deep", "--label", "rigor:standard",
+)
+run_malformed(
+    "a TOML date anywhere in [strategy.*]/[review.*]/[budget.*] -> invalid_config, not a TypeError",
+    "human_gates  = []", "human_gates  = 2026-08-25",
+    "no JSON equivalent",
 )
 run_malformed(
     "a rigor naming a missing budget profile -> invalid_config, not a traceback",

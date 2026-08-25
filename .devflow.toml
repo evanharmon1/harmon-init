@@ -443,10 +443,20 @@ description = "Strategy: human owns central decisions; AI does bounded pieces"
 # explicitly. Neither form is a new top-level default; absent any override,
 # every role comes from the rigor profile alone.
 #
-# `tier:adaptive` (unscoped, or scoped to a role) is a VALID refinement
-# value — never "unknown" — even though `[rigor.*]` role tiers themselves
-# must stay concrete (below): a human or a label may legitimately ask for a
-# role to be classified by preflight rather than pinned. A concrete tier
+# `tier:adaptive`, UNSCOPED only, is a VALID refinement value — never
+# "unknown" — even though `[rigor.*]` role tiers themselves must stay
+# concrete (below): a human or a label may legitimately ask for the
+# implementer role to be classified by preflight rather than pinned.
+# `tier:<role>:adaptive` (scoped) is a DIFFERENT case: not a provisioned
+# label shape at all (label-registry.json's tier-role family holds only the
+# 15 concrete role x ladder combinations — a role can't be pinned to "let a
+# preflight classifier decide"), so it is treated as unknown and ignored,
+# same as any other unrecognized value. `--override tier=adaptive` and
+# `--override tier.<role>=adaptive` are rejected outright, for a third
+# reason: an override is the explicit, attributable instruction channel
+# (ADR 0006 D5), and "defer this to a preflight classifier" is not a
+# concrete instruction the way naming a ladder tier is — an operator wanting
+# preflight classification must use the tier:adaptive LABEL. A concrete tier
 # label for the same role still beats `adaptive` (ADR 0006 D5 — a conflict
 # only ever buys more capability, and `adaptive` isn't a capability level to
 # compare against). Resolving `adaptive` needs a concrete answer from
@@ -476,10 +486,11 @@ description = "Strategy: human owns central decisions; AI does bounded pieces"
 # The tier ladder is `local → economy → standard → frontier → apex` (ADR
 # 0006 D2); `adaptive` is off-ladder and never a concrete map, and never a
 # legal value for a [rigor.*] role tier — the SHIPPED profile always names a
-# concrete rung. `adaptive` IS legal as a label/override refinement value
-# (above) — that role then resolves via preflight rather than the profile
-# directly, but the profile itself never leaves a role unresolved by
-# default. `frontier` is opus-class, `apex` is
+# concrete rung. `adaptive` IS legal as a refinement value in exactly one
+# shape — the unscoped `tier:adaptive` LABEL (above) — that role then
+# resolves via preflight rather than the profile directly, but the profile
+# itself never leaves a role unresolved by default. `frontier` is opus-class,
+# `apex` is
 # mythos-class (fable, sol). Families appear at a tier only where they have
 # a model of that stratum — the top strata are genuinely narrow, so most
 # families top out at `standard`. `escalate_to` climbs toward `apex` and

@@ -145,12 +145,12 @@ policy above, and draw against nothing here. That separation is why a rigor
 level's budget is never in tension with its own review policy — the two
 sets of numbers count different things, one agents doing the work, the
 other heuristic passes checking it — and it is also why a strategy's
-`min_agents` is checked against this budget at all, though not by a direct
-read: see "Strategy × rigor compatibility" below for how `council`'s
+`min_agents` is checked against this budget directly, with one documented
+exception: see "Strategy × rigor compatibility" below for how `council`'s
 `min_agents` undercounts its actual `max_agent_runs` footprint (the
-coordinator is one more run), and `orchestrate`'s `min_agents` overcounts
-its actual `max_parallel_agents` footprint (the lead needs no concurrent
-slot of its own). `wall_clock_min` bounds elapsed time;
+coordinator is one more run `min_agents` never counted). `orchestrate` has
+no such exception — its `min_agents` is checked as-is against both budget
+fields. `wall_clock_min` bounds elapsed time;
 `allow_tier_escalation` says whether a role may climb
 its tier's
 `escalate_to` chain (see "Role tiers" below) under this budget at all —
@@ -222,18 +222,18 @@ The fields, explained without leaning on their names:
 - **`min_agents`** — the floor that keeps a one-agent run from being
   represented as the topology it claims. Two strategies set one, both `2`,
   but they count differently, because the accountable coordinating party is
-  counted differently. `orchestrate`'s `2` is the whole minimum roster — the
-  lead plus at least one worker, since `delegation = required` means a lead
-  running alone cannot satisfy its own topology — but the lead itself does
-  not need a *concurrent* slot: only the workers it hands work to run at the
-  same time as each other. `council`'s `2` counts only the independent
-  **proposers** — a single agent cannot produce independent proposals to
-  judge between — and does **not** include the coordinating agent that
-  delegates each proposal and judges the results afterward; that coordinator
-  is a further, separate agent run, and (the reverse of `orchestrate`'s lead)
-  it does not need a concurrent slot either, since it runs once the
-  proposers have finished. See "Strategy × rigor compatibility" below for
-  what that means for the budget check.
+  counted differently. `orchestrate`'s `2` is the **whole minimum roster** —
+  the lead plus at least one worker, since `delegation = required` means a
+  lead running alone cannot satisfy its own topology. `council`'s `2`
+  counts only the independent **proposers** — a single agent cannot produce
+  independent proposals to judge between — and does **not** include the
+  coordinating agent that delegates each proposal and judges the results
+  afterward; that coordinator is a further, separate agent run `min_agents`
+  never counted. See "Strategy × rigor compatibility" below for what that
+  scoping difference means for the budget check — it is the only place the
+  two strategies' checks actually diverge; `orchestrate`'s `min_agents`
+  already *is* its true agent count, with no adjustment in either
+  direction.
 - **`human_gates`** — explicit pause points this strategy inserts, drawn from
   the allowed set below. This is the **only** configurable human-gate
   vocabulary: `after-discovery`, `after-plan`, `before-delegation`,
@@ -506,33 +506,40 @@ agents exactly like `min_agents` does (see "Budgets" above). Every other
 shipped strategy (`oneshot`, `plan`, `plan-approved`, `human-led`) sets no
 floor at all, so it resolves under any rigor level, at any budget.
 
-The "real footprint" is not simply `min_agents` compared against both
-budget fields — the check is topology-specific, because `min_agents` itself
-counts a different thing per topology (see `min_agents` above):
+Every strategy's `min_agents` is checked against both budget fields
+directly, with **one** documented exception, not a general per-topology
+discount — `specs/issue-strategy.md` states the plain rule (`min_agents`
+exceeds `max_agent_runs` or `max_parallel_agents`) for every strategy
+alike, and only `council` departs from it:
 
 | Topology | `min_agents` counts | Required `max_agent_runs` | Required `max_parallel_agents` |
 | --- | --- | --- | --- |
-| `independent-proposals` (`council`) | proposers only | `min_agents + 1` — the coordinator's judging pass is one more run | `min_agents` — the proposers run concurrently; the coordinator needs no slot of its own |
-| `lead-and-workers` (`orchestrate`) | lead plus workers | `min_agents` — the lead is already counted | `min_agents - 1` — only the workers run concurrently; the lead needs no slot of its own |
+| `independent-proposals` (`council`) | proposers only | `min_agents + 1` — the coordinator's judging pass is one more run, on top of what `min_agents` counted | `min_agents` |
+| `lead-and-workers` (`orchestrate`) | lead plus workers (the whole roster) | `min_agents` | `min_agents` |
 
-`trivial` is the one rigor level that fails this check for both strategies
-— but not for the same reason. `council` under `trivial` fails **both**
-requirements: its `max_agent_runs` is below the proposers-plus-coordinator
-total, and its `max_parallel_agents` is below the proposer count alone.
-`orchestrate` under `trivial` fails only the `max_agent_runs` requirement —
-its `max_parallel_agents` is actually *enough* for the single concurrent
-worker `orchestrate` needs (the lead's own non-concurrent slot does not
-count against it), but its `max_agent_runs` is not enough for the
-lead-plus-worker total. Every other shipped budget clears every one of
-these requirements, `council`'s included: `light` (and `minimal`, which
-reuses `light`'s envelope) resolves for `council` with no slack on either
-number — its `max_parallel_agents` exactly covers the proposers, and its
-`max_agent_runs` exactly covers those proposers plus the coordinator — and
-resolves for `orchestrate` with slack on both. `council` under `trivial`
-and `orchestrate` under `trivial` are therefore the two documented
-incompatibilities in the shipped configuration; every other strategy×rigor
-pairing resolves cleanly — see `.devflow.toml`'s `[budget.*]` and
-`[strategy.*]` tables for the actual figures behind this comparison.
+`council`'s `+1` is not a topology-specific concurrency adjustment — it
+exists only because `council`'s own `min_agents` deliberately excludes the
+coordinator from its count (see `min_agents` above), so the check has to
+add that excluded agent back in to reflect the true total. `orchestrate`'s
+`min_agents` already **is** its true agent count, lead and workers both, so
+it is checked as-is against both budget fields, with no adjustment in
+either direction.
+
+`trivial` is the one rigor level that fails this check, for **both**
+strategies, on **both** requirements: its `max_agent_runs` is below what
+either strategy's true agent count needs, and its `max_parallel_agents` is
+below `council`'s proposer count and `orchestrate`'s whole roster alike.
+Every other shipped budget clears every one of these requirements. `light`
+(and `minimal`, which reuses `light`'s envelope) resolves `council` with no
+slack on either number — its `max_parallel_agents` exactly covers the
+proposers, and its `max_agent_runs` exactly covers those proposers plus the
+coordinator — and resolves `orchestrate` with slack on `max_agent_runs`
+but none on `max_parallel_agents`, which lands exactly on `orchestrate`'s
+`min_agents` too. `council` under `trivial` and `orchestrate` under
+`trivial` are therefore the two documented incompatibilities in the shipped
+configuration; every other strategy×rigor pairing resolves cleanly — see
+`.devflow.toml`'s `[budget.*]` and `[strategy.*]` tables for the actual
+figures behind this comparison.
 
 ## Ownership boundaries
 
@@ -610,15 +617,14 @@ Rigor `light` (as above) + strategy `orchestrate` (lead-and-workers,
 explicit plan, delegation required). "In parallel" names `orchestrate`'s
 own `coordination = parallel-when-independent` field directly — it does not
 require a separate override, because that is what `orchestrate` already
-does for independent slices of work. Compatible, and with slack on both
-numbers: `light`'s budget covers both of `orchestrate`'s requirements — the
-lead-plus-worker total, and the single concurrent worker that actually
-needs a slot once the non-concurrent lead is excluded (see "Strategy ×
-rigor compatibility" below for both formulas). The same request under
+does for independent slices of work. Compatible: `light`'s budget checks
+`orchestrate`'s `min_agents` directly against both fields (no coordinator
+adjustment — that's `council`'s exception, not this one; see "Strategy ×
+rigor compatibility" below) — `max_agent_runs` clears it with slack,
+`max_parallel_agents` clears it exactly, with none. The same request under
 `trivial` rigor would be reported as an incompatibility instead —
-`trivial`'s budget does not allow enough *total* agent runs for a
-lead-and-workers topology to exist at all, even though its single
-concurrent slot happens to be just enough for the worker alone.
+`trivial`'s budget is below `orchestrate`'s `min_agents` on *both* fields,
+not just one.
 
 **"Take a deep one-shot at this, then stop."**
 Rigor `deep` (as above) + strategy `oneshot` (single accountable lead,

@@ -195,6 +195,15 @@ rejects("a negative stage cap", sub(
     '[review.driveby]\nchallenge  = 1', '[review.driveby]\nchallenge  = -1',
 ), "must be >= 0")
 
+# min_rounds must ALSO stay non-decreasing along rigor_order, same as every
+# other field the round-3 monotonicity check covers — thorough's own bound
+# (min_rounds <= min(challenge, review) = 4) stays satisfied at 2, so this
+# trips ONLY the cross-level monotonicity check, not the per-policy bound
+# check above: thorough=2 then deep=1 is a drop climbing rigor_order.
+rejects("min_rounds not monotonic (thorough=2 then deep=1 along rigor_order)", sub(
+    '[review.thorough]\nchallenge  = 4\nreview     = 4\nshepherd   = 5\nmin_rounds = 1',
+    '[review.thorough]\nchallenge  = 4\nreview     = 4\nshepherd   = 5\nmin_rounds = 2',
+), "is not monotonic")
 
 # (A demonstration that shepherd no longer bounds min_rounds at all — e.g.
 # dropping [review.light].shepherd toward 0 while min_rounds stays 1 — is

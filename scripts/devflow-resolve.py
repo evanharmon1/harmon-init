@@ -32,8 +32,13 @@ Malformed input never produces a raw traceback. A config file that EXISTS but
 cannot be read, decoded as UTF-8, or parsed as TOML at all reports
 invalid_config, the same as one that parses fine but whose cross-references
 dangle (an unknown default_rigor, a rigor level naming a missing
-review/budget, a rigor_order entry with no matching table, and so on) —
-validated BEFORE anything is dereferenced. This is a crash-safety net, not a
+review/budget, a rigor_order entry with no matching table, rigor_order itself
+missing an entry or holding a duplicate, and so on) — validated BEFORE
+anything is dereferenced. The same net catches a value TOML can represent but
+JSON cannot: a bare date/datetime/time literal (`human_gates = 2026-08-25`
+parses as a real datetime.date, not a string) anywhere inside a [review.*],
+[budget.*], or [strategy.*] table is invalid_config too, checked before that
+table can ever reach json.dumps() and raise. This is a crash-safety net, not a
 restatement of scripts/test-devflow-config.sh's exhaustive static validation
 (enums, cross-registry checks, description equality) — that script is the
 authority on whether a config is well-formed; this resolver only needs
@@ -56,16 +61,29 @@ branch does NOT touch .devflow.toml at all, so the merge-base rule does not
 apply and reading --config directly is correct. Zero or more than one of
 these three is an invalid_input error.
 
-`adaptive` (unscoped `tier:adaptive` or scoped `tier:<role>:adaptive`, as a
-label OR an override value) is a VALID provisioned tier value, never
-"unknown" — it just resolves differently than a concrete ladder rung.
---adaptive-result <ladder tier> represents the caller's own preflight
-classifier having already decided a concrete answer; when given, it wins
-outright for every role that resolved to `adaptive`. Absent it, an
+`adaptive` is a VALID provisioned tier value in exactly one shape: the
+UNQUALIFIED `tier:adaptive` LABEL (which, like any unqualified tier label,
+targets the implementer role). label-registry.json's `tier` family provisions
+`adaptive` as one of its 6 values; its separate `tier-role` family provisions
+only the 15 CONCRETE role-scoped combinations (3 roles x 5 ladder tiers) and
+was never seeded with a role-scoped adaptive variant — a role can't be pinned
+to "let a preflight classifier decide". So `tier:<role>:adaptive` is not a
+provisioned label shape at all: treated as unknown (ignored with a warning),
+exactly like any other value that names no concrete ladder tier. `--override
+tier=adaptive` and `--override tier.<role>=adaptive` are rejected outright
+(invalid_input) for a different reason — an override is the explicit,
+attributable instruction channel (ADR 0006 D5), and "defer this to a
+preflight classifier" is not a concrete instruction, so an operator wanting
+that must use the `tier:adaptive` LABEL rather than an override.
+
+For the one reachable shape (an unqualified `tier:adaptive` label targeting
+implementer): --adaptive-result <ladder tier> represents the caller's own
+preflight classifier having already decided a concrete answer; when given, it
+wins outright for the role that resolved to `adaptive`. Absent it, an
 adaptive-resolved role reports preflight_required=true (also aggregated at
 the top level) and provisionally uses the rigor profile's own tier for that
-role — never a claim that preflight has already run. A concrete tier label
-on the same role still beats `adaptive` (ADR 0006 D5) before any of this
+role — never a claim that preflight has already run. A concrete tier label on
+the same role still beats `adaptive` (ADR 0006 D5) before any of this
 applies, exactly as a stronger concrete label beats a weaker one.
 requires_confirmation stays honest throughout: it is computed from what was
 actually requested (`adaptive`) for trust purposes, not from whatever
@@ -85,7 +103,7 @@ Usage:
         (--merge-base-config PATH | --merge-base-absent | --config-unchanged) \\
         [--label rigor:deep] [--label strategy:council] \\
         [--label tier:economy] [--label tier:implementer:economy] \\
-        [--label tier:reviewer:adaptive] [--adaptive-result economy] \\
+        [--label tier:adaptive] [--adaptive-result economy] \\
         [--trusted-label rigor:deep] \\
         [--override rigor=deep] [--override tier.implementer=economy] \\
         [--unattended]
@@ -130,7 +148,11 @@ Inputs, precisely:
                              strongest-wins by ladder rank, regardless of
                              input order: a conflict can only ever raise the
                              tier, mirroring how a rigor conflict can only
-                             ever buy more depth (ADR 0006 D5).
+                             ever buy more depth (ADR 0006 D5). `adaptive` is
+                             only reachable via the unqualified tier:adaptive
+                             form — tier:<role>:adaptive is not a provisioned
+                             label shape and is treated as unknown (see the
+                             module docstring above).
   --trusted-label F:V       the subset of labels (same FAMILY:VALUE forms as
                              --label, same namespace filter) whose provenance
                              the CALLER has already verified against its own
@@ -153,7 +175,8 @@ Inputs, precisely:
                              strategy, tier (unqualified, implementer only),
                              tier.orchestrator, tier.implementer,
                              tier.reviewer. A tier VALUE of `adaptive` is
-                             valid here too — see the module docstring above.
+                             rejected (invalid_input) for every one of these
+                             keys — see the module docstring above.
   --adaptive-result TIER    the caller's own preflight classifier's already-
                              decided concrete answer (one of the ladder
                              tiers, never `adaptive` itself) — applies to
@@ -177,6 +200,24 @@ import tomllib
 
 LADDER = ("local", "economy", "standard", "frontier", "apex")
 LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
+
+_JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
+
+
+def json_safe(value):
+    """True if `value` will serialize cleanly with json.dumps(). TOML has
+    native date/datetime/time literals with no JSON equivalent (tomllib
+    parses `2026-08-25` as a real datetime.date, not a string) — checked
+    structurally, recursively through any list/dict, since this is a crash
+    safety net for WHATEVER shape a table takes, not a restatement of
+    scripts/test-devflow-config.sh's exhaustive per-field validation."""
+    if isinstance(value, _JSON_SAFE_SCALARS):
+        return True
+    if isinstance(value, list):
+        return all(json_safe(v) for v in value)
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and json_safe(v) for k, v in value.items())
+    return False
 ROLES = ("orchestrator", "implementer", "reviewer")
 DEVFLOW_LABEL_PREFIXES = ("rigor:", "strategy:", "tier:")
 
@@ -289,15 +330,29 @@ def validate_config_references(cfg, errors):
     elif default_strategy not in strategies:
         fail(f"default_strategy={default_strategy!r} names no [strategy.*] value")
 
+    # rigor_order must be a duplicate-free EXACT permutation of [rigor.*],
+    # not merely a list of valid entries — resolve_rigor builds
+    # {name: i for i, name in enumerate(rigor_order)} and falls back to -1
+    # for anything missing, so a level left OUT of rigor_order would
+    # silently rank as weakest-possible instead of failing loudly, and a
+    # duplicate would make that level's own rank ambiguous. Checked here,
+    # before rank-building ever runs, so either case is invalid_config
+    # instead of a silent wrong-conflict-winner.
     rigor_order = cfg.get("rigor_order")
-    if not isinstance(rigor_order, list):
-        fail("rigor_order must be a list")
-    else:
-        for entry in rigor_order:
-            if not isinstance(entry, str):
-                fail(f"rigor_order entry must be a string (got {entry!r})")
-            elif entry not in levels:
-                fail(f"rigor_order entry {entry!r} names no [rigor.*] level")
+    if not isinstance(rigor_order, list) or not all(isinstance(e, str) for e in rigor_order):
+        fail("rigor_order must be a list of strings")
+    elif len(rigor_order) != len(set(rigor_order)):
+        dupes = sorted({e for e in rigor_order if rigor_order.count(e) > 1})
+        fail(f"rigor_order has duplicate entries: {dupes}")
+    elif set(rigor_order) != set(levels):
+        missing = sorted(set(levels) - set(rigor_order))
+        extra = sorted(set(rigor_order) - set(levels))
+        detail = []
+        if missing:
+            detail.append(f"missing {missing}")
+        if extra:
+            detail.append(f"names unknown level(s) {extra}")
+        fail(f"rigor_order is not a permutation of [rigor.*] — {'; '.join(detail)}")
 
     for name, tbl in levels.items():
         if not isinstance(tbl, dict):
@@ -326,14 +381,26 @@ def validate_config_references(cfg, errors):
             elif tbl[field] not in LADDER:
                 fail(f"[rigor.{name}].{field}={tbl[field]!r} is not a concrete ladder tier")
 
+    # review/budget/strategy tables are spread wholesale into the output
+    # below (main()'s "review": {**review_tbl, ...} and friends) — every
+    # value inside ANY of them, not just the fields this function otherwise
+    # inspects, must be JSON-safe before that spread can ever run, or
+    # json.dumps() raises a raw TypeError on a TOML date/time value instead
+    # of this function's clean invalid_config. Checked for every table
+    # regardless of which rigor/strategy ends up selected, exactly like
+    # every other check in this function.
     for name, tbl in reviews.items():
         if not isinstance(tbl, dict):
             fail(f"[review.{name}] is not a table")
+        elif not json_safe(tbl):
+            fail(f"[review.{name}] contains a value with no JSON equivalent (a TOML date/time?)")
 
     for name, tbl in budgets.items():
         if not isinstance(tbl, dict):
             fail(f"[budget.{name}] is not a table")
             continue
+        if not json_safe(tbl):
+            fail(f"[budget.{name}] contains a value with no JSON equivalent (a TOML date/time?)")
         for field in ("max_agent_runs", "max_parallel_agents"):
             if field not in tbl or not isinstance(tbl[field], int) or isinstance(tbl[field], bool):
                 fail(f"[budget.{name}].{field} must be an integer")
@@ -341,6 +408,8 @@ def validate_config_references(cfg, errors):
     for name, tbl in strategies.items():
         if not isinstance(tbl, dict):
             fail(f"[strategy.{name}] is not a table")
+        elif not json_safe(tbl):
+            fail(f"[strategy.{name}] contains a value with no JSON equivalent (a TOML date/time?)")
 
     return ok
 
@@ -412,16 +481,22 @@ def validate_trusted_labels_against_builtin(trusted_labels, errors):
             })
 
 
-def _add_tier_candidate(tier_candidates, role, value, raw, warnings):
-    # `adaptive` is a valid provisioned tier value, not "unknown" — it just
-    # resolves differently than a concrete ladder rung (see resolve_tiers).
-    if value in LADDER or value == "adaptive":
+def _add_tier_candidate(tier_candidates, role, value, raw, warnings, *, allow_adaptive):
+    # `adaptive` is a valid provisioned tier value ONLY via the unqualified
+    # tier:<value> label shape (allow_adaptive=True, role forced to
+    # "implementer" by the caller) — label-registry.json's tier-role family
+    # was never seeded with a role-scoped adaptive variant, so
+    # tier:<role>:adaptive is not a provisioned label shape at all and is
+    # "unknown" like any other unrecognized value, not a valid candidate
+    # (see the module docstring).
+    if value in LADDER or (allow_adaptive and value == "adaptive"):
         tier_candidates[role].append(value)
     else:
+        allowed = f"({', '.join(LADDER)}{', adaptive' if allow_adaptive else ''})"
+        suffix = " or `adaptive`" if allow_adaptive else ""
         warnings.append({
             "code": "unknown_label",
-            "detail": f"{raw!r} is not a concrete ladder tier or `adaptive` "
-                      f"({', '.join(LADDER)}, adaptive), ignored",
+            "detail": f"{raw!r} is not a concrete ladder tier{suffix} {allowed}, ignored",
         })
 
 
@@ -430,10 +505,12 @@ def parse_labels(raw_labels, warnings):
     pass namespace-filtered, trust-filtered labels in — every raw label here
     is assumed to already be this resolver's business.
 
-    tier_candidates is {role: [valid ladder values]} — an unqualified
-    tier:<value> label folds into "implementer"; a scoped tier:<role>:
-    <value> label folds into its named role. A label naming something that
-    is not a concrete ladder tier is dropped with a warning HERE, before the
+    tier_candidates is {role: [valid ladder values, plus `adaptive` for
+    "implementer" only]} — an unqualified tier:<value> label folds into
+    "implementer" and may name `adaptive`; a scoped tier:<role>:<value> label
+    folds into its named role but may NOT name `adaptive` (not a provisioned
+    label shape — see the module docstring). A label naming something that
+    is not accepted for its shape is dropped with a warning HERE, before the
     strongest-wins reduction, so an invalid candidate can never "win" by
     being the only one left.
     """
@@ -447,9 +524,9 @@ def parse_labels(raw_labels, warnings):
         elif parts[0] == "strategy" and len(parts) == 2:
             strategy_labels.append(parts[1])
         elif parts[0] == "tier" and len(parts) == 2:
-            _add_tier_candidate(tier_candidates, "implementer", parts[1], raw, warnings)
+            _add_tier_candidate(tier_candidates, "implementer", parts[1], raw, warnings, allow_adaptive=True)
         elif parts[0] == "tier" and len(parts) == 3 and parts[1] in ROLES:
-            _add_tier_candidate(tier_candidates, parts[1], parts[2], raw, warnings)
+            _add_tier_candidate(tier_candidates, parts[1], parts[2], raw, warnings, allow_adaptive=False)
         else:
             # Reachable only for a malformed shape WITHIN the devflow
             # namespace (e.g. "tier:bogus:role:extra", "rigor:x:y") — a
@@ -511,23 +588,43 @@ def parse_overrides(raw_overrides, errors):
 def validate_override_tier_values(unqualified, scoped, errors):
     """Overrides are explicit and attributable, so an invalid tier value here
     is a hard error (never a silently-dropped candidate the way a bad label
-    is). `adaptive` is a VALID value here too — an operator may explicitly
-    ask for a role to be preflight-classified, exactly as a `tier:adaptive`
-    label may (see resolve_tiers) — only something that is neither a
-    concrete ladder rung nor `adaptive` is rejected."""
-    if unqualified is not None and unqualified not in LADDER and unqualified != "adaptive":
+    is). `adaptive` is REJECTED here specifically — an override is the
+    explicit, attributable instruction channel (ADR 0006 D5), and "defer
+    this to a preflight classifier" is not a concrete instruction the way
+    naming a ladder tier is; an operator wanting preflight classification
+    must use the tier:adaptive LABEL instead (unqualified only — see the
+    module docstring). Coded invalid_input, distinct from invalid_override's
+    "this names no recognized tier value at all" below — adaptive IS a
+    recognized value, just not a legal one for this channel."""
+    if unqualified == "adaptive":
+        errors.append({
+            "code": "invalid_input",
+            "detail": "--override tier=adaptive is rejected — an explicit instruction names a "
+                      "concrete tier; use a tier:adaptive LABEL instead if preflight "
+                      "classification is what's actually wanted",
+        })
+        unqualified = None
+    elif unqualified is not None and unqualified not in LADDER:
         errors.append({
             "code": "invalid_override",
-            "detail": f"tier={unqualified!r} is not a concrete ladder tier or `adaptive` "
-                      f"({', '.join(LADDER)}, adaptive)",
+            "detail": f"tier={unqualified!r} is not a concrete ladder tier ({', '.join(LADDER)})",
         })
         unqualified = None
     for role in list(scoped):
-        if scoped[role] not in LADDER and scoped[role] != "adaptive":
+        if scoped[role] == "adaptive":
+            errors.append({
+                "code": "invalid_input",
+                "detail": f"--override tier.{role}=adaptive is rejected — an explicit instruction "
+                          "names a concrete tier; tier:<role>:adaptive is not even a provisioned "
+                          "label shape, so preflight classification is only reachable via the "
+                          "unqualified tier:adaptive LABEL, which targets implementer",
+            })
+            del scoped[role]
+        elif scoped[role] not in LADDER:
             errors.append({
                 "code": "invalid_override",
-                "detail": f"tier.{role}={scoped[role]!r} is not a concrete ladder tier or "
-                          f"`adaptive` ({', '.join(LADDER)}, adaptive)",
+                "detail": f"tier.{role}={scoped[role]!r} is not a concrete ladder tier "
+                          f"({', '.join(LADDER)})",
             })
             del scoped[role]
     return unqualified, scoped
@@ -720,12 +817,16 @@ def strategy_drove_untrusted_off_default(strategy_name, strategy_source, cfg, tr
 def tier_drove_untrusted_off_profile(role, tier, trusted_set):
     if tier["source"] != "label" or not tier["off_profile"]:
         return False
-    # Reconstructed from `requested`, NOT `value`: when the label was
-    # `tier:<role>:adaptive` and --adaptive-result resolved it to a concrete
-    # tier, `value` is that concrete tier but the label that was actually
-    # APPLIED — and whose trust this checks — still reads "adaptive".
-    # Checking trust against the resolved value would look for a label that
-    # was never there.
+    # Reconstructed from `requested`, NOT `value`: when the label was the
+    # unqualified `tier:adaptive` and --adaptive-result resolved it to a
+    # concrete tier, `value` is that concrete tier but the label that was
+    # actually APPLIED — and whose trust this checks — still reads
+    # "adaptive". Checking trust against the resolved value would look for a
+    # label that was never there. raw_scoped covers a concrete scoped label
+    # (tier:<role>:economy); it can never match on requested=="adaptive"
+    # since tier:<role>:adaptive is not a provisioned label shape at all
+    # (see the module docstring) — requested=="adaptive" is only reachable
+    # for role=="implementer", where raw_unqualified is the one that matters.
     raw_scoped = f"tier:{role}:{tier['requested']}"
     raw_unqualified = f"tier:{tier['requested']}" if role == "implementer" else None
     trusted = raw_scoped in trusted_set or (raw_unqualified is not None and raw_unqualified in trusted_set)
