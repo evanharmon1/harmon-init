@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.39.0](https://github.com/evanharmon1/harmon-init/compare/v4.38.0...v4.39.0) (2026-08-24)
+
+
+### Features
+
+* **docs:** add worktrees and Herdr operating guides ([#1043](https://github.com/evanharmon1/harmon-init/issues/1043)) ([09b8d11](https://github.com/evanharmon1/harmon-init/commit/09b8d116d2479e23da44b8c9422b6bddd5398302))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.35.0 ([#1035](https://github.com/evanharmon1/harmon-init/issues/1035)) ([3199d4b](https://github.com/evanharmon1/harmon-init/commit/3199d4b76bc0d533cc99819a6de5f7032555688a))
+
 ## [4.38.0](https://github.com/evanharmon1/harmon-init/compare/v4.37.2...v4.38.0) (2026-08-22)
 
 
