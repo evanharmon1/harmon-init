@@ -1673,6 +1673,11 @@ else
         [ ! -f .devcontainer/config/statusline-pr-lookup.enabled ] ||
             err "status-line PR lookup marker rendered without explicit opt-in"
     fi
+    # Run the rendered status-line suite as well as checking the conditional
+    # marker itself. The suite exercises env-unset discovery from the marker,
+    # so the default-off profiles must prove they make no fallback call while
+    # the explicit opt-in profile proves they do.
+    ./scripts/test-statusline.sh || err "rendered status-line fallback checks failed for profile '$profile'"
     [ -f .devcontainer/config/codex-managed-config.toml ] ||
         err "Codex managed baseline missing from devcontainer output"
     [ -x .devcontainer/config/codex-hooks/claude-compat.sh ] ||

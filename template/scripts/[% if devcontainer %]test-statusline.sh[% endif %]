@@ -77,7 +77,8 @@ mkdir -p "$fixture_repo/.git" "$stub_dir"
 printf '%s\n' 'ref: refs/heads/statusline/test-branch' >"$fixture_repo/.git/HEAD"
 
 # The stubs prove the renderer asks `timeout` to cap every lookup at one second,
-# never permits an interactive gh prompt, and keeps the query branch-specific.
+# never permits an interactive gh prompt, and asks `gh` to resolve the PR for
+# the checkout's current branch.
 printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
@@ -132,7 +133,7 @@ cache_dir="$statusline_tmp/cache"
 export STATUSLINE_GH_LOG="$statusline_tmp/gh.log"
 export STATUSLINE_TIMEOUT_LOG="$statusline_tmp/timeout.log"
 export STATUSLINE_GH_MODE=ok STATUSLINE_TIMEOUT_MODE=run
-export STATUSLINE_GH_RESPONSE='[{"number":1042,"url":"https://example.test/pull/1042","isDraft":false,"reviewDecision":"APPROVED","isCrossRepository":false}]'
+export STATUSLINE_GH_RESPONSE='{"number":1042,"url":"https://example.test/pull/1042","isDraft":false,"reviewDecision":"APPROVED"}'
 : >"$STATUSLINE_GH_LOG"
 : >"$STATUSLINE_TIMEOUT_LOG"
 
@@ -144,17 +145,23 @@ link="${osc8}]8;;${pr_url}${osc8}\\#1042${osc8}]8;;${osc8}\\"
 case "$out" in *"$link"*) ;; *) fail "expected fallback OSC-8 link for $pr_url around #1042" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "expected one gh lookup on a cache miss"
 [ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "expected one one-second timeout wrapper"
-grep -qx 'pr list --head statusline/test-branch --state open --json number,url,isDraft,reviewDecision,isCrossRepository' "$STATUSLINE_GH_LOG" ||
-    fail "lookup did not query the current branch"
+grep -qx 'pr view --json number,url,isDraft,reviewDecision' "$STATUSLINE_GH_LOG" ||
+    fail "lookup did not resolve the current checkout's PR"
 
-echo "==> the adjacent opt-in marker enables lookup without an environment override"
+echo "==> an adjacent opt-in marker controls no-override lookup"
 marker_cache="$statusline_tmp/marker-cache"
 : >"$STATUSLINE_GH_LOG"
 : >"$STATUSLINE_TIMEOUT_LOG"
 out=$(render_marker_default "$marker_cache" 30 "$payload")
-case "$out" in *'PR #1042 ✓'*) ;; *) fail "adjacent marker did not enable fallback: $out" ;; esac
-[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "marker-enabled fallback did not make one gh lookup"
-[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "marker-enabled fallback did not use timeout"
+if [ -r "${sl%/*}/statusline-pr-lookup.enabled" ]; then
+    case "$out" in *'PR #1042 ✓'*) ;; *) fail "adjacent marker did not enable fallback: $out" ;; esac
+    [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "marker-enabled fallback did not make one gh lookup"
+    [ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "marker-enabled fallback did not use timeout"
+else
+    case "$out" in *'PR #'*) fail "absent marker unexpectedly rendered a PR: $out" ;; esac
+    [ ! -s "$STATUSLINE_GH_LOG" ] || fail "absent marker unexpectedly called gh"
+    [ ! -s "$STATUSLINE_TIMEOUT_LOG" ] || fail "absent marker unexpectedly called timeout"
+fi
 
 # Restore the logs before cache assertions below, which are scoped to the
 # explicitly enabled cache directory rather than the marker-detection probe.
@@ -169,7 +176,7 @@ case "$out" in *'PR #1042 ✓'*) ;; *) fail "fresh fallback cache did not render
 
 echo "==> branch and repository cache keys do not reuse another PR"
 printf '%s\n' 'ref: refs/heads/statusline/other-branch' >"$fixture_repo/.git/HEAD"
-export STATUSLINE_GH_RESPONSE='[{"number":1043,"url":"https://example.test/pull/1043","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","isCrossRepository":false}]'
+export STATUSLINE_GH_RESPONSE='{"number":1043,"url":"https://example.test/pull/1043","isDraft":false,"reviewDecision":"REVIEW_REQUIRED"}'
 out=$(render_cached "$cache_dir" 30 "$payload")
 case "$out" in *'PR #1043 ⋯'*) ;; *) fail "branch-keyed cache reused the old PR: $out" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "new branch did not make one lookup"
@@ -177,22 +184,11 @@ fixture_other_repo="$statusline_tmp/other-repo"
 mkdir -p "$fixture_other_repo/.git"
 printf '%s\n' 'ref: refs/heads/statusline/other-branch' >"$fixture_other_repo/.git/HEAD"
 other_payload=$(printf '{"workspace":{"current_dir":"%s"}}' "$fixture_other_repo")
-export STATUSLINE_GH_RESPONSE='[{"number":1044,"url":"https://example.test/pull/1044","isDraft":true,"reviewDecision":"APPROVED","isCrossRepository":false}]'
+export STATUSLINE_GH_RESPONSE='{"number":1044,"url":"https://example.test/pull/1044","isDraft":true,"reviewDecision":"APPROVED"}'
 out=$(render_cached "$cache_dir" 30 "$other_payload")
 case "$out" in *'PR #1044'*) ;; *) fail "repository-keyed cache reused another repository's PR: $out" ;; esac
 case "$out" in *'✓'* | *'✗'* | *'⋯'*) fail "draft fallback invented a review glyph: $out" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 2 ] || fail "new repository did not make one lookup"
-
-echo "==> a same-named fork PR cannot hide this repository's PR"
-fork_cache="$statusline_tmp/fork-cache"
-: >"$STATUSLINE_GH_LOG"
-: >"$STATUSLINE_TIMEOUT_LOG"
-export STATUSLINE_GH_RESPONSE='[{"number":1045,"url":"https://example.test/pull/1045","isDraft":false,"reviewDecision":"APPROVED","isCrossRepository":true},{"number":1046,"url":"https://example.test/pull/1046","isDraft":false,"reviewDecision":"CHANGES_REQUESTED","isCrossRepository":false}]'
-out=$(render_cached "$fork_cache" 30 "$payload")
-case "$out" in *'PR #1046 ✗'*) ;; *) fail "same-repository PR was hidden by a same-named fork PR: $out" ;; esac
-case "$out" in *'#1045'*) fail "cross-repository PR rendered for the current repository: $out" ;; esac
-[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "cross-repository result did not run one lookup"
-[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "cross-repository result did not use timeout"
 
 echo "==> failures are capped and negative-cached"
 failure_cache="$statusline_tmp/failure-cache"
@@ -207,6 +203,32 @@ out=$(render_cached "$failure_cache" 30 "$payload")
 case "$out" in *'PR #'*) fail "negative cache rendered a PR: $out" ;; esac
 [ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "negative cache retried before its ten-second TTL"
 export STATUSLINE_TIMEOUT_MODE=run
+
+echo "==> expired positive cache is never reused when refresh cannot run"
+stale_cache="$statusline_tmp/stale-cache"
+: >"$STATUSLINE_GH_LOG"
+: >"$STATUSLINE_TIMEOUT_LOG"
+export STATUSLINE_GH_RESPONSE='{"number":1045,"url":"https://example.test/pull/1045","isDraft":false,"reviewDecision":"APPROVED"}'
+out=$(render_cached "$stale_cache" 30 "$payload")
+case "$out" in *'PR #1045 ✓'*) ;; *) fail "fresh cache did not seed the stale-cache regression: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "stale-cache setup did not call gh"
+[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "stale-cache setup did not invoke timeout"
+stale_files=("$stale_cache"/*)
+[ "${#stale_files[@]}" -eq 1 ] || fail "stale-cache setup did not write exactly one cache row"
+IFS=$'\t' read -r _ stale_kind stale_number stale_url stale_state <"${stale_files[0]}"
+printf '0\t%s\t%s\t%s\t%s\n' "$stale_kind" "$stale_number" "$stale_url" "$stale_state" >"${stale_files[0]}"
+missing_refresh_dir="$statusline_tmp/missing-refresh"
+mkdir -p "$missing_refresh_dir"
+for tool in jq date sha256sum shasum; do
+    tool_path=$(command -v "$tool" || true)
+    [ -z "$tool_path" ] || ln -s "$tool_path" "$missing_refresh_dir/$tool"
+done
+out=$(PATH="$missing_refresh_dir" STATUSLINE_PR_LOOKUP_ENABLED=1 \
+    STATUSLINE_PR_CACHE_DIR="$stale_cache" NO_COLOR=1 \
+    STATUSLINE_HYPERLINK=0 "$bash_bin" "$sl" <<<"$payload")
+case "$out" in *'PR #'*) fail "expired positive cache rendered without refresh tools: $out" ;; esac
+[ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "missing refresh tools unexpectedly called gh"
+[ "$(wc -l <"$STATUSLINE_TIMEOUT_LOG")" -eq 1 ] || fail "missing refresh tools unexpectedly called timeout"
 
 echo "==> payload PR remains authoritative and runtime disable skips lookup"
 : >"$STATUSLINE_GH_LOG"

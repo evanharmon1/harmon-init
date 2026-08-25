@@ -143,7 +143,7 @@ subprocess — the branch is read from `.git/HEAD` directly, worktrees included.
 
 Claude Code's `pr.*` fields are absent until it discovers the open PR. The
 optional **STATUSLINE PR LOOKUP** Copier answer (off by default) lets the
-renderer fill that gap with a read-only `gh pr list` lookup when it was enabled
+renderer fill that gap with a read-only `gh pr view` lookup when it was enabled
 at scaffold time. Results are cached by git directory and branch: positive
 results live for 30 seconds and negative/failure results for 10.
 On a cache miss or expiry, the current render can wait for one read-only,

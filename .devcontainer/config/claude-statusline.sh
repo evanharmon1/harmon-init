@@ -303,8 +303,10 @@ fi
 
 # ---- pull-request fallback cache ----
 # Claude's `.pr` object is authoritative whenever it is present. When it is
-# absent, synchronously cache the result of a branch-local `gh pr list`
-# lookup. The cache key is SHA-256 of the resolved gitdir and
+# absent, synchronously cache the result of `gh pr view` in that checkout.
+# `gh` resolves its no-argument form to the pull request for the current branch,
+# including a fork head, without truncating or second-guessing its result. The
+# cache key is SHA-256 of the resolved gitdir and
 # branch, never a branch name used directly as a path; branches may contain
 # slashes, spaces, or strings that look like path traversal.
 pr_cache_key() {
@@ -352,11 +354,11 @@ pr_cache_fresh() {
 # misses may duplicate one bounded lookup, rather than leaving persistent
 # single-flight state behind a short-lived status-line process.
 pr_cache_refresh() {
-    local cache_dir=$1 cache_file=$2 repo_dir=$3 branch_name=$4 cache_now=$5
+    local cache_dir=$1 cache_file=$2 repo_dir=$3 cache_now=$4
     (
         umask 077
         mkdir -p -- "$cache_dir" 2>/dev/null || exit 0
-        if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr list --head "$branch_name" --state open --json number,url,isDraft,reviewDecision,isCrossRepository 2>/dev/null | jq -r '
+        if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr view --json number,url,isDraft,reviewDecision 2>/dev/null | jq -r '
           def clean: (. // "") | tostring | explode
                      | map(select(. > 31 and . != 127 and (. < 128 or . > 159))) | implode;
           def review_state:
@@ -365,9 +367,8 @@ pr_cache_refresh() {
             elif .reviewDecision == "CHANGES_REQUESTED" then "changes_requested"
             elif .reviewDecision == "REVIEW_REQUIRED" then "pending"
             else "" end;
-          (if type == "array" then map(select(.isCrossRepository == false and (.number | type) == "number")) else [] end)
-          | if length > 0
-          then .[0] | [(.number | floor | tostring), (.url | clean), review_state] | @tsv
+          if type == "object" and (.number | type) == "number"
+          then [(.number | floor | tostring), (.url | clean), review_state] | @tsv
           else "" end'); then
             [ -n "$result" ] && kind=positive || kind=negative
         else
@@ -384,10 +385,10 @@ if [ "$STATUSLINE_PR_LOOKUP_ENABLED" = 1 ] && [ "${pr_present:-false}" != true ]
         pr_cache_file="$STATUSLINE_PR_CACHE_DIR/$REPLY"
         pr_cache_load "$pr_cache_file" || true
         if ! pr_cache_fresh && command -v gh >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-            pr_cache_refresh "$STATUSLINE_PR_CACHE_DIR" "$pr_cache_file" "$d" "$branch" "$now"
+            pr_cache_refresh "$STATUSLINE_PR_CACHE_DIR" "$pr_cache_file" "$d" "$now"
             pr_cache_load "$pr_cache_file" || true
         fi
-        if [ "$PR_CACHE_KIND" = positive ] && num "$PR_CACHE_NUM"; then
+        if pr_cache_fresh && [ "$PR_CACHE_KIND" = positive ] && num "$PR_CACHE_NUM"; then
             pr_num=$PR_CACHE_NUM
             pr_url=$PR_CACHE_URL
             pr_state=$PR_CACHE_STATE

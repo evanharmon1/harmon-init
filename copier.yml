@@ -283,7 +283,7 @@ use_statusline_pr_lookup:
   type: bool
   help: >-
     STATUSLINE PR LOOKUP: When Claude Code omits PR data, let the devcontainer
-    status line make a bounded, cached read-only `gh pr list` lookup for the
+    status line make a bounded, cached read-only `gh pr view` lookup for the
     current branch? Requires a GitHub account and authenticated GitHub CLI.
     GitHub Free is sufficient for public repositories and private repositories
     the account can already read, but this grants no access: missing repository
