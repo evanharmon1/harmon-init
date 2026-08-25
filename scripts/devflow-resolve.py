@@ -7,6 +7,18 @@ records: explicit operator instruction > rigor:*/strategy:* labels >
 default_rigor/default_strategy > the built-in fallback (used only when
 .devflow.toml is entirely absent).
 
+Trust is a CONSUMER input, not something this resolver infers: --label is
+UNVERIFIED by default, and --trusted-label marks the subset whose provenance
+the caller has already verified against its own trusted-actor configuration
+(ADR 0006 D6). Unattended automation may act only on trusted labels (D6.1) —
+every other --label is ignored, with a warning naming it, and falls back to
+the default. An interactive session may still act on any --label (advisory,
+as before trust existed as a concept here), but an off-default result driven
+by an untrusted one sets requires_confirmation, so the operator is asked
+before it is used rather than applied silently (D6.2). An --override is
+always trusted by definition — it is the explicit, attributable instruction
+channel ADR 0006 D5 describes, never repository content.
+
 This is a ROOT-ONLY reference implementation, not the versioned,
 cross-consumer conformance contract — that is harmon-init#1048
 (schema_version, language-neutral fixtures, a fixture corpus). It exists so
@@ -19,6 +31,7 @@ Usage:
         [--merge-base-config PATH] \\
         [--label rigor:deep] [--label strategy:council] \\
         [--label tier:economy] [--label tier:implementer:economy] \\
+        [--trusted-label rigor:deep] \\
         [--override rigor=deep] [--override tier.implementer=economy] \\
         [--unattended]
 
@@ -34,20 +47,43 @@ Inputs, precisely:
                              change under review edits .devflow.toml...").
                              --config is still recorded, unread.
   --label FAMILY:VALUE      a rigor:*/strategy:*/tier:* label present on the
-                             issue or PR, repeatable. tier:<value> is
-                             unqualified (implementer only); tier:<role>:
-                             <value> is scoped. Anything else (a label with
-                             no devflow-relevant prefix) is silently
-                             irrelevant, not a warning.
+                             issue or PR, repeatable — UNVERIFIED provenance.
+                             tier:<value> is unqualified (implementer only);
+                             tier:<role>:<value> is scoped (role one of
+                             orchestrator/implementer/reviewer). Multiple
+                             tier labels that land on the same role — any mix
+                             of the unqualified and scoped forms — resolve
+                             strongest-wins by ladder rank, regardless of
+                             input order: a conflict can only ever raise the
+                             tier, mirroring how a rigor conflict can only
+                             ever buy more depth (ADR 0006 D5). Anything else
+                             (a label with no devflow-relevant prefix) is
+                             silently irrelevant, not a warning.
+  --trusted-label F:V       the subset of labels (same FAMILY:VALUE forms as
+                             --label) whose provenance the CALLER has already
+                             verified against its own trusted-actor
+                             configuration (ADR 0006 D6) — repeatable, and
+                             need not literally duplicate a --label entry.
+                             Under --unattended, ONLY trusted labels
+                             participate in resolution. In interactive mode
+                             every --label still applies as before;
+                             --trusted-label instead controls whether an
+                             off-default result sets requires_confirmation.
   --override KEY=VALUE      an explicit, attributable operator instruction,
-                             repeatable. KEY is one of: rigor, strategy,
-                             tier (unqualified, implementer only),
+                             repeatable — always trusted by definition
+                             (ADR 0006 D5: an explicit instruction arrives on
+                             the operator's attributable channel and is never
+                             repository content). KEY is one of: rigor,
+                             strategy, tier (unqualified, implementer only),
                              tier.orchestrator, tier.implementer,
                              tier.reviewer.
-  --unattended               changes only how an ambiguous strategy
-                             conflict resolves: an interactive run reports
-                             an error and asks; an unattended run falls
-                             back to default_strategy with a warning.
+  --unattended               two effects, both from ADR 0006 D6.1: an
+                             ambiguous strategy conflict falls back to
+                             default_strategy with a warning instead of
+                             erroring, AND only --trusted-label values are
+                             applied at all — every plain --label is ignored
+                             (with a warning naming it) and falls back to the
+                             default instead.
 """
 import argparse
 import hashlib
@@ -57,6 +93,7 @@ import sys
 import tomllib
 
 LADDER = ("local", "economy", "standard", "frontier", "apex")
+LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
 ROLES = ("orchestrator", "implementer", "reviewer")
 
 # Used only when .devflow.toml is entirely absent (AGENTS.md's built-in
@@ -77,11 +114,57 @@ def load_config(path):
     return tomllib.loads(raw.decode("utf-8")), hashlib.sha256(raw).hexdigest()
 
 
+def filter_labels_by_trust(raw_labels, trusted_labels, *, unattended, warnings):
+    """Returns the effective raw label list resolution should actually use.
+
+    Interactive: every --label still applies (trust only affects
+    requires_confirmation later) — --trusted-label entries are unioned in so
+    a caller may assert trust for a label it did not separately re-pass via
+    --label. Unattended (ADR 0006 D6.1): ONLY trusted labels apply; every
+    other --label is dropped with a warning naming it, and --trusted-label
+    entries are still unioned in for the same reason as above.
+    """
+    trusted_set = set(trusted_labels)
+    if unattended:
+        effective = [raw for raw in raw_labels if raw in trusted_set]
+        for raw in raw_labels:
+            if raw not in trusted_set:
+                warnings.append({
+                    "code": "untrusted_label_ignored",
+                    "detail": f"{raw!r} ignored under --unattended (no matching --trusted-label) "
+                              "— falls back to the default",
+                })
+    else:
+        effective = list(raw_labels)
+    for raw in trusted_labels:
+        if raw not in effective:
+            effective.append(raw)
+    return effective
+
+
+def _add_tier_candidate(tier_candidates, role, value, raw, warnings):
+    if value in LADDER:
+        tier_candidates[role].append(value)
+    else:
+        warnings.append({
+            "code": "unknown_label",
+            "detail": f"{raw!r} is not a concrete ladder tier ({', '.join(LADDER)}), ignored",
+        })
+
+
 def parse_labels(raw_labels, warnings):
+    """Returns (rigor_labels, strategy_labels, tier_candidates).
+
+    tier_candidates is {role: [valid ladder values]} — an unqualified
+    tier:<value> label folds into "implementer"; a scoped tier:<role>:
+    <value> label folds into its named role. A label naming something that
+    is not a concrete ladder tier is dropped with a warning HERE, before the
+    strongest-wins reduction, so an invalid candidate can never "win" by
+    being the only one left.
+    """
     rigor_labels = []
     strategy_labels = []
-    tier_unqualified = None
-    tier_scoped = {}
+    tier_candidates = {role: [] for role in ROLES}
     for raw in raw_labels:
         parts = raw.split(":")
         if parts[0] == "rigor" and len(parts) == 2:
@@ -89,15 +172,30 @@ def parse_labels(raw_labels, warnings):
         elif parts[0] == "strategy" and len(parts) == 2:
             strategy_labels.append(parts[1])
         elif parts[0] == "tier" and len(parts) == 2:
-            tier_unqualified = parts[1]  # last one wins if repeated
+            _add_tier_candidate(tier_candidates, "implementer", parts[1], raw, warnings)
         elif parts[0] == "tier" and len(parts) == 3 and parts[1] in ROLES:
-            tier_scoped[parts[1]] = parts[2]
+            _add_tier_candidate(tier_candidates, parts[1], parts[2], raw, warnings)
         else:
             warnings.append({
                 "code": "unknown_label",
                 "detail": f"{raw!r} is not a recognized rigor:/strategy:/tier: label, ignored",
             })
-    return rigor_labels, strategy_labels, tier_unqualified, tier_scoped
+    return rigor_labels, strategy_labels, tier_candidates
+
+
+def strongest_tier_per_role(tier_candidates):
+    """Labels are an unordered set — GitHub attaches no meaning to which was
+    applied first — so multiple tier labels landing on one role must resolve
+    identically regardless of input order. Strongest-by-ladder-rank is the
+    same conflict rule rigor itself uses (ADR 0006 D5: "a label only ever
+    buys more capability or oversight"): a conflict can only ever raise the
+    tier, never silently weaken it by depending on which label happened to
+    be seen, or applied, last."""
+    return {
+        role: max(values, key=lambda v: LADDER_RANK[v])
+        for role, values in tier_candidates.items()
+        if values
+    }
 
 
 def parse_overrides(raw_overrides, errors):
@@ -123,29 +221,35 @@ def parse_overrides(raw_overrides, errors):
     return explicit_rigor, explicit_strategy, tier_unqualified, tier_scoped
 
 
-def validate_tier_values(unqualified, scoped, *, fatal, bucket):
-    """Drops (fatal=False, bucket=warnings) or errors on (fatal=True,
-    bucket=errors) any tier value that is not a concrete ladder rung —
-    `adaptive` included, since a role always resolves to a concrete rung or
-    not at all (ADR 0006 D7, re-scoped by ADR 0007 D2/D5 from `default_tier`
-    to every role tier and override target)."""
+def validate_override_tier_values(unqualified, scoped, errors):
+    """Overrides are explicit and attributable, so an invalid tier value here
+    is a hard error (never a silently-dropped candidate the way a bad label
+    is) — `adaptive` included, since a role always resolves to a concrete
+    rung or not at all (ADR 0006 D7, re-scoped by ADR 0007 D2/D5 from
+    `default_tier` to every role tier and override target)."""
     if unqualified is not None and unqualified not in LADDER:
-        msg = f"tier={unqualified!r} is not a concrete ladder tier ({', '.join(LADDER)})"
-        bucket.append({"code": "invalid_override" if fatal else "unknown_label", "detail": msg})
+        errors.append({
+            "code": "invalid_override",
+            "detail": f"tier={unqualified!r} is not a concrete ladder tier ({', '.join(LADDER)})",
+        })
         unqualified = None
     for role in list(scoped):
         if scoped[role] not in LADDER:
-            msg = f"tier.{role}={scoped[role]!r} is not a concrete ladder tier ({', '.join(LADDER)})"
-            bucket.append({"code": "invalid_override" if fatal else "unknown_label", "detail": msg})
+            errors.append({
+                "code": "invalid_override",
+                "detail": f"tier.{role}={scoped[role]!r} is not a concrete ladder tier ({', '.join(LADDER)})",
+            })
             del scoped[role]
     return unqualified, scoped
 
 
 def merge_tier_overrides(unqualified, scoped):
     """Unqualified targets the implementer; a scoped override for the same
-    role is more specific and wins (see the comment on the announcement
-    line resolution order in .devflow.toml — this ordering is this
-    resolver's own documented choice, not independently specified)."""
+    role is more specific and wins. Overrides are a single attributable
+    operator's own instructions (not competing votes the way labels are), so
+    this stays most-specific-wins rather than strongest-wins-by-rank — this
+    ordering is this resolver's own documented choice, not independently
+    specified."""
     merged = {}
     if unqualified is not None:
         merged["implementer"] = unqualified
@@ -240,6 +344,32 @@ def check_incompatible(cfg, rigor_name, strategy_name, errors):
         })
 
 
+def label_drove_untrusted_off_default(rigor_name, rigor_source, cfg, trusted_set):
+    return (
+        rigor_source == "label"
+        and rigor_name != cfg.get("default_rigor")
+        and f"rigor:{rigor_name}" not in trusted_set
+    )
+
+
+def strategy_drove_untrusted_off_default(strategy_name, strategy_source, cfg, trusted_set):
+    return (
+        strategy_source == "label"
+        and strategy_name is not None
+        and strategy_name != cfg.get("default_strategy")
+        and f"strategy:{strategy_name}" not in trusted_set
+    )
+
+
+def tier_drove_untrusted_off_profile(role, tier, trusted_set):
+    if tier["source"] != "label" or not tier["off_profile"]:
+        return False
+    raw_scoped = f"tier:{role}:{tier['value']}"
+    raw_unqualified = f"tier:{tier['value']}" if role == "implementer" else None
+    trusted = raw_scoped in trusted_set or (raw_unqualified is not None and raw_unqualified in trusted_set)
+    return not trusted
+
+
 def emit(output, errors):
     print(json.dumps(output, indent=2, sort_keys=True))
     sys.exit(1 if errors else 0)
@@ -250,12 +380,14 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--merge-base-config")
     ap.add_argument("--label", action="append", default=[], dest="labels")
+    ap.add_argument("--trusted-label", action="append", default=[], dest="trusted_labels")
     ap.add_argument("--override", action="append", default=[], dest="overrides")
     ap.add_argument("--unattended", action="store_true")
     args = ap.parse_args()
 
     warnings = []
     errors = []
+    trusted_set = set(args.trusted_labels)
 
     read_path = args.merge_base_config if args.merge_base_config else args.config
     config_source = "merge-base" if args.merge_base_config else "branch"
@@ -274,7 +406,8 @@ def main():
             "tiers": {role: {"value": None, "source": "builtin", "off_profile": False} for role in ROLES},
             "budget": None,
             "strategy_fields": None,
-            "disclosure": {"off_default": False, "off_profile": False, "same_family_reviewer": False},
+            "disclosure": {"off_default": False, "off_profile": False, "same_family_reviewer": None},
+            "requires_confirmation": False,
             "warnings": warnings + [{
                 "code": "config_absent",
                 "detail": f"{read_path} does not exist — resolved from the built-in fallback",
@@ -292,29 +425,29 @@ def main():
             "detail": f"{read_path}: missing required key(s)/table(s): {', '.join(detail_bits)}",
         })
         emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-              "warnings": warnings, "errors": errors}, errors)
+              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
-    rigor_labels, strategy_labels, tier_label_unqualified, tier_label_scoped = parse_labels(args.labels, warnings)
+    effective_labels = filter_labels_by_trust(
+        args.labels, args.trusted_labels, unattended=args.unattended, warnings=warnings)
+    rigor_labels, strategy_labels, tier_candidates = parse_labels(effective_labels, warnings)
     explicit_rigor, explicit_strategy, tier_override_unqualified, tier_override_scoped = parse_overrides(
         args.overrides, errors)
     if errors:
         emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-              "warnings": warnings, "errors": errors}, errors)
+              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
-    tier_label_unqualified, tier_label_scoped = validate_tier_values(
-        tier_label_unqualified, tier_label_scoped, fatal=False, bucket=warnings)
-    tier_override_unqualified, tier_override_scoped = validate_tier_values(
-        tier_override_unqualified, tier_override_scoped, fatal=True, bucket=errors)
+    tier_override_unqualified, tier_override_scoped = validate_override_tier_values(
+        tier_override_unqualified, tier_override_scoped, errors)
     if errors:
         emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-              "warnings": warnings, "errors": errors}, errors)
+              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
     rigor_name, rigor_source = resolve_rigor(cfg, rigor_labels, explicit_rigor, warnings, errors)
     if rigor_name is None:
         emit({
             "config_path": read_path, "config_source": config_source, "config_sha256": digest,
             "selections": {"rigor": {"value": None, "source": rigor_source}},
-            "warnings": warnings, "errors": errors,
+            "requires_confirmation": False, "warnings": warnings, "errors": errors,
         }, errors)
 
     strategy_name, strategy_source = resolve_strategy(
@@ -328,13 +461,29 @@ def main():
     budget_tbl = cfg["budget"][budget_name]
     strategy_tbl = cfg["strategy"][strategy_name] if strategy_name is not None else None
 
-    overrides_label = merge_tier_overrides(tier_label_unqualified, tier_label_scoped)
+    overrides_label = strongest_tier_per_role(tier_candidates)
     overrides_explicit = merge_tier_overrides(tier_override_unqualified, tier_override_scoped)
     tiers = resolve_tiers(rigor_tbl, overrides_label, overrides_explicit)
 
     off_default = rigor_name != cfg.get("default_rigor") or (
         strategy_name is not None and strategy_name != cfg.get("default_strategy"))
     off_profile = any(t["off_profile"] for t in tiers.values())
+
+    # Interactive-only (ADR 0006 D6.2): an off-default/off-profile result is
+    # fine when it came from an explicit override or a TRUSTED label — both
+    # are attributable to an authorized actor. It requires operator
+    # confirmation when the label that produced it is not in --trusted-label.
+    # Unattended automation never sets this: it already only acted on
+    # trusted labels in the first place (D6.1), so there is nothing left
+    # here for a human to confirm synchronously.
+    requires_confirmation = False
+    if not args.unattended:
+        if label_drove_untrusted_off_default(rigor_name, rigor_source, cfg, trusted_set):
+            requires_confirmation = True
+        if strategy_drove_untrusted_off_default(strategy_name, strategy_source, cfg, trusted_set):
+            requires_confirmation = True
+        if any(tier_drove_untrusted_off_profile(role, t, trusted_set) for role, t in tiers.items()):
+            requires_confirmation = True
 
     emit({
         "config_path": read_path,
@@ -356,11 +505,15 @@ def main():
             # consuming environment, which this reference resolver has no
             # way to know — that is consumer-specific (docs/guides/devflow.md
             # covers the tier-floor/harness/family-diversity split) and out
-            # of scope for a config-only resolver. Always false here; a
-            # fuller resolver (#1048) that is handed actual configured
-            # families could compute this for real.
-            "same_family_reviewer": False,
+            # of scope for a config-only resolver. `null` means genuinely
+            # UNKNOWN here, not "no" — a caller must not treat a missing
+            # same-family disclosure as "different family confirmed" just
+            # because this resolver said false. A fuller resolver (#1048)
+            # that is handed actual configured families could compute this
+            # for real.
+            "same_family_reviewer": None,
         },
+        "requires_confirmation": requires_confirmation,
         "warnings": warnings,
         "errors": errors,
     }, errors)

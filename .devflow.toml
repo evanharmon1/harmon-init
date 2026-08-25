@@ -216,15 +216,23 @@ min_rounds = 1
 
 # ── Budget envelopes — portable resource ceilings ───────────────────────────
 #
-# max_agent_runs and max_parallel_agents bound total and concurrent agent
-# invocations; wall_clock_min bounds elapsed time; allow_tier_escalation
-# says whether a role may climb its tier's escalate_to chain ([tier.*]
-# below) under this budget at all. Optional max_tokens / max_usd are part of
-# the schema but ABSENT from every shipped envelope below: a consumer that
-# cannot actually measure tokens or spend must report the corresponding
-# limit as UNENFORCED rather than claiming an enforcement it cannot perform
-# — do not add either key here unless harmon-init itself gains that
-# measurement.
+# max_agent_runs and max_parallel_agents bound the ORCHESTRATION/
+# IMPLEMENTATION work itself — the orchestrator's own invocation plus every
+# worker or implementer run a strategy's topology spawns (e.g. orchestrate's
+# lead + workers, council's independent proposers). They do NOT count
+# challenge/review/shepherd passes: those are a separate cost axis, already
+# bounded by the resolved [review.*] policy's own caps (challenge/review/
+# shepherd/min_rounds, above) — a rigor level's budget and its review policy
+# are two independent envelopes, not one shared pool, so a clean run's
+# required review passes are never in tension with how many agents the work
+# itself was allowed to spend. wall_clock_min bounds elapsed time;
+# allow_tier_escalation says whether a role may climb its tier's
+# escalate_to chain ([tier.*] below) under this budget at all. Optional
+# max_tokens / max_usd are part of the schema but ABSENT from every shipped
+# envelope below: a consumer that cannot actually measure tokens or spend
+# must report the corresponding limit as UNENFORCED rather than claiming an
+# enforcement it cannot perform — do not add either key here unless
+# harmon-init itself gains that measurement.
 #
 # Only five envelopes for six rigor levels: `minimal` reuses `light`'s
 # envelope (its extra caution over `trivial` is entirely in the review
@@ -280,8 +288,12 @@ allow_tier_escalation = true
 #   comparison, not a vote. `synthesis = true` permits combining compatible
 #   strengths from more than one proposal rather than picking exactly one
 #   verbatim.
-# min_agents: the floor that keeps a one-agent run from being represented as
-#   a council; council requires >= 2.
+# min_agents: the floor that keeps a run from being represented as a
+#   topology it cannot actually be. council requires >= 2 (independent
+#   proposals need at least two proposers). orchestrate also requires >= 2:
+#   delegation = "required" means a lead PLUS at least one worker, so a
+#   single-agent run is not orchestration either, just oneshot/plan wearing
+#   a different label.
 # human_gates: pause points this strategy inserts, drawn from the allowed
 #   set below. This is the ONLY configurable human-gate vocabulary —
 #   constitutional approvals (merge, release, destructive actions,
@@ -299,11 +311,15 @@ allow_tier_escalation = true
 # A strategy whose min_agents exceeds the resolved rigor's budget
 # (max_agent_runs OR max_parallel_agents) is INCOMPATIBLE, and resolution
 # reports that rather than silently substituting a different topology — e.g.
-# council (min_agents 2) under trivial (budget.trivial: 1 and 1, above).
+# council OR orchestrate (both min_agents 2) under trivial (budget.trivial:
+# 1 and 1, above) — trivial's whole point is a single agent doing a single
+# pass, which neither topology can honestly represent.
 # Every shipped strategy×rigor pair either resolves cleanly or is one of
 # these documented incompatibilities (scripts/test-devflow-config.sh carries
-# the executable list); a pairing that starts resolving cleanly again after
-# a retune is expected to be removed from that list, not left stale.
+# the executable list, checked in both directions: an undocumented
+# incompatible pair fails it, and so does a documented one that no longer
+# actually is); a pairing that starts resolving cleanly again after a retune
+# is expected to be removed from that list, not left stale.
 [strategy.oneshot]
 topology    = "single-agent"
 planning    = "inline"
@@ -330,6 +346,7 @@ topology     = "lead-and-workers"
 planning     = "explicit"
 delegation   = "required"
 coordination = "parallel-when-independent"
+min_agents   = 2
 human_gates  = []
 description  = "Strategy: lead agent delegates bounded work to parallel workers"
 

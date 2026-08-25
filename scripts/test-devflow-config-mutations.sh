@@ -229,13 +229,42 @@ def widen_trivial_budget(tmp):
     # If council's min_agents no longer exceeds trivial's budget, the
     # KNOWN_INCOMPATIBLE entry for (council, trivial) goes stale — the
     # validator must catch a documented incompatibility that stopped being
-    # one, not just an undocumented one that started being one.
+    # one, not just an undocumented one that started being one. (Widening
+    # also moots orchestrate's min_agents=2 against trivial, so this single
+    # mutation exercises staleness for both documented entries at once.)
     edit_toml(tmp, lambda t: t.replace(
         '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1',
         '[budget.trivial]\nmax_agent_runs        = 4\nmax_parallel_agents   = 4',
     ))
 rejects("a documented incompatibility (council x trivial) that no longer applies",
         widen_trivial_budget, "but it actually resolves cleanly now")
+
+
+def edit_script(tmp, fn):
+    p = os.path.join(tmp, "scripts", "test-devflow-config.sh")
+    content = open(p).read()
+    open(p, "w").write(fn(content))
+
+
+def undocument_orchestrate_trivial(tmp):
+    edit_script(tmp, lambda t: t.replace(
+        'KNOWN_INCOMPATIBLE = {("council", "trivial"), ("orchestrate", "trivial")}',
+        'KNOWN_INCOMPATIBLE = {("council", "trivial")}',
+    ))
+rejects("orchestrate x trivial incompatibility left undocumented in the script",
+        undocument_orchestrate_trivial, "is not in KNOWN_INCOMPATIBLE")
+
+
+def drop_orchestrate_min_agents(tmp):
+    # A strategy that LOSES its min_agents field entirely must not let a
+    # documented KNOWN_INCOMPATIBLE entry for it go unchecked — this is the
+    # gap the has_min_agents restructuring (not just a lowered value) closes.
+    edit_toml(tmp, lambda t: t.replace(
+        'coordination = "parallel-when-independent"\nmin_agents   = 2\nhuman_gates  = []',
+        'coordination = "parallel-when-independent"\nhuman_gates  = []',
+    ))
+rejects("orchestrate's min_agents removed entirely while still documented as incompatible",
+        drop_orchestrate_min_agents, "but it actually resolves cleanly now")
 
 # ── tier model maps (unchanged surface, ADR 0006) ───────────────────────
 rejects("unknown model slug", sub('claude   = "sonnet"', 'claude   = "notamodel"'),

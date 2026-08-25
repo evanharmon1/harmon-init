@@ -99,9 +99,17 @@ low, self-referential cap safe. `shepherd` bounds *other people's* findings —
 CI failures, human review comments, Codex cloud review — and a shallower
 rigor level legitimately expects to answer fewer of them before promoting.
 Lowering `shepherd` does not reduce effort already spent; at the cap, the
-answer is "stop and escalate", not "silently drop the finding" — see
-`AGENTS.md`'s shepherd stage for what happens when that cap is reached,
-including at 0.
+answer is "stop and escalate", not "silently drop the finding". At
+`shepherd = 0` (`trivial` rigor's `none` policy), escalating happens on the
+very first thing that would need an answer, because there is no fix round
+left to spend — and with no fix round, there is also no round left to
+trigger a fresh `@codex review` from, so the readiness gate's current-head
+Codex cycle requirement drops out too, exactly the way it already does
+wherever Codex review is off entirely. Nothing else about the readiness gate
+moves: CI still has to be green, and a review finding that lands anyway is
+answered by leaving the PR draft with a blocker report for a human, never by
+an agent fix round the cap does not allow — see `AGENTS.md`'s shepherd stage
+and readiness gate for the full mechanics.
 
 AI challenge, review, and shepherd passes are **heuristic confidence and
 cost controls** — they are not, and cannot be, substitutes for deterministic
@@ -125,8 +133,17 @@ Only five envelopes back six rigor levels: `minimal` reuses `light`'s budget
 (`driveby` instead of `none`) and the role tiers (standard orchestrator and
 reviewer instead of economy), not in a separate budget number.
 
-`max_agent_runs` and `max_parallel_agents` bound total and concurrent agent
-invocations; `wall_clock_min` bounds elapsed time; `allow_tier_escalation`
+`max_agent_runs` and `max_parallel_agents` bound **implementation and
+orchestration** agent invocations — the main session, plus any workers it
+delegates to or council proposers it starts. They do **not** count AI review
+passes: `challenge`, `review`, and `shepherd` are bounded separately, by the
+review policy above, and draw against nothing here. That separation is why
+`light`'s `max_agent_runs = 3` is not in tension with its own `light` review
+policy's `2/2/3` — the two sets of numbers count different things, one
+agents doing the work, the other heuristic passes checking it — and it is
+also why a strategy's `min_agents` compares cleanly against this budget (see
+"Strategy × rigor compatibility" below): both sides count the same kind of
+agent. `wall_clock_min` bounds elapsed time; `allow_tier_escalation`
 says whether a role may climb its tier's `escalate_to` chain (see "Role
 tiers" below) under this budget at all — `trivial` and `light` forbid it,
 because escalation is itself a cost decision and those two budgets are
@@ -152,7 +169,7 @@ intersection is Foreman-side work, out of scope for this file.
 | `oneshot` | single-agent | inline | none | — | — | — | — | none |
 | `plan` (default) | single-agent | explicit | optional | — | — | — | — | none |
 | `plan-approved` | single-agent | explicit | optional | — | — | — | — | after-plan |
-| `orchestrate` | lead-and-workers | explicit | required | parallel-when-independent | — | — | — | none |
+| `orchestrate` | lead-and-workers | explicit | required | parallel-when-independent | — | — | 2 | none |
 | `council` | independent-proposals | independent | required | — | judge | true | 2 | none |
 | `human-led` | human-directed | collaborative | optional | — | — | — | — | after-discovery, after-plan, before-publication |
 
@@ -182,8 +199,11 @@ The fields, explained without leaning on their names:
   independent output may be combined into one deliverable, rather than
   picking exactly one proposal verbatim. `council` sets this `true`.
 - **`min_agents`** — the floor that keeps a one-agent run from being
-  represented as the topology it claims. Only `council` sets one (`2`): a
-  single agent cannot produce independent proposals to judge between.
+  represented as the topology it claims. Two strategies set one, both `2`:
+  `council` (a single agent cannot produce independent proposals to judge
+  between) and `orchestrate` (`delegation = required` means the lead must
+  hand off bounded work to at least one worker, so a lead running alone
+  cannot satisfy its own topology either).
 - **`human_gates`** — explicit pause points this strategy inserts, drawn from
   the allowed set below. This is the **only** configurable human-gate
   vocabulary: `after-discovery`, `after-plan`, `before-delegation`,
@@ -228,7 +248,10 @@ global default:
   **implementer** tier only — the common case, since a human saying just
   "tier" usually means "make the implementer cheaper or stronger."
 - A **scoped** `tier:orchestrator:<value>` / `tier:implementer:<value>` /
-  `tier:reviewer:<value>` targets exactly the role it names.
+  `tier:reviewer:<value>` targets exactly the role it names. All 15 scoped
+  values (3 roles × the 5 concrete tiers — `adaptive` is never legal here)
+  are **provisioned**, the same as every other rigor/strategy/tier label —
+  `task setup:github-labels` creates them, not an agent on first use.
 - Absent any override, every role comes from the resolved rigor level alone.
 
 `escalate_to` chains climb toward `apex` and fire on failure, refusal, or
@@ -377,11 +400,15 @@ accepts that substitution.
 A strategy whose `min_agents` exceeds the resolved budget's
 `max_agent_runs` or `max_parallel_agents` is an **incompatibility**:
 resolution reports it and stops, and never silently substitutes a different
-topology or silently widens the budget. Only `council` (`min_agents = 2`)
-sets a floor at all — every other shipped strategy resolves under any rigor
+topology or silently widens the budget. Two strategies set a floor at all —
+`council` and `orchestrate`, both `min_agents = 2` — and both compare against
+the same kind of number, since the budget's `max_agent_runs`/
+`max_parallel_agents` count implementation/orchestration agents exactly like
+`min_agents` does (see "Budgets" above). Every other shipped strategy
+(`oneshot`, `plan`, `plan-approved`, `human-led`) resolves under any rigor
 level, at any budget:
 
-| Rigor | Budget | `max_parallel_agents` | `council` (needs 2) |
+| Rigor | Budget | `max_parallel_agents` | `council` / `orchestrate` (need 2) |
 | --- | --- | --- | --- |
 | `trivial` | `trivial` | 1 | ✗ incompatible |
 | `minimal` | `light` | 2 | ✓ |
@@ -390,8 +417,10 @@ level, at any budget:
 | `thorough` | `thorough` | 4 | ✓ |
 | `deep` | `deep` | 4 | ✓ |
 
-`council` under `trivial` is the one documented incompatibility in the
-shipped configuration. Every other strategy×rigor pairing — 35 of the 36
+`council` under `trivial` and `orchestrate` under `trivial` are the two
+documented incompatibilities in the shipped configuration — both fail for
+the same reason, `trivial`'s `max_parallel_agents = 1` being below either
+strategy's floor of 2. Every other strategy×rigor pairing — 34 of the 36
 combinations — resolves cleanly.
 
 ## Ownership boundaries
@@ -466,10 +495,15 @@ floor of 2.
 
 **"Orchestrate these in parallel with light rigor."**
 Rigor `light` (as above) + strategy `orchestrate` (lead-and-workers,
-explicit plan, delegation required). "In parallel" names
+explicit plan, delegation required, `min_agents` 2). "In parallel" names
 `orchestrate`'s own `coordination = parallel-when-independent` field
 directly — it does not require a separate override, because that is what
-`orchestrate` already does for independent slices of work.
+`orchestrate` already does for independent slices of work. Compatible for
+the same reason `council` was in the first example: `orchestrate`'s
+`min_agents` (2) is at `light`'s `max_parallel_agents` ceiling (2) exactly.
+The same request under `trivial` rigor would be reported as an
+incompatibility instead — `trivial`'s budget allows only 1 parallel agent,
+below the floor a lead-and-workers topology needs to be one.
 
 **"Take a deep one-shot at this, then stop."**
 Rigor `deep` (as above) + strategy `oneshot` (single agent, inline planning,

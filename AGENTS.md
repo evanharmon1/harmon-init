@@ -385,7 +385,8 @@ inferred from behavior.
 
 A **strategy whose minimum requirements exceed the resolved budget** —
 `min_agents` above the budget's `max_agent_runs` or `max_parallel_agents`,
-e.g. `council` under `trivial` — is an **incompatibility**: report it and
+e.g. `council` or `orchestrate` (both `min_agents = 2`) under `trivial`
+(`max_parallel_agents = 1`) — is an **incompatibility**: report it and
 stop, never silently substitute a different topology or silently widen the
 budget. Every shipped strategy×rigor pairing either resolves cleanly or is
 one of these documented incompatibilities; an undocumented pairing that fails
@@ -645,12 +646,21 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   resolved review policy the same way challenge and review do, but the reason
   to stop at it is unchanged: it bounds *other people's* findings, not your
   own work, so reaching it — even a low cap from a shallow rigor level — means
-  escalate rather than keep spending rounds. A cap of 0 means the very first
-  thing that needs an answer is already at the cap: escalate on it
-  immediately rather than attempting a fix round. None of this shortens the
-  readiness gate below — every required check still has to conclude and every
-  review finding still has to be fixed, declined, or filed before a draft can
-  be promoted, whatever the shepherd cap let you attempt.
+  escalate rather than keep spending rounds. A cap of 0 (`trivial` rigor)
+  means the very first thing that needs an answer is already at the cap:
+  there is no fix round to spend on it, so escalate immediately — leave the
+  PR draft with a blocker report for a human, the same way any other failed
+  or indeterminate readiness-gate condition is handled below, just reached
+  at round zero instead of after one. That removes the agent's shepherd fix
+  rounds, and with them the readiness gate's current-head Codex cycle
+  requirement (see below) — there is no round left to trigger a fresh
+  `@codex review` from, so that one condition drops out exactly the way it
+  already does wherever Codex review is off entirely. It removes nothing
+  else: CI still has to be green, and every other required check and review
+  finding still has to be fixed, declined, or filed before a draft can be
+  promoted — a finding that lands despite a shepherd cap of 0 is answered by
+  the blocker report above, never by an agent fix round the cap does not
+  allow.
   Where a **vendored** skill (`/shepherd`)
   states a different cap or exit condition, **this file wins** — the skills
   are synced from harmon-devkit on its own release cadence and can lag a
@@ -682,7 +692,10 @@ review only when **all** of the following hold for its current `headRefOid`:
   to run.
 - The current-head Codex cycle above is terminal and clean — including clean
   by way of dispositions recorded with `settle` (Codex review is
-  enabled here; where it is off, this condition drops out).
+  enabled here; where it is off, **or where the resolved shepherd cap is
+  0**, this condition drops out — a cap of 0 leaves no shepherd fix round to
+  trigger a fresh `@codex review` from. Every other condition on this list
+  still applies unchanged).
 - Every review finding is fixed, declined with evidence, or filed as follow-up
   work.
 - Every inline review comment has its required per-thread reply.

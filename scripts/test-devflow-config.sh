@@ -108,7 +108,7 @@ RESERVED_TIER_KEYS = {"endpoint", "escalate_to"}
 # here must actually resolve; every pair listed here must actually be
 # incompatible — both directions are checked below, so a retune that closes
 # or opens a gap is caught either way.
-KNOWN_INCOMPATIBLE = {("council", "trivial")}
+KNOWN_INCOMPATIBLE = {("council", "trivial"), ("orchestrate", "trivial")}
 
 
 def family_values(registry_path, family_name):
@@ -256,14 +256,37 @@ for path in config_paths:
     models_by_family = registry_models(agent_registry_path)
     local_families = local_harness_families(agent_registry_path)
 
-    # The provisioned tier vocabulary must EQUAL the ADR-fixed ladder plus
-    # `adaptive` — both directions, unchanged from before ADR 0007 ("tier
-    # maps resolve against agent-registry as today"). A missing rung
-    # silently narrows what a [rigor.*] role tier or an override may name; an
-    # EXTRA value (a future `tier:ultra`) provisions a label with no ladder
-    # position, table, or rank, leaving strongest-wins resolution undefined.
+    # The provisioned tier vocabulary must EQUAL the ADR-fixed ladder, plus
+    # `adaptive`, plus the durable role-scoped forms `<role>:<tier>` for
+    # every role × every concrete ladder rung (`tier:orchestrator:economy`
+    # etc. — never `tier:<role>:adaptive`, since a role tier is always
+    # concrete) — both directions, unchanged from before ADR 0007 ("tier
+    # maps resolve against agent-registry as today") except for that
+    # addition. A missing rung (bare or role-scoped) silently narrows what a
+    # [rigor.*] role tier, a label, or an override may name; an EXTRA value
+    # (a future `tier:ultra` or `tier:reviewer:ultra`) provisions a label
+    # with no ladder position, table, or rank, leaving strongest-wins
+    # resolution undefined.
+    #
+    # The role-scoped forms live in their OWN family, `tier-role` — a
+    # `prefix: null` family whose values are the COMPLETE label name
+    # (`"tier:orchestrator:economy"`, not a bare `"orchestrator:economy"`
+    # suffix), because the label-registry schema's slug pattern forbids a
+    # colon inside a value under a non-null prefix. Strip the shared
+    # `"tier:"` prefix so both families compare in one `<role>:<tier>` shape;
+    # a `tier-role` value that does NOT start with it is left unstripped on
+    # purpose — it then simply fails to match anything in `expected_tiers`
+    # below and surfaces as an "unexpected" entry, which is the correct
+    # failure for a malformed value rather than a bespoke second message.
+    SCOPED_TIER_ROLES = ("orchestrator", "implementer", "reviewer")
     valid_tiers = set(family_values(label_registry_path, "tier"))
-    expected_tiers = set(LADDER) | {"adaptive"}
+    for full_name in family_values(label_registry_path, "tier-role"):
+        valid_tiers.add(full_name[len("tier:"):] if full_name.startswith("tier:") else full_name)
+    expected_tiers = (
+        set(LADDER)
+        | {"adaptive"}
+        | {f"{role}:{tier}" for role in SCOPED_TIER_ROLES for tier in LADDER}
+    )
     if valid_tiers != expected_tiers:
         missing_t = sorted(expected_tiers - valid_tiers)
         extra_t = sorted(valid_tiers - expected_tiers)
@@ -274,7 +297,7 @@ for path in config_paths:
             detail.append(f"unexpected {', '.join(extra_t)} (no ladder position/table/rank)")
         failures.append(
             f"{path}: provisioned tier vocabulary in {label_registry_path} does not "
-            f"match the ADR-fixed ladder — {'; '.join(detail)}"
+            f"match the ADR-fixed ladder plus role-scoped forms — {'; '.join(detail)}"
         )
 
     # ── [rigor.*] ────────────────────────────────────────────────────────
@@ -484,10 +507,16 @@ for path in config_paths:
                 )
 
     # ── strategy × rigor compatibility matrix ───────────────────────────
+    # Every (strategy, rigor) pair is evaluated below, even one whose
+    # strategy carries no min_agents at all (has_min_agents=False forces
+    # incompatible=False rather than skipping the pair outright) — a
+    # strategy that LOSES its min_agents field is exactly the case that must
+    # still trip the "documented but no longer incompatible" branch further
+    # down; `continue`-ing past it here would let a stale KNOWN_INCOMPATIBLE
+    # entry survive undetected instead of merely under-triggering.
     for sname, stbl in strategies.items():
         min_agents = stbl.get("min_agents") if isinstance(stbl, dict) else None
-        if not isinstance(min_agents, int) or isinstance(min_agents, bool):
-            continue
+        has_min_agents = isinstance(min_agents, int) and not isinstance(min_agents, bool)
         for rname, rtbl in levels.items():
             if not isinstance(rtbl, dict):
                 continue
@@ -497,8 +526,9 @@ for path in config_paths:
                 continue
             runs = budget_tbl.get("max_agent_runs")
             parallel = budget_tbl.get("max_parallel_agents")
-            incompatible = (isinstance(runs, int) and min_agents > runs) or (
-                isinstance(parallel, int) and min_agents > parallel
+            incompatible = has_min_agents and (
+                (isinstance(runs, int) and min_agents > runs)
+                or (isinstance(parallel, int) and min_agents > parallel)
             )
             documented = (sname, rname) in KNOWN_INCOMPATIBLE
             if incompatible and not documented:
@@ -737,8 +767,14 @@ check("two strategy labels are ambiguous and error (interactive)",
       code == 1 and out["selections"]["strategy"]["value"] is None
       and any(e["code"] == "ambiguous_strategy" for e in out["errors"]))
 
-code, out = run("--label", "strategy:plan", "--label", "strategy:orchestrate", "--unattended")
-check("two strategy labels default with a warning, once unattended",
+# Trust-filtering runs BEFORE ambiguity resolution, so both conflicting
+# labels need --trusted-label here or they never survive to be ambiguous at
+# all — that "plain label filtered under --unattended" path is covered
+# separately below (rigor:trivial, untrusted, no --trusted-label).
+code, out = run("--label", "strategy:plan", "--label", "strategy:orchestrate",
+                "--trusted-label", "strategy:plan", "--trusted-label", "strategy:orchestrate",
+                "--unattended")
+check("two TRUSTED strategy labels default with a warning, once unattended",
       code == 0
       and out["selections"]["strategy"] == {"value": default_strategy, "source": "default"}
       and any(w["code"] == "ambiguous_strategy" for w in out["warnings"]))
@@ -747,6 +783,56 @@ check("two strategy labels default with a warning, once unattended",
 code, out = run("--override", "rigor=trivial", "--override", "strategy=council")
 check("council under trivial is a reported incompatibility",
       code == 1 and any(e["code"] == "incompatible_strategy" for e in out["errors"]))
+
+# orchestrate x trivial -> also incompatible (delegation=required needs a lead + >=1 worker)
+code, out = run("--override", "rigor=trivial", "--override", "strategy=orchestrate")
+check("orchestrate under trivial is also a reported incompatibility",
+      code == 1 and any(e["code"] == "incompatible_strategy" for e in out["errors"]))
+
+# multiple tier labels for the SAME role resolve strongest-wins by ladder
+# rank, regardless of input order — the literal apex/economy example from
+# the finding this fixes, checked both ways round.
+code, out = run("--label", "tier:apex", "--label", "tier:economy")
+check("tier:apex then tier:economy resolves to apex (strongest, not last)",
+      code == 0 and out["tiers"]["implementer"]["value"] == "apex")
+code, out = run("--label", "tier:economy", "--label", "tier:apex")
+check("tier:economy then tier:apex ALSO resolves to apex (order-independent)",
+      code == 0 and out["tiers"]["implementer"]["value"] == "apex")
+# the unqualified and scoped forms land on the same role and must be
+# reconciled together, not treated as two independent overrides.
+code, out = run("--label", "tier:economy", "--label", "tier:implementer:frontier")
+check("an unqualified and a scoped label for the same role also resolve strongest-wins",
+      code == 0 and out["tiers"]["implementer"]["value"] == "frontier")
+
+# --unattended: an untrusted --label is NOT applied — it is ignored (named
+# in a warning) and falls back to the default, per ADR 0006 D6.1.
+code, out = run("--label", "rigor:trivial", "--unattended")
+check("under --unattended, an untrusted rigor label is ignored and falls back to the default",
+      code == 0
+      and out["selections"]["rigor"] == {"value": "standard", "source": "default"}
+      and any(w["code"] == "untrusted_label_ignored" and "rigor:trivial" in w["detail"]
+              for w in out["warnings"]))
+
+# --unattended + --trusted-label: a TRUSTED label still applies.
+code, out = run("--label", "rigor:trivial", "--trusted-label", "rigor:trivial", "--unattended")
+check("under --unattended, a --trusted-label of the same value applies normally",
+      code == 0 and out["selections"]["rigor"] == {"value": "trivial", "source": "label"})
+
+# interactive mode: --label stays advisory as before, but an off-default
+# result driven by an UNTRUSTED label requires operator confirmation
+# (ADR 0006 D6.2) — and does not when the same label is trusted, or when
+# the result was never off-default in the first place.
+code, out = run("--label", "rigor:deep")
+check("interactive + untrusted off-default label -> requires_confirmation",
+      code == 0 and out["selections"]["rigor"]["value"] == "deep"
+      and out["requires_confirmation"] is True)
+code, out = run("--label", "rigor:deep", "--trusted-label", "rigor:deep")
+check("interactive + TRUSTED off-default label -> no confirmation needed",
+      code == 0 and out["selections"]["rigor"]["value"] == "deep"
+      and out["requires_confirmation"] is False)
+code, out = run()
+check("interactive + on-default result -> no confirmation needed (nothing off-default)",
+      code == 0 and out["requires_confirmation"] is False)
 
 # tier:implementer:economy under standard -> refines + off_profile disclosed
 code, out = run("--override", "rigor=standard", "--label", "tier:implementer:economy")
@@ -807,5 +893,7 @@ if failures:
         print(f"FAIL: {line}", file=sys.stderr)
     sys.exit(1)
 print("devflow-resolve.py case table OK: rigor/strategy conflicts, incompatibility, tier "
-      "overrides, explicit-vs-label, merge-base, and absent-config all resolve as documented")
+      "overrides (order-independent strongest-wins), trust (--trusted-label / --unattended / "
+      "requires_confirmation), explicit-vs-label, merge-base, and absent-config all resolve "
+      "as documented")
 PY

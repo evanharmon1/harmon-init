@@ -604,7 +604,9 @@ the taxonomy table below is generated from) and the starter set is created by
   `tier:<value>` refines the **implementer** role only; a scoped
   `tier:orchestrator:<value>` / `tier:implementer:<value>` /
   `tier:reviewer:<value>` targets exactly the role it names. Absent any
-  override, all three roles come from the resolved rigor level.
+  override, all three roles come from the resolved rigor level. All 15
+  scoped values (3 roles × 5 concrete tiers) are **provisioned** like every
+  other tier value, not created on demand.
 
 The prose above describes what each family *means*; the actual values — names,
 colors, writers, lifecycle — live in `label-registry.json` and appear in the
@@ -749,6 +751,7 @@ deliberately leaves it alone.
 | `area:{ci,docs,deps,build,tests,tasks,release,devcontainer,pm,skills,gauntlet}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
 | `rigor:{trivial,minimal,light,standard,thorough,deep}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a review policy, three role tiers, and a budget; arms nothing | set when the default rigor is wrong for the change; survives the work |
 | `tier:{local,economy,standard,frontier,apex,adaptive}` | humans, at triage or planning — never an agent on itself | humans and agents — resolved to a model via `.devflow.toml` `[tier]` (ADR 0006) | provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing | set when the default tier would be wrong; strongest-wins resolution per ADR 0006 |
+| `tier:orchestrator:local`, `tier:orchestrator:economy`, `tier:orchestrator:standard`, `tier:orchestrator:frontier`, `tier:orchestrator:apex`, `tier:implementer:local`, `tier:implementer:economy`, `tier:implementer:standard`, `tier:implementer:frontier`, `tier:implementer:apex`, `tier:reviewer:local`, `tier:reviewer:economy`, `tier:reviewer:standard`, `tier:reviewer:frontier`, `tier:reviewer:apex` | humans, at triage or planning — never an agent on itself | humans and agents — resolved via `.devflow.toml` `[tier]`; targets exactly the role it names (ADR 0006/0007), unlike the unqualified `tier:<value>` which targets the implementer only | provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing | set when one role's tier should differ from the rigor's own profile; strongest-wins per role |
 | `method:{oneshot,plan,plan-approved,orchestrate,council,human-led}` (**retired**) | nobody — renamed to strategy:* | humans — retired, see `strategy:*` | retired — execution topology renamed to the `strategy` family; never provisioned | rename each BEFORE provisioning creates its strategy:* counterpart (association-preserving): `gh label edit method:<v> --name strategy:<v>` |
 | `strategy:{oneshot,plan,plan-approved,orchestrate,council,human-led}` | humans, at triage or planning — never an agent on itself | agents, when entering the Dev Loop — Foreman does not consume it yet (out of scope here) | provisioned; **read by agents** — selects an execution topology, arms nothing | set when the default strategy is wrong for the change; survives the work |
 | `suggest:<family>` | humans or agents, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |

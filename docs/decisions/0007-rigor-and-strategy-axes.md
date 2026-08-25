@@ -166,6 +166,24 @@ names. This is restated explicitly here because D3's zero/one-round
 policies make the low end of the range a first-class, frequently-selected
 configuration rather than a rare edge case.
 
+A shepherd cap of 0 specifically is worth spelling out, because shepherd is
+the one stage that bounds *other people's* findings rather than the agent's
+own generated work (AGENTS.md, Dev Loop). Disabling it removes exactly two
+things: the agent's own shepherd fix-rounds, and the readiness gate's
+current-head Codex-cycle *requirement* — the same way that requirement
+already drops out wherever Codex review is not enabled at all (AGENTS.md,
+Readiness gate). It removes neither the readiness gate itself nor any of
+its other conditions: CI still has to conclude successfully, every human
+review thread still needs its required reply, `reviewDecision` still may
+not be `CHANGES_REQUESTED`. **Not:** a shepherd cap of 0 waiving those
+conditions so a PR can be promoted over unresolved feedback — that would
+make the deepest cost-cutting rigor level the one AI review passes cannot
+reach ready-for-review under, exactly backwards from what a ceiling is
+supposed to do. If a human still leaves findings on a shepherd-disabled
+PR, the agent has no budget left to answer them: the PR simply stays
+draft, and those findings are left for the human who raised them, exactly
+as any other unresolved readiness-gate condition would leave it.
+
 ### D9 — `min_rounds` is bounded by the enabled caps, not pinned to 1 or 2
 
 `0 <= min_rounds <= min(challenge, review, shepherd)` for every review
@@ -191,8 +209,9 @@ alone.
 ### D11 — Strategy/rigor incompatibility is reported, never silently substituted
 
 A strategy whose `min_agents` exceeds the resolved rigor's
-`max_agent_runs` or `max_parallel_agents` (e.g. `council`, `min_agents = 2`,
-under `trivial`'s budget of 1 and 1) is a reported incompatibility.
+`max_agent_runs` or `max_parallel_agents` (e.g. `council` or `orchestrate`,
+both `min_agents = 2`, under `trivial`'s budget of 1 and 1) is a reported
+incompatibility.
 **Not:** silently downgrading the topology to fit the budget, or silently
 raising the budget to fit the topology. Either direction would substitute
 a decision the operator did not unambiguously make; reporting keeps a

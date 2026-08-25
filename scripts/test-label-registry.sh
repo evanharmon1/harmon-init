@@ -241,6 +241,21 @@ tier:standard|7057FF|Model tier: reliable general-purpose coding model first
 tier:frontier|7057FF|Model tier: opus-class heavyweights; no warm-up on weaker models
 tier:apex|7057FF|Model tier: mythos-class leading edge (fable, sol)
 tier:adaptive|7057FF|Model tier: cheap preflight classifies, then chooses or escalates
+tier:orchestrator:local|7057FF|Tier override: pin the orchestrator to local — self-hosted endpoint first
+tier:orchestrator:economy|7057FF|Tier override: pin the orchestrator to economy — cheapest qualified hosted model
+tier:orchestrator:standard|7057FF|Tier override: pin the orchestrator to standard — reliable general-purpose coding model
+tier:orchestrator:frontier|7057FF|Tier override: pin the orchestrator to frontier — opus-class heavyweight, no warm-up
+tier:orchestrator:apex|7057FF|Tier override: pin the orchestrator to apex — mythos-class leading edge
+tier:implementer:local|7057FF|Tier override: pin the implementer to local — self-hosted endpoint first
+tier:implementer:economy|7057FF|Tier override: pin the implementer to economy — cheapest qualified hosted model
+tier:implementer:standard|7057FF|Tier override: pin the implementer to standard — reliable general-purpose coding model
+tier:implementer:frontier|7057FF|Tier override: pin the implementer to frontier — opus-class heavyweight, no warm-up
+tier:implementer:apex|7057FF|Tier override: pin the implementer to apex — mythos-class leading edge
+tier:reviewer:local|7057FF|Tier override: pin the reviewer to local — self-hosted endpoint first
+tier:reviewer:economy|7057FF|Tier override: pin the reviewer to economy — cheapest qualified hosted model
+tier:reviewer:standard|7057FF|Tier override: pin the reviewer to standard — reliable general-purpose coding model
+tier:reviewer:frontier|7057FF|Tier override: pin the reviewer to frontier — opus-class heavyweight, no warm-up
+tier:reviewer:apex|7057FF|Tier override: pin the reviewer to apex — mythos-class leading edge
 strategy:oneshot|BF3989|Strategy: single agent, no separate plan phase
 strategy:plan|BF3989|Strategy: agent plans then implements; no human plan gate
 strategy:plan-approved|BF3989|Strategy: plan requires human approval before implementation
