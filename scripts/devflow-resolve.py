@@ -4,8 +4,12 @@
 Resolves a rigor + strategy execution policy the way AGENTS.md's Dev Loop
 describes and ADR 0007 (docs/decisions/0007-rigor-and-strategy-axes.md)
 records: explicit operator instruction > rigor:*/strategy:* labels >
-default_rigor/default_strategy > the built-in fallback (used only when
-.devflow.toml is entirely absent).
+default_rigor/default_strategy > the built-in fallback. The built-in
+fallback is a FLOOR, not a bypass: even when .devflow.toml is entirely
+absent, every input below is still parsed and applied over it — an
+--override or --trusted-label naming a rigor/strategy the built-in cannot
+honor (there are no [rigor.*]/[strategy.*] tables to resolve anything else
+against) is a deterministic error, never silently discarded.
 
 Trust is a CONSUMER input, not something this resolver infers: --label is
 UNVERIFIED by default, and --trusted-label marks the subset whose provenance
@@ -18,6 +22,21 @@ by an untrusted one sets requires_confirmation, so the operator is asked
 before it is used rather than applied silently (D6.2). An --override is
 always trusted by definition — it is the explicit, attributable instruction
 channel ADR 0006 D5 describes, never repository content.
+
+Only labels in the rigor:/strategy:/tier: namespaces are this resolver's
+business — anything else (a plain `bug`, an `area:ci`) is filtered out
+before either the trust filter or the label parser ever see it, silently:
+it was never a devflow input, so it produces no warning of any kind.
+
+Malformed input never produces a raw traceback: a config file that parses as
+TOML but whose cross-references dangle (an unknown default_rigor, a rigor
+level naming a missing review/budget, a rigor_order entry with no matching
+table, and so on) is validated BEFORE anything is dereferenced, and reported
+as one normalized invalid_config error like any other bad input. This is a
+crash-safety net, not a restatement of scripts/test-devflow-config.sh's
+exhaustive static validation (enums, cross-registry checks, description
+equality) — that script is the authority on whether a config is well-formed;
+this resolver only needs enough checking to fail cleanly on one that isn't.
 
 This is a ROOT-ONLY reference implementation, not the versioned,
 cross-consumer conformance contract — that is harmon-init#1048
@@ -41,13 +60,17 @@ warnings are always both present in the output (possibly empty lists) so a
 caller never needs to guess whether the key exists.
 
 Inputs, precisely:
-  --config PATH             the branch's copy of .devflow.toml.
+  --config PATH             the branch's copy of .devflow.toml. May be
+                             absent — see the built-in fallback above.
   --merge-base-config PATH  when given, THIS is the copy actually read —
                              the merge-base rule (AGENTS.md, "When the
                              change under review edits .devflow.toml...").
                              --config is still recorded, unread.
   --label FAMILY:VALUE      a rigor:*/strategy:*/tier:* label present on the
                              issue or PR, repeatable — UNVERIFIED provenance.
+                             Anything outside those three namespaces is
+                             silently irrelevant, not a warning — it is
+                             filtered out before trust or parsing ever runs.
                              tier:<value> is unqualified (implementer only);
                              tier:<role>:<value> is scoped (role one of
                              orchestrator/implementer/reviewer). Multiple
@@ -56,19 +79,21 @@ Inputs, precisely:
                              strongest-wins by ladder rank, regardless of
                              input order: a conflict can only ever raise the
                              tier, mirroring how a rigor conflict can only
-                             ever buy more depth (ADR 0006 D5). Anything else
-                             (a label with no devflow-relevant prefix) is
-                             silently irrelevant, not a warning.
+                             ever buy more depth (ADR 0006 D5).
   --trusted-label F:V       the subset of labels (same FAMILY:VALUE forms as
-                             --label) whose provenance the CALLER has already
-                             verified against its own trusted-actor
-                             configuration (ADR 0006 D6) — repeatable, and
-                             need not literally duplicate a --label entry.
-                             Under --unattended, ONLY trusted labels
-                             participate in resolution. In interactive mode
-                             every --label still applies as before;
-                             --trusted-label instead controls whether an
-                             off-default result sets requires_confirmation.
+                             --label, same namespace filter) whose provenance
+                             the CALLER has already verified against its own
+                             trusted-actor configuration (ADR 0006 D6) —
+                             repeatable, and need not literally duplicate a
+                             --label entry. Under --unattended, ONLY trusted
+                             labels participate in resolution. In interactive
+                             mode every --label still applies; --trusted-label
+                             instead controls whether an off-default result
+                             sets requires_confirmation. When the config is
+                             absent, a trusted rigor:/strategy: label naming
+                             anything the built-in fallback does not define
+                             is a deterministic error, exactly like an
+                             --override would be.
   --override KEY=VALUE      an explicit, attributable operator instruction,
                              repeatable — always trusted by definition
                              (ADR 0006 D5: an explicit instruction arrives on
@@ -95,6 +120,7 @@ import tomllib
 LADDER = ("local", "economy", "standard", "frontier", "apex")
 LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
 ROLES = ("orchestrator", "implementer", "reviewer")
+DEVFLOW_LABEL_PREFIXES = ("rigor:", "strategy:", "tier:")
 
 # Used only when .devflow.toml is entirely absent (AGENTS.md's built-in
 # fallback sentence, kept in lockstep with it and with [review.standard] by
@@ -103,6 +129,23 @@ ROLES = ("orchestrator", "implementer", "reviewer")
 BUILTIN_RIGOR = "standard"
 BUILTIN_STRATEGY = "plan"
 BUILTIN_REVIEW = {"challenge": 3, "review": 3, "shepherd": 4, "min_rounds": 1}
+# A minimal synthetic config, structurally just real enough that
+# resolve_rigor()/resolve_strategy() need no absent-config special case of
+# their own: membership in `rigor`/`strategy` here IS the built-in's
+# vocabulary (exactly BUILTIN_RIGOR/BUILTIN_STRATEGY, nothing else), so an
+# --override or label naming anything else is rejected by the SAME
+# "not in levels"/"not in strategies" checks that already guard a real
+# config, for free. The inner tables are intentionally empty: no [tier.*]
+# ladder, no [budget.*], no [review.*] beyond BUILTIN_REVIEW — "tiers inert"
+# means there is nothing for a role tier to refine, so those are never
+# dereferenced against this dict (main() branches on config_absent instead).
+BUILTIN_CFG = {
+    "default_rigor": BUILTIN_RIGOR,
+    "default_strategy": BUILTIN_STRATEGY,
+    "rigor_order": [BUILTIN_RIGOR],
+    "rigor": {BUILTIN_RIGOR: {}},
+    "strategy": {BUILTIN_STRATEGY: {}},
+}
 
 
 def load_config(path):
@@ -114,8 +157,99 @@ def load_config(path):
     return tomllib.loads(raw.decode("utf-8")), hashlib.sha256(raw).hexdigest()
 
 
+def validate_config_references(cfg, errors):
+    """Defensive validation this resolver needs to avoid a raw traceback on
+    a malformed-but-syntactically-valid TOML config — see the module
+    docstring on how this differs from scripts/test-devflow-config.sh.
+    Every reference checked here is one this resolver is about to
+    dereference somewhere below; catching a dangling one here turns a
+    KeyError/TypeError into one clean invalid_config error instead. Returns
+    True if every reference this resolver depends on actually resolves.
+    """
+    ok = True
+
+    def fail(detail):
+        nonlocal ok
+        errors.append({"code": "invalid_config", "detail": detail})
+        ok = False
+
+    levels = cfg.get("rigor")
+    if not isinstance(levels, dict) or not levels:
+        fail("[rigor.*] must be a non-empty table of tables")
+        return False  # nothing below is safe to inspect without at least this
+
+    reviews = cfg.get("review")
+    reviews = reviews if isinstance(reviews, dict) else {}
+    budgets = cfg.get("budget")
+    budgets = budgets if isinstance(budgets, dict) else {}
+    strategies = cfg.get("strategy")
+    strategies = strategies if isinstance(strategies, dict) else {}
+
+    default_rigor = cfg.get("default_rigor")
+    if default_rigor not in levels:
+        fail(f"default_rigor={default_rigor!r} names no [rigor.*] level")
+
+    default_strategy = cfg.get("default_strategy")
+    if default_strategy not in strategies:
+        fail(f"default_strategy={default_strategy!r} names no [strategy.*] value")
+
+    rigor_order = cfg.get("rigor_order")
+    if not isinstance(rigor_order, list):
+        fail("rigor_order must be a list")
+    else:
+        for entry in rigor_order:
+            if entry not in levels:
+                fail(f"rigor_order entry {entry!r} names no [rigor.*] level")
+
+    for name, tbl in levels.items():
+        if not isinstance(tbl, dict):
+            fail(f"[rigor.{name}] is not a table")
+            continue
+        for field in ("review", "orchestrator_tier", "implementer_tier", "reviewer_tier", "budget"):
+            if field not in tbl:
+                fail(f"[rigor.{name}] is missing {field!r}")
+        if "review" in tbl and tbl["review"] not in reviews:
+            fail(f"[rigor.{name}].review={tbl['review']!r} names no [review.*] policy")
+        if "budget" in tbl and tbl["budget"] not in budgets:
+            fail(f"[rigor.{name}].budget={tbl['budget']!r} names no [budget.*] profile")
+        for field in ("orchestrator_tier", "implementer_tier", "reviewer_tier"):
+            if field in tbl and tbl[field] not in LADDER:
+                fail(f"[rigor.{name}].{field}={tbl[field]!r} is not a concrete ladder tier")
+
+    for name, tbl in reviews.items():
+        if not isinstance(tbl, dict):
+            fail(f"[review.{name}] is not a table")
+
+    for name, tbl in budgets.items():
+        if not isinstance(tbl, dict):
+            fail(f"[budget.{name}] is not a table")
+            continue
+        for field in ("max_agent_runs", "max_parallel_agents"):
+            if field not in tbl or not isinstance(tbl[field], int) or isinstance(tbl[field], bool):
+                fail(f"[budget.{name}].{field} must be an integer")
+
+    for name, tbl in strategies.items():
+        if not isinstance(tbl, dict):
+            fail(f"[strategy.{name}] is not a table")
+
+    return ok
+
+
+def filter_to_devflow_namespace(raw_labels):
+    """Anything outside rigor:/strategy:/tier: is not this resolver's
+    business at all — dropped here, before the trust filter or the label
+    parser, so a plain `bug` or `area:ci` produces no warning of any kind
+    (neither an untrusted_label_ignored under --unattended nor an
+    unknown_label from the parser). Everything that DOES match one of the
+    three namespaces still goes through full validation below — this is a
+    namespace pre-filter, not a shape check."""
+    return [raw for raw in raw_labels if raw.startswith(DEVFLOW_LABEL_PREFIXES)]
+
+
 def filter_labels_by_trust(raw_labels, trusted_labels, *, unattended, warnings):
     """Returns the effective raw label list resolution should actually use.
+    Callers pass namespace-filtered lists in (filter_to_devflow_namespace) —
+    this function only implements the trust policy, not the namespace one.
 
     Interactive: every --label still applies (trust only affects
     requires_confirmation later) — --trusted-label entries are unioned in so
@@ -142,6 +276,32 @@ def filter_labels_by_trust(raw_labels, trusted_labels, *, unattended, warnings):
     return effective
 
 
+def validate_trusted_labels_against_builtin(trusted_labels, errors):
+    """Only called when the config is absent. The built-in fallback honors
+    exactly rigor=standard and strategy=plan (BUILTIN_CFG) — there are no
+    tables to resolve anything else against. A --trusted-label is a
+    verified, attributable instruction like an --override; naming something
+    the built-in cannot honor is a deterministic error here too, not the
+    warn-and-fall-through treatment a merely UNVERIFIED label's mismatch
+    already gets (that path still applies via resolve_rigor/resolve_strategy
+    for any trusted label that TOLERATES the mismatch, i.e. every non-rigor/
+    non-strategy label, and for plain unverified labels)."""
+    for raw in trusted_labels:
+        parts = raw.split(":")
+        if parts[0] == "rigor" and len(parts) == 2 and parts[1] != BUILTIN_RIGOR:
+            errors.append({
+                "code": "invalid_override",
+                "detail": f"--trusted-label {raw!r} cannot be honored — .devflow.toml is absent, "
+                          f"so only rigor:{BUILTIN_RIGOR} (the built-in fallback) resolves",
+            })
+        elif parts[0] == "strategy" and len(parts) == 2 and parts[1] != BUILTIN_STRATEGY:
+            errors.append({
+                "code": "invalid_override",
+                "detail": f"--trusted-label {raw!r} cannot be honored — .devflow.toml is absent, "
+                          f"so only strategy:{BUILTIN_STRATEGY} (the built-in fallback) resolves",
+            })
+
+
 def _add_tier_candidate(tier_candidates, role, value, raw, warnings):
     if value in LADDER:
         tier_candidates[role].append(value)
@@ -153,7 +313,9 @@ def _add_tier_candidate(tier_candidates, role, value, raw, warnings):
 
 
 def parse_labels(raw_labels, warnings):
-    """Returns (rigor_labels, strategy_labels, tier_candidates).
+    """Returns (rigor_labels, strategy_labels, tier_candidates). Callers
+    pass namespace-filtered, trust-filtered labels in — every raw label here
+    is assumed to already be this resolver's business.
 
     tier_candidates is {role: [valid ladder values]} — an unqualified
     tier:<value> label folds into "implementer"; a scoped tier:<role>:
@@ -176,9 +338,13 @@ def parse_labels(raw_labels, warnings):
         elif parts[0] == "tier" and len(parts) == 3 and parts[1] in ROLES:
             _add_tier_candidate(tier_candidates, parts[1], parts[2], raw, warnings)
         else:
+            # Reachable only for a malformed shape WITHIN the devflow
+            # namespace (e.g. "tier:bogus:role:extra", "rigor:x:y") — a
+            # label outside rigor:/strategy:/tier: never reaches here at
+            # all (filter_to_devflow_namespace runs first).
             warnings.append({
                 "code": "unknown_label",
-                "detail": f"{raw!r} is not a recognized rigor:/strategy:/tier: label, ignored",
+                "detail": f"{raw!r} is not a recognized rigor:/strategy:/tier: label shape, ignored",
             })
     return rigor_labels, strategy_labels, tier_candidates
 
@@ -328,7 +494,7 @@ def check_incompatible(cfg, rigor_name, strategy_name, errors):
         return
     strategy_tbl = cfg["strategy"][strategy_name]
     min_agents = strategy_tbl.get("min_agents")
-    if min_agents is None:
+    if not isinstance(min_agents, int) or isinstance(min_agents, bool):
         return
     budget_name = cfg["rigor"][rigor_name]["budget"]
     budget = cfg["budget"][budget_name]
@@ -387,48 +553,52 @@ def main():
 
     warnings = []
     errors = []
-    trusted_set = set(args.trusted_labels)
 
     read_path = args.merge_base_config if args.merge_base_config else args.config
     config_source = "merge-base" if args.merge_base_config else "branch"
 
     cfg, digest = load_config(read_path)
-    if cfg is None:
-        emit({
-            "config_path": read_path,
-            "config_source": "absent",
-            "config_sha256": None,
-            "selections": {
-                "rigor": {"value": BUILTIN_RIGOR, "source": "builtin"},
-                "strategy": {"value": BUILTIN_STRATEGY, "source": "builtin"},
-            },
-            "review": {**BUILTIN_REVIEW, "policy": BUILTIN_RIGOR, "source": "builtin"},
-            "tiers": {role: {"value": None, "source": "builtin", "off_profile": False} for role in ROLES},
-            "budget": None,
-            "strategy_fields": None,
-            "disclosure": {"off_default": False, "off_profile": False, "same_family_reviewer": None},
-            "requires_confirmation": False,
-            "warnings": warnings + [{
-                "code": "config_absent",
-                "detail": f"{read_path} does not exist — resolved from the built-in fallback",
-            }],
-            "errors": errors,
-        }, errors)
-
-    required_tables = ("rigor", "strategy", "review", "budget")
-    missing = [t for t in required_tables if t not in cfg]
-    if missing or "default_rigor" not in cfg or "default_strategy" not in cfg:
-        detail_bits = missing + (["default_rigor"] if "default_rigor" not in cfg else []) + (
-            ["default_strategy"] if "default_strategy" not in cfg else [])
-        errors.append({
-            "code": "invalid_config",
-            "detail": f"{read_path}: missing required key(s)/table(s): {', '.join(detail_bits)}",
+    config_absent = cfg is None
+    if config_absent:
+        # Set once, here, rather than special-cased per emit() call below:
+        # every exit path from this point on — success or error — reports
+        # the config as absent and carries the same notice, not just the
+        # final happy-path output.
+        config_source = "absent"
+        warnings.append({
+            "code": "config_absent",
+            "detail": f"{read_path} does not exist — resolved from the built-in fallback",
         })
-        emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
-              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
+    if not config_absent:
+        required_tables = ("rigor", "strategy", "review", "budget")
+        missing = [t for t in required_tables if t not in cfg]
+        if missing or "default_rigor" not in cfg or "default_strategy" not in cfg:
+            detail_bits = missing + (["default_rigor"] if "default_rigor" not in cfg else []) + (
+                ["default_strategy"] if "default_strategy" not in cfg else [])
+            errors.append({
+                "code": "invalid_config",
+                "detail": f"{read_path}: missing required key(s)/table(s): {', '.join(detail_bits)}",
+            })
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+        if not validate_config_references(cfg, errors):
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+
+    resolution_cfg = BUILTIN_CFG if config_absent else cfg
+    trusted_labels = filter_to_devflow_namespace(args.trusted_labels)
+    trusted_set = set(trusted_labels)
+
+    if config_absent:
+        validate_trusted_labels_against_builtin(trusted_labels, errors)
+        if errors:
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+
+    devflow_labels = filter_to_devflow_namespace(args.labels)
     effective_labels = filter_labels_by_trust(
-        args.labels, args.trusted_labels, unattended=args.unattended, warnings=warnings)
+        devflow_labels, trusted_labels, unattended=args.unattended, warnings=warnings)
     rigor_labels, strategy_labels, tier_candidates = parse_labels(effective_labels, warnings)
     explicit_rigor, explicit_strategy, tier_override_unqualified, tier_override_scoped = parse_overrides(
         args.overrides, errors)
@@ -442,7 +612,9 @@ def main():
         emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
               "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
-    rigor_name, rigor_source = resolve_rigor(cfg, rigor_labels, explicit_rigor, warnings, errors)
+    rigor_name, rigor_source = resolve_rigor(resolution_cfg, rigor_labels, explicit_rigor, warnings, errors)
+    if config_absent and rigor_source == "default":
+        rigor_source = "builtin"
     if rigor_name is None:
         emit({
             "config_path": read_path, "config_source": config_source, "config_sha256": digest,
@@ -451,22 +623,31 @@ def main():
         }, errors)
 
     strategy_name, strategy_source = resolve_strategy(
-        cfg, strategy_labels, explicit_strategy, args.unattended, warnings, errors)
+        resolution_cfg, strategy_labels, explicit_strategy, args.unattended, warnings, errors)
+    if config_absent and strategy_source == "default":
+        strategy_source = "builtin"
 
-    check_incompatible(cfg, rigor_name, strategy_name, errors)
+    if config_absent:
+        review_policy_name = BUILTIN_RIGOR
+        review_tbl = BUILTIN_REVIEW
+        budget_name = None
+        budget_tbl = None
+        strategy_tbl = None
+        tiers = {role: {"value": None, "source": "builtin", "off_profile": False} for role in ROLES}
+    else:
+        check_incompatible(cfg, rigor_name, strategy_name, errors)
+        rigor_tbl = cfg["rigor"][rigor_name]
+        review_policy_name = rigor_tbl["review"]
+        review_tbl = cfg["review"][review_policy_name]
+        budget_name = rigor_tbl["budget"]
+        budget_tbl = cfg["budget"][budget_name]
+        strategy_tbl = cfg["strategy"][strategy_name] if strategy_name is not None else None
+        overrides_label = strongest_tier_per_role(tier_candidates)
+        overrides_explicit = merge_tier_overrides(tier_override_unqualified, tier_override_scoped)
+        tiers = resolve_tiers(rigor_tbl, overrides_label, overrides_explicit)
 
-    rigor_tbl = cfg["rigor"][rigor_name]
-    review_tbl = cfg["review"][rigor_tbl["review"]]
-    budget_name = rigor_tbl["budget"]
-    budget_tbl = cfg["budget"][budget_name]
-    strategy_tbl = cfg["strategy"][strategy_name] if strategy_name is not None else None
-
-    overrides_label = strongest_tier_per_role(tier_candidates)
-    overrides_explicit = merge_tier_overrides(tier_override_unqualified, tier_override_scoped)
-    tiers = resolve_tiers(rigor_tbl, overrides_label, overrides_explicit)
-
-    off_default = rigor_name != cfg.get("default_rigor") or (
-        strategy_name is not None and strategy_name != cfg.get("default_strategy"))
+    off_default = rigor_name != resolution_cfg.get("default_rigor") or (
+        strategy_name is not None and strategy_name != resolution_cfg.get("default_strategy"))
     off_profile = any(t["off_profile"] for t in tiers.values())
 
     # Interactive-only (ADR 0006 D6.2): an off-default/off-profile result is
@@ -475,12 +656,14 @@ def main():
     # confirmation when the label that produced it is not in --trusted-label.
     # Unattended automation never sets this: it already only acted on
     # trusted labels in the first place (D6.1), so there is nothing left
-    # here for a human to confirm synchronously.
+    # here for a human to confirm synchronously. Never true when the config
+    # is absent, either — the only value achievable is the built-in's own,
+    # which is by definition never off its own default.
     requires_confirmation = False
-    if not args.unattended:
-        if label_drove_untrusted_off_default(rigor_name, rigor_source, cfg, trusted_set):
+    if not args.unattended and not config_absent:
+        if label_drove_untrusted_off_default(rigor_name, rigor_source, resolution_cfg, trusted_set):
             requires_confirmation = True
-        if strategy_drove_untrusted_off_default(strategy_name, strategy_source, cfg, trusted_set):
+        if strategy_drove_untrusted_off_default(strategy_name, strategy_source, resolution_cfg, trusted_set):
             requires_confirmation = True
         if any(tier_drove_untrusted_off_profile(role, t, trusted_set) for role, t in tiers.items()):
             requires_confirmation = True
@@ -493,9 +676,9 @@ def main():
             "rigor": {"value": rigor_name, "source": rigor_source},
             "strategy": {"value": strategy_name, "source": strategy_source},
         },
-        "review": {**review_tbl, "policy": rigor_tbl["review"], "source": "profile"},
+        "review": {**review_tbl, "policy": review_policy_name, "source": "builtin" if config_absent else "profile"},
         "tiers": tiers,
-        "budget": {**budget_tbl, "name": budget_name, "source": "profile"},
+        "budget": None if budget_tbl is None else {**budget_tbl, "name": budget_name, "source": "profile"},
         "strategy_fields": strategy_tbl,
         "disclosure": {
             "off_default": off_default,

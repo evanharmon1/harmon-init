@@ -211,6 +211,22 @@ rejects("an invalid topology enum value", sub(
     '[strategy.oneshot]\ntopology    = "single-agent"',
     '[strategy.oneshot]\ntopology    = "some-made-up-topology"',
 ), "not in")
+
+# ── topology/delegation triangle (single-agent forbids required;
+# lead-and-workers requires required; delegation=none only with
+# single-agent) ──────────────────────────────────────────────────────────
+rejects("topology=single-agent with delegation=required", sub(
+    '[strategy.oneshot]\ntopology    = "single-agent"\nplanning    = "inline"\ndelegation  = "none"',
+    '[strategy.oneshot]\ntopology    = "single-agent"\nplanning    = "inline"\ndelegation  = "required"',
+), "forbids delegation=required")
+rejects("topology=lead-and-workers with delegation=optional", sub(
+    'topology     = "lead-and-workers"\nplanning     = "explicit"\ndelegation   = "required"',
+    'topology     = "lead-and-workers"\nplanning     = "explicit"\ndelegation   = "optional"',
+), "requires delegation=required")
+rejects("delegation=none with a non-single-agent topology", sub(
+    'topology    = "human-directed"\nplanning    = "collaborative"\ndelegation  = "optional"',
+    'topology    = "human-directed"\nplanning    = "collaborative"\ndelegation  = "none"',
+), "delegation=none is only valid with topology=single-agent")
 rejects("a constitutional gate in human_gates", sub(
     '[strategy.plan-approved]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = ["after-plan"]',
     '[strategy.plan-approved]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = ["after-plan", "merge"]',

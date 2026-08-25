@@ -54,14 +54,12 @@ than silently applied; see "Role tiers" and "Disclosure" below.
 
 ## Review policies: the challenge/review/shepherd ceilings
 
-| Policy | `challenge` | `review` | `shepherd` | `min_rounds` |
-| --- | --- | --- | --- | --- |
-| `none` | 0 | 0 | 0 | 0 |
-| `driveby` | 1 | 1 | 1 | 1 |
-| `light` | 2 | 2 | 3 | 1 |
-| `standard` | 3 | 3 | 4 | 1 |
-| `thorough` | 4 | 4 | 5 | 1 |
-| `deep` | 5 | 5 | 6 | 1 |
+Six review policies exist — `none`, `driveby`, `light`, `standard`,
+`thorough`, and `deep` — each setting `challenge`, `review`, `shepherd`, and
+`min_rounds` to its own values. The actual numbers live only in
+`.devflow.toml`'s `[review.*]` tables; per
+[docs/conventions.md](../conventions.md), that file is the single source of
+truth for them and this guide does not keep its own copy to go stale.
 
 `challenge`, `review`, and `shepherd` are **per-stage maximum** heuristic AI
 passes (Dev Loop stages, `AGENTS.md`). `min_rounds` is the **minimum** passes
@@ -71,8 +69,8 @@ exit (two consecutive adjudicated-clean rounds always exits regardless of
 satisfied first — see `AGENTS.md`, "Loop cap and exit", for the exit
 conditions themselves, which this file does not restate). Validation holds
 `0 <= min_rounds <= min(challenge, review, shepherd)` for every policy —
-`none` is not a special case, it is what that inequality gives you when every
-cap is 0.
+`none` is not a special case, it is what that inequality gives you when a
+policy legitimately sets every cap to its floor.
 
 These are **ceilings, never quotas**:
 
@@ -91,25 +89,26 @@ These are **ceilings, never quotas**:
   that stage; it never lowers a deterministic gate, and it never waives the
   obligation to adjudicate and record whatever did surface before the cap.
 
-**`shepherd` varies with the policy now** (1 through 6), instead of holding
-one number for every rigor level regardless of depth. The reason is what it
-bounds: `challenge` and `review` bound work the agent generates for itself —
-each round's fixes are the next round's input, which is exactly what makes a
-low, self-referential cap safe. `shepherd` bounds *other people's* findings —
-CI failures, human review comments, Codex cloud review — and a shallower
-rigor level legitimately expects to answer fewer of them before promoting.
+**`shepherd` varies with the policy now**, instead of holding one number for
+every rigor level regardless of depth. The reason is what it bounds:
+`challenge` and `review` bound work the agent generates for itself — each
+round's fixes are the next round's input, which is exactly what makes a low,
+self-referential cap safe. `shepherd` bounds *other people's* findings — CI
+failures, human review comments, Codex cloud review — and a shallower rigor
+level legitimately expects to answer fewer of them before promoting.
 Lowering `shepherd` does not reduce effort already spent; at the cap, the
-answer is "stop and escalate", not "silently drop the finding". At
-`shepherd = 0` (`trivial` rigor's `none` policy), escalating happens on the
-very first thing that would need an answer, because there is no fix round
-left to spend — and with no fix round, there is also no round left to
-trigger a fresh `@codex review` from, so the readiness gate's current-head
-Codex cycle requirement drops out too, exactly the way it already does
-wherever Codex review is off entirely. Nothing else about the readiness gate
-moves: CI still has to be green, and a review finding that lands anyway is
-answered by leaving the PR draft with a blocker report for a human, never by
-an agent fix round the cap does not allow — see `AGENTS.md`'s shepherd stage
-and readiness gate for the full mechanics.
+answer is "stop and escalate", not "silently drop the finding". Where a
+policy disables `shepherd` outright — `trivial` rigor's `none` policy, today
+— escalating happens on the very first thing that would need an answer,
+because there is no fix round left to spend — and with no fix round, there
+is also no round left to trigger a fresh `@codex review` from, so the
+readiness gate's current-head Codex cycle requirement drops out too, exactly
+the way it already does wherever Codex review is off entirely. Nothing else
+about the readiness gate moves: CI still has to be green, and a review
+finding that lands anyway is answered by leaving the PR draft with a
+blocker report for a human, never by an agent fix round the cap does not
+allow — see `AGENTS.md`'s shepherd stage and readiness gate for the full
+mechanics.
 
 AI challenge, review, and shepherd passes are **heuristic confidence and
 cost controls** — they are not, and cannot be, substitutes for deterministic
@@ -120,34 +119,32 @@ without an AI pass on top of them.
 
 ## Budgets: portable resource ceilings
 
-| Budget | `max_agent_runs` | `max_parallel_agents` | `wall_clock_min` | `allow_tier_escalation` |
-| --- | --- | --- | --- | --- |
-| `trivial` | 1 | 1 | 15 | false |
-| `light` | 3 | 2 | 45 | false |
-| `standard` | 6 | 3 | 120 | true |
-| `thorough` | 12 | 4 | 240 | true |
-| `deep` | 20 | 4 | 480 | true |
+Five budget envelopes exist — `trivial`, `light`, `standard`, `thorough`,
+and `deep` — each setting `max_agent_runs`, `max_parallel_agents`,
+`wall_clock_min`, and `allow_tier_escalation`. As with the review policies
+above, the actual figures live only in `.devflow.toml`'s `[budget.*]`
+tables; this guide names the envelopes and explains what each field means,
+not what any of them is currently set to.
 
 Only five envelopes back six rigor levels: `minimal` reuses `light`'s budget
 — its extra caution over `trivial` lives entirely in the review policy
 (`driveby` instead of `none`) and the role tiers (standard orchestrator and
-reviewer instead of economy), not in a separate budget number.
+reviewer instead of economy), not in a separate budget.
 
 `max_agent_runs` and `max_parallel_agents` bound **implementation and
 orchestration** agent invocations — the main session, plus any workers it
 delegates to or council proposers it starts. They do **not** count AI review
 passes: `challenge`, `review`, and `shepherd` are bounded separately, by the
 review policy above, and draw against nothing here. That separation is why
-`light`'s `max_agent_runs = 3` is not in tension with its own `light` review
-policy's `2/2/3` — the two sets of numbers count different things, one
-agents doing the work, the other heuristic passes checking it — and it is
-also why a strategy's `min_agents` compares cleanly against this budget (see
-"Strategy × rigor compatibility" below): both sides count the same kind of
-agent. `wall_clock_min` bounds elapsed time; `allow_tier_escalation`
-says whether a role may climb its tier's `escalate_to` chain (see "Role
-tiers" below) under this budget at all — `trivial` and `light` forbid it,
-because escalation is itself a cost decision and those two budgets are
-choosing not to make one automatically.
+a rigor level's budget is never in tension with its own review policy — the
+two sets of numbers count different things, one agents doing the work, the
+other heuristic passes checking it — and it is also why a strategy's `min_agents` compares
+cleanly against this budget (see "Strategy × rigor compatibility" below):
+both sides count the same kind of agent. `wall_clock_min` bounds elapsed
+time; `allow_tier_escalation` says whether a role may climb its tier's
+`escalate_to` chain (see "Role tiers" below) under this budget at all —
+`trivial` and `light` forbid it, because escalation is itself a cost
+decision and those two budgets are choosing not to make one automatically.
 
 The schema also permits optional `max_tokens` / `max_usd` keys, and **every
 shipped envelope above omits both**. This is deliberate: a consumer that
@@ -175,18 +172,27 @@ intersection is Foreman-side work, out of scope for this file.
 
 The fields, explained without leaning on their names:
 
-- **`topology`** — the structural arrangement of agents: one agent alone
-  (`single-agent`), one lead with workers it can assign to
-  (`lead-and-workers`), several agents each producing a proposal with nobody
-  in charge of the others (`independent-proposals`), or a human directing
-  bounded AI contributions (`human-directed`).
+- **`topology`** — the structural arrangement of agents. `single-agent` is
+  one **accountable lead** agent; it may spin up bounded helper subagents,
+  but only where `delegation` permits it (`optional`) — those helpers are
+  auxiliary, never first-class units of the topology itself.
+  `lead-and-workers` is the opposite: workers **are** first-class structural
+  units — the topology itself is a lead plus the workers it hands bounded
+  work to — which is why `delegation` is always `required` there.
+  `independent-proposals` (`council`'s topology) is several agents each
+  producing a proposal with nobody in charge of the others.
+  `human-directed` (`human-led`'s topology) is a human directing bounded AI
+  contributions.
 - **`planning`** — whether and how a plan is produced before work starts:
   folded into the first turn with no separate artifact (`inline`), a stated
   plan as its own step (`explicit`), each proposal planning on its own before
   anything is compared (`independent`, council only), or produced together
   with a human (`collaborative`, human-led only).
 - **`delegation`** — whether the lead may assign bounded work to other
-  agents (`optional`), must (`required`), or never does (`none`).
+  agents (`optional`), must (`required`), or never does (`none`). `required`
+  appears only on `lead-and-workers` — see `topology` above for why: a
+  mandatory hand-off only makes sense where the topology's shape already
+  includes someone to hand off to.
 - **`coordination`** — scheduling and independence policy among delegated
   agents. Only `orchestrate` sets it today: `parallel-when-independent` means
   workers whose slices of work do not depend on each other run concurrently
@@ -217,16 +223,21 @@ The fields, explained without leaning on their names:
   stricter gate — configuring a gate that already exists unconditionally
   would only create a second, weaker place for it to live.
 
-`plan` is `default_strategy`: a single agent that plans explicitly but
-proceeds without a human plan-approval gate, and may delegate if it chooses
-to. `oneshot` is the fastest path (no separate plan step) for small,
-well-understood changes; `plan-approved` adds exactly one human checkpoint
-(after the plan, before implementation) to the same single-agent shape;
-`orchestrate` and `council` are the two multi-agent topologies, differing in
-whether the lead assigns work top-down or several agents propose
-independently for a judge to compare; `human-led` is the only topology where
-a human — not an agent — holds the central decisions, with AI doing bounded
-pieces between the gates.
+`plan` is `default_strategy`: a single accountable lead that plans
+explicitly but proceeds without a human plan-approval gate, and may spin up
+a bounded helper subagent if it chooses to — `delegation = optional` on a
+`single-agent` topology means exactly that, not a second first-class agent.
+`oneshot` is the fastest path (no separate plan step, and `delegation =
+none` — not even a bounded helper) for small, well-understood changes;
+`plan-approved` adds exactly one human checkpoint (after the plan, before
+implementation) to the same single-agent-plus-optional-helper shape.
+`orchestrate` and `council` are the two topologies where workers are
+first-class structural units rather than optional helpers — a lead
+assigning work top-down, or several agents proposing independently for a
+judge to compare — and `delegation = required` appears on both of them and
+nowhere else, consistent with the rule above. `human-led` is the only
+topology where a human — not an agent — holds the central decisions, with
+AI doing bounded pieces between the gates.
 
 ## Role tiers: the model-stratum ladder
 
@@ -275,8 +286,8 @@ PR text, which is untrusted repository content)
   > rigor:*/strategy:* labels on the issue
     > default_rigor / default_strategy
       > the built-in fallback — used only when .devflow.toml is entirely
-        absent: the standard review policy (3/3/4, min_rounds 1), strategy
-        plan, tiers inert
+        absent: the `standard` review policy, strategy `plan`, tiers inert
+        (see .devflow.toml for the standard policy's actual numbers)
 ```
 
 Advanced overrides (`tier:<role>:<value>`, or an unqualified `tier:<value>`,
@@ -401,27 +412,22 @@ A strategy whose `min_agents` exceeds the resolved budget's
 `max_agent_runs` or `max_parallel_agents` is an **incompatibility**:
 resolution reports it and stops, and never silently substitutes a different
 topology or silently widens the budget. Two strategies set a floor at all —
-`council` and `orchestrate`, both `min_agents = 2` — and both compare against
-the same kind of number, since the budget's `max_agent_runs`/
-`max_parallel_agents` count implementation/orchestration agents exactly like
-`min_agents` does (see "Budgets" above). Every other shipped strategy
-(`oneshot`, `plan`, `plan-approved`, `human-led`) resolves under any rigor
-level, at any budget:
+`council` and `orchestrate` — and both compare against the same kind of
+number, since the budget's `max_agent_runs`/`max_parallel_agents` count
+implementation/orchestration agents exactly like `min_agents` does (see
+"Budgets" above). Every other shipped strategy (`oneshot`, `plan`,
+`plan-approved`, `human-led`) sets no floor at all, so it resolves under any
+rigor level, at any budget.
 
-| Rigor | Budget | `max_parallel_agents` | `council` / `orchestrate` (need 2) |
-| --- | --- | --- | --- |
-| `trivial` | `trivial` | 1 | ✗ incompatible |
-| `minimal` | `light` | 2 | ✓ |
-| `light` | `light` | 2 | ✓ |
-| `standard` | `standard` | 3 | ✓ |
-| `thorough` | `thorough` | 4 | ✓ |
-| `deep` | `deep` | 4 | ✓ |
-
-`council` under `trivial` and `orchestrate` under `trivial` are the two
-documented incompatibilities in the shipped configuration — both fail for
-the same reason, `trivial`'s `max_parallel_agents = 1` being below either
-strategy's floor of 2. Every other strategy×rigor pairing — 34 of the 36
-combinations — resolves cleanly.
+`trivial` is the one rigor level whose budget caps parallel agents below
+what `council` and `orchestrate` both need to exist as their own topology;
+every other shipped budget's ceiling is at or above that floor. `council`
+under `trivial` and `orchestrate` under `trivial` are therefore the two
+documented incompatibilities in the shipped configuration, and both fail for
+the same reason. Every other strategy×rigor pairing resolves cleanly — see
+`.devflow.toml`'s `[budget.*]` and `[strategy.*]` tables for the figures
+behind that comparison, if you need the exact numbers rather than the shape
+of the rule.
 
 ## Ownership boundaries
 
@@ -466,18 +472,17 @@ applied as labels. An operator's instruction always outranks a label (see
 needs to map it onto a concrete, resolved profile. Six worked examples:
 
 **"Use light rigor and council strategy."**
-Rigor `light` (review policy `light`: challenge ≤2, review ≤2, shepherd 3,
-min_rounds 1; tiers frontier/economy/frontier; budget `light`: 3 runs / 2
-parallel / 45 min / no escalation) + strategy `council` (independent
-proposals, judge selection, synthesis, min_agents 2). Compatible: council's
-`min_agents` (2) is at `light`'s `max_parallel_agents` ceiling (2) exactly —
-resolves, does not exceed it.
+Rigor `light` (review policy `light`; tiers frontier/economy/frontier;
+budget `light`) + strategy `council` (independent proposals, judge
+selection, synthesis). Compatible: `light`'s budget covers `council`'s
+floor on parallel agents — see `.devflow.toml` for the exact figures behind
+that.
 
 **"Deep rigor, plan-approved."**
-Rigor `deep` (review policy `deep`: challenge ≤5, review ≤5, shepherd 6,
-min_rounds 1; tiers apex/frontier/apex; budget `deep`: 20 runs / 4 parallel /
-480 min / escalation allowed) + strategy `plan-approved` (single agent,
-explicit plan, one human gate after the plan, before implementation begins).
+Rigor `deep` (review policy `deep`; tiers apex/frontier/apex; budget
+`deep`, with tier escalation allowed) + strategy `plan-approved` (single
+accountable lead, explicit plan, one human gate after the plan, before
+implementation begins).
 
 **"Use council, but cap both role tiers at economy."**
 Strategy `council` explicit; rigor unstated → `default_rigor` (`standard`).
@@ -485,43 +490,41 @@ Council's two roles that actually do the work are the independent proposers
 (implementer) and the judge (reviewer) — there is no lead role to delegate
 through in a pure council — so "both role tiers" reads as
 `tier:implementer:economy` + `tier:reviewer:economy`, leaving orchestrator at
-standard's built-in `frontier`. Resolved: rigor `standard` (review policy
-`standard`: 3/3/4/1; budget `standard`) with tiers
-orchestrator/implementer/reviewer = frontier/**economy**/**economy** —
-*both* overrides are off-profile against `standard`'s built-in
-frontier/standard/frontier and are disclosed in the PR body. Council still
-resolves: `standard`'s budget allows 3 parallel agents, above council's
-floor of 2.
+standard's built-in tier. Resolved: rigor `standard` (review policy
+`standard`; budget `standard`) with the implementer and reviewer tiers both
+overridden to `economy` — *both* are off-profile against `standard`'s
+built-in tiers and are disclosed in the PR body. Council still resolves:
+`standard`'s budget comfortably covers its floor.
 
 **"Orchestrate these in parallel with light rigor."**
 Rigor `light` (as above) + strategy `orchestrate` (lead-and-workers,
-explicit plan, delegation required, `min_agents` 2). "In parallel" names
-`orchestrate`'s own `coordination = parallel-when-independent` field
-directly — it does not require a separate override, because that is what
-`orchestrate` already does for independent slices of work. Compatible for
-the same reason `council` was in the first example: `orchestrate`'s
-`min_agents` (2) is at `light`'s `max_parallel_agents` ceiling (2) exactly.
-The same request under `trivial` rigor would be reported as an
-incompatibility instead — `trivial`'s budget allows only 1 parallel agent,
-below the floor a lead-and-workers topology needs to be one.
+explicit plan, delegation required). "In parallel" names `orchestrate`'s
+own `coordination = parallel-when-independent` field directly — it does not
+require a separate override, because that is what `orchestrate` already
+does for independent slices of work. Compatible for the same reason
+`council` was in the first example: `light`'s budget covers `orchestrate`'s
+floor too. The same request under `trivial` rigor would be reported as an
+incompatibility instead — `trivial`'s budget does not allow enough parallel
+agents for a lead-and-workers topology to exist at all.
 
 **"Take a deep one-shot at this, then stop."**
-Rigor `deep` (as above) + strategy `oneshot` (single agent, inline planning,
-no delegation). "Then stop" describes `oneshot`'s inherent shape — a single
-pass, not a loop — rather than requesting a configurable `human_gates` entry;
-`oneshot` already ships with none.
+Rigor `deep` (as above) + strategy `oneshot` (single accountable lead,
+inline planning, no delegation — not even a bounded helper subagent). "Then
+stop" describes `oneshot`'s inherent shape — a single pass, not a loop —
+rather than requesting a configurable `human_gates` entry; `oneshot`
+already ships with none.
 
 **"Use standard rigor with an economy implementer and a reviewer from a
 different family."**
 Rigor `standard` explicit; strategy unstated → `default_strategy` (`plan`).
 `tier:implementer:economy` overrides the implementer only (off-profile
-against standard's built-in `standard` implementer tier — disclosed);
-orchestrator and reviewer stay at standard's built-in `frontier`. "A reviewer
-from a different family" states the plain preference, not a hard
-requirement (no "must"/"require"), so it confirms the **default**
-family-diversity policy above rather than elevating it — prefer a
-different-family reviewer at the resolved `reviewer_tier`, same-family only
-with disclosure if none is configured.
+against standard's built-in implementer tier — disclosed); orchestrator and
+reviewer stay at standard's built-in tier. "A reviewer from a different
+family" states the plain preference, not a hard requirement (no
+"must"/"require"), so it confirms the **default** family-diversity policy
+above rather than elevating it — prefer a different-family reviewer at the
+resolved `reviewer_tier`, same-family only with disclosure if none is
+configured.
 
 ## Related documentation
 

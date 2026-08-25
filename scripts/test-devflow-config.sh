@@ -446,6 +446,28 @@ for path in config_paths:
         if delegation not in DELEGATION_ENUM:
             failures.append(f"{path}: [strategy.{name}].delegation={delegation!r} not in {sorted(DELEGATION_ENUM)}")
 
+        # topology constrains delegation, not the other way round — the
+        # triangle documented beside [strategy.*] above: single-agent (one
+        # ACCOUNTABLE lead, helpers only when delegation permits) forbids
+        # `required`; lead-and-workers (workers are first-class) requires
+        # it; `none` describes only single-agent, since every other
+        # topology inherently involves more than the one accountable party.
+        if topology == "single-agent" and delegation == "required":
+            failures.append(
+                f"{path}: [strategy.{name}] topology=single-agent forbids delegation=required "
+                "— an accountable lead cannot be MANDATED to delegate away its own work"
+            )
+        if topology == "lead-and-workers" and delegation != "required":
+            failures.append(
+                f"{path}: [strategy.{name}] topology=lead-and-workers requires delegation=required "
+                f"(got {delegation!r}) — workers are first-class units, not optional help"
+            )
+        if delegation == "none" and topology != "single-agent":
+            failures.append(
+                f"{path}: [strategy.{name}] delegation=none is only valid with topology=single-agent "
+                f"(got topology={topology!r})"
+            )
+
         if "coordination" in tbl and tbl["coordination"] not in COORDINATION_ENUM:
             failures.append(
                 f"{path}: [strategy.{name}].coordination={tbl['coordination']!r} "
@@ -887,6 +909,90 @@ check("an absent config resolves from the built-in fallback",
       and out["review"]["challenge"] == 3 and out["review"]["review"] == 3
       and out["review"]["shepherd"] == 4 and out["review"]["min_rounds"] == 1)
 
+
+def run_absent(*args):
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", "/nonexistent/path/.devflow.toml", *args],
+        capture_output=True, text=True,
+    )
+    return result.returncode, json.loads(result.stdout)
+
+
+# absent config: an override/trusted-label/label are still parsed and
+# applied over the built-in fallback, not short-circuited past.
+code, out = run_absent("--override", "rigor=standard")
+check("absent config + an override the built-in CAN honor resolves normally",
+      code == 0 and out["selections"]["rigor"] == {"value": "standard", "source": "explicit"})
+
+code, out = run_absent("--override", "rigor=deep")
+check("absent config + an override the built-in CANNOT honor is a deterministic error",
+      code == 1 and any(e["code"] == "invalid_override" for e in out["errors"]))
+
+code, out = run_absent("--label", "rigor:deep", "--trusted-label", "rigor:deep")
+check("absent config + a TRUSTED label the built-in cannot honor is also a deterministic error",
+      code == 1 and any(e["code"] == "invalid_override" for e in out["errors"]))
+
+code, out = run_absent("--label", "rigor:deep")
+check("absent config + a plain (untrusted) label naming the same thing just warns and falls back",
+      code == 0 and out["selections"]["rigor"] == {"value": "standard", "source": "builtin"}
+      and any(w["code"] == "unknown_label" for w in out["warnings"]))
+
+# a present config whose cross-references dangle must fail cleanly
+# (invalid_config), never traceback.
+DEVFLOW_TOML_TEXT = open(config).read()
+
+
+def run_malformed(description, old, new, expect_substring):
+    with tempfile.TemporaryDirectory() as tmp:
+        bad_path = os.path.join(tmp, "bad.toml")
+        assert old in DEVFLOW_TOML_TEXT, f"anchor text not found for {description!r}"
+        open(bad_path, "w").write(DEVFLOW_TOML_TEXT.replace(old, new))
+        result = subprocess.run(
+            [sys.executable, resolver, "--config", bad_path],
+            capture_output=True, text=True,
+        )
+        try:
+            out = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            failures.append(f"{description}: not JSON — a traceback? stdout={result.stdout!r} stderr={result.stderr!r}")
+            return
+        ok = (
+            result.returncode == 1
+            and any(e["code"] == "invalid_config" and expect_substring in e["detail"] for e in out["errors"])
+        )
+        check(description, ok)
+
+
+run_malformed(
+    "default_rigor naming nothing -> invalid_config, not a traceback",
+    'default_rigor    = "standard"', 'default_rigor    = "bogus-does-not-exist"',
+    "names no [rigor.*] level",
+)
+run_malformed(
+    "a rigor naming a missing review policy -> invalid_config, not a traceback",
+    'review             = "none"', 'review             = "nonexistent-review-policy"',
+    "names no [review.*] policy",
+)
+run_malformed(
+    "a rigor_order entry with no matching table -> invalid_config, not a traceback",
+    '"thorough", "deep"]', '"thorough", "nonexistent-level"]',
+    "names no [rigor.*] level",
+)
+run_malformed(
+    "a rigor naming a missing budget profile -> invalid_config, not a traceback",
+    'budget             = "trivial"', 'budget             = "nonexistent-budget-profile"',
+    "names no [budget.*] profile",
+)
+
+# labels outside rigor:/strategy:/tier: are silently irrelevant — no warning
+# of any kind, in either mode.
+code, out = run("--label", "bug", "--label", "area:ci")
+check("plain non-devflow labels produce zero warnings (interactive)",
+      code == 0 and out["warnings"] == [])
+code, out = run("--label", "bug", "--label", "area:ci", "--unattended")
+check("... and zero warnings under --unattended too (no untrusted_label_ignored either)",
+      code == 0 and out["warnings"] == [])
+
 if failures:
     print()
     for line in failures:
@@ -894,6 +1000,8 @@ if failures:
     sys.exit(1)
 print("devflow-resolve.py case table OK: rigor/strategy conflicts, incompatibility, tier "
       "overrides (order-independent strongest-wins), trust (--trusted-label / --unattended / "
-      "requires_confirmation), explicit-vs-label, merge-base, and absent-config all resolve "
-      "as documented")
+      "requires_confirmation), explicit-vs-label, merge-base, absent-config (still honoring "
+      "overrides/trusted-labels over the built-in floor), dangling-reference configs "
+      "(invalid_config, never a traceback), and the rigor:/strategy:/tier: namespace filter "
+      "all resolve as documented")
 PY

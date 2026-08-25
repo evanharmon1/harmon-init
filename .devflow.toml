@@ -273,14 +273,35 @@ allow_tier_escalation = true
 
 # ── Strategies — how the work is organized and performed ───────────────────
 #
-# topology: the structural arrangement of agents (single-agent,
-#   lead-and-workers, independent-proposals, or human-directed).
+# topology: the structural arrangement of agents — precisely, not just by
+#   name:
+#     single-agent        one ACCOUNTABLE lead that may use bounded helper
+#                          subagents ONLY when delegation permits it
+#                          (delegation = "optional"); the helpers are not
+#                          first-class units of the topology, just the one
+#                          lead's own implementation detail.
+#     lead-and-workers     workers ARE first-class units the lead's plan
+#                          depends on, not an implementation detail — so
+#                          delegation is REQUIRED, never merely available.
+#     independent-proposals   council: >= 2 proposers work independently
+#                          before a judged comparison (see selection/
+#                          synthesis/min_agents below).
+#     human-directed       human-led: the human is the accountable party: a
+#                          topology in its own right, not a variant of
+#                          single-agent with a human standing in as the lead.
 # planning: whether/how a plan is produced before work starts (inline =
 #   folded into the first turn, explicit = a stated plan, independent = each
 #   proposal plans on its own before comparison, collaborative = produced
 #   together with the human).
 # delegation: whether the lead may (optional) or must (required) assign
-#   bounded work to other agents, or never does (none).
+#   bounded work to other agents, or never does (none). Constrained by
+#   topology, not independently free: single-agent forbids `required` (an
+#   accountable lead cannot be MANDATED to delegate away its own work — that
+#   would make it lead-and-workers under a different name); lead-and-workers
+#   requires `required` (workers are first-class, not optional help);
+#   `none` is legal ONLY under single-agent (every other topology inherently
+#   involves more than the one accountable party, so "no delegation at all"
+#   cannot describe it). The validator enforces this triangle.
 # coordination: scheduling/independence policy among delegated agents (only
 #   `orchestrate` sets it today: parallel-when-independent).
 # selection / synthesis: council-only. `selection = "judge"` compares
