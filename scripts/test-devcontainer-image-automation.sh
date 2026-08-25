@@ -35,6 +35,30 @@ if HARMON_MANIFEST_DIR="$manifest_dir" \
 fi
 pass
 
+# The IaC producer contract puts only standalone Terraform tooling in the
+# shared image. Ansible's project-owned Python environment and on-demand Checkov
+# scans must not become transitive shared-image dependencies.
+producer_dockerfile="images/devcontainer/Dockerfile"
+for tool in terraform tflint; do
+    grep -q "ARG $(printf '%s' "$tool" | tr '[:lower:]' '[:upper:]')_VERSION=" "$producer_dockerfile" ||
+        fail "shared image does not pin ${tool}"
+    grep -q "\"${tool}=\${$(printf '%s' "$tool" | tr '[:lower:]' '[:upper:]')_VERSION}\"" "$producer_dockerfile" ||
+        fail "shared image does not record ${tool} in its manifest"
+    grep -q "run_version ${tool} ${tool}" images/devcontainer/smoke.sh ||
+        fail "shared image smoke test does not execute ${tool}"
+done
+grep -q -- '--status-fd 1 --verify' "$producer_dockerfile" ||
+    fail "Terraform checksum verification does not expose the signer identity"
+grep -q '\$NF == "C874011F0AB405110D02105534365D9472D7468F"' "$producer_dockerfile" ||
+    fail "Terraform checksum verification does not require HashiCorp's pinned primary fingerprint"
+grep -q 'terraform_gnupg_home="$(mktemp -d)"' "$producer_dockerfile" ||
+    fail "Terraform verification does not fail if its temporary GPG home cannot be created"
+if grep -Ev '^[[:space:]]*#' "$producer_dockerfile" |
+    grep -Eqi '(^|[^[:alnum:]_-])(ansible|checkov)([^[:alnum:]_-]|$)'; then
+    fail "shared image adds project-local Ansible or on-demand Checkov"
+fi
+pass
+
 # Pure reference formatting rejects floating/malformed inputs.
 want="ghcr.io/evanharmon1/harmon-devcontainer:sha-${sha_a}@${digest_a}"
 got="$(scripts/publish-devcontainer-image.sh reference "$sha_a" "$digest_a")"
