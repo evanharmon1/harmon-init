@@ -214,6 +214,20 @@
       }
     },
     {
+      "name": "unattended-trusted-strategy-conflict-defaults-with-warning",
+      "basis": "branch",
+      "labels": ["strategy:plan", "strategy:orchestrate"],
+      "trusted_labels": ["strategy:plan", "strategy:orchestrate"],
+      "unattended": true,
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "strategy": { "value": "plan", "source": "default" } }
+        },
+        "warning_diagnostics": [{ "code": "ambiguous_strategy", "subject": "strategy" }]
+      }
+    },
+    {
       "name": "concrete-tier-beats-adaptive",
       "basis": "branch",
       "labels": ["tier:adaptive", "tier:economy"],
@@ -268,6 +282,26 @@
               "source": "label"
             }
           }
+        }
+      }
+    },
+    {
+      "name": "explicit-tier-override-beats-tier-label",
+      "basis": "branch",
+      "labels": ["tier:apex"],
+      "overrides": ["tier=economy"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "requested": "economy",
+              "source": "explicit"
+            }
+          },
+          "requires_confirmation": false,
+          "disclosure": { "off_profile": true }
         }
       }
     },

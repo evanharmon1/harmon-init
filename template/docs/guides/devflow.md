@@ -29,10 +29,12 @@ The shipped `.devflow.toml` declares `schema_version = 1`. A consumer that
 supports v1 must reject a missing, non-integer, or unsupported version; it
 must never guess a compatible interpretation. The declarative structural
 surface is [`.devflow.schema.json`](../../.devflow.schema.json), while
-`scripts/test-devflow-config.sh` is the authoritative executable validator
-for TOML parsing, cross-references to the label and agent registries, and the
-v1 value matrix. `additionalProperties: false` at the top level is deliberate:
-an unknown top-level key is a compatibility error, not an extension point.
+[Harmon Init's upstream validator](https://github.com/evanharmon1/harmon-init/blob/main/scripts/test-devflow-config.sh)
+is the authoritative executable validator for TOML parsing, cross-references
+to the label and agent registries, and the v1 value matrix. Consumers that
+need that executable gate must vendor it; it is not generated into every
+project. `additionalProperties: false` at the top level is deliberate: an
+unknown top-level key is a compatibility error, not an extension point.
 
 The one migration exception is a branch that introduces `schema_version = 1`
 while its merge-base has the preceding unversioned file. The resolver reads
