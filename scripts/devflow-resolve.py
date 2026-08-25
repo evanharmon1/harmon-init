@@ -209,6 +209,7 @@ import math
 import os
 import sys
 import tomllib
+from pathlib import Path
 
 LADDER = ("local", "economy", "standard", "frontier", "apex")
 LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
@@ -219,6 +220,113 @@ TOP_LEVEL_KEYS = {
 }
 
 _JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
+
+
+def _schema_type_matches(value, expected):
+    """Implement the small, portable JSON Schema subset used by v1."""
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return True
+
+
+def _schema_violations(value, schema, root, path="$"):
+    """Return structural v1-schema violations as stable path/message pairs.
+
+    v1 uses only the keywords implemented here. Reject an unsupported schema
+    reference rather than silently validating less than the contract says.
+    """
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        prefix = "#/$defs/"
+        if not isinstance(ref, str) or not ref.startswith(prefix):
+            return [(path, f"unsupported schema reference {ref!r}")]
+        target = root.get("$defs", {}).get(ref[len(prefix):])
+        if not isinstance(target, dict):
+            return [(path, f"unresolved schema reference {ref!r}")]
+        return _schema_violations(value, target, root, path)
+
+    violations = []
+    expected_type = schema.get("type")
+    if isinstance(expected_type, str) and not _schema_type_matches(value, expected_type):
+        return [(path, f"must be a {expected_type}")]
+    if "const" in schema and value != schema["const"]:
+        violations.append((path, f"must equal {schema['const']!r}"))
+    if "enum" in schema and value not in schema["enum"]:
+        violations.append((path, f"must be one of {schema['enum']!r}"))
+
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        for key in required:
+            if key not in value:
+                violations.append((path, f"is missing required property {key!r}"))
+        additional = schema.get("additionalProperties", True)
+        for key, item in value.items():
+            item_schema = properties.get(key)
+            if item_schema is None:
+                if additional is False:
+                    violations.append((f"{path}.{key}", "is not allowed"))
+                elif isinstance(additional, dict):
+                    violations.extend(_schema_violations(item, additional, root, f"{path}.{key}"))
+            elif isinstance(item_schema, dict):
+                violations.extend(_schema_violations(item, item_schema, root, f"{path}.{key}"))
+    elif isinstance(value, list):
+        items = schema.get("items")
+        if isinstance(items, dict):
+            for index, item in enumerate(value):
+                violations.extend(_schema_violations(item, items, root, f"{path}[{index}]"))
+        if schema.get("uniqueItems"):
+            encoded = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value]
+            if len(encoded) != len(set(encoded)):
+                violations.append((path, "must have unique items"))
+
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            violations.append((path, f"must have length >= {schema['minLength']}"))
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            violations.append((path, f"must have length <= {schema['maxLength']}"))
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            violations.append((path, f"must be >= {schema['minimum']}"))
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            violations.append((path, f"must be > {schema['exclusiveMinimum']}"))
+    return violations
+
+
+def validate_schema_v1_shape(cfg, errors, *, allow_legacy_merge_base=False):
+    """Validate a present config against the checked-in v1 schema.
+
+    The unversioned merge-base compatibility basis still has to satisfy every
+    v1 requirement except its absent schema_version.
+    """
+    schema_path = Path(__file__).resolve().parents[1] / ".devflow.schema.json"
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append({
+            "code": "invalid_config",
+            "detail": f"cannot load v1 structural schema {schema_path}: {exc}",
+        })
+        return False
+    violations = _schema_violations(cfg, schema, schema)
+    if allow_legacy_merge_base:
+        violations = [
+            violation for violation in violations
+            if violation != ("$", "is missing required property 'schema_version'")
+        ]
+    for path, detail in violations:
+        errors.append({"code": "invalid_config", "detail": f"schema v1 {path} {detail}"})
+    return not violations
 
 
 def json_safe(value):
@@ -1086,6 +1194,10 @@ def main():
                   "requires_confirmation": False, "preflight_required": False,
               "warnings": warnings, "errors": errors}, errors)
         if not validate_config_references(cfg, errors, allow_legacy_merge_base=legacy_merge_base):
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
+        if not validate_schema_v1_shape(cfg, errors, allow_legacy_merge_base=legacy_merge_base):
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
                   "requires_confirmation": False, "preflight_required": False,
               "warnings": warnings, "errors": errors}, errors)

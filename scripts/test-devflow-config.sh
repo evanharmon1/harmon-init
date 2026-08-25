@@ -1252,9 +1252,25 @@ with tempfile.TemporaryDirectory() as tmp:
         capture_output=True, text=True,
     )
     out = json.loads(result.stdout)
-    check("a schema-v1 config missing [tier.*] is invalid to the resolver",
+check("a schema-v1 config missing [tier.*] is invalid to the resolver",
+      result.returncode == 1
+      and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
+
+# Required nested fields are part of the same v1 structural contract. A
+# missing cap must not make a resolver silently emit a policy that a consumer
+# can mistake for a zero/default cap.
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial-review.toml")
+    open(partial_path, "w").write(open(config).read().replace("challenge  = 3\n", "", 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 config missing a required review cap is invalid to the resolver",
           result.returncode == 1
-          and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
+          and any(e["code"] == "invalid_config" and "review.standard" in e["detail"]
+                  and "challenge" in e["detail"] for e in out["errors"]))
 
 # absent config -> builtin (--config-unchanged: the branch's OWN copy is
 # the one that's absent, not a merge-base extraction)
