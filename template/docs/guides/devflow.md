@@ -45,12 +45,13 @@ implementer paired with a strong reviewer is a deliberate, common shape —
 inconsistency to "fix".
 
 Two invariants hold for every level above: `orchestrator_tier >=
-implementer_tier` and `reviewer_tier >= implementer_tier`, on the tier ladder
-below. These are minima, not maxima — a role may cost *more* than its floor,
-never less, without disclosure. An explicit, attributable operator override
-may violate either invariant (spend less on a role than the level implies),
-but doing so is recorded and disclosed as an **off-profile** decision rather
-than silently applied; see "Role tiers" and "Disclosure" below.
+implementer_tier` and `reviewer_tier >= implementer_tier`, on the tier
+ladder below — a floor relationship between roles, not a ceiling on any one
+role's own tier. An explicit, attributable operator override may set a
+role's tier to anything on the ladder, whether that ends up above or below
+what the resolved level's built-in profile specifies for that role; either
+direction is recorded and disclosed as an **off-profile** decision, never
+silently applied; see "Role tiers" and "Disclosure" below.
 
 ## Review policies: the challenge/review/shepherd ceilings
 
@@ -173,26 +174,30 @@ intersection is Foreman-side work, out of scope for this file.
 The fields, explained without leaning on their names:
 
 - **`topology`** — the structural arrangement of agents. `single-agent` is
-  one **accountable lead** agent; it may spin up bounded helper subagents,
-  but only where `delegation` permits it (`optional`) — those helpers are
-  auxiliary, never first-class units of the topology itself.
-  `lead-and-workers` is the opposite: workers **are** first-class structural
-  units — the topology itself is a lead plus the workers it hands bounded
-  work to — which is why `delegation` is always `required` there.
-  `independent-proposals` (`council`'s topology) is several agents each
-  producing a proposal with nobody in charge of the others.
-  `human-directed` (`human-led`'s topology) is a human directing bounded AI
-  contributions.
+  one **accountable lead** agent; it may hand a bounded unit of work to a
+  helper subagent, but only where `delegation` permits it (`optional`) —
+  that helper is auxiliary, never a first-class unit of the topology
+  itself. `lead-and-workers` makes the delegate first-class: the lead plans
+  the task, decomposes it, and hands bounded pieces of that plan to the
+  workers it delegates to. `independent-proposals` (`council`'s topology)
+  also makes the delegate first-class, but delegates a different kind of
+  unit: a coordinating agent hands each proposer the *whole problem*,
+  planning nothing about how the proposer gets there (`planning =
+  independent`, below) — no proposer is in charge of, or aware of, the
+  others — and later judges what comes back. `human-directed`
+  (`human-led`'s topology) is a human directing bounded AI contributions.
 - **`planning`** — whether and how a plan is produced before work starts:
   folded into the first turn with no separate artifact (`inline`), a stated
   plan as its own step (`explicit`), each proposal planning on its own before
   anything is compared (`independent`, council only), or produced together
   with a human (`collaborative`, human-led only).
-- **`delegation`** — whether the lead may assign bounded work to other
-  agents (`optional`), must (`required`), or never does (`none`). `required`
-  appears only on `lead-and-workers` — see `topology` above for why: a
-  mandatory hand-off only makes sense where the topology's shape already
-  includes someone to hand off to.
+- **`delegation`** — whether a coordinating agent hands a bounded unit of
+  work to other agents: never (`none`), may (`optional`), must (`required`).
+  `required` appears on both `lead-and-workers` and `independent-proposals`
+  — a decomposed sub-task in one, a whole independent proposal in the other
+  — because neither topology's shape exists without that hand-off; it
+  appears on neither `single-agent` (where any helper is optional) nor
+  `human-directed` (where a human, not an agent, coordinates).
 - **`coordination`** — scheduling and independence policy among delegated
   agents. Only `orchestrate` sets it today: `parallel-when-independent` means
   workers whose slices of work do not depend on each other run concurrently
@@ -361,13 +366,19 @@ fact:
   from `default_rigor`/`default_strategy`, in *either* direction. Above
   default spends more than the repository's baseline; below default spends
   less oversight — both are worth a human seeing, for opposite reasons.
-- **Off-profile role tier** — an explicit override put a role's tier below
-  what its resolved rigor level's built-in profile specifies (violating
+- **Off-profile role tier** — an explicit override sets a role's tier to
+  anything other than what its resolved rigor level's built-in profile
+  specifies for that role, in *either* direction. Raising a tier spends more
+  than the resolved rigor implies; lowering one spends less oversight —
+  parallel to off-default resolution above, both are worth a human seeing,
+  for opposite reasons. Lowering can additionally violate
   `orchestrator_tier >= implementer_tier` or `reviewer_tier >=
-  implementer_tier` for that role). This can happen even when the rigor
-  itself is exactly at default — "standard rigor with an economy
-  implementer" (see the natural-language examples below) is on-default rigor
-  and off-profile tier at the same time.
+  implementer_tier`, but the disclosure obligation does not depend on
+  whether it does — a raise that stays within those invariants is just as
+  much an off-profile deviation as a lowering that breaks them. This can
+  happen even when the rigor itself is exactly at default — "standard rigor
+  with an economy implementer" (see the natural-language examples below) is
+  on-default rigor and off-profile tier at the same time.
 
 Unattended automation carries a further obligation beyond disclosure: it acts
 on a `rigor:*`/`strategy:*`/`tier:*` label only after verifying that label's

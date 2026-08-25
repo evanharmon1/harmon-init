@@ -28,15 +28,29 @@ business — anything else (a plain `bug`, an `area:ci`) is filtered out
 before either the trust filter or the label parser ever see it, silently:
 it was never a devflow input, so it produces no warning of any kind.
 
-Malformed input never produces a raw traceback: a config file that parses as
-TOML but whose cross-references dangle (an unknown default_rigor, a rigor
-level naming a missing review/budget, a rigor_order entry with no matching
-table, and so on) is validated BEFORE anything is dereferenced, and reported
-as one normalized invalid_config error like any other bad input. This is a
-crash-safety net, not a restatement of scripts/test-devflow-config.sh's
-exhaustive static validation (enums, cross-registry checks, description
-equality) — that script is the authority on whether a config is well-formed;
-this resolver only needs enough checking to fail cleanly on one that isn't.
+Malformed input never produces a raw traceback. A config file that EXISTS but
+cannot be read, decoded as UTF-8, or parsed as TOML at all reports
+invalid_config, the same as one that parses fine but whose cross-references
+dangle (an unknown default_rigor, a rigor level naming a missing
+review/budget, a rigor_order entry with no matching table, and so on) —
+validated BEFORE anything is dereferenced. This is a crash-safety net, not a
+restatement of scripts/test-devflow-config.sh's exhaustive static validation
+(enums, cross-registry checks, description equality) — that script is the
+authority on whether a config is well-formed; this resolver only needs
+enough checking to fail cleanly on one that isn't.
+
+A config path that does not exist on disk is handled two different ways
+depending on WHICH input named it, because the two cases carry different
+risk. --config naming a missing path is ordinary and common (a repo that
+has never adopted rigor/strategy at all) and resolves from the built-in
+fallback, as documented above. --merge-base-config naming a missing path is
+NOT treated the same way: it is far more likely a caller/extraction bug
+(a failed `git show <sha>:.devflow.toml`, a wrong path) than genuine
+absence, so it is a hard invalid_input error instead. Genuine merge-base
+absence still exists as a real case — this PR might be the one introducing
+.devflow.toml — but it must be asserted explicitly, with
+--merge-base-config-absent, never inferred from a path just not being
+there.
 
 This is a ROOT-ONLY reference implementation, not the versioned,
 cross-consumer conformance contract — that is harmon-init#1048
@@ -47,7 +61,7 @@ starting point rather than re-deriving the algorithm from prose each time.
 
 Usage:
     devflow-resolve.py --config .devflow.toml \\
-        [--merge-base-config PATH] \\
+        [--merge-base-config PATH | --merge-base-config-absent] \\
         [--label rigor:deep] [--label strategy:council] \\
         [--label tier:economy] [--label tier:implementer:economy] \\
         [--trusted-label rigor:deep] \\
@@ -65,7 +79,15 @@ Inputs, precisely:
   --merge-base-config PATH  when given, THIS is the copy actually read —
                              the merge-base rule (AGENTS.md, "When the
                              change under review edits .devflow.toml...").
-                             --config is still recorded, unread.
+                             --config is still recorded, unread. The path
+                             MUST exist — naming one that does not is an
+                             invalid_input error, not a fallback to the
+                             built-in (see the module docstring above).
+  --merge-base-config-absent  asserts that the merge-base commit genuinely
+                             has no .devflow.toml — resolves from the
+                             built-in fallback, exactly like an absent
+                             --config would. Mutually exclusive with
+                             --merge-base-config.
   --label FAMILY:VALUE      a rigor:*/strategy:*/tier:* label present on the
                              issue or PR, repeatable — UNVERIFIED provenance.
                              Anything outside those three namespaces is
@@ -148,13 +170,28 @@ BUILTIN_CFG = {
 }
 
 
+class ConfigReadError(Exception):
+    """Raised by load_config() when the path EXISTS but cannot be read,
+    decoded as UTF-8, or parsed as TOML. Kept distinct from the (None, None)
+    "genuinely absent" return so a caller can tell "there is no file" apart
+    from "there is a file and it is broken" — the latter is never silently
+    treated as the built-in fallback."""
+
+
 def load_config(path):
-    """Returns (cfg, sha256_hex) or (None, None) if path does not exist."""
+    """Returns (cfg, sha256_hex) or (None, None) if path does not exist.
+    Raises ConfigReadError — never lets OSError/UnicodeDecodeError/
+    tomllib.TOMLDecodeError escape as a raw traceback — if the path exists
+    but cannot be read, decoded, or parsed."""
     if not os.path.isfile(path):
         return None, None
-    with open(path, "rb") as fh:
-        raw = fh.read()
-    return tomllib.loads(raw.decode("utf-8")), hashlib.sha256(raw).hexdigest()
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        cfg = tomllib.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigReadError(f"{path}: {exc}") from exc
+    return cfg, hashlib.sha256(raw).hexdigest()
 
 
 def validate_config_references(cfg, errors):
@@ -545,6 +582,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
     ap.add_argument("--merge-base-config")
+    ap.add_argument("--merge-base-config-absent", action="store_true")
     ap.add_argument("--label", action="append", default=[], dest="labels")
     ap.add_argument("--trusted-label", action="append", default=[], dest="trusted_labels")
     ap.add_argument("--override", action="append", default=[], dest="overrides")
@@ -554,21 +592,71 @@ def main():
     warnings = []
     errors = []
 
-    read_path = args.merge_base_config if args.merge_base_config else args.config
-    config_source = "merge-base" if args.merge_base_config else "branch"
+    if args.merge_base_config and args.merge_base_config_absent:
+        errors.append({
+            "code": "invalid_input",
+            "detail": "--merge-base-config and --merge-base-config-absent are mutually exclusive",
+        })
+        emit({"config_path": None, "config_source": None, "config_sha256": None,
+              "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
-    cfg, digest = load_config(read_path)
+    if args.merge_base_config_absent:
+        # The caller has explicitly CONFIRMED the merge-base commit has no
+        # .devflow.toml — a real, valid state (e.g. this PR is the one
+        # introducing the file). Distinct from merge_base_config naming a
+        # path that just doesn't exist on disk, handled below: that is far
+        # more likely a caller/extraction bug (git show <sha>:path failed,
+        # wrong path, ...) than genuine absence, so it errors instead of
+        # being silently treated the same as this confirmed case.
+        read_path = None
+        config_source = "absent"
+    elif args.merge_base_config:
+        read_path = args.merge_base_config
+        config_source = "merge-base"
+        if not os.path.isfile(read_path):
+            errors.append({
+                "code": "invalid_input",
+                "detail": (
+                    f"--merge-base-config {read_path!r} does not exist — this looks like a "
+                    "caller/extraction error (e.g. `git show <merge-base>:.devflow.toml` failed "
+                    "or wrote nowhere), not a signal that the merge-base has no .devflow.toml; "
+                    "pass --merge-base-config-absent instead if it genuinely does not"
+                ),
+            })
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": None,
+                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+    else:
+        read_path = args.config
+        config_source = "branch"
+
+    if read_path is None:
+        cfg, digest = None, None
+    else:
+        try:
+            cfg, digest = load_config(read_path)
+        except ConfigReadError as exc:
+            errors.append({"code": "invalid_config", "detail": str(exc)})
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": None,
+                  "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
+
     config_absent = cfg is None
     if config_absent:
         # Set once, here, rather than special-cased per emit() call below:
         # every exit path from this point on — success or error — reports
         # the config as absent and carries the same notice, not just the
-        # final happy-path output.
+        # final happy-path output. read_path is None specifically for the
+        # --merge-base-config-absent case (an explicit confirmation, not a
+        # path that failed to resolve) — worded differently since "None
+        # does not exist" would be a confusing thing to print.
         config_source = "absent"
-        warnings.append({
-            "code": "config_absent",
-            "detail": f"{read_path} does not exist — resolved from the built-in fallback",
-        })
+        if read_path is None:
+            detail = (
+                "merge-base .devflow.toml confirmed absent via --merge-base-config-absent "
+                "— resolved from the built-in fallback"
+            )
+        else:
+            detail = f"{read_path} does not exist — resolved from the built-in fallback"
+        warnings.append({"code": "config_absent", "detail": detail})
 
     if not config_absent:
         required_tables = ("rigor", "strategy", "review", "budget")

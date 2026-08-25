@@ -347,9 +347,11 @@ it names. Absent an override, every role tier comes from the resolved rigor
 level alone. Two labels naming the same role resolve strongest-wins on the
 tier ladder, and a concrete tier always beats `adaptive`. Built-in rigor
 levels keep `orchestrator_tier >= implementer_tier` and `reviewer_tier >=
-implementer_tier`; an explicit, attributable override may spend less on a
-role than that, but doing so is an **off-profile** decision, recorded and
-disclosed rather than silently applied.
+implementer_tier`, a floor relationship between roles rather than a ceiling
+on any one of them; an explicit, attributable override may set any role's
+tier above or below what the resolved level's built-in profile gives it,
+and either direction is an **off-profile** decision, recorded and disclosed
+rather than silently applied.
 
 **When the change under review edits `.devflow.toml` itself**, resolve
 *every* parameter — every rigor level, review policy, budget envelope,

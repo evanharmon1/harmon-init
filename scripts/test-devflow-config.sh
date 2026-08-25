@@ -153,16 +153,21 @@ def local_harness_families(agent_registry_path):
     return fams
 
 
-def harness_role_coverage(agent_registry_path):
-    # role -> whether >=1 harness declares it.
+def registry_harnesses(agent_registry_path):
     with open(agent_registry_path, "rb") as fh:
         reg = json.load(fh)
-    covered = {"orchestrate": False, "implement": False, "review": False}
-    for harness in reg.get("harnesses", []):
-        for role in harness.get("roles", []):
-            if role in covered:
-                covered[role] = True
-    return covered
+    return reg.get("harnesses", [])
+
+
+# agent-registry.json's roles vocabulary (verb forms) vs .devflow.toml's
+# role-tier field names (noun forms) — kept as two vocabularies on purpose
+# (each file's natural spelling), so the coverage check below needs the map
+# between them.
+ROLE_TIER_TO_HARNESS_ROLE = {
+    "orchestrator_tier": "orchestrate",
+    "implementer_tier": "implement",
+    "reviewer_tier": "review",
+}
 
 
 registries_by_config = {
@@ -249,6 +254,58 @@ for path in config_paths:
         if extra_o:
             detail.append(f"names unknown level(s) {extra_o}")
         failures.append(f"{path}: rigor_order is not a permutation of [rigor.*] — {'; '.join(detail)}")
+    else:
+        # rigor_order is a confirmed-valid permutation — being "a
+        # permutation" only says the SET is right; it says nothing about
+        # whether the ORDER actually climbs. "Strongest label wins" is only
+        # a safe conflict rule if strength is monotonic in everything a
+        # rigor level composes: for every CONSECUTIVE pair (weaker,
+        # stronger), review caps, each role tier (ladder rank), and budget
+        # fields must never decrease — allow_tier_escalation may only turn
+        # ON — moving up the list. A dip anywhere would mean the "strongest"
+        # label doesn't actually buy strictly more of everything, which is
+        # the entire premise the conflict rule (and the announcement line)
+        # relies on.
+        for weaker, stronger in zip(rigor_order, rigor_order[1:]):
+            w_tbl, s_tbl = levels.get(weaker), levels.get(stronger)
+            if not isinstance(w_tbl, dict) or not isinstance(s_tbl, dict):
+                continue  # reported elsewhere ([rigor.*] is not a table)
+
+            w_review = reviews.get(w_tbl.get("review"))
+            s_review = reviews.get(s_tbl.get("review"))
+            if isinstance(w_review, dict) and isinstance(s_review, dict):
+                for stage in STAGE_KEYS:
+                    wv, sv = w_review.get(stage), s_review.get(stage)
+                    if isinstance(wv, int) and isinstance(sv, int) and sv < wv:
+                        failures.append(
+                            f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
+                            f"review.{stage} drops {wv} -> {sv}"
+                        )
+
+            for role in ("orchestrator_tier", "implementer_tier", "reviewer_tier"):
+                wv, sv = w_tbl.get(role), s_tbl.get(role)
+                if wv in LADDER_RANK and sv in LADDER_RANK and LADDER_RANK[sv] < LADDER_RANK[wv]:
+                    failures.append(
+                        f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
+                        f"{role} drops {wv!r} -> {sv!r}"
+                    )
+
+            w_budget = budgets.get(w_tbl.get("budget"))
+            s_budget = budgets.get(s_tbl.get("budget"))
+            if isinstance(w_budget, dict) and isinstance(s_budget, dict):
+                for field in ("max_agent_runs", "max_parallel_agents", "wall_clock_min"):
+                    wv, sv = w_budget.get(field), s_budget.get(field)
+                    if isinstance(wv, int) and isinstance(sv, int) and sv < wv:
+                        failures.append(
+                            f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
+                            f"budget.{field} drops {wv} -> {sv}"
+                        )
+                wv, sv = w_budget.get("allow_tier_escalation"), s_budget.get("allow_tier_escalation")
+                if wv is True and sv is False:
+                    failures.append(
+                        f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
+                        "budget.allow_tier_escalation turns off (true -> false)"
+                    )
 
     label_registry_path, agent_registry_path = registries_by_config[path]
     rigor_family = family_values(label_registry_path, "rigor")
@@ -449,18 +506,25 @@ for path in config_paths:
         # topology constrains delegation, not the other way round — the
         # triangle documented beside [strategy.*] above: single-agent (one
         # ACCOUNTABLE lead, helpers only when delegation permits) forbids
-        # `required`; lead-and-workers (workers are first-class) requires
-        # it; `none` describes only single-agent, since every other
-        # topology inherently involves more than the one accountable party.
+        # `required`; lead-and-workers AND independent-proposals both
+        # require it — a lead-and-workers lead delegates to first-class
+        # workers, and an independent-proposals coordinator equally
+        # delegates each proposal as a first-class unit before judging (no
+        # one plans FOR the proposers; "the lead" is just spelled
+        # "coordinator" there) — `none` describes only single-agent, since
+        # every other topology inherently involves more than the one
+        # accountable party.
+        DELEGATION_REQUIRED_TOPOLOGIES = {"lead-and-workers", "independent-proposals"}
         if topology == "single-agent" and delegation == "required":
             failures.append(
                 f"{path}: [strategy.{name}] topology=single-agent forbids delegation=required "
                 "— an accountable lead cannot be MANDATED to delegate away its own work"
             )
-        if topology == "lead-and-workers" and delegation != "required":
+        if topology in DELEGATION_REQUIRED_TOPOLOGIES and delegation != "required":
             failures.append(
-                f"{path}: [strategy.{name}] topology=lead-and-workers requires delegation=required "
-                f"(got {delegation!r}) — workers are first-class units, not optional help"
+                f"{path}: [strategy.{name}] topology={topology!r} requires delegation=required "
+                f"(got {delegation!r}) — {topology} always delegates to first-class units, "
+                "worker or proposer alike"
             )
         if delegation == "none" and topology != "single-agent":
             failures.append(
@@ -644,14 +708,42 @@ for path in config_paths:
                         f"in {agent_registry_path} (ADR 0006 D2 — local is opt-in per family)"
                     )
 
-    # ── agent-registry role coverage ────────────────────────────────────
-    coverage = harness_role_coverage(agent_registry_path)
-    for role, has_any in coverage.items():
-        if not has_any:
-            failures.append(
-                f"{path}: no harness in {agent_registry_path} declares the {role!r} role — "
-                "resolution could never staff that role"
+    # ── agent-registry harness coverage ─────────────────────────────────
+    # Not just "some harness declares this role at all" — for EVERY shipped
+    # rigor level and EVERY role, at least one harness declaring that role
+    # must be able to reach a model AT THE TIER that role needs: a broker
+    # harness (family_constraint.kind == "broker") qualifies whenever ANY
+    # family has a model at that tier; a fixed-family harness
+    # (kind == "fixed") qualifies only when its OWN family does.
+    harnesses = registry_harnesses(agent_registry_path)
+    tier_families = {
+        tname: {k for k in ttbl if k not in RESERVED_TIER_KEYS}
+        for tname, ttbl in (tiers.items() if isinstance(tiers, dict) else [])
+        if isinstance(ttbl, dict)
+    }
+    for rname, rtbl in sorted(levels.items()):
+        if not isinstance(rtbl, dict):
+            continue
+        for role_field, harness_role in ROLE_TIER_TO_HARNESS_ROLE.items():
+            tname = rtbl.get(role_field)
+            families = tier_families.get(tname)
+            if families is None:
+                continue  # a dangling/missing tier table is reported elsewhere
+            served = any(
+                harness_role in h.get("roles", [])
+                and (
+                    (h.get("family_constraint", {}).get("kind") == "broker" and bool(families))
+                    or h.get("family_constraint", {}).get("family") in families
+                )
+                for h in harnesses
             )
+            if not served:
+                failures.append(
+                    f"{path}: [rigor.{rname}].{role_field}={tname!r} — no harness in "
+                    f"{agent_registry_path} declaring the {harness_role!r} role can reach a "
+                    f"{tname!r}-tier model (families with a {tname!r}-tier model: "
+                    f"{sorted(families) or 'none'})"
+                )
 
 # ── AGENTS.md / template twin: the built-in fallback sentence ───────────────
 # Exactly one match per file, of exactly this shape, and the captured numbers
@@ -993,6 +1085,55 @@ code, out = run("--label", "bug", "--label", "area:ci", "--unattended")
 check("... and zero warnings under --unattended too (no untrusted_label_ignored either)",
       code == 0 and out["warnings"] == [])
 
+# --merge-base-config naming a path that does not exist is a caller/
+# extraction ERROR, never a silent fallback to the built-in — genuine
+# merge-base absence must be asserted explicitly.
+result = subprocess.run(
+    [sys.executable, resolver, "--config", config,
+     "--merge-base-config", "/nonexistent/path/mb.toml"],
+    capture_output=True, text=True,
+)
+out = json.loads(result.stdout)
+check("--merge-base-config naming a nonexistent path is a deterministic error",
+      result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
+
+result = subprocess.run(
+    [sys.executable, resolver, "--config", config, "--merge-base-config-absent"],
+    capture_output=True, text=True,
+)
+out = json.loads(result.stdout)
+check("--merge-base-config-absent explicitly confirms genuine absence and resolves cleanly",
+      result.returncode == 0
+      and out["config_source"] == "absent"
+      and out["selections"]["rigor"] == {"value": "standard", "source": "builtin"}
+      and not any(e["code"] == "invalid_input" for e in out["errors"]))
+
+result = subprocess.run(
+    [sys.executable, resolver, "--config", config,
+     "--merge-base-config", config, "--merge-base-config-absent"],
+    capture_output=True, text=True,
+)
+out = json.loads(result.stdout)
+check("--merge-base-config and --merge-base-config-absent together is rejected",
+      result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
+
+# a present config that cannot even be parsed as TOML -> invalid_config, not
+# a traceback.
+with tempfile.TemporaryDirectory() as tmp:
+    garbage_path = os.path.join(tmp, "garbage.toml")
+    open(garbage_path, "w").write("this is [not valid toml at all {{{\n")
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", garbage_path],
+        capture_output=True, text=True,
+    )
+    try:
+        out = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        failures.append(f"garbage TOML: stdout was not JSON — a traceback? {result.stdout!r} {result.stderr!r}")
+    else:
+        check("a present config that fails to parse as TOML -> invalid_config, not a traceback",
+              result.returncode == 1 and any(e["code"] == "invalid_config" for e in out["errors"]))
+
 if failures:
     print()
     for line in failures:
@@ -1000,8 +1141,9 @@ if failures:
     sys.exit(1)
 print("devflow-resolve.py case table OK: rigor/strategy conflicts, incompatibility, tier "
       "overrides (order-independent strongest-wins), trust (--trusted-label / --unattended / "
-      "requires_confirmation), explicit-vs-label, merge-base, absent-config (still honoring "
-      "overrides/trusted-labels over the built-in floor), dangling-reference configs "
-      "(invalid_config, never a traceback), and the rigor:/strategy:/tier: namespace filter "
-      "all resolve as documented")
+      "requires_confirmation), explicit-vs-label, merge-base (a missing --merge-base-config "
+      "path errors; genuine absence needs --merge-base-config-absent), absent-config (still "
+      "honoring overrides/trusted-labels over the built-in floor), dangling-reference and "
+      "unparseable configs (invalid_config, never a traceback), and the rigor:/strategy:/tier: "
+      "namespace filter all resolve as documented")
 PY

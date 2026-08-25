@@ -283,9 +283,18 @@ allow_tier_escalation = true
 #     lead-and-workers     workers ARE first-class units the lead's plan
 #                          depends on, not an implementation detail — so
 #                          delegation is REQUIRED, never merely available.
-#     independent-proposals   council: >= 2 proposers work independently
-#                          before a judged comparison (see selection/
-#                          synthesis/min_agents below).
+#     independent-proposals   council: a coordinator DELEGATES each proposal
+#                          as its own first-class unit of work, >= 2
+#                          proposers execute independently, then the
+#                          coordinator judges (see selection/synthesis/
+#                          min_agents below). Nobody plans FOR the
+#                          proposers — each plans its own proposal
+#                          (planning = "independent") — but dispatching the
+#                          work is still delegation in the ordinary sense;
+#                          "coordinator" is this topology's name for the
+#                          delegating party, exactly as "lead" is
+#                          lead-and-workers' name for it. delegation =
+#                          "required" needs no special-casing here.
 #     human-directed       human-led: the human is the accountable party: a
 #                          topology in its own right, not a variant of
 #                          single-agent with a human standing in as the lead.
@@ -298,7 +307,8 @@ allow_tier_escalation = true
 #   topology, not independently free: single-agent forbids `required` (an
 #   accountable lead cannot be MANDATED to delegate away its own work — that
 #   would make it lead-and-workers under a different name); lead-and-workers
-#   requires `required` (workers are first-class, not optional help);
+#   AND independent-proposals both require `required` (workers, and
+#   proposals alike, are first-class dispatched units, not optional help);
 #   `none` is legal ONLY under single-agent (every other topology inherently
 #   involves more than the one accountable party, so "no delegation at all"
 #   cannot describe it). The validator enforces this triangle.

@@ -153,6 +153,10 @@ rejects("rigor_order missing a level", sub(
     'rigor_order = ["trivial", "minimal", "light", "standard", "thorough", "deep"]',
     'rigor_order = ["trivial", "minimal", "light", "standard", "thorough"]',
 ), "is not a permutation of [rigor.*]")
+rejects("rigor_order not monotonic (light and standard swapped)", sub(
+    'rigor_order = ["trivial", "minimal", "light", "standard", "thorough", "deep"]',
+    'rigor_order = ["trivial", "minimal", "standard", "light", "thorough", "deep"]',
+), "is not monotonic")
 
 # ── [rigor.*] ────────────────────────────────────────────────────────────
 rejects("a role tier of adaptive", sub(
@@ -222,6 +226,10 @@ rejects("topology=single-agent with delegation=required", sub(
 rejects("topology=lead-and-workers with delegation=optional", sub(
     'topology     = "lead-and-workers"\nplanning     = "explicit"\ndelegation   = "required"',
     'topology     = "lead-and-workers"\nplanning     = "explicit"\ndelegation   = "optional"',
+), "requires delegation=required")
+rejects("topology=independent-proposals (council) with delegation=optional", sub(
+    'topology    = "independent-proposals"\nplanning    = "independent"\ndelegation  = "required"',
+    'topology    = "independent-proposals"\nplanning    = "independent"\ndelegation  = "optional"',
 ), "requires delegation=required")
 rejects("delegation=none with a non-single-agent topology", sub(
     'topology    = "human-directed"\nplanning    = "collaborative"\ndelegation  = "optional"',
@@ -355,6 +363,23 @@ def strip_role(role):
 def drop_review_role(tmp):
     edit_registry(tmp, strip_role("review"))
 rejects("no harness left declaring the review role", drop_review_role, "no harness in")
+
+
+def strip_review_from_apex_capable_harnesses(tmp):
+    # "apex-capable" = a broker (any family) or a fixed-family harness whose
+    # family has an apex-tier model (claude, gpt) — everything else was
+    # never going to serve reviewer_tier="apex" anyway, so leaving those
+    # untouched isolates the mutation to exactly the harnesses that matter.
+    def fn(reg):
+        for h in reg.get("harnesses", []):
+            constraint = h.get("family_constraint", {})
+            apex_capable = constraint.get("kind") == "broker" or constraint.get("family") in ("claude", "gpt")
+            if apex_capable and "roles" in h:
+                h["roles"] = [r for r in h["roles"] if r != "review"]
+    edit_registry(tmp, fn)
+rejects("every apex-capable harness loses the review role -> no reviewer can serve apex",
+        strip_review_from_apex_capable_harnesses,
+        "declaring the 'review' role can reach a 'apex'-tier model")
 
 if failures:
     print()
