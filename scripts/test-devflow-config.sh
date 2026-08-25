@@ -314,6 +314,30 @@ for path in config_paths:
                             f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
                             f"budget.{field} drops {wv} -> {sv}"
                         )
+                # max_tokens/max_usd are OPTIONAL — absent means UNENFORCED
+                # ([budget.*]'s own preamble: a consumer that cannot measure
+                # tokens/spend must report the limit as unenforced, not
+                # zero), which is the LARGEST possible ceiling, not the
+                # smallest. Comparing with absent treated as +infinity keeps
+                # that reading consistent: a weaker level with no cap and a
+                # stronger level that adds a finite one IS a decrease (the
+                # ceiling shrank from unlimited to something finite), while a
+                # weaker level with a cap and a stronger level with none is
+                # fine (the ceiling only grew). A present-but-non-numeric
+                # value is also treated as +infinity here — the field's own
+                # type check (below) already reports that separately; this
+                # loop only needs to avoid a bad comparison, not re-report it.
+                for field in ("max_tokens", "max_usd"):
+                    raw_w, raw_s = w_budget.get(field), s_budget.get(field)
+                    wv = raw_w if isinstance(raw_w, (int, float)) and not isinstance(raw_w, bool) else float("inf")
+                    sv = raw_s if isinstance(raw_s, (int, float)) and not isinstance(raw_s, bool) else float("inf")
+                    if sv < wv:
+                        w_disp = "absent (unenforced)" if wv == float("inf") else wv
+                        s_disp = "absent (unenforced)" if sv == float("inf") else sv
+                        failures.append(
+                            f"{path}: rigor_order {weaker!r} -> {stronger!r} is not monotonic — "
+                            f"budget.{field} drops {w_disp} -> {s_disp}"
+                        )
                 wv, sv = w_budget.get("allow_tier_escalation"), s_budget.get("allow_tier_escalation")
                 if wv is True and sv is False:
                     failures.append(

@@ -296,8 +296,10 @@ gate and adjudication obligation elsewhere is unaffected. For any stage whose
 cap is 1 or more, two cases exit faster still than the two-consecutive rule.
 A round with **no
 findings at all** ends the stage on the spot **once the level's `min_rounds`
-floor is met** (`0 <= min_rounds <= cap`; the built-in fallback uses 1 where
-a level does not set it) — an empty round is exactly
+floor is met** (`0 <= min_rounds <= cap`; the built-in fallback of 1 applies
+only when `.devflow.toml` is entirely absent — a *present* config's review
+policy omitting `min_rounds` is a validation error, never a silent default)
+— an empty round is exactly
 the older "clean re-run" exit, so neither a trivial change nor a clean
 post-fix re-run pays for a confirmation pass, and the floor only delays
 that one shortcut. The other two exits need no separate floor check: two

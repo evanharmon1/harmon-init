@@ -223,6 +223,31 @@ rejects("a zero max_agent_runs", sub(
     '[budget.trivial]\nmax_agent_runs        = 1', '[budget.trivial]\nmax_agent_runs        = 0',
 ), "must be an integer > 0")
 
+
+def add_shrinking_max_tokens(tmp):
+    # max_tokens is absent from every shipped envelope (unenforced, i.e. the
+    # largest possible ceiling) — this mutation ADDS it to two adjacent
+    # rigor_order levels rather than lowering an existing value, since there
+    # is no existing value to lower. light gets a finite cap where it
+    # previously had none; standard (the next-stronger level) gets a LOWER
+    # finite cap — a decrease either way you read it: light's absent->1000
+    # is not itself the violation (absent is treated as +infinity, so
+    # "adding" a cap only ever narrows from infinity), but 1000 -> 500 one
+    # step later in rigor_order is a plain numeric drop.
+    edit_toml(tmp, lambda t: t.replace(
+        '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2\n'
+        'wall_clock_min        = 45\nallow_tier_escalation = false',
+        '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2\n'
+        'wall_clock_min        = 45\nallow_tier_escalation = false\nmax_tokens            = 1000',
+    ).replace(
+        '[budget.standard]\nmax_agent_runs        = 6\nmax_parallel_agents   = 3\n'
+        'wall_clock_min        = 120\nallow_tier_escalation = true',
+        '[budget.standard]\nmax_agent_runs        = 6\nmax_parallel_agents   = 3\n'
+        'wall_clock_min        = 120\nallow_tier_escalation = true\nmax_tokens            = 500',
+    ))
+rejects("optional budget.max_tokens not monotonic (light=1000 then standard=500)",
+        add_shrinking_max_tokens, "budget.max_tokens drops 1000 -> 500")
+
 # ── [strategy.*] ─────────────────────────────────────────────────────────
 rejects("council with min_agents lowered to 1", sub(
     'selection   = "judge"\nsynthesis   = true\nmin_agents  = 2',

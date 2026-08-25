@@ -266,13 +266,20 @@ AI doing bounded pieces between the gates.
 ## Role tiers: the model-stratum ladder
 
 The tier ladder is `local → economy → standard → frontier → apex`.
-`adaptive` is an **input-only** value — a `tier:adaptive` label or
-`tier=adaptive` override tells the resolver to run a cheap preflight
+`adaptive` is an **input-only** value, and a **label-only** one: an
+unqualified `tier:adaptive` label (which, like any unqualified tier label,
+targets the implementer role) tells the resolver to run a cheap preflight
 classification of the work and use whatever concrete rung that returns,
-rather than naming one directly. It is never a legal value for a
-`[rigor.*]` role tier in `.devflow.toml`, and it never appears as a
-*resolved* role tier either: a role always ends up on a concrete rung, one
-way or another.
+rather than naming one directly. An explicit **override** cannot request
+it — `tier=adaptive`, or a scoped `tier.<role>=adaptive`, is rejected
+outright, because an override is the explicit, attributable instruction
+channel, and "defer this to a preflight classifier" is not itself a
+concrete instruction; an operator who wants adaptive resolution applies the
+label instead. A **scoped** `tier:<role>:adaptive` label is not provisioned
+either — only the unqualified form reaches the preflight path. `adaptive`
+is never a legal value for a `[rigor.*]` role tier in `.devflow.toml`, and
+it never appears as a *resolved* role tier either: a role always ends up on
+a concrete rung, one way or another.
 
 **A caller that has already run its own preflight supplies the concrete
 tier alongside the `adaptive` input**, and the resolver uses it directly.
