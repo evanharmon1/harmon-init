@@ -369,18 +369,33 @@ for path in config_paths:
         if extra_k:
             failures.append(f"{path}: [rigor.{name}] has unknown key(s) {sorted(extra_k)}")
 
+        # Type-checked as a scalar string BEFORE dict-membership tests
+        # (`x not in reviews`/`x not in budgets`) — `reviews`/`budgets` are
+        # dicts, whose membership test requires a hashable LHS, and TOML
+        # happily parses e.g. `review = ["none"]` as a valid (if wrong)
+        # list value. An unhashable value there would otherwise raise a raw
+        # TypeError instead of the FAIL this validator exists to produce.
         review_ref = tbl.get("review")
-        if review_ref not in reviews:
+        if not isinstance(review_ref, str):
+            failures.append(f"{path}: [rigor.{name}].review must be a string (got {review_ref!r})")
+        elif review_ref not in reviews:
             failures.append(f"{path}: [rigor.{name}].review={review_ref!r} names no [review.*] policy")
 
         budget_ref = tbl.get("budget")
-        if budget_ref not in budgets:
+        if not isinstance(budget_ref, str):
+            failures.append(f"{path}: [rigor.{name}].budget must be a string (got {budget_ref!r})")
+        elif budget_ref not in budgets:
             failures.append(f"{path}: [rigor.{name}].budget={budget_ref!r} names no [budget.*] profile")
 
         role_tiers = {}
         for role in ("orchestrator_tier", "implementer_tier", "reviewer_tier"):
             value = tbl.get(role)
-            if value not in LADDER:
+            # `value not in LADDER` alone would never raise (tuple
+            # membership just compares, unlike dict membership above), but
+            # the isinstance check still gives a more specific message.
+            if not isinstance(value, str):
+                failures.append(f"{path}: [rigor.{name}].{role} must be a string (got {value!r})")
+            elif value not in LADDER:
                 failures.append(
                     f"{path}: [rigor.{name}].{role}={value!r} is not a concrete ladder tier "
                     f"({', '.join(LADDER)}) — never `adaptive`"
@@ -443,12 +458,20 @@ for path in config_paths:
             failures.append(f"{path}: review.{name}.min_rounds={min_rounds!r} is not an integer")
         elif min_rounds < 0:
             failures.append(f"{path}: review.{name}.min_rounds={min_rounds} must be >= 0")
-        elif len(stage_values) == len(STAGE_KEYS):
-            ceiling = min(stage_values.values())
+        elif "challenge" in stage_values and "review" in stage_values:
+            # Scoped to challenge/review ONLY — shepherd is externally
+            # driven (CI results, human review, Codex), not something the
+            # agent paces itself, so it cannot manufacture a round the way
+            # a self-generated challenge/review pass can, and never bounds
+            # min_rounds. A policy where both challenge and review are
+            # capped at 0 (`none`) requires min_rounds=0 right along with
+            # them, regardless of what shepherd's own cap is.
+            ceiling = min(stage_values["challenge"], stage_values["review"])
             if min_rounds > ceiling:
                 failures.append(
                     f"{path}: review.{name}.min_rounds={min_rounds} exceeds "
-                    f"min(challenge, review, shepherd)={ceiling} for this policy"
+                    f"min(challenge, review)={ceiling} for this policy — shepherd is externally "
+                    "driven and does not bound min_rounds"
                 )
 
     # shepherd is EXPECTED to vary by policy now (ADR 0007 D4) — no
@@ -593,6 +616,20 @@ for path in config_paths:
                 )
 
     # ── strategy × rigor compatibility matrix ───────────────────────────
+    # min_agents COUNTS DIFFERENTLY per topology (comment beside
+    # [strategy.*] above), so the budget it needs does too:
+    #   independent-proposals (council): min_agents counts PROPOSERS only —
+    #     the coordinator that judges them afterward is one MORE run but
+    #     does not need a concurrent slot (it runs after the proposers
+    #     finish). Needs max_agent_runs >= min_agents + 1 and
+    #     max_parallel_agents >= min_agents.
+    #   lead-and-workers (orchestrate): min_agents counts the lead PLUS its
+    #     workers. The lead does not consume a parallel slot of its own —
+    #     only the workers run concurrently. Needs max_agent_runs >=
+    #     min_agents and max_parallel_agents >= min_agents - 1.
+    #   anything else: no topology-specific formula is defined, so fall
+    #     back to the conservative same-value check.
+    #
     # Every (strategy, rigor) pair is evaluated below, even one whose
     # strategy carries no min_agents at all (has_min_agents=False forces
     # incompatible=False rather than skipping the pair outright) — a
@@ -603,6 +640,15 @@ for path in config_paths:
     for sname, stbl in strategies.items():
         min_agents = stbl.get("min_agents") if isinstance(stbl, dict) else None
         has_min_agents = isinstance(min_agents, int) and not isinstance(min_agents, bool)
+        topology = stbl.get("topology") if isinstance(stbl, dict) else None
+        required_runs = required_parallel = None
+        if has_min_agents:
+            if topology == "independent-proposals":
+                required_runs, required_parallel = min_agents + 1, min_agents
+            elif topology == "lead-and-workers":
+                required_runs, required_parallel = min_agents, min_agents - 1
+            else:
+                required_runs = required_parallel = min_agents
         for rname, rtbl in levels.items():
             if not isinstance(rtbl, dict):
                 continue
@@ -613,15 +659,16 @@ for path in config_paths:
             runs = budget_tbl.get("max_agent_runs")
             parallel = budget_tbl.get("max_parallel_agents")
             incompatible = has_min_agents and (
-                (isinstance(runs, int) and min_agents > runs)
-                or (isinstance(parallel, int) and min_agents > parallel)
+                (isinstance(runs, int) and required_runs > runs)
+                or (isinstance(parallel, int) and required_parallel > parallel)
             )
             documented = (sname, rname) in KNOWN_INCOMPATIBLE
             if incompatible and not documented:
                 failures.append(
-                    f"{path}: strategy {sname!r} (min_agents={min_agents}) is incompatible with "
-                    f"rigor {rname!r}'s budget {budget_name!r} (max_agent_runs={runs}, "
-                    f"max_parallel_agents={parallel}) but is not in KNOWN_INCOMPATIBLE"
+                    f"{path}: strategy {sname!r} ({topology!r}, min_agents={min_agents}) needs "
+                    f"max_agent_runs>={required_runs}, max_parallel_agents>={required_parallel}, "
+                    f"but rigor {rname!r}'s budget {budget_name!r} has max_agent_runs={runs}, "
+                    f"max_parallel_agents={parallel} — not in KNOWN_INCOMPATIBLE"
                 )
             if documented and not incompatible:
                 failures.append(
@@ -849,8 +896,13 @@ failures = []
 
 
 def run(*args):
+    # --config-unchanged by default: every case below is exercising
+    # rigor/strategy/tier resolution, not the merge-base distinction, so
+    # "read --config directly" (the branch-unchanged basis) is the right
+    # default — pass an explicit --merge-base-config/--merge-base-absent in
+    # *args to override it for a case that specifically needs to.
     result = subprocess.run(
-        [sys.executable, resolver, "--config", config, *args],
+        [sys.executable, resolver, "--config", config, "--config-unchanged", *args],
         capture_output=True, text=True,
     )
     try:
@@ -988,9 +1040,10 @@ with tempfile.TemporaryDirectory() as tmp:
           and out["config_source"] == "merge-base"
           and out["selections"]["rigor"] == {"value": "trivial", "source": "default"})
 
-# absent config -> builtin
+# absent config -> builtin (--config-unchanged: the branch's OWN copy is
+# the one that's absent, not a merge-base extraction)
 result = subprocess.run(
-    [sys.executable, resolver, "--config", "/nonexistent/path/.devflow.toml"],
+    [sys.executable, resolver, "--config", "/nonexistent/path/.devflow.toml", "--config-unchanged"],
     capture_output=True, text=True,
 )
 out = json.loads(result.stdout)
@@ -999,12 +1052,14 @@ check("an absent config resolves from the built-in fallback",
       and out["selections"]["rigor"] == {"value": "standard", "source": "builtin"}
       and out["selections"]["strategy"] == {"value": "plan", "source": "builtin"}
       and out["review"]["challenge"] == 3 and out["review"]["review"] == 3
-      and out["review"]["shepherd"] == 4 and out["review"]["min_rounds"] == 1)
+      and out["review"]["shepherd"] == 4 and out["review"]["min_rounds"] == 1
+      and out["review"]["min_rounds_scope"] == ["challenge", "review"])
 
 
 def run_absent(*args):
     result = subprocess.run(
-        [sys.executable, resolver, "--config", "/nonexistent/path/.devflow.toml", *args],
+        [sys.executable, resolver, "--config", "/nonexistent/path/.devflow.toml",
+         "--config-unchanged", *args],
         capture_output=True, text=True,
     )
     return result.returncode, json.loads(result.stdout)
@@ -1040,7 +1095,7 @@ def run_malformed(description, old, new, expect_substring):
         assert old in DEVFLOW_TOML_TEXT, f"anchor text not found for {description!r}"
         open(bad_path, "w").write(DEVFLOW_TOML_TEXT.replace(old, new))
         result = subprocess.run(
-            [sys.executable, resolver, "--config", bad_path],
+            [sys.executable, resolver, "--config", bad_path, "--config-unchanged"],
             capture_output=True, text=True,
         )
         try:
@@ -1075,6 +1130,11 @@ run_malformed(
     'budget             = "trivial"', 'budget             = "nonexistent-budget-profile"',
     "names no [budget.*] profile",
 )
+run_malformed(
+    "default_rigor as a list (not a scalar string) -> invalid_config, not a TypeError",
+    'default_rigor    = "standard"', 'default_rigor    = ["standard"]',
+    "must be a string",
+)
 
 # labels outside rigor:/strategy:/tier: are silently irrelevant — no warning
 # of any kind, in either mode.
@@ -1098,11 +1158,11 @@ check("--merge-base-config naming a nonexistent path is a deterministic error",
       result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
 
 result = subprocess.run(
-    [sys.executable, resolver, "--config", config, "--merge-base-config-absent"],
+    [sys.executable, resolver, "--config", config, "--merge-base-absent"],
     capture_output=True, text=True,
 )
 out = json.loads(result.stdout)
-check("--merge-base-config-absent explicitly confirms genuine absence and resolves cleanly",
+check("--merge-base-absent explicitly confirms genuine absence and resolves cleanly",
       result.returncode == 0
       and out["config_source"] == "absent"
       and out["selections"]["rigor"] == {"value": "standard", "source": "builtin"}
@@ -1110,11 +1170,27 @@ check("--merge-base-config-absent explicitly confirms genuine absence and resolv
 
 result = subprocess.run(
     [sys.executable, resolver, "--config", config,
-     "--merge-base-config", config, "--merge-base-config-absent"],
+     "--merge-base-config", config, "--merge-base-absent"],
     capture_output=True, text=True,
 )
 out = json.loads(result.stdout)
-check("--merge-base-config and --merge-base-config-absent together is rejected",
+check("--merge-base-config and --merge-base-absent together is rejected",
+      result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
+
+# exactly one config-basis flag is REQUIRED — reading --config must never be
+# a silent default. Zero flags, and all three at once, are both rejected.
+result = subprocess.run([sys.executable, resolver, "--config", config], capture_output=True, text=True)
+out = json.loads(result.stdout)
+check("zero config-basis flags is rejected (no silent default)",
+      result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
+
+result = subprocess.run(
+    [sys.executable, resolver, "--config", config, "--config-unchanged",
+     "--merge-base-absent", "--merge-base-config", config],
+    capture_output=True, text=True,
+)
+out = json.loads(result.stdout)
+check("all three config-basis flags at once is also rejected",
       result.returncode == 1 and any(e["code"] == "invalid_input" for e in out["errors"]))
 
 # a present config that cannot even be parsed as TOML -> invalid_config, not
@@ -1123,7 +1199,7 @@ with tempfile.TemporaryDirectory() as tmp:
     garbage_path = os.path.join(tmp, "garbage.toml")
     open(garbage_path, "w").write("this is [not valid toml at all {{{\n")
     result = subprocess.run(
-        [sys.executable, resolver, "--config", garbage_path],
+        [sys.executable, resolver, "--config", garbage_path, "--config-unchanged"],
         capture_output=True, text=True,
     )
     try:
@@ -1139,11 +1215,13 @@ if failures:
     for line in failures:
         print(f"FAIL: {line}", file=sys.stderr)
     sys.exit(1)
-print("devflow-resolve.py case table OK: rigor/strategy conflicts, incompatibility, tier "
-      "overrides (order-independent strongest-wins), trust (--trusted-label / --unattended / "
-      "requires_confirmation), explicit-vs-label, merge-base (a missing --merge-base-config "
-      "path errors; genuine absence needs --merge-base-config-absent), absent-config (still "
-      "honoring overrides/trusted-labels over the built-in floor), dangling-reference and "
-      "unparseable configs (invalid_config, never a traceback), and the rigor:/strategy:/tier: "
-      "namespace filter all resolve as documented")
+print("devflow-resolve.py case table OK: rigor/strategy conflicts, incompatibility (topology-"
+      "aware budget formula), tier overrides (order-independent strongest-wins), trust "
+      "(--trusted-label / --unattended / requires_confirmation), explicit-vs-label, exactly-"
+      "one-of-three config-basis flags required (--merge-base-config / --merge-base-absent / "
+      "--config-unchanged — a missing --merge-base-config path errors; genuine absence needs "
+      "--merge-base-absent; zero or multiple flags errors), absent-config (still honoring "
+      "overrides/trusted-labels over the built-in floor), dangling-reference and unparseable "
+      "configs (invalid_config, never a traceback), and the rigor:/strategy:/tier: namespace "
+      "filter all resolve as documented")
 PY

@@ -316,10 +316,13 @@ than guessed at.
 **A resolved rigor level supplies three things: a review policy, three role
 tiers, and a budget.** The review policy sets `challenge`, `review`, and
 `shepherd` — per-stage maximum heuristic passes — and `min_rounds`, the
-minimum passes an enabled stage must actually run before it may take the
-early clean-round exit (`0 <= min_rounds <= cap` for every enabled stage; a
-policy where every cap is 0 legally sets `min_rounds` to 0 right along with
-them). These are ceilings, never quotas: reaching one ends the configured
+minimum passes `challenge` and `review` must each actually run before either
+may take the early clean-round exit (`0 <= min_rounds <= min(challenge,
+review)`; a policy where both those caps are 0 legally sets `min_rounds` to
+0 right along with them). `min_rounds` never binds `shepherd`: shepherd is
+externally driven (see below) rather than something that can manufacture a
+round to satisfy a floor, so it has no early exit for a floor to gate at
+all. These are ceilings, never quotas: reaching one ends the configured
 AI-review effort for that stage without weakening a deterministic gate
 (tests, CI, security scanners, branch protection, human merge/release
 approval) or waiving the obligation to adjudicate and record whatever

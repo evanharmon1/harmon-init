@@ -166,10 +166,18 @@ description        = "Rigor: deep review, apex orchestrator/reviewer, frontier i
 # protection, human merge/release approval) and the obligation to adjudicate
 # and record any finding that DOES surface are unchanged by a disabled
 # stage; a cap of 1 is a single pass, ending the stage the moment that round
-# is clean. `0 <= min_rounds <= min(challenge, review, shepherd)` holds for
-# every policy below — when every stage is capped at 0 (`none`), min_rounds
-# is forced to 0 right along with them, which is exactly the `none` row, not
-# a bug to reject.
+# is clean.
+#
+# `min_rounds` is scoped to `challenge` and `review` ONLY —
+# `0 <= min_rounds <= min(challenge, review)`. `shepherd` never bounds it:
+# shepherd is externally driven (CI results, human review, Codex) rather
+# than something the agent paces itself, so it cannot MANUFACTURE a round
+# the way a self-generated challenge/review pass can — there is no sense in
+# which shepherd could satisfy a "run at least N of your own rounds first"
+# floor, since its rounds are not the agent's to run on demand. When both
+# challenge and review are capped at 0 (`none`), min_rounds is forced to 0
+# right along with them, which is exactly the `none` row below, not a bug
+# to reject.
 #
 # Unlike the rigor-scoped caps this table replaces, `shepherd` now varies
 # WITH the policy (1 through 6) instead of holding one repo-wide value
@@ -320,11 +328,16 @@ allow_tier_escalation = true
 #   strengths from more than one proposal rather than picking exactly one
 #   verbatim.
 # min_agents: the floor that keeps a run from being represented as a
-#   topology it cannot actually be. council requires >= 2 (independent
-#   proposals need at least two proposers). orchestrate also requires >= 2:
-#   delegation = "required" means a lead PLUS at least one worker, so a
-#   single-agent run is not orchestration either, just oneshot/plan wearing
-#   a different label.
+#   topology it cannot actually be — but it COUNTS DIFFERENTLY per topology,
+#   because the accountable party is counted differently:
+#     independent-proposals (council)  PROPOSERS only, >= 2 — the
+#       coordinator that dispatches each proposal and later judges them is
+#       NOT one of the min_agents; it is an ADDITIONAL run (see the budget
+#       formula below).
+#     lead-and-workers (orchestrate)   the lead PLUS its workers, >= 2 —
+#       delegation = "required" means a lead PLUS at least one worker, so a
+#       single-agent run is not orchestration either, just oneshot/plan
+#       wearing a different label. Unlike council, the lead IS counted.
 # human_gates: pause points this strategy inserts, drawn from the allowed
 #   set below. This is the ONLY configurable human-gate vocabulary —
 #   constitutional approvals (merge, release, destructive actions,
@@ -339,12 +352,23 @@ allow_tier_escalation = true
 # description: becomes the `strategy:<name>` label's text in
 #   label-registry.json (kept equal to it there; ≤100 chars).
 #
-# A strategy whose min_agents exceeds the resolved rigor's budget
-# (max_agent_runs OR max_parallel_agents) is INCOMPATIBLE, and resolution
-# reports that rather than silently substituting a different topology — e.g.
-# council OR orchestrate (both min_agents 2) under trivial (budget.trivial:
-# 1 and 1, above) — trivial's whole point is a single agent doing a single
-# pass, which neither topology can honestly represent.
+# A strategy whose min_agents needs more than the resolved rigor's budget
+# provides is INCOMPATIBLE, and resolution reports that rather than
+# silently substituting a different topology. What "more than the budget
+# provides" means is topology-specific, because min_agents itself counts
+# differently (above):
+#   independent-proposals (council)   needs max_parallel_agents >=
+#     min_agents (the proposers run concurrently) AND max_agent_runs >=
+#     min_agents + 1 (the coordinator's judging pass is one more run, after
+#     the proposers finish, so it does not need a concurrent slot but DOES
+#     count toward the total).
+#   lead-and-workers (orchestrate)    needs max_agent_runs >= min_agents
+#     (the lead is already counted in min_agents, so no "+1") AND
+#     max_parallel_agents >= min_agents - 1 (the lead does not consume a
+#     parallel slot of its own — only the workers running concurrently do).
+# e.g. council OR orchestrate under trivial (budget.trivial: 1 and 1, above)
+# — trivial's whole point is a single agent doing a single pass, which
+# neither topology can honestly represent, by either formula.
 # Every shipped strategy×rigor pair either resolves cleanly or is one of
 # these documented incompatibilities (scripts/test-devflow-config.sh carries
 # the executable list, checked in both directions: an undocumented

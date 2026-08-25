@@ -180,18 +180,30 @@ rejects("a rigor description drifted from the label registry", sub(
     'description        = "Rigor: something completely different from the seeded label"',
 ), "does not match the rigor:trivial label description")
 
-# ── [review.*] ───────────────────────────────────────────────────────────
-rejects("min_rounds above every stage cap", sub(
+# ── [review.*] — min_rounds is scoped to challenge+review ONLY; shepherd
+# is externally driven and cannot manufacture a round, so it never bounds
+# min_rounds (ADR 0007-adjacent, .devflow.toml comment beside [review.*]) ─
+rejects("min_rounds=2 exceeds challenge=1 (shepherd no longer bounds it)", sub(
     '[review.driveby]\nchallenge  = 1\nreview     = 1\nshepherd   = 1\nmin_rounds = 1',
     '[review.driveby]\nchallenge  = 1\nreview     = 1\nshepherd   = 1\nmin_rounds = 2',
-), "exceeds min(challenge, review, shepherd)")
+), "exceeds min(challenge, review)")
 rejects("review.none with min_rounds forced above 0", sub(
     '[review.none]\nchallenge  = 0\nreview     = 0\nshepherd   = 0\nmin_rounds = 0',
     '[review.none]\nchallenge  = 0\nreview     = 0\nshepherd   = 0\nmin_rounds = 1',
-), "exceeds min(challenge, review, shepherd)")
+), "exceeds min(challenge, review)")
 rejects("a negative stage cap", sub(
     '[review.driveby]\nchallenge  = 1', '[review.driveby]\nchallenge  = -1',
 ), "must be >= 0")
+
+
+# (A demonstration that shepherd no longer bounds min_rounds at all — e.g.
+# dropping [review.light].shepherd toward 0 while min_rounds stays 1 — is
+# deliberately NOT exercised as a mutation here: shepherd also has to stay
+# non-decreasing along rigor_order (the round-3 monotonicity check, above),
+# so a shepherd-only mutation would trip THAT check instead and prove
+# nothing about min_rounds specifically. The rejects case above already
+# proves the bound is min(challenge, review) — challenge=1 alone is what
+# blocks min_rounds=2 regardless of shepherd's value.)
 
 # ── [budget.*] ───────────────────────────────────────────────────────────
 rejects("a non-boolean allow_tier_escalation", sub(
@@ -276,7 +288,7 @@ def undocument_orchestrate_trivial(tmp):
         'KNOWN_INCOMPATIBLE = {("council", "trivial")}',
     ))
 rejects("orchestrate x trivial incompatibility left undocumented in the script",
-        undocument_orchestrate_trivial, "is not in KNOWN_INCOMPATIBLE")
+        undocument_orchestrate_trivial, "not in KNOWN_INCOMPATIBLE")
 
 
 def drop_orchestrate_min_agents(tmp):
@@ -289,6 +301,25 @@ def drop_orchestrate_min_agents(tmp):
     ))
 rejects("orchestrate's min_agents removed entirely while still documented as incompatible",
         drop_orchestrate_min_agents, "but it actually resolves cleanly now")
+
+
+def shrink_light_budget_to_two_runs(tmp):
+    # council's min_agents=2 counts PROPOSERS only — the coordinator that
+    # judges them is one MORE run, so council needs max_agent_runs >=
+    # min_agents + 1 = 3, not just >= 2. A 2-runs/2-parallel budget has
+    # enough PARALLEL capacity (2 >= min_agents) but not enough TOTAL RUN
+    # capacity — exactly the gap the "+1" formula exists to catch, and
+    # exactly what the old (pre-fix) same-value formula would have missed
+    # (2 >= 2 would have looked fine). orchestrate's min_agents=2 already
+    # counts its lead, so it needs only max_agent_runs >= 2 — unaffected by
+    # this same mutation, proving the two formulas are genuinely different,
+    # not just differently worded.
+    edit_toml(tmp, lambda t: t.replace(
+        '[budget.light]\nmax_agent_runs        = 3\nmax_parallel_agents   = 2',
+        '[budget.light]\nmax_agent_runs        = 2\nmax_parallel_agents   = 2',
+    ))
+rejects("council under a 2-runs/2-parallel budget is incompatible (needs the coordinator's +1 run)",
+        shrink_light_budget_to_two_runs, "not in KNOWN_INCOMPATIBLE")
 
 # ── tier model maps (unchanged surface, ADR 0006) ───────────────────────
 rejects("unknown model slug", sub('claude   = "sonnet"', 'claude   = "notamodel"'),

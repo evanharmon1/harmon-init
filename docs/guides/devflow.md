@@ -63,15 +63,19 @@ Six review policies exist — `none`, `driveby`, `light`, `standard`,
 truth for them and this guide does not keep its own copy to go stale.
 
 `challenge`, `review`, and `shepherd` are **per-stage maximum** heuristic AI
-passes (Dev Loop stages, `AGENTS.md`). `min_rounds` is the **minimum** passes
-an enabled stage must actually run before it may take the early clean-round
-exit (two consecutive adjudicated-clean rounds always exits regardless of
-`min_rounds`; a single round with no findings at all needs `min_rounds`
-satisfied first — see `AGENTS.md`, "Loop cap and exit", for the exit
-conditions themselves, which this file does not restate). Validation holds
-`0 <= min_rounds <= min(challenge, review, shepherd)` for every policy —
-`none` is not a special case, it is what that inequality gives you when a
-policy legitimately sets every cap to its floor.
+passes (Dev Loop stages, `AGENTS.md`). `min_rounds` is the **minimum**
+passes `challenge` and `review` must each actually run before either may
+take the early clean-round exit (two consecutive adjudicated-clean rounds
+always exits regardless of `min_rounds`; a single round with no findings at
+all needs `min_rounds` satisfied first — see `AGENTS.md`, "Loop cap and
+exit", for the exit conditions themselves, which this file does not
+restate). `min_rounds` never binds `shepherd`: shepherd is externally
+driven — a round is one fix push or one no-change cycle, never something
+the stage can manufacture on its own — so it has no early exit for a floor
+to gate at all. Validation holds `0 <= min_rounds <= min(challenge,
+review)` for every policy — `none` is not a special case, it is what that
+inequality gives you when a policy legitimately sets `challenge` and
+`review` to their floor.
 
 These are **ceilings, never quotas**:
 
@@ -134,15 +138,18 @@ reviewer instead of economy), not in a separate budget.
 
 `max_agent_runs` and `max_parallel_agents` bound **implementation and
 orchestration** agent invocations — the main session, plus any workers it
-delegates to or council proposers it starts. They do **not** count AI review
-passes: `challenge`, `review`, and `shepherd` are bounded separately, by the
-review policy above, and draw against nothing here. That separation is why
-a rigor level's budget is never in tension with its own review policy — the
-two sets of numbers count different things, one agents doing the work, the
-other heuristic passes checking it — and it is also why a strategy's `min_agents` compares
-cleanly against this budget (see "Strategy × rigor compatibility" below):
-both sides count the same kind of agent. `wall_clock_min` bounds elapsed
-time; `allow_tier_escalation` says whether a role may climb its tier's
+delegates to, any council proposers it starts, and any coordinator running a
+council's delegation and judging. They do **not** count AI review passes:
+`challenge`, `review`, and `shepherd` are bounded separately, by the review
+policy above, and draw against nothing here. That separation is why a rigor
+level's budget is never in tension with its own review policy — the two
+sets of numbers count different things, one agents doing the work, the
+other heuristic passes checking it — and it is also why a strategy's
+`min_agents` is checked against this budget at all (see "Strategy × rigor
+compatibility" below for the one wrinkle: `council`'s `min_agents` counts
+fewer agents than its actual budget footprint does). `wall_clock_min`
+bounds elapsed time; `allow_tier_escalation` says whether a role may climb
+its tier's
 `escalate_to` chain (see "Role tiers" below) under this budget at all —
 `trivial` and `light` forbid it, because escalation is itself a cost
 decision and those two budgets are choosing not to make one automatically.
@@ -210,11 +217,16 @@ The fields, explained without leaning on their names:
   independent output may be combined into one deliverable, rather than
   picking exactly one proposal verbatim. `council` sets this `true`.
 - **`min_agents`** — the floor that keeps a one-agent run from being
-  represented as the topology it claims. Two strategies set one, both `2`:
-  `council` (a single agent cannot produce independent proposals to judge
-  between) and `orchestrate` (`delegation = required` means the lead must
-  hand off bounded work to at least one worker, so a lead running alone
-  cannot satisfy its own topology either).
+  represented as the topology it claims. Two strategies set one, both `2`,
+  but they count differently. `orchestrate`'s `2` is the whole minimum
+  roster: `delegation = required` means the lead must hand off bounded work
+  to at least one worker, so a lead running alone cannot satisfy its own
+  topology, and lead-plus-worker is exactly the two agents counted.
+  `council`'s `2` counts only the independent **proposers** — a single agent
+  cannot produce independent proposals to judge between — and does **not**
+  include the coordinating agent that delegates each proposal and judges the
+  results; that coordinator is a further, separate agent run. See "Strategy
+  × rigor compatibility" below for what that means for the budget check.
 - **`human_gates`** — explicit pause points this strategy inserts, drawn from
   the allowed set below. This is the **only** configurable human-gate
   vocabulary: `after-discovery`, `after-plan`, `before-delegation`,
@@ -357,6 +369,47 @@ branch itself is under. An explicit human instruction still overrides this,
 since that is an attributable decision rather than the branch deciding for
 itself.
 
+## Reference resolver
+
+[scripts/devflow-resolve.py](../../scripts/devflow-resolve.py) is a
+minimal, root-only reference implementation of the resolution order above —
+not the versioned, cross-consumer conformance contract (that is a later,
+separate piece of work), but a working starting point so an agent or
+Foreman does not have to re-derive the algorithm from this guide's prose
+every time, and something `scripts/test-devflow-config.sh` can run its
+resolution-order case table against.
+
+**Reading the branch's own `--config` copy is never a silent default.**
+Every invocation must pass exactly one of three mutually exclusive
+config-basis flags; omitting all three, or passing more than one, is a hard
+`invalid_input` error, never a fallback to reading `--config` anyway:
+
+- **`--merge-base-config PATH`** — the change under review edits
+  `.devflow.toml` itself. `PATH` is the merge-base's extracted copy (e.g.
+  from `git show <merge-base-sha>:.devflow.toml`), and it is read *instead
+  of* the branch's own copy — the merge-base rule above, enforced
+  mechanically rather than left to a reviewer to remember. `PATH` **must
+  exist**: naming one that does not is an `invalid_input` error, never
+  treated as "genuinely absent" — a missing path here is far more likely a
+  caller or extraction bug (a failed `git show`, a wrong path) than a real
+  absence, so the resolver refuses rather than guessing which one it is.
+- **`--merge-base-absent`** — the change under review edits
+  `.devflow.toml`, but the merge-base commit genuinely predates the file
+  (this change might be the one introducing it). Resolves from the built-in
+  fallback, with every label, trusted-label, and override still applied
+  over it exactly as a genuinely-absent `--config` would be.
+- **`--config-unchanged`** — the change under review does **not** touch
+  `.devflow.toml` at all, so the merge-base rule does not apply, and
+  reading `--config` directly is correct.
+
+The three flags exist to close one specific hole: without a mandatory
+choice, a branch that edits `.devflow.toml` could have its own PR resolve
+against its own — possibly weakened — copy, simply because a caller forgot
+to pass a flag. Requiring the caller to state which of the three situations
+applies, on every invocation, turns "did anyone remember the merge-base
+rule" from something a reviewer has to notice into something the tool
+refuses to run without.
+
 ## Disclosure
 
 Two distinct things get disclosed in the PR body, and they are not the same
@@ -420,25 +473,39 @@ accepts that substitution.
 ## Strategy × rigor compatibility
 
 A strategy whose `min_agents` exceeds the resolved budget's
-`max_agent_runs` or `max_parallel_agents` is an **incompatibility**:
-resolution reports it and stops, and never silently substitutes a different
-topology or silently widens the budget. Two strategies set a floor at all —
-`council` and `orchestrate` — and both compare against the same kind of
-number, since the budget's `max_agent_runs`/`max_parallel_agents` count
+`max_parallel_agents` is an **incompatibility**: resolution reports it and
+stops, never silently substitutes a different topology or silently widens
+the budget. Two strategies set a floor at all — `council` and `orchestrate`
+— and the budget's `max_agent_runs`/`max_parallel_agents` count
 implementation/orchestration agents exactly like `min_agents` does (see
-"Budgets" above). Every other shipped strategy (`oneshot`, `plan`,
-`plan-approved`, `human-led`) sets no floor at all, so it resolves under any
-rigor level, at any budget.
+"Budgets" above), so the comparison is apples-to-apples. Every other shipped
+strategy (`oneshot`, `plan`, `plan-approved`, `human-led`) sets no floor at
+all, so it resolves under any rigor level, at any budget.
 
-`trivial` is the one rigor level whose budget caps parallel agents below
-what `council` and `orchestrate` both need to exist as their own topology;
-every other shipped budget's ceiling is at or above that floor. `council`
-under `trivial` and `orchestrate` under `trivial` are therefore the two
-documented incompatibilities in the shipped configuration, and both fail for
-the same reason. Every other strategy×rigor pairing resolves cleanly — see
-`.devflow.toml`'s `[budget.*]` and `[strategy.*]` tables for the figures
-behind that comparison, if you need the exact numbers rather than the shape
-of the rule.
+The two floors are not checked identically, because of the distinction in
+"Strategy: how the work is organized" above. `orchestrate`'s `min_agents`
+already counts its whole minimum roster — lead plus worker — so
+`max_parallel_agents >= min_agents` is the entire check. `council`'s
+`min_agents` counts only the independent proposers, and its coordinator is
+a further, separate agent run that `min_agents` never counted — so
+`council` needs `max_parallel_agents >= min_agents` for the proposers to
+run concurrently, **and** `max_agent_runs >= min_agents + 1` for the
+coordinator's run on top of them.
+
+`trivial` is the one rigor level that fails every one of these checks — its
+`max_parallel_agents` is below what either topology needs to exist at all,
+and its `max_agent_runs` is below what `council` additionally needs once
+the coordinator is counted. Every other shipped budget clears all of them,
+`council`'s included: `light` (and `minimal`, which reuses `light`'s
+envelope) resolves for `council` with no slack on either number — its
+`max_parallel_agents` exactly covers the two proposers, and its
+`max_agent_runs` exactly covers those two proposers plus the coordinator.
+`council` under `trivial` and `orchestrate` under `trivial` are therefore
+the two documented incompatibilities in the shipped configuration; every
+other strategy×rigor pairing resolves cleanly — see `.devflow.toml`'s
+`[budget.*]` and `[strategy.*]` tables for the figures behind that
+comparison, if you need the exact numbers rather than the shape of the
+rule.
 
 ## Ownership boundaries
 
@@ -469,8 +536,10 @@ and template copies at release time.
 
 Two things are worth keeping if you do customize: the invariants
 (`orchestrator_tier >= implementer_tier`, `reviewer_tier >= implementer_tier`
-for every level; `0 <= min_rounds <= min(challenge, review, shepherd)` for
-every policy; `rigor_order` a permutation of your `[rigor.*]` keys), and the
+for every level; `0 <= min_rounds <= min(challenge, review)` for every
+policy — `min_rounds` never binds `shepherd`, which is externally driven and
+cannot manufacture a round to satisfy a floor; `rigor_order` a permutation
+of your `[rigor.*]` keys), and the
 merge-base rule above — both keep a branch from quietly loosening the gate it
 is being reviewed under, which matters just as much for a customized policy
 as for the shipped one.
@@ -485,9 +554,11 @@ needs to map it onto a concrete, resolved profile. Six worked examples:
 **"Use light rigor and council strategy."**
 Rigor `light` (review policy `light`; tiers frontier/economy/frontier;
 budget `light`) + strategy `council` (independent proposals, judge
-selection, synthesis). Compatible: `light`'s budget covers `council`'s
-floor on parallel agents — see `.devflow.toml` for the exact figures behind
-that.
+selection, synthesis). Compatible, but with no slack on either number:
+`light`'s budget covers `council`'s floor on concurrent proposers, and
+separately covers those proposers plus the coordinating agent that
+delegates and judges them — see "Strategy × rigor compatibility" below for
+what those two checks are and why `council` needs both of them.
 
 **"Deep rigor, plan-approved."**
 Rigor `deep` (review policy `deep`; tiers apex/frontier/apex; budget
@@ -512,11 +583,13 @@ Rigor `light` (as above) + strategy `orchestrate` (lead-and-workers,
 explicit plan, delegation required). "In parallel" names `orchestrate`'s
 own `coordination = parallel-when-independent` field directly — it does not
 require a separate override, because that is what `orchestrate` already
-does for independent slices of work. Compatible for the same reason
-`council` was in the first example: `light`'s budget covers `orchestrate`'s
-floor too. The same request under `trivial` rigor would be reported as an
-incompatibility instead — `trivial`'s budget does not allow enough parallel
-agents for a lead-and-workers topology to exist at all.
+does for independent slices of work. Compatible: `light`'s budget covers
+`orchestrate`'s floor, which — unlike `council`'s in the first example — is
+a single check on concurrent agents, since `orchestrate`'s `min_agents`
+already counts its whole minimum roster (see "Strategy × rigor
+compatibility" below). The same request under `trivial` rigor would be
+reported as an incompatibility instead — `trivial`'s budget does not allow
+enough parallel agents for a lead-and-workers topology to exist at all.
 
 **"Take a deep one-shot at this, then stop."**
 Rigor `deep` (as above) + strategy `oneshot` (single accountable lead,

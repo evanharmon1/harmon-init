@@ -39,18 +39,22 @@ restatement of scripts/test-devflow-config.sh's exhaustive static validation
 authority on whether a config is well-formed; this resolver only needs
 enough checking to fail cleanly on one that isn't.
 
-A config path that does not exist on disk is handled two different ways
-depending on WHICH input named it, because the two cases carry different
-risk. --config naming a missing path is ordinary and common (a repo that
-has never adopted rigor/strategy at all) and resolves from the built-in
-fallback, as documented above. --merge-base-config naming a missing path is
-NOT treated the same way: it is far more likely a caller/extraction bug
-(a failed `git show <sha>:.devflow.toml`, a wrong path) than genuine
-absence, so it is a hard invalid_input error instead. Genuine merge-base
-absence still exists as a real case — this PR might be the one introducing
-.devflow.toml — but it must be asserted explicitly, with
---merge-base-config-absent, never inferred from a path just not being
-there.
+Reading the branch's own --config copy is NEVER a silent default: exactly
+one of three config-basis flags is required on every invocation, because a
+branch that edits .devflow.toml could otherwise have its own PR read its own
+(possibly weakened) copy instead of the merge-base's, simply because a
+caller forgot a flag. --merge-base-config PATH says the branch edits the
+file and here is the merge-base's extracted copy to read instead — the path
+MUST exist; naming one that does not is a hard invalid_input error (far more
+likely a caller/extraction bug — a failed `git show <sha>:.devflow.toml`, a
+wrong path — than genuine absence). --merge-base-absent says the branch
+edits the file but the merge-base commit genuinely predates it (this PR
+might be the one introducing .devflow.toml) — resolves from the built-in
+fallback, with every --label/--override/--trusted-label still applied over
+it exactly as an absent --config would be. --config-unchanged says the
+branch does NOT touch .devflow.toml at all, so the merge-base rule does not
+apply and reading --config directly is correct. Zero or more than one of
+these three is an invalid_input error.
 
 This is a ROOT-ONLY reference implementation, not the versioned,
 cross-consumer conformance contract — that is harmon-init#1048
@@ -61,7 +65,7 @@ starting point rather than re-deriving the algorithm from prose each time.
 
 Usage:
     devflow-resolve.py --config .devflow.toml \\
-        [--merge-base-config PATH | --merge-base-config-absent] \\
+        (--merge-base-config PATH | --merge-base-absent | --config-unchanged) \\
         [--label rigor:deep] [--label strategy:council] \\
         [--label tier:economy] [--label tier:implementer:economy] \\
         [--trusted-label rigor:deep] \\
@@ -74,20 +78,27 @@ warnings are always both present in the output (possibly empty lists) so a
 caller never needs to guess whether the key exists.
 
 Inputs, precisely:
-  --config PATH             the branch's copy of .devflow.toml. May be
-                             absent — see the built-in fallback above.
-  --merge-base-config PATH  when given, THIS is the copy actually read —
+  --config PATH             the branch's copy of .devflow.toml. Always
+                             required and always recorded, but only actually
+                             READ when --config-unchanged selects it as the
+                             basis (see the three flags below).
+  EXACTLY ONE of the following three is required — see the module docstring
+  above for why there is no silent default:
+  --merge-base-config PATH  the branch edits .devflow.toml; THIS is the
+                             merge-base's extracted copy to read instead —
                              the merge-base rule (AGENTS.md, "When the
                              change under review edits .devflow.toml...").
-                             --config is still recorded, unread. The path
-                             MUST exist — naming one that does not is an
-                             invalid_input error, not a fallback to the
-                             built-in (see the module docstring above).
-  --merge-base-config-absent  asserts that the merge-base commit genuinely
-                             has no .devflow.toml — resolves from the
-                             built-in fallback, exactly like an absent
-                             --config would. Mutually exclusive with
-                             --merge-base-config.
+                             The path MUST exist — naming one that does not
+                             is an invalid_input error, not a fallback to
+                             the built-in.
+  --merge-base-absent        the branch edits .devflow.toml, but the
+                             merge-base commit genuinely has no such file
+                             (this PR may be the one introducing it) —
+                             resolves from the built-in fallback, exactly
+                             like an absent --config would.
+  --config-unchanged         the branch does NOT modify .devflow.toml —
+                             the merge-base rule does not apply, so --config
+                             itself is read directly.
   --label FAMILY:VALUE      a rigor:*/strategy:*/tier:* label present on the
                              issue or PR, repeatable — UNVERIFIED provenance.
                              Anything outside those three namespaces is
@@ -151,6 +162,15 @@ DEVFLOW_LABEL_PREFIXES = ("rigor:", "strategy:", "tier:")
 BUILTIN_RIGOR = "standard"
 BUILTIN_STRATEGY = "plan"
 BUILTIN_REVIEW = {"challenge": 3, "review": 3, "shepherd": 4, "min_rounds": 1}
+# min_rounds is a floor on ROUNDS THE AGENT ITSELF RUNS before the
+# early-clean-round exit is available — it is scoped to challenge and
+# review only. shepherd is externally driven (CI results, human review,
+# Codex) and cannot manufacture a round on its own, so it is never part of
+# what min_rounds bounds; scripts/test-devflow-config.sh's validator enforces
+# `0 <= min_rounds <= min(challenge, review)` accordingly. Included in every
+# `review` output object below so a caller does not have to already know
+# this to interpret min_rounds correctly.
+MIN_ROUNDS_SCOPE = ["challenge", "review"]
 # A minimal synthetic config, structurally just real enough that
 # resolve_rigor()/resolve_strategy() need no absent-config special case of
 # their own: membership in `rigor`/`strategy` here IS the built-in's
@@ -222,12 +242,26 @@ def validate_config_references(cfg, errors):
     strategies = cfg.get("strategy")
     strategies = strategies if isinstance(strategies, dict) else {}
 
+    # Every reference below is type-checked as a scalar string BEFORE any
+    # dictionary-membership test (`x not in some_dict`) — dict membership
+    # requires its LHS to be hashable, and TOML happily parses
+    # `default_rigor = ["standard"]` as a perfectly valid (if wrong) list
+    # value. An unhashable value there would otherwise raise a raw
+    # TypeError instead of the invalid_config this function exists to
+    # produce. `x not in LADDER` (a tuple) needs no such guard — tuple
+    # membership never raises regardless of x's type — but is still
+    # type-checked here for a clearer message and for consistency across
+    # every reference this function validates.
     default_rigor = cfg.get("default_rigor")
-    if default_rigor not in levels:
+    if not isinstance(default_rigor, str):
+        fail(f"default_rigor must be a string (got {default_rigor!r})")
+    elif default_rigor not in levels:
         fail(f"default_rigor={default_rigor!r} names no [rigor.*] level")
 
     default_strategy = cfg.get("default_strategy")
-    if default_strategy not in strategies:
+    if not isinstance(default_strategy, str):
+        fail(f"default_strategy must be a string (got {default_strategy!r})")
+    elif default_strategy not in strategies:
         fail(f"default_strategy={default_strategy!r} names no [strategy.*] value")
 
     rigor_order = cfg.get("rigor_order")
@@ -235,7 +269,9 @@ def validate_config_references(cfg, errors):
         fail("rigor_order must be a list")
     else:
         for entry in rigor_order:
-            if entry not in levels:
+            if not isinstance(entry, str):
+                fail(f"rigor_order entry must be a string (got {entry!r})")
+            elif entry not in levels:
                 fail(f"rigor_order entry {entry!r} names no [rigor.*] level")
 
     for name, tbl in levels.items():
@@ -245,12 +281,24 @@ def validate_config_references(cfg, errors):
         for field in ("review", "orchestrator_tier", "implementer_tier", "reviewer_tier", "budget"):
             if field not in tbl:
                 fail(f"[rigor.{name}] is missing {field!r}")
-        if "review" in tbl and tbl["review"] not in reviews:
-            fail(f"[rigor.{name}].review={tbl['review']!r} names no [review.*] policy")
-        if "budget" in tbl and tbl["budget"] not in budgets:
-            fail(f"[rigor.{name}].budget={tbl['budget']!r} names no [budget.*] profile")
+        review_ref = tbl.get("review")
+        if "review" in tbl:
+            if not isinstance(review_ref, str):
+                fail(f"[rigor.{name}].review must be a string (got {review_ref!r})")
+            elif review_ref not in reviews:
+                fail(f"[rigor.{name}].review={review_ref!r} names no [review.*] policy")
+        budget_ref = tbl.get("budget")
+        if "budget" in tbl:
+            if not isinstance(budget_ref, str):
+                fail(f"[rigor.{name}].budget must be a string (got {budget_ref!r})")
+            elif budget_ref not in budgets:
+                fail(f"[rigor.{name}].budget={budget_ref!r} names no [budget.*] profile")
         for field in ("orchestrator_tier", "implementer_tier", "reviewer_tier"):
-            if field in tbl and tbl[field] not in LADDER:
+            if field not in tbl:
+                continue
+            if not isinstance(tbl[field], str):
+                fail(f"[rigor.{name}].{field} must be a string (got {tbl[field]!r})")
+            elif tbl[field] not in LADDER:
                 fail(f"[rigor.{name}].{field}={tbl[field]!r} is not a concrete ladder tier")
 
     for name, tbl in reviews.items():
@@ -526,6 +574,29 @@ def resolve_tiers(rigor_tbl, overrides_label, overrides_explicit):
     return tiers
 
 
+def required_agent_runs_and_parallel(topology, min_agents):
+    """min_agents means something different per topology, so the budget it
+    needs does too:
+      independent-proposals (council): min_agents counts PROPOSERS only —
+        the coordinator that judges them afterward is one MORE run, but
+        does not need a concurrent slot of its own (it runs once the
+        proposers have finished). Needs max_agent_runs >= min_agents + 1
+        and max_parallel_agents >= min_agents.
+      lead-and-workers (orchestrate): min_agents counts the lead PLUS its
+        workers (ADR 0007 D2's "a lead plus at least one worker"). The lead
+        does not consume a parallel slot of its own — only the workers run
+        concurrently. Needs max_agent_runs >= min_agents and
+        max_parallel_agents >= min_agents - 1.
+      anything else: no topology-specific formula is defined, so fall back
+        to the conservative same-value check.
+    """
+    if topology == "independent-proposals":
+        return min_agents + 1, min_agents
+    if topology == "lead-and-workers":
+        return min_agents, min_agents - 1
+    return min_agents, min_agents
+
+
 def check_incompatible(cfg, rigor_name, strategy_name, errors):
     if rigor_name is None or strategy_name is None:
         return
@@ -533,14 +604,17 @@ def check_incompatible(cfg, rigor_name, strategy_name, errors):
     min_agents = strategy_tbl.get("min_agents")
     if not isinstance(min_agents, int) or isinstance(min_agents, bool):
         return
+    topology = strategy_tbl.get("topology")
+    required_runs, required_parallel = required_agent_runs_and_parallel(topology, min_agents)
     budget_name = cfg["rigor"][rigor_name]["budget"]
     budget = cfg["budget"][budget_name]
-    if min_agents > budget["max_agent_runs"] or min_agents > budget["max_parallel_agents"]:
+    if required_runs > budget["max_agent_runs"] or required_parallel > budget["max_parallel_agents"]:
         errors.append({
             "code": "incompatible_strategy",
             "detail": (
-                f"strategy {strategy_name!r} needs min_agents={min_agents}, but rigor "
-                f"{rigor_name!r}'s budget {budget_name!r} allows "
+                f"strategy {strategy_name!r} ({topology!r}, min_agents={min_agents}) needs "
+                f"max_agent_runs>={required_runs} and max_parallel_agents>={required_parallel}, "
+                f"but rigor {rigor_name!r}'s budget {budget_name!r} allows "
                 f"max_agent_runs={budget['max_agent_runs']}, "
                 f"max_parallel_agents={budget['max_parallel_agents']}"
             ),
@@ -582,7 +656,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
     ap.add_argument("--merge-base-config")
-    ap.add_argument("--merge-base-config-absent", action="store_true")
+    ap.add_argument("--merge-base-absent", action="store_true")
+    ap.add_argument("--config-unchanged", action="store_true")
     ap.add_argument("--label", action="append", default=[], dest="labels")
     ap.add_argument("--trusted-label", action="append", default=[], dest="trusted_labels")
     ap.add_argument("--override", action="append", default=[], dest="overrides")
@@ -592,15 +667,33 @@ def main():
     warnings = []
     errors = []
 
-    if args.merge_base_config and args.merge_base_config_absent:
+    # Exactly one config-basis flag is required — reading --config is NEVER
+    # a silent default (see the module docstring). argparse's own
+    # mutually-exclusive-group is deliberately not used here: its error
+    # handling bypasses this script's "always emit clean JSON" contract.
+    basis_given = [
+        name for name, present in (
+            ("--merge-base-config", bool(args.merge_base_config)),
+            ("--merge-base-absent", args.merge_base_absent),
+            ("--config-unchanged", args.config_unchanged),
+        )
+        if present
+    ]
+    if len(basis_given) != 1:
         errors.append({
             "code": "invalid_input",
-            "detail": "--merge-base-config and --merge-base-config-absent are mutually exclusive",
+            "detail": (
+                "exactly one of --merge-base-config PATH, --merge-base-absent, or "
+                f"--config-unchanged is required — got {len(basis_given)} "
+                f"({', '.join(basis_given) if basis_given else 'none'}). Reading the branch "
+                "config must never be a silent default: a branch that edits .devflow.toml could "
+                "otherwise read its own (possibly weakened) copy instead of the merge-base's."
+            ),
         })
         emit({"config_path": None, "config_source": None, "config_sha256": None,
               "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
 
-    if args.merge_base_config_absent:
+    if args.merge_base_absent:
         # The caller has explicitly CONFIRMED the merge-base commit has no
         # .devflow.toml — a real, valid state (e.g. this PR is the one
         # introducing the file). Distinct from merge_base_config naming a
@@ -620,12 +713,16 @@ def main():
                     f"--merge-base-config {read_path!r} does not exist — this looks like a "
                     "caller/extraction error (e.g. `git show <merge-base>:.devflow.toml` failed "
                     "or wrote nowhere), not a signal that the merge-base has no .devflow.toml; "
-                    "pass --merge-base-config-absent instead if it genuinely does not"
+                    "pass --merge-base-absent instead if it genuinely does not"
                 ),
             })
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": None,
                   "requires_confirmation": False, "warnings": warnings, "errors": errors}, errors)
     else:
+        # The only remaining possibility, given basis_given has exactly one
+        # member: --config-unchanged. The branch does not touch
+        # .devflow.toml, so the merge-base rule does not apply and --config
+        # is the right thing to read directly.
         read_path = args.config
         config_source = "branch"
 
@@ -645,13 +742,13 @@ def main():
         # every exit path from this point on — success or error — reports
         # the config as absent and carries the same notice, not just the
         # final happy-path output. read_path is None specifically for the
-        # --merge-base-config-absent case (an explicit confirmation, not a
-        # path that failed to resolve) — worded differently since "None
-        # does not exist" would be a confusing thing to print.
+        # --merge-base-absent case (an explicit confirmation, not a path
+        # that failed to resolve) — worded differently since "None does not
+        # exist" would be a confusing thing to print.
         config_source = "absent"
         if read_path is None:
             detail = (
-                "merge-base .devflow.toml confirmed absent via --merge-base-config-absent "
+                "merge-base .devflow.toml confirmed absent via --merge-base-absent "
                 "— resolved from the built-in fallback"
             )
         else:
@@ -764,7 +861,11 @@ def main():
             "rigor": {"value": rigor_name, "source": rigor_source},
             "strategy": {"value": strategy_name, "source": strategy_source},
         },
-        "review": {**review_tbl, "policy": review_policy_name, "source": "builtin" if config_absent else "profile"},
+        "review": {
+            **review_tbl, "policy": review_policy_name,
+            "source": "builtin" if config_absent else "profile",
+            "min_rounds_scope": MIN_ROUNDS_SCOPE,
+        },
         "tiers": tiers,
         "budget": None if budget_tbl is None else {**budget_tbl, "name": budget_name, "source": "profile"},
         "strategy_fields": strategy_tbl,
