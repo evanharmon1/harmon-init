@@ -367,30 +367,42 @@
     {
       "family": "rigor",
       "prefix": "rigor",
-      "purpose": "Which round-cap level in .devflow.toml an agent works the issue under; values must match its [rigor.*] tables.",
+      "purpose": "How much confidence, effort, depth, and budget an agent works the issue under; values must match .devflow.toml's [rigor.*] tables.",
       "axis": "strategy",
-      "source": "inline",
+      "source": "devflow",
       "writers": ["human"],
       "writer_note": "humans, at triage — **never an agent on itself**",
       "readers": "agents, when entering the Dev Loop",
       "lifecycle": "durable",
-      "lifecycle_note": "set when the default budget is wrong for the change; survives the work",
-      "trust_note": "provisioned; **read by agents** — selects a round-cap level, arms nothing",
+      "lifecycle_note": "set when the default rigor is wrong for the change; survives the work",
+      "trust_note": "provisioned; **read by agents** — selects a review policy, three role tiers, and a budget; arms nothing",
       "exclusive": false,
       "provision": true,
       "color": "D4C5F9",
       "values": [
         {
+          "value": "trivial",
+          "description": "Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes"
+        },
+        {
+          "value": "minimal",
+          "description": "Rigor: a quick driveby review, standard orchestrator/reviewer, economy implementer, light budget"
+        },
+        {
           "value": "light",
-          "description": "Dev Loop caps: trivial, low-blast-radius change"
+          "description": "Rigor: light review, frontier orchestrator/reviewer, economy implementer, light budget"
         },
         {
           "value": "standard",
-          "description": "Dev Loop caps: the default budget"
+          "description": "Rigor: standard review, frontier orchestrator/reviewer, standard implementer — the default"
+        },
+        {
+          "value": "thorough",
+          "description": "Rigor: thorough review, apex orchestrator/reviewer, standard implementer, thorough budget"
         },
         {
           "value": "deep",
-          "description": "Dev Loop caps: security, migrations, irreversible paths"
+          "description": "Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget"
         }
       ]
     },
@@ -439,42 +451,66 @@
     {
       "family": "method",
       "prefix": "method",
-      "purpose": "Execution topology for working the issue; conflicts resolve by the config-backed rank.",
+      "purpose": "Retired: execution topology now lives in the `strategy` family (`.devflow.toml` `[strategy.*]`).",
       "axis": "strategy",
       "source": "inline",
+      "writers": [],
+      "writer_note": "nobody — renamed to strategy:*",
+      "readers": "humans — retired, see `strategy:*`",
+      "lifecycle": "durable",
+      "lifecycle_note": "rename each BEFORE provisioning creates its strategy:* counterpart (association-preserving): `gh label edit method:<v> --name strategy:<v>`",
+      "trust_note": "retired — execution topology renamed to the `strategy` family; never provisioned",
+      "exclusive": false,
+      "provision": false,
+      "retired": true,
+      "values": [
+        { "value": "oneshot" },
+        { "value": "plan" },
+        { "value": "plan-approved" },
+        { "value": "orchestrate" },
+        { "value": "council" },
+        { "value": "human-led" }
+      ]
+    },
+    {
+      "family": "strategy",
+      "prefix": "strategy",
+      "purpose": "Which execution strategy in .devflow.toml [strategy.*] an agent works the issue under; conflicts are ambiguous, never ranked.",
+      "axis": "strategy",
+      "source": "devflow",
       "writers": ["human"],
       "writer_note": "humans, at triage or planning — never an agent on itself",
-      "readers": "humans and agents — resolved to a topology via `.devflow.toml` `default_method`/`[method]` (ADR 0006)",
+      "readers": "agents, when entering the Dev Loop — Foreman does not consume it yet (out of scope here)",
       "lifecycle": "durable",
-      "lifecycle_note": "set when the default method would be wrong; config-backed rank resolution per ADR 0006",
-      "trust_note": "provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing",
-      "exclusive": false,
+      "lifecycle_note": "set when the default strategy is wrong for the change; survives the work",
+      "trust_note": "provisioned; **read by agents** — selects an execution topology, arms nothing",
+      "exclusive": true,
       "provision": true,
       "color": "BF3989",
       "values": [
         {
           "value": "oneshot",
-          "description": "Execution: single agent, no separate plan phase"
+          "description": "Strategy: single agent, no separate plan phase"
         },
         {
           "value": "plan",
-          "description": "Execution: agent plans then implements; no human plan gate"
+          "description": "Strategy: agent plans then implements; no human plan gate"
         },
         {
           "value": "plan-approved",
-          "description": "Execution: plan requires human approval before implementation"
+          "description": "Strategy: plan requires human approval before implementation"
         },
         {
           "value": "orchestrate",
-          "description": "Execution: conductor session drives subagents, possibly across related issues"
+          "description": "Strategy: lead agent delegates bounded work to parallel workers"
         },
         {
           "value": "council",
-          "description": "Execution: N independent implementations; judged, best or synthesis wins"
+          "description": "Strategy: independent proposals, judged; best or synthesis wins (2+ agents)"
         },
         {
           "value": "human-led",
-          "description": "Execution: human owns central decisions; AI does bounded pieces"
+          "description": "Strategy: human owns central decisions; AI does bounded pieces"
         }
       ]
     },

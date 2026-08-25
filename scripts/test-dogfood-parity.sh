@@ -17,8 +17,8 @@ cd "$(dirname "$0")/.."
 #   .devcontainer/related-repos.txt — harmon-init's curated sibling-repo list;
 #               generated repositories begin with an empty, consumer-owned list.
 #   label-registry.json — the root manifest carries harmon-init's own
-#               vocabulary (its area:*/domain:* values and the tier:*/method:*
-#               strategy families); the template twin ships the generic
+#               vocabulary (its area:*/domain:* values and the tier:*/strategy:*
+#               families); the template twin ships the generic
 #               starter values. test-label-registry.sh gates BOTH layers
 #               against their own reviewed lockfiles and diffs the shared
 #               family metadata, so the divergence is checked, just not

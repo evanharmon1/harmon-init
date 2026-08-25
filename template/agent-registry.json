@@ -1,6 +1,6 @@
 {
   "$schema": "./agent-registry.schema.json",
-  "schema_version": 2,
+  "schema_version": 3,
   "labels": {
     "suggest": {
       "prefix": "suggest",
@@ -105,7 +105,8 @@
         "owner": "runner-config",
         "details": "The runner or repository configuration selects the Claude model; labels do not."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "claude-code-action",
@@ -116,7 +117,8 @@
         "owner": "workflow-config",
         "details": "The GitHub Actions workflow input selects the Claude model."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["implement", "review"]
     },
     {
       "slug": "claude-code-deepseek",
@@ -127,7 +129,8 @@
         "owner": "provider-wrapper",
         "details": "The provider-rewired wrapper fixes the family and its runtime configuration selects the model."
       },
-      "provider_rewired": true
+      "provider_rewired": true,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "claude-code-glm",
@@ -138,7 +141,8 @@
         "owner": "provider-wrapper",
         "details": "The provider-rewired wrapper fixes the family and its runtime configuration selects the model."
       },
-      "provider_rewired": true
+      "provider_rewired": true,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "claude-code-kimi",
@@ -149,7 +153,8 @@
         "owner": "provider-wrapper",
         "details": "The provider-rewired wrapper fixes the family and its runtime configuration selects the model."
       },
-      "provider_rewired": true
+      "provider_rewired": true,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "claude-code-minimax",
@@ -160,7 +165,8 @@
         "owner": "provider-wrapper",
         "details": "The provider-rewired wrapper fixes the family and its runtime configuration selects the model."
       },
-      "provider_rewired": true
+      "provider_rewired": true,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "claude-code-qwen",
@@ -171,7 +177,8 @@
         "owner": "provider-wrapper",
         "details": "The provider-rewired wrapper fixes the family; per-role model env vars select Qwen3.7-Max for the main/reasoning roles and Qwen3-Coder-Plus for the coding/subagent roles."
       },
-      "provider_rewired": true
+      "provider_rewired": true,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "claude-code-qwen-local",
@@ -182,7 +189,8 @@
         "owner": "provider-wrapper",
         "details": "The provider-rewired wrapper points at a local Anthropic-compatible endpoint (Ollama or LM Studio) serving qwen3-coder:30b."
       },
-      "provider_rewired": true
+      "provider_rewired": true,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "codex-cli",
@@ -193,7 +201,8 @@
         "owner": "runner-config",
         "details": "The runner or CLI invocation selects the GPT model."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "copilot-cli",
@@ -204,7 +213,8 @@
         "owner": "harness-runtime",
         "details": "Copilot's picker selects among MAI and brokered third-party models at runtime."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "qwen-code",
@@ -215,7 +225,8 @@
         "owner": "runner-config",
         "details": "The runner or Qwen Code configuration selects the Qwen model."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "antigravity",
@@ -226,7 +237,8 @@
         "owner": "harness-runtime",
         "details": "The Antigravity session selects the Gemini model."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "opencode",
@@ -237,7 +249,8 @@
         "owner": "harness-runtime",
         "details": "The multi-provider harness selects both provider family and model at runtime."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "pi",
@@ -248,7 +261,8 @@
         "owner": "harness-runtime",
         "details": "The multi-provider harness selects both provider family and model at runtime."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "goose",
@@ -259,7 +273,8 @@
         "owner": "harness-runtime",
         "details": "The multi-provider harness selects both provider family and model at runtime."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     },
     {
       "slug": "cline",
@@ -270,7 +285,8 @@
         "owner": "harness-runtime",
         "details": "The multi-provider harness selects both provider family and model at runtime."
       },
-      "provider_rewired": false
+      "provider_rewired": false,
+      "roles": ["orchestrate", "implement", "review"]
     }
   ],
   "foreman_adapters": [

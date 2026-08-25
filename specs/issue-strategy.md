@@ -40,8 +40,13 @@ Issues become cheap to classify and route, for humans and agents alike:
   who may write each family — rendered into provisioning, docs, and skill behavior.
 - Three classification axes: `area:*` (codebase subsystem), `domain:*` (product capability),
   `layer:*` (stack slice); at most one of each per issue.
-- Two advisory strategy axes with config-backed semantics: `method:*` (execution topology) and
-  `tier:*` (model routing), resolved like rigor and consumable by foreman under its trust model.
+- Two primary execution-policy axes, config-backed in `.devflow.toml`: `rigor:*` (how much
+  confidence, effort, depth, and budget — a review policy, three role tiers, and a budget
+  envelope) and `strategy:*` (how the work is organized and performed — topology, planning,
+  delegation, and human gates). `tier:*` becomes an advanced, role-scoped refinement of rigor's
+  own per-role tiers rather than a peer axis with its own default; both `rigor:*` and
+  `strategy:*` are consumable by foreman under its trust model. (#1047, superseding this spec's
+  original `method:*`; see [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md).)
 - One authoring standard (title rule, body skeleton, metadata checklist) enforced by a checker
   and mirrored by the issue forms.
 - A manifest-governed triage skill that classifies the backlog and reports what it cannot decide.
@@ -86,11 +91,17 @@ Issues become cheap to classify and route, for humans and agents alike:
       codex, worktree, release, security, pm, docs); generic template starter (ci, docs, deps,
       build). Rule: area = solution space, domain = problem space, layer = stack slice. (#854)
 - [ ] `tier:*` ladder `local → economy → standard → frontier → apex` plus `adaptive`; `apex` =
-      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains `default_tier`
-      and `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
+      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains
+      `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
       (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier.
       `tier:local` escalates to economy; privacy-pinning is a future separate concern label,
-      not a tier semantic. (#855)
+      not a tier semantic. (#855; re-scoped #1047 — there is no `default_tier`: each
+      `[rigor.*]` level names `orchestrator_tier`/`implementer_tier`/`reviewer_tier`
+      directly, and those three values are the default for every role absent an override.
+      An unqualified `tier:<value>` label or override refines the **implementer** tier only;
+      `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>`
+      refine one named role. See [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md)
+      D2/D5.)
 - [ ] Tier tables are **inert routing preferences, never dependencies**: nothing in a
       generated repo invokes any model because the config exists, and an acting consumer may
       select only among vendors/harnesses the operator has already configured and
@@ -109,33 +120,51 @@ Issues become cheap to classify and route, for humans and agents alike:
       absent a suggestion, the consumer's own configured backend or harness picks; a tier
       with no eligible configured candidate escalates along the chain, and an exhausted
       chain **stops with a report** — never a silent vendor switch or downgrade. (#855)
-- [ ] Built-in fallbacks are defined: absent `.devflow.toml` (or its `[tier]`/`[method]`
-      sections), both axes are advisory-informational only — the labels still classify, and
-      nothing resolves them to a model or workflow. `adaptive` is never a terminal answer:
-      the consumer's preflight resolves it to a concrete ladder tier, and a consumer with no
-      preflight capability treats it as `default_tier` where that key is configured —
-      validation rejects `adaptive` as a `default_tier`, so that fallback is always
-      concrete — and absent the config, `adaptive` resolves to nothing, like every tier
-      value under the axes-inert fallback above. (#855)
-- [ ] `method:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`;
-      `default_method` in `.devflow.toml`. Method conflicts resolve by a **config-backed
-      rank** (shipped order, most human oversight first:
-      `human-led > plan-approved > council > orchestrate > plan > oneshot`), so topologies
-      with no inherent ordering still resolve deterministically and identically for every
-      consumer. (#855)
-- [ ] Resolution and trust (ADR 0006): explicit instruction > label > config default >
-      built-in — where an **explicit instruction** is one arriving on the operator's
-      attributable channel (the interactive session's human input, or the automation's own
-      configuration) and never repository content: issue bodies, comments, and PR text are
-      untrusted input and can never outrank labels or config. Merge-base copy applies when
-      the change edits `.devflow.toml`; conflicts resolve
-      strongest-wins on tier and by the method rank above (a label only ever buys more
-      capability or oversight); a concrete tier beats `adaptive`; below-default resolutions
-      are disclosed in the PR body (#809 doctrine extended). Consumer trust is stated as
-      **invariants**; the concrete timeline-validation algorithm is deliberately not
-      specified here — it is ADR 0006 / foreman#139 design work under #855, and the
-      adversarial scenarios raised in this spec's review are carried there as required test
-      cases:
+- [ ] Built-in fallbacks are defined: absent `.devflow.toml` entirely, resolution uses the
+      built-in review policy equivalent to `standard` (3 / 3 / 4, `min_rounds` 1), strategy
+      `plan`, and tiers **inert** — the labels still classify, and nothing resolves a role to a
+      concrete model. `adaptive` is never a terminal answer for a role tier: it is rejected
+      outright as a `[rigor.*]` role-tier value or an override target — a role always resolves
+      to a concrete ladder rung or not at all (inert), never to `adaptive` itself. (#855;
+      restated #1047 without `default_tier`/`[method]`, which no longer exist — see
+      [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md) D5/D12.)
+- [ ] `strategy:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`
+      (replacing `method:*`, retired via the existing retired-family pattern);
+      `default_strategy` in `.devflow.toml`. Each value carries machine-readable `topology`,
+      `planning`, `delegation`, optional `coordination`/`selection`/`synthesis`/`min_agents`,
+      and `human_gates` fields (defined without relying on the value's name — see
+      [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md) and
+      `docs/guides/devflow.md`). Unlike the `method:*` rank it replaces, **strategy conflicts
+      are ambiguous, not ranked**: two `strategy:*` labels on one issue require resolution
+      (an interactive session asks; unattended automation falls back to `default_strategy`
+      with a warning) rather than resolving to a fixed cross-topology order — topologies are
+      not orderable against each other the way rigor levels are. `human_gates` is drawn from a
+      fixed ten-value set (`after-discovery`, `after-plan`, `before-delegation`,
+      `before-selection`, `before-synthesis`, `before-scope-expansion`,
+      `before-budget-escalation`, `before-publication`, `before-ready-for-review`,
+      `each-phase`); constitutional approvals (merge, release, destructive actions,
+      credential-store writes, security-relevant settings) are never configurable through it,
+      and a strategy naming one is a validation error. A strategy whose `min_agents` exceeds
+      the resolved rigor's budget (`max_agent_runs` or `max_parallel_agents`) is a reported
+      incompatibility, never a silent substitution. (#1047, superseding this spec's original
+      `method:*` requirement from #855.)
+- [ ] Resolution and trust (ADR 0006, re-scoped by ADR 0007): explicit instruction > label >
+      config default > built-in — where an **explicit instruction** is one arriving on the
+      operator's attributable channel (the interactive session's human input, or the
+      automation's own configuration) and never repository content: issue bodies, comments,
+      and PR text are untrusted input and can never outrank labels or config. Merge-base copy
+      applies when the change edits `.devflow.toml` — every parameter, not only defaults.
+      **Rigor conflicts resolve strongest-wins by `rigor_order`** (a label only ever buys more
+      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**, and
+      a concrete tier always beats `adaptive`; **strategy conflicts are ambiguous** — there is
+      no rank, because topologies are not orderable against each other the way rigor levels
+      are, so an interactive session must ask and unattended automation falls back to
+      `default_strategy` with a warning. Off-default resolutions — above or below, for rigor,
+      strategy, or any individual role tier — are disclosed in the PR body (#809 doctrine
+      extended). Consumer trust is stated as **invariants**; the concrete timeline-validation
+      algorithm is deliberately not specified here — it is ADR 0006 / foreman#139 design work
+      under #855, and the adversarial scenarios raised in this spec's review are carried there
+      as required test cases:
       1. **Unattended automation** acts on a strategy or suggestion label only after
          verifying its provenance end-to-end from its own trusted-actor configuration,
          re-read immediately before acting — and no sequence of untrusted mutations,
@@ -186,11 +215,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       is complete** (work type present in the owner-appropriate form, and each of
       area/layer/domain either applied or genuinely inapplicable); a partially classified
       issue keeps the label and appears in the report; never
-      `foreman:*`/`rigor:*`/`tier:*`/`method:*`/`claim:*`/`suggest:*`, milestones, closes,
+      `foreman:*`/`rigor:*`/`tier:*`/`strategy:*`/`claim:*`/`suggest:*`, milestones, closes,
       assignees, or body/title edits; everything else lands in one rolling report issue.
 - [ ] Foreman alignment: pin bump to 2.5.0 (#849), AdmiralFraggle in `trusted_actors` (#850),
       claim contract at dispatch proposed upstream (foreman#169, engaging foreman#82), tier
-      vocabulary contributed to foreman#139. Foreman consumption of `tier:*`/`method:*` follows
+      vocabulary contributed to foreman#139. Foreman consumption of `tier:*`/`strategy:*` follows
       #139's rails; nothing here arms anything.
 - [ ] Docs reconciliation (#857): manifest named as source; scope-batch milestones legitimized
       for rolling-release repos; #683/#702/#703 absorbed.
@@ -207,9 +236,17 @@ Issues become cheap to classify and route, for humans and agents alike:
 ### Scenario: tier conflict can only buy more
 
 - **Given** an issue carrying both `tier:economy` and `tier:standard`
-- **When** an agent (or foreman, later) resolves the tier
-- **Then** the resolution is `standard`, and any resolution below `default_tier` is disclosed in
-  the PR body
+- **When** an agent (or foreman, later) resolves the (unqualified, implementer-scoped) tier
+- **Then** the resolution is `standard`, and any role tier that ends up below the resolved
+  rigor's own profile for that role is disclosed in the PR body
+
+### Scenario: rigor conflict resolves to the strongest level
+
+- **Given** an issue carrying both `rigor:light` and `rigor:deep`
+- **When** an agent (or foreman, later) resolves the rigor
+- **Then** the resolution is `deep` — the level that sorts strongest in `.devflow.toml`'s
+  `rigor_order` — carrying `deep`'s whole profile (review policy, all three role tiers,
+  budget) rather than a mix of fields from both labels
 
 ### Scenario: untrusted strategy labels are inert to automation
 
@@ -221,19 +258,46 @@ Issues become cheap to classify and route, for humans and agents alike:
   away from what trusted actors' surviving actions alone would produce (the provenance
   invariant; the concrete algorithm lives with ADR 0006 / foreman#139)
 
-### Scenario: incomparable methods still resolve deterministically
+### Scenario: two strategy labels are ambiguous, not ranked
 
-- **Given** an issue carrying both `method:orchestrate` and `method:council`
-- **When** any consumer resolves the method
-- **Then** the config-backed rank decides (`council`, under the shipped order) and every
-  consumer reaches the same answer
+- **Given** an issue carrying both `strategy:orchestrate` and `strategy:council`
+- **When** an interactive session resolves the strategy
+- **Then** resolution stops with an ambiguous-strategy error asking which one applies, rather
+  than picking one by a fixed rank — and when the same conflict is resolved by unattended
+  automation instead, it falls back to `default_strategy` with a warning rather than guessing
+
+### Scenario: a strategy that exceeds the rigor's budget is reported, not substituted
+
+- **Given** an issue carrying `strategy:council` (`min_agents = 2`) and `rigor:trivial`
+  (`budget.trivial`: `max_agent_runs = 1`, `max_parallel_agents = 1`)
+- **When** any consumer resolves the pairing
+- **Then** resolution reports the incompatibility and stops — it never silently substitutes a
+  different topology and never silently widens the budget to fit
+
+### Scenario: a zero-cap stage is skipped without weakening a deterministic gate
+
+- **Given** `rigor:trivial` (review policy `none`: challenge/review/shepherd all 0)
+- **When** an agent works the issue to a PR
+- **Then** no AI challenge, review, or shepherd round runs, while every deterministic gate
+  (tests, CI, security scanners, branch protection, the human merge/release decision) still
+  runs exactly as it would under any other rigor, and any finding that a required check does
+  surface is still adjudicated and recorded like any other
+
+### Scenario: a same-family reviewer fallback is disclosed, not silent
+
+- **Given** `rigor:standard` (`reviewer_tier = "frontier"`) and an implementer whose configured
+  harness is in the only family with a `frontier`-tier reviewer available
+- **When** resolution selects the primary reviewer
+- **Then** it falls back to that same-family reviewer at the required tier rather than failing
+  outright, and marks the choice as a disclosed same-family fallback rather than presenting it
+  as the preferred different-family outcome
 
 ### Scenario: triage stays inside its allowlist
 
 - **Given** the triage skill running over the live backlog
 - **When** it classifies an issue it is confident about
 - **Then** it writes only labels whose manifest `writers` include `agent`, and everything else —
-  including every tier/method/suggest proposal — appears only in the rolling report
+  including every tier/strategy/suggest proposal — appears only in the rolling report
 
 ### Scenario: a form-filed bug arrives classified
 
@@ -273,7 +337,9 @@ Issues become cheap to classify and route, for humans and agents alike:
 - The `tier:*`/`method:*`/`area:*`/`task`/`research` labels were hand-seeded on 2026-08-13 across
   harmon-init, harmon-devkit, and ponderousdev/foreman (colors: area `0E8A16`, tier `7057FF`,
   method `BF3989`, task `6E7781`, research `0E7C86`); #851 formalizes them — the manifest must
-  adopt these exact names/colors so provisioning reconciles instead of fighting.
+  adopt these exact names/colors so provisioning reconciles instead of fighting. `method:*` was
+  retired in favor of `strategy:*` under #1047 (ADR 0007); its color `BF3989` carries over to
+  `strategy` so provisioning reconciles the same way.
 - Design rails inherited from upstream foreman (v2.5.0 source, verified): unrecognized
   `foreman:*` labels arm as backend selectors; `type:<commit-type>` is parsed (two = error);
   dispatchability requires an `## Acceptance Criteria` section (case-insensitive) with ≥ 1

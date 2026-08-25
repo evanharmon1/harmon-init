@@ -50,6 +50,15 @@ switch (mutation) {
   case 'missing-model-owner':
     delete registry.harnesses[0].model_resolution.owner
     break
+  case 'missing-roles':
+    delete registry.harnesses[0].roles
+    break
+  case 'empty-roles':
+    registry.harnesses[0].roles = []
+    break
+  case 'unknown-role':
+    registry.harnesses[0].roles = ['orchestrate', 'unknown']
+    break
   case 'unknown-fixed-family':
     registry.harnesses[0].family_constraint.family = 'unknown'
     break
@@ -212,6 +221,15 @@ rejects "duplicate harness slugs" \
 rejects "missing model-resolution ownership" \
     'missing-model-owner' \
     'missing required property owner'
+rejects "a harness without a roles list" \
+    'missing-roles' \
+    'missing required property roles'
+rejects "a harness with an empty roles list" \
+    'empty-roles' \
+    'must contain at least 1 item(s)'
+rejects "a harness with an unrecognized role" \
+    'unknown-role' \
+    'must be one of'
 rejects "unknown fixed-family constraints" \
     'unknown-fixed-family' \
     'references unknown family unknown'

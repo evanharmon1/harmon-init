@@ -6,6 +6,15 @@ Date: 2026-08-16
 
 Accepted
 
+D4 (the method rank and its `[method]` table) is **superseded** by
+[ADR 0007](0007-rigor-and-strategy-axes.md), which retires `method:*` in
+favor of `strategy:*`; D5 (resolution order and conflict handling) is
+**amended** by ADR 0007 to cover `rigor:*`/`strategy:*` as the primary
+label inputs rather than `tier:*`/`method:*`. D1–D3 and D6–D8 (the tier
+ladder, escalation, consumer-trust invariants, and no-auto-merge) stand
+unchanged; ADR 0007 re-scopes tier resolution to per-role tiers but the
+`[tier.*]` model itself is untouched.
+
 Amends [ADR 0005](0005-unified-agent-vocabulary.md) D6 (see Decision § D6
 amendment). Authoritative requirements live in
 [`specs/issue-strategy.md`](../../specs/issue-strategy.md); on any conflict the

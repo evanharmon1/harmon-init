@@ -7,7 +7,7 @@
   "required": ["$schema", "schema_version", "labels", "families", "harnesses", "foreman_adapters"],
   "properties": {
     "$schema": { "const": "./agent-registry.schema.json" },
-    "schema_version": { "const": 2 },
+    "schema_version": { "const": 3 },
     "labels": {
       "type": "object",
       "additionalProperties": false,
@@ -110,6 +110,7 @@
         "details": { "type": "string", "minLength": 1 }
       }
     },
+    "role": { "enum": ["orchestrate", "implement", "review"] },
     "harness": {
       "type": "object",
       "additionalProperties": false,
@@ -119,7 +120,8 @@
         "product",
         "family_constraint",
         "model_resolution",
-        "provider_rewired"
+        "provider_rewired",
+        "roles"
       ],
       "properties": {
         "slug": { "$ref": "#/$defs/slug" },
@@ -127,7 +129,14 @@
         "product": { "type": "string", "minLength": 1 },
         "family_constraint": { "$ref": "#/$defs/familyConstraint" },
         "model_resolution": { "$ref": "#/$defs/modelResolution" },
-        "provider_rewired": { "type": "boolean" }
+        "provider_rewired": { "type": "boolean" },
+        "roles": {
+          "description": "Which of orchestrate/implement/review this harness can serve — the capability metadata a rigor/strategy resolver reads to pick an eligible harness for a role; not itself an execution trigger.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/role" }
+        }
       }
     },
     "foremanAdapter": {

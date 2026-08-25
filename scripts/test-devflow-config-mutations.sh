@@ -2,14 +2,16 @@
 # test-devflow-config-mutations.sh — prove test-devflow-config.sh REJECTS bad
 # configs, not only that it accepts the good one.
 #
-# test:devflow-config runs the validator against the checked-in (valid) config,
-# so it proves the happy path and nothing else: a regression that stopped
-# rejecting `default_tier = "adaptive"`, a dangling escalate_to, an unknown
-# model slug, a missing local harness, or method-rank drift would leave that
-# task green. This test exercises each advertised rejection by mutating a
-# throwaway copy of the whole config layout and asserting the validator fails
-# with the expected reason — the same shape as test-agent-registry.sh's
-# `rejects` cases. Root-only, like the validator it guards.
+# test:devflow-config runs the validator against the checked-in (valid)
+# config, so it proves the happy path and nothing else: a regression that
+# stopped rejecting a role tier of `adaptive`, a rigor_order that isn't a
+# permutation, a constitutional human_gate, an undocumented strategy×rigor
+# incompatibility, or a description that drifted from label-registry.json
+# would leave that task green. This test exercises each advertised
+# rejection by mutating a throwaway copy of the whole config layout and
+# asserting the validator fails with the expected reason — the same shape as
+# test-agent-registry.sh's `rejects` cases. Root-only, like the validator it
+# guards.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -22,14 +24,18 @@ import sys
 import tempfile
 
 repo = sys.argv[1]
-# The validator reads both .devflow.toml copies, both label + agent registries,
-# and both AGENTS files; a mutation layout has to mirror that whole surface.
+# The validator reads both .devflow.toml copies, both label + agent
+# registries, both AGENTS files, docs/guides/devflow.md (existence only),
+# and shells out to scripts/devflow-resolve.py — a mutation layout has to
+# mirror that whole surface.
 LAYOUT = [
     "label-registry.json",
     "agent-registry.json",
     "AGENTS.md",
     ".devflow.toml",
     "scripts/test-devflow-config.sh",
+    "scripts/devflow-resolve.py",
+    "docs/guides/devflow.md",
     "template/label-registry.json",
     "template/agent-registry.json",
     "template/.devflow.toml",
@@ -40,15 +46,16 @@ failures = []
 
 
 def build(tmp):
-    os.makedirs(os.path.join(tmp, "scripts"))
-    os.makedirs(os.path.join(tmp, "template"))
     for rel in LAYOUT:
-        shutil.copy(os.path.join(repo, rel), os.path.join(tmp, rel))
+        dest = os.path.join(tmp, rel)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy(os.path.join(repo, rel), dest)
 
 
 def edit_toml(tmp, fn):
-    # Mutate both .devflow.toml copies identically, so the twin-parity check is
-    # not what trips — we are testing the tier/method logic, not that gate.
+    # Mutate both .devflow.toml copies identically, so the twin-parity check
+    # is not what trips — we are testing the rigor/strategy logic, not that
+    # gate.
     for rel in (".devflow.toml", "template/.devflow.toml"):
         p = os.path.join(tmp, rel)
         content = open(p).read()  # read before opening for write — truncation first would empty it
@@ -124,21 +131,118 @@ def sub(old, new):
 # Control: the unmutated layout must pass, or every rejection below is vacuous.
 accepts("the checked-in configuration")
 
-# default_tier / default_method
-rejects("default_tier = adaptive", sub('default_tier   = "standard"', 'default_tier   = "adaptive"'),
-        "default_tier='adaptive' is rejected")
-rejects("default_tier names no provisioned tier",
-        sub('default_tier   = "standard"', 'default_tier   = "bogus"'), "names no provisioned tier")
-rejects("default_method names no provisioned method",
-        sub('default_method = "plan"', 'default_method = "nope"'), "names no provisioned method")
+# ── Removed top-level shape (ADR 0007) ──────────────────────────────────────
+rejects("default_tier still present", sub(
+    'default_strategy = "plan"', 'default_strategy = "plan"\ndefault_tier = "standard"'
+), "'default_tier' is present but was removed")
+rejects("default_method still present", sub(
+    'default_strategy = "plan"', 'default_strategy = "plan"\ndefault_method = "plan"'
+), "'default_method' is present but was removed")
+rejects("[method] table still present", sub(
+    'claude = "fable"\ngpt    = "sol"',
+    'claude = "fable"\ngpt    = "sol"\n\n[method]\n'
+    'rank = ["human-led", "plan-approved", "council", "orchestrate", "plan", "oneshot"]',
+), "[method] table is present")
 
-# tier model maps
+# ── rigor_order ──────────────────────────────────────────────────────────
+rejects("rigor_order has a duplicate entry (rank violation)", sub(
+    'rigor_order = ["trivial", "minimal", "light", "standard", "thorough", "deep"]',
+    'rigor_order = ["trivial", "minimal", "light", "standard", "thorough", "thorough"]',
+), "duplicate entries")
+rejects("rigor_order missing a level", sub(
+    'rigor_order = ["trivial", "minimal", "light", "standard", "thorough", "deep"]',
+    'rigor_order = ["trivial", "minimal", "light", "standard", "thorough"]',
+), "is not a permutation of [rigor.*]")
+
+# ── [rigor.*] ────────────────────────────────────────────────────────────
+rejects("a role tier of adaptive", sub(
+    'implementer_tier   = "economy"\nreviewer_tier      = "economy"\nbudget             = "trivial"',
+    'implementer_tier   = "adaptive"\nreviewer_tier      = "economy"\nbudget             = "trivial"',
+), "is not a concrete ladder tier")
+rejects("orchestrator_tier below implementer_tier", sub(
+    'orchestrator_tier  = "frontier"\nimplementer_tier   = "standard"\nreviewer_tier      = "frontier"\nbudget             = "standard"',
+    'orchestrator_tier  = "economy"\nimplementer_tier   = "standard"\nreviewer_tier      = "frontier"\nbudget             = "standard"',
+), "must satisfy orchestrator_tier >= implementer_tier")
+rejects("a budget reference that resolves nothing", sub(
+    'budget             = "trivial"\ndescription        = "Rigor: no AI review',
+    'budget             = "nonexistent"\ndescription        = "Rigor: no AI review',
+), "names no [budget.*] profile")
+rejects("a review reference that resolves nothing", sub(
+    'review             = "none"\norchestrator_tier  = "economy"',
+    'review             = "nonexistent"\norchestrator_tier  = "economy"',
+), "names no [review.*] policy")
+rejects("a rigor description drifted from the label registry", sub(
+    'description        = "Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes"',
+    'description        = "Rigor: something completely different from the seeded label"',
+), "does not match the rigor:trivial label description")
+
+# ── [review.*] ───────────────────────────────────────────────────────────
+rejects("min_rounds above every stage cap", sub(
+    '[review.driveby]\nchallenge  = 1\nreview     = 1\nshepherd   = 1\nmin_rounds = 1',
+    '[review.driveby]\nchallenge  = 1\nreview     = 1\nshepherd   = 1\nmin_rounds = 2',
+), "exceeds min(challenge, review, shepherd)")
+rejects("review.none with min_rounds forced above 0", sub(
+    '[review.none]\nchallenge  = 0\nreview     = 0\nshepherd   = 0\nmin_rounds = 0',
+    '[review.none]\nchallenge  = 0\nreview     = 0\nshepherd   = 0\nmin_rounds = 1',
+), "exceeds min(challenge, review, shepherd)")
+rejects("a negative stage cap", sub(
+    '[review.driveby]\nchallenge  = 1', '[review.driveby]\nchallenge  = -1',
+), "must be >= 0")
+
+# ── [budget.*] ───────────────────────────────────────────────────────────
+rejects("a non-boolean allow_tier_escalation", sub(
+    '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1\nwall_clock_min        = 15\nallow_tier_escalation = false',
+    '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1\nwall_clock_min        = 15\nallow_tier_escalation = "false"',
+), "must be a boolean")
+rejects("a zero max_agent_runs", sub(
+    '[budget.trivial]\nmax_agent_runs        = 1', '[budget.trivial]\nmax_agent_runs        = 0',
+), "must be an integer > 0")
+
+# ── [strategy.*] ─────────────────────────────────────────────────────────
+rejects("council with min_agents lowered to 1", sub(
+    'selection   = "judge"\nsynthesis   = true\nmin_agents  = 2',
+    'selection   = "judge"\nsynthesis   = true\nmin_agents  = 1',
+), "must be an integer >= 2")
+rejects("an unknown field on a strategy table", sub(
+    '[strategy.oneshot]\ntopology    = "single-agent"',
+    '[strategy.oneshot]\ntopology    = "single-agent"\nbogus_field = "x"',
+), "has unknown key(s)")
+rejects("an invalid topology enum value", sub(
+    '[strategy.oneshot]\ntopology    = "single-agent"',
+    '[strategy.oneshot]\ntopology    = "some-made-up-topology"',
+), "not in")
+rejects("a constitutional gate in human_gates", sub(
+    '[strategy.plan-approved]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = ["after-plan"]',
+    '[strategy.plan-approved]\ntopology    = "single-agent"\nplanning    = "explicit"\ndelegation  = "optional"\nhuman_gates = ["after-plan", "merge"]',
+), "constitutional gate")
+rejects("an unrecognized (non-constitutional) human gate", sub(
+    '[strategy.oneshot]\ntopology    = "single-agent"\nplanning    = "inline"\ndelegation  = "none"\nhuman_gates = []',
+    '[strategy.oneshot]\ntopology    = "single-agent"\nplanning    = "inline"\ndelegation  = "none"\nhuman_gates = ["not-a-real-gate"]',
+), "not in the allowed set")
+rejects("a strategy description drifted from the label registry", sub(
+    'description = "Strategy: single agent, no separate plan phase"',
+    'description = "Strategy: something completely different from the seeded label"',
+), "does not match the strategy:oneshot label description")
+
+# ── strategy × rigor compatibility matrix ───────────────────────────────
+def widen_trivial_budget(tmp):
+    # If council's min_agents no longer exceeds trivial's budget, the
+    # KNOWN_INCOMPATIBLE entry for (council, trivial) goes stale — the
+    # validator must catch a documented incompatibility that stopped being
+    # one, not just an undocumented one that started being one.
+    edit_toml(tmp, lambda t: t.replace(
+        '[budget.trivial]\nmax_agent_runs        = 1\nmax_parallel_agents   = 1',
+        '[budget.trivial]\nmax_agent_runs        = 4\nmax_parallel_agents   = 4',
+    ))
+rejects("a documented incompatibility (council x trivial) that no longer applies",
+        widen_trivial_budget, "but it actually resolves cleanly now")
+
+# ── tier model maps (unchanged surface, ADR 0006) ───────────────────────
 rejects("unknown model slug", sub('claude   = "sonnet"', 'claude   = "notamodel"'),
         "is not a registered model")
 rejects("unknown family in a tier table", sub('claude   = "sonnet"', 'banana   = "sonnet"'),
         "is not in")
 
-# escalate_to shape
 rejects("non-monotonic escalate_to", sub('[tier.economy]\nescalate_to = ["standard"]',
         '[tier.economy]\nescalate_to = ["local"]'), "not monotonic toward apex")
 rejects("local escalate_to is not economy",
@@ -146,7 +250,7 @@ rejects("local escalate_to is not economy",
             'endpoint    = "local"\nescalate_to = ["standard"]'),
         'escalate_to must be exactly ["economy"]')
 
-# ladder completeness / referential chain
+
 def drop_frontier(tmp):
     edit_toml(tmp, lambda t: re.sub(
         r"# Opus-class.*?qwen   = \"max\"\n\n", "", t, flags=re.S))
@@ -154,6 +258,7 @@ rejects("dropping a ladder table", drop_frontier, "missing table(s) for frontier
 # Referentiality of escalate_to is guaranteed structurally (targets are ladder
 # tiers and every ladder tier must have a table), so there is no separate
 # referential rejection to exercise — a dropped table is caught above.
+
 
 def add_extra_tier(tmp):
     def fn(reg):
@@ -164,12 +269,12 @@ def add_extra_tier(tmp):
 rejects("an extra provisioned tier value beyond the fixed ladder",
         add_extra_tier, "does not match the ADR-fixed ladder")
 
+
 def drop_all_tiers(tmp):
     edit_toml(tmp, lambda t: re.sub(
         r"\n# Self-hosted stratum.*?gpt    = \"sol\"\n", "\n", t, flags=re.S))
 rejects("removing the whole [tier] section", drop_all_tiers, "[tier] tables are missing")
 
-# endpoint rules
 rejects("endpoint on a non-local tier",
         sub('[tier.economy]\nescalate_to = ["standard"]',
             '[tier.economy]\nendpoint    = "local"\nescalate_to = ["standard"]'),
@@ -178,11 +283,11 @@ rejects("local tier missing endpoint",
         sub('[tier.local]\nendpoint    = "local"\nescalate_to', '[tier.local]\nescalate_to'),
         'must set endpoint = "local"')
 
-# local harness binding
 rejects("local family with no -local harness",
         sub('endpoint    = "local"\nescalate_to = ["economy"]\nqwen        = "coder-30b"   # served locally by claude-code-qwen-local',
             'endpoint    = "local"\nescalate_to = ["economy"]\nclaude      = "haiku"'),
         "has no registered `-local` harness")
+
 
 def unrewire_local(tmp):
     def fn(reg):
@@ -193,13 +298,18 @@ def unrewire_local(tmp):
 rejects("a -local harness that is not provider-rewired", unrewire_local,
         "has no registered `-local` harness")
 
-# [method].rank
-rejects("[method].rank reordered",
-        sub('rank = ["human-led", "plan-approved"', 'rank = ["plan-approved", "human-led"'),
-        "must be exactly")
-rejects("[method] table removed",
-        sub('[method]\nrank = ["human-led", "plan-approved", "council", "orchestrate", "plan", "oneshot"]', ''),
-        "[method] table is missing")
+# ── agent-registry role coverage (new, ADR 0007) ────────────────────────
+def strip_role(role):
+    def fn(reg):
+        for h in reg.get("harnesses", []):
+            if "roles" in h:
+                h["roles"] = [r for r in h["roles"] if r != role]
+    return fn
+
+
+def drop_review_role(tmp):
+    edit_registry(tmp, strip_role("review"))
+rejects("no harness left declaring the review role", drop_review_role, "no harness in")
 
 if failures:
     print()
