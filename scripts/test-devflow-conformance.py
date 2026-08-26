@@ -138,6 +138,11 @@ def main() -> int:
         if not isinstance(case.get("expect"), dict):
             fail(f"{name}: expect must be an object")
             return 1
+        for field in ("labels", "trusted_labels", "overrides"):
+            values = case.get(field, [])
+            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                fail(f"{name}: {field} must be an array of strings")
+                return 1
     if len(names) != len(set(names)):
         fail("fixture case names must be unique")
         return 1

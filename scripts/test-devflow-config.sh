@@ -689,6 +689,18 @@ for path in config_paths:
                 f"{sorted(MULTI_AGENT_TOPOLOGIES)} (got topology={topology!r})"
             )
 
+        required_by_topology = []
+        if topology == "lead-and-workers":
+            required_by_topology.extend(["coordination", "min_agents"])
+        if topology == "independent-proposals":
+            required_by_topology.extend(["selection", "synthesis", "min_agents"])
+        missing_by_topology = [field for field in required_by_topology if field not in tbl]
+        if missing_by_topology:
+            failures.append(
+                f"{path}: [strategy.{name}] topology={topology!r} is missing required field(s) "
+                f"{sorted(missing_by_topology)}"
+            )
+
         if "coordination" in tbl and tbl["coordination"] not in COORDINATION_ENUM:
             failures.append(
                 f"{path}: [strategy.{name}].coordination={tbl['coordination']!r} "
@@ -1310,10 +1322,50 @@ with tempfile.TemporaryDirectory() as tmp:
         capture_output=True, text=True,
     )
     out = json.loads(result.stdout)
-    check("a schema-v1 config missing a required review cap is invalid to the resolver",
-          result.returncode == 1
-          and any(e["code"] == "invalid_config" and "review.standard" in e["detail"]
+check("a schema-v1 config missing a required review cap is invalid to the resolver",
+      result.returncode == 1
+      and any(e["code"] == "invalid_config" and "review.standard" in e["detail"]
                   and "challenge" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial-strategy.toml")
+    open(partial_path, "w").write(open(config).read().replace("min_agents   = 2\n", "", 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 multi-agent strategy missing min_agents is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "min_agents" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    impossible_path = os.path.join(tmp, "impossible-review.toml")
+    open(impossible_path, "w").write(open(config).read().replace("min_rounds = 1\n", "min_rounds = 99\n", 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", impossible_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 review floor above its stage caps is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "min_rounds" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    branch_path = os.path.join(tmp, "branch.toml")
+    merge_base_path = os.path.join(tmp, "merge-base.toml")
+    branch_text = open(config).read()
+    merge_base_text = branch_text.replace("schema_version = 1\n\n", "", 1)
+    open(branch_path, "w").write(branch_text.replace("schema_version = 1", "schema_version = 2", 1))
+    open(merge_base_path, "w").write(merge_base_text)
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", branch_path, "--merge-base-config", merge_base_path],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a legacy merge-base transition requires a valid schema-v1 branch config",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "schema_version=2" in e["detail"] for e in out["errors"]))
 
 # absent config -> builtin (--config-unchanged: the branch's OWN copy is
 # the one that's absent, not a merge-base extraction)

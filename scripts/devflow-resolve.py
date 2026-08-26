@@ -256,6 +256,17 @@ def _schema_violations(value, schema, root, path="$"):
         return _schema_violations(value, target, root, path)
 
     violations = []
+    for branch in schema.get("allOf", []):
+        if not isinstance(branch, dict):
+            violations.append((path, "has a non-object allOf branch"))
+            continue
+        condition = branch.get("if")
+        if condition is None:
+            violations.extend(_schema_violations(value, branch, root, path))
+        elif not _schema_violations(value, condition, root, path):
+            consequence = branch.get("then")
+            if isinstance(consequence, dict):
+                violations.extend(_schema_violations(value, consequence, root, path))
     expected_type = schema.get("type")
     if isinstance(expected_type, str) and not _schema_type_matches(value, expected_type):
         return [(path, f"must be a {expected_type}")]
@@ -548,6 +559,16 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
             fail(f"[review.{name}] is not a table")
         elif not json_safe(tbl):
             fail(f"[review.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
+        else:
+            challenge = tbl.get("challenge")
+            review = tbl.get("review")
+            min_rounds = tbl.get("min_rounds")
+            if all(isinstance(value, int) and not isinstance(value, bool)
+                   for value in (challenge, review, min_rounds)) and min_rounds > min(challenge, review):
+                fail(
+                    f"[review.{name}].min_rounds={min_rounds} exceeds "
+                    f"min(challenge, review)={min(challenge, review)}"
+                )
 
     for name, tbl in budgets.items():
         if not isinstance(tbl, dict):
@@ -564,6 +585,15 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
             fail(f"[strategy.{name}] is not a table")
         elif not json_safe(tbl):
             fail(f"[strategy.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
+        elif tbl.get("topology") in {"lead-and-workers", "independent-proposals"}:
+            required_fields = ["min_agents"]
+            if tbl.get("topology") == "lead-and-workers":
+                required_fields.append("coordination")
+            if tbl.get("topology") == "independent-proposals":
+                required_fields.extend(["selection", "synthesis"])
+            for field in required_fields:
+                if field not in tbl:
+                    fail(f"[strategy.{name}] topology={tbl['topology']!r} is missing {field!r}")
 
     return ok
 
@@ -1184,6 +1214,33 @@ def main():
                 "basis only for this self-edit transition"
             ),
         })
+
+        # A legacy merge base is a one-time transition aid, not a way to
+        # ignore the branch copy. The branch must itself introduce a fully
+        # valid v1 contract before the resolver may use the older merge-base
+        # policy to review that self-edit.
+        try:
+            transition_cfg, _ = load_config(args.config)
+        except ConfigReadError as exc:
+            errors.append({
+                "code": "invalid_config",
+                "detail": f"branch self-edit config is not readable: {exc}",
+            })
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+                  "warnings": warnings, "errors": errors}, errors)
+        if transition_cfg is None:
+            errors.append({
+                "code": "invalid_config",
+                "detail": "branch self-edit config is absent; schema_version=1 is required for a legacy merge-base transition",
+            })
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+                  "warnings": warnings, "errors": errors}, errors)
+        if not validate_config_references(transition_cfg, errors) or not validate_schema_v1_shape(transition_cfg, errors):
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+                  "warnings": warnings, "errors": errors}, errors)
 
     if not config_absent:
         required_tables = ("rigor", "strategy", "review", "budget", "tier")

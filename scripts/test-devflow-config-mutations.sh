@@ -206,6 +206,18 @@ def malformed_expectation(tmp):
 rejects("a malformed conformance expectation", malformed_expectation, "defaults: expect must be an object")
 
 
+def malformed_fixture_labels(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "retired-method-label-is-ignored":
+                case["labels"] = "method:council"
+                return
+        raise AssertionError("retired-method case missing")
+    edit_fixture(tmp, mutate)
+rejects("a fixture label collection that is not an array", malformed_fixture_labels,
+        "retired-method-label-is-ignored: labels must be an array of strings")
+
+
 def omitted_expected_diagnostic(tmp):
     def mutate(fixture):
         for case in fixture["cases"]:
@@ -280,6 +292,11 @@ rejects("review.none with min_rounds forced above 0", sub(
 rejects("a negative stage cap", sub(
     '[review.driveby]\nchallenge  = 1', '[review.driveby]\nchallenge  = -1',
 ), "must be >= 0")
+
+rejects("a multi-agent strategy missing min_agents", sub(
+    'coordination = "parallel-when-independent"\nmin_agents   = 2',
+    'coordination = "parallel-when-independent"',
+), "missing required field(s)")
 
 # min_rounds must ALSO stay non-decreasing along rigor_order, same as every
 # other field the round-3 monotonicity check covers — thorough's own bound

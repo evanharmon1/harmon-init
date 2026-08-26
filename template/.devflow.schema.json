@@ -111,6 +111,24 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["topology", "planning", "delegation", "human_gates", "description"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": {
+              "topology": { "const": "lead-and-workers" }
+            }
+          },
+          "then": { "required": ["coordination", "min_agents"] }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": { "topology": { "const": "independent-proposals" } }
+          },
+          "then": { "required": ["selection", "synthesis", "min_agents"] }
+        }
+      ],
       "properties": {
         "topology": {
           "enum": ["single-agent", "lead-and-workers", "independent-proposals", "human-directed"]
