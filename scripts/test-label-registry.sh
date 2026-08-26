@@ -578,7 +578,7 @@ api)
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
-                (if $scenario == "fixed-source" then .[1] += [{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"claim:codex:sol",color:"abcdef",description:"fixture",node_id:"claim:codex:sol-id"}] else . end) |
+                (if $scenario == "fixed-source" then .[1] += [{name:"agent:codex",color:"abcdef",description:"fixture",node_id:"agent:codex-id"},{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"claim:codex:sol",color:"abcdef",description:"fixture",node_id:"claim:codex:sol-id"}] else . end) |
                 (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         else
@@ -588,7 +588,7 @@ api)
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
-                (if $scenario == "fixed-source" then .[1] += [{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"claim:codex:sol",color:"abcdef",description:"fixture",node_id:"claim:codex:sol-id"}] else . end) |
+                (if $scenario == "fixed-source" then .[1] += [{name:"agent:codex",color:"abcdef",description:"fixture",node_id:"agent:codex-id"},{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"claim:codex:sol",color:"abcdef",description:"fixture",node_id:"claim:codex:sol-id"}] else . end) |
                 (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         fi
@@ -807,6 +807,7 @@ STUB
     done
 
     for fixed_case in \
+        'agent:codex=claim:claude|claim:gpt' \
         'claim:codex=suggest:gpt|claim:gpt' \
         'claim:codex:sol=suggest:gpt:sol|claim:gpt:sol'; do
         fixed_spec="${fixed_case%%|*}"

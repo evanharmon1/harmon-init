@@ -429,6 +429,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     fixed_migration_destination() {
         case "$1" in
         agent:claude-code) printf '%s' 'claim:claude' ;;
+        agent:codex) printf '%s' 'claim:gpt' ;;
         agent:gemini-cli) printf '%s' 'claim:gemini' ;;
         agent:kimi-k2) printf '%s' 'claim:kimi' ;;
         agent:qwen-code) printf '%s' 'claim:qwen' ;;
