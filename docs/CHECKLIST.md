@@ -42,6 +42,8 @@ this comment. -->
       [architecture/ci-cd.md](architecture/ci-cd.md#harmon-devkit-skills-propagation).
       To bump by hand — or to recover a missed dispatch — run
       `task sync:devkit-release -- vX.Y.Z`, which does the same work locally.
+      To see the current vendoring state without changing anything, run
+      `task skills:status` (add `-- --offline` for an offline snapshot).
       **The fully manual fallback is a two-step, and this repo has TWO
       manifests:** edit `ref` in both `.skills-sync.yaml` **and**
       `template/[% if use_skills_sync %].skills-sync.yaml[% endif %].jinja`,

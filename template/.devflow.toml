@@ -20,6 +20,13 @@
 # that would 404 once copied. `[tier.*]` at the bottom of this file is
 # unchanged from the model ADR 0006 introduced.
 #
+# Schema v1 is the first portable compatibility contract. Consumers must
+# reject a missing, non-integer, or unsupported version rather than guess
+# which fields or resolution semantics the file intended. The explicit
+# validator and the language-neutral conformance corpus are in
+# docs/guides/devflow.md.
+schema_version = 1
+
 # Two top-level defaults, nothing else:
 default_rigor    = "standard"
 default_strategy = "plan"

@@ -32,7 +32,9 @@ environment — against the items below
       manifest's `agents:` block vendors shared subagents there at the same
       pinned ref)[% endif %]. Until then the `verify:skills*` drift checks skip
       cleanly (CI + pre-push). **Pin bumps are a two-step:** edit `ref` in
-      `.skills-sync.yaml`, then run `task sync:skills` and commit the refreshed
+      `.skills-sync.yaml`, then run `task skills:status` to see the current
+      vendoring state without changing anything (add `-- --offline` for an
+      offline snapshot). Then run `task sync:skills` and commit the refreshed
       `.claude/skills/`[% if use_shared_agents %] and `.claude/agents/`[% endif %]
       in the same PR. Renovate surfaces a new release in the
       Dependency Dashboard; approve it there to open the pin PR, then run the
