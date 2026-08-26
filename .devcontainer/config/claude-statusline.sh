@@ -357,6 +357,9 @@ pr_cache_refresh() {
     local cache_dir=$1 cache_file=$2 repo_dir=$3 cache_now=$4 git_dir=$5 expected_head=$6 current_head
     (
         umask 077
+        # gh otherwise treats an inherited GH_REPO as authoritative over the
+        # checkout it is resolving. This subshell makes the clear lookup-local.
+        unset GH_REPO
         mkdir -p -- "$cache_dir" 2>/dev/null || exit 0
         if result=$(cd "$repo_dir" && GH_PROMPT_DISABLED=1 timeout -s KILL 1 gh pr view --json number,url,isDraft,reviewDecision,state 2>/dev/null | jq -r '
           def clean: (. // "") | tostring | explode

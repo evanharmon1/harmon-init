@@ -83,6 +83,7 @@ printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
     '[ "${GH_PROMPT_DISABLED:-}" = 1 ] || exit 42' \
+    '[ -z "${GH_REPO+x}" ] || exit 43' \
     'printf "%s\n" "$*" >>"$STATUSLINE_GH_LOG"' \
     'case "${STATUSLINE_GH_MODE:-ok}" in' \
     'ok) printf "%s\n" "${STATUSLINE_GH_RESPONSE:?}" ;;' \
@@ -135,6 +136,7 @@ cache_dir="$statusline_tmp/cache"
 export STATUSLINE_GH_LOG="$statusline_tmp/gh.log"
 export STATUSLINE_TIMEOUT_LOG="$statusline_tmp/timeout.log"
 export STATUSLINE_GH_MODE=ok STATUSLINE_TIMEOUT_MODE=run
+export GH_REPO='wrong-owner/wrong-repository'
 export STATUSLINE_GH_RESPONSE='{"number":1042,"url":"https://example.test/pull/1042","isDraft":false,"reviewDecision":"APPROVED","state":"OPEN"}'
 : >"$STATUSLINE_GH_LOG"
 : >"$STATUSLINE_TIMEOUT_LOG"
