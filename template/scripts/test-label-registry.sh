@@ -424,6 +424,12 @@ set -euo pipefail
 printf 'gh %s\n' "$*" >>"$STUB_LOG"
 
 initial_labels() {
+    if [ "${STUB_SCENARIO:-}" = comma-name ]; then
+        if [ "$1" -eq 12 ]; then
+            printf '%s\n' 'legacy,comma'
+        fi
+        return 0
+    fi
     case "$1" in
     1 | 2) printf '%s\n' ENHANCEMENT ;;
     3 | 4) printf '%s\n' custom-associated ;;
@@ -475,13 +481,49 @@ item_json() {
 case "${1:-}" in
 api)
     case "$*" in
+    *"--method POST repos/drift/check/issues/"*"/labels --input -"*)
+        path="$4"
+        number="${path#repos/drift/check/issues/}"
+        number="${number%%/*}"
+        label="$(jq -er '.labels | select(length == 1) | .[0]')"
+        kind=issue
+        case "$number" in 2 | 4 | 7 | 9 | 42) kind=pr ;; esac
+        state_file="${STUB_STATE}.${kind}.${number}"
+        [ -f "$state_file" ] || initial_labels "$number" >"$state_file"
+        grep -Fqx "$label" "$state_file" || printf '%s\n' "$label" >>"$state_file"
+        printf '%s #%s add %s\n' "$kind" "$number" "$label" >>"$STUB_LOG"
+        printf '%s\n' '[]'
+        ;;
+    *"--method DELETE repos/drift/check/issues/"*"/labels/"*)
+        path="$4"
+        number="${path#repos/drift/check/issues/}"
+        number="${number%%/*}"
+        encoded_label="${path##*/}"
+        label="$(printf '%b' "${encoded_label//%/\\x}")"
+        kind=issue
+        case "$number" in 2 | 4 | 7 | 9 | 42) kind=pr ;; esac
+        state_file="${STUB_STATE}.${kind}.${number}"
+        [ -f "${STUB_STATE}.verified.${kind}.${number}" ] || exit 1
+        if [ "${STUB_SCENARIO:-}" = verification-drift ] &&
+            [ "${STUB_DRIFT_KIND:-}" = "$kind" ] &&
+            [ "${STUB_DRIFT_NUMBER:-}" = "$number" ] &&
+            [ -f "${STUB_STATE}.drifted.${kind}.${number}" ]; then
+            printf 'unsafe-remove %s #%s %s (destination drifted)\n' "$kind" "$number" "$label" >>"$STUB_LOG"
+            exit 1
+        fi
+        printf '%s #%s remove %s\n' "$kind" "$number" "$label" >>"$STUB_LOG"
+        awk -v label="$label" 'tolower($0) != tolower(label)' "$state_file" >"${state_file}.tmp"
+        mv "${state_file}.tmp" "$state_file"
+        printf '%s\n' '{}'
+        ;;
     *"discussions(first:100"*)
         if [ "${STUB_FAIL:-}" = discussions ]; then
             printf '%s\n' '{"data":{"repository":{"discussions":null}}}'
             exit 0
         fi
         discussion_labels="$(labels_json discussion 50)"
-        if [ "${STUB_SCENARIO:-}" = all-safe ] || [ "${STUB_SCENARIO:-}" = appears-before-delete ]; then
+        if [ "${STUB_SCENARIO:-}" = all-safe ] || [ "${STUB_SCENARIO:-}" = appears-before-delete ] ||
+            [ "${STUB_SCENARIO:-}" = comma-name ]; then
             discussion_labels='[]'
         fi
         jq -cn --argjson labels "$discussion_labels" '[
@@ -496,17 +538,28 @@ api)
     *"addLabelsToLabelable"*)
         state_file="${STUB_STATE}.discussion.50"
         [ -f "$state_file" ] || initial_labels 50 >"$state_file"
-        grep -Fqx feature "$state_file" || printf '%s\n' feature >>"$state_file"
-        printf '%s\n' 'discussion #50 add feature' >>"$STUB_LOG"
+        label_id=""
+        for arg in "$@"; do
+            case "$arg" in labelIds[]=*) label_id="${arg#labelIds[]=}" ;; esac
+        done
+        label="${label_id%-id}"
+        [ -n "$label" ] || exit 2
+        grep -Fqx "$label" "$state_file" || printf '%s\n' "$label" >>"$state_file"
+        printf 'discussion #50 add %s\n' "$label" >>"$STUB_LOG"
         printf '%s\n' '{"data":{"addLabelsToLabelable":{"clientMutationId":null}}}'
         ;;
     *"removeLabelsFromLabelable"*)
         state_file="${STUB_STATE}.discussion.50"
         [ -f "${STUB_STATE}.verified.discussion.50" ] || exit 1
-        grep -Fqx feature "$state_file" || exit 1
+        label_id=""
+        for arg in "$@"; do
+            case "$arg" in labelIds[]=*) label_id="${arg#labelIds[]=}" ;; esac
+        done
+        label="${label_id%-id}"
+        [ -n "$label" ] || exit 2
         awk 'tolower($0) != "enhancement"' "$state_file" >"${state_file}.tmp"
         mv "${state_file}.tmp" "$state_file"
-        printf '%s\n' 'discussion #50 remove enhancement' >>"$STUB_LOG"
+        printf 'discussion #50 remove %s\n' "$label" >>"$STUB_LOG"
         printf '%s\n' '{"data":{"removeLabelsFromLabelable":{"clientMutationId":null}}}'
         ;;
     *"labels?per_page=100"*)
@@ -521,15 +574,17 @@ api)
             jq -cn '[
                 [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
                 [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
-            ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" '
+            ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
+                (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         else
             jq -cn '[
                 [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
                 [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
-            ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" '
+            ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
+                (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         fi
         ;;
@@ -657,6 +712,7 @@ STUB
     chmod +x "$maintenance_stub/gh"
     reset_maintenance() {
         rm -f "$maintenance_log" "$maintenance_state" "$maintenance_state".*
+        : >"$maintenance_log"
     }
 
     report_log="$maintenance_stub/report.log"
@@ -818,15 +874,48 @@ STUB
         fail "fixed migration deleted labels while unresolved broker sources remained"
 
     reset_maintenance
+    if ambiguous_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate 'legacy=source=feature' 2>&1)"; then
+        fail "ambiguous migration encoding was accepted"
+    fi
+    case "$ambiguous_out" in
+    *"OLD=NEW is ambiguous"*"relabel those records manually"*) ;;
+    *) fail "ambiguous migration refusal was not actionable: $ambiguous_out" ;;
+    esac
+    ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+        fail "ambiguous migration encoding reached a write path"
+
+    reset_maintenance
+    if comma_out="$(STUB_SCENARIO=comma-name STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate 'legacy,comma=feature' 2>&1)"; then
+        :
+    else
+        fail "exact comma-bearing label migration failed: $comma_out"
+    fi
+    grep -Fqx 'issue #12 add feature' "$maintenance_log" ||
+        fail "comma-bearing migration did not add the exact destination"
+    grep -Fqx 'issue #12 remove legacy,comma' "$maintenance_log" ||
+        fail "comma-bearing migration did not remove the exact source"
+
+    reset_maintenance
     if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
         bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
-        --migrate enhancement=suggest:gpt:new-model >/dev/null 2>&1; then
+        --migrate enhancement=suggest:gpt:new-model \
+        --migrate legacy-empty=suggest:gpt:new-model >/dev/null 2>&1; then
         fail "model-destination fixture unexpectedly completed"
     fi
     grep -Fqx 'create suggest:gpt:new-model' "$maintenance_log" ||
         fail "recognized missing model destination was not created after confirmation"
+    [ "$(grep -Fxc 'create suggest:gpt:new-model' "$maintenance_log")" -eq 1 ] ||
+        fail "shared missing model destination was created more than once"
+    grep -Fqx 'issue #1 add suggest:gpt' "$maintenance_log" ||
+        fail "model migration did not preserve the family-level association"
+    grep -Fqx 'issue #1 add suggest:gpt:new-model' "$maintenance_log" ||
+        fail "model migration did not add the qualified destination"
     create_line="$(grep -nE '^create suggest:gpt:new-model$' "$maintenance_log" | cut -d: -f1)"
-    first_edit_line="$(grep -nE '^gh issue edit 1 ' "$maintenance_log" | sed -n '1{s/:.*//;p;}')"
+    first_edit_line="$(grep -nE '^issue #1 add ' "$maintenance_log" | sed -n '1{s/:.*//;p;}')"
     [ -n "$first_edit_line" ] && [ "$create_line" -lt "$first_edit_line" ] ||
         fail "model destination was not created before association migration"
 

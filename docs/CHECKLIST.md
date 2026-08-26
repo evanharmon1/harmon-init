@@ -248,8 +248,8 @@ this comment. -->
       labels here — it is additive and never deletes, so existing labels and
       the issues they sit on are untouched — then classify open issues with the
       added families. A RENAMED family (like `method:*` → `strategy:*` above)
-      is not a pure addition — migrate it first, the same way, before
-      provisioning.
+      is not a pure addition — provision the new destinations first, then
+      migrate the old associations before retiring their labels.
 - [ ] **[human-only] Inspect live label drift before retiring anything** — keep
       the default setup path additive, then run
       `./scripts/setup-github-labels.sh --repo <owner/repo> --report-unregistered`
@@ -276,11 +276,14 @@ this comment. -->
       source, together with `--prune`; for example,
       `./scripts/setup-github-labels.sh --repo <owner/repo> --prune
       --migrate agent:gemini-cli=claim:gemini`. `--migrate` does not match a
-      prefix, so each live model-level source needs its own mapping. Move only
+      prefix, so each live model-level source needs its own mapping. The
+      `OLD=NEW` form contains exactly one `=`; a label name containing `=` must
+      be relabeled per record instead of passed to bulk migration. Move only
       the family segment for fixed mappings and preserve the recorded model
       suffix, e.g. `suggest:codex:sol` → `suggest:gpt:sol` and
       `claim:codex:sol` → `claim:gpt:sol`; model-level labels refine rather
-      than replace their family-level label. If a recognized model-level
+      than replace their family-level label, and the command retains or adds
+      both associations. If a recognized model-level
       destination is absent, the command creates it after confirmation by
       copying metadata from the live family label; missing family labels stop
       maintenance and require setup first.
@@ -313,7 +316,10 @@ this comment. -->
       `claim:<actual-family>`; use `claim:mai` only when the record confirms
       MAI. Apply the same per-record distinction to
       `suggest:copilot:<model>`/`claim:copilot:<model>` and preserve a model
-      suffix only after the actual family is known. If a live claim's record is
+      suffix only after the actual family is known. Include Discussions in that
+      per-record inventory: the read-only report gives their association count,
+      and the Discussions UI or GraphQL API identifies the records to relabel.
+      If a live claim's record is
       missing, settle it with its owner or leave the label untouched rather
       than guess. Add and verify the per-record destination before removing the
       old association; after every record is handled, a fresh zero-association

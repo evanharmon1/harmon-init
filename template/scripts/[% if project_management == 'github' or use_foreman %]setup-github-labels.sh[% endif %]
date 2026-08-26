@@ -370,10 +370,15 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     migration_old=()
     migration_new=()
     migration_create_from=()
+    migration_parent=()
     parse_migrations() {
         local spec old new i
         [ "${#migrate_specs[@]}" -gt 0 ] || return 0
         for spec in "${migrate_specs[@]}"; do
+            if [[ "$spec" == *=*=* ]]; then
+                echo "Invalid migration '$spec' (OLD=NEW is ambiguous when either label contains '='); relabel those records manually" >&2
+                exit 2
+            fi
             case "$spec" in
             *=*)
                 old="${spec%%=*}"
@@ -434,23 +439,27 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             if ! is_protected_label "$new"; then
                 die "migration destination '$new' is not covered by the registry inventory"
             fi
+            parent=""
+            for prefix in "${protected_prefixes[@]}"; do
+                if [[ "$new" == "$prefix"* ]] && { [ -z "$parent" ] || [ "${#prefix}" -gt "$((${#parent} + 1))" ]; }; then
+                    parent="${prefix%:}"
+                fi
+            done
+            canonical_parent=""
+            if [ -n "$parent" ]; then
+                canonical_parent="$(live_label_name "$parent")" ||
+                    die "migration destination '$new' requires live family label '$parent'; run label setup first"
+            fi
             if canonical_new="$(live_label_name "$new")"; then
                 migration_create_from+=("")
             else
-                parent=""
-                for prefix in "${protected_prefixes[@]}"; do
-                    if [[ "$new" == "$prefix"* ]] && { [ -z "$parent" ] || [ "${#prefix}" -gt "$((${#parent} + 1))" ]; }; then
-                        parent="${prefix%:}"
-                    fi
-                done
                 [ -n "$parent" ] || die "migration destination '$new' is not live and is not an on-demand registry family label"
-                canonical_parent="$(live_label_name "$parent")" ||
-                    die "migration destination '$new' requires live family label '$parent'; run label setup first"
                 canonical_new="$new"
                 migration_create_from+=("$canonical_parent")
             fi
             migration_old[i]="$canonical_old"
             migration_new[i]="$canonical_new"
+            migration_parent+=("$canonical_parent")
         done
     }
 
@@ -460,6 +469,10 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             parent="${migration_create_from[$i]}"
             [ -n "$parent" ] || continue
             new="${migration_new[$i]}"
+            if canonical_new="$(live_label_name "$new")"; then
+                migration_new[i]="$canonical_new"
+                continue
+            fi
             metadata="$(jq -cer --arg parent "$parent" '.[] | select((.name | ascii_downcase) == ($parent | ascii_downcase)) | {color, description}' "$live_labels_json")" ||
                 die "could not read metadata for migration destination family '$parent'"
             color="$(jq -r '.color' <<<"$metadata")"
@@ -528,40 +541,42 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     migration_labels_present() {
-        local labels_json="$1" old="$2" new="$3"
-        jq -e --arg old "$old" --arg new "$new" '
+        local labels_json="$1" old="$2" new="$3" parent="$4"
+        jq -e --arg old "$old" --arg new "$new" --arg parent "$parent" '
             (.labels | type) == "array" and
             any(.labels[]?; ((.name | ascii_downcase) == ($old | ascii_downcase))) and
-            any(.labels[]?; ((.name | ascii_downcase) == ($new | ascii_downcase)))
+            any(.labels[]?; ((.name | ascii_downcase) == ($new | ascii_downcase))) and
+            ($parent == "" or any(.labels[]?; ((.name | ascii_downcase) == ($parent | ascii_downcase))))
         ' <<<"$labels_json" >/dev/null
     }
 
     migration_result_valid() {
-        local labels_json="$1" old="$2" new="$3"
-        jq -e --arg old "$old" --arg new "$new" '
+        local labels_json="$1" old="$2" new="$3" parent="$4"
+        jq -e --arg old "$old" --arg new "$new" --arg parent "$parent" '
             (.labels | type) == "array" and
             any(.labels[]?; ((.name | ascii_downcase) == ($new | ascii_downcase))) and
+            ($parent == "" or any(.labels[]?; ((.name | ascii_downcase) == ($parent | ascii_downcase)))) and
             all(.labels[]?; ((.name | ascii_downcase) != ($old | ascii_downcase)))
         ' <<<"$labels_json" >/dev/null
     }
 
     verify_migration_before_remove() {
-        local kind="$1" number="$2" item_id="$3" old="$4" new="$5" phase="$6" labels_json
+        local kind="$1" number="$2" item_id="$3" old="$4" new="$5" parent="$6" phase="$7" labels_json
         if ! labels_json="$(read_item_labels "$kind" "$number" "$item_id")"; then
             die "could not read labels on $kind #$number $phase; refusing further maintenance"
         fi
-        if ! migration_labels_present "$labels_json" "$old" "$new"; then
-            die "could not verify '$old' and '$new' on $kind #$number $phase; refusing further maintenance"
+        if ! migration_labels_present "$labels_json" "$old" "$new" "$parent"; then
+            die "could not verify migration labels on $kind #$number $phase; refusing further maintenance"
         fi
     }
 
     verify_migration_after_remove() {
-        local kind="$1" number="$2" item_id="$3" old="$4" new="$5" labels_json
+        local kind="$1" number="$2" item_id="$3" old="$4" new="$5" parent="$6" labels_json
         if ! labels_json="$(read_item_labels "$kind" "$number" "$item_id")"; then
             die "could not re-read labels on $kind #$number after removing '$old'; refusing further maintenance"
         fi
-        if ! migration_result_valid "$labels_json" "$old" "$new"; then
-            die "migration verification failed on $kind #$number; '$new' must remain and '$old' must be absent"
+        if ! migration_result_valid "$labels_json" "$old" "$new" "$parent"; then
+            die "migration verification failed on $kind #$number; destination labels must remain and '$old' must be absent"
         fi
     }
 
@@ -580,6 +595,17 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         gh api graphql -f labelableId="$discussion_id" -F labelIds[]="$label_id" -f query="$mutation" >/dev/null
     }
 
+    edit_issue_or_pr_label() {
+        local operation="$1" number="$2" label="$3" encoded_label
+        if [ "$operation" = add ]; then
+            jq -nc --arg label "$label" '{labels: [$label]}' |
+                gh api --method POST "repos/$repo/issues/$number/labels" --input - >/dev/null
+        else
+            encoded_label="$(jq -rn --arg label "$label" '$label | @uri')"
+            gh api --method DELETE "repos/$repo/issues/$number/labels/$encoded_label" >/dev/null
+        fi
+    }
+
     # GitHub exposes no conditional mutation that means "remove OLD only while
     # NEW is still present." Keep the safe ordering explicit: add NEW, verify
     # both labels, re-read both labels immediately before removing OLD, remove
@@ -588,34 +614,36 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     # or compare-and-swap token for this boundary, so the post-remove check can
     # detect a bad result but cannot undo a successful concurrent removal.
     apply_migrations() {
-        local i old new number kind item_id
+        local i old new parent number kind item_id
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
+            parent="${migration_parent[$i]}"
             while IFS=$'\t' read -r -d '' number kind item_id; do
                 if [ "$kind" = discussion ]; then
+                    if [ -n "$parent" ]; then
+                        edit_discussion_label add "$item_id" "$parent" ||
+                            die "could not add family label '$parent' to discussion #$number; refusing further maintenance"
+                    fi
                     edit_discussion_label add "$item_id" "$new" ||
                         die "could not add '$new' to discussion #$number; refusing further maintenance"
-                    verify_migration_before_remove discussion "$number" "$item_id" "$old" "$new" "after adding '$new'"
-                    verify_migration_before_remove discussion "$number" "$item_id" "$old" "$new" "immediately before removing '$old'"
+                    verify_migration_before_remove discussion "$number" "$item_id" "$old" "$new" "$parent" "after adding destination labels"
+                    verify_migration_before_remove discussion "$number" "$item_id" "$old" "$new" "$parent" "immediately before removing '$old'"
                     edit_discussion_label remove "$item_id" "$old" ||
                         die "could not remove '$old' from discussion #$number; refusing further maintenance"
-                elif [ "$kind" = pr ]; then
-                    gh pr edit "$number" --repo "$repo" --add-label "$new" ||
-                        die "could not add '$new' to pull request #$number; refusing further maintenance"
-                    verify_migration_before_remove pr "$number" "" "$old" "$new" "after adding '$new'"
-                    verify_migration_before_remove pr "$number" "" "$old" "$new" "immediately before removing '$old'"
-                    gh pr edit "$number" --repo "$repo" --remove-label "$old" ||
-                        die "could not remove '$old' from pull request #$number; refusing further maintenance"
                 else
-                    gh issue edit "$number" --repo "$repo" --add-label "$new" ||
-                        die "could not add '$new' to issue #$number; refusing further maintenance"
-                    verify_migration_before_remove issue "$number" "" "$old" "$new" "after adding '$new'"
-                    verify_migration_before_remove issue "$number" "" "$old" "$new" "immediately before removing '$old'"
-                    gh issue edit "$number" --repo "$repo" --remove-label "$old" ||
-                        die "could not remove '$old' from issue #$number; refusing further maintenance"
+                    if [ -n "$parent" ]; then
+                        edit_issue_or_pr_label add "$number" "$parent" ||
+                            die "could not add family label '$parent' to $kind #$number; refusing further maintenance"
+                    fi
+                    edit_issue_or_pr_label add "$number" "$new" ||
+                        die "could not add '$new' to $kind #$number; refusing further maintenance"
+                    verify_migration_before_remove "$kind" "$number" "" "$old" "$new" "$parent" "after adding destination labels"
+                    verify_migration_before_remove "$kind" "$number" "" "$old" "$new" "$parent" "immediately before removing '$old'"
+                    edit_issue_or_pr_label remove "$number" "$old" ||
+                        die "could not remove '$old' from $kind #$number; refusing further maintenance"
                 fi
-                verify_migration_after_remove "$kind" "$number" "$item_id" "$old" "$new"
+                verify_migration_after_remove "$kind" "$number" "$item_id" "$old" "$new" "$parent"
                 printf -v quoted_old '%q' "$old"
                 printf -v quoted_new '%q' "$new"
                 output_emit 'Migrated %s -> %s on %s #%s\n' "$quoted_old" "$quoted_new" "$kind" "$number"

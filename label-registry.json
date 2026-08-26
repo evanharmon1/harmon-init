@@ -273,7 +273,7 @@
           "retired": true,
           "writer_note": "nobody — retired at root",
           "trust_note": "retired — split across dev-loop/delivery/environment; never provisioned here",
-          "lifecycle_note": "choose replacement domains, then use guarded `--prune` with repeatable `--migrate OLD=NEW`"
+          "lifecycle_note": "choose replacement domains per record, relabel each record, then use guarded `--prune` only after `domain:platform` reaches zero associations"
         },
         {
           "value": "billing",
