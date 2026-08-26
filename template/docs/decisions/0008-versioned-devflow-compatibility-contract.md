@@ -52,4 +52,4 @@ Schema version 1 is the first compatibility contract.
 Consumers can prove agreement by running the same fixtures instead of parsing
 prose. A future incompatible meaning requires a new schema version and a new
 fixture corpus. The human approval criterion for this ADR remains open until
-Evan accepts it.
+the owning repository's maintainer accepts it.

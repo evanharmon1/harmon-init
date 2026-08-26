@@ -602,11 +602,13 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
             fail(f"[strategy.{name}] is not a table")
         elif not json_safe(tbl):
             fail(f"[strategy.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
-        elif tbl.get("topology") in {"lead-and-workers", "independent-proposals"}:
+        elif not isinstance(tbl.get("topology"), str):
+            fail(f"[strategy.{name}].topology must be a string (got {tbl.get('topology')!r})")
+        elif tbl["topology"] in {"lead-and-workers", "independent-proposals"}:
             required_fields = ["min_agents"]
-            if tbl.get("topology") == "lead-and-workers":
+            if tbl["topology"] == "lead-and-workers":
                 required_fields.append("coordination")
-            if tbl.get("topology") == "independent-proposals":
+            if tbl["topology"] == "independent-proposals":
                 required_fields.extend(["selection", "synthesis"])
             for field in required_fields:
                 if field not in tbl:
@@ -614,6 +616,8 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
 
         if isinstance(tbl, dict):
             topology = tbl.get("topology")
+            if not isinstance(topology, str):
+                continue
             allowed_topologies = {
                 "coordination": {"lead-and-workers", "independent-proposals"},
                 "selection": {"independent-proposals"},

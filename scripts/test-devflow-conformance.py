@@ -128,6 +128,9 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"cannot read fixture {fixture_path}: {exc}")
         return 1
+    if not isinstance(fixture, dict):
+        fail("fixture root must be an object")
+        return 1
     if fixture.get("kind") != "harmon-init.devflow.conformance":
         fail("fixture kind must be 'harmon-init.devflow.conformance'")
         return 1

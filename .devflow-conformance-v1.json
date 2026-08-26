@@ -326,6 +326,42 @@
       }
     },
     {
+      "name": "unattended-standalone-trusted-strategy-label-applies",
+      "basis": "branch",
+      "trusted_labels": ["strategy:orchestrate"],
+      "unattended": true,
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "strategy": { "value": "orchestrate", "source": "label" } },
+          "strategy_fields": {
+            "topology": "lead-and-workers",
+            "coordination": "parallel-when-independent",
+            "min_agents": 2
+          },
+          "requires_confirmation": false
+        }
+      }
+    },
+    {
+      "name": "unattended-standalone-trusted-tier-label-applies",
+      "basis": "branch",
+      "trusted_labels": ["tier:economy"],
+      "unattended": true,
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "orchestrator": { "value": "frontier", "requested": "frontier", "source": "profile" },
+            "implementer": { "value": "economy", "requested": "economy", "source": "label" },
+            "reviewer": { "value": "frontier", "requested": "frontier", "source": "profile" }
+          },
+          "requires_confirmation": false,
+          "disclosure": { "off_profile": true }
+        }
+      }
+    },
+    {
       "name": "multiple-rigor-labels-strongest-wins",
       "basis": "branch",
       "labels": ["rigor:light", "rigor:deep"],
@@ -534,6 +570,30 @@
             "min_rounds": 1
           }
         },
+        "warning_diagnostics": [{ "code": "config_absent", "subject": "config" }]
+      }
+    },
+    {
+      "name": "absent-config-honors-supported-explicit-input",
+      "basis": "absent",
+      "overrides": ["rigor=standard"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "config_source": "absent",
+          "selections": { "rigor": { "value": "standard", "source": "explicit" } }
+        },
+        "warning_diagnostics": [{ "code": "config_absent", "subject": "config" }]
+      }
+    },
+    {
+      "name": "absent-config-rejects-unsupported-trusted-input",
+      "basis": "absent",
+      "trusted_labels": ["rigor:deep"],
+      "unattended": true,
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [{ "code": "invalid_override", "subject": "override" }],
         "warning_diagnostics": [{ "code": "config_absent", "subject": "config" }]
       }
     },

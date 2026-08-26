@@ -1528,6 +1528,11 @@ run_malformed(
     'default_rigor    = "standard"', 'default_rigor    = ["standard"]',
     "must be a string",
 )
+run_malformed(
+    "strategy topology as a list -> invalid_config, not a TypeError",
+    'topology    = "single-agent"', 'topology    = ["single-agent"]',
+    "topology must be a string",
+)
 
 # labels outside rigor:/strategy:/tier: are silently irrelevant — no warning
 # of any kind, in either mode.

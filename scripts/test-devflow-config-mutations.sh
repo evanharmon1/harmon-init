@@ -167,6 +167,14 @@ def malformed_fixture(tmp):
 rejects("a malformed conformance fixture", malformed_fixture, "cannot read fixture")
 
 
+def non_object_fixture_root(tmp):
+    for rel in (".devflow-conformance-v1.json", "template/.devflow-conformance-v1.json"):
+        p = os.path.join(tmp, rel)
+        open(p, "w").write("[]")
+rejects("a non-object conformance fixture root", non_object_fixture_root,
+        "fixture root must be an object")
+
+
 def boolean_fixture_schema_version(tmp):
     edit_fixture(tmp, lambda fixture: fixture.__setitem__("schema_version", True))
 rejects("a boolean fixture schema version", boolean_fixture_schema_version,
