@@ -256,6 +256,19 @@ def _schema_violations(value, schema, root, path="$"):
         return _schema_violations(value, target, root, path)
 
     violations = []
+    if "not" in schema:
+        prohibited = schema["not"]
+        if not isinstance(prohibited, dict):
+            violations.append((path, "has a non-object not schema"))
+        elif not _schema_violations(value, prohibited, root, path):
+            violations.append((path, "matches a prohibited schema"))
+    if "anyOf" in schema:
+        alternatives = schema["anyOf"]
+        if not isinstance(alternatives, list) or not alternatives:
+            violations.append((path, "has an empty or non-array anyOf"))
+        elif all(not isinstance(branch, dict) or _schema_violations(value, branch, root, path)
+                 for branch in alternatives):
+            violations.append((path, "does not match any permitted schema"))
     for branch in schema.get("allOf", []):
         if not isinstance(branch, dict):
             violations.append((path, "has a non-object allOf branch"))
@@ -594,6 +607,27 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
             for field in required_fields:
                 if field not in tbl:
                     fail(f"[strategy.{name}] topology={tbl['topology']!r} is missing {field!r}")
+
+        if isinstance(tbl, dict):
+            topology = tbl.get("topology")
+            allowed_topologies = {
+                "coordination": {"lead-and-workers", "independent-proposals"},
+                "selection": {"independent-proposals"},
+                "synthesis": {"independent-proposals"},
+                "min_agents": {"lead-and-workers", "independent-proposals"},
+            }
+            for field, allowed in allowed_topologies.items():
+                if field in tbl and topology not in allowed:
+                    fail(f"[strategy.{name}].{field} is not valid for topology={topology!r}")
+
+    for name, tbl in cfg.get("tier", {}).items():
+        if not isinstance(tbl, dict):
+            continue
+        endpoint = tbl.get("endpoint")
+        if name == "local" and endpoint != "local":
+            fail("[tier.local] must set endpoint='local'")
+        elif name != "local" and endpoint is not None:
+            fail(f"[tier.{name}] endpoint is only valid on [tier.local]")
 
     return ok
 

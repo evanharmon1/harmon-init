@@ -143,6 +143,9 @@ def main() -> int:
             if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
                 fail(f"{name}: {field} must be an array of strings")
                 return 1
+        if "unattended" in case and not isinstance(case["unattended"], bool):
+            fail(f"{name}: unattended must be a boolean")
+            return 1
     if len(names) != len(set(names)):
         fail("fixture case names must be unique")
         return 1

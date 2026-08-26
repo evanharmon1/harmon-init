@@ -1340,6 +1340,35 @@ with tempfile.TemporaryDirectory() as tmp:
           and any(e["code"] == "invalid_config" and "min_agents" in e["detail"] for e in out["errors"]))
 
 with tempfile.TemporaryDirectory() as tmp:
+    topology_path = os.path.join(tmp, "wrong-topology-field.toml")
+    open(topology_path, "w").write(open(config).read().replace(
+        'delegation  = "optional"\nhuman_gates',
+        'delegation  = "optional"\ncoordination = "parallel-when-independent"\nhuman_gates', 1,
+    ))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", topology_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 topology-only strategy field is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "coordination" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    endpoint_path = os.path.join(tmp, "wrong-tier-endpoint.toml")
+    open(endpoint_path, "w").write(open(config).read().replace(
+        '[tier.economy]\nescalate_to', '[tier.economy]\nendpoint = "local"\nescalate_to', 1,
+    ))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", endpoint_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 non-local tier endpoint is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "endpoint" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
     impossible_path = os.path.join(tmp, "impossible-review.toml")
     open(impossible_path, "w").write(open(config).read().replace("min_rounds = 1\n", "min_rounds = 99\n", 1))
     result = subprocess.run(

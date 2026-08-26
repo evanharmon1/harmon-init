@@ -46,11 +46,21 @@
       "additionalProperties": false,
       "required": ["local", "economy", "standard", "frontier", "apex"],
       "properties": {
-        "local": { "$ref": "#/$defs/tier" },
-        "economy": { "$ref": "#/$defs/tier" },
-        "standard": { "$ref": "#/$defs/tier" },
-        "frontier": { "$ref": "#/$defs/tier" },
-        "apex": { "$ref": "#/$defs/tier" }
+        "local": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "required": ["endpoint"] }]
+        },
+        "economy": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        },
+        "standard": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        },
+        "frontier": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        },
+        "apex": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        }
       }
     }
   },
@@ -119,7 +129,16 @@
               "topology": { "const": "lead-and-workers" }
             }
           },
-          "then": { "required": ["coordination", "min_agents"] }
+          "then": {
+            "allOf": [
+              { "required": ["coordination", "min_agents"] },
+              {
+                "not": {
+                  "anyOf": [{ "required": ["selection"] }, { "required": ["synthesis"] }]
+                }
+              }
+            ]
+          }
         },
         {
           "if": {
@@ -127,6 +146,24 @@
             "properties": { "topology": { "const": "independent-proposals" } }
           },
           "then": { "required": ["selection", "synthesis", "min_agents"] }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": {
+              "topology": { "enum": ["single-agent", "human-directed"] }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["coordination"] },
+                { "required": ["selection"] },
+                { "required": ["synthesis"] },
+                { "required": ["min_agents"] }
+              ]
+            }
+          }
         }
       ],
       "properties": {

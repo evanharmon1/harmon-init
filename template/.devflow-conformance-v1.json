@@ -205,6 +205,17 @@
       }
     },
     {
+      "name": "multiple-rigor-labels-strongest-wins-in-reverse-order",
+      "basis": "branch",
+      "labels": ["rigor:deep", "rigor:light"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "rigor": { "value": "deep", "source": "label" } }
+        }
+      }
+    },
+    {
       "name": "multiple-strategy-labels-are-ambiguous",
       "basis": "branch",
       "labels": ["strategy:plan", "strategy:orchestrate"],
@@ -265,6 +276,28 @@
           "requires_confirmation": true,
           "preflight_required": false,
           "disclosure": { "off_profile": true }
+        }
+      }
+    },
+    {
+      "name": "adaptive-tier-without-preflight-result-requires-classification",
+      "basis": "branch",
+      "labels": ["tier:adaptive"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "requested": "adaptive",
+              "source": "label",
+              "off_profile": false,
+              "preflight_required": true
+            }
+          },
+          "requires_confirmation": false,
+          "preflight_required": true,
+          "disclosure": { "off_profile": false }
         }
       }
     },

@@ -218,6 +218,18 @@ rejects("a fixture label collection that is not an array", malformed_fixture_lab
         "retired-method-label-is-ignored: labels must be an array of strings")
 
 
+def malformed_fixture_unattended(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "unattended-authorized-label-applies":
+                case["unattended"] = "true"
+                return
+        raise AssertionError("unattended case missing")
+    edit_fixture(tmp, mutate)
+rejects("a fixture unattended value that is not a boolean", malformed_fixture_unattended,
+        "unattended-authorized-label-applies: unattended must be a boolean")
+
+
 def omitted_expected_diagnostic(tmp):
     def mutate(fixture):
         for case in fixture["cases"]:
