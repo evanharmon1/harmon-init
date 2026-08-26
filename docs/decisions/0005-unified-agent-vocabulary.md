@@ -71,14 +71,25 @@ The following decisions are adopted together:
    `codex`, and `copilot` was originally recorded as a family with no models.
    Both were the exact product-vs-family mistake D9 already fixed for
    `codex-cli` itself — Codex and Copilot are products/harnesses, GPT and MAI
-   are the vendor intelligence underneath them. Renaming families is a
-   registry-and-label change, not a live-data migration: existing
-   `suggest:codex*`/`claim:codex*` and `suggest:copilot*`/`claim:copilot*`
-   labels are not deleted or auto-renamed (`setup-github-labels` is additive,
-   same as the `agent:*` → `claim:*` cutover D4 already established), so a
-   repo carrying pre-refresh labels does a one-time human rename —
-   documented as a CHECKLIST.md item next to the equivalent `agent:*` step —
-   rather than a scripted live-data rewrite.
+   are the vendor intelligence underneath them. At the time of this 2026-08-10
+   amendment, the operational guidance was a one-time human rename rather than
+   an automatic rewrite: existing `suggest:codex*`/`claim:codex*` and
+   `suggest:copilot*`/`claim:copilot*` labels are not deleted or auto-renamed
+   (`setup-github-labels` is additive, same as the `agent:*` → `claim:*`
+   cutover D4 already established). **Amended 2026-08-25 — operational
+   mechanism:** that no-automatic-write decision remains, but the documented
+   human path is now the guarded maintenance flow in `docs/CHECKLIST.md` and
+   `docs/project-management.md`: the read-only report inventories live labels,
+   and `--prune` with repeatable `--migrate OLD=NEW` validates live registry
+   destinations, moves fixed-family associations across issues, PRs, and
+   Discussions, and deletes only a fresh zero-association source. It must be run in a quiescent
+   maintenance window. GitHub provides no transaction or compare-and-swap
+   between the final read and the following edit/DELETE, so a concurrent writer
+   can still race the request; the command cannot undo that mutation.
+   Broker-derived Copilot labels are excluded from bulk migration: suggestions
+   are re-expressed or dropped, while claims are handled per issue, PR, or
+   Discussion from the actual claim/session record; `mai` is only the broker default, never a
+   guessed destination.
 9. **D9 — Harness slugs follow product, collision, and endpoint-variant
    rules.** Product names are lowercase slugs (`antigravity`, `opencode`,
    `pi`). A product qualifier avoids a family collision (`claude-code`,
@@ -192,7 +203,11 @@ label.
   level — no GitHub write runs automatically — so a repo seeded before
   2026-08-10 keeps its pre-refresh `suggest:codex*`/`claim:codex*`/
   `suggest:copilot*`/`claim:copilot*` labels until an operator runs the
-  documented rename (docs/CHECKLIST.md, next to the equivalent `agent:*` step).
-  `task test:registry-drift` only binds this repository's own provisioning
-  script and wrappers to the current registry; it has no visibility into any
-  other repository's live label set and cannot detect that a rename is owed.
+  amended guarded maintenance flow (docs/CHECKLIST.md and
+  docs/project-management.md). Fixed mappings may use bulk association
+  migration; Copilot broker labels require the per-record rules above. The
+  flow's quiescent precondition and non-atomic API boundary remain operational
+  requirements, not guarantees supplied by the registry. `task
+  test:registry-drift` only binds this repository's own provisioning script and
+  wrappers to the current registry; it has no visibility into any other
+  repository's live label set and cannot detect that a rename is owed.

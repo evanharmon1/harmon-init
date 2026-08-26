@@ -136,7 +136,7 @@
           "enum": ["foreman", "release-please"]
         },
         "retired": {
-          "description": "Legacy family: never provisioned, rendered as retired in docs. Provisioning is additive-only, so live labels survive until an operator re-maps and deletes them by hand (`gh label edit --name` preserves issue associations).",
+          "description": "Legacy family: never provisioned, rendered as retired in docs. Provisioning remains additive; use --report-unregistered to inspect live labels, --migrate OLD=NEW for guarded best-effort association migration, and --prune for prompted deletion of labels with zero associations in the latest snapshot. Maintenance requires a quiescent window, and GitHub's read/edit API boundary is non-atomic.",
           "type": "boolean"
         },
         "open_values": {
