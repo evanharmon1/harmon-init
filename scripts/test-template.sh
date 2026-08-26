@@ -1367,18 +1367,27 @@ iac | full)
         err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     if [ "$profile" = "iac" ]; then
-        grep -Fq 'Labels: run `task setup:github-labels`' docs/CHECKLIST.md ||
+        checklist_flat="$(tr -s '[:space:]' ' ' <docs/CHECKLIST.md)"
+        printf '%s' "$checklist_flat" | grep -Fq 'Labels: run `task setup:github-labels`' ||
             err "CHECKLIST omits label setup for project_management=none + use_foreman=true"
-        grep -Fq 'Retire any legacy `agent:*` claim labels' docs/CHECKLIST.md ||
+        printf '%s' "$checklist_flat" | grep -Fq 'Retire any legacy `agent:*` claim labels' ||
             err "CHECKLIST omits legacy-label migration for project_management=none + use_foreman=true"
-        grep -Fq 'treat it as capped' docs/CHECKLIST.md ||
+        printf '%s' "$checklist_flat" | grep -Fq 'An exactly-full manual result is capped' ||
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
-        ! grep -Fq '[project-management.md](project-management.md)' docs/CHECKLIST.md ||
+        ! printf '%s' "$checklist_flat" | grep -Fq '[project-management.md](project-management.md)' ||
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
-        ! grep -Fq 'ADR 0005' docs/CHECKLIST.md ||
+        ! printf '%s' "$checklist_flat" | grep -Fq 'ADR 0005' ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
-        grep -Fq 'Copilot is a broker that defaults to `mai`' docs/CHECKLIST.md ||
+        printf '%s' "$checklist_flat" | grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' ||
             err "CHECKLIST loses the Copilot broker/default-family distinction"
+        printf '%s' "$checklist_flat" | grep -Fq 'and is never a guessed destination' ||
+            err "CHECKLIST permits treating the Copilot broker default as migration evidence"
+        printf '%s' "$checklist_flat" | grep -Fq 'For `suggest:copilot`, there is no claim/session record: re-express each' ||
+            err "CHECKLIST loses the suggestion-specific Copilot handling"
+        printf '%s' "$checklist_flat" | grep -Fq 'For `claim:copilot`,' ||
+            err "CHECKLIST loses the per-record Copilot claim handling"
+        printf '%s' "$checklist_flat" | grep -Fq 'use `claim:mai` only when the record confirms' ||
+            err "CHECKLIST permits guessing MAI for a Copilot claim"
     fi
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"

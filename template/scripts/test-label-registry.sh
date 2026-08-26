@@ -377,6 +377,421 @@ else
     echo "note: scripts/setup-github-labels.sh not present in this profile — skipping the provisioning binding" >&2
 fi
 
+# ── 4b. maintenance modes: report, refuse, pagination, migration, prune ────
+# The fixture returns two API pages and puts migration records on the second
+# page. It also models pull requests through the repository issues endpoint,
+# which is the REST surface the setup script uses for all-state associations.
+if [ -f scripts/setup-github-labels.sh ]; then
+    if bash scripts/setup-github-labels.sh --repo 'drift/check;touch' --report-unregistered >/dev/null 2>&1; then
+        fail "maintenance mode accepted an unsafe repository argument"
+    fi
+    if bash scripts/setup-github-labels.sh --repo drift/check --migrate enhancement=feature >/dev/null 2>&1; then
+        fail "--migrate was accepted without --prune"
+    fi
+    maintenance_stub="$(mktemp -d)"
+    maintenance_log="$maintenance_stub/log"
+    maintenance_state="$maintenance_stub/migrated"
+    cat >"$maintenance_stub/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'gh %s\n' "$*" >>"$STUB_LOG"
+
+initial_labels() {
+    case "$1" in
+    1 | 2) printf '%s\n' ENHANCEMENT ;;
+    3 | 4) printf '%s\n' custom-associated ;;
+    41 | 42) printf '%s\n' ENHANCEMENT page-two-only ;;
+    esac
+    if [ "${STUB_SCENARIO:-}" = broker-unresolved ]; then
+        case "$1" in
+        6) printf '%s\n' claim:copilot ;;
+        7) printf '%s\n' claim:copilot:sol ;;
+        8) printf '%s\n' suggest:copilot ;;
+        9) printf '%s\n' suggest:copilot:sol ;;
+        10) printf '%s\n' agent:github-copilot ;;
+        11) printf '%s\n' agent:github-copilot:sol ;;
+        esac
+    fi
+}
+labels_json() {
+    local kind="$1" number="$2"
+    local state_file="${STUB_STATE}.${kind}.${number}"
+    if [ -f "$state_file" ]; then
+        jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' "$state_file"
+    else
+        case "${STUB_SCENARIO:-}" in
+        all-safe | appears-before-delete) printf '%s\n' '[]' ;;
+        *) initial_labels "$number" | jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' ;;
+        esac
+    fi
+}
+item_json() {
+    local number="$1" labels
+    labels="$(labels_json issue "$number")"
+    if [ "${STUB_SCENARIO:-}" = appears-before-delete ] &&
+        [ -f "${STUB_STATE}.appeared" ] && [ "$number" -eq 5 ]; then
+        labels='[{"name":"unknown-empty"}]'
+    fi
+    printf '{"number":%s,"labels":%s' "$number" "$labels"
+    if [ "$number" -eq 2 ] || [ "$number" -eq 4 ] || [ "$number" -eq 7 ] ||
+        [ "$number" -eq 9 ] || [ "$number" -eq 42 ]; then
+        printf ',"pull_request":{}'
+    fi
+    printf '}\n'
+}
+
+case "${1:-}" in
+api)
+    case "$*" in
+    *"labels?per_page=100"*)
+        if [ "${2:-}" != --paginate ] || [ "${3:-}" != --slurp ]; then
+            exit 3
+        fi
+        if [ "${STUB_FAIL:-}" = labels ]; then
+            printf '%s\n' '{not-json'
+            exit 0
+        fi
+        if [ "${STUB_SCENARIO:-}" = broker-unresolved ]; then
+            jq -cn '[
+                [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
+                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"}]
+            ]'
+        else
+            jq -cn '[
+                [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
+                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"}]
+            ]'
+        fi
+        ;;
+    *"issues?state=all&per_page=100"*)
+        if [ "${2:-}" != --paginate ] || [ "${3:-}" != --slurp ]; then
+            exit 3
+        fi
+        page_one="$(
+            number=1
+            while [ "$number" -le 30 ]; do
+                item_json "$number"
+                number=$((number + 1))
+            done | jq -s .
+        )"
+        page_two="$(
+            number=31
+            while [ "$number" -le 45 ]; do
+                item_json "$number"
+                number=$((number + 1))
+            done | jq -s .
+        )"
+        jq -cn --argjson page_one "$page_one" --argjson page_two "$page_two" '[ $page_one, $page_two ]'
+        ;;
+    *)
+        exit 2
+        ;;
+    esac
+    ;;
+issue|pr)
+    kind="$1"
+    if [ "${2:-}" = view ]; then
+        number="$3"
+        [ "${4:-}" = --repo ] && [ "${5:-}" = "${STUB_REPO:-drift/check}" ] || exit 2
+        [ "${6:-}" = --json ] && [ "${7:-}" = labels ] || exit 2
+        printf '%s #%s view labels\n' "$kind" "$number" >>"$STUB_LOG"
+        if [ "${STUB_FAIL:-}" = verify ]; then
+            printf '%s\n' '{"labels":[]}'
+        elif [ "${STUB_SCENARIO:-}" = verification-drift ] &&
+            [ "${STUB_DRIFT_KIND:-}" = "$kind" ] &&
+            [ "${STUB_DRIFT_NUMBER:-}" = "$number" ] &&
+            [ -f "${STUB_STATE}.drifted.${kind}.${number}" ]; then
+            labels_json "$kind" "$number" |
+                jq -c 'map(select((.name | ascii_downcase) != "feature"))' |
+                jq -c '{labels: .}'
+        else
+            labels_json "$kind" "$number" | jq -c '{labels: .}'
+            if [ "${STUB_SCENARIO:-}" = verification-drift ] &&
+                [ "${STUB_DRIFT_KIND:-}" = "$kind" ] &&
+                [ "${STUB_DRIFT_NUMBER:-}" = "$number" ]; then
+                : >"${STUB_STATE}.drifted.${kind}.${number}"
+            fi
+            : >"${STUB_STATE}.verified.${kind}.${number}"
+        fi
+        exit 0
+    fi
+    [ "${2:-}" = edit ] || exit 2
+    number="$3"
+    shift 3
+    [ "${1:-}" = --repo ] && [ "${2:-}" = "${STUB_REPO:-drift/check}" ] || exit 2
+    shift 2
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        --add-label)
+            [ "$2" = feature ] || exit 2
+            printf '%s #%s add %s\n' "$kind" "$number" "$2" >>"$STUB_LOG"
+            state_file="${STUB_STATE}.${kind}.${number}"
+            if [ ! -f "$state_file" ]; then
+                initial_labels "$number" >"$state_file"
+            fi
+            grep -Fqx "$2" "$state_file" || printf '%s\n' "$2" >>"$state_file"
+            shift 2
+            ;;
+        --remove-label)
+            [ "$2" = enhancement ] || exit 2
+            state_file="${STUB_STATE}.${kind}.${number}"
+            if [ ! -f "${STUB_STATE}.verified.${kind}.${number}" ]; then
+                printf 'unsafe-remove %s #%s %s (not verified)\n' "$kind" "$number" "$2" >>"$STUB_LOG"
+                exit 1
+            fi
+            if ! grep -Fqx feature "$state_file"; then
+                printf 'unsafe-remove %s #%s %s (destination missing)\n' "$kind" "$number" "$2" >>"$STUB_LOG"
+                exit 1
+            fi
+            if [ "${STUB_SCENARIO:-}" = verification-drift ] &&
+                [ "${STUB_DRIFT_KIND:-}" = "$kind" ] &&
+                [ "${STUB_DRIFT_NUMBER:-}" = "$number" ] &&
+                [ -f "${STUB_STATE}.drifted.${kind}.${number}" ]; then
+                printf 'unsafe-remove %s #%s %s (destination drifted)\n' "$kind" "$number" "$2" >>"$STUB_LOG"
+                exit 1
+            fi
+            printf '%s #%s remove %s\n' "$kind" "$number" "$2" >>"$STUB_LOG"
+            awk -v label="$2" 'tolower($0) != tolower(label)' "$state_file" >"${state_file}.tmp"
+            mv "${state_file}.tmp" "$state_file"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+        esac
+    done
+    ;;
+label)
+    [ "${2:-}" = delete ] || exit 2
+    [ "${4:-}" = --repo ] && [ "${5:-}" = "${STUB_REPO:-drift/check}" ] || exit 2
+    [ "${6:-}" = --yes ] || exit 2
+    if [ "${STUB_SCENARIO:-}" = appears-before-delete ] && [ "$3" = legacy-empty ]; then
+        : >"${STUB_STATE}.appeared"
+    elif [ "${STUB_SCENARIO:-}" = appears-before-delete ] && [ "$3" = unknown-empty ] &&
+        [ -f "${STUB_STATE}.appeared" ]; then
+        printf 'unsafe-delete %s\n' "$3" >>"$STUB_LOG"
+        exit 1
+    fi
+    printf 'delete %s\n' "$3" >>"$STUB_LOG"
+    ;;
+*)
+    exit 2
+    ;;
+esac
+STUB
+    chmod +x "$maintenance_stub/gh"
+    reset_maintenance() {
+        rm -f "$maintenance_log" "$maintenance_state" "$maintenance_state".*
+    }
+
+    report_log="$maintenance_stub/report.log"
+    report_out="$(STUB_LOG="$report_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --report-unregistered 2>&1)" ||
+        fail "--report-unregistered failed against the paginated fixture"
+    case "$report_out" in
+    *"Unregistered label: enhancement (issues: 2, PRs: 2)"*) ;;
+    *) fail "report did not print separate issue/PR counts for the retired label: $report_out" ;;
+    esac
+    case "$report_out" in
+    *"Unregistered label: page-two-only (issues: 1, PRs: 1)"*) ;;
+    *) fail "report did not count the page-two-only issue and PR association: $report_out" ;;
+    esac
+    case "$report_out" in
+    *"Unregistered label: question"* | *"Unregistered label: documentation"* | *"Unregistered label: dependencies"*)
+        fail "report flagged an adopted/never-delete label: $report_out"
+        ;;
+    esac
+    case "$report_out" in
+    *"Unregistered label: suggest:gpt:sol"* | *"Unregistered label: claim:gpt:sol"* | *"Unregistered label: BUG"*)
+        fail "report flagged a recognized family or provisioned label: $report_out"
+        ;;
+    esac
+    case "$report_out" in
+    *"Unregistered label: foreman:approved"* | *"Unregistered label: autorelease:"*)
+        fail "report exposed a gated tool label without its opt-in flag: $report_out"
+        ;;
+    esac
+    if grep -Eq '^(issue|pr|delete) ' "$report_log"; then
+        fail "--report-unregistered performed a write:"
+        cat "$report_log" >&2
+    fi
+
+    reset_maintenance
+    if confirm_out="$(printf 'y\n' | STUB_SCENARIO=all-safe STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune 2>&1)"; then
+        fail "--prune accepted piped confirmation without explicit --yes"
+    fi
+    case "$confirm_out" in
+    *"requires a TTY"*"--yes explicitly"*) ;;
+    *) fail "non-TTY confirmation did not explain the explicit --yes requirement: $confirm_out" ;;
+    esac
+    ! grep -Eq '^(issue|pr|delete) ' "$maintenance_log" ||
+        fail "non-TTY confirmation refusal reached a write path"
+
+    reset_maintenance
+    if prune_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes 2>&1)"; then
+        fail "--prune returned success while refusing associated labels"
+    fi
+    case "$prune_out" in
+    *"Refused: enhancement (issues: 2, PRs: 2)"*) ;;
+    *) fail "--prune did not refuse enhancement by name: $prune_out" ;;
+    esac
+    case "$prune_out" in
+    *"Refused: custom-associated (issues: 1, PRs: 1)"*) ;;
+    *) fail "--prune did not refuse custom-associated by name: $prune_out" ;;
+    esac
+    ! grep -Eq '^(issue|pr|delete) ' "$maintenance_log" ||
+        fail "--prune partially mutated labels after preflight found associated candidates"
+    ! grep -Eq '^delete (foreman:approved|autorelease: pending)$' "$maintenance_log" ||
+        fail "--prune treated a gated tool label as an unregistered deletion candidate"
+
+    reset_maintenance
+    if safe_prune_out="$(STUB_SCENARIO=all-safe STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes 2>&1)"; then
+        :
+    else
+        fail "--prune rejected a fixture with no label associations: $safe_prune_out"
+    fi
+    case "$safe_prune_out" in
+    *"Prune confirmed by explicit --yes"*) ;;
+    *) fail "--yes did not communicate explicit destructive confirmation: $safe_prune_out" ;;
+    esac
+    case "$safe_prune_out" in
+    *quiescen* | *concurrent* | *"label writer"* | *"label updates paused"*) ;;
+    *) fail "destructive confirmation did not communicate the quiescence precondition: $safe_prune_out" ;;
+    esac
+    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete page-two-only'; do
+        grep -Fqx "$expected" "$maintenance_log" ||
+            fail "successful prune missed an unregistered zero-association label: $expected"
+    done
+    ! grep -Eq '^delete (foreman:approved|autorelease: pending)$' "$maintenance_log" ||
+        fail "successful prune deleted a gated tool label without its opt-in flag"
+
+    reset_maintenance
+    if migrate_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=feature --migrate legacy-empty=feature 2>&1)"; then
+        fail "migrate-then-prune returned success while refusing custom-associated"
+    fi
+    case "$migrate_out" in
+    *"Refused: custom-associated (issues: 1, PRs: 1)"*) ;;
+    *) fail "migrate-then-prune did not refuse the associated label by name: $migrate_out" ;;
+    esac
+    for expected in \
+        'issue #1 add feature' 'issue #1 view labels' 'issue #1 remove enhancement' \
+        'pr #2 add feature' 'pr #2 view labels' 'pr #2 remove enhancement' \
+        'issue #41 add feature' 'issue #41 view labels' 'issue #41 remove enhancement' \
+        'pr #42 add feature' 'pr #42 view labels' 'pr #42 remove enhancement'; do
+        grep -Fqx "$expected" "$maintenance_log" || fail "migration missed paginated record: $expected"
+    done
+    ! grep -Eq '^delete ' "$maintenance_log" ||
+        fail "migrate-then-prune partially deleted labels after preflight found custom-associated"
+
+    for broker_case in \
+        'claim:copilot|claim:mai' \
+        'claim:copilot:sol|claim:mai:sol' \
+        'suggest:copilot|suggest:mai' \
+        'suggest:copilot:sol|suggest:mai:sol' \
+        'agent:github-copilot|claim:mai' \
+        'agent:github-copilot:sol|claim:mai:sol'; do
+        broker_old="${broker_case%%|*}"
+        broker_new="${broker_case#*|}"
+        reset_maintenance
+        if broker_out="$(STUB_SCENARIO=broker-unresolved STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+            --migrate "$broker_old=$broker_new" 2>&1)"; then
+            fail "broker-derived migration source was accepted: $broker_old"
+        fi
+        case "$broker_out" in
+        *"migration source '$broker_old' is broker-derived and has no trustworthy single destination"*) ;;
+        *) fail "broker-source refusal did not emit the exact diagnostic for $broker_old: $broker_out" ;;
+        esac
+        case "$broker_out" in
+        *"Prune confirmed by explicit --yes"*)
+            fail "broker-source validation reached destructive confirmation for $broker_old"
+            ;;
+        esac
+        ! grep -Eq '^gh (issue|pr) (edit|close|reopen|delete) ' "$maintenance_log" ||
+            fail "broker-source refusal reached an issue/PR mutation for $broker_old"
+        ! grep -Eq '^gh label delete ' "$maintenance_log" ||
+            fail "broker-source refusal reached label deletion for $broker_old"
+    done
+
+    reset_maintenance
+    if broker_fixed_out="$(STUB_SCENARIO=broker-unresolved STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=feature 2>&1)"; then
+        fail "fixed migration unexpectedly succeeded while unresolved broker labels remained"
+    fi
+    for expected in \
+        'issue #1 add feature' 'issue #1 view labels' 'issue #1 remove enhancement' \
+        'pr #2 add feature' 'pr #2 view labels' 'pr #2 remove enhancement' \
+        'issue #41 add feature' 'issue #41 view labels' 'issue #41 remove enhancement' \
+        'pr #42 add feature' 'pr #42 view labels' 'pr #42 remove enhancement'; do
+        grep -Fqx "$expected" "$maintenance_log" ||
+            fail "fixed migration did not preserve the exact issue/PR operation: $expected"
+    done
+    ! grep -Eq '^(issue|pr) #(6|7|8|9|10|11) ' "$maintenance_log" ||
+        fail "fixed migration touched a broker-derived source"
+    ! grep -Eq '^delete ' "$maintenance_log" ||
+        fail "fixed migration deleted labels while unresolved broker sources remained"
+
+    reset_maintenance
+    if appears_out="$(STUB_SCENARIO=appears-before-delete STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes 2>&1)"; then
+        fail "prune succeeded after an association appeared before deletion"
+    fi
+    case "$appears_out" in
+    *"Refused: unknown-empty"* | *"association drift detected for 'unknown-empty'"*) ;;
+    *) fail "prune did not re-read and refuse the label that became associated: $appears_out" ;;
+    esac
+    grep -Fqx 'delete legacy-empty' "$maintenance_log" ||
+        fail "association-before-delete fixture never reached its race point"
+    ! grep -Fqx 'delete unknown-empty' "$maintenance_log" ||
+        fail "prune deleted a label after its association appeared"
+    ! grep -Fqx 'unsafe-delete unknown-empty' "$maintenance_log" ||
+        fail "prune reached the destructive API instead of detecting the new association"
+
+    reset_maintenance
+    if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" STUB_FAIL=verify PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=feature >/dev/null 2>&1; then
+        fail "migration accepted an unverified destination label"
+    fi
+    grep -Fqx 'issue #1 add feature' "$maintenance_log" ||
+        fail "destination-verification fixture never reached the add step"
+    ! grep -Fqx 'issue #1 remove enhancement' "$maintenance_log" ||
+        fail "migration removed the source after destination verification failed"
+
+    reset_maintenance
+    if drift_out="$(STUB_SCENARIO=verification-drift STUB_DRIFT_KIND=pr STUB_DRIFT_NUMBER=2 \
+        STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=feature 2>&1)"; then
+        fail "migration succeeded after the verified destination drifted"
+    fi
+    grep -Fqx 'pr #2 add feature' "$maintenance_log" ||
+        fail "post-verification-drift fixture never reached the PR add step"
+    grep -Fqx 'pr #2 view labels' "$maintenance_log" ||
+        fail "post-verification-drift fixture never verified the PR destination"
+    ! grep -Fqx 'pr #2 remove enhancement' "$maintenance_log" ||
+        fail "migration removed the PR source after destination drift"
+    ! grep -Fqx 'unsafe-remove pr #2 enhancement (destination drifted)' "$maintenance_log" ||
+        fail "migration reached the destructive PR removal after destination drift"
+
+    fail_log="$maintenance_stub/fail.log"
+    reset_maintenance
+    if STUB_LOG="$fail_log" STUB_STATE="$maintenance_state" STUB_FAIL=labels PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --report-unregistered >/dev/null 2>&1; then
+        fail "maintenance mode accepted an indeterminate label read"
+    fi
+    ! grep -Eq '^(issue|pr|delete) ' "$fail_log" ||
+        fail "indeterminate read reached a write path"
+    rm -rf "$maintenance_stub"
+fi
+
 # ── 5. status inventory binding ────────────────────────────────────────────
 if [ -f scripts/status.sh ]; then
     grep -q 'label-registry-render.mjs' scripts/status.sh ||

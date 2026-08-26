@@ -588,10 +588,91 @@ suggestion to match the claim overwrites a planning decision.
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
 org's **default labels** (org Settings → Repository, UI-only) to seed *new* repos
-(it won't change existing ones). It never deletes labels, so GitHub's defaults
-remain until you prune them — including a pre-`ui`/`logic`/`data`/`integration`
-repo's `layer:frontend`, `layer:backend`, and `layer:infra`, which you re-map and
-delete by hand.
+(it won't change existing ones). The default path is additive: it creates or
+updates only provisioned labels and never deletes a live label. To inspect live
+labels outside the registry inventory (including adopted, tool-owned, and
+recognized families), run `./scripts/setup-github-labels.sh --repo
+<owner/repo> --report-unregistered` with the same `--foreman` and
+`--release-please` profile flags used for setup when you want to mirror
+provisioning. Maintenance protection still includes every non-retired
+registered family, including gated tool labels, when those flags are omitted.
+The read-only report pages all labels and all-state issues and pull requests,
+and prints separate association counts; an indeterminate read fails closed. For
+an intentional retirement, use the guarded maintenance flow below.
+`--prune` accepts one or more repeatable `--migrate OLD=NEW` flags. The write
+path requires a quiescent maintenance window: pause claim/release, Foreman,
+release-please, and other human/API label writers for the whole run.
+`--report-unregistered` is read-only, but its counts are a snapshot; obtain a
+fresh report immediately before pruning. The command validates live registry
+destinations, requires a TTY confirmation before writes (or the separate
+explicit `--yes` flag for automation), attempts to migrate associations for
+matching issues and PRs returned by its current paginated snapshot, re-reads
+associations, and attempts to delete only reported labels that are unassociated
+in its latest snapshot; names with observed associations are refused. Retired
+labels are reportable, so use this flow instead of starting with a direct
+`gh label delete`.
+
+The guard is deliberately not an atomic API transaction. The command re-reads
+before removals and before each deletion and fails closed on read or verification
+errors, but GitHub has no transaction or compare-and-swap that binds the final
+association read to the following edit/DELETE. A concurrent writer can still
+change labels after that read and before the request, and the command cannot
+undo a successful concurrent mutation. If the window was not quiescent or any
+verification drifts, treat the operation as incomplete, reconcile live
+associations, and rerun in a new quiet window; a successful exit alone is not a
+claim of association preservation.
+
+**Fixed legacy mappings are authoritative.** Use the association-migration path
+for these fixed sources: `agent:claude-code` → `claim:claude`,
+`agent:gemini-cli` → `claim:gemini`, `agent:kimi-k2` → `claim:kimi`,
+`agent:qwen-code` → `claim:qwen`, `suggest:codex` → `suggest:gpt`, and
+`claim:codex` → `claim:gpt`. Pass one repeatable `--migrate OLD=NEW` per exact
+live source; `--migrate` does not match prefixes. For a model-level fixed
+source, move only the family segment and preserve the recorded suffix, for
+example `suggest:codex:sol` → `suggest:gpt:sol` and
+`claim:codex:sol` → `claim:gpt:sol`. Model-level labels refine rather than
+replace their family-level label, so retain or add both associations as
+appropriate. Enumerate model-level names explicitly with
+`gh label list --repo <owner/repo> --limit 1000 --json name --jq '.[].name' |
+grep -E '^(suggest|claim):(codex|copilot):'`; for each source, inspect all-state
+`gh issue list --label <old> --state all --limit 1000` and
+`gh pr list --label <old> --state all --limit 1000`. An exactly-full manual
+result is capped; increase the limit and rerun before writes. The maintenance
+path itself uses `gh api --paginate` and refuses an indeterminate read.
+
+If a destination already exists — normally because setup provisioned it — do
+not use `gh label edit` or create-then-delete. Use `--migrate` for a fixed
+mapping: it validates the live registry destination, attempts the association
+move for each matching issue and PR found in the paginated snapshot, then
+permits guarded `--prune` only when a fresh snapshot shows the source has zero
+associations. For
+per-record broker handling, add and
+verify the destination on each record before removing the old association;
+after all records are handled, a fresh zero-association snapshot may permit
+guarded `--prune` to attempt retiring the old label.
+
+**Copilot labels need a per-record family decision, not a default-based rename.**
+`copilot-cli` is a broker, not a model family: its picker defaults to `mai`,
+but MAI is only that default and never evidence for a migration. Do not pass
+`agent:github-copilot*`, `suggest:copilot*`, or `claim:copilot*` to bulk
+`--migrate`; the command rejects broker-derived sources because one destination
+cannot represent mixed runtime records. `suggest:copilot` has no claim/session
+record: re-express each issue/PR's planning intent as
+`suggest:<actual-family>` or drop the old association, never mechanically
+rename it to `suggest:mai`. `claim:copilot` is different: inspect each
+issue/PR's claim/session record and handle that record individually as
+`claim:<actual-family>`; use `claim:mai` only when the record confirms MAI.
+Apply the same distinction to model-level
+`suggest:copilot:<model>`/`claim:copilot:<model>` labels and preserve a model
+suffix only after the actual family is known. If a live claim's record is
+missing, settle it with its owner or leave the label untouched rather than
+guess.
+
+Before moving any in-flight `claim:*`/legacy `agent:*` marker, settle the claim
+or amend its durable record in the same sitting: its release path names the
+exact label it will remove, and moving only the issue/PR association strands
+the replacement marker. Interactive runs confirm on the TTY; automation must
+state destructive intent again with separate `--yes` (piped stdin is refused).
 
 ### Labels carry no permissions
 
@@ -620,7 +701,8 @@ labels, for exactly this reason: a `labeled` event carries an actor, but the
 label sitting on the issue afterwards does not, so half the paths a
 label-triggered workflow can start from have nobody to check. Label setup is
 additive, so a repository standardized before those labels were retired may
-still carry them live-but-inert — delete them by hand.
+still carry them live-but-inert — report them with `--report-unregistered`,
+then map and retire them with guarded `--migrate`/`--prune` maintenance.
 
 ### Label or field?
 
@@ -670,24 +752,25 @@ deliberately leaves it alone.
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
 | `documentation` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
-| `enhancement` (**retired**) | nobody — replaced by `feature` | humans, saved views | retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned | rename BEFORE provisioning creates `feature` (`gh label edit enhancement --name feature`, association-preserving); once `feature` exists the rename is refused — re-label the issues and delete `enhancement` |
+| `dependencies` | Renovate, when it manages dependency updates | humans, saved views | not provisioned — Renovate creates it on demand; never deleted by setup | tool-managed by Renovate |
+| `enhancement` (**retired**) | nobody — replaced by `feature` | humans, saved views | retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned | use guarded `--prune` with `--migrate enhancement=feature` |
 | `layer:{ui,logic,data,integration,infra}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field |
 | `domain:{template,standardization,dev-loop,agent-workflow,project-tracking,auth,delivery,environment}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field |
-| `domain:platform` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — split across dev-loop/delivery/environment; never provisioned here | re-label its issues to the split domains, then delete the live label |
-| `domain:billing` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — a generic starter value this repo never needed | re-label any stragglers, then delete the live label |
+| `domain:platform` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — split across dev-loop/delivery/environment; never provisioned here | choose replacement domains, then use guarded `--prune` with repeatable `--migrate OLD=NEW` |
+| `domain:billing` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — a generic starter value this repo never needed | choose the replacement, then use guarded `--prune` with `--migrate OLD=NEW` |
 | `area:{copier,devcontainer,ci,tasks,tests,deps,skills,foreman,gauntlet,worktree,release,security,pm,docs}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
-| `area:template` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:copier` (the engine was what it labeled) | rename BEFORE provisioning creates `area:copier`: `gh label edit area:template --name area:copier` |
-| `area:codex` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:gauntlet`; codex is the current backend, not the stage | rename BEFORE provisioning creates `area:gauntlet`: `gh label edit area:codex --name area:gauntlet` |
+| `area:template` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:copier` (the engine was what it labeled) | use guarded `--prune` with `--migrate area:template=area:copier` |
+| `area:codex` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:gauntlet`; codex is the current backend, not the stage | use guarded `--prune` with `--migrate area:codex=area:gauntlet` |
 | `rigor:{trivial,minimal,light,standard,thorough,deep}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a review policy, three role tiers, and a budget; arms nothing | set when the default rigor is wrong for the change; survives the work |
 | `tier:{local,economy,standard,frontier,apex,adaptive}` | humans, at triage or planning — never an agent on itself | humans and agents — resolved to a model via `.devflow.toml` `[tier]` (ADR 0006) | provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing | set when the default tier would be wrong; strongest-wins resolution per ADR 0006 |
 | `tier:orchestrator:local`, `tier:orchestrator:economy`, `tier:orchestrator:standard`, `tier:orchestrator:frontier`, `tier:orchestrator:apex`, `tier:implementer:local`, `tier:implementer:economy`, `tier:implementer:standard`, `tier:implementer:frontier`, `tier:implementer:apex`, `tier:reviewer:local`, `tier:reviewer:economy`, `tier:reviewer:standard`, `tier:reviewer:frontier`, `tier:reviewer:apex` | humans, at triage or planning — never an agent on itself | humans and agents — resolved via `.devflow.toml` `[tier]`; targets exactly the role it names (ADR 0006/0007), unlike the unqualified `tier:<value>` which targets the implementer only | provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing | set when one role's tier should differ from the rigor's own profile; strongest-wins per role |
-| `method:{oneshot,plan,plan-approved,orchestrate,council,human-led}` (**retired**) | nobody — renamed to strategy:* | humans — retired, see `strategy:*` | retired — execution topology renamed to the `strategy` family; never provisioned | rename each BEFORE provisioning creates its strategy:* counterpart (association-preserving): `gh label edit method:<v> --name strategy:<v>` |
+| `method:{oneshot,plan,plan-approved,orchestrate,council,human-led}` (**retired**) | nobody — renamed to strategy:* | humans — retired, see `strategy:*` | retired — execution topology renamed to the `strategy` family; never provisioned | migrate each with guarded `--prune` and repeatable `--migrate method:<v>=strategy:<v>` |
 | `strategy:{oneshot,plan,plan-approved,orchestrate,council,human-led}` | humans, at triage or planning — never an agent on itself | agents, when entering the Dev Loop — Foreman does not consume it yet (out of scope here) | provisioned; **read by agents** — selects an execution topology, arms nothing | set when the default strategy is wrong for the change; survives the work |
 | `suggest:<family>` | humans or agents, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |
 | `suggest:<family>:<model>` | humans or agents, at planning | humans | **tool-owned, created on demand** — seeding every model would be an unbounded roster | refines the family label; apply both |
 | `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step, or by `claim-release.yml` on close where the repo ships it |
 | `claim:<family>:<model>` | the agent itself | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | **tool-owned, created on demand** | refines the family label; added at claim, removed at release |
-| `agent:<harness>` (**retired**) | nobody — never seeded into a new repo | claim skills (and `claim-release.yml` where present), which still recognize it | legacy; inert | delete once live claims are re-mapped to `claim:*` |
+| `agent:<harness>` (**retired**) | nobody — never seeded into a new repo | claim skills (and `claim-release.yml` where present), which still recognize it | legacy; inert | after choosing the actual claim family, use guarded `--prune` with repeatable `--migrate OLD=NEW` |
 | `foreman:<adapter>` | a trusted human, to arm an issue | Foreman | provisioned from the registry where the repo uses foreman (`--foreman`), for production-dispatchable adapters only; **actor-verified arming** | applied to arm; stays on the issue |
 | `foreman:approved` | a trusted human | Foreman | provisioned (`--foreman`); **actor-verified arming** with the repo default backend | applied to arm; stays on the issue |
 | `foreman:hold` | a human | Foreman | provisioned (`--foreman`); non-arming and always wins | applied to exclude, removed to re-include |
@@ -697,7 +780,7 @@ deliberately leaves it alone.
 | `foreman:ready-for-review` | Foreman, on passing its readiness gate | Foreman, humans | **tool-owned, auto-created** | added at promotion; the hand-off to human review |
 | `type:<commit-type>` | a human, optionally | Foreman, to pick the unit's conventional-commit type | **not provisioned** — an optional override of the native issue `Type` | applied when the native type is absent or wrong |
 | `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
-| `duplicate`, `good first issue`, `help wanted`, `invalid`, `wontfix` | GitHub, at repo creation | humans | not provisioned, never deleted by setup | prune by hand if you do not want them |
+| `duplicate`, `good first issue`, `help wanted`, `invalid`, `wontfix` | GitHub, at repo creation | humans | not provisioned, never deleted by setup | adopted; leave in place — inventory reporting and guarded pruning exclude it |
 <!-- label-taxonomy:end -->
 
 One nuance the table compresses: `claim:claude` in a repo with **no label

@@ -167,13 +167,20 @@
           "trust_note": "not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary"
         },
         {
+          "value": "dependencies",
+          "provision": false,
+          "writer_note": "Renovate, when it manages dependency updates",
+          "trust_note": "not provisioned — Renovate creates it on demand; never deleted by setup",
+          "lifecycle_note": "tool-managed by Renovate"
+        },
+        {
           "value": "enhancement",
           "description": "New feature or request",
           "color": "A2EEEF",
           "retired": true,
           "writer_note": "nobody — replaced by `feature`",
           "trust_note": "retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned",
-          "lifecycle_note": "rename BEFORE provisioning creates `feature` (`gh label edit enhancement --name feature`, association-preserving); once `feature` exists the rename is refused — re-label the issues and delete `enhancement`"
+          "lifecycle_note": "use guarded `--prune` with `--migrate enhancement=feature`"
         }
       ]
     },
@@ -476,7 +483,7 @@
       "writer_note": "nobody — renamed to strategy:*",
       "readers": "humans — retired, see `strategy:*`",
       "lifecycle": "durable",
-      "lifecycle_note": "rename each BEFORE provisioning creates its strategy:* counterpart (association-preserving): `gh label edit method:<v> --name strategy:<v>`",
+      "lifecycle_note": "migrate each with guarded `--prune` and repeatable `--migrate method:<v>=strategy:<v>`",
       "trust_note": "retired — execution topology renamed to the `strategy` family; never provisioned",
       "exclusive": false,
       "provision": false,
@@ -618,7 +625,7 @@
       "writer_note": "nobody — never seeded into a new repo",
       "readers": "claim skills (and `claim-release.yml` where present), which still recognize it",
       "lifecycle": "claim-release",
-      "lifecycle_note": "delete once live claims are re-mapped to `claim:*`",
+      "lifecycle_note": "after choosing the actual claim family, use guarded `--prune` with repeatable `--migrate OLD=NEW`",
       "trust_note": "legacy; inert",
       "exclusive": false,
       "provision": false,
@@ -771,14 +778,14 @@
     {
       "family": "github-defaults",
       "prefix": null,
-      "purpose": "GitHub's repo-creation defaults that remain in the vocabulary; never provisioned, never deleted by setup.",
+      "purpose": "GitHub's repo-creation defaults that remain in the vocabulary; never provisioned and protected from maintenance pruning.",
       "axis": "meta",
       "source": "inline",
       "writers": ["human"],
       "writer_note": "GitHub, at repo creation",
       "readers": "humans",
       "lifecycle": "durable",
-      "lifecycle_note": "prune by hand if you do not want them",
+      "lifecycle_note": "adopted; leave in place — inventory reporting and guarded pruning exclude it",
       "trust_note": "not provisioned, never deleted by setup",
       "exclusive": false,
       "provision": false,
