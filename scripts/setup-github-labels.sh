@@ -479,7 +479,8 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             done
             canonical_parent=""
             if [ "$source_complete" = 1 ]; then
-                canonical_new="$(live_label_name "$new" || printf '%s' "$new")"
+                canonical_new="$(live_label_name "$new")" ||
+                    die "migration source '$canonical_old' is absent but destination '$new' is not live; run label setup first"
                 migration_create_from+=("")
             elif canonical_new="$(live_label_name "$new")"; then
                 migration_create_from+=("")

@@ -454,7 +454,7 @@ labels_json() {
         jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' "$state_file"
     else
         case "${STUB_SCENARIO:-}" in
-        all-safe | appears-before-delete | completed-migration) printf '%s\n' '[]' ;;
+        all-safe | appears-before-delete | completed-migration | completed-migration-missing-destination) printf '%s\n' '[]' ;;
         *) initial_labels "$number" | jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' ;;
         esac
     fi
@@ -524,6 +524,7 @@ api)
         discussion_labels="$(labels_json discussion 50)"
         if [ "${STUB_SCENARIO:-}" = all-safe ] || [ "${STUB_SCENARIO:-}" = appears-before-delete ] ||
             [ "${STUB_SCENARIO:-}" = completed-migration ] ||
+            [ "${STUB_SCENARIO:-}" = completed-migration-missing-destination ] ||
             [ "${STUB_SCENARIO:-}" = comma-name ]; then
             discussion_labels='[]'
         fi
@@ -579,7 +580,8 @@ api)
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
                 (if $scenario == "fixed-source" then .[1] += [{name:"agent:codex",color:"abcdef",description:"fixture",node_id:"agent:codex-id"},{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"Claim:Codex:Sol",color:"abcdef",description:"fixture",node_id:"Claim:Codex:Sol-id"}] else . end) |
-                (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
+                (if ($scenario == "completed-migration" or $scenario == "completed-migration-missing-destination") then map(map(select(.name != "enhancement"))) else . end) |
+                (if $scenario == "completed-migration-missing-destination" then map(map(select(.name != "feature"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         else
             jq -cn '[
@@ -589,7 +591,8 @@ api)
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
                 (if $scenario == "fixed-source" then .[1] += [{name:"agent:codex",color:"abcdef",description:"fixture",node_id:"agent:codex-id"},{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"Claim:Codex:Sol",color:"abcdef",description:"fixture",node_id:"Claim:Codex:Sol-id"}] else . end) |
-                (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
+                (if ($scenario == "completed-migration" or $scenario == "completed-migration-missing-destination") then map(map(select(.name != "enhancement"))) else . end) |
+                (if $scenario == "completed-migration-missing-destination" then map(map(select(.name != "feature"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         fi
         ;;
@@ -963,6 +966,19 @@ STUB
         fail "completed migration repeated association mutations"
     ! grep -Fqx 'delete enhancement' "$maintenance_log" ||
         fail "completed migration attempted to delete its already-absent source"
+
+    reset_maintenance
+    if missing_destination_out="$(STUB_SCENARIO=completed-migration-missing-destination STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=feature 2>&1)"; then
+        fail "completed migration accepted an absent destination"
+    fi
+    case "$missing_destination_out" in
+    *"migration source 'enhancement' is absent but destination 'feature' is not live"*"run label setup first"*) ;;
+    *) fail "absent completed-migration destination refusal was not actionable: $missing_destination_out" ;;
+    esac
+    ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+        fail "absent completed-migration destination reached a write path"
 
     reset_maintenance
     if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
