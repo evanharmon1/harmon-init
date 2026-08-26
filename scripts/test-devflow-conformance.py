@@ -18,6 +18,19 @@ from pathlib import Path
 
 
 SUPPORTED_SCHEMA_VERSION = 1
+CASE_KEYS = {
+    "adaptive_result",
+    "basis",
+    "config_replacements",
+    "expect",
+    "labels",
+    "merge_base_replacements",
+    "name",
+    "overrides",
+    "trusted_labels",
+    "unattended",
+}
+EXPECT_KEYS = {"error_diagnostics", "exit", "result", "warning_diagnostics"}
 
 
 def fail(message: str) -> None:
@@ -118,10 +131,20 @@ def main() -> int:
     if fixture.get("kind") != "harmon-init.devflow.conformance":
         fail("fixture kind must be 'harmon-init.devflow.conformance'")
         return 1
-    if fixture.get("schema_version") != SUPPORTED_SCHEMA_VERSION:
+    schema_version = fixture.get("schema_version")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version != SUPPORTED_SCHEMA_VERSION
+    ):
         fail(f"fixture schema_version must be {SUPPORTED_SCHEMA_VERSION}")
         return 1
-    if fixture.get("result_schema_version") != SUPPORTED_SCHEMA_VERSION:
+    result_schema_version = fixture.get("result_schema_version")
+    if (
+        not isinstance(result_schema_version, int)
+        or isinstance(result_schema_version, bool)
+        or result_schema_version != SUPPORTED_SCHEMA_VERSION
+    ):
         fail(f"fixture result_schema_version must be {SUPPORTED_SCHEMA_VERSION}")
         return 1
     if not isinstance(fixture.get("cases"), list) or not fixture["cases"]:
@@ -135,8 +158,16 @@ def main() -> int:
             fail("every fixture case needs a non-empty name")
             return 1
         names.append(name)
+        unknown_case_keys = sorted(set(case) - CASE_KEYS)
+        if unknown_case_keys:
+            fail(f"{name}: unknown case key(s): {', '.join(unknown_case_keys)}")
+            return 1
         if not isinstance(case.get("expect"), dict):
             fail(f"{name}: expect must be an object")
+            return 1
+        unknown_expect_keys = sorted(set(case["expect"]) - EXPECT_KEYS)
+        if unknown_expect_keys:
+            fail(f"{name}: unknown expect key(s): {', '.join(unknown_expect_keys)}")
             return 1
         expected_exit = case["expect"].get("exit")
         if not isinstance(expected_exit, int) or isinstance(expected_exit, bool) or expected_exit not in (0, 1):

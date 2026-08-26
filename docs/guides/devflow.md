@@ -44,10 +44,11 @@ or consumer config without a supported version is still rejected.
 
 The language-neutral vectors in
 [`.devflow-conformance-v1.json`](../../.devflow-conformance-v1.json) define
-the normalized result contract. A consumer demonstrates conformance by
-running every case against both its root and generated-template copies and
-matching the listed projection: selections and their sources, review caps and
-floor, tiers, disclosure state, config basis, and diagnostic codes. Paths,
+the normalized result contract. Harmon Init demonstrates conformance against
+both its root and generated-template copies. A generated consumer has one
+rendered repository and demonstrates conformance by running every case there
+and matching the listed projection: selections and their sources, review caps
+and floor, tiers, disclosure state, config basis, and diagnostic codes. Paths,
 hashes, and diagnostic prose are deliberately not fixture values. Every
 diagnostic instead has a stable `code` and broad `subject`; prose remains
 actionable but is not a parsing API.

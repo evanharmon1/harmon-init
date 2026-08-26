@@ -167,6 +167,18 @@ def malformed_fixture(tmp):
 rejects("a malformed conformance fixture", malformed_fixture, "cannot read fixture")
 
 
+def boolean_fixture_schema_version(tmp):
+    edit_fixture(tmp, lambda fixture: fixture.__setitem__("schema_version", True))
+rejects("a boolean fixture schema version", boolean_fixture_schema_version,
+        "fixture schema_version must be 1")
+
+
+def boolean_result_schema_version(tmp):
+    edit_fixture(tmp, lambda fixture: fixture.__setitem__("result_schema_version", True))
+rejects("a boolean fixture result schema version", boolean_result_schema_version,
+        "fixture result_schema_version must be 1")
+
+
 def malformed_schema(tmp):
     for rel in (".devflow.schema.json", "template/.devflow.schema.json"):
         p = os.path.join(tmp, rel)
@@ -204,6 +216,21 @@ def malformed_expectation(tmp):
         fixture["cases"][0]["expect"] = []
     edit_fixture(tmp, mutate)
 rejects("a malformed conformance expectation", malformed_expectation, "defaults: expect must be an object")
+
+
+def unknown_fixture_case_key(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["label"] = "rigor:standard"
+    edit_fixture(tmp, mutate)
+rejects("an unknown conformance case key", unknown_fixture_case_key, "defaults: unknown case key(s): label")
+
+
+def unknown_fixture_expect_key(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["expect"]["results"] = fixture["cases"][0]["expect"]["result"]
+    edit_fixture(tmp, mutate)
+rejects("an unknown conformance expectation key", unknown_fixture_expect_key,
+        "defaults: unknown expect key(s): results")
 
 
 def malformed_fixture_labels(tmp):
