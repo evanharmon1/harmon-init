@@ -199,12 +199,14 @@ prov_field() {
     sed -n "s/^# $2:[[:space:]]*//p" "$1" | head -n 1
 }
 
-# status_prov_ref PROV — the ref recorded by a provenance stamp, or empty when
-# the required stamp/ref is absent. Status is read-only, so a malformed or
-# incomplete stamp is reported as not fully vendored rather than repaired.
+# status_prov_ref PROV REQUIRE_MANAGED — the ref recorded by a provenance
+# stamp, or empty when the required stamp/ref is absent. Skills provenance has
+# a supported legacy generation without `# managed:`; agents provenance does
+# not. Status is read-only, so a malformed or incomplete stamp is reported as
+# not fully vendored rather than repaired.
 status_prov_ref() {
     [ -f "$1" ] || return 0
-    grep -q '^# managed:' "$1" || return 0
+    [ "${2:-0}" -eq 0 ] || grep -q '^# managed:' "$1" || return 0
     prov_field "$1" "ref" | sed 's/ (.*//'
 }
 
@@ -1067,14 +1069,14 @@ cmd_status() {
     [ -n "$_cs_pinned" ] && [ "$_cs_pinned" != "null" ] ||
         die "manifest: .source.ref is required"
 
-    _cs_skills_ref="$(status_prov_ref "$_cs_dest/.SKILLS_PROVENANCE")"
+    _cs_skills_ref="$(status_prov_ref "$_cs_dest/.SKILLS_PROVENANCE" 0)"
     _cs_vendored="$_cs_skills_ref"
     _cs_never=0
     [ -n "$_cs_skills_ref" ] || _cs_never=1
     _cs_agents_ref=""
     if agents_enabled; then
         _cs_agents_dest="$(agents_dest)"
-        _cs_agents_ref="$(status_prov_ref "$_cs_agents_dest/.AGENTS_PROVENANCE")"
+        _cs_agents_ref="$(status_prov_ref "$_cs_agents_dest/.AGENTS_PROVENANCE" 1)"
         [ -n "$_cs_agents_ref" ] || _cs_never=1
     fi
 
@@ -1085,9 +1087,14 @@ cmd_status() {
         _cs_state="never-vendored"
         _cs_vendored="none"
         _cs_status="$STATUS_NEVER_VENDORED"
-    elif [ "$_cs_skills_ref" != "$_cs_pinned" ] ||
-        { agents_enabled && [ "$_cs_agents_ref" != "$_cs_pinned" ]; }; then
+    elif [ "$_cs_skills_ref" != "$_cs_pinned" ]; then
         _cs_state="pin-moved"
+        _cs_status="$STATUS_PIN_MOVED"
+    elif agents_enabled && [ "$_cs_agents_ref" != "$_cs_pinned" ]; then
+        _cs_state="pin-moved"
+        # Keep the fixed `vendored=REF` schema useful when only the agents
+        # stamp is stale: report the ref that actually differs from the pin.
+        _cs_vendored="$_cs_agents_ref"
         _cs_status="$STATUS_PIN_MOVED"
     elif [ "$_cs_offline" -eq 0 ] &&
         status_version_parse "$_cs_pinned" 2>/dev/null; then
