@@ -24,7 +24,8 @@ always trusted by definition — it is the explicit, attributable instruction
 channel ADR 0006 D5 describes, never repository content.
 
 Only labels in the rigor:/strategy:/tier: namespaces are this resolver's
-business — anything else (a plain `bug`, an `area:ci`) is filtered out
+business — anything else (including retired `method:*`, a plain `bug`, or an
+`area:ci`) is filtered out
 before either the trust filter or the label parser ever see it, silently:
 it was never a devflow input, so it produces no warning of any kind.
 
@@ -101,12 +102,12 @@ actually requested (`adaptive`) for trust purposes, not from whatever
 adaptive is exactly as confirmation-worthy as one asking for any other
 off-profile tier once it resolves to something concrete.
 
-This is a ROOT-ONLY reference implementation, not the versioned,
-cross-consumer conformance contract — that is harmon-init#1048
-(schema_version, language-neutral fixtures, a fixture corpus). It exists so
-scripts/test-devflow-config.sh has something executable to run the
-resolution-order case table against, and so an agent or Foreman has a
-starting point rather than re-deriving the algorithm from prose each time.
+This is the shipped v1 reference implementation for the versioned,
+cross-consumer conformance contract: `schema_version`, the language-neutral
+fixture corpus, and this executable resolver agree on the normalized result.
+It also gives scripts/test-devflow-config.sh an executable resolution-order
+case table and lets an agent or Foreman start from a shared algorithm rather
+than re-deriving one from prose.
 
 Usage:
     devflow-resolve.py --config .devflow.toml \\
@@ -208,11 +209,153 @@ import math
 import os
 import sys
 import tomllib
+from pathlib import Path
 
 LADDER = ("local", "economy", "standard", "frontier", "apex")
 LADDER_RANK = {tier: i for i, tier in enumerate(LADDER)}
+SUPPORTED_SCHEMA_VERSION = 1
+TOP_LEVEL_KEYS = {
+    "schema_version", "default_rigor", "default_strategy", "rigor_order",
+    "rigor", "review", "budget", "strategy", "tier",
+}
 
 _JSON_SAFE_SCALARS = (str, int, float, bool, type(None))
+
+
+def _schema_type_matches(value, expected):
+    """Implement the small, portable JSON Schema subset used by v1."""
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return True
+
+
+def _schema_violations(value, schema, root, path="$"):
+    """Return structural v1-schema violations as stable path/message pairs.
+
+    v1 uses only the keywords implemented here. Reject an unsupported schema
+    reference rather than silently validating less than the contract says.
+    """
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        prefix = "#/$defs/"
+        if not isinstance(ref, str) or not ref.startswith(prefix):
+            return [(path, f"unsupported schema reference {ref!r}")]
+        target = root.get("$defs", {}).get(ref[len(prefix):])
+        if not isinstance(target, dict):
+            return [(path, f"unresolved schema reference {ref!r}")]
+        return _schema_violations(value, target, root, path)
+
+    violations = []
+    if "not" in schema:
+        prohibited = schema["not"]
+        if not isinstance(prohibited, dict):
+            violations.append((path, "has a non-object not schema"))
+        elif not _schema_violations(value, prohibited, root, path):
+            violations.append((path, "matches a prohibited schema"))
+    if "anyOf" in schema:
+        alternatives = schema["anyOf"]
+        if not isinstance(alternatives, list) or not alternatives:
+            violations.append((path, "has an empty or non-array anyOf"))
+        elif all(not isinstance(branch, dict) or _schema_violations(value, branch, root, path)
+                 for branch in alternatives):
+            violations.append((path, "does not match any permitted schema"))
+    for branch in schema.get("allOf", []):
+        if not isinstance(branch, dict):
+            violations.append((path, "has a non-object allOf branch"))
+            continue
+        condition = branch.get("if")
+        if condition is None:
+            violations.extend(_schema_violations(value, branch, root, path))
+        elif not _schema_violations(value, condition, root, path):
+            consequence = branch.get("then")
+            if isinstance(consequence, dict):
+                violations.extend(_schema_violations(value, consequence, root, path))
+    expected_type = schema.get("type")
+    if isinstance(expected_type, str) and not _schema_type_matches(value, expected_type):
+        return [(path, f"must be a {expected_type}")]
+    if "const" in schema and value != schema["const"]:
+        violations.append((path, f"must equal {schema['const']!r}"))
+    if "enum" in schema and value not in schema["enum"]:
+        violations.append((path, f"must be one of {schema['enum']!r}"))
+
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        for key in required:
+            if key not in value:
+                violations.append((path, f"is missing required property {key!r}"))
+        additional = schema.get("additionalProperties", True)
+        for key, item in value.items():
+            item_schema = properties.get(key)
+            if item_schema is None:
+                if additional is False:
+                    violations.append((f"{path}.{key}", "is not allowed"))
+                elif isinstance(additional, dict):
+                    violations.extend(_schema_violations(item, additional, root, f"{path}.{key}"))
+            elif isinstance(item_schema, dict):
+                violations.extend(_schema_violations(item, item_schema, root, f"{path}.{key}"))
+    elif isinstance(value, list):
+        items = schema.get("items")
+        if isinstance(items, dict):
+            for index, item in enumerate(value):
+                violations.extend(_schema_violations(item, items, root, f"{path}[{index}]"))
+        # A preceding item-schema violation (for example a TOML date where
+        # the schema requires a string) must still yield normalized
+        # invalid_config JSON. Do not feed TOML-native values to json.dumps
+        # merely to check uniqueness; the type violation already rejects the
+        # instance and json_safe keeps this path crash-free.
+        if schema.get("uniqueItems") and all(json_safe(item) for item in value):
+            encoded = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value]
+            if len(encoded) != len(set(encoded)):
+                violations.append((path, "must have unique items"))
+
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            violations.append((path, f"must have length >= {schema['minLength']}"))
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            violations.append((path, f"must have length <= {schema['maxLength']}"))
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            violations.append((path, f"must be >= {schema['minimum']}"))
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            violations.append((path, f"must be > {schema['exclusiveMinimum']}"))
+    return violations
+
+
+def validate_schema_v1_shape(cfg, errors, *, allow_legacy_merge_base=False):
+    """Validate a present config against the checked-in v1 schema.
+
+    The unversioned merge-base compatibility basis still has to satisfy every
+    v1 requirement except its absent schema_version.
+    """
+    schema_path = Path(__file__).resolve().parents[1] / ".devflow.schema.json"
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append({
+            "code": "invalid_config",
+            "detail": f"cannot load v1 structural schema {schema_path}: {exc}",
+        })
+        return False
+    violations = _schema_violations(cfg, schema, schema)
+    if allow_legacy_merge_base:
+        violations = [
+            violation for violation in violations
+            if violation != ("$", "is missing required property 'schema_version'")
+        ]
+    for path, detail in violations:
+        errors.append({"code": "invalid_config", "detail": f"schema v1 {path} {detail}"})
+    return not violations
 
 
 def json_safe(value):
@@ -300,7 +443,7 @@ def load_config(path):
     return cfg, hashlib.sha256(raw).hexdigest()
 
 
-def validate_config_references(cfg, errors):
+def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
     """Defensive validation this resolver needs to avoid a raw traceback on
     a malformed-but-syntactically-valid TOML config — see the module
     docstring on how this differs from scripts/test-devflow-config.sh.
@@ -327,6 +470,25 @@ def validate_config_references(cfg, errors):
     budgets = budgets if isinstance(budgets, dict) else {}
     strategies = cfg.get("strategy")
     strategies = strategies if isinstance(strategies, dict) else {}
+    tiers = cfg.get("tier")
+    if not isinstance(tiers, dict):
+        fail("[tier] must be a table")
+        tiers = {}
+
+    unknown = sorted(set(cfg) - TOP_LEVEL_KEYS)
+    if unknown:
+        fail(f"unknown top-level key(s): {', '.join(unknown)}")
+
+    schema_version = cfg.get("schema_version")
+    if schema_version is None and allow_legacy_merge_base:
+        pass
+    elif not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        fail(f"schema_version must be an integer (got {schema_version!r})")
+    elif schema_version != SUPPORTED_SCHEMA_VERSION:
+        fail(
+            f"schema_version={schema_version!r} is unsupported — this resolver supports "
+            f"schema version {SUPPORTED_SCHEMA_VERSION}; upgrade the consumer or use a compatible config"
+        )
 
     # Every reference below is type-checked as a scalar string BEFORE any
     # dictionary-membership test (`x not in some_dict`) — dict membership
@@ -414,6 +576,16 @@ def validate_config_references(cfg, errors):
             fail(f"[review.{name}] is not a table")
         elif not json_safe(tbl):
             fail(f"[review.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
+        else:
+            challenge = tbl.get("challenge")
+            review = tbl.get("review")
+            min_rounds = tbl.get("min_rounds")
+            if all(isinstance(value, int) and not isinstance(value, bool)
+                   for value in (challenge, review, min_rounds)) and min_rounds > min(challenge, review):
+                fail(
+                    f"[review.{name}].min_rounds={min_rounds} exceeds "
+                    f"min(challenge, review)={min(challenge, review)}"
+                )
 
     for name, tbl in budgets.items():
         if not isinstance(tbl, dict):
@@ -430,6 +602,40 @@ def validate_config_references(cfg, errors):
             fail(f"[strategy.{name}] is not a table")
         elif not json_safe(tbl):
             fail(f"[strategy.{name}] contains a value with no JSON equivalent (a TOML date/time, or a non-finite float?)")
+        elif not isinstance(tbl.get("topology"), str):
+            fail(f"[strategy.{name}].topology must be a string (got {tbl.get('topology')!r})")
+        elif tbl["topology"] in {"lead-and-workers", "independent-proposals"}:
+            required_fields = ["min_agents"]
+            if tbl["topology"] == "lead-and-workers":
+                required_fields.append("coordination")
+            if tbl["topology"] == "independent-proposals":
+                required_fields.extend(["selection", "synthesis"])
+            for field in required_fields:
+                if field not in tbl:
+                    fail(f"[strategy.{name}] topology={tbl['topology']!r} is missing {field!r}")
+
+        if isinstance(tbl, dict):
+            topology = tbl.get("topology")
+            if not isinstance(topology, str):
+                continue
+            allowed_topologies = {
+                "coordination": {"lead-and-workers", "independent-proposals"},
+                "selection": {"independent-proposals"},
+                "synthesis": {"independent-proposals"},
+                "min_agents": {"lead-and-workers", "independent-proposals"},
+            }
+            for field, allowed in allowed_topologies.items():
+                if field in tbl and topology not in allowed:
+                    fail(f"[strategy.{name}].{field} is not valid for topology={topology!r}")
+
+    for name, tbl in tiers.items():
+        if not isinstance(tbl, dict):
+            continue
+        endpoint = tbl.get("endpoint")
+        if name == "local" and endpoint != "local":
+            fail("[tier.local] must set endpoint='local'")
+        elif name != "local" and endpoint is not None:
+            fail(f"[tier.{name}] endpoint is only valid on [tier.local]")
 
     return ok
 
@@ -854,6 +1060,28 @@ def tier_drove_untrusted_off_profile(role, tier, trusted_set):
 
 
 def emit(output, errors):
+    # The resolver's output itself is a versioned interoperability surface.
+    # Keep this separate from config_schema_version: a resolver can report a
+    # malformed or unsupported config without pretending it successfully
+    # resolved that config's contract.
+    output.setdefault("result_schema_version", SUPPORTED_SCHEMA_VERSION)
+    # Diagnostic prose is deliberately actionable but not a compatibility
+    # surface. Every v1 diagnostic carries a stable code and broad subject so
+    # consumers can branch without parsing English text.
+    subject_by_code = {
+        "invalid_config": "config",
+        "invalid_input": "input",
+        "invalid_override": "override",
+        "unknown_label": "label",
+        "untrusted_label_ignored": "label",
+        "ambiguous_strategy": "strategy",
+        "incompatible_strategy": "strategy",
+        "config_absent": "config",
+        "legacy_merge_base_config": "config",
+    }
+    for collection in (output.get("warnings", []), output.get("errors", [])):
+        for diagnostic in collection:
+            diagnostic.setdefault("subject", subject_by_code.get(diagnostic.get("code"), "resolution"))
     print(json.dumps(output, indent=2, sort_keys=True))
     sys.exit(1 if errors else 0)
 
@@ -1017,8 +1245,47 @@ def main():
             detail = f"{read_path} does not exist — resolved from the built-in fallback"
         warnings.append({"code": "config_absent", "detail": detail})
 
+    legacy_merge_base = (
+        not config_absent and config_source == "merge-base" and "schema_version" not in cfg
+    )
+    if legacy_merge_base:
+        warnings.append({
+            "code": "legacy_merge_base_config",
+            "detail": (
+                "merge-base .devflow.toml predates schema v1; using the legacy compatibility "
+                "basis only for this self-edit transition"
+            ),
+        })
+
+        # A legacy merge base is a one-time transition aid, not a way to
+        # ignore the branch copy. The branch must itself introduce a fully
+        # valid v1 contract before the resolver may use the older merge-base
+        # policy to review that self-edit.
+        try:
+            transition_cfg, _ = load_config(args.config)
+        except ConfigReadError as exc:
+            errors.append({
+                "code": "invalid_config",
+                "detail": f"branch self-edit config is not readable: {exc}",
+            })
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+                  "warnings": warnings, "errors": errors}, errors)
+        if transition_cfg is None:
+            errors.append({
+                "code": "invalid_config",
+                "detail": "branch self-edit config is absent; schema_version=1 is required for a legacy merge-base transition",
+            })
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+                  "warnings": warnings, "errors": errors}, errors)
+        if not validate_config_references(transition_cfg, errors) or not validate_schema_v1_shape(transition_cfg, errors):
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+                  "warnings": warnings, "errors": errors}, errors)
+
     if not config_absent:
-        required_tables = ("rigor", "strategy", "review", "budget")
+        required_tables = ("rigor", "strategy", "review", "budget", "tier")
         missing = [t for t in required_tables if t not in cfg]
         if missing or "default_rigor" not in cfg or "default_strategy" not in cfg:
             detail_bits = missing + (["default_rigor"] if "default_rigor" not in cfg else []) + (
@@ -1030,7 +1297,11 @@ def main():
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
                   "requires_confirmation": False, "preflight_required": False,
               "warnings": warnings, "errors": errors}, errors)
-        if not validate_config_references(cfg, errors):
+        if not validate_config_references(cfg, errors, allow_legacy_merge_base=legacy_merge_base):
+            emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
+                  "requires_confirmation": False, "preflight_required": False,
+              "warnings": warnings, "errors": errors}, errors)
+        if not validate_schema_v1_shape(cfg, errors, allow_legacy_merge_base=legacy_merge_base):
             emit({"config_path": read_path, "config_source": config_source, "config_sha256": digest,
                   "requires_confirmation": False, "preflight_required": False,
               "warnings": warnings, "errors": errors}, errors)
@@ -1130,6 +1401,7 @@ def main():
         "config_path": read_path,
         "config_source": config_source,
         "config_sha256": digest,
+        "config_schema_version": None if config_absent else cfg.get("schema_version", 0),
         "selections": {
             "rigor": {"value": rigor_name, "source": rigor_source},
             "strategy": {"value": strategy_name, "source": strategy_source},
@@ -1153,9 +1425,8 @@ def main():
             # of scope for a config-only resolver. `null` means genuinely
             # UNKNOWN here, not "no" — a caller must not treat a missing
             # same-family disclosure as "different family confirmed" just
-            # because this resolver said false. A fuller resolver (#1048)
-            # that is handed actual configured families could compute this
-            # for real.
+            # because this resolver said false. A consumer that is handed
+            # actual configured families can compute this for real.
             "same_family_reviewer": None,
         },
         "requires_confirmation": requires_confirmation,

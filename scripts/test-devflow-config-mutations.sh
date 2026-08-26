@@ -16,6 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 python3 - "$PWD" <<'PY'
+import json
 import os
 import re
 import shutil
@@ -33,12 +34,17 @@ LAYOUT = [
     "agent-registry.json",
     "AGENTS.md",
     ".devflow.toml",
+    ".devflow.schema.json",
+    ".devflow-conformance-v1.json",
     "scripts/test-devflow-config.sh",
+    "scripts/test-devflow-conformance.py",
     "scripts/devflow-resolve.py",
     "docs/guides/devflow.md",
     "template/label-registry.json",
     "template/agent-registry.json",
     "template/.devflow.toml",
+    "template/.devflow.schema.json",
+    "template/.devflow-conformance-v1.json",
     "template/AGENTS.md.jinja",
 ]
 
@@ -131,6 +137,157 @@ def sub(old, new):
 # Control: the unmutated layout must pass, or every rejection below is vacuous.
 accepts("the checked-in configuration")
 
+# ── Compatibility version + contract surface ─────────────────────────────
+rejects("a missing schema_version", sub(
+    'schema_version = 1\n\n', ''
+), "schema_version must be an integer")
+rejects("a non-integer schema_version", sub(
+    'schema_version = 1', 'schema_version = "1"'
+), "schema_version must be an integer")
+rejects("an unsupported schema_version", sub(
+    'schema_version = 1', 'schema_version = 2'
+), "schema_version=2 is unsupported")
+rejects("an unknown top-level config key", sub(
+    'schema_version = 1', 'schema_version = 1\nunsupported_v1_key = true'
+), "unknown top-level key")
+
+
+def edit_fixture(tmp, fn):
+    for rel in (".devflow-conformance-v1.json", "template/.devflow-conformance-v1.json"):
+        p = os.path.join(tmp, rel)
+        fixture = json.load(open(p))
+        fn(fixture)
+        json.dump(fixture, open(p, "w"), indent=2)
+
+
+def malformed_fixture(tmp):
+    for rel in (".devflow-conformance-v1.json", "template/.devflow-conformance-v1.json"):
+        p = os.path.join(tmp, rel)
+        open(p, "w").write("{")
+rejects("a malformed conformance fixture", malformed_fixture, "cannot read fixture")
+
+
+def non_object_fixture_root(tmp):
+    for rel in (".devflow-conformance-v1.json", "template/.devflow-conformance-v1.json"):
+        p = os.path.join(tmp, rel)
+        open(p, "w").write("[]")
+rejects("a non-object conformance fixture root", non_object_fixture_root,
+        "fixture root must be an object")
+
+
+def boolean_fixture_schema_version(tmp):
+    edit_fixture(tmp, lambda fixture: fixture.__setitem__("schema_version", True))
+rejects("a boolean fixture schema version", boolean_fixture_schema_version,
+        "fixture schema_version must be 1")
+
+
+def boolean_result_schema_version(tmp):
+    edit_fixture(tmp, lambda fixture: fixture.__setitem__("result_schema_version", True))
+rejects("a boolean fixture result schema version", boolean_result_schema_version,
+        "fixture result_schema_version must be 1")
+
+
+def malformed_schema(tmp):
+    for rel in (".devflow.schema.json", "template/.devflow.schema.json"):
+        p = os.path.join(tmp, rel)
+        open(p, "w").write("{")
+rejects("a malformed v1 structural schema", malformed_schema, "cannot parse devflow schema JSON")
+
+
+def weakened_review_schema(tmp):
+    for rel in (".devflow.schema.json", "template/.devflow.schema.json"):
+        p = os.path.join(tmp, rel)
+        schema = json.load(open(p))
+        schema["$defs"]["review"]["required"].remove("shepherd")
+        json.dump(schema, open(p, "w"), indent=2)
+rejects("a v1 schema that omits a required nested review cap", weakened_review_schema,
+        "must require challenge, review, shepherd, and min_rounds")
+
+
+def wrong_fixture_expectation(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["expect"]["result"]["selections"]["rigor"]["source"] = "explicit"
+    edit_fixture(tmp, mutate)
+rejects("an incorrect normalized-result expectation", wrong_fixture_expectation,
+        "defaults: result.selections.rigor.source")
+
+
+def duplicate_fixture_name(tmp):
+    def mutate(fixture):
+        fixture["cases"].append(fixture["cases"][0])
+    edit_fixture(tmp, mutate)
+rejects("duplicate conformance fixture names", duplicate_fixture_name, "fixture case names must be unique")
+
+
+def malformed_expectation(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["expect"] = []
+    edit_fixture(tmp, mutate)
+rejects("a malformed conformance expectation", malformed_expectation, "defaults: expect must be an object")
+
+
+def unknown_fixture_case_key(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["label"] = "rigor:standard"
+    edit_fixture(tmp, mutate)
+rejects("an unknown conformance case key", unknown_fixture_case_key, "defaults: unknown case key(s): label")
+
+
+def unknown_fixture_expect_key(tmp):
+    def mutate(fixture):
+        fixture["cases"][0]["expect"]["results"] = fixture["cases"][0]["expect"]["result"]
+    edit_fixture(tmp, mutate)
+rejects("an unknown conformance expectation key", unknown_fixture_expect_key,
+        "defaults: unknown expect key(s): results")
+
+
+def malformed_fixture_labels(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "retired-method-label-is-ignored":
+                case["labels"] = "method:council"
+                return
+        raise AssertionError("retired-method case missing")
+    edit_fixture(tmp, mutate)
+rejects("a fixture label collection that is not an array", malformed_fixture_labels,
+        "retired-method-label-is-ignored: labels must be an array of strings")
+
+
+def malformed_fixture_unattended(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "unattended-authorized-label-applies":
+                case["unattended"] = "true"
+                return
+        raise AssertionError("unattended case missing")
+    edit_fixture(tmp, mutate)
+rejects("a fixture unattended value that is not a boolean", malformed_fixture_unattended,
+        "unattended-authorized-label-applies: unattended must be a boolean")
+
+
+def malformed_fixture_exit(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "unsupported-schema-version-is-rejected":
+                case["expect"]["exit"] = True
+                return
+        raise AssertionError("unsupported-schema-version case missing")
+    edit_fixture(tmp, mutate)
+rejects("a fixture exit expectation that is not an integer", malformed_fixture_exit,
+        "unsupported-schema-version-is-rejected: expect.exit must be the integer 0 or 1")
+
+
+def omitted_expected_diagnostic(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "unattended-unauthorized-label-is-ignored":
+                case["expect"]["warning_diagnostics"] = []
+                return
+        raise AssertionError("unattended warning case missing")
+    edit_fixture(tmp, mutate)
+rejects("an omitted expected diagnostic", omitted_expected_diagnostic,
+        "unexpected warning diagnostic pairs")
+
 # ── Removed top-level shape (ADR 0007) ──────────────────────────────────────
 rejects("default_tier still present", sub(
     'default_strategy = "plan"', 'default_strategy = "plan"\ndefault_tier = "standard"'
@@ -194,6 +351,11 @@ rejects("review.none with min_rounds forced above 0", sub(
 rejects("a negative stage cap", sub(
     '[review.driveby]\nchallenge  = 1', '[review.driveby]\nchallenge  = -1',
 ), "must be >= 0")
+
+rejects("a multi-agent strategy missing min_agents", sub(
+    'coordination = "parallel-when-independent"\nmin_agents   = 2',
+    'coordination = "parallel-when-independent"',
+), "missing required field(s)")
 
 # min_rounds must ALSO stay non-decreasing along rigor_order, same as every
 # other field the round-3 monotonicity check covers — thorough's own bound

@@ -23,6 +23,49 @@ last edit. A repository that has customized its own copy (see
 "Customizing this for your own repository" below) may show different values;
 its own file is always the authority for what it actually does.
 
+## Compatibility contract (schema v1)
+
+The shipped `.devflow.toml` declares `schema_version = 1`. A consumer that
+supports v1 must reject a missing, non-integer, or unsupported version; it
+must never guess a compatible interpretation. The declarative structural
+surface is [`.devflow.schema.json`](../../.devflow.schema.json), while
+[Harmon Init's upstream validator](https://github.com/evanharmon1/harmon-init/blob/main/scripts/test-devflow-config.sh)
+is the authoritative executable validator for TOML parsing, cross-references
+to the label and agent registries, and the v1 value matrix. Consumers that
+need that executable gate must vendor it; it is not generated into every
+project. `additionalProperties: false` at the top level is deliberate: an
+unknown top-level key is a compatibility error, not an extension point.
+
+The one migration exception is a branch that introduces `schema_version = 1`
+while its merge-base has the preceding unversioned file. The resolver reads
+that historical merge-base only to preserve the self-edit guard, identifies it
+as schema version `0`, and emits `legacy_merge_base_config`; a normal branch
+or consumer config without a supported version is still rejected.
+
+The language-neutral vectors in
+[`.devflow-conformance-v1.json`](../../.devflow-conformance-v1.json) define
+the normalized result contract. Harmon Init demonstrates conformance against
+both its root and generated-template copies. A generated consumer has one
+rendered repository and demonstrates conformance by running every case there
+and matching the listed projection: selections and their sources, review caps
+and floor, tiers, disclosure state, config basis, and diagnostic codes. Paths,
+hashes, and diagnostic prose are deliberately not fixture values. Every
+diagnostic instead has a stable `code` and broad `subject`; prose remains
+actionable but is not a parsing API.
+
+V1 is a closed compatibility profile for the shipped rigor/review/budget/
+strategy/tier vocabulary. A repository may still customize its local policy,
+but it then owns its validator and consumer agreement; adding a compatibility
+extension or changing a meaning requires a new schema version rather than an
+undocumented v1 reinterpretation.
+
+The resolver accepts consumer-supplied authorization facts (`trusted-label`)
+and reports their resolution consequences. It does not authenticate GitHub
+actors, inspect timelines, choose a model, arm a workflow, or enforce a
+budget. Those are consumer and platform trust boundaries. Retired `method:*`
+labels are outside the v1 input namespace and are ignored; only
+`rigor:*`, `strategy:*`, and `tier:*` are v1 resolution inputs.
+
 ## Rigor: a review policy, three role tiers, and a budget
 
 Each `[rigor.<level>]` table is a pointer to three lower-level tables, not a
@@ -397,18 +440,19 @@ branch itself is under. An explicit human instruction still overrides this,
 since that is an attributable decision rather than the branch deciding for
 itself.
 
-## Reference resolver
+## Reference resolver and normalized output
 
 [`scripts/devflow-resolve.py`](https://github.com/evanharmon1/harmon-init/blob/main/scripts/devflow-resolve.py)
 is harmon-init's own minimal reference implementation of the resolution
 order above — it lives only in harmon-init itself, so this links to its
 upstream location rather than a path in this repository; generated
-repositories do not receive it. It is not the versioned, cross-consumer
-conformance contract either (that is a later, separate piece of work), but
-a working starting point so an agent or Foreman does not have to re-derive
-the algorithm from this guide's prose every time, and something
-`scripts/test-devflow-config.sh` — also harmon-init-only — can run its
-resolution-order case table against.
+repositories do not receive it. It implements schema-v1's normalized result
+for the checked-in conformance vectors: result/config schema versions,
+config-basis provenance, resolved values and sources, review policy, role
+tiers, budget/strategy fields, disclosure flags, confirmation/preflight
+state, warnings, and errors. It is a reference implementation, not an
+authentication boundary; another language or consumer proves compatibility
+by the fixture corpus rather than by copying Python.
 
 **Reading the branch's own `--config` copy is never a silent default.**
 Every invocation must pass exactly one of three mutually exclusive
