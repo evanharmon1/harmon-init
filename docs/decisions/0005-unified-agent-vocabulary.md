@@ -81,14 +81,14 @@ The following decisions are adopted together:
    human path is now the guarded maintenance flow in `docs/CHECKLIST.md` and
    `docs/project-management.md`: the read-only report inventories live labels,
    and `--prune` with repeatable `--migrate OLD=NEW` validates live registry
-   destinations, moves fixed-family associations across issues and PRs, and
-   deletes only a fresh zero-association source. It must be run in a quiescent
+   destinations, moves fixed-family associations across issues, PRs, and
+   Discussions, and deletes only a fresh zero-association source. It must be run in a quiescent
    maintenance window. GitHub provides no transaction or compare-and-swap
    between the final read and the following edit/DELETE, so a concurrent writer
    can still race the request; the command cannot undo that mutation.
    Broker-derived Copilot labels are excluded from bulk migration: suggestions
-   are re-expressed or dropped, while claims are handled per issue/PR from the
-   actual claim/session record; `mai` is only the broker default, never a
+   are re-expressed or dropped, while claims are handled per issue, PR, or
+   Discussion from the actual claim/session record; `mai` is only the broker default, never a
    guessed destination.
 9. **D9 — Harness slugs follow product, collision, and endpoint-variant
    rules.** Product names are lowercase slugs (`antigravity`, `opencode`,

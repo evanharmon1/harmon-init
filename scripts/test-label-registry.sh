@@ -454,7 +454,7 @@ labels_json() {
         jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' "$state_file"
     else
         case "${STUB_SCENARIO:-}" in
-        all-safe | appears-before-delete) printf '%s\n' '[]' ;;
+        all-safe | appears-before-delete | completed-migration) printf '%s\n' '[]' ;;
         *) initial_labels "$number" | jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' ;;
         esac
     fi
@@ -523,6 +523,7 @@ api)
         fi
         discussion_labels="$(labels_json discussion 50)"
         if [ "${STUB_SCENARIO:-}" = all-safe ] || [ "${STUB_SCENARIO:-}" = appears-before-delete ] ||
+            [ "${STUB_SCENARIO:-}" = completed-migration ] ||
             [ "${STUB_SCENARIO:-}" = comma-name ]; then
             discussion_labels='[]'
         fi
@@ -577,6 +578,7 @@ api)
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
+                (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         else
             jq -cn '[
@@ -585,6 +587,7 @@ api)
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
+                (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         fi
         ;;
@@ -887,6 +890,19 @@ STUB
         fail "ambiguous migration encoding reached a write path"
 
     reset_maintenance
+    if empty_suffix_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate 'enhancement=claim:gpt:' 2>&1)"; then
+        fail "empty model suffix was accepted"
+    fi
+    case "$empty_suffix_out" in
+    *"migration destination 'claim:gpt:' is not covered by the registry inventory"*) ;;
+    *) fail "empty model suffix refusal was not exact: $empty_suffix_out" ;;
+    esac
+    ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+        fail "empty model suffix reached a write path"
+
+    reset_maintenance
     if comma_out="$(STUB_SCENARIO=comma-name STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
         bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
         --migrate 'legacy,comma=feature' 2>&1)"; then
@@ -898,6 +914,23 @@ STUB
         fail "comma-bearing migration did not add the exact destination"
     grep -Fqx 'issue #12 remove legacy,comma' "$maintenance_log" ||
         fail "comma-bearing migration did not remove the exact source"
+
+    reset_maintenance
+    if completed_out="$(STUB_SCENARIO=completed-migration STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=feature 2>&1)"; then
+        :
+    else
+        fail "completed migration was not idempotent: $completed_out"
+    fi
+    case "$completed_out" in
+    *"Migration already complete: enhancement -> feature (source label is absent)"*) ;;
+    *) fail "completed migration did not report its no-op disposition: $completed_out" ;;
+    esac
+    ! grep -Eq '^(issue|pr|discussion).* (add|remove) (enhancement|feature)$' "$maintenance_log" ||
+        fail "completed migration repeated association mutations"
+    ! grep -Fqx 'delete enhancement' "$maintenance_log" ||
+        fail "completed migration attempted to delete its already-absent source"
 
     reset_maintenance
     if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \

@@ -290,7 +290,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         done
         for prefix in "${protected_prefixes[@]}"; do
             case "$name" in
-            "$prefix"*) return 0 ;;
+            "$prefix"?*) return 0 ;;
             esac
         done
         return 1
@@ -371,6 +371,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     migration_new=()
     migration_create_from=()
     migration_parent=()
+    migration_complete=()
     parse_migrations() {
         local spec old new i
         [ "${#migrate_specs[@]}" -gt 0 ] || return 0
@@ -426,12 +427,18 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     validate_migrations() {
-        local i old new canonical_old canonical_new canonical_parent prefix parent
+        local i old new canonical_old canonical_new canonical_parent prefix parent source_complete
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
-            if ! canonical_old="$(candidate_label_name "$old")"; then
-                die "migration source '$old' is not one of the reported unregistered labels"
+            source_complete=0
+            if canonical_old="$(candidate_label_name "$old")"; then
+                :
+            elif live_label_exists "$old"; then
+                die "migration source '$old' is live but is not one of the reported unregistered labels"
+            else
+                canonical_old="$old"
+                source_complete=1
             fi
             if is_broker_migration_source "$canonical_old"; then
                 die "migration source '$canonical_old' is broker-derived and has no trustworthy single destination; re-express or remove each matching record manually using its confirmed family/model, then rerun --prune"
@@ -441,16 +448,19 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             fi
             parent=""
             for prefix in "${protected_prefixes[@]}"; do
-                if [[ "$new" == "$prefix"* ]] && { [ -z "$parent" ] || [ "${#prefix}" -gt "$((${#parent} + 1))" ]; }; then
+                if [[ "$new" == "$prefix"?* ]] && { [ -z "$parent" ] || [ "${#prefix}" -gt "$((${#parent} + 1))" ]; }; then
                     parent="${prefix%:}"
                 fi
             done
             canonical_parent=""
-            if [ -n "$parent" ]; then
+            if [ "$source_complete" = 0 ] && [ -n "$parent" ]; then
                 canonical_parent="$(live_label_name "$parent")" ||
                     die "migration destination '$new' requires live family label '$parent'; run label setup first"
             fi
-            if canonical_new="$(live_label_name "$new")"; then
+            if [ "$source_complete" = 1 ]; then
+                canonical_new="$(live_label_name "$new" || printf '%s' "$new")"
+                migration_create_from+=("")
+            elif canonical_new="$(live_label_name "$new")"; then
                 migration_create_from+=("")
             else
                 [ -n "$parent" ] || die "migration destination '$new' is not live and is not an on-demand registry family label"
@@ -460,6 +470,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             migration_old[i]="$canonical_old"
             migration_new[i]="$canonical_new"
             migration_parent+=("$canonical_parent")
+            migration_complete+=("$source_complete")
         done
     }
 
@@ -494,6 +505,12 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
+            if [ "${migration_complete[$i]}" = 1 ]; then
+                printf -v quoted_old '%q' "$old"
+                printf -v quoted_new '%q' "$new"
+                output_emit 'Migration already complete: %s -> %s (source label is absent)\n' "$quoted_old" "$quoted_new"
+                continue
+            fi
             counts="$(association_counts "$old")"
             IFS=$'\t' read -r issue_count pr_count discussion_count <<<"$counts"
             printf -v quoted_old '%q' "$old"
@@ -616,6 +633,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     apply_migrations() {
         local i old new parent number kind item_id
         for i in "${!migration_old[@]}"; do
+            [ "${migration_complete[$i]}" = 0 ] || continue
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
             parent="${migration_parent[$i]}"
