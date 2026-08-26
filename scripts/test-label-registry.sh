@@ -573,20 +573,22 @@ api)
         fi
         if [ "${STUB_SCENARIO:-}" = broker-unresolved ]; then
             jq -cn '[
-                [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
+                [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"--legacy"},{"name":"question"},{"name":"documentation"}],
                 [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
+                (if $scenario == "fixed-source" then .[1] += [{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"claim:codex:sol",color:"abcdef",description:"fixture",node_id:"claim:codex:sol-id"}] else . end) |
                 (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         else
             jq -cn '[
-                [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
+                [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"--legacy"},{"name":"question"},{"name":"documentation"}],
                 [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
+                (if $scenario == "fixed-source" then .[1] += [{name:"claim:codex",color:"abcdef",description:"fixture",node_id:"claim:codex-id"},{name:"claim:codex:sol",color:"abcdef",description:"fixture",node_id:"claim:codex:sol-id"}] else . end) |
                 (if $scenario == "completed-migration" then map(map(select(.name != "enhancement"))) else . end) |
                 if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         fi
@@ -703,9 +705,9 @@ label)
         exit 0
     fi
     [ "${2:-}" = delete ] || exit 2
-    [ "${4:-}" = --repo ] && [ "${5:-}" = "${STUB_REPO:-drift/check}" ] || exit 2
-    [ "${6:-}" = --yes ] || exit 2
-    printf 'delete %s\n' "$3" >>"$STUB_LOG"
+    [ "${3:-}" = --repo ] && [ "${4:-}" = "${STUB_REPO:-drift/check}" ] || exit 2
+    [ "${5:-}" = --yes ] && [ "${6:-}" = -- ] && [ -n "${7:-}" ] || exit 2
+    printf 'delete %s\n' "$7" >>"$STUB_LOG"
     ;;
 *)
     exit 2
@@ -799,9 +801,28 @@ STUB
     *quiescen* | *concurrent* | *"label writer"* | *"label updates paused"*) ;;
     *) fail "destructive confirmation did not communicate the quiescence precondition: $safe_prune_out" ;;
     esac
-    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete page-two-only' 'delete discussion-page-two'; do
+    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete --legacy' 'delete page-two-only' 'delete discussion-page-two'; do
         grep -Fqx "$expected" "$maintenance_log" ||
             fail "successful prune missed an unregistered zero-association label: $expected"
+    done
+
+    for fixed_case in \
+        'claim:codex=suggest:gpt|claim:gpt' \
+        'claim:codex:sol=suggest:gpt:sol|claim:gpt:sol'; do
+        fixed_spec="${fixed_case%%|*}"
+        fixed_destination="${fixed_case#*|}"
+        fixed_source="${fixed_spec%%=*}"
+        reset_maintenance
+        if fixed_out="$(STUB_SCENARIO=fixed-source STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check --prune --yes --migrate "$fixed_spec" 2>&1)"; then
+            fail "noncanonical fixed migration was accepted: $fixed_spec"
+        fi
+        case "$fixed_out" in
+        *"migration source '$fixed_source' has authoritative destination '$fixed_destination'"*) ;;
+        *) fail "fixed-source refusal did not name its authoritative destination: $fixed_out" ;;
+        esac
+        ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+            fail "noncanonical fixed migration reached a write path: $fixed_spec"
     done
     ! grep -Eq '^delete (foreman:approved|autorelease: pending)$' "$maintenance_log" ||
         fail "successful prune deleted a gated tool label without its opt-in flag"

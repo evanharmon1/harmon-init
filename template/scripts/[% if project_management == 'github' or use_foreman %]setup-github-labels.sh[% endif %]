@@ -426,8 +426,22 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         return 1
     }
 
+    fixed_migration_destination() {
+        case "$1" in
+        agent:claude-code) printf '%s' 'claim:claude' ;;
+        agent:gemini-cli) printf '%s' 'claim:gemini' ;;
+        agent:kimi-k2) printf '%s' 'claim:kimi' ;;
+        agent:qwen-code) printf '%s' 'claim:qwen' ;;
+        suggest:codex) printf '%s' 'suggest:gpt' ;;
+        suggest:codex:*) printf 'suggest:gpt:%s' "${1#suggest:codex:}" ;;
+        claim:codex) printf '%s' 'claim:gpt' ;;
+        claim:codex:*) printf 'claim:gpt:%s' "${1#claim:codex:}" ;;
+        *) return 1 ;;
+        esac
+    }
+
     validate_migrations() {
-        local i old new canonical_old canonical_new canonical_parent prefix parent source_complete
+        local i old new canonical_old canonical_new canonical_parent expected_fixed prefix parent source_complete
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
@@ -442,6 +456,9 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             fi
             if is_broker_migration_source "$canonical_old"; then
                 die "migration source '$canonical_old' is broker-derived and has no trustworthy single destination; re-express or remove each matching record manually using its confirmed family/model, then rerun --prune"
+            fi
+            if expected_fixed="$(fixed_migration_destination "$canonical_old")" && [[ "$new" != "$expected_fixed" ]]; then
+                die "migration source '$canonical_old' has authoritative destination '$expected_fixed', not '$new'"
             fi
             if ! is_protected_label "$new"; then
                 die "migration destination '$new' is not covered by the registry inventory"
@@ -768,7 +785,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     # window keeps this bounded plan meaningful; GitHub still offers no atomic
     # read/delete primitive for the narrow final boundary.
     for name in "${prune_candidates[@]}"; do
-        if ! gh label delete "$name" --repo "$repo" --yes; then
+        if ! gh label delete --repo "$repo" --yes -- "$name"; then
             die "could not delete '$name'; refusing further maintenance"
         fi
         printf -v quoted_name '%q' "$name"
