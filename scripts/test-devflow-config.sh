@@ -82,6 +82,23 @@ else:
         failures.append(".devflow.schema.json must declare schema_version const 1")
     if schema_root_data.get("additionalProperties") is not False:
         failures.append(".devflow.schema.json must reject unknown top-level keys")
+    # The resolver executes the checked-in schema, so a schema edit that
+    # silently drops a required nested review cap would otherwise weaken the
+    # portable v1 contract while the shipped configuration still passes.
+    # Pin the required review-policy shape here as part of the validator's
+    # own contract, rather than trusting the current TOML instance to expose
+    # every missing schema requirement.
+    review_definition = schema_root_data.get("$defs", {}).get("review", {})
+    required_review_caps = {"challenge", "review", "shepherd", "min_rounds"}
+    if not isinstance(review_definition, dict) or not required_review_caps.issubset(
+        set(review_definition.get("required", []))
+    ):
+        failures.append(
+            ".devflow.schema.json must require challenge, review, shepherd, and min_rounds "
+            "in $defs.review"
+        )
+    if review_definition.get("additionalProperties") is not False:
+        failures.append(".devflow.schema.json must reject unknown $defs.review keys")
 
 # ── Fixed vocabulary (ADR 0007) ─────────────────────────────────────────────
 SUPPORTED_SCHEMA_VERSION = 1

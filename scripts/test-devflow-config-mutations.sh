@@ -174,6 +174,16 @@ def malformed_schema(tmp):
 rejects("a malformed v1 structural schema", malformed_schema, "cannot parse devflow schema JSON")
 
 
+def weakened_review_schema(tmp):
+    for rel in (".devflow.schema.json", "template/.devflow.schema.json"):
+        p = os.path.join(tmp, rel)
+        schema = json.load(open(p))
+        schema["$defs"]["review"]["required"].remove("shepherd")
+        json.dump(schema, open(p, "w"), indent=2)
+rejects("a v1 schema that omits a required nested review cap", weakened_review_schema,
+        "must require challenge, review, shepherd, and min_rounds")
+
+
 def wrong_fixture_expectation(tmp):
     def mutate(fixture):
         fixture["cases"][0]["expect"]["result"]["selections"]["rigor"]["source"] = "explicit"
