@@ -17,12 +17,13 @@
 # unless you explicitly run a maintenance mode. The maintenance modes report
 # live labels outside the active/adopted/tool-owned registry inventory and can
 # prune them only after a prompt and a fresh zero-association check.
-# `--migrate OLD=NEW` attempts to move OLD associations for matching issues and
-# pull requests returned by the paginated snapshot before the guarded prune.
+# `--migrate OLD=NEW` attempts to move OLD associations for matching issues,
+# pull requests, and discussions returned by the paginated snapshots before the
+# guarded prune.
 # Retired values are intentionally reportable. The move is best-effort at
 # GitHub's non-atomic API boundary and requires a quiescent maintenance window.
-# Destructive maintenance assumes the operator has paused label/issue/PR writers
-# for a quiescent window; GitHub cannot atomically bind the final association
+# Destructive maintenance assumes the operator has paused label/issue/PR/
+# discussion writers for a quiescent window; GitHub cannot atomically bind the final association
 # read to the subsequent label DELETE request.
 #
 # Usage:
@@ -181,7 +182,10 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     live_pages="$maintenance_tmp/live-pages.json"
     live_labels_json="$maintenance_tmp/live-labels.json"
     association_pages="$maintenance_tmp/association-pages.json"
+    discussion_pages="$maintenance_tmp/discussion-pages.json"
     associations_json="$maintenance_tmp/associations.json"
+    repo_owner="${repo%%/*}"
+    repo_name="${repo#*/}"
 
     read_live_labels() {
         if ! gh api --paginate --slurp "repos/$repo/labels?per_page=100" >"$live_pages"; then
@@ -192,9 +196,11 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
                 error("expected paginated label arrays")
             else
                 [.[][] |
-                    if type != "object" or (.name | type) != "string" or (.name | length) == 0 or (.name | test("[\\n\\r]")) then
+                    if type != "object" or (.name | type) != "string" or (.name | length) == 0 or (.name | test("[\\n\\r]")) or
+                        (.color | type) != "string" or (.description != null and (.description | type) != "string") or
+                        (.node_id | type) != "string" or (.node_id | length) == 0 then
                         error("label response contains an invalid name")
-                    else .name end
+                    else {name, color, description: (.description // ""), id: .node_id} end
                 ]
             end
         ' "$live_pages" >"$live_labels_json"; then
@@ -222,13 +228,34 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
                     elif any(.labels[]; type != "object" or ((.name | type) != "string") or ((.name | length) == 0) or (.name | test("[\\n\\r]"))) then
                         error("issue response contains an invalid label")
                     else
-                        {number, pull_request: has("pull_request"), labels: [.labels[].name]}
+                        {number, kind: (if has("pull_request") then "pr" else "issue" end), id: null, labels: [.labels[].name]}
                     end
                 ]
             end
         ' "$association_pages" >"$associations_json"; then
             die "issue or pull-request response was invalid; refusing maintenance"
         fi
+
+        if ! gh api graphql --paginate --slurp -f owner="$repo_owner" -f name="$repo_name" -f query='query($owner:String!,$name:String!,$endCursor:String){repository(owner:$owner,name:$name){discussions(first:100,after:$endCursor){nodes{id number labels(first:100){nodes{name} pageInfo{hasNextPage}}}pageInfo{hasNextPage endCursor}}}}' >"$discussion_pages"; then
+            die "could not read the complete discussion list; refusing maintenance"
+        fi
+        if ! jq -e '
+            if type != "array" or any(.[]; (.data.repository.discussions.nodes | type) != "array") then
+                error("expected paginated discussion objects")
+            else
+                [.[] | .data.repository.discussions.nodes[] |
+                    if (.id | type) != "string" or (.id | length) == 0 or (.number | type) != "number" or
+                        (.labels.nodes | type) != "array" or .labels.pageInfo.hasNextPage != false or
+                        any(.labels.nodes[]; (.name | type) != "string" or (.name | length) == 0 or (.name | test("[\\n\\r]"))) then
+                        error("discussion response is invalid or has more than 100 labels")
+                    else {number, kind: "discussion", id, labels: [.labels.nodes[].name]} end
+                ]
+            end
+        ' "$discussion_pages" >"$maintenance_tmp/discussions.json"; then
+            die "discussion response was invalid or incomplete; refusing maintenance"
+        fi
+        jq -s '.[0] + .[1]' "$associations_json" "$maintenance_tmp/discussions.json" >"$maintenance_tmp/all-associations.json"
+        mv "$maintenance_tmp/all-associations.json" "$associations_json"
     }
 
     protected_exact=()
@@ -276,7 +303,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
                 printf '%s' "$name"
                 return 0
             fi
-        done < <(jq -j '.[] | . + "\u0000"' "$live_labels_json")
+        done < <(jq -j '.[].name + "\u0000"' "$live_labels_json")
         return 1
     }
 
@@ -298,29 +325,33 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     association_counts() {
         local label="$1"
         jq -r --arg label "$label" '
-            reduce .[] as $item ({issues: 0, prs: 0};
+            reduce .[] as $item ({issues: 0, prs: 0, discussions: 0};
                 if any($item.labels[]; ascii_downcase == ($label | ascii_downcase)) then
-                    if $item.pull_request then .prs += 1 else .issues += 1 end
+                    if $item.kind == "pr" then .prs += 1
+                    elif $item.kind == "discussion" then .discussions += 1
+                    else .issues += 1 end
                 else . end)
-            | "\(.issues)\t\(.prs)"
+            | "\(.issues)\t\(.prs)\t\(.discussions)"
         ' "$associations_json"
     }
 
     candidates=()
     candidate_issues=()
     candidate_prs=()
+    candidate_discussions=()
     collect_candidates() {
-        local name counts issue_count pr_count
+        local name counts issue_count pr_count discussion_count
         while IFS= read -r -d '' name; do
             if is_protected_label "$name"; then
                 continue
             fi
             counts="$(association_counts "$name")"
-            IFS=$'\t' read -r issue_count pr_count <<<"$counts"
+            IFS=$'\t' read -r issue_count pr_count discussion_count <<<"$counts"
             candidates+=("$name")
             candidate_issues+=("$issue_count")
             candidate_prs+=("$pr_count")
-        done < <(jq -j '.[] | . + "\u0000"' "$live_labels_json")
+            candidate_discussions+=("$discussion_count")
+        done < <(jq -j '.[].name + "\u0000"' "$live_labels_json")
     }
 
     print_report() {
@@ -331,13 +362,14 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         fi
         for i in "${!candidates[@]}"; do
             printf -v quoted_name '%q' "${candidates[$i]}"
-            output_emit 'Unregistered label: %s (issues: %s, PRs: %s)\n' \
-                "$quoted_name" "${candidate_issues[$i]}" "${candidate_prs[$i]}"
+            output_emit 'Unregistered label: %s (issues: %s, PRs: %s, discussions: %s)\n' \
+                "$quoted_name" "${candidate_issues[$i]}" "${candidate_prs[$i]}" "${candidate_discussions[$i]}"
         done
     }
 
     migration_old=()
     migration_new=()
+    migration_create_from=()
     parse_migrations() {
         local spec old new i
         [ "${#migrate_specs[@]}" -gt 0 ] || return 0
@@ -389,7 +421,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     validate_migrations() {
-        local i old new canonical_old canonical_new
+        local i old new canonical_old canonical_new canonical_parent prefix parent
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
@@ -399,42 +431,76 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             if is_broker_migration_source "$canonical_old"; then
                 die "migration source '$canonical_old' is broker-derived and has no trustworthy single destination; re-express or remove each matching record manually using its confirmed family/model, then rerun --prune"
             fi
-            if ! canonical_new="$(live_label_name "$new")"; then
-                die "migration destination '$new' is not a live label; provision it first"
-            fi
-            if ! is_protected_label "$canonical_new"; then
+            if ! is_protected_label "$new"; then
                 die "migration destination '$new' is not covered by the registry inventory"
+            fi
+            if canonical_new="$(live_label_name "$new")"; then
+                migration_create_from+=("")
+            else
+                parent=""
+                for prefix in "${protected_prefixes[@]}"; do
+                    if [[ "$new" == "$prefix"* ]] && { [ -z "$parent" ] || [ "${#prefix}" -gt "$((${#parent} + 1))" ]; }; then
+                        parent="${prefix%:}"
+                    fi
+                done
+                [ -n "$parent" ] || die "migration destination '$new' is not live and is not an on-demand registry family label"
+                canonical_parent="$(live_label_name "$parent")" ||
+                    die "migration destination '$new' requires live family label '$parent'; run label setup first"
+                canonical_new="$new"
+                migration_create_from+=("$canonical_parent")
             fi
             migration_old[i]="$canonical_old"
             migration_new[i]="$canonical_new"
         done
     }
 
+    create_missing_destinations() {
+        local i new parent metadata color description canonical_new quoted_new quoted_parent
+        for i in "${!migration_old[@]}"; do
+            parent="${migration_create_from[$i]}"
+            [ -n "$parent" ] || continue
+            new="${migration_new[$i]}"
+            metadata="$(jq -cer --arg parent "$parent" '.[] | select((.name | ascii_downcase) == ($parent | ascii_downcase)) | {color, description}' "$live_labels_json")" ||
+                die "could not read metadata for migration destination family '$parent'"
+            color="$(jq -r '.color' <<<"$metadata")"
+            description="$(jq -r '.description' <<<"$metadata")"
+            gh label create "$new" --repo "$repo" --color "$color" --description "$description" ||
+                die "could not create on-demand migration destination '$new'; refusing further maintenance"
+            read_live_labels
+            canonical_new="$(live_label_name "$new")" ||
+                die "created migration destination '$new' could not be re-read; refusing further maintenance"
+            migration_new[i]="$canonical_new"
+            printf -v quoted_new '%q' "$canonical_new"
+            printf -v quoted_parent '%q' "$parent"
+            output_emit 'Created migration destination: %s (copied metadata from %s)\n' "$quoted_new" "$quoted_parent"
+        done
+    }
+
     print_migration_plan() {
-        local i old new counts issue_count pr_count
+        local i old new counts issue_count pr_count discussion_count
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
             counts="$(association_counts "$old")"
-            IFS=$'\t' read -r issue_count pr_count <<<"$counts"
+            IFS=$'\t' read -r issue_count pr_count discussion_count <<<"$counts"
             printf -v quoted_old '%q' "$old"
             printf -v quoted_new '%q' "$new"
-            output_emit 'Migration: %s -> %s (issues: %s, PRs: %s)\n' \
-                "$quoted_old" "$quoted_new" "$issue_count" "$pr_count"
+            output_emit 'Migration: %s -> %s (issues: %s, PRs: %s, discussions: %s)\n' \
+                "$quoted_old" "$quoted_new" "$issue_count" "$pr_count" "$discussion_count"
         done
     }
 
     confirm_prune() {
         local answer
         if [ "$assume_yes" = 1 ]; then
-            output_emit '%s\n' 'Prune confirmed by explicit --yes: operator confirms a quiescent maintenance window and accepts the unavoidable GitHub final-read/delete API race.'
+            output_emit '%s\n' 'Prune confirmed by explicit --yes: operator confirms a quiescent maintenance window for issue, PR, and discussion label writers and accepts the unavoidable GitHub final-read/delete API race.'
             return 0
         fi
         if [ ! -t 0 ]; then
             output_emit '%s\n' 'Prune cancelled: interactive confirmation requires a TTY; pass --yes explicitly for noninteractive use.'
             return 1
         fi
-        if ! read -r -p 'Confirm a quiescent maintenance window (pause label/issue/PR writers) and accept the unavoidable GitHub final-read/delete API race; proceed? [y/N] ' answer </dev/tty; then
+        if ! read -r -p 'Confirm a quiescent maintenance window (pause label/issue/PR/discussion writers) and accept the unavoidable GitHub final-read/delete API race; proceed? [y/N] ' answer </dev/tty; then
             output_emit '%s\n' 'Prune cancelled: confirmation was unavailable.'
             return 1
         fi
@@ -448,7 +514,12 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     read_item_labels() {
-        local kind="$1" number="$2"
+        local kind="$1" number="$2" item_id="${3:-}" response
+        if [ "$kind" = discussion ]; then
+            response="$(gh api graphql -f id="$item_id" -f query='query($id:ID!){node(id:$id){... on Discussion{labels(first:100){nodes{name}pageInfo{hasNextPage}}}}}')" || return 1
+            jq -e 'if .data.node.labels.pageInfo.hasNextPage == false then {labels: .data.node.labels.nodes} else error("discussion has more than 100 labels") end' <<<"$response"
+            return
+        fi
         if [ "$kind" = pr ]; then
             gh pr view "$number" --repo "$repo" --json labels
         else
@@ -475,8 +546,8 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     verify_migration_before_remove() {
-        local kind="$1" number="$2" old="$3" new="$4" phase="$5" labels_json
-        if ! labels_json="$(read_item_labels "$kind" "$number")"; then
+        local kind="$1" number="$2" item_id="$3" old="$4" new="$5" phase="$6" labels_json
+        if ! labels_json="$(read_item_labels "$kind" "$number" "$item_id")"; then
             die "could not read labels on $kind #$number $phase; refusing further maintenance"
         fi
         if ! migration_labels_present "$labels_json" "$old" "$new"; then
@@ -485,13 +556,28 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     verify_migration_after_remove() {
-        local kind="$1" number="$2" old="$3" new="$4" labels_json
-        if ! labels_json="$(read_item_labels "$kind" "$number")"; then
+        local kind="$1" number="$2" item_id="$3" old="$4" new="$5" labels_json
+        if ! labels_json="$(read_item_labels "$kind" "$number" "$item_id")"; then
             die "could not re-read labels on $kind #$number after removing '$old'; refusing further maintenance"
         fi
         if ! migration_result_valid "$labels_json" "$old" "$new"; then
             die "migration verification failed on $kind #$number; '$new' must remain and '$old' must be absent"
         fi
+    }
+
+    live_label_id() {
+        jq -er --arg label "$1" '.[] | select((.name | ascii_downcase) == ($label | ascii_downcase)) | .id' "$live_labels_json"
+    }
+
+    edit_discussion_label() {
+        local operation="$1" discussion_id="$2" label="$3" label_id mutation
+        label_id="$(live_label_id "$label")" || die "could not resolve label ID for '$label'"
+        if [ "$operation" = add ]; then
+            mutation='mutation($labelableId:ID!,$labelIds:[ID!]!){addLabelsToLabelable(input:{labelableId:$labelableId,labelIds:$labelIds}){clientMutationId}}'
+        else
+            mutation='mutation($labelableId:ID!,$labelIds:[ID!]!){removeLabelsFromLabelable(input:{labelableId:$labelableId,labelIds:$labelIds}){clientMutationId}}'
+        fi
+        gh api graphql -f labelableId="$discussion_id" -F labelIds[]="$label_id" -f query="$mutation" >/dev/null
     }
 
     # GitHub exposes no conditional mutation that means "remove OLD only while
@@ -502,34 +588,41 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     # or compare-and-swap token for this boundary, so the post-remove check can
     # detect a bad result but cannot undo a successful concurrent removal.
     apply_migrations() {
-        local i old new number kind
+        local i old new number kind item_id
         for i in "${!migration_old[@]}"; do
             old="${migration_old[$i]}"
             new="${migration_new[$i]}"
-            while IFS=$'\t' read -r -d '' number kind; do
-                if [ "$kind" = pr ]; then
+            while IFS=$'\t' read -r -d '' number kind item_id; do
+                if [ "$kind" = discussion ]; then
+                    edit_discussion_label add "$item_id" "$new" ||
+                        die "could not add '$new' to discussion #$number; refusing further maintenance"
+                    verify_migration_before_remove discussion "$number" "$item_id" "$old" "$new" "after adding '$new'"
+                    verify_migration_before_remove discussion "$number" "$item_id" "$old" "$new" "immediately before removing '$old'"
+                    edit_discussion_label remove "$item_id" "$old" ||
+                        die "could not remove '$old' from discussion #$number; refusing further maintenance"
+                elif [ "$kind" = pr ]; then
                     gh pr edit "$number" --repo "$repo" --add-label "$new" ||
                         die "could not add '$new' to pull request #$number; refusing further maintenance"
-                    verify_migration_before_remove pr "$number" "$old" "$new" "after adding '$new'"
-                    verify_migration_before_remove pr "$number" "$old" "$new" "immediately before removing '$old'"
+                    verify_migration_before_remove pr "$number" "" "$old" "$new" "after adding '$new'"
+                    verify_migration_before_remove pr "$number" "" "$old" "$new" "immediately before removing '$old'"
                     gh pr edit "$number" --repo "$repo" --remove-label "$old" ||
                         die "could not remove '$old' from pull request #$number; refusing further maintenance"
                 else
                     gh issue edit "$number" --repo "$repo" --add-label "$new" ||
                         die "could not add '$new' to issue #$number; refusing further maintenance"
-                    verify_migration_before_remove issue "$number" "$old" "$new" "after adding '$new'"
-                    verify_migration_before_remove issue "$number" "$old" "$new" "immediately before removing '$old'"
+                    verify_migration_before_remove issue "$number" "" "$old" "$new" "after adding '$new'"
+                    verify_migration_before_remove issue "$number" "" "$old" "$new" "immediately before removing '$old'"
                     gh issue edit "$number" --repo "$repo" --remove-label "$old" ||
                         die "could not remove '$old' from issue #$number; refusing further maintenance"
                 fi
-                verify_migration_after_remove "$kind" "$number" "$old" "$new"
+                verify_migration_after_remove "$kind" "$number" "$item_id" "$old" "$new"
                 printf -v quoted_old '%q' "$old"
                 printf -v quoted_new '%q' "$new"
                 output_emit 'Migrated %s -> %s on %s #%s\n' "$quoted_old" "$quoted_new" "$kind" "$number"
             done < <(
                 jq -j --arg old "$old" '
                     .[] | select(any(.labels[]; ascii_downcase == ($old | ascii_downcase))) |
-                    [(.number | tostring), (if .pull_request then "pr" else "issue" end)] |
+                    [(.number | tostring), .kind, (.id // "")] |
                     join("\t") + "\u0000"
                 ' "$associations_json"
             )
@@ -555,12 +648,12 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     safe_candidate_count=0
     associated_candidate_found=0
     for i in "${!candidates[@]}"; do
-        if [ "${candidate_issues[$i]}" -eq 0 ] && [ "${candidate_prs[$i]}" -eq 0 ]; then
+        if [ "${candidate_issues[$i]}" -eq 0 ] && [ "${candidate_prs[$i]}" -eq 0 ] && [ "${candidate_discussions[$i]}" -eq 0 ]; then
             safe_candidate_count=$((safe_candidate_count + 1))
         elif ! is_migration_source "${candidates[$i]}"; then
             printf -v quoted_name '%q' "${candidates[$i]}"
-            output_emit 'Refused: %s (issues: %s, PRs: %s)\n' "$quoted_name" \
-                "${candidate_issues[$i]}" "${candidate_prs[$i]}"
+            output_emit 'Refused: %s (issues: %s, PRs: %s, discussions: %s)\n' "$quoted_name" \
+                "${candidate_issues[$i]}" "${candidate_prs[$i]}" "${candidate_discussions[$i]}"
             associated_candidate_found=1
         fi
     done
@@ -578,6 +671,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     fi
 
     if [ "${#migration_old[@]}" -gt 0 ]; then
+        create_missing_destinations
         apply_migrations
     fi
 
@@ -598,16 +692,16 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     for i in "${!candidates[@]}"; do
         name="${candidates[$i]}"
         counts="$(association_counts "${candidates[$i]}")"
-        IFS=$'\t' read -r issue_count pr_count <<<"$counts"
-        if { [ "${candidate_issues[$i]}" -ne 0 ] || [ "${candidate_prs[$i]}" -ne 0 ]; } &&
+        IFS=$'\t' read -r issue_count pr_count discussion_count <<<"$counts"
+        if { [ "${candidate_issues[$i]}" -ne 0 ] || [ "${candidate_prs[$i]}" -ne 0 ] || [ "${candidate_discussions[$i]}" -ne 0 ]; } &&
             ! is_migration_source "$name"; then
             printf -v quoted_name '%q' "$name"
-            output_emit 'Refused: %s (issues: %s, PRs: %s)\n' "$quoted_name" \
-                "${candidate_issues[$i]}" "${candidate_prs[$i]}"
+            output_emit 'Refused: %s (issues: %s, PRs: %s, discussions: %s)\n' "$quoted_name" \
+                "${candidate_issues[$i]}" "${candidate_prs[$i]}" "${candidate_discussions[$i]}"
             refused=1
             continue
         fi
-        if [ "$issue_count" -ne 0 ] || [ "$pr_count" -ne 0 ]; then
+        if [ "$issue_count" -ne 0 ] || [ "$pr_count" -ne 0 ] || [ "$discussion_count" -ne 0 ]; then
             die "association drift detected for '$name' before deletion; refusing all label deletion"
         fi
         prune_candidates+=("$name")
@@ -621,26 +715,13 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         exit 1
     fi
 
-    # GitHub label deletion is not conditional on the association count. Before
-    # each DELETE, refresh the live label list and all associations, then check
-    # every remaining prune candidate from that fresh snapshot. This catches a
-    # new association or a failed read before the next deletion. A concurrent
-    # writer can still add an association after the final read and before the
-    # DELETE request; GitHub offers no transaction/compare-and-swap primitive,
-    # so that narrow TOCTOU boundary is unavoidable and documented here.
+    # The complete preflight above is deliberately one bounded snapshot for the
+    # whole deletion batch. Re-scanning every issue, PR, and discussion before
+    # every candidate makes API work grow with candidates × repository history
+    # and can exhaust quota after partial deletion. The required quiescent
+    # window keeps this bounded plan meaningful; GitHub still offers no atomic
+    # read/delete primitive for the narrow final boundary.
     for name in "${prune_candidates[@]}"; do
-        read_live_labels
-        if ! live_label_exists "$name"; then
-            die "label '$name' disappeared before deletion; refusing all further label deletion"
-        fi
-        read_associations
-        for check_name in "${prune_candidates[@]}"; do
-            counts="$(association_counts "$check_name")"
-            IFS=$'\t' read -r issue_count pr_count <<<"$counts"
-            if [ "$issue_count" -ne 0 ] || [ "$pr_count" -ne 0 ]; then
-                die "association drift detected for '$check_name' before deleting '$name'; refusing all further label deletion"
-            fi
-        done
         if ! gh label delete "$name" --repo "$repo" --yes; then
             die "could not delete '$name'; refusing further maintenance"
         fi

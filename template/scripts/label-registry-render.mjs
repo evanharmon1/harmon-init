@@ -254,6 +254,18 @@ if (mode === 'inventory') {
   const addExact = (name, where) => exact.add(field(name, where))
   const addPrefix = (prefix, where) => prefixes.add(field(prefix, where))
 
+  // Resolve the agent-registry bases before consuming any open-value family.
+  // Manifest order is documentation order, not an authorization boundary: an
+  // open family must never fall back to a broad `suggest:`/`claim:` prefix just
+  // because its agent-registry family appears later in the file.
+  for (const family of manifest.families ?? []) {
+    if (family.retired === true || family.source !== 'agent-registry' || family.prefix === null)
+      continue
+    const found = exactByPrefix.get(family.prefix) ?? []
+    found.push(...registryFamilyRecords(family).map((line) => line.split('|')[0]))
+    exactByPrefix.set(family.prefix, found)
+  }
+
   // The inventory is intentionally broader than `labels`: provisioned labels,
   // adopted labels, and labels created by tools are all recognized. Do not
   // apply `gateOpen` here. A missing profile flag must not turn a registered
@@ -267,11 +279,6 @@ if (mode === 'inventory') {
       const names = registryFamilyRecords(family).map((line) => line.split('|')[0])
       for (const name of names) {
         addExact(name, `family ${family.family} inventory`)
-        if (family.prefix !== null) {
-          const found = exactByPrefix.get(family.prefix) ?? []
-          found.push(name)
-          exactByPrefix.set(family.prefix, found)
-        }
       }
       continue
     }

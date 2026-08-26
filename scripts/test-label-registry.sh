@@ -160,6 +160,32 @@ rejects "a closed inline family with no values" 'closed-family-without-values' \
 rejects "a closed devflow-sourced family with no values" 'closed-devflow-family-without-values' \
     'closed devflow family'
 
+# Inventory authorization must not depend on documentation order. Put the
+# open model families before their agent-registry bases and require the same
+# precise family prefixes—never the overly broad `suggest:` or `claim:`.
+cp agent-registry.json "$mutation_tmp/agent-registry.json"
+node --input-type=module - label-registry.json "$mutated_manifest" <<'NODE'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const [inputPath, outputPath] = process.argv.slice(2)
+const manifest = JSON.parse(await readFile(inputPath, 'utf8'))
+for (const [openId, baseId] of [['suggest-model', 'suggest'], ['claim-model', 'claim']]) {
+  const open = manifest.families.find((entry) => entry.family === openId)
+  manifest.families = manifest.families.filter((entry) => entry.family !== openId)
+  manifest.families.splice(manifest.families.findIndex((entry) => entry.family === baseId), 0, open)
+}
+await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)
+NODE
+reordered_inventory="$(node scripts/label-registry-render.mjs inventory "$mutated_manifest")" ||
+    fail "inventory failed when open model families preceded their registry bases"
+if grep -Eq '^prefix\|(suggest|claim):$' <<<"$reordered_inventory"; then
+    fail "inventory widened protection when families were reordered"
+fi
+grep -Fqx 'prefix|suggest:gpt:' <<<"$reordered_inventory" ||
+    fail "reordered inventory lost the suggest:gpt model prefix"
+grep -Fqx 'prefix|claim:gpt:' <<<"$reordered_inventory" ||
+    fail "reordered inventory lost the claim:gpt model prefix"
+
 # ── 2. cross-file checks ───────────────────────────────────────────────────
 # rigor values ↔ .devflow.toml levels: the label selects a [rigor.*] table, so
 # a value with no table (or a table with no label) strands one side.
@@ -402,6 +428,7 @@ initial_labels() {
     1 | 2) printf '%s\n' ENHANCEMENT ;;
     3 | 4) printf '%s\n' custom-associated ;;
     41 | 42) printf '%s\n' ENHANCEMENT page-two-only ;;
+    50) printf '%s\n' ENHANCEMENT discussion-page-two ;;
     esac
     if [ "${STUB_SCENARIO:-}" = broker-unresolved ]; then
         case "$1" in
@@ -427,8 +454,12 @@ labels_json() {
     fi
 }
 item_json() {
-    local number="$1" labels
-    labels="$(labels_json issue "$number")"
+    local number="$1" labels kind=issue
+    if [ "$number" -eq 2 ] || [ "$number" -eq 4 ] || [ "$number" -eq 7 ] ||
+        [ "$number" -eq 9 ] || [ "$number" -eq 42 ]; then
+        kind=pr
+    fi
+    labels="$(labels_json "$kind" "$number")"
     if [ "${STUB_SCENARIO:-}" = appears-before-delete ] &&
         [ -f "${STUB_STATE}.appeared" ] && [ "$number" -eq 5 ]; then
         labels='[{"name":"unknown-empty"}]'
@@ -444,6 +475,40 @@ item_json() {
 case "${1:-}" in
 api)
     case "$*" in
+    *"discussions(first:100"*)
+        if [ "${STUB_FAIL:-}" = discussions ]; then
+            printf '%s\n' '{"data":{"repository":{"discussions":null}}}'
+            exit 0
+        fi
+        discussion_labels="$(labels_json discussion 50)"
+        if [ "${STUB_SCENARIO:-}" = all-safe ] || [ "${STUB_SCENARIO:-}" = appears-before-delete ]; then
+            discussion_labels='[]'
+        fi
+        jq -cn --argjson labels "$discussion_labels" '[
+            {data:{repository:{discussions:{nodes:[],pageInfo:{hasNextPage:true,endCursor:"page-1"}}}}},
+            {data:{repository:{discussions:{nodes:[{id:"D_50",number:50,labels:{nodes:$labels,pageInfo:{hasNextPage:false}}}],pageInfo:{hasNextPage:false,endCursor:null}}}}}
+        ]'
+        ;;
+    *"node(id:\$id)"*)
+        labels_json discussion 50 | jq -c '{data:{node:{labels:{nodes:.,pageInfo:{hasNextPage:false}}}}}'
+        : >"${STUB_STATE}.verified.discussion.50"
+        ;;
+    *"addLabelsToLabelable"*)
+        state_file="${STUB_STATE}.discussion.50"
+        [ -f "$state_file" ] || initial_labels 50 >"$state_file"
+        grep -Fqx feature "$state_file" || printf '%s\n' feature >>"$state_file"
+        printf '%s\n' 'discussion #50 add feature' >>"$STUB_LOG"
+        printf '%s\n' '{"data":{"addLabelsToLabelable":{"clientMutationId":null}}}'
+        ;;
+    *"removeLabelsFromLabelable"*)
+        state_file="${STUB_STATE}.discussion.50"
+        [ -f "${STUB_STATE}.verified.discussion.50" ] || exit 1
+        grep -Fqx feature "$state_file" || exit 1
+        awk 'tolower($0) != "enhancement"' "$state_file" >"${state_file}.tmp"
+        mv "${state_file}.tmp" "$state_file"
+        printf '%s\n' 'discussion #50 remove enhancement' >>"$STUB_LOG"
+        printf '%s\n' '{"data":{"removeLabelsFromLabelable":{"clientMutationId":null}}}'
+        ;;
     *"labels?per_page=100"*)
         if [ "${2:-}" != --paginate ] || [ "${3:-}" != --slurp ]; then
             exit 3
@@ -455,18 +520,29 @@ api)
         if [ "${STUB_SCENARIO:-}" = broker-unresolved ]; then
             jq -cn '[
                 [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
-                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"}]
-            ]'
+                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
+            ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" '
+                map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
+                if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         else
             jq -cn '[
                 [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"question"},{"name":"documentation"}],
-                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"}]
-            ]'
+                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
+            ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" '
+                map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
+                if $created == "" then . else .[1] += [{name:$created,color:"abcdef",description:"fixture",node_id:($created + "-id")}] end'
         fi
         ;;
     *"issues?state=all&per_page=100"*)
         if [ "${2:-}" != --paginate ] || [ "${3:-}" != --slurp ]; then
             exit 3
+        fi
+        if [ "${STUB_SCENARIO:-}" = appears-before-delete ]; then
+            reads=0
+            [ ! -f "${STUB_STATE}.association-reads" ] || reads="$(cat "${STUB_STATE}.association-reads")"
+            reads=$((reads + 1))
+            printf '%s\n' "$reads" >"${STUB_STATE}.association-reads"
+            [ "$reads" -lt 2 ] || : >"${STUB_STATE}.appeared"
         fi
         page_one="$(
             number=1
@@ -563,16 +639,14 @@ issue|pr)
     done
     ;;
 label)
+    if [ "${2:-}" = create ]; then
+        printf '%s\n' "$3" >"${STUB_STATE}.created-label"
+        printf 'create %s\n' "$3" >>"$STUB_LOG"
+        exit 0
+    fi
     [ "${2:-}" = delete ] || exit 2
     [ "${4:-}" = --repo ] && [ "${5:-}" = "${STUB_REPO:-drift/check}" ] || exit 2
     [ "${6:-}" = --yes ] || exit 2
-    if [ "${STUB_SCENARIO:-}" = appears-before-delete ] && [ "$3" = legacy-empty ]; then
-        : >"${STUB_STATE}.appeared"
-    elif [ "${STUB_SCENARIO:-}" = appears-before-delete ] && [ "$3" = unknown-empty ] &&
-        [ -f "${STUB_STATE}.appeared" ]; then
-        printf 'unsafe-delete %s\n' "$3" >>"$STUB_LOG"
-        exit 1
-    fi
     printf 'delete %s\n' "$3" >>"$STUB_LOG"
     ;;
 *)
@@ -590,12 +664,16 @@ STUB
         bash scripts/setup-github-labels.sh --repo drift/check --report-unregistered 2>&1)" ||
         fail "--report-unregistered failed against the paginated fixture"
     case "$report_out" in
-    *"Unregistered label: enhancement (issues: 2, PRs: 2)"*) ;;
+    *"Unregistered label: enhancement (issues: 2, PRs: 2, discussions: 1)"*) ;;
     *) fail "report did not print separate issue/PR counts for the retired label: $report_out" ;;
     esac
     case "$report_out" in
-    *"Unregistered label: page-two-only (issues: 1, PRs: 1)"*) ;;
+    *"Unregistered label: page-two-only (issues: 1, PRs: 1, discussions: 0)"*) ;;
     *) fail "report did not count the page-two-only issue and PR association: $report_out" ;;
+    esac
+    case "$report_out" in
+    *"Unregistered label: discussion-page-two (issues: 0, PRs: 0, discussions: 1)"*) ;;
+    *) fail "report did not count the page-two discussion association: $report_out" ;;
     esac
     case "$report_out" in
     *"Unregistered label: question"* | *"Unregistered label: documentation"* | *"Unregistered label: dependencies"*)
@@ -635,11 +713,11 @@ STUB
         fail "--prune returned success while refusing associated labels"
     fi
     case "$prune_out" in
-    *"Refused: enhancement (issues: 2, PRs: 2)"*) ;;
+    *"Refused: enhancement (issues: 2, PRs: 2, discussions: 1)"*) ;;
     *) fail "--prune did not refuse enhancement by name: $prune_out" ;;
     esac
     case "$prune_out" in
-    *"Refused: custom-associated (issues: 1, PRs: 1)"*) ;;
+    *"Refused: custom-associated (issues: 1, PRs: 1, discussions: 0)"*) ;;
     *) fail "--prune did not refuse custom-associated by name: $prune_out" ;;
     esac
     ! grep -Eq '^(issue|pr|delete) ' "$maintenance_log" ||
@@ -662,7 +740,7 @@ STUB
     *quiescen* | *concurrent* | *"label writer"* | *"label updates paused"*) ;;
     *) fail "destructive confirmation did not communicate the quiescence precondition: $safe_prune_out" ;;
     esac
-    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete page-two-only'; do
+    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete page-two-only' 'delete discussion-page-two'; do
         grep -Fqx "$expected" "$maintenance_log" ||
             fail "successful prune missed an unregistered zero-association label: $expected"
     done
@@ -676,14 +754,15 @@ STUB
         fail "migrate-then-prune returned success while refusing custom-associated"
     fi
     case "$migrate_out" in
-    *"Refused: custom-associated (issues: 1, PRs: 1)"*) ;;
+    *"Refused: custom-associated (issues: 1, PRs: 1, discussions: 0)"*) ;;
     *) fail "migrate-then-prune did not refuse the associated label by name: $migrate_out" ;;
     esac
     for expected in \
         'issue #1 add feature' 'issue #1 view labels' 'issue #1 remove enhancement' \
         'pr #2 add feature' 'pr #2 view labels' 'pr #2 remove enhancement' \
         'issue #41 add feature' 'issue #41 view labels' 'issue #41 remove enhancement' \
-        'pr #42 add feature' 'pr #42 view labels' 'pr #42 remove enhancement'; do
+        'pr #42 add feature' 'pr #42 view labels' 'pr #42 remove enhancement' \
+        'discussion #50 add feature' 'discussion #50 remove enhancement'; do
         grep -Fqx "$expected" "$maintenance_log" || fail "migration missed paginated record: $expected"
     done
     ! grep -Eq '^delete ' "$maintenance_log" ||
@@ -739,6 +818,19 @@ STUB
         fail "fixed migration deleted labels while unresolved broker sources remained"
 
     reset_maintenance
+    if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+        --migrate enhancement=suggest:gpt:new-model >/dev/null 2>&1; then
+        fail "model-destination fixture unexpectedly completed"
+    fi
+    grep -Fqx 'create suggest:gpt:new-model' "$maintenance_log" ||
+        fail "recognized missing model destination was not created after confirmation"
+    create_line="$(grep -nE '^create suggest:gpt:new-model$' "$maintenance_log" | cut -d: -f1)"
+    first_edit_line="$(grep -nE '^gh issue edit 1 ' "$maintenance_log" | sed -n '1{s/:.*//;p;}')"
+    [ -n "$first_edit_line" ] && [ "$create_line" -lt "$first_edit_line" ] ||
+        fail "model destination was not created before association migration"
+
+    reset_maintenance
     if appears_out="$(STUB_SCENARIO=appears-before-delete STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
         bash scripts/setup-github-labels.sh --repo drift/check --prune --yes 2>&1)"; then
         fail "prune succeeded after an association appeared before deletion"
@@ -747,12 +839,10 @@ STUB
     *"Refused: unknown-empty"* | *"association drift detected for 'unknown-empty'"*) ;;
     *) fail "prune did not re-read and refuse the label that became associated: $appears_out" ;;
     esac
-    grep -Fqx 'delete legacy-empty' "$maintenance_log" ||
-        fail "association-before-delete fixture never reached its race point"
+    ! grep -Eq '^delete ' "$maintenance_log" ||
+        fail "bounded preflight partially deleted labels after association drift"
     ! grep -Fqx 'delete unknown-empty' "$maintenance_log" ||
         fail "prune deleted a label after its association appeared"
-    ! grep -Fqx 'unsafe-delete unknown-empty' "$maintenance_log" ||
-        fail "prune reached the destructive API instead of detecting the new association"
 
     reset_maintenance
     if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" STUB_FAIL=verify PATH="$maintenance_stub:$PATH" \
@@ -789,6 +879,13 @@ STUB
     fi
     ! grep -Eq '^(issue|pr|delete) ' "$fail_log" ||
         fail "indeterminate read reached a write path"
+    reset_maintenance
+    if STUB_LOG="$fail_log" STUB_STATE="$maintenance_state" STUB_FAIL=discussions PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes >/dev/null 2>&1; then
+        fail "maintenance mode accepted an indeterminate discussion read"
+    fi
+    ! grep -Eq '^(issue|pr|discussion|create|delete) ' "$fail_log" ||
+        fail "indeterminate discussion read reached a write path"
     rm -rf "$maintenance_stub"
 fi
 

@@ -283,7 +283,7 @@ environment — against the items below
       guarded maintenance flow below. For each live value among `oneshot`,
       `plan`, `plan-approved`, `orchestrate`, `council`, and `human-led`, pass
       one `--migrate method:<v>=strategy:<v>`; the guarded flow attempts to move
-      associations for matching issues and PRs found in its paginated snapshot,
+      associations for matching issues, PRs, and discussions found in its paginated snapshots,
       re-reads them, and only then allows `--prune` to remove zero-association
       retired labels.
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
@@ -309,8 +309,8 @@ environment — against the items below
       setup when you want to mirror provisioning. Maintenance protection still
       includes every non-retired registered family, including gated tool labels,
       when those flags are omitted. This is read-only: it pages through the
-      live labels and all-state issues and pull requests, and reports separate
-      issue/PR association counts. An indeterminate read is a stop, not
+      live labels, all-state issues and pull requests, and repository
+      discussions, and reports separate association counts. An indeterminate read is a stop, not
       permission to clean up.
 - [ ] **[human-only] Retire any legacy `agent:*` claim labels or pre-2026
       `codex`/`copilot` labels** — use the guarded maintenance flow, never a
@@ -332,13 +332,17 @@ environment — against the items below
       the family segment for fixed mappings and preserve the recorded model
       suffix, e.g. `suggest:codex:sol` → `suggest:gpt:sol` and
       `claim:codex:sol` → `claim:gpt:sol`; model-level labels refine rather
-      than replace their family-level label.
+      than replace their family-level label. If a recognized model-level
+      destination is absent, the command creates it after confirmation by
+      copying metadata from the live family label; missing family labels stop
+      maintenance and require setup first.
 
-      If a destination already exists — normally because setup provisioned it —
-      use this association-migration path, not `gh label edit` and not
-      create-then-delete: the command validates a live registry destination,
-      attempts the association move for each matching issue and PR found in its
-      paginated snapshot, then permits `--prune` only when a fresh snapshot
+      Use this association-migration path, not `gh label edit` or a hand-written
+      create-then-delete sequence: the command validates a live registry
+      destination or creates a recognized on-demand model destination as
+      described above, attempts the association move for each matching issue,
+      PR, and discussion found in its paginated snapshots, then permits
+      `--prune` only when a fresh snapshot
       shows the source has zero associations. Enumerate
       model-level names explicitly with `gh label list --repo <owner/repo>
       --limit 1000 --json name --jq '.[].name' | grep -E
@@ -374,8 +378,9 @@ environment — against the items below
       the TTY; automation must state destructive intent again with separate
       `--yes` (piped stdin is refused).
 
-      The command re-reads before removals and before each deletion and fails
-      closed on read/verification errors, but GitHub has no transaction or
+      The command verifies each migration around source removal, then takes one
+      complete, bounded post-migration association snapshot before the deletion
+      batch and fails closed on read/verification errors, but GitHub has no transaction or
       compare-and-swap that binds the final read to the following edit/DELETE.
       A concurrent writer can still change labels after that read and before
       the request, and the command cannot undo a successful concurrent

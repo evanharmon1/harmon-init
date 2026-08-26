@@ -660,8 +660,8 @@ recognized families), run `./scripts/setup-github-labels.sh --repo
 `--release-please` profile flags used for setup when you want to mirror
 provisioning. Maintenance protection still includes every non-retired
 registered family, including gated tool labels, when those flags are omitted.
-The read-only report pages all labels and all-state issues and pull requests,
-and prints separate association counts; an indeterminate read fails closed. For
+The read-only report pages all labels, all-state issues and pull requests, and
+repository discussions, and prints separate association counts; an indeterminate read fails closed. For
 an intentional retirement, use the guarded maintenance flow below.
 `--prune` accepts one or more repeatable `--migrate OLD=NEW` flags. The write
 path requires a quiescent maintenance window: pause claim/release, Foreman,
@@ -670,15 +670,16 @@ release-please, and other human/API label writers for the whole run.
 fresh report immediately before pruning. The command validates live registry
 destinations, requires a TTY confirmation before writes (or the separate
 explicit `--yes` flag for automation), attempts to migrate associations for
-matching issues and PRs returned by its current paginated snapshot, re-reads
+matching issues, PRs, and discussions returned by its current paginated snapshot, re-reads
 associations, and attempts to delete only reported labels that are unassociated
 in its latest snapshot; names with observed associations are refused. Retired
 labels are reportable, so use this flow instead of starting with a direct
 `gh label delete`.
 
-The guard is deliberately not an atomic API transaction. The command re-reads
-before removals and before each deletion and fails closed on read or verification
-errors, but GitHub has no transaction or compare-and-swap that binds the final
+The guard is deliberately not an atomic API transaction. The command verifies
+each migration around source removal, then takes one complete, bounded
+post-migration association snapshot before the deletion batch. It fails closed
+on read or verification errors, but GitHub has no transaction or compare-and-swap that binds the final
 association read to the following edit/DELETE. A concurrent writer can still
 change labels after that read and before the request, and the command cannot
 undo a successful concurrent mutation. If the window was not quiescent or any
@@ -696,7 +697,10 @@ source, move only the family segment and preserve the recorded suffix, for
 example `suggest:codex:sol` → `suggest:gpt:sol` and
 `claim:codex:sol` → `claim:gpt:sol`. Model-level labels refine rather than
 replace their family-level label, so retain or add both associations as
-appropriate. Enumerate model-level names explicitly with
+appropriate. When a recognized model-level destination is absent, the guarded
+command creates it only after confirmation by copying the live family label's
+color and description; if that family label is absent, setup must run first and
+maintenance stops. Enumerate model-level names explicitly with
 `gh label list --repo <owner/repo> --limit 1000 --json name --jq '.[].name' |
 grep -E '^(suggest|claim):(codex|copilot):'`; for each source, inspect all-state
 `gh issue list --label <old> --state all --limit 1000` and
@@ -704,10 +708,12 @@ grep -E '^(suggest|claim):(codex|copilot):'`; for each source, inspect all-state
 result is capped; increase the limit and rerun before writes. The maintenance
 path itself uses `gh api --paginate` and refuses an indeterminate read.
 
-If a destination already exists — normally because setup provisioned it — do
-not use `gh label edit` or create-then-delete. Use `--migrate` for a fixed
+For a fixed mapping, do not use `gh label edit` or a hand-written
+create-then-delete sequence. Use `--migrate`: it accepts a live registered
+destination or creates a recognized on-demand model destination as described
+above,
 mapping: it validates the live registry destination, attempts the association
-move for each matching issue and PR found in the paginated snapshot, then
+move for each matching issue, PR, and discussion found in the paginated snapshots, then
 permits guarded `--prune` only when a fresh snapshot shows the source has zero
 associations. For
 per-record broker handling, add and
