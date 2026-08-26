@@ -138,6 +138,10 @@ def main() -> int:
         if not isinstance(case.get("expect"), dict):
             fail(f"{name}: expect must be an object")
             return 1
+        expected_exit = case["expect"].get("exit")
+        if not isinstance(expected_exit, int) or isinstance(expected_exit, bool) or expected_exit not in (0, 1):
+            fail(f"{name}: expect.exit must be the integer 0 or 1")
+            return 1
         for field in ("labels", "trusted_labels", "overrides"):
             values = case.get(field, [])
             if not isinstance(values, list) or not all(isinstance(value, str) for value in values):

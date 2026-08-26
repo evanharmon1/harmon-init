@@ -230,6 +230,18 @@ rejects("a fixture unattended value that is not a boolean", malformed_fixture_un
         "unattended-authorized-label-applies: unattended must be a boolean")
 
 
+def malformed_fixture_exit(tmp):
+    def mutate(fixture):
+        for case in fixture["cases"]:
+            if case["name"] == "unsupported-schema-version-is-rejected":
+                case["expect"]["exit"] = True
+                return
+        raise AssertionError("unsupported-schema-version case missing")
+    edit_fixture(tmp, mutate)
+rejects("a fixture exit expectation that is not an integer", malformed_fixture_exit,
+        "unsupported-schema-version-is-rejected: expect.exit must be the integer 0 or 1")
+
+
 def omitted_expected_diagnostic(tmp):
     def mutate(fixture):
         for case in fixture["cases"]:

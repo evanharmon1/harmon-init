@@ -1286,6 +1286,18 @@ check("a schema-v1 config missing [tier.*] is invalid to the resolver",
       and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
 
 with tempfile.TemporaryDirectory() as tmp:
+    broken_path = os.path.join(tmp, "non-table-tier.toml")
+    open(broken_path, "w").write(open(config).read().split("[tier.local]", 1)[0] + 'tier = "broken"\n')
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", broken_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 non-table tier registry is invalid_config, never a traceback",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
     partial_path = os.path.join(tmp, "partial-tier-ladder.toml")
     open(partial_path, "w").write(open(config).read().split("[tier.economy]", 1)[0])
     result = subprocess.run(

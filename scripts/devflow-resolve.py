@@ -470,6 +470,10 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
     budgets = budgets if isinstance(budgets, dict) else {}
     strategies = cfg.get("strategy")
     strategies = strategies if isinstance(strategies, dict) else {}
+    tiers = cfg.get("tier")
+    if not isinstance(tiers, dict):
+        fail("[tier] must be a table")
+        tiers = {}
 
     unknown = sorted(set(cfg) - TOP_LEVEL_KEYS)
     if unknown:
@@ -620,7 +624,7 @@ def validate_config_references(cfg, errors, *, allow_legacy_merge_base=False):
                 if field in tbl and topology not in allowed:
                     fail(f"[strategy.{name}].{field} is not valid for topology={topology!r}")
 
-    for name, tbl in cfg.get("tier", {}).items():
+    for name, tbl in tiers.items():
         if not isinstance(tbl, dict):
             continue
         endpoint = tbl.get("endpoint")

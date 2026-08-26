@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schema_version": 1,
   "kind": "harmon-init.devflow.conformance",
   "description": "Language-neutral v1 inputs and normalized-result expectations for .devflow.toml consumers.",
@@ -194,6 +193,19 @@
       }
     },
     {
+      "name": "unattended-standalone-trusted-label-applies",
+      "basis": "branch",
+      "trusted_labels": ["rigor:deep"],
+      "unattended": true,
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": { "rigor": { "value": "deep", "source": "label" } },
+          "requires_confirmation": false
+        }
+      }
+    },
+    {
       "name": "multiple-rigor-labels-strongest-wins",
       "basis": "branch",
       "labels": ["rigor:light", "rigor:deep"],
@@ -314,6 +326,21 @@
               "requested": "frontier",
               "source": "label"
             }
+          }
+        }
+      }
+    },
+    {
+      "name": "unqualified-tier-label-targets-only-implementer",
+      "basis": "branch",
+      "labels": ["tier:economy"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "orchestrator": { "value": "frontier", "requested": "frontier", "source": "profile" },
+            "implementer": { "value": "economy", "requested": "economy", "source": "label" },
+            "reviewer": { "value": "frontier", "requested": "frontier", "source": "profile" }
           }
         }
       }
