@@ -427,16 +427,23 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
     }
 
     fixed_migration_destination() {
-        case "$1" in
+        local source="$1" suffix
+        case "$source" in
         agent:claude-code) printf '%s' 'claim:claude' ;;
         agent:codex) printf '%s' 'claim:gpt' ;;
         agent:gemini-cli) printf '%s' 'claim:gemini' ;;
         agent:kimi-k2) printf '%s' 'claim:kimi' ;;
         agent:qwen-code) printf '%s' 'claim:qwen' ;;
         suggest:codex) printf '%s' 'suggest:gpt' ;;
-        suggest:codex:*) printf 'suggest:gpt:%s' "${1#suggest:codex:}" ;;
+        suggest:codex:*)
+            suffix="${source#*:}"
+            printf 'suggest:gpt:%s' "${suffix#*:}"
+            ;;
         claim:codex) printf '%s' 'claim:gpt' ;;
-        claim:codex:*) printf 'claim:gpt:%s' "${1#claim:codex:}" ;;
+        claim:codex:*)
+            suffix="${source#*:}"
+            printf 'claim:gpt:%s' "${suffix#*:}"
+            ;;
         *) return 1 ;;
         esac
     }
@@ -471,10 +478,6 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
                 fi
             done
             canonical_parent=""
-            if [ "$source_complete" = 0 ] && [ -n "$parent" ]; then
-                canonical_parent="$(live_label_name "$parent")" ||
-                    die "migration destination '$new' requires live family label '$parent'; run label setup first"
-            fi
             if [ "$source_complete" = 1 ]; then
                 canonical_new="$(live_label_name "$new" || printf '%s' "$new")"
                 migration_create_from+=("")
@@ -482,6 +485,8 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
                 migration_create_from+=("")
             else
                 [ -n "$parent" ] || die "migration destination '$new' is not live and is not an on-demand registry family label"
+                canonical_parent="$(live_label_name "$parent")" ||
+                    die "migration destination '$new' requires live family label '$parent'; run label setup first"
                 canonical_new="$new"
                 migration_create_from+=("$canonical_parent")
             fi
