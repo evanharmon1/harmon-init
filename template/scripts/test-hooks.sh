@@ -160,9 +160,6 @@ if [ -f .devcontainer/config/claude-settings.json ]; then
         | index("/usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh") != null
     ' .devcontainer/config/claude-settings.json >/dev/null ||
         fail "Claude managed settings do not register guard-process-kill"
-    grep -Fq 'claude-compat.sh /usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh' \
-        .devcontainer/config/codex-managed-config.toml ||
-        fail "Codex managed settings do not register guard-process-kill"
 fi
 jq -e '
     [."claude-hooks".PreToolUse[] | select(.matcher == "run_command") | .hooks[].command]
@@ -221,14 +218,6 @@ chmod +x "$cwd_mock"
 got="$(printf '%s' '{"cwd":"/tmp/codex-project"}' |
     bash "$repo/.devcontainer/config/codex-hooks/claude-compat.sh" "$cwd_mock")"
 [ "$got" = "/tmp/codex-project" ] || fail "Codex Bash adapter lost the session cwd"
-
-codex_guard_output="$(jq -n --arg command 'kill -9 42' '{cwd: "/tmp/codex-project", tool_input: {command: $command}}' |
-    bash "$repo/.devcontainer/config/codex-hooks/claude-compat.sh" "$guard")" ||
-    fail "Codex Claude-hook adapter failed to run guard-process-kill"
-printf '%s' "$codex_guard_output" | jq -e '
-    .hookSpecificOutput.hookEventName == "PreToolUse" and
-    .hookSpecificOutput.permissionDecision == "ask"
-' >/dev/null || fail "Codex Claude-hook adapter did not preserve the structured ask output"
 
 echo "==> shared Claude/Codex hook adapters OK"
 

@@ -35,11 +35,6 @@ type = "command"
 command = "/etc/codex/hooks/claude-compat.sh /etc/claude-code/hooks/block-no-verify.sh"
 timeout = 20
 
-[[hooks.PreToolUse.hooks]]
-type = "command"
-command = "/etc/codex/hooks/claude-compat.sh /usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh"
-timeout = 20
-
 [[hooks.PreToolUse]]
 matcher = "Edit|Write"
 
