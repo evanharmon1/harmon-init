@@ -25,13 +25,10 @@ trap 'rm -rf "$tmp"' EXIT
 issues_file="$tmp/issues"
 : >"$issues_file"
 
-# GitHub resolves closing keywords itself.  A same-repo URL is the only kind
-# this workflow can safely act on; cross-repository references are ignored.
-gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
-    --jq '.closingIssuesReferences[]
-          | select(.url | startswith("https://github.com/" + env.GH_REPO + "/"))
-          | .number' >>"$issues_file"
-
+# No live closingIssuesReferences query: it reads current PR state rather
+# than the merge event, and it is redundant here — closing keywords in the
+# body are delivery keywords below, and an issue linked only through the UI
+# closes at merge, so the issues-closed job releases its claim.
 # Treat PR-body text as data.  A candidate is a delivery reference — a
 # reference keyword (Closes/Fixes/Resolves/Refs and their variants)
 # immediately before a #N token or its repository-qualified same-repo form
@@ -56,19 +53,24 @@ printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
         if (substr($0, i, 1) != "#") {
             continue
         }
-        start = i
-        before = i == 1 ? "" : substr($0, i - 1, 1)
-        if (before != "" && before ~ /[[:alnum:]_]/) {
-            qual_start = i - length(repo)
-            # GitHub owner/repo slugs are case-insensitive.
-            if (qual_start < 1 || tolower(substr($0, qual_start, length(repo))) != tolower(repo)) {
-                continue
-            }
+        # Try the qualified form first, independent of the character before
+        # the # — a repository name may legally end in punctuation, so the
+        # qualifier cannot be detected off that character alone.
+        # GitHub owner/repo slugs are case-insensitive.
+        start = 0
+        qual_start = i - length(repo)
+        if (qual_start >= 1 && tolower(substr($0, qual_start, length(repo))) == tolower(repo)) {
             qual_before = qual_start == 1 ? "" : substr($0, qual_start - 1, 1)
-            if (qual_before != "" && qual_before ~ /[[:alnum:]_.\/-]/) {
+            if (qual_before == "" || qual_before !~ /[[:alnum:]_.\/-]/) {
+                start = qual_start
+            }
+        }
+        if (start == 0) {
+            before = i == 1 ? "" : substr($0, i - 1, 1)
+            if (before != "" && before ~ /[[:alnum:]_]/) {
                 continue
             }
-            start = qual_start
+            start = i
         }
         j = i + 1
         while (j <= length($0) && substr($0, j, 1) ~ /[0-9]/) {
@@ -127,7 +129,22 @@ write_audit() {
     fi
 }
 
+# Bound the work: every candidate costs a release-engine run plus an audit
+# API call inside a five-minute job. A body with more delivery references
+# than this is pathological; process the cap, report the truncation loudly,
+# and fail the job so a human reconciles the remainder — never truncate
+# silently.
+max_candidates="${CLAIM_RELEASE_MAX_CANDIDATES:-50}"
+total_candidates="$(sort -nu "$issues_file" | grep -c . || true)"
 job_rc=0
+if [ "$total_candidates" -gt "$max_candidates" ]; then
+    dropped="$(sort -nu "$issues_file" | tail -n +"$((max_candidates + 1))" | tr '\n' ' ')"
+    echo "truncating: $total_candidates delivery references exceed the $max_candidates-candidate cap; unprocessed: $dropped" >&2
+    summary "### PR #$PR_NUMBER — candidate cap exceeded"
+    summary "- Processed the first $max_candidates of $total_candidates references; unprocessed: $dropped"
+    summary "- Re-run the release for the remainder by hand (release-claim.sh) or raise CLAIM_RELEASE_MAX_CANDIDATES."
+    job_rc=5
+fi
 while IFS= read -r issue; do
     [ -n "$issue" ] || continue
     rc=0
@@ -144,6 +161,6 @@ while IFS= read -r issue; do
         job_rc="$rc"
         ;;
     esac
-done < <(sort -nu "$issues_file")
+done < <(sort -nu "$issues_file" | head -n "$max_candidates")
 
 exit "$job_rc"

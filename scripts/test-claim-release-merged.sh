@@ -76,7 +76,8 @@ run_case() {
     set +e
     PATH="$tmp/bin:$PATH" RELEASE_CLAIM_SCRIPT="$tmp/release-claim.sh" \
         RELEASE_LOG="$tmp/release.log" RELEASE_STATE="$tmp/release.state" \
-        GH_REPO=owner/repo PR_NUMBER=1067 MERGED_AT=2026-08-27T12:00:00Z \
+        GH_REPO="${GH_REPO_OVERRIDE:-owner/repo}" PR_NUMBER=1067 \
+        MERGED_AT=2026-08-27T12:00:00Z \
         HEAD_REF=fix/partial GITHUB_STEP_SUMMARY="$tmp/summary" \
         "$script" >"$tmp/out" 2>&1
     run_rc=$?
@@ -91,7 +92,7 @@ calls_are() {
 }
 
 echo "==> closing-keyword references release the merged PR's claim"
-GH_CLOSING=42 GH_BODY='' run_case
+GH_CLOSING='' GH_BODY='Closes #42' run_case
 [ "$run_rc" -eq 0 ] || fail "closing-keyword path exited $run_rc"
 calls_are '42 '
 grep -Fq -- '--not-after 2026-08-27T12:00:00Z --branch fix/partial' "$tmp/release.log" ||
@@ -115,7 +116,7 @@ calls_are '50 '
 grep -Fq 'no attributable live claim' "$tmp/summary" || fail "missing benign no-claim audit"
 
 echo "==> one merged PR can release several distinct issue claims"
-GH_CLOSING=7 GH_BODY='Refs #8, Refs #7, and cross/repo#9' run_case
+GH_CLOSING='' GH_BODY='Refs #8, Refs #7, and cross/repo#9' run_case
 [ "$run_rc" -eq 0 ] || fail "multi-issue path exited $run_rc"
 calls_are '7 8 '
 
@@ -133,6 +134,19 @@ echo "==> qualified matching is case-insensitive, as GitHub slugs are"
 GH_CLOSING='' GH_BODY='Refs Owner/Repo#37' run_case
 [ "$run_rc" -eq 0 ] || fail "case-variant path exited $run_rc"
 calls_are '37 '
+
+echo "==> a repository name ending in punctuation still matches qualified refs"
+GH_REPO_OVERRIDE='owner/repo-' GH_CLOSING='' GH_BODY='Refs owner/repo-#44' run_case
+[ "$run_rc" -eq 0 ] || fail "punctuation-suffix path exited $run_rc"
+calls_are '44 '
+
+echo "==> excess candidates are truncated loudly, never silently"
+big_body="$(awk 'BEGIN { for (n = 1; n <= 60; n++) printf "Refs #%d\n", n }')"
+GH_CLOSING='' GH_BODY="$big_body" run_case
+[ "$run_rc" -eq 5 ] || fail "cap path exited $run_rc, expected 5"
+released="$(awk '{ for (i = 1; i <= NF; i++) if ($i == "--issue") print $(i + 1) }' "$tmp/release.log" | wc -l | tr -d ' ')"
+[ "$released" = "50" ] || fail "expected 50 capped release calls, got $released"
+grep -Fq 'candidate cap exceeded' "$tmp/summary" || fail "missing truncation audit"
 
 echo "==> the event body snapshot outranks the live PR body"
 GH_CLOSING='' GH_BODY='Refs #98' PR_BODY_OVERRIDE='Refs #97' run_case
