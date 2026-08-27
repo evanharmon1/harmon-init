@@ -76,8 +76,6 @@ echo "==> guard-process-kill permits only complete, non-terminating probe segmen
 assert_guard_allows "kill -l"
 assert_guard_allows "kill -0 42 99"
 assert_guard_allows "kill -l && kill -0 42"
-assert_guard_allows "printf 'kill -9 42'"
-assert_guard_allows "find . -name 'kill -9 42'"
 assert_guard_allows "skill --version"
 assert_guard_allows "killswitch=false"
 assert_guard_allows "printf safe"
@@ -101,6 +99,10 @@ for command in \
     "timeout 1 sh -c 'kill -9 42'" \
     "zsh -lc 'kill -9 42'" \
     "eval 'kill -9 42'" \
+    "trap 'kill -9 42' EXIT" \
+    "printf 'kill -9 42'" \
+    "find . -name 'kill -9 42'" \
+    "echo foo#bar; kill -9 42" \
     "\`kill -9 42\`" \
     "\$killer -9 42" \
     "echo \$(kill -9 42)" \

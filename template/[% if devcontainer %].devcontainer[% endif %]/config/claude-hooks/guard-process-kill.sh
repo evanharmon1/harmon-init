@@ -39,6 +39,7 @@ import shlex
 import sys
 
 TERMINATORS = {"kill", "pkill", "killall", "xkill"}
+TERMINATOR_TEXT = re.compile(r"(?<![A-Za-z0-9_])(?:kill|pkill|killall|xkill)(?![A-Za-z0-9_])")
 SHELLS = {"sh", "bash", "dash", "zsh", "fish"}
 WRAPPERS = {
     "chrt", "command", "builtin", "doas", "env", "exec", "flock", "ionice",
@@ -73,7 +74,7 @@ def inspect_segment(segment):
         return "allow" if safe_kill(args) else "ask"
     if command in TERMINATORS:
         return "ask"
-    if any(name(token) in TERMINATORS for token in args):
+    if any(TERMINATOR_TEXT.search(token) for token in args):
         return "ask"
     # `-c`, `-lc`, `-- -c`, and an implementation-specific equivalent all run
     # shell text. Asking for every shell launcher is intentionally broader than
@@ -126,7 +127,11 @@ def inspect_tokens(tokens):
 
 
 def inspect_command(command):
-    return inspect_tokens(list(shlex.shlex(command, posix=True, punctuation_chars=True)))
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    # Bash starts a comment only when `#` begins a word. Python shlex treats an
+    # in-word hash as a comment too, which could hide a later command segment.
+    lexer.commenters = ""
+    return inspect_tokens(list(lexer))
 
 
 try:
