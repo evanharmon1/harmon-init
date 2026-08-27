@@ -64,6 +64,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$repo" ] || usage
+# GitHub treats its hostname and owner/repository names case-insensitively.
+# Keep the supplied spelling for API calls, but use a canonical identity when
+# deciding whether a closing reference targets this repository.
+repo_identity="$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')"
 body="${body_env:+${!body_env-}}"
 title="${title_env:+${!title_env-}}"
 commits=""
@@ -130,24 +134,25 @@ while IFS= read -r match; do
     # Resolve every form to its target. Explicit references are informational
     # only when they actually name another repository; an explicit reference
     # back to this repository is governed exactly like a bare #N.
-    case "$text" in
+    normalized_text="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')"
+    case "$normalized_text" in
     *github.com/*/issues/*)
-        number="${text##*/issues/}"
-        target="${text%/issues/*}"
+        number="${normalized_text##*/issues/}"
+        target="${normalized_text%/issues/*}"
         target="${target#*github.com/}"
         ;;
     *)
-        prefix="${text%#*}"
+        prefix="${normalized_text%#*}"
         target="$(printf '%s' "$prefix" | grep -oE '[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || true)"
-        target="${target:-$repo}"
-        number="${text##*#}"
+        target="${target:-$repo_identity}"
+        number="${normalized_text##*#}"
         ;;
     esac
-    if [ "$target" != "$repo" ]; then
+    if [ "$target" != "$repo_identity" ]; then
         informational="${informational}  ${where}: ${text} (cross-repository reference)\n"
         continue
     fi
-    key="${repo}#${number}"
+    key="${repo_identity}#${number}"
     case "$seen" in *"|${key}|"*) continue ;; esac
     seen="${seen}|${key}|"
 

@@ -42,6 +42,12 @@ echo '==> explicit same-repo references are evaluated'
 [ "$(run 'fix: x' 'Fixes https://github.com/acme/repo/issues/1' '')" = 0 ] ||
     fail 'completed same-repo issue URL should pass'
 
+echo '==> case variants of same-repo references are evaluated'
+[ "$(run 'fix: closes AcMe/RePo#2' '' '')" = 1 ] ||
+    fail 'mixed-case same-repo shorthand must fail'
+[ "$(run 'fix: x' 'Fixes https://GiThUb.CoM/AcMe/RePo/issues/2' '')" = 1 ] ||
+    fail 'mixed-case GitHub URL must fail'
+
 echo '==> explicit owner/repo references are informational, not queried'
 [ "$(run 'fix: closes other/repo#99' 'Fixes https://github.com/other/repo/issues/100' '')" = 0 ] ||
     fail 'cross-repository references should be informational'
