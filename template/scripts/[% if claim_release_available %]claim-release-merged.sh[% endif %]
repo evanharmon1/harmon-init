@@ -32,13 +32,16 @@ gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
           | select(.url | startswith("https://github.com/" + env.GH_REPO + "/"))
           | .number' >>"$issues_file"
 
-# Treat PR-body text as data.  This recognizes standalone #N tokens plus the
-# repository-qualified same-repo form (this exact owner/repo immediately
-# before the #, itself preceded by a non-word character): a partial PR may
-# legitimately write `Refs owner/repo#N` about its own repository.  Any other
-# owner/repo#N, and URL fragments, keep their alphanumeric predecessor and are
-# excluded.  The release engine still owns every write decision through its
-# timestamp and branch-bound claim-record checks.
+# Treat PR-body text as data.  A candidate is a delivery reference — a
+# reference keyword (Closes/Fixes/Resolves/Refs and their variants)
+# immediately before a #N token or its repository-qualified same-repo form
+# (this exact owner/repo, case-insensitively, preceded by a non-word
+# character).  A bare #N with no keyword is an incidental mention: with one
+# branch claiming several issues, "remaining work tracked in #M" must not
+# submit #M for release, because the branch and timestamp checks prove
+# ownership, never delivery.  Other repositories' owner/repo#N and URL
+# fragments are excluded.  The release engine still owns every write decision
+# through its timestamp and branch-bound claim-record checks.
 # Prefer the merge event's own body snapshot (PR_BODY, set by the workflow):
 # a body edited after the merge must not change what a delayed or retried run
 # processes. The fetch is only the fallback for manual/backfill invocations.
@@ -53,6 +56,7 @@ printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
         if (substr($0, i, 1) != "#") {
             continue
         }
+        start = i
         before = i == 1 ? "" : substr($0, i - 1, 1)
         if (before != "" && before ~ /[[:alnum:]_]/) {
             qual_start = i - length(repo)
@@ -64,6 +68,7 @@ printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
             if (qual_before != "" && qual_before ~ /[[:alnum:]_.\/-]/) {
                 continue
             }
+            start = qual_start
         }
         j = i + 1
         while (j <= length($0) && substr($0, j, 1) ~ /[0-9]/) {
@@ -74,6 +79,21 @@ printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
         }
         after = j > length($0) ? "" : substr($0, j, 1)
         if (after != "" && after ~ /[[:alnum:]_]/) {
+            continue
+        }
+        # Delivery keyword required immediately before the token, separated
+        # by whitespace or a colon; a bare mention is not a candidate.
+        k = start - 1
+        sep = 0
+        while (k >= 1 && substr($0, k, 1) ~ /[[:space:]:]/) {
+            k--
+            sep++
+        }
+        if (sep == 0) {
+            continue
+        }
+        pre = tolower(substr($0, 1, k))
+        if (pre !~ /(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?|ref(s|erence[sd]?)?)$/) {
             continue
         }
         print substr($0, i + 1, j - i - 1)

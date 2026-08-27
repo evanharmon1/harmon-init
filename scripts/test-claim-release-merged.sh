@@ -124,6 +124,11 @@ GH_CLOSING='' GH_BODY='Refs owner/repo#33, not other/repo#34, nor prefix-owner/r
 [ "$run_rc" -eq 0 ] || fail "qualified-reference path exited $run_rc"
 calls_are '33 '
 
+echo "==> incidental mentions are not delivery references"
+GH_CLOSING='' GH_BODY='Refs #10; remaining work tracked in #11, fixes #12, and prefix #13' run_case
+[ "$run_rc" -eq 0 ] || fail "incidental-mention path exited $run_rc"
+calls_are '10 12 '
+
 echo "==> qualified matching is case-insensitive, as GitHub slugs are"
 GH_CLOSING='' GH_BODY='Refs Owner/Repo#37' run_case
 [ "$run_rc" -eq 0 ] || fail "case-variant path exited $run_rc"
@@ -141,7 +146,7 @@ calls_are '61 '
 grep -Fq 'no attributable live claim' "$tmp/summary" || fail "no-claim outcome was not auditable"
 
 echo "==> one release failure does not starve other referenced issues"
-GH_CLOSING='' GH_BODY='Refs #70 and #71' RELEASE_FAIL_ISSUE=70 RELEASE_FAIL_RC=7 run_case
+GH_CLOSING='' GH_BODY='Refs #70 and Refs #71' RELEASE_FAIL_ISSUE=70 RELEASE_FAIL_RC=7 run_case
 [ "$run_rc" -eq 7 ] || fail "failure path exited $run_rc, expected 7"
 calls_are '70 71 '
 grep -Fq 'failed (exit 7)' "$tmp/summary" || fail "missing failed audit"
