@@ -27,7 +27,8 @@ fi
 # A shell grammar is deliberately not reimplemented here. Expansion syntax can
 # produce a command that is absent from the token stream, so it is an approval
 # boundary rather than an input to guess about.
-if [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ]]; then
+if [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ||
+    "$command" == *'['* || "$command" == *'?'* || "$command" == *'*'* ]]; then
     decision="ask"
 elif ! decision="$(
     python3 - "$command" <<'PY'

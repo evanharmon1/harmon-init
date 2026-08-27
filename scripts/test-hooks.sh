@@ -106,6 +106,9 @@ for command in \
     "find . -exec sh -c 'kill -9 42' \\;" \
     $'echo ready\nkill -9 42' \
     "FOO=x kill -9 42" \
+    "/bin/ki[l]l -9 42" \
+    "/bin/kil? -9 42" \
+    "/bin/ki* -9 42" \
     "{ kill -9 42; }" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
