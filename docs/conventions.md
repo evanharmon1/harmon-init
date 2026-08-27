@@ -22,6 +22,11 @@ it points here.
 - **Never bypass hooks** (`--no-verify` is forbidden) — fix the underlying issue.
   In the devcontainer a Claude Code hook actively blocks `--no-verify` and
   validates commit messages.
+- **Ask before terminating processes.** `guard-process-kill.sh` is registered
+  for Claude Code, Codex, and agy Bash commands. It requests approval for every
+  terminating `kill`, `pkill`, `killall`, or `xkill` invocation; only direct
+  `kill -l` and `kill -0 <PID>` probe segments are automatic. Do not infer that
+  a PID belongs to the current session.
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
 

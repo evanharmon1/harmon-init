@@ -35,6 +35,98 @@ fail() {
     exit 1
 }
 
+guard="$repo/.claude/hooks/guard-process-kill.sh"
+
+guard_command() {
+    jq -n --arg command "$1" '{tool_input: {command: $command}}' | "$guard"
+}
+
+assert_guard_allows() {
+    local command="$1"
+    local output
+    output="$(guard_command "$command")" || fail "guard-process-kill failed for allowed command: $command"
+    [ -z "$output" ] || fail "guard-process-kill prompted for allowed command '$command': $output"
+}
+
+assert_guard_asks() {
+    local command="$1"
+    local output
+    output="$(guard_command "$command")" || fail "guard-process-kill failed for approval-gated command: $command"
+    printf '%s' "$output" | jq -e '
+        .hookSpecificOutput.hookEventName == "PreToolUse" and
+        .hookSpecificOutput.permissionDecision == "ask" and
+        (.hookSpecificOutput.permissionDecisionReason | type == "string" and length > 0)
+    ' >/dev/null || fail "guard-process-kill did not emit a structured Claude ask for '$command': $output"
+}
+
+echo "==> guard-process-kill permits only complete, non-terminating probe segments"
+[ -x "$guard" ] || fail "guard-process-kill is not executable"
+assert_guard_allows "kill -l"
+assert_guard_allows "kill -0 42 99"
+assert_guard_allows "kill -l && kill -0 42"
+assert_guard_allows "printf 'kill -9 42'"
+assert_guard_allows "find . -name 'kill -9 42'"
+assert_guard_allows "printf safe"
+for command in \
+    "kill" \
+    "kill 42" \
+    "kill -9 42" \
+    "kill -l TERM" \
+    "kill -s 0 42" \
+    "env kill -0 42" \
+    "timeout 1 kill -9 42" \
+    "pkill -f worker" \
+    "killall worker" \
+    "xkill" \
+    "bash -c 'kill -9 42'" \
+    "bash -lc 'kill -9 42'" \
+    "bash -- -c 'kill -9 42'" \
+    "sh -c 'kill -9 42'" \
+    "zsh -lc 'kill -9 42'" \
+    "eval 'kill -9 42'" \
+    "\`kill -9 42\`" \
+    "\$killer -9 42" \
+    "echo \$(kill -9 42)" \
+    "find . -exec kill -9 42 \\;" \
+    "find . -execdir kill -9 42 \\;" \
+    "find . -exec sh -c 'kill -9 42' \\;" \
+    "{ kill -9 42; }" \
+    "kill 'unterminated"; do
+    assert_guard_asks "$command"
+done
+
+owned_output="$(jq -n --arg command 'kill 42' '{tool_input: {command: $command}}' |
+    HARMON_HARNESS_OWNED_PIDS=42 "$guard")" || fail "guard-process-kill failed with a forged ownership environment"
+printf '%s' "$owned_output" | jq -e '.hookSpecificOutput.permissionDecision == "ask"' >/dev/null ||
+    fail "guard-process-kill trusted a non-authoritative ownership environment"
+
+echo "==> guard-process-kill asks for all terminating commands"
+
+echo "==> guard-process-kill registrations cover Claude, Codex, and agy"
+jq -e '
+    [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command]
+    | index("./.claude/hooks/guard-process-kill.sh") != null
+' .claude/settings.json >/dev/null ||
+    fail "repository Claude settings do not register guard-process-kill"
+grep -Fq '"command": "./.claude/hooks/guard-process-kill.sh"' \
+    template/.claude/settings.json.jinja ||
+    fail "always-generated Claude settings template does not register guard-process-kill"
+jq -e '
+    [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command]
+    | index("/usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh") != null
+' .devcontainer/config/claude-settings.json >/dev/null ||
+    fail "Claude managed settings do not register guard-process-kill"
+grep -Fq 'claude-compat.sh /usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh' \
+    .devcontainer/config/codex-managed-config.toml ||
+    fail "Codex managed settings do not register guard-process-kill"
+jq -e '
+    [."claude-hooks".PreToolUse[] | select(.matcher == "run_command") | .hooks[].command]
+    | index("./.agents/agy-adapter.sh ./.claude/hooks/guard-process-kill.sh PreToolUse") != null
+' .agents/hooks.json >/dev/null ||
+    fail "agy hooks do not register guard-process-kill"
+
+echo "==> guard-process-kill registrations OK"
+
 echo "==> lint:commit-msg:text accepts a valid conventional message"
 if ! printf '%s' 'feat: a valid message' | task lint:commit-msg:text >/dev/null 2>&1; then
     fail "lint:commit-msg:text rejected a VALID conventional message"
@@ -87,6 +179,14 @@ got="$(printf '%s' '{"cwd":"/tmp/codex-project"}' |
     bash "$repo/.devcontainer/config/codex-hooks/claude-compat.sh" "$cwd_mock")"
 [ "$got" = "/tmp/codex-project" ] || fail "Codex Bash adapter lost the session cwd"
 
+codex_guard_output="$(jq -n --arg command 'kill -9 42' '{cwd: "/tmp/codex-project", tool_input: {command: $command}}' |
+    bash "$repo/.devcontainer/config/codex-hooks/claude-compat.sh" "$guard")" ||
+    fail "Codex Claude-hook adapter failed to run guard-process-kill"
+printf '%s' "$codex_guard_output" | jq -e '
+    .hookSpecificOutput.hookEventName == "PreToolUse" and
+    .hookSpecificOutput.permissionDecision == "ask"
+' >/dev/null || fail "Codex Claude-hook adapter did not preserve the structured ask output"
+
 echo "==> shared Claude/Codex hook adapters OK"
 
 echo "==> agy adapter follows Cwd to the worktree root and exports CLAUDE_PROJECT_DIR"
@@ -119,6 +219,14 @@ result_a="$(cd "$tmpdir" && AGY_PROBE_LOG="$agy_probe_log" bash -c 'printf "%s" 
 probe_line="$(cat "$agy_probe_log")"
 [ "$probe_line" = "PWD=$agy_expected_root CPD=$agy_expected_root" ] ||
     fail "agy-adapter (worktree Cwd) expected PWD/CPD=$agy_expected_root, got: $probe_line"
+
+cp "$guard" "$agy_fixture/.claude/hooks/guard-process-kill.sh"
+chmod +x "$agy_fixture/.claude/hooks/guard-process-kill.sh"
+payload_guard="$(jq -n --arg cwd "$agy_wt/some/subdir" '{toolCall: {name: "run_command", args: {CommandLine: "kill -9 42", Cwd: $cwd}}}')"
+result_guard="$(cd "$tmpdir" && bash -c 'printf "%s" "$1" | bash "$2" ./.claude/hooks/guard-process-kill.sh PreToolUse' _ "$payload_guard" "$agy_fixture/.agents/agy-adapter.sh")"
+printf '%s' "$result_guard" | jq -e '
+    .decision == "ask" and (.reason | type == "string" and length > 0)
+' >/dev/null || fail "agy-adapter did not preserve guard-process-kill's ask decision: $result_guard"
 
 echo "==> agy adapter always executes ITS OWN hook, even when the target worktree's copy is tampered"
 cat >"$agy_wt/.claude/hooks/probe.sh" <<'EOF'
