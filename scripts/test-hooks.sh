@@ -59,6 +59,18 @@ assert_guard_asks() {
     ' >/dev/null || fail "guard-process-kill did not emit a structured Claude ask for '$command': $output"
 }
 
+assert_guard_ask_names() {
+    local command="$1"
+    local matched="$2"
+    local output
+    output="$(guard_command "$command")" || fail "guard-process-kill failed for named command: $command"
+    printf '%s' "$output" | jq -e --arg matched "$matched" '
+        .hookSpecificOutput.permissionDecision == "ask" and
+        (.hookSpecificOutput.permissionDecisionReason | contains("Command '\''" + $matched + "'\''")) and
+        (.hookSpecificOutput.permissionDecisionReason | contains("process-termination rule"))
+    ' >/dev/null || fail "guard-process-kill reason did not name '$matched' and the rule: $output"
+}
+
 echo "==> guard-process-kill permits only complete, non-terminating probe segments"
 [ -x "$guard" ] || fail "guard-process-kill is not executable"
 assert_guard_allows "kill -l"
@@ -66,6 +78,8 @@ assert_guard_allows "kill -0 42 99"
 assert_guard_allows "kill -l && kill -0 42"
 assert_guard_allows "printf 'kill -9 42'"
 assert_guard_allows "find . -name 'kill -9 42'"
+assert_guard_allows "skill --version"
+assert_guard_allows "killswitch=false"
 assert_guard_allows "printf safe"
 for command in \
     "kill" \
@@ -90,10 +104,15 @@ for command in \
     "find . -exec kill -9 42 \\;" \
     "find . -execdir kill -9 42 \\;" \
     "find . -exec sh -c 'kill -9 42' \\;" \
+    $'echo ready\nkill -9 42' \
+    "FOO=x kill -9 42" \
     "{ kill -9 42; }" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done
+
+assert_guard_ask_names "sudo killall worker" "killall"
+assert_guard_ask_names "printf safe && pkill worker" "pkill"
 
 owned_output="$(jq -n --arg command 'kill 42' '{tool_input: {command: $command}}' |
     HARMON_HARNESS_OWNED_PIDS=42 "$guard")" || fail "guard-process-kill failed with a forged ownership environment"

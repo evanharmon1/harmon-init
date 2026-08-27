@@ -19,10 +19,15 @@ if ! command="$(printf '%s' "$input" | jq -er '.tool_input.command // empty')"; 
 fi
 [[ -n "$command" ]] || exit 0
 
+matched_command=""
+if [[ "$command" =~ (^|[^[:alnum:]_])(kill|pkill|killall|xkill)($|[^[:alnum:]_]) ]]; then
+    matched_command="${BASH_REMATCH[2]}"
+fi
+
 # A shell grammar is deliberately not reimplemented here. Expansion syntax can
 # produce a command that is absent from the token stream, so it is an approval
 # boundary rather than an input to guess about.
-if [[ "$command" == *'$'* || "$command" == *'`'* ]]; then
+if [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ]]; then
     decision="ask"
 elif ! decision="$(
     python3 - "$command" <<'PY'
@@ -65,6 +70,8 @@ def inspect_segment(segment):
     if command == "kill":
         return "allow" if safe_kill(args) else "ask"
     if command in TERMINATORS:
+        return "ask"
+    if any(name(token) in TERMINATORS for token in args):
         return "ask"
     # `-c`, `-lc`, `-- -c`, and an implementation-specific equivalent all run
     # shell text. Asking for every shell launcher is intentionally broader than
@@ -125,5 +132,9 @@ PY
 fi
 
 if [ "$decision" != "allow" ]; then
-    emit_ask "Process termination requires explicit user approval; only direct kill -l and kill -0 PID probes are exempt."
+    if [ -n "$matched_command" ]; then
+        emit_ask "Command '$matched_command' matches the process-termination rule and requires explicit user approval; only direct kill -l and kill -0 PID probes are exempt."
+    else
+        emit_ask "The process-termination rule requires explicit user approval for this indirect command; only direct kill -l and kill -0 PID probes are exempt."
+    fi
 fi
