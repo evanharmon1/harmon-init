@@ -71,7 +71,10 @@ summary() {
 write_audit() {
     audit_issue="$1"
     audit_result="$2"
-    issue_json="$(gh api "repos/$GH_REPO/issues/$audit_issue")"
+    # A body reference can name a number that is not a live issue (deleted, a
+    # typo, a PR). The audit line must not abort the loop and starve the
+    # releases of the PR's other referenced issues.
+    issue_json="$(gh api "repos/$GH_REPO/issues/$audit_issue" 2>/dev/null || printf '{}')"
     issue_state="$(jq -r '.state // "unknown"' <<<"$issue_json")"
     remaining=0
     if [ "$issue_state" = "open" ]; then
