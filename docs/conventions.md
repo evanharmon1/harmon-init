@@ -302,7 +302,7 @@ has.
   `Closes`/`Fixes`/`Resolves` references.
   A bare `#N` is same-repository work: the gate refuses it while issue `#N`
   has unchecked task-list items, or when it cannot read that issue. Explicit
-  `owner/repo#N` references and issue URLs are informational because this
+  references that name another repository are informational because this
   repository cannot safely decide another repository's close policy. Use
   `Refs #N` for partial work. The check reruns when a PR is edited or new
   commits are pushed; run `task guard:closing-keywords` to pre-flight it.
