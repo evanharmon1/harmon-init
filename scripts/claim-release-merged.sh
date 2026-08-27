@@ -32,12 +32,15 @@ gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
           | select(.url | startswith("https://github.com/" + env.GH_REPO + "/"))
           | .number' >>"$issues_file"
 
-# Treat PR-body text as data.  This deliberately recognizes only standalone
-# #N tokens: owner/repo#N and URL fragments have an alphanumeric predecessor
-# and are therefore excluded.  The release engine still owns every write
-# decision through its timestamp and branch-bound claim-record checks.
+# Treat PR-body text as data.  This recognizes standalone #N tokens plus the
+# repository-qualified same-repo form (this exact owner/repo immediately
+# before the #, itself preceded by a non-word character): a partial PR may
+# legitimately write `Refs owner/repo#N` about its own repository.  Any other
+# owner/repo#N, and URL fragments, keep their alphanumeric predecessor and are
+# excluded.  The release engine still owns every write decision through its
+# timestamp and branch-bound claim-record checks.
 body="$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq '.body // ""')"
-printf '%s\n' "$body" | awk '
+printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
 {
     for (i = 1; i <= length($0); i++) {
         if (substr($0, i, 1) != "#") {
@@ -45,7 +48,14 @@ printf '%s\n' "$body" | awk '
         }
         before = i == 1 ? "" : substr($0, i - 1, 1)
         if (before != "" && before ~ /[[:alnum:]_]/) {
-            continue
+            qual_start = i - length(repo)
+            if (qual_start < 1 || substr($0, qual_start, length(repo)) != repo) {
+                continue
+            }
+            qual_before = qual_start == 1 ? "" : substr($0, qual_start - 1, 1)
+            if (qual_before != "" && qual_before ~ /[[:alnum:]_.\/-]/) {
+                continue
+            }
         }
         j = i + 1
         while (j <= length($0) && substr($0, j, 1) ~ /[0-9]/) {

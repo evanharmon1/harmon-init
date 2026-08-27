@@ -111,6 +111,11 @@ GH_CLOSING=7 GH_BODY='Refs #8, Refs #7, and cross/repo#9' run_case
 [ "$run_rc" -eq 0 ] || fail "multi-issue path exited $run_rc"
 calls_are '7 8 '
 
+echo "==> a repository-qualified same-repo reference is recognized"
+GH_CLOSING='' GH_BODY='Refs owner/repo#33, not other/repo#34, nor prefix-owner/repo#35, nor https://github.com/owner/repo#36' run_case
+[ "$run_rc" -eq 0 ] || fail "qualified-reference path exited $run_rc"
+calls_are '33 '
+
 echo "==> no attributable record is benign and does not infer ownership"
 GH_CLOSING='' GH_BODY='Refs #61' RELEASE_NO_CLAIM_ISSUE=61 run_case
 [ "$run_rc" -eq 0 ] || fail "no-claim path exited $run_rc"
