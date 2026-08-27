@@ -49,7 +49,10 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
 - `publish-harmon-devcontainer.yml` — **root-only**: validates and publishes the
   shared amd64/arm64 toolchain image, then maintains its reviewed pin PR.
-- `claim-release.yml` — on `issues closed` and on `pull_request closed` **unmerged**,
+- `claim-release.yml` — on `issues closed`, on `pull_request closed` **unmerged**,
+  and on `pull_request` **merged into the default branch** (releasing the
+  branch-bound claim of a partial `Refs` PR whose issue correctly stays open,
+  via `scripts/claim-release-merged.sh`),
   releases the claim markers a session left on an issue. It holds `issues: write`
   and parses attacker-writable comment bodies, so it always checks out the
   **default branch** and never a PR head. It only wires events to
