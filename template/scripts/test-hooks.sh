@@ -96,6 +96,9 @@ for command in \
     "bash -lc 'kill -9 42'" \
     "bash -- -c 'kill -9 42'" \
     "sh -c 'kill -9 42'" \
+    "sudo sh -c 'kill -9 42'" \
+    "env bash -c 'kill -9 42'" \
+    "timeout 1 sh -c 'kill -9 42'" \
     "zsh -lc 'kill -9 42'" \
     "eval 'kill -9 42'" \
     "\`kill -9 42\`" \

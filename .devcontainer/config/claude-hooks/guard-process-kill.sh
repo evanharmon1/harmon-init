@@ -79,6 +79,11 @@ def inspect_segment(segment):
     # necessary, but avoids treating an unrecognized option spelling as safe.
     if command in SHELLS or command == "eval":
         return "ask"
+    # Wrappers can launch a shell whose `-c` payload contains the terminating
+    # command. The quoted payload is one token, so looking only for a direct
+    # terminator argument would miss `sudo sh -c 'kill ...'` and equivalents.
+    if command in WRAPPERS and any(name(token) in SHELLS or name(token) == "eval" for token in args):
+        return "ask"
     # `find -exec*` can launch a shell or a terminating utility after arbitrary
     # substitutions. Its target is never a direct probe segment.
     if command == "find" and any(predicate in args for predicate in {"-exec", "-execdir", "-ok", "-okdir"}):
