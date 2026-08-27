@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# test-claim-release-merged.sh — offline coverage for merged-PR claim release.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+script="$PWD/scripts/claim-release-merged.sh"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/bin"
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    [ -f "$tmp/out" ] && sed 's/^/    /' "$tmp/out" >&2
+    exit 1
+}
+
+cat >"$tmp/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+*'--json closingIssuesReferences'*) printf '%s\n' "${GH_CLOSING:-}" ;;
+*'--json body'*) printf '%s\n' "${GH_BODY:-}" ;;
+*'repos/'*)
+    issue=""
+    for arg in "$@"; do
+        case "$arg" in
+        repos/*/issues/*) issue="${arg##*/}" ;;
+        esac
+    done
+    body="${GH_ISSUE_BODY:-## Acceptance criteria\n- [x] [CI] Done}"
+    if [ "$issue" = "${GH_HUMAN_ISSUE:-}" ]; then
+        body="${GH_HUMAN_BODY:-$body}"
+    fi
+    printf '{"state":"%s","body":%s}\n' "${GH_ISSUE_STATE:-open}" "$(printf '%s' "$body" | jq -Rs .)"
+    ;;
+*) echo "unexpected gh call: $*" >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$tmp/bin/gh"
+
+cat >"$tmp/release-claim.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+issue=""
+args="$*"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --issue) issue="$2"; shift 2 ;;
+    *) shift ;;
+    esac
+done
+printf '%s\n' "$args" >>"${RELEASE_LOG:?}"
+if [ "$issue" = "${RELEASE_FAIL_ISSUE:-}" ]; then
+    exit "${RELEASE_FAIL_RC:-7}"
+fi
+if [ "$issue" = "${RELEASE_NO_CLAIM_ISSUE:-}" ]; then
+    exit 3
+fi
+if [ "$issue" = "${RELEASE_IDEMPOTENT_ISSUE:-}" ]; then
+    if [ -e "${RELEASE_STATE:?}" ]; then exit 3; fi
+    : >"${RELEASE_STATE:?}"
+fi
+STUB
+chmod +x "$tmp/release-claim.sh"
+
+run_case() {
+    : >"$tmp/release.log"
+    : >"$tmp/summary"
+    set +e
+    PATH="$tmp/bin:$PATH" RELEASE_CLAIM_SCRIPT="$tmp/release-claim.sh" \
+        RELEASE_LOG="$tmp/release.log" RELEASE_STATE="$tmp/release.state" \
+        GH_REPO=owner/repo PR_NUMBER=1067 MERGED_AT=2026-08-27T12:00:00Z \
+        HEAD_REF=fix/partial GITHUB_STEP_SUMMARY="$tmp/summary" \
+        "$script" >"$tmp/out" 2>&1
+    run_rc=$?
+    set -e
+}
+
+calls_are() {
+    actual="$(awk '{ for (i = 1; i <= NF; i++) if ($i == "--issue") print $(i + 1) }' "$tmp/release.log" |
+        sort -n | tr '\n' ' ')"
+    [ "$actual" = "$1" ] || fail "expected release calls '$1', got '$actual'"
+}
+
+echo "==> closing-keyword references release the merged PR's claim"
+GH_CLOSING=42 GH_BODY='' run_case
+[ "$run_rc" -eq 0 ] || fail "closing-keyword path exited $run_rc"
+calls_are '42 '
+grep -Fq -- '--not-after 2026-08-27T12:00:00Z --branch fix/partial' "$tmp/release.log" ||
+    fail "release engine did not receive the event time and claiming branch"
+grep -Fq 'Claim release: released' "$tmp/summary" || fail "missing released audit"
+
+echo "==> partial Refs PR preserves open HUMAN work while releasing its claim"
+GH_CLOSING='' GH_BODY='Refs #1048' GH_HUMAN_ISSUE=1048 \
+    GH_HUMAN_BODY=$'## Acceptance criteria\n- [x] [CI] implementation\n- [ ] [HUMAN] approve ADR' run_case
+[ "$run_rc" -eq 0 ] || fail "partial-reference path exited $run_rc"
+calls_are '1048 '
+grep -Fq 'Issue state: open' "$tmp/summary" || fail "partial issue was not reported open"
+grep -Fq 'Remaining unticked criteria: 1' "$tmp/summary" || fail "remaining HUMAN criterion was not counted"
+
+echo "==> newer claim records are left untouched across repeated PR cleanup"
+GH_CLOSING='' GH_BODY='Refs #50' RELEASE_NO_CLAIM_ISSUE=50 run_case
+[ "$run_rc" -eq 0 ] || fail "newer-claim first run exited $run_rc"
+GH_CLOSING='' GH_BODY='Refs #50' RELEASE_NO_CLAIM_ISSUE=50 run_case
+[ "$run_rc" -eq 0 ] || fail "newer-claim repeat exited $run_rc"
+calls_are '50 '
+grep -Fq 'no attributable live claim' "$tmp/summary" || fail "missing benign no-claim audit"
+
+echo "==> one merged PR can release several distinct issue claims"
+GH_CLOSING=7 GH_BODY='Refs #8, Refs #7, and cross/repo#9' run_case
+[ "$run_rc" -eq 0 ] || fail "multi-issue path exited $run_rc"
+calls_are '7 8 '
+
+echo "==> no attributable record is benign and does not infer ownership"
+GH_CLOSING='' GH_BODY='Refs #61' RELEASE_NO_CLAIM_ISSUE=61 run_case
+[ "$run_rc" -eq 0 ] || fail "no-claim path exited $run_rc"
+calls_are '61 '
+grep -Fq 'no attributable live claim' "$tmp/summary" || fail "no-claim outcome was not auditable"
+
+echo "==> one release failure does not starve other referenced issues"
+GH_CLOSING='' GH_BODY='Refs #70 and #71' RELEASE_FAIL_ISSUE=70 RELEASE_FAIL_RC=7 run_case
+[ "$run_rc" -eq 7 ] || fail "failure path exited $run_rc, expected 7"
+calls_are '70 71 '
+grep -Fq 'failed (exit 7)' "$tmp/summary" || fail "missing failed audit"
+
+echo "==> rerunning after release is idempotent"
+rm -f "$tmp/release.state"
+GH_CLOSING='' GH_BODY='Refs #90' RELEASE_IDEMPOTENT_ISSUE=90 run_case
+[ "$run_rc" -eq 0 ] || fail "idempotent first run exited $run_rc"
+GH_CLOSING='' GH_BODY='Refs #90' RELEASE_IDEMPOTENT_ISSUE=90 run_case
+[ "$run_rc" -eq 0 ] || fail "idempotent rerun exited $run_rc"
+calls_are '90 '
+grep -Fq 'no attributable live claim' "$tmp/summary" || fail "idempotent rerun was not reported"
+
+echo "claim-release-merged: all cases passed"

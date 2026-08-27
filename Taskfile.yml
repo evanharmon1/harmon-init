@@ -92,6 +92,7 @@ tasks:
       - task: test:renovate-pins
       - task: test:lint-hygiene
       - task: test:release-title
+      - task: test:claim-release-merged
       - task: test:setup-github
       - task: test:setup-github-project
       - task: test:sync-devkit-release
@@ -446,6 +447,11 @@ tasks:
     desc: Unit-test the release-content title guard (require-release-title.sh)
     cmds:
       - ./scripts/test-release-title.sh
+
+  test:claim-release-merged:
+    desc: Unit-test merged-PR claim release (offline, stubbed gh and release engine)
+    cmds:
+      - ./scripts/test-claim-release-merged.sh
 
   test:setup-github:
     desc: Unit-test repository-setting outcomes and failure propagation (stubbed gh, no network)
