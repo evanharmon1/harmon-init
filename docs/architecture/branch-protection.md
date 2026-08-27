@@ -184,6 +184,10 @@ This mirrors the importable
           {
             "context": "security",
             "integration_id": 15368
+          },
+          {
+            "context": "closing-keywords",
+            "integration_id": 15368
           }
         ]
       }
@@ -264,6 +268,7 @@ The required checks are the build gates (see [ci-cd.md](ci-cd.md)):
 | ---------- | ----------------------------------------------------------------------------------------------- |
 | `verify`   | Aggregate build gate — rolls up root lint/template validation |
 | `security` | gitleaks + dependency audit + Semgrep CE (this repo's SAST engine — it has no CodeQL workflow) |
+| `closing-keywords` | Metadata-only PR gate: a same-repository closing keyword may pass only when its issue has no unchecked task-list items; it reports a successful no-op on push, merge-queue, and manual runs |
 
 Snyk PR/App checks are absent by default. This repo's weekly
 `snyk-scheduled.yml` — like the one a generated repo opts into — is advisory and

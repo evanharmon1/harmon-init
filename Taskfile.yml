@@ -204,6 +204,19 @@ tasks:
     cmds:
       - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
 
+  guard:closing-keywords:
+    # PR title/body are supplied by CI (or by a caller pre-flighting a PR).
+    # Commit messages are read as data, never executed.
+    desc: "Guard: same-repo closing keywords require a completed issue checklist"
+    cmds:
+      - |
+        commits_file=$(mktemp)
+        trap 'rm -f "$commits_file"' EXIT
+        git log --format=%B "${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}" > "$commits_file"
+        repo="${GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+        ./scripts/check-closing-keywords.sh --repo "$repo" \
+          --title-env PR_TITLE --body-env PR_BODY --commits-file "$commits_file"
+
   format:
     desc: Auto-format code
     cmds:
@@ -397,7 +410,7 @@ tasks:
       - ./scripts/test-tasks.sh
 
   test:ci-results:
-    desc: Unit-test the fail-closed CI aggregate result helper
+    desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
       - ./scripts/test-ci-results.sh
 

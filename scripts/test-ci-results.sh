@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermetic truth-table regressions for the fail-closed CI result helper.
+# Hermetic truth tables for CI aggregation and closing-keyword semantics.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -40,5 +40,17 @@ reject_required "an empty job name" success =success
 reject_required "a malformed pair" success lint
 reject_required "an unsupported expectation" neutral lint=neutral
 reject_required "an empty result set" success
+
+workflow="${repo}/.github/workflows/build.yml"
+grep -q 'HEAD_REPO:.*head.repo.full_name' "$workflow" || fail 'bootstrap must compare the PR head repository'
+grep -q "grep -q '(HTTP 404)'" "$workflow" || fail 'bootstrap must require a confirmed default-branch 404'
+grep -Fq '[ "$HEAD_REPO" = "$GH_REPO" ]' "$workflow" || fail 'bootstrap must permit same-repo heads only'
+grep -q 'fetch_script "$DEFAULT_BRANCH"' "$workflow" || fail 'guard must prefer the default-branch script'
+grep -q 'fetch_script "$HEAD_SHA"' "$workflow" || fail 'same-repo bootstrap must fetch the head SHA'
+
+# Keep the closing-keyword fixtures in this CI contract test rather than in an
+# orphan target: all five semantic cases run wherever CI checks its result
+# aggregation, including generated repositories without vendored skills.
+"${repo}/scripts/test-closing-keywords.sh"
 
 echo "CI result helper truth tables: PASS"

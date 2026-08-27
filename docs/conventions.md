@@ -296,6 +296,16 @@ has.
   to a tag); generated repos configure their own via the `release_content_paths`
   copier answer (empty = no guard). Automated dependency PRs (Renovate/Dependabot)
   are skipped — retitle by hand if a dep bump to guarded content must ship.
+- **Closing an issue is guarded separately.** The `closing-keywords` job in
+  `build.yml` reads only PR and issue metadata with a read-only token, and scans
+  the PR title, body, and every commit message for
+  `Closes`/`Fixes`/`Resolves` references.
+  A bare `#N` is same-repository work: the gate refuses it while issue `#N`
+  has unchecked task-list items, or when it cannot read that issue. Explicit
+  `owner/repo#N` references and issue URLs are informational because this
+  repository cannot safely decide another repository's close policy. Use
+  `Refs #N` for partial work. The check reruns when a PR is edited or new
+  commits are pushed; run `task guard:closing-keywords` to pre-flight it.
 - Issue types map many-to-one onto these commit types. Personal-account repos
   use the equivalent work-type labels as that mapping's substrate because native
   issue Type is unavailable there; organization repos use native Type and no
