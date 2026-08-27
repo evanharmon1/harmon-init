@@ -118,8 +118,11 @@ write_audit() {
     issue_state="$(jq -r '.state // "unknown"' <<<"$issue_json")"
     remaining=0
     if [ "$issue_state" = "open" ]; then
+        # Count every rendered unchecked task form GitHub supports: bulleted,
+        # ordered, and blockquoted items alike (the shape guard:closing-keywords
+        # uses); an informational count must not under-report HUMAN criteria.
         remaining="$(jq -r '.body // ""' <<<"$issue_json" |
-            grep -Ec '^[[:space:]]*[-*+][[:space:]]+\[[[:space:]]\][[:space:]]' || true)"
+            grep -Ec '^[[:space:]]*(>[[:space:]]*)*([-*+]|[0-9]+[.)])[[:space:]]+\[[[:space:]]\][[:space:]]' || true)"
     fi
     summary "### PR #$PR_NUMBER → issue #$audit_issue"
     summary "- Claim release: $audit_result"

@@ -101,11 +101,11 @@ grep -Fq 'Claim release: released' "$tmp/summary" || fail "missing released audi
 
 echo "==> partial Refs PR preserves open HUMAN work while releasing its claim"
 GH_CLOSING='' GH_BODY='Refs #1048' GH_HUMAN_ISSUE=1048 \
-    GH_HUMAN_BODY=$'## Acceptance criteria\n- [x] [CI] implementation\n- [ ] [HUMAN] approve ADR' run_case
+    GH_HUMAN_BODY=$'## Acceptance criteria\n- [x] [CI] implementation\n- [ ] [HUMAN] approve ADR\n1. [ ] [HUMAN] ordered form\n> - [ ] [HUMAN] blockquoted form' run_case
 [ "$run_rc" -eq 0 ] || fail "partial-reference path exited $run_rc"
 calls_are '1048 '
 grep -Fq 'Issue state: open' "$tmp/summary" || fail "partial issue was not reported open"
-grep -Fq 'Remaining unticked criteria: 1' "$tmp/summary" || fail "remaining HUMAN criterion was not counted"
+grep -Fq 'Remaining unticked criteria: 3' "$tmp/summary" || fail "remaining criteria across task forms were not counted"
 
 echo "==> newer claim records are left untouched across repeated PR cleanup"
 GH_CLOSING='' GH_BODY='Refs #50' RELEASE_NO_CLAIM_ISSUE=50 run_case
