@@ -125,6 +125,9 @@ tasks:
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
+[% if claim_release_available %]
+      - task: test:claim-release-merged
+[% endif %]
       - task: test:setup-github
 [% if project_management == 'github' %]
       - task: test:setup-github-project
@@ -819,6 +822,13 @@ tasks:
     desc: Unit-test the release-content title guard (require-release-title.sh)
     cmds:
       - ./scripts/test-release-title.sh
+[% endif %]
+[% if claim_release_available %]
+
+  test:claim-release-merged:
+    desc: Unit-test merged-PR claim release (offline, stubbed gh and release engine)
+    cmds:
+      - ./scripts/test-claim-release-merged.sh
 [% endif %]
 
   test:setup-github:
