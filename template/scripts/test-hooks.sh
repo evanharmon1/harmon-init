@@ -36,6 +36,8 @@ fail() {
 }
 
 guard="$repo/.claude/hooks/guard-process-kill.sh"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
 
 guard_command() {
     jq -n --arg command "$1" '{tool_input: {command: $command}}' | "$guard"
@@ -130,23 +132,38 @@ printf '%s' "$owned_output" | jq -e '.hookSpecificOutput.permissionDecision == "
 
 echo "==> guard-process-kill asks for all terminating commands"
 
+no_jq_path="$tmpdir/no-jq-path"
+mkdir -p "$no_jq_path"
+ln -s "$(command -v cat)" "$no_jq_path/cat"
+bash_bin="$(command -v bash)"
+no_jq_output="$(printf '%s' '{"tool_input":{"command":"kill -9 42"}}' |
+    PATH="$no_jq_path" "$bash_bin" "$guard")" || fail "guard-process-kill failed when jq was unavailable"
+printf '%s' "$no_jq_output" | jq -e '
+    .hookSpecificOutput.permissionDecision == "ask" and
+    (.hookSpecificOutput.permissionDecisionReason | contains("process-termination rule"))
+' >/dev/null || fail "guard-process-kill did not fail closed when jq was unavailable: $no_jq_output"
+
 echo "==> guard-process-kill registrations cover Claude, Codex, and agy"
 jq -e '
     [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command]
     | index("./.claude/hooks/guard-process-kill.sh") != null
 ' .claude/settings.json >/dev/null ||
     fail "repository Claude settings do not register guard-process-kill"
-grep -Fq '"command": "./.claude/hooks/guard-process-kill.sh"' \
-    template/.claude/settings.json.jinja ||
-    fail "always-generated Claude settings template does not register guard-process-kill"
-jq -e '
-    [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command]
-    | index("/usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh") != null
-' .devcontainer/config/claude-settings.json >/dev/null ||
-    fail "Claude managed settings do not register guard-process-kill"
-grep -Fq 'claude-compat.sh /usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh' \
-    .devcontainer/config/codex-managed-config.toml ||
-    fail "Codex managed settings do not register guard-process-kill"
+if [ -f template/.claude/settings.json.jinja ]; then
+    grep -Fq '"command": "./.claude/hooks/guard-process-kill.sh"' \
+        template/.claude/settings.json.jinja ||
+        fail "always-generated Claude settings template does not register guard-process-kill"
+fi
+if [ -f .devcontainer/config/claude-settings.json ]; then
+    jq -e '
+        [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command]
+        | index("/usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh") != null
+    ' .devcontainer/config/claude-settings.json >/dev/null ||
+        fail "Claude managed settings do not register guard-process-kill"
+    grep -Fq 'claude-compat.sh /usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh' \
+        .devcontainer/config/codex-managed-config.toml ||
+        fail "Codex managed settings do not register guard-process-kill"
+fi
 jq -e '
     [."claude-hooks".PreToolUse[] | select(.matcher == "run_command") | .hooks[].command]
     | index("./.agents/agy-adapter.sh ./.claude/hooks/guard-process-kill.sh PreToolUse") != null
@@ -166,8 +183,6 @@ if printf '%s' 'not a conventional message' | task lint:commit-msg:text >/dev/nu
 fi
 
 echo "==> format:file formats a file, including a path containing a space"
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
 spaced="$tmpdir/with space.sh"
 printf 'f(){\necho hi\n}\n' >"$spaced"
 before="$(cat "$spaced")"

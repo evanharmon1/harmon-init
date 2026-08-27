@@ -8,9 +8,18 @@
 set -euo pipefail
 
 emit_ask() {
-    jq -n --arg reason "$1" \
-        '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
+    if command -v jq >/dev/null 2>&1; then
+        jq -n --arg reason "$1" \
+            '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $reason}}'
+    else
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"The process-termination rule requires approval because guard-process-kill cannot inspect commands without jq."}}'
+    fi
 }
+
+if ! command -v jq >/dev/null 2>&1; then
+    emit_ask "guard-process-kill requires jq to inspect the Bash command safely."
+    exit 0
+fi
 
 input="$(cat)"
 if ! command="$(printf '%s' "$input" | jq -er '.tool_input.command // empty')"; then
