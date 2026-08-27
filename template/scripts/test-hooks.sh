@@ -9,6 +9,27 @@ set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
 
+# The agy-adapter fixtures below run `git init`/`commit`/`worktree add` in
+# throwaway repos. Left unsanitized, a machine with commit.gpgsign=true or a
+# global core.hooksPath can make those fixture commits prompt, fail, or fire
+# unrelated hooks — and since this suite is part of the required local gate,
+# that makes `task test:hooks` unreliable rather than merely the fixture.
+# Same isolation scripts/test-worktree.sh uses, for the same reason.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+git_config_count="${GIT_CONFIG_COUNT:-0}"
+case "$git_config_count" in
+'' | *[!0-9]*) git_config_count=0 ;;
+esac
+i=0
+while [ "$i" -lt "$git_config_count" ]; do
+    unset "GIT_CONFIG_KEY_$i" "GIT_CONFIG_VALUE_$i"
+    i=$((i + 1))
+done
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 fail() {
     echo "TEST FAIL: $*" >&2
     exit 1
@@ -81,6 +102,7 @@ chmod +x "$agy_fixture/.claude/hooks/probe.sh"
 git -C "$agy_fixture" init -q >/dev/null
 git -C "$agy_fixture" config user.email "test@example.com" >/dev/null
 git -C "$agy_fixture" config user.name "Test" >/dev/null
+git -C "$agy_fixture" config commit.gpgsign false >/dev/null
 git -C "$agy_fixture" add -A >/dev/null
 git -C "$agy_fixture" commit -q -m init >/dev/null
 agy_wt="$tmpdir/agy-fixture-wt"
@@ -98,6 +120,21 @@ probe_line="$(cat "$agy_probe_log")"
 [ "$probe_line" = "PWD=$agy_expected_root CPD=$agy_expected_root" ] ||
     fail "agy-adapter (worktree Cwd) expected PWD/CPD=$agy_expected_root, got: $probe_line"
 
+echo "==> agy adapter always executes ITS OWN hook, even when the target worktree's copy is tampered"
+cat >"$agy_wt/.claude/hooks/probe.sh" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'TAMPERED ran PWD=%s CPD=%s\n' "$PWD" "${CLAUDE_PROJECT_DIR:-unset}" >>"$AGY_PROBE_LOG"
+EOF
+git -C "$agy_wt" add -A >/dev/null
+git -C "$agy_wt" commit -q -m "tamper: neuter the safety hook on this branch" >/dev/null
+: >"$agy_probe_log"
+result_tamper="$(cd "$tmpdir" && AGY_PROBE_LOG="$agy_probe_log" bash -c 'printf "%s" "$1" | bash "$2" ./.claude/hooks/probe.sh PreToolUse' _ "$payload_a" "$agy_fixture/.agents/agy-adapter.sh")"
+[ "$result_tamper" = '{"decision": "allow"}' ] || fail "agy-adapter (tampered worktree hook) did not allow: $result_tamper"
+probe_line_tamper="$(cat "$agy_probe_log")"
+[ "$probe_line_tamper" = "PWD=$agy_expected_root CPD=$agy_expected_root" ] ||
+    fail "agy-adapter ran the target worktree's own (tampered) hook instead of its trusted copy: $probe_line_tamper"
+
 echo "==> agy adapter refuses a Cwd from a foreign checkout (no cd, foreign hook not run)"
 agy_foreign="$tmpdir/agy-foreign"
 mkdir -p "$agy_foreign/.claude/hooks"
@@ -110,6 +147,7 @@ chmod +x "$agy_foreign/.claude/hooks/probe.sh"
 git -C "$agy_foreign" init -q >/dev/null
 git -C "$agy_foreign" config user.email "test@example.com" >/dev/null
 git -C "$agy_foreign" config user.name "Test" >/dev/null
+git -C "$agy_foreign" config commit.gpgsign false >/dev/null
 git -C "$agy_foreign" add -A >/dev/null
 git -C "$agy_foreign" commit -q -m init >/dev/null
 
