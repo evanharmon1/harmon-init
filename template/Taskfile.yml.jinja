@@ -50,8 +50,9 @@ tasks:
   ci:
     # Full local mirror of the CI pipeline — run before (or instead of) opening
     # a PR to catch everything CI would, on demand, without waiting on a PR run.
-    # Builds on `verify` and adds every OTHER check the build workflow runs, so
-    # the two cannot drift apart.
+    # The PR-metadata closing guard stays outside offline `verify`, so run it
+    # explicitly before building on `verify` and adding every OTHER check the
+    # build workflow runs, so the two cannot drift apart.
 [% if use_node %]
     # This is the FIRST tier that may bind a port: test:e2e serves the app.
     # `check`/`build`/`test`/`verify` stay port-free so parallel agents and
@@ -64,8 +65,9 @@ tasks:
     # It is deliberately not in `verify`, which stays offline — the pre-push hook
     # uses verify:skills:offline for that reason.
 [% endif %]
-    desc: Full CI mirror (verify[% if use_node %] → test:e2e[% endif %][% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
+    desc: Full CI mirror (guard:closing-keywords → verify[% if use_node %] → test:e2e[% endif %][% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
     cmds:
+      - task: guard:closing-keywords
       - task: verify
 [% if use_node %]
       - task: test:e2e
