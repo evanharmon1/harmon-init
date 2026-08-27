@@ -211,6 +211,10 @@ jobs:
           # A branch name is attacker-controlled text.  The release engine
           # receives it only as data and compares it for exact equality.
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # The event's own body snapshot: a body edited after the merge must
+          # not change what a delayed or retried run processes. Env only —
+          # the script treats it strictly as data.
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           # Same not-yet-vendored no-op as the other release paths: if the
           # claim skill is absent too, no claim convention was ever installed.

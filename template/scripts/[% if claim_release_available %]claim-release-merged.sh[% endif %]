@@ -39,7 +39,14 @@ gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
 # owner/repo#N, and URL fragments, keep their alphanumeric predecessor and are
 # excluded.  The release engine still owns every write decision through its
 # timestamp and branch-bound claim-record checks.
-body="$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq '.body // ""')"
+# Prefer the merge event's own body snapshot (PR_BODY, set by the workflow):
+# a body edited after the merge must not change what a delayed or retried run
+# processes. The fetch is only the fallback for manual/backfill invocations.
+if [ "${PR_BODY+set}" = set ]; then
+    body="$PR_BODY"
+else
+    body="$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq '.body // ""')"
+fi
 printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
 {
     for (i = 1; i <= length($0); i++) {
@@ -49,7 +56,8 @@ printf '%s\n' "$body" | awk -v repo="$GH_REPO" '
         before = i == 1 ? "" : substr($0, i - 1, 1)
         if (before != "" && before ~ /[[:alnum:]_]/) {
             qual_start = i - length(repo)
-            if (qual_start < 1 || substr($0, qual_start, length(repo)) != repo) {
+            # GitHub owner/repo slugs are case-insensitive.
+            if (qual_start < 1 || tolower(substr($0, qual_start, length(repo))) != tolower(repo)) {
                 continue
             }
             qual_before = qual_start == 1 ? "" : substr($0, qual_start - 1, 1)

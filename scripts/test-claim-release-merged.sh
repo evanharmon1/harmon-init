@@ -66,6 +66,13 @@ chmod +x "$tmp/release-claim.sh"
 run_case() {
     : >"$tmp/release.log"
     : >"$tmp/summary"
+    # PR_BODY_OVERRIDE exercises the workflow's event-snapshot path; every
+    # other case covers the manual/backfill fetch fallback.
+    if [ "${PR_BODY_OVERRIDE+set}" = set ]; then
+        export PR_BODY="$PR_BODY_OVERRIDE"
+    else
+        unset PR_BODY
+    fi
     set +e
     PATH="$tmp/bin:$PATH" RELEASE_CLAIM_SCRIPT="$tmp/release-claim.sh" \
         RELEASE_LOG="$tmp/release.log" RELEASE_STATE="$tmp/release.state" \
@@ -74,6 +81,7 @@ run_case() {
         "$script" >"$tmp/out" 2>&1
     run_rc=$?
     set -e
+    unset PR_BODY
 }
 
 calls_are() {
@@ -115,6 +123,16 @@ echo "==> a repository-qualified same-repo reference is recognized"
 GH_CLOSING='' GH_BODY='Refs owner/repo#33, not other/repo#34, nor prefix-owner/repo#35, nor https://github.com/owner/repo#36' run_case
 [ "$run_rc" -eq 0 ] || fail "qualified-reference path exited $run_rc"
 calls_are '33 '
+
+echo "==> qualified matching is case-insensitive, as GitHub slugs are"
+GH_CLOSING='' GH_BODY='Refs Owner/Repo#37' run_case
+[ "$run_rc" -eq 0 ] || fail "case-variant path exited $run_rc"
+calls_are '37 '
+
+echo "==> the event body snapshot outranks the live PR body"
+GH_CLOSING='' GH_BODY='Refs #98' PR_BODY_OVERRIDE='Refs #97' run_case
+[ "$run_rc" -eq 0 ] || fail "snapshot path exited $run_rc"
+calls_are '97 '
 
 echo "==> no attributable record is benign and does not infer ownership"
 GH_CLOSING='' GH_BODY='Refs #61' RELEASE_NO_CLAIM_ISSUE=61 run_case
