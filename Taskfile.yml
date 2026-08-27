@@ -205,14 +205,28 @@ tasks:
       - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
 
   guard:closing-keywords:
-    # PR title/body are supplied by CI (or by a caller pre-flighting a PR).
+    # CI supplies PR metadata. Local runs fetch it from the current branch
+    # when either value is absent; explicitly empty PR_BODY is valid.
     # Commit messages are read as data, never executed.
     desc: "Guard: same-repo closing keywords require a completed issue checklist"
     cmds:
       - |
         commits_file=$(mktemp)
         trap 'rm -f "$commits_file"' EXIT
-        git log --format=%B "${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}" > "$commits_file"
+        base_sha="${BASE_SHA:-origin/main}"
+        head_sha="${HEAD_SHA:-HEAD}"
+        if ! merge_base="$(git merge-base "$base_sha" "$head_sha")" || [ -z "$merge_base" ]; then
+          echo "guard:closing-keywords: could not resolve merge-base for ${base_sha} and ${head_sha}; refusing to scan an indeterminate commit range" >&2
+          exit 2
+        fi
+        git log --format=%B "${merge_base}..${head_sha}" > "$commits_file"
+        if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
+          if ! PR_TITLE="$(gh pr view --json title --jq '.title')" || ! PR_BODY="$(gh pr view --json body --jq '.body // ""')"; then
+            echo "guard:closing-keywords: could not read PR title/body for the current branch; supply both PR_TITLE and PR_BODY" >&2
+            exit 2
+          fi
+          export PR_TITLE PR_BODY
+        fi
         repo="${GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
         ./scripts/check-closing-keywords.sh --repo "$repo" \
           --title-env PR_TITLE --body-env PR_BODY --commits-file "$commits_file"

@@ -26,6 +26,95 @@ if ! task --list-all >/dev/null 2>&1; then
     fail "task --list-all failed — the Taskfile does not compile"
 fi
 
+echo "==> closing-keyword preflight scans only merge-base-to-head and reads missing PR metadata"
+for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
+    [ -f "$taskfile" ] || continue
+    block="$(awk '
+        $0 == "  guard:closing-keywords:" { inblock = 1; next }
+        inblock && /^  [a-zA-Z0-9]/ { inblock = 0 }
+        inblock { print }
+    ' "$taskfile")"
+    [ -n "$block" ] || fail "${taskfile}: guard:closing-keywords task not found"
+    printf '%s\n' "$block" | grep -Fq 'git merge-base "$base_sha" "$head_sha"' ||
+        fail "${taskfile}: closing-keyword guard does not resolve the merge base"
+    printf '%s\n' "$block" | grep -Fq 'git log --format=%B "${merge_base}..${head_sha}"' ||
+        fail "${taskfile}: closing-keyword guard does not scan merge-base-to-head only"
+    if printf '%s\n' "$block" | grep -Fq '${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}'; then
+        fail "${taskfile}: closing-keyword guard still scans the symmetric difference"
+    fi
+    printf '%s\n' "$block" | grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' ||
+        fail "${taskfile}: closing-keyword guard does not distinguish unset metadata from an empty body"
+    printf '%s\n' "$block" | grep -Fq "gh pr view --json title --jq '.title'" ||
+        fail "${taskfile}: closing-keyword guard does not fetch a missing PR title"
+    printf '%s\n' "$block" | grep -Fq "gh pr view --json body --jq" ||
+        fail "${taskfile}: closing-keyword guard does not fetch a missing PR body"
+done
+
+guard_bin="${test_tmp}/closing-keywords-bin"
+guard_git_args="${test_tmp}/closing-keywords-git-args"
+guard_gh_args="${test_tmp}/closing-keywords-gh-args"
+guard_issues="${test_tmp}/closing-keywords-issues"
+mkdir -p "$guard_bin" "$guard_issues"
+printf '%s\n' '- [x] complete' >"${guard_issues}/acme_repo__1.md"
+printf '%s\n' '- [ ] unfinished' >"${guard_issues}/acme_repo__2.md"
+cat >"${guard_bin}/git" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+merge-base)
+    [ -z "${GIT_MERGE_BASE_FAIL:-}" ] || exit 1
+    printf '%s\n' merge-base
+    ;;
+log) printf '%s\n' "$@" >"${GIT_ARGS:?}" ;;
+*) exit 1 ;;
+esac
+EOF
+cat >"${guard_bin}/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_ARGS:?}"
+[ -z "${GH_PR_VIEW_FAIL:-}" ] || exit 1
+case "${1:-} ${2:-}" in
+"pr view")
+    case "$*" in
+    *'--json title'*) printf '%s\n' 'Fixes #2' ;;
+    *'--json body'*) printf '\n' ;;
+    *) exit 1 ;;
+    esac
+    ;;
+*) exit 1 ;;
+esac
+EOF
+chmod +x "${guard_bin}/git" "${guard_bin}/gh"
+
+out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \
+    GIT_ARGS="$guard_git_args" GH_ARGS="$guard_gh_args" GH_REPO=acme/repo \
+    ISSUE_BODY_DIR="$guard_issues" BASE_SHA=base HEAD_SHA=head \
+    task guard:closing-keywords 2>&1) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] || fail "closing-keyword guard did not use fetched PR metadata: $out"
+grep -Fxq 'merge-base..head' "$guard_git_args" ||
+    fail "closing-keyword guard did not scan exactly merge-base..head"
+[ "$(grep -c '^pr view ' "$guard_gh_args")" -eq 2 ] ||
+    fail "closing-keyword guard did not fetch both missing PR metadata fields"
+
+out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \
+    GIT_MERGE_BASE_FAIL=1 GIT_ARGS="$guard_git_args" GH_ARGS="$guard_gh_args" \
+    GH_REPO=acme/repo ISSUE_BODY_DIR="$guard_issues" BASE_SHA=base HEAD_SHA=head \
+    task guard:closing-keywords 2>&1) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] || fail "closing-keyword guard accepted an unresolved merge base"
+case "$out" in
+*'could not resolve merge-base'*) ;;
+*) fail "closing-keyword guard reported the wrong merge-base failure: $out" ;;
+esac
+
+out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \
+    GH_PR_VIEW_FAIL=1 GIT_ARGS="$guard_git_args" GH_ARGS="$guard_gh_args" \
+    GH_REPO=acme/repo ISSUE_BODY_DIR="$guard_issues" BASE_SHA=base HEAD_SHA=head \
+    task guard:closing-keywords 2>&1) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] || fail "closing-keyword guard accepted unreadable PR metadata"
+case "$out" in
+*'supply both PR_TITLE and PR_BODY'*) ;;
+*) fail "closing-keyword guard reported the wrong metadata failure: $out" ;;
+esac
+
 echo "==> bootstrap is a no-op when Homebrew is already installed"
 # Run against STUBS, never the real toolchain. `test:tasks` is part of `verify`,
 # and in a generated use_node repo `bootstrap` runs `brew install node` plus
