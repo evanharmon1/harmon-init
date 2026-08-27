@@ -48,6 +48,10 @@
           {
             "context": "security",
             "integration_id": 15368
+          },
+          {
+            "context": "closing-keywords",
+            "integration_id": 15368
           }
         ]
       }
