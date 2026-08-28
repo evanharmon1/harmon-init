@@ -95,8 +95,11 @@ for command in \
     "bash -c 'kill -9 42'" \
     "bash -lc 'kill -9 42'" \
     "bash -- -c 'kill -9 42'" \
+    "bash < cleanup.sh" \
+    "bash <<< 'kill -9 42'" \
     "sh -c 'kill -9 42'" \
     "sudo sh -c 'kill -9 42'" \
+    "sudo sh < cleanup.sh" \
     "env bash -c 'kill -9 42'" \
     "timeout 1 sh -c 'kill -9 42'" \
     "zsh -lc 'kill -9 42'" \

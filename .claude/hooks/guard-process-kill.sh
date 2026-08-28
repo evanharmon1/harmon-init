@@ -75,25 +75,22 @@ def safe_kill(args):
 def inspect_segment(segment):
     if not segment:
         return "allow"
+    command, args = name(segment[0]), segment[1:]
+    # Shells can read executable text from `-c` arguments or redirects, so ask
+    # for every shell launcher before redirect handling.
+    if command in SHELLS or command == "eval":
+        return "ask"
+    # Wrappers can launch a shell whose payload contains a terminating command.
+    if command in WRAPPERS and any(name(token) in SHELLS or name(token) == "eval" for token in args):
+        return "ask"
     if any(token in REDIRECTS for token in segment):
         return "ask" if any(name(token) in TERMINATORS for token in segment) else "allow"
 
-    command, args = name(segment[0]), segment[1:]
     if command == "kill":
         return "allow" if safe_kill(args) else "ask"
     if command in TERMINATORS:
         return "ask"
     if any(TERMINATOR_TEXT.search(token) for token in args):
-        return "ask"
-    # `-c`, `-lc`, `-- -c`, and an implementation-specific equivalent all run
-    # shell text. Asking for every shell launcher is intentionally broader than
-    # necessary, but avoids treating an unrecognized option spelling as safe.
-    if command in SHELLS or command == "eval":
-        return "ask"
-    # Wrappers can launch a shell whose `-c` payload contains the terminating
-    # command. The quoted payload is one token, so looking only for a direct
-    # terminator argument would miss `sudo sh -c 'kill ...'` and equivalents.
-    if command in WRAPPERS and any(name(token) in SHELLS or name(token) == "eval" for token in args):
         return "ask"
     # `find -exec*` can launch a shell or a terminating utility after arbitrary
     # substitutions. Its target is never a direct probe segment.
