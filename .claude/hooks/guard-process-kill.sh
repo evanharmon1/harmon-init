@@ -38,8 +38,12 @@ fi
 # boundary rather than an input to guess about.
 if [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ||
     "$command" == *'['* || "$command" == *'?'* || "$command" == *'*'* ||
-    "$command" == *'{'* || "$command" == *'}'* ]]; then
+    "$command" == *'{'* || "$command" == *'}'* ||
+    "$command" == *'@('* || "$command" == *'+('* || "$command" == *'!('* ]]; then
     decision="ask"
+elif ! command -v python3 >/dev/null 2>&1; then
+    emit_ask "guard-process-kill requires python3 to inspect the Bash command safely."
+    exit 0
 elif ! decision="$(
     python3 - "$command" <<'PY'
 import os

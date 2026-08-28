@@ -81,6 +81,16 @@ assert_guard_allows "kill -l && kill -0 42"
 assert_guard_allows "skill --version"
 assert_guard_allows "killswitch=false"
 assert_guard_allows "printf safe"
+
+guard_subdir="$tmpdir/guard-subdir"
+mkdir -p "$guard_subdir"
+anchored_guard_output="$(cd "$guard_subdir" &&
+    jq -n --arg command 'kill -9 42' '{tool_input: {command: $command}}' |
+    CLAUDE_PROJECT_DIR="$repo" bash -c '"$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-process-kill.sh')" ||
+    fail "the project-anchored guard hook failed from a subdirectory"
+printf '%s' "$anchored_guard_output" | jq -e '.hookSpecificOutput.permissionDecision == "ask"' >/dev/null ||
+    fail "the project-anchored guard hook did not ask for a terminating command from a subdirectory: $anchored_guard_output"
+
 for command in \
     "kill" \
     "kill 42" \
@@ -120,6 +130,10 @@ for command in \
     "/bin/kil? -9 42" \
     "/bin/ki* -9 42" \
     "k{i..i}ll -9 42" \
+    "@(ki|noop)ll -9 42" \
+    "+(ki)ll -9 42" \
+    "!(safe) -9 42" \
+    "/usr/bin/@(k)ill -9 42" \
     "{ kill -9 42; }" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
@@ -146,14 +160,38 @@ printf '%s' "$no_jq_output" | jq -e '
     (.hookSpecificOutput.permissionDecisionReason | contains("process-termination rule"))
 ' >/dev/null || fail "guard-process-kill did not fail closed when jq was unavailable: $no_jq_output"
 
+no_python_path="$tmpdir/no-python-path"
+mkdir -p "$no_python_path"
+ln -s "$(command -v cat)" "$no_python_path/cat"
+ln -s "$(command -v jq)" "$no_python_path/jq"
+for command in 'printf safe' 'perl -ekill+9,42' 'kill -l' 'kill -0 42 99' 'bash' '/usr/bin/@(k)ill -9 42'; do
+    no_python_output="$(jq -n --arg command "$command" '{tool_input: {command: $command}}' |
+        PATH="$no_python_path" "$bash_bin" "$guard")" ||
+        fail "guard-process-kill failed without python3 for command: $command"
+    printf '%s' "$no_python_output" | jq -e '.hookSpecificOutput.permissionDecision == "ask"' >/dev/null ||
+        fail "guard-process-kill did not fail closed without python3 for '$command': $no_python_output"
+done
+
+managed_guard="$repo/.devcontainer/config/claude-hooks/guard-process-kill.sh"
+if [ -f "$managed_guard" ]; then
+    [ -x "$managed_guard" ] || fail "managed guard-process-kill is not executable"
+    for command in 'printf safe' 'perl -ekill+9,42' 'kill -l' 'kill -0 42 99' '/usr/bin/@(k)ill -9 42' 'bash'; do
+        managed_output="$(jq -n --arg command "$command" '{tool_input: {command: $command}}' |
+            PATH="$no_python_path" "$bash_bin" "$managed_guard")" ||
+            fail "managed guard-process-kill failed without python3 for approval-gated command: $command"
+        printf '%s' "$managed_output" | jq -e '.hookSpecificOutput.permissionDecision == "ask"' >/dev/null ||
+            fail "managed guard-process-kill did not fail closed without python3 for '$command': $managed_output"
+    done
+fi
+
 echo "==> guard-process-kill registrations cover Claude, Codex, and agy"
 jq -e '
     [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command]
-    | index("./.claude/hooks/guard-process-kill.sh") != null
+    | index("\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-process-kill.sh") != null
 ' .claude/settings.json >/dev/null ||
     fail "repository Claude settings do not register guard-process-kill"
 if [ -f template/.claude/settings.json.jinja ]; then
-    grep -Fq '"command": "./.claude/hooks/guard-process-kill.sh"' \
+    grep -Fq '"command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-process-kill.sh"' \
         template/.claude/settings.json.jinja ||
         fail "always-generated Claude settings template does not register guard-process-kill"
 fi
