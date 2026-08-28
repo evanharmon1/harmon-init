@@ -1637,15 +1637,19 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
 done
 
 # Required checks must run on the draft, or the gate has nothing to read. A
-# bare `pull_request:` trigger already covers draft opened/synchronize; what
-# would break it is an explicit draft filter or a narrowed types: list.
+# bare `pull_request:` trigger already covers draft opened/synchronize. The
+# closing-keyword job deliberately narrows event types, but keeps the four PR
+# events that create, edit, or add commits to a draft workbench.
 for wf in .github/workflows/*.yml; do
     [ -f "$wf" ] || continue
     ! grep -Fq 'pull_request.draft' "$wf" ||
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
 done
-awk '/^on:/,/^jobs:/' .github/workflows/build.yml | grep -q 'types:' &&
-    err "build.yml narrows its pull_request types — draft opened/synchronize may not run"
+build_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/build.yml)"
+if printf '%s\n' "$build_trigger" | grep -q 'types:' &&
+    ! printf '%s\n' "$build_trigger" | grep -Fq 'types: [opened, edited, synchronize, reopened]'; then
+    err "build.yml pull_request types omit a draft-closing-keyword trigger"
+fi
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
 # minimal renders with devcontainer=false; every other profile has it on.
