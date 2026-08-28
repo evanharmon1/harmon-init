@@ -46,10 +46,10 @@ tasks:
           task "$task_name"
         fi
 
-  # ── CI / Verification Pipelines ────────────────────────────────
   ci:
-    # Full local mirror of the CI pipeline — run before (or instead of) opening
-    # a PR to catch everything CI would, on demand, without waiting on a PR run.
+    # Full local mirror of the CI pipeline — use on demand when CI is red and
+    # you want to iterate locally, without waiting on each PR push. The pre-PR
+    # gate is `task verify` + `task security`; this adds the rest.
     # The PR-metadata closing guard stays outside offline `verify`, so run it
     # explicitly before building on `verify` and adding every OTHER check the
     # build workflow runs, so the two cannot drift apart.

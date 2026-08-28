@@ -44,8 +44,8 @@ tier binds a port**, not what it is named:
 Everything an agent runs on every change is port-free, so N agents in N
 worktrees can run `task verify` concurrently without fighting over a port.
 `task test:e2e` is the first tier that serves the app, which is why it lives in
-`task ci` (on demand, one at a time) and in its own CI job (runner-isolated) —
-never in `check`, `test`, or `verify`.
+`task ci` (on demand when CI is red, one at a time) and in its own CI job
+(runner-isolated) — never in `check`, `test`, or `verify`.
 
 **Do not "fix" a slow inner loop by moving e2e into `verify`, and do not add a
 port-binding step to `check`/`build`/`test`.** That is the invariant this split
@@ -141,7 +141,7 @@ Other rules:
 
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
 - `task verify` is the local definition-of-done gate[% if use_node %]; `task ci` adds the
-  port-binding e2e tier and security[% endif %]. CI runs the same task targets.
+  port-binding e2e tier and security, on demand when CI is red[% endif %]. CI runs the same task targets.
 [% if project_type in ['web-astro', 'web-app'] %]
 - Playwright runs desktop Chromium/Firefox/WebKit **and mobile device
   projects** (e.g. Pixel + iPhone). The scaffold ships the mobile projects

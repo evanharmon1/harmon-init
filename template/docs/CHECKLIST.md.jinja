@@ -459,12 +459,12 @@ environment — against the items below
       already run, so `astro preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
-- [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
-      parallel Foreman worktrees would then race for the Playwright port. Pick
-      one before you dispatch: point the `[verify]` default at
-      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
-      set `max_parallel = 1`, or derive a per-worktree port in
+- [ ] **Adding that config makes `task ci` bind a port.** `.foreman.toml`
+      ships `[verify] default = ["bash", "-c", "task verify && task security"]`
+      with `max_parallel = 3` — this is port-free and runs the pre-PR gate.
+      If you override it to `["task", "ci"]` for full local CI mirroring,
+      parallel Foreman worktrees will race for the Playwright port. In that
+      case, set `max_parallel = 1` or derive a per-worktree port in
       `playwright.config.ts`.
 [% endif %]
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
@@ -533,12 +533,12 @@ environment — against the items below
       already run, so `vite preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
-- [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
-      parallel Foreman worktrees would then race for the Playwright port. Pick
-      one before you dispatch: point the `[verify]` default at
-      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
-      set `max_parallel = 1`, or derive a per-worktree port in
+- [ ] **Adding that config makes `task ci` bind a port.** `.foreman.toml`
+      ships `[verify] default = ["bash", "-c", "task verify && task security"]`
+      with `max_parallel = 3` — this is port-free and runs the pre-PR gate.
+      If you override it to `["task", "ci"]` for full local CI mirroring,
+      parallel Foreman worktrees will race for the Playwright port. In that
+      case, set `max_parallel = 1` or derive a per-worktree port in
       `playwright.config.ts`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in

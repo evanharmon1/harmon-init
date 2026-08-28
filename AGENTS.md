@@ -146,7 +146,7 @@ copier copy harmon-init new-project --trust
 task verify
 
 # Full CI mirror on demand (verify's checks + skills drift + devcontainer
-# assert + security)
+# assert + security) — use when CI is red and you want to iterate locally
 task ci
 
 # Lint only (fast gate — safe for editors, hooks, and agents on every change)
@@ -234,7 +234,7 @@ permission for.
 
 ```text
 preflight/claim → implement → task verify → task challenge → task review
-  → task ci → create DRAFT PR → shepherd the draft (CI, deferred findings,
+  → task security → create DRAFT PR → shepherd the draft (CI, deferred findings,
   reviewers) → readiness gate → mark ready for review → human review
   → human merge
 ```
@@ -491,8 +491,8 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the setup: **every round's commit is secret-scanned before it is pushed.**
   Where the `pre-push` hook is installed it is automatic (this repo installs
   it via `task install:hooks`); where it is not, run `task security:secrets`
-  yourself first. The rest of the security suite still runs at `task ci`
-  before the PR exists.
+  yourself first. The full security suite (`task security`) runs before the
+  draft PR as the pre-publication gate.
   **Push to the branch's own writable remote** — the one `gh pr create` will
   push to — and set it on the first push (`git push -u <remote> <branch>`),
   since a new branch has no upstream to infer. What it buys is that a
@@ -518,7 +518,9 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   its own resolved **review cap**. The two stages are counted separately — and
   capped separately, even where the level gives them equal numbers: a converged
   challenge says nothing about review.
-- **`task ci`** — the full CI mirror; fix anything it catches.
+- **`task security`** — Semgrep CE + gitleaks + dependency audit; the
+  pre-publication security gate (~1 min). `task ci` remains available on demand
+  when CI is red and you want to iterate the full mirror locally.
 - **Open the draft PR** — conventional commit, push whatever the rounds above
   have not already pushed,
   **`gh pr create --draft`** with a clear what/why/verification summary (mind
@@ -789,7 +791,7 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
   needless complexity. Steer it with e.g.
   `task challenge -- --base main focus on the update/migration path`.
 - `task review` (→ `review:codex`) — verification checkpoint: double-checks
-  the implementation, consistency, and test coverage before `task ci`.
+  the implementation, consistency, and test coverage before the draft PR.
 - `task codex:gate:enable` / `:disable` / `:status` — the automatic
   Claude Code → Codex stop-gate (the codex plugin's Stop hook reviews each
   editing turn and blocks completion on material findings). Per-repo,
@@ -800,7 +802,7 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
   past a BLOCK** — adjudicate the finding or escalate to Evan instead.
 
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
-before `task ci` — and, where the skill's supported topology holds (`origin`
+before `task security` and the draft PR — and, where the skill's supported topology holds (`origin`
 is the repository the PR will target), the procedure for running them to
 convergence is the vendored `/gauntlet` skill, entered by reading
 `.claude/skills/gauntlet/SKILL.md`; otherwise the Dev Loop's fallback above
