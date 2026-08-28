@@ -94,7 +94,8 @@ assert_guard_allows "sudo printf safe"
 assert_guard_allows "sudo ls ."
 assert_guard_allows "env printf ."
 assert_guard_allows "env --chdir . printf safe"
-assert_guard_allows "timeout 1 printf ."
+assert_guard_allows "timeout --help"
+assert_guard_allows "timeout --version"
 assert_guard_allows "time printf ."
 assert_guard_allows "command printf ."
 assert_guard_allows "builtin printf ."
@@ -131,6 +132,8 @@ for command in \
     "env -iS'kill -9 42'" \
     "env --split-string='kill -9 42'" \
     "env --split-string 'kill -9 42'" \
+    "timeout 1 printf ." \
+    "timeout 1 sleep 10" \
     "timeout 1 kill -9 42" \
     "pkill -f worker" \
     "killall worker" \
@@ -205,6 +208,7 @@ for command in \
     "sudo --unknown-option printf safe" \
     "trap 'kill -9 42' EXIT" \
     "trap 'KILL -9 42' EXIT" \
+    "trap 'ki\\ll -9 42' EXIT" \
     "printf 'kill -9 42'" \
     "find . -name 'kill -9 42'" \
     "echo foo#bar; kill -9 42" \

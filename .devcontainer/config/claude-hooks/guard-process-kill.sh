@@ -54,7 +54,7 @@ import sys
 TERMINATORS = {"kill", "pkill", "killall", "xkill"}
 TERMINATOR_TEXT = re.compile(r"(?<![A-Za-z0-9_])(?:kill|pkill|killall|xkill)(?![A-Za-z0-9_])")
 SHELLS = {"sh", "bash", "dash", "zsh", "fish"}
-EVALUATORS = {"eval", "source", "."}
+EVALUATORS = {"eval", "source", ".", "trap"}
 EVALUATOR_CONTROLS = {"if", "then", "elif", "else", "while", "until", "do"}
 WRAPPERS = {
     "chrt", "command", "builtin", "doas", "env", "exec", "flock", "ionice",
@@ -125,6 +125,12 @@ def env_uses_split_string(args):
                 break
         index += 1
     return False
+
+
+def timeout_is_active(args):
+    # GNU timeout's help/version forms do not execute a child or send signals.
+    # All other forms are approval-gated rather than reimplementing its grammar.
+    return args not in (["--help"], ["--version"])
 
 
 def sudo_uses_shell(args):
@@ -232,6 +238,8 @@ def inspect_segment(segment):
         return "ask"
     # GNU env's split-string options re-tokenize their payload as a command.
     if command == "env" and env_uses_split_string(args):
+        return "ask"
+    if command == "timeout" and timeout_is_active(args):
         return "ask"
     # Wrapper args can launch a shell through nested wrappers or option forms.
     if command in WRAPPERS and any(name(token) in SHELLS for token in args):
