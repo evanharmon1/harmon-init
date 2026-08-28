@@ -212,7 +212,7 @@ if [ -f .devcontainer/config/claude-settings.json ]; then
 fi
 jq -e '
     [."claude-hooks".PreToolUse[] | select(.matcher == "run_command") | .hooks[].command]
-    | index("./.agents/agy-adapter.sh ./.claude/hooks/guard-process-kill.sh PreToolUse") != null
+    | index("./agy-adapter.sh .claude/hooks/guard-process-kill.sh PreToolUse") != null
 ' .agents/hooks.json >/dev/null ||
     fail "agy hooks do not register guard-process-kill"
 
