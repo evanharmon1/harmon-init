@@ -54,6 +54,8 @@ import sys
 TERMINATORS = {"kill", "pkill", "killall", "xkill"}
 TERMINATOR_TEXT = re.compile(r"(?<![A-Za-z0-9_])(?:kill|pkill|killall|xkill)(?![A-Za-z0-9_])")
 SHELLS = {"sh", "bash", "dash", "zsh", "fish"}
+EVALUATORS = {"eval", "source", "."}
+EVALUATOR_CONTROLS = {"if", "then", "elif", "else", "while", "until", "do"}
 WRAPPERS = {
     "chrt", "command", "builtin", "doas", "env", "exec", "flock", "ionice",
     "nice", "nohup", "setsid", "stdbuf", "sudo", "taskset", "time", "timeout", "xargs",
@@ -62,10 +64,27 @@ CONTROL = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "d
 OPERATORS = {";", "&&", "||", "|", "&"}
 REDIRECTS = {"<", ">", ">>", "<<", "<<<", "<>", ">&", "<&"}
 PID = re.compile(r"[1-9][0-9]*")
+ASSIGNMENT_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\+)?=.*")
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+SUDO_SHORT_OPTIONS_WITH_ARGUMENT = {"a", "C", "D", "g", "h", "p", "R", "r", "t", "T", "U", "u"}
+SUDO_SHORT_OPTIONS_WITHOUT_ARGUMENT = {"A", "b", "B", "E", "e", "H", "K", "k", "l", "n", "P", "S", "v", "V"}
+SUDO_LONG_OPTIONS_WITH_ARGUMENT = {
+    "--chdir", "--close-from", "--command-timeout", "--group", "--host", "--other-user", "--prompt",
+    "--role", "--type", "--user",
+}
+SUDO_LONG_OPTIONS_WITHOUT_ARGUMENT = {
+    "--askpass", "--background", "--bell", "--edit", "--help", "--list", "--non-interactive",
+    "--preserve-groups", "--remove-timestamp", "--reset-timestamp", "--set-home", "--stdin", "--validate",
+    "--version",
+}
 
 
 def name(token):
-    return os.path.basename(token)
+    return ascii_lower(os.path.basename(token))
+
+
+def ascii_lower(value):
+    return value.translate(ASCII_LOWER)
 
 
 def safe_kill(args):
@@ -108,28 +127,130 @@ def env_uses_split_string(args):
     return False
 
 
+def sudo_uses_shell(args):
+    # Stop at sudo's command. Unknown or incomplete option grammar is unsafe.
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            return index + 1 >= len(args)
+        if token in {"--shell", "--login"}:
+            return True
+        if token in SUDO_LONG_OPTIONS_WITH_ARGUMENT:
+            if index + 1 >= len(args):
+                return True
+            index += 2
+            continue
+        option, separator, _ = token.partition("=")
+        if separator and option in SUDO_LONG_OPTIONS_WITH_ARGUMENT:
+            index += 1
+            continue
+        if token in SUDO_LONG_OPTIONS_WITHOUT_ARGUMENT:
+            index += 1
+            continue
+        if token.startswith("--"):
+            return True
+        if token == "-" or not token.startswith("-"):
+            return False
+        for position, option in enumerate(token[1:]):
+            if option in {"i", "s"}:
+                return True
+            if option in SUDO_SHORT_OPTIONS_WITH_ARGUMENT:
+                if position + 1 == len(token[1:]):
+                    if index + 1 >= len(args):
+                        return True
+                    index += 1
+                break
+            if option not in SUDO_SHORT_OPTIONS_WITHOUT_ARGUMENT:
+                return True
+        index += 1
+    return True
+
+
+def command_builtin_payload(command, args):
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            return args[index + 1] if index + 1 < len(args) else None
+        if command == "command" and token == "-p":
+            index += 1
+            continue
+        if token.startswith("-"):
+            options = token[1:]
+            if "v" in options or "V" in options:
+                return None
+            if command == "command" and options and set(options) == {"p"}:
+                index += 1
+                continue
+            return None
+        return token
+    return None
+
+
+def assignment_width(tokens):
+    if ASSIGNMENT_WORD.fullmatch(tokens[0]):
+        return 1
+    return 0
+
+
+def effective_command(segment):
+    tokens = segment
+    while tokens:
+        token, rest = tokens[0], tokens[1:]
+        width = assignment_width(tokens)
+        if width:
+            tokens = tokens[width:]
+            continue
+        current = name(token)
+        if current == "time":
+            while rest and rest[0] in {"-p", "--"}:
+                rest = rest[1:]
+            tokens = rest
+            continue
+        if current == "!" or current in EVALUATOR_CONTROLS:
+            tokens = rest
+            continue
+        if current == "coproc":
+            # A simple coprocess starts with its command; named compound forms
+            # contain `{` and are already rejected before token inspection.
+            return rest
+        return tokens
+    return []
+
+
 def inspect_segment(segment):
     if not segment:
         return "allow"
-    command, args = name(segment[0]), segment[1:]
+    effective = effective_command(segment)
+    if not effective:
+        return "allow"
+    command, args = name(effective[0]), effective[1:]
     # Shells can read executable text from `-c` arguments or redirects, so ask
     # for every shell launcher before redirect handling.
-    if command in SHELLS or command == "eval":
+    if command in SHELLS or command in EVALUATORS:
         return "ask"
     # GNU env's split-string options re-tokenize their payload as a command.
     if command == "env" and env_uses_split_string(args):
         return "ask"
-    # Wrappers can launch a shell whose payload contains a terminating command.
-    if command in WRAPPERS and any(name(token) in SHELLS or name(token) == "eval" for token in args):
+    # Wrapper args can launch a shell through nested wrappers or option forms.
+    if command in WRAPPERS and any(name(token) in SHELLS for token in args):
         return "ask"
-    if any(token in REDIRECTS for token in segment):
-        return "ask" if any(name(token) in TERMINATORS for token in segment) else "allow"
+    if command == "sudo" and sudo_uses_shell(args):
+        return "ask"
+    # command/builtin can dispatch evaluators without a shell binary.
+    if command in {"command", "builtin"}:
+        payload = command_builtin_payload(command, args)
+        if payload is not None and name(payload) in EVALUATORS:
+            return "ask"
+    if any(token in REDIRECTS for token in effective):
+        return "ask" if any(name(token) in TERMINATORS for token in effective) else "allow"
 
     if command == "kill":
         return "allow" if safe_kill(args) else "ask"
     if command in TERMINATORS:
         return "ask"
-    if any(TERMINATOR_TEXT.search(token) for token in args):
+    if any(TERMINATOR_TEXT.search(ascii_lower(token)) for token in args):
         return "ask"
     # `find -exec*` can launch a shell or a terminating utility after arbitrary
     # substitutions. Its target is never a direct probe segment.
@@ -173,6 +294,9 @@ def inspect_tokens(tokens):
 
 def inspect_command(command):
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    # Preserve assignment operators within adjacent words. Whitespace still
+    # separates `printf + =value`, so it cannot be mistaken for `NAME+=value`.
+    lexer.wordchars += "+="
     # Bash starts a comment only when `#` begins a word. Python shlex treats an
     # in-word hash as a comment too, which could hide a later command segment.
     lexer.commenters = ""

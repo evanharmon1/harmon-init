@@ -77,11 +77,34 @@ echo "==> guard-process-kill permits only complete, non-terminating probe segmen
 [ -x "$guard" ] || fail "guard-process-kill is not executable"
 assert_guard_allows "kill -l"
 assert_guard_allows "kill -0 42 99"
+assert_guard_allows "/usr/bin/KILL -0 42 99"
 assert_guard_allows "kill -l && kill -0 42"
 assert_guard_allows "skill --version"
 assert_guard_allows "killswitch=false"
 assert_guard_allows "printf safe"
+assert_guard_allows "FOO=bar printf safe"
+assert_guard_allows "FOO+=bar printf safe"
 assert_guard_allows "env FOO=bar printf safe"
+assert_guard_allows "coproc printf bash"
+assert_guard_allows "coproc printf source"
+assert_guard_allows "coproc echo ."
+assert_guard_allows "printf + =bar bash"
+assert_guard_allows "echo + =x source"
+assert_guard_allows "sudo printf safe"
+assert_guard_allows "sudo ls ."
+assert_guard_allows "env printf ."
+assert_guard_allows "env --chdir . printf safe"
+assert_guard_allows "timeout 1 printf ."
+assert_guard_allows "time printf ."
+assert_guard_allows "command printf ."
+assert_guard_allows "builtin printf ."
+assert_guard_allows "nice printf ."
+assert_guard_allows "xargs printf ."
+assert_guard_allows "command -v source"
+assert_guard_allows "command -V source"
+assert_guard_allows "sudo printf -s"
+assert_guard_allows "sudo source ./cleanup.sh"
+assert_guard_allows "env . ./cleanup.sh"
 assert_guard_allows "env printf -- -Sfoo"
 assert_guard_allows "env FOO=bar printf -Sfoo"
 
@@ -100,6 +123,8 @@ for command in \
     "kill -9 42" \
     "kill -l TERM" \
     "kill -s 0 42" \
+    "/usr/bin/KILL -9 42" \
+    "sudo /usr/bin/KILL -9 42" \
     "env kill -0 42" \
     "env -S'kill -9 42'" \
     "env -S 'kill -9 42'" \
@@ -120,9 +145,66 @@ for command in \
     "sudo sh < cleanup.sh" \
     "env bash -c 'kill -9 42'" \
     "timeout 1 sh -c 'kill -9 42'" \
+    "env - bash" \
+    "env sudo sh -c 'kill -9 42'" \
+    "timeout -sKILL 1 bash" \
+    "sudo -h buildhost bash" \
+    "sudo -h buildhost -s" \
+    "FOO=bar source ./cleanup.sh" \
+    "FOO=bar eval true" \
+    "FOO=bar bash -c 'true'" \
+    "FOO=x sudo -s" \
+    "FOO=x sudo" \
+    "FOO=x env bash" \
+    "FOO=x timeout 1 bash" \
+    "FOO=x command bash" \
+    "FOO+=bar bash -c 'true'" \
+    "FOO+=bar source ./cleanup.sh" \
+    "FOO+=bar sudo -s" \
+    "time FOO=bar source ./cleanup.sh" \
+    "time FOO=x sudo -s" \
+    "! FOO=bar bash -c 'true'" \
+    "! FOO=x timeout 1 bash" \
+    "if FOO=bar eval true; then printf safe; fi" \
+    "if FOO=x env bash; then printf safe; fi" \
+    "coproc source ./cleanup.sh" \
+    "coproc eval true" \
+    "coproc bash -c 'true'" \
     "zsh -lc 'kill -9 42'" \
     "eval 'kill -9 42'" \
+    "source ./cleanup.sh" \
+    ". ./cleanup.sh" \
+    "source < cleanup.sh" \
+    ". < cleanup.sh" \
+    "printf '\\153ill -9 42\\n' | source /dev/stdin" \
+    "printf '\\153ill -9 42\\n' | . /dev/stdin" \
+    "command source ./cleanup.sh" \
+    "command -p source ./cleanup.sh" \
+    "command -- source ./cleanup.sh" \
+    "builtin . ./cleanup.sh" \
+    "time source ./cleanup.sh" \
+    "time . ./cleanup.sh" \
+    "time eval true" \
+    "! source ./cleanup.sh" \
+    "if source ./cleanup.sh; then printf safe; fi" \
+    "while source ./cleanup.sh; do printf safe; done" \
+    "sudo" \
+    "sudo --" \
+    "sudo -s" \
+    "sudo -s <<< 'kill -9 42'" \
+    "sudo --shell" \
+    "sudo --shell <<< 'kill -9 42'" \
+    "sudo -i" \
+    "sudo -i <<< 'kill -9 42'" \
+    "sudo --login" \
+    "sudo --login <<< 'kill -9 42'" \
+    "sudo -ks" \
+    "sudo -ks < cleanup.sh" \
+    "sudo --command-timeout 5 -s" \
+    "sudo --host buildhost -s" \
+    "sudo --unknown-option printf safe" \
     "trap 'kill -9 42' EXIT" \
+    "trap 'KILL -9 42' EXIT" \
     "printf 'kill -9 42'" \
     "find . -name 'kill -9 42'" \
     "echo foo#bar; kill -9 42" \
@@ -199,6 +281,7 @@ jq -e '
 ' .claude/settings.json >/dev/null ||
     fail "repository Claude settings do not register guard-process-kill"
 if [ -f template/.claude/settings.json.jinja ]; then
+    # shellcheck disable=SC2016 # The generated hook command intentionally contains a literal variable.
     grep -Fq '"command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-process-kill.sh"' \
         template/.claude/settings.json.jinja ||
         fail "always-generated Claude settings template does not register guard-process-kill"
@@ -241,34 +324,39 @@ fi
 
 echo "==> hook-delegation targets OK (commit-msg accept/reject, format:file)"
 
-echo "==> Codex apply_patch adapter emits one Claude-style payload per file"
-capture="$tmpdir/capture"
-mock="$tmpdir/mock-hook.sh"
-cat >"$mock" <<'EOF'
+codex_hooks_dir="$repo/.devcontainer/config/codex-hooks"
+if [ -x "$codex_hooks_dir/file-payload.sh" ] && [ -x "$codex_hooks_dir/claude-compat.sh" ]; then
+    echo "==> Codex apply_patch adapter emits one Claude-style payload per file"
+    capture="$tmpdir/capture"
+    mock="$tmpdir/mock-hook.sh"
+    cat >"$mock" <<'EOF'
 #!/usr/bin/env bash
 jq -r '.tool_input.file_path' >>"$HOOK_CAPTURE"
 EOF
-chmod +x "$mock"
-export HOOK_CAPTURE="$capture"
-printf '%s' '{"cwd":"/tmp/project","tool_input":{"command":"*** Begin Patch\n*** Update File: one.txt\n*** Add File: dir/two.txt\n*** End Patch"}}' |
-    bash "$repo/.devcontainer/config/codex-hooks/file-payload.sh" "$mock"
-printf 'one.txt\ndir/two.txt\n' >"$tmpdir/expected"
-cmp -s "$tmpdir/expected" "$capture" ||
-    fail "Codex file-payload adapter did not preserve both patch paths"
+    chmod +x "$mock"
+    export HOOK_CAPTURE="$capture"
+    printf '%s' '{"cwd":"/tmp/project","tool_input":{"command":"*** Begin Patch\n*** Update File: one.txt\n*** Add File: dir/two.txt\n*** End Patch"}}' |
+        bash "$codex_hooks_dir/file-payload.sh" "$mock"
+    printf 'one.txt\ndir/two.txt\n' >"$tmpdir/expected"
+    cmp -s "$tmpdir/expected" "$capture" ||
+        fail "Codex file-payload adapter did not preserve both patch paths"
 
-echo "==> Codex Bash adapter exports the session cwd"
-cwd_mock="$tmpdir/cwd-hook.sh"
-cat >"$cwd_mock" <<'EOF'
+    echo "==> Codex Bash adapter exports the session cwd"
+    cwd_mock="$tmpdir/cwd-hook.sh"
+    cat >"$cwd_mock" <<'EOF'
 #!/usr/bin/env bash
 printf '%s' "$CLAUDE_PROJECT_DIR"
 cat >/dev/null
 EOF
-chmod +x "$cwd_mock"
-got="$(printf '%s' '{"cwd":"/tmp/codex-project"}' |
-    bash "$repo/.devcontainer/config/codex-hooks/claude-compat.sh" "$cwd_mock")"
-[ "$got" = "/tmp/codex-project" ] || fail "Codex Bash adapter lost the session cwd"
+    chmod +x "$cwd_mock"
+    got="$(printf '%s' '{"cwd":"/tmp/codex-project"}' |
+        bash "$codex_hooks_dir/claude-compat.sh" "$cwd_mock")"
+    [ "$got" = "/tmp/codex-project" ] || fail "Codex Bash adapter lost the session cwd"
 
-echo "==> shared Claude/Codex hook adapters OK"
+    echo "==> shared Claude/Codex hook adapters OK"
+else
+    echo "==> Codex adapter fixtures skipped (devcontainer assets absent)"
+fi
 
 echo "==> agy adapter follows Cwd to the worktree root and exports CLAUDE_PROJECT_DIR"
 agy_fixture="$tmpdir/agy-fixture"
