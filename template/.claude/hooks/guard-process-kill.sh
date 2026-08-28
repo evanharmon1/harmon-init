@@ -76,6 +76,38 @@ def safe_kill(args):
     )
 
 
+def env_uses_split_string(args):
+    # GNU env accepts options before assignments and the command. Track only
+    # that region so a command's own `-S...` argument is not mistaken for env.
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            return False
+        if token == "--split-string" or token.startswith("--split-string="):
+            return True
+        if token in {"--chdir", "--unset"}:
+            index += 2
+            continue
+        if token.startswith("--"):
+            index += 1
+            continue
+        if token == "-" or not token.startswith("-"):
+            if "=" in token and not token.startswith("="):
+                index += 1
+                continue
+            return False
+        for position, option in enumerate(token[1:]):
+            if option == "S":
+                return True
+            if option in {"C", "u"}:
+                if position + 1 == len(token[1:]):
+                    index += 1
+                break
+        index += 1
+    return False
+
+
 def inspect_segment(segment):
     if not segment:
         return "allow"
@@ -83,6 +115,9 @@ def inspect_segment(segment):
     # Shells can read executable text from `-c` arguments or redirects, so ask
     # for every shell launcher before redirect handling.
     if command in SHELLS or command == "eval":
+        return "ask"
+    # GNU env's split-string options re-tokenize their payload as a command.
+    if command == "env" and env_uses_split_string(args):
         return "ask"
     # Wrappers can launch a shell whose payload contains a terminating command.
     if command in WRAPPERS and any(name(token) in SHELLS or name(token) == "eval" for token in args):

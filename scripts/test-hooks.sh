@@ -81,6 +81,9 @@ assert_guard_allows "kill -l && kill -0 42"
 assert_guard_allows "skill --version"
 assert_guard_allows "killswitch=false"
 assert_guard_allows "printf safe"
+assert_guard_allows "env FOO=bar printf safe"
+assert_guard_allows "env printf -- -Sfoo"
+assert_guard_allows "env FOO=bar printf -Sfoo"
 
 guard_subdir="$tmpdir/guard-subdir"
 mkdir -p "$guard_subdir"
@@ -98,6 +101,11 @@ for command in \
     "kill -l TERM" \
     "kill -s 0 42" \
     "env kill -0 42" \
+    "env -S'kill -9 42'" \
+    "env -S 'kill -9 42'" \
+    "env -iS'kill -9 42'" \
+    "env --split-string='kill -9 42'" \
+    "env --split-string 'kill -9 42'" \
     "timeout 1 kill -9 42" \
     "pkill -f worker" \
     "killall worker" \
