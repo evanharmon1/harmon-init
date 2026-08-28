@@ -311,15 +311,19 @@ if printf '%s' 'not a conventional message' | task lint:commit-msg:text >/dev/nu
     fail "lint:commit-msg:text accepted an INVALID message"
 fi
 
-echo "==> format:file formats a file, including a path containing a space"
-spaced="$tmpdir/with space.sh"
-printf 'f(){\necho hi\n}\n' >"$spaced"
-before="$(cat "$spaced")"
-if ! task format:file -- "$spaced" >/dev/null 2>&1; then
-    fail "format:file errored on a path containing a space"
-fi
-if [ "$before" = "$(cat "$spaced")" ]; then
-    fail "format:file did not reformat a mis-formatted file"
+if command -v shfmt >/dev/null 2>&1; then
+    echo "==> format:file formats a file, including a path containing a space"
+    spaced="$tmpdir/with space.sh"
+    printf 'f(){\necho hi\n}\n' >"$spaced"
+    before="$(cat "$spaced")"
+    if ! task format:file -- "$spaced" >/dev/null 2>&1; then
+        fail "format:file errored on a path containing a space"
+    fi
+    if [ "$before" = "$(cat "$spaced")" ]; then
+        fail "format:file did not reformat a mis-formatted file"
+    fi
+else
+    echo "==> format:file delegation skipped (shfmt unavailable)"
 fi
 
 echo "==> hook-delegation targets OK (commit-msg accept/reject, format:file)"
