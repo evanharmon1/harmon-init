@@ -79,7 +79,10 @@ this comment. -->
       repository's `CI_RUNS_ON` variable from the selected runner settings;
       explicit GitHub-hosted overrides are preserved. The repository value is
       intentional and takes precedence over an organization fallback. Public
-      repositories reject self-hosted routing. Do not add `dependabot.yml`: Renovate owns routine
+      repositories reject self-hosted routing. Re-run this task after changing
+      Copier runner answers; an explicit GitHub-hosted override remains
+      authoritative and must be removed manually before adopting self-hosted
+      routing. Do not add `dependabot.yml`: Renovate owns routine
       and vulnerability-remediation PRs; Dependabot owns advisory alerts.
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is

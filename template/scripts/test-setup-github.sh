@@ -89,6 +89,22 @@ grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/o
     fail "missing preserved override outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted override was rewritten"; fi
 
+echo "==> GitHub-hosted runner arrays are preserved"
+GH_PRIVATE=true GH_VARIABLE_VALUE='["ubuntu-latest"]' \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "hosted-array path exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/out" ||
+    fail "missing preserved hosted-array outcome"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted array was rewritten"; fi
+
+echo "==> ambiguous scalar runner labels fail closed"
+GH_PRIVATE=true GH_VARIABLE_VALUE='"self-hosted"' \
+    run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 1 ] || fail "ambiguous-scalar path exited $run_rc"
+grep -Fq '[ ] Actions runner routing - existing CI_RUNS_ON is not valid hosted or self-hosted JSON' "$tmp/out" ||
+    fail "ambiguous scalar was not rejected"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "ambiguous scalar was rewritten"; fi
+
 echo "==> switching a template to GitHub-hosted clears its stale self-hosted routing"
 GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" \
     run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'

@@ -124,7 +124,13 @@ if [ -n "$ci_runs_on" ]; then
             fi
         else
             current_kind="$(printf '%s\n' "$current_ci_runs_on" | jq -r \
-                'if type == "array" and index("self-hosted") != null then "self-hosted" elif type == "string" then "hosted" else "invalid" end' \
+                'def hosted_label:
+                    type == "string" and test("^(ubuntu|windows|macos)-[A-Za-z0-9._-]+$");
+                 if type == "array" and index("self-hosted") != null then "self-hosted"
+                 elif hosted_label then "hosted"
+                 elif type == "array" and length > 0 and all(.[]; hosted_label) then "hosted"
+                 else "invalid"
+                 end' \
                 2>/dev/null || printf '%s' invalid)"
             if [ "$current_kind" = self-hosted ]; then
                 if output_run "Updating self-hosted runner routing" \

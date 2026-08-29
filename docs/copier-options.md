@@ -237,7 +237,7 @@ A generated repo's behavior also depends on state no answer captures.
 
 | Variable | Effect |
 |---|---|
-| `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON string or label array). For self-hosted projects, `task setup:github` creates or standardizes this repository variable on private repos while preserving an explicit GitHub-hosted value; public repos reject self-hosted setup. |
+| `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON string or label array). `task setup:github` creates or reconciles this repository variable from the current Copier runner answers; re-run it after changing those answers. Explicit GitHub-hosted values remain authoritative and must be removed manually before adopting self-hosted routing; public repos reject self-hosted setup. |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
 | `FULL_SECURITY_SCAN` | On a repo rendered with `use_codeql: true`, opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, suppresses the Semgrep CE step in `build.yml` — a swap, not an addition. Compared as the string `'true'`. **Inert on a `use_codeql: false` repo** — see the note below |
 | `ORG_PROJECT_ID` | Org Projects V2 board the automation writes to |
