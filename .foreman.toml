@@ -52,7 +52,7 @@ sandboxed = false
 # entries (docker, ports, untrusted-input) run additionally where the
 # capability is present. Whatever does not run in-unit is CI's job.
 [verify]
-default = ["task", "ci"]
+default = ["bash", "-c", "task verify && task security"]
 
 [budgets]
 dispatch_usd = 20.0
