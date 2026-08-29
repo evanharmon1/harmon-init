@@ -140,8 +140,8 @@ tasks:
 [% endif %]
       - task: test:worktree
       - task: test:session-cleanup
-[% if devcontainer %]
       - task: test:hooks
+[% if devcontainer %]
       - task: test:statusline
       - task: test:link-claude-json
       - task: test:image-staleness
@@ -893,11 +893,13 @@ tasks:
     cmds:
       - ./scripts/test-open-devcontainer.sh
 
+[% endif %]
+
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
     cmds:
       - ./scripts/test-hooks.sh
-[% endif %]
+
 [% if use_node %]
 
   test:e2e:

@@ -11,6 +11,10 @@
           {
             "type": "command",
             "command": "./agy-adapter.sh .claude/hooks/enforce-conventional-commits.sh PreToolUse"
+          },
+          {
+            "type": "command",
+            "command": "./agy-adapter.sh .claude/hooks/guard-process-kill.sh PreToolUse"
           }
         ]
       }
