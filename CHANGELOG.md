@@ -8,6 +8,29 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.41.0](https://github.com/evanharmon1/harmon-init/compare/v4.40.0...v4.41.0) (2026-08-29)
+
+
+### Features
+
+* add guarded unregistered-label retirement ([#1079](https://github.com/evanharmon1/harmon-init/issues/1079)) ([c0fdab6](https://github.com/evanharmon1/harmon-init/commit/c0fdab624e6b8b2021497344f1257e5fa2201432))
+* **ci:** gate issue closure on completed criteria ([#1099](https://github.com/evanharmon1/harmon-init/issues/1099)) ([50415d9](https://github.com/evanharmon1/harmon-init/commit/50415d9596dd75e9f1264e723ab57211937e6c83))
+* **dev-loop:** drop task ci from pre-PR path, keep on demand ([#1107](https://github.com/evanharmon1/harmon-init/issues/1107)) ([c8e3627](https://github.com/evanharmon1/harmon-init/commit/c8e3627310bba0f975a1f1d612f0c573eeefebaf))
+* **devcontainer:** add shared Terraform tooling ([#1059](https://github.com/evanharmon1/harmon-init/issues/1059)) ([79ad7fb](https://github.com/evanharmon1/harmon-init/commit/79ad7fb3879d7eeb086b7fdac1350be0b7d91773))
+* **devflow:** add schema v1 conformance contract ([#1067](https://github.com/evanharmon1/harmon-init/issues/1067)) ([8146b16](https://github.com/evanharmon1/harmon-init/commit/8146b16bd7384ca1ba880dbe05bb9b4870d71124))
+* **hooks:** ask before terminating processes ([#1106](https://github.com/evanharmon1/harmon-init/issues/1106)) ([29cf81c](https://github.com/evanharmon1/harmon-init/commit/29cf81ce3debe8d7bf1b4efb1d1c9b38626a82b0))
+* report skills vendoring status ([#1070](https://github.com/evanharmon1/harmon-init/issues/1070)) ([0cbfa0a](https://github.com/evanharmon1/harmon-init/commit/0cbfa0ab0182730e4bc17d997b45565a8168d662))
+
+
+### Bug Fixes
+
+* **agents:** anchor agy-adapter's CLAUDE_PROJECT_DIR to the worktree root ([#1096](https://github.com/evanharmon1/harmon-init/issues/1096)) ([5ca28aa](https://github.com/evanharmon1/harmon-init/commit/5ca28aad2c4351871816d6364f086092a4c0c2b4))
+* **agents:** resolve agy-adapter path relative to .agents working directory ([#1108](https://github.com/evanharmon1/harmon-init/issues/1108)) ([9bad6da](https://github.com/evanharmon1/harmon-init/commit/9bad6da6cad818eb1616c9fce96454d1812edc09))
+* **devcontainer:** make Claude PR status reliable ([#1068](https://github.com/evanharmon1/harmon-init/issues/1068)) ([39c6ed5](https://github.com/evanharmon1/harmon-init/commit/39c6ed5809a8cabab2a9f3b3e1851890a1c1d87d))
+* **devcontainer:** update shared image to 79ad7fb3 ([#1065](https://github.com/evanharmon1/harmon-init/issues/1065)) ([521f1de](https://github.com/evanharmon1/harmon-init/commit/521f1de73323e3fe35749e001382e804c636bd68))
+* release claims after partial-issue PRs merge ([#1098](https://github.com/evanharmon1/harmon-init/issues/1098)) ([84f3bf4](https://github.com/evanharmon1/harmon-init/commit/84f3bf45f7c1bdfdeb145ac928e8578c1beeb2ef))
+* **template:** sync harmon-devkit skills to v0.37.0 ([#1111](https://github.com/evanharmon1/harmon-init/issues/1111)) ([f026040](https://github.com/evanharmon1/harmon-init/commit/f026040dd17084375991b59a783f6749d208e148))
+
 ## [4.40.0](https://github.com/evanharmon1/harmon-init/compare/v4.39.1...v4.40.0) (2026-08-25)
 
 
