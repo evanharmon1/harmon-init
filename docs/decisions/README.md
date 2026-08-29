@@ -15,7 +15,8 @@ one's status.
   `Status` line carries the outcome). Records from before this convention
   keep their numbered `NNNN-` names; both forms are valid.
 - Start with
-  [0001-record-architecture-decisions.md](0001-record-architecture-decisions.md)
-  — the meta-ADR for the process; copy it as the template for new ADRs.
+  [2026-06-19-record-architecture-decisions.md](2026-06-19-record-architecture-decisions.md)
+  — the meta-ADR for the process, maintained by the project template and
+  named by the date it was seeded; copy it as the template for new ADRs.
 - [0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
   — proposed v1 contract for portable devflow consumers.

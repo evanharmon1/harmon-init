@@ -6,12 +6,13 @@ Date: 2026-08-29
 
 Accepted
 
-Amends two clauses of [ADR 0001](0001-record-architecture-decisions.md):
-the naming rule ("Numbered sequentially and zero-padded" becomes the date
-form below) and the status vocabulary (`Rejected` is added, so a `Proposed`
-record that is turned down can say so without renaming). The rest of 0001 —
-one ADR per file, the Context/Decision/Consequences shape,
-supersede-don't-edit — stands unchanged.
+Amends two clauses of [the seed record](2026-06-19-record-architecture-decisions.md)
+(formerly `0001-record-architecture-decisions.md`): the naming rule
+("Numbered sequentially and zero-padded" becomes the date form below) and
+the status vocabulary (`Rejected` is added, so a `Proposed` record that is
+turned down can say so without renaming). The rest of the seed — one ADR
+per file, the Context/Decision/Consequences shape, supersede-don't-edit —
+stands unchanged.
 
 ## Context
 
@@ -31,22 +32,23 @@ is the day the record was filed. The name is fixed at creation and never
 changes with status: a record filed as `Proposed` keeps its filing date when
 it is accepted or rejected (`Rejected` joins the status vocabulary), and the `Status` line
 carries the outcome, so no review ever waits on a rename. This amends
-[ADR 0001](0001-record-architecture-decisions.md)'s naming clause.
+[the seed record](2026-06-19-record-architecture-decisions.md)'s naming clause.
 
 - Records already numbered when this was filed keep their existing names,
   as does any numbered record still in flight on a branch at that time (PR
   #1114's Dev flow v2 record, for one). Both the `NNNN-` and `YYYY-MM-DD-`
-  forms are valid; nothing is renamed.
-- `template/docs/decisions/README.md` and the template's seed
-  `0001-record-architecture-decisions.md` carry the convention into every
-  generated repo (harmon-init#1112). The seed states the date form directly
-  — a new project never made the numbered decision, so it has no history to
-  amend — while this repo's own `0001` keeps its original bullet and records
-  the change in a dated Amendments entry; the two are an allowlisted
-  dogfood-parity divergence for that reason. An existing consumer's accepted
-  `0001` is reconciled by its `copier update` PR with repository-aware
-  judgment (append an amendment there, or accept the seed's new bullet),
-  per the "regular rolling updates" rule in `AGENTS.md`.
+  forms are valid; nothing is renamed except the template-managed seed,
+  which the next bullet covers.
+- The seed record is **template-managed and follows the rule itself**: it
+  is rendered as `<decisions_seed_date>-record-architecture-decisions.md`,
+  where `decisions_seed_date` is a Copier answer defaulting to the scaffold
+  date and recorded once, so `copier update` keeps improving the seed's
+  content without ever renaming it. A repository scaffolded under the
+  numbered convention is re-titled by its next update (the answer defaults
+  to that update's date, or the maintainer records an earlier one) — the
+  seed's date is a reasonable marker, not a precise historical claim, and
+  harmon-init's own copy uses the date its seed was first committed. The
+  README links to the seed by that name.
 
 ## Consequences
 

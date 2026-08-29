@@ -551,6 +551,12 @@ state:
   when: false
 
 # Date & Time
+decisions_seed_date:
+  type: str
+  help: "DOCS: Date (YYYY-MM-DD) that names the seed decision record docs/decisions/<date>-record-architecture-decisions.md (defaults to today; recorded once so updates never rename it)"
+  default: "[[ '%Y-%m-%d' | strftime ]]"
+  validator: "[% if not (decisions_seed_date | regex_search('^\\d{4}-\\d{2}-\\d{2}$')) %]Enter the date as YYYY-MM-DD.[% endif %]"
+
 current_date:
   type: str
   default: "[[ '%Y-%m-%d' | strftime ]]"

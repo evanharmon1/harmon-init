@@ -23,16 +23,9 @@ cd "$(dirname "$0")/.."
 #               against their own reviewed lockfiles and diffs the shared
 #               family metadata, so the divergence is checked, just not
 #               byte-checked.
-#   docs/decisions/0001-record-architecture-decisions.md — the root record is
-#               harmon-init's real history (original numbered-naming bullet
-#               plus a dated Amendments entry); the template seed states the
-#               current date-named convention directly, because a freshly
-#               generated project never made the earlier decision and must not
-#               inherit harmon-init's amendment trail. See
-#               docs/decisions/2026-08-29-name-decision-records-by-date.md.
 #   (.claude/settings.json is a jinja twin now — root additionally grants the
 #   sibling-repo read permissions/sandbox dirs, reconciled by hand.)
-ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt label-registry.json docs/decisions/0001-record-architecture-decisions.md scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh"
+ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt label-registry.json scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh"
 
 fail=0
 checked=0

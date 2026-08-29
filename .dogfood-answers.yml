@@ -86,3 +86,7 @@ obsidian_directory: "~/Local/Memex/Professional"
 
 include_terraform: false
 include_ansible: false
+
+# The seed decision record is named by this date (root twin: docs/decisions/2026-06-19-…);
+# harmon-init first committed its seed ADR on 2026-06-19.
+decisions_seed_date: "2026-06-19"
