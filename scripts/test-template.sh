@@ -1662,6 +1662,17 @@ if [ "$profile" = "minimal" ]; then
     [ ! -f scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh rendered but devcontainer=false"
     [ ! -f scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh rendered but devcontainer=false"
     ! grep -q 'test:devcontainer:permissions' Taskfile.yml || err "test:devcontainer references rendered but devcontainer=false"
+    grep -Fq '  test:hooks:' Taskfile.yml || err "test:hooks is missing with devcontainer=false"
+    awk '/^  verify:/,/^  # ── Quality Checks/' Taskfile.yml | grep -Fq 'task: test:hooks' ||
+        err "verify does not run test:hooks with devcontainer=false"
+    grep -Fq 'Codex adapter fixtures skipped (devcontainer assets absent)' scripts/test-hooks.sh ||
+        err "test:hooks does not skip Codex adapter fixtures with devcontainer=false"
+    if have task; then
+        run_quiet minimal-hooks task --color=false test:hooks ||
+            err "test:hooks fails with devcontainer=false"
+    else
+        required task "test:hooks with devcontainer=false" || fail=1
+    fi
 else
     grep -Fq 'label=Local%20Dev%20Container&message=Clone' README.md ||
         err "README missing the labeled local clone-in-volume fallback"
