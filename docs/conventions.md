@@ -22,6 +22,11 @@ it points here.
 - **Never bypass hooks** (`--no-verify` is forbidden) — fix the underlying issue.
   In the devcontainer a Claude Code hook actively blocks `--no-verify` and
   validates commit messages.
+- **Ask before terminating processes.** `guard-process-kill.sh` is registered
+  for Claude Code, Codex, and agy Bash commands. It requests approval for every
+  terminating `kill`, `pkill`, `killall`, or `xkill` invocation; only direct
+  `kill -l` and `kill -0 <PID>` probe segments are automatic. Do not infer that
+  a PID belongs to the current session.
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
 
@@ -296,6 +301,16 @@ has.
   to a tag); generated repos configure their own via the `release_content_paths`
   copier answer (empty = no guard). Automated dependency PRs (Renovate/Dependabot)
   are skipped — retitle by hand if a dep bump to guarded content must ship.
+- **Closing an issue is guarded separately.** The `closing-keywords` job in
+  `build.yml` reads only PR and issue metadata with a read-only token, and scans
+  the PR title, body, and every commit message for
+  `Closes`/`Fixes`/`Resolves` references.
+  A bare `#N` is same-repository work: the gate refuses it while issue `#N`
+  has unchecked task-list items, or when it cannot read that issue. Explicit
+  references that name another repository are informational because this
+  repository cannot safely decide another repository's close policy. Use
+  `Refs #N` for partial work. The check reruns when a PR is edited or new
+  commits are pushed; run `task guard:closing-keywords` to pre-flight it.
 - Issue types map many-to-one onto these commit types. Personal-account repos
   use the equivalent work-type labels as that mapping's substrate because native
   issue Type is unavailable there; organization repos use native Type and no

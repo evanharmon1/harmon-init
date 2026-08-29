@@ -207,6 +207,7 @@ full)
         --data include_terraform=true
         --data include_ansible=true
         --data devcontainer=true
+        --data use_statusline_pr_lookup=true
         --data ci_runner=self-hosted
         --data github_org=test-org
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
@@ -1366,18 +1367,27 @@ iac | full)
         err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     if [ "$profile" = "iac" ]; then
-        grep -Fq 'Labels: run `task setup:github-labels`' docs/CHECKLIST.md ||
+        checklist_flat="$(tr -s '[:space:]' ' ' <docs/CHECKLIST.md)"
+        printf '%s' "$checklist_flat" | grep -Fq 'Labels: run `task setup:github-labels`' ||
             err "CHECKLIST omits label setup for project_management=none + use_foreman=true"
-        grep -Fq 'Retire any legacy `agent:*` claim labels' docs/CHECKLIST.md ||
+        printf '%s' "$checklist_flat" | grep -Fq 'Retire any legacy `agent:*` claim labels' ||
             err "CHECKLIST omits legacy-label migration for project_management=none + use_foreman=true"
-        grep -Fq 'treat it as capped' docs/CHECKLIST.md ||
+        printf '%s' "$checklist_flat" | grep -Fq 'An exactly-full manual result is capped' ||
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
-        ! grep -Fq '[project-management.md](project-management.md)' docs/CHECKLIST.md ||
+        ! printf '%s' "$checklist_flat" | grep -Fq '[project-management.md](project-management.md)' ||
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
-        ! grep -Fq 'ADR 0005' docs/CHECKLIST.md ||
+        ! printf '%s' "$checklist_flat" | grep -Fq 'ADR 0005' ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
-        grep -Fq 'Copilot is a broker that defaults to `mai`' docs/CHECKLIST.md ||
+        printf '%s' "$checklist_flat" | grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' ||
             err "CHECKLIST loses the Copilot broker/default-family distinction"
+        printf '%s' "$checklist_flat" | grep -Fq 'and is never a guessed destination' ||
+            err "CHECKLIST permits treating the Copilot broker default as migration evidence"
+        printf '%s' "$checklist_flat" | grep -Fq 'For `suggest:copilot`, there is no claim/session record: re-express each' ||
+            err "CHECKLIST loses the suggestion-specific Copilot handling"
+        printf '%s' "$checklist_flat" | grep -Fq 'For `claim:copilot`,' ||
+            err "CHECKLIST loses the per-record Copilot claim handling"
+        printf '%s' "$checklist_flat" | grep -Fq 'use `claim:mai` only when the record confirms' ||
+            err "CHECKLIST permits guessing MAI for a Copilot claim"
     fi
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
         err ".foreman.toml still ships v1-only keys the v2 CLI ignores"
@@ -1627,15 +1637,19 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
 done
 
 # Required checks must run on the draft, or the gate has nothing to read. A
-# bare `pull_request:` trigger already covers draft opened/synchronize; what
-# would break it is an explicit draft filter or a narrowed types: list.
+# bare `pull_request:` trigger already covers draft opened/synchronize. The
+# closing-keyword job deliberately narrows event types, but keeps the four PR
+# events that create, edit, or add commits to a draft workbench.
 for wf in .github/workflows/*.yml; do
     [ -f "$wf" ] || continue
     ! grep -Fq 'pull_request.draft' "$wf" ||
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
 done
-awk '/^on:/,/^jobs:/' .github/workflows/build.yml | grep -q 'types:' &&
-    err "build.yml narrows its pull_request types — draft opened/synchronize may not run"
+build_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/build.yml)"
+if printf '%s\n' "$build_trigger" | grep -q 'types:' &&
+    ! printf '%s\n' "$build_trigger" | grep -Fq 'types: [opened, edited, synchronize, reopened]'; then
+    err "build.yml pull_request types omit a draft-closing-keyword trigger"
+fi
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
 # minimal renders with devcontainer=false; every other profile has it on.
@@ -1648,6 +1662,17 @@ if [ "$profile" = "minimal" ]; then
     [ ! -f scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh rendered but devcontainer=false"
     [ ! -f scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh rendered but devcontainer=false"
     ! grep -q 'test:devcontainer:permissions' Taskfile.yml || err "test:devcontainer references rendered but devcontainer=false"
+    grep -Fq '  test:hooks:' Taskfile.yml || err "test:hooks is missing with devcontainer=false"
+    awk '/^  verify:/,/^  # ── Quality Checks/' Taskfile.yml | grep -Fq 'task: test:hooks' ||
+        err "verify does not run test:hooks with devcontainer=false"
+    grep -Fq 'Codex adapter fixtures skipped (devcontainer assets absent)' scripts/test-hooks.sh ||
+        err "test:hooks does not skip Codex adapter fixtures with devcontainer=false"
+    if have task; then
+        run_quiet minimal-hooks task --color=false test:hooks ||
+            err "test:hooks fails with devcontainer=false"
+    else
+        required task "test:hooks with devcontainer=false" || fail=1
+    fi
 else
     grep -Fq 'label=Local%20Dev%20Container&message=Clone' README.md ||
         err "README missing the labeled local clone-in-volume fallback"
@@ -1665,6 +1690,18 @@ else
     [ -d .devcontainer ] || err ".devcontainer/ missing (devcontainer on for profile '$profile')"
     [ -x scripts/devcontainer-assert.sh ] || err "scripts/devcontainer-assert.sh missing or not executable"
     [ -x scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh missing or not executable"
+    if [ "$profile" = "full" ]; then
+        [ -f .devcontainer/config/statusline-pr-lookup.enabled ] ||
+            err "status-line PR lookup marker missing (use_statusline_pr_lookup=true)"
+    else
+        [ ! -f .devcontainer/config/statusline-pr-lookup.enabled ] ||
+            err "status-line PR lookup marker rendered without explicit opt-in"
+    fi
+    # Run the rendered status-line suite as well as checking the conditional
+    # marker itself. The suite exercises env-unset discovery from the marker,
+    # so the default-off profiles must prove they make no fallback call while
+    # the explicit opt-in profile proves they do.
+    ./scripts/test-statusline.sh || err "rendered status-line fallback checks failed for profile '$profile'"
     [ -f .devcontainer/config/codex-managed-config.toml ] ||
         err "Codex managed baseline missing from devcontainer output"
     [ -x .devcontainer/config/codex-hooks/claude-compat.sh ] ||

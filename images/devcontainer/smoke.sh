@@ -25,7 +25,7 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
         fail "manifest architecture does not match $EXPECTED_ARCHITECTURE"
 fi
 
-for tool in task shfmt hadolint actionlint terraform-docs yq lefthook gitleaks sops act uv semgrep copier \
+for tool in task shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
     claude codex gemini opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
@@ -46,6 +46,8 @@ run_version shfmt shfmt --version
 run_version hadolint hadolint --version
 run_version actionlint actionlint -version
 run_version terraform-docs terraform-docs --version
+run_version terraform terraform version
+run_version tflint tflint --version
 run_version yq yq --version
 run_version lefthook lefthook version
 run_version gitleaks gitleaks version
@@ -100,6 +102,12 @@ done
 task_version="$(task --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [ "$task_version" = "$(jq -r '.tools.task' "$manifest")" ] ||
     fail "task $task_version does not match the manifest"
+terraform_version="$(terraform version -json | jq -r '.terraform_version')"
+[ "$terraform_version" = "$(jq -r '.tools.terraform' "$manifest")" ] ||
+    fail "Terraform $terraform_version does not match the manifest"
+tflint_version="$(tflint --version | awk 'NR == 1 { print $3 }')"
+[ "$tflint_version" = "$(jq -r '.tools.tflint' "$manifest")" ] ||
+    fail "TFLint $tflint_version does not match the manifest"
 agy_version="$(agy --version | head -1)"
 [ "$agy_version" = "$(jq -r '.tools["antigravity-cli"]' "$manifest")" ] ||
     fail "Antigravity CLI $agy_version does not match the manifest"

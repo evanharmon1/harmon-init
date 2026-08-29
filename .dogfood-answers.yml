@@ -53,6 +53,9 @@ use_codex_cloud_review: true
 use_coderabbit: false
 
 devcontainer: true
+# Dogfoods the opt-in, read-only GitHub CLI fallback for a missing Claude PR
+# payload. Generated projects leave it off unless their maintainer opts in.
+use_statusline_pr_lookup: true
 # No captured personal URI is checked in: it is extension-owned client state.
 # The root therefore renders the general local-clone fallback only.
 devcontainer_coder_folder_uri: ""

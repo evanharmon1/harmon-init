@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evanharmon1.github.io/harmon-init/devflow.schema.json",
+  "title": "Harmon Init devflow configuration",
+  "description": "The JSON-shaped structural contract for TOML .devflow.toml schema version 1. The shipped validator enforces TOML parsing and cross-file references.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "default_rigor",
+    "default_strategy",
+    "rigor_order",
+    "rigor",
+    "review",
+    "budget",
+    "strategy",
+    "tier"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "default_rigor": { "type": "string" },
+    "default_strategy": { "type": "string" },
+    "rigor_order": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "rigor": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/rigor" }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/review" }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/budget" }
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/strategy" }
+    },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local", "economy", "standard", "frontier", "apex"],
+      "properties": {
+        "local": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "required": ["endpoint"] }]
+        },
+        "economy": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        },
+        "standard": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        },
+        "frontier": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        },
+        "apex": {
+          "allOf": [{ "$ref": "#/$defs/tier" }, { "not": { "required": ["endpoint"] } }]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tier-name": {
+      "enum": ["local", "economy", "standard", "frontier", "apex"]
+    },
+    "rigor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review",
+        "orchestrator_tier",
+        "implementer_tier",
+        "reviewer_tier",
+        "budget",
+        "description"
+      ],
+      "properties": {
+        "review": { "type": "string" },
+        "orchestrator_tier": { "$ref": "#/$defs/tier-name" },
+        "implementer_tier": { "$ref": "#/$defs/tier-name" },
+        "reviewer_tier": { "$ref": "#/$defs/tier-name" },
+        "budget": { "type": "string" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["challenge", "review", "shepherd", "min_rounds"],
+      "properties": {
+        "challenge": { "type": "integer", "minimum": 0 },
+        "review": { "type": "integer", "minimum": 0 },
+        "shepherd": { "type": "integer", "minimum": 0 },
+        "min_rounds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_agent_runs",
+        "max_parallel_agents",
+        "wall_clock_min",
+        "allow_tier_escalation"
+      ],
+      "properties": {
+        "max_agent_runs": { "type": "integer", "minimum": 1 },
+        "max_parallel_agents": { "type": "integer", "minimum": 1 },
+        "wall_clock_min": { "type": "integer", "minimum": 1 },
+        "allow_tier_escalation": { "type": "boolean" },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "max_usd": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology", "planning", "delegation", "human_gates", "description"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": {
+              "topology": { "const": "lead-and-workers" }
+            }
+          },
+          "then": {
+            "allOf": [
+              { "required": ["coordination", "min_agents"] },
+              {
+                "not": {
+                  "anyOf": [{ "required": ["selection"] }, { "required": ["synthesis"] }]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": { "topology": { "const": "independent-proposals" } }
+          },
+          "then": { "required": ["selection", "synthesis", "min_agents"] }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": {
+              "topology": { "enum": ["single-agent", "human-directed"] }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["coordination"] },
+                { "required": ["selection"] },
+                { "required": ["synthesis"] },
+                { "required": ["min_agents"] }
+              ]
+            }
+          }
+        }
+      ],
+      "properties": {
+        "topology": {
+          "enum": ["single-agent", "lead-and-workers", "independent-proposals", "human-directed"]
+        },
+        "planning": {
+          "enum": ["inline", "explicit", "independent", "collaborative"]
+        },
+        "delegation": { "enum": ["none", "optional", "required"] },
+        "human_gates": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "description": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "coordination": { "const": "parallel-when-independent" },
+        "selection": { "const": "judge" },
+        "synthesis": { "type": "boolean" },
+        "min_agents": { "type": "integer", "minimum": 2 }
+      }
+    },
+    "tier": {
+      "type": "object",
+      "required": ["escalate_to"],
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "endpoint": { "const": "local" },
+        "escalate_to": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tier-name" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

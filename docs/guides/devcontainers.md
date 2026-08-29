@@ -94,12 +94,13 @@ status line:
 
 Two rows for hooks, because they are not installed the same way. A **mandatory**
 hook is listed in the image installer's `required_files`, so every image is
-guaranteed to place it under `/etc/claude-code/hooks/`. An **optional** hook —
-currently `session-end-archive.sh` — is installed only when the repository
-ships it, so a settings entry naming the `/etc` copy would break the moment the
-image pin were rolled back past the release that added it. Those are registered
-at their **staged** path instead, where the repository's own
-`COPY .devcontainer/config/` puts them regardless of which image is pinned.
+guaranteed to place it under `/etc/claude-code/hooks/`. **Optional** hooks —
+currently `session-end-archive.sh` and `guard-process-kill.sh` — are installed
+only when the repository ships them, so a settings entry naming the `/etc` copy
+would break the moment the image pin were rolled back past the release that
+added one. Those are registered at their **staged** path instead, where the
+repository's own `COPY .devcontainer/config/` puts them regardless of which
+image is pinned.
 
 The practical consequence when troubleshooting: for an optional hook, the copy
 under `/etc/claude-code/hooks/` is **not** the one that runs. Inspect or replace
@@ -138,12 +139,23 @@ honored, and `STATUSLINE_CTX_WIDTH`, `STATUSLINE_RL_WIDTH`, `STATUSLINE_RL_PCT`
 (exact limit percentages) and `STATUSLINE_HYPERLINK` (the OSC-8 link behind the
 PR number) tune the rest.
 
-It is built to be cheap, because it re-renders constantly: two forks per render
-(`jq` and `date`), no `git` subprocess — the branch is read from `.git/HEAD`
-directly, worktrees included — and nothing written to disk.
+It is built to be cheap: ordinary renders use `jq` and `date`, no `git`
+subprocess — the branch is read from `.git/HEAD` directly, worktrees included.
+
+Claude Code's `pr.*` fields are absent until it discovers the open PR. The
+optional **STATUSLINE PR LOOKUP** Copier answer (off by default) lets the
+renderer fill that gap with a read-only `gh pr view` lookup when it was enabled
+at scaffold time. Results are cached by git directory and branch: positive
+results live for 30 seconds and negative/failure results for 10.
+On a cache miss or expiry, the current render can wait for one read-only,
+`GH_PROMPT_DISABLED=1` lookup, hard-capped at one second; ordinary cached renders
+stay local. Payload PR data always wins. Missing `gh`/`timeout`, failed GitHub
+discovery, or absent repository access simply leave the segment empty; the
+lookup cannot manufacture PR data.
+Set `STATUSLINE_PR_LOOKUP_ENABLED=0` to disable an enabled fallback at runtime.
 
 To use your own instead, point `statusLine.command` in `~/.claude/settings.json`
-at it — the seed merge will not overwrite it.
+at it — the seed merge will not overwrite it or add `refreshInterval`.
 
 ## Codex CLI settings in the container
 

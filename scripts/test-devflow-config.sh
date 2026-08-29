@@ -35,8 +35,13 @@ AGENT_REGISTRY_TEMPLATE="template/agent-registry.json"
 AGENTS_ROOT="AGENTS.md"
 AGENTS_TEMPLATE="template/AGENTS.md.jinja"
 DEVFLOW_GUIDE="docs/guides/devflow.md"
+SCHEMA_ROOT=".devflow.schema.json"
+SCHEMA_TEMPLATE="template/.devflow.schema.json"
+CONFORMANCE_ROOT=".devflow-conformance-v1.json"
+CONFORMANCE_TEMPLATE="template/.devflow-conformance-v1.json"
 
-for f in .devflow.toml template/.devflow.toml; do
+for f in .devflow.toml template/.devflow.toml "$SCHEMA_ROOT" "$SCHEMA_TEMPLATE" \
+    "$CONFORMANCE_ROOT" "$CONFORMANCE_TEMPLATE"; do
     [ -f "$f" ] || {
         echo "FAIL: missing ${f}" >&2
         exit 1
@@ -49,7 +54,7 @@ done
 
 python3 - "$LABEL_REGISTRY_ROOT" "$LABEL_REGISTRY_TEMPLATE" \
     "$AGENT_REGISTRY_ROOT" "$AGENT_REGISTRY_TEMPLATE" "$AGENTS_ROOT" "$AGENTS_TEMPLATE" \
-    "$DEVFLOW_GUIDE" .devflow.toml template/.devflow.toml <<'PY'
+    "$DEVFLOW_GUIDE" "$SCHEMA_ROOT" "$SCHEMA_TEMPLATE" .devflow.toml template/.devflow.toml <<'PY'
 import json
 import math
 import re
@@ -57,11 +62,46 @@ import sys
 import tomllib
 
 (registry_root, registry_template, agent_registry_root, agent_registry_template,
- agents_root, agents_template, devflow_guide, *config_paths) = sys.argv[1:]
+ agents_root, agents_template, devflow_guide, schema_root, schema_template, *config_paths) = sys.argv[1:]
 
 failures = []
 
+# The schema is the portable structural contract; the executable checks below
+# enforce its TOML-specific and cross-file clauses. Keep root/template copies
+# equal so a generated repository receives the same contract the root dogfoods.
+try:
+    schema_root_data = json.load(open(schema_root))
+    schema_template_data = json.load(open(schema_template))
+except (OSError, json.JSONDecodeError) as exc:
+    failures.append(f"cannot parse devflow schema JSON: {exc}")
+    schema_root_data = schema_template_data = {}
+else:
+    if schema_root_data != schema_template_data:
+        failures.append(".devflow.schema.json differs from template/.devflow.schema.json")
+    if schema_root_data.get("properties", {}).get("schema_version", {}).get("const") != 1:
+        failures.append(".devflow.schema.json must declare schema_version const 1")
+    if schema_root_data.get("additionalProperties") is not False:
+        failures.append(".devflow.schema.json must reject unknown top-level keys")
+    # The resolver executes the checked-in schema, so a schema edit that
+    # silently drops a required nested review cap would otherwise weaken the
+    # portable v1 contract while the shipped configuration still passes.
+    # Pin the required review-policy shape here as part of the validator's
+    # own contract, rather than trusting the current TOML instance to expose
+    # every missing schema requirement.
+    review_definition = schema_root_data.get("$defs", {}).get("review", {})
+    required_review_caps = {"challenge", "review", "shepherd", "min_rounds"}
+    if not isinstance(review_definition, dict) or not required_review_caps.issubset(
+        set(review_definition.get("required", []))
+    ):
+        failures.append(
+            ".devflow.schema.json must require challenge, review, shepherd, and min_rounds "
+            "in $defs.review"
+        )
+    if review_definition.get("additionalProperties") is not False:
+        failures.append(".devflow.schema.json must reject unknown $defs.review keys")
+
 # ── Fixed vocabulary (ADR 0007) ─────────────────────────────────────────────
+SUPPORTED_SCHEMA_VERSION = 1
 RIGOR_LEVELS = {"trivial", "minimal", "light", "standard", "thorough", "deep"}
 REVIEW_POLICIES = {"none", "driveby", "light", "standard", "thorough", "deep"}
 BUDGET_PROFILES = {"trivial", "light", "standard", "thorough", "deep"}
@@ -76,6 +116,10 @@ BUDGET_REQUIRED_KEYS = {"max_agent_runs", "max_parallel_agents", "wall_clock_min
 BUDGET_OPTIONAL_KEYS = {"max_tokens", "max_usd"}
 STRATEGY_REQUIRED_KEYS = {"topology", "planning", "delegation", "human_gates", "description"}
 STRATEGY_OPTIONAL_KEYS = {"coordination", "selection", "synthesis", "min_agents"}
+TOP_LEVEL_KEYS = {
+    "schema_version", "default_rigor", "default_strategy", "rigor_order",
+    "rigor", "review", "budget", "strategy", "tier",
+}
 
 TOPOLOGY_ENUM = {"single-agent", "lead-and-workers", "independent-proposals", "human-directed"}
 PLANNING_ENUM = {"inline", "explicit", "independent", "collaborative"}
@@ -187,6 +231,19 @@ for path in config_paths:
 
     if "docs/guides/devflow.md" not in raw_text:
         failures.append(f"{path}: header does not link to docs/guides/devflow.md")
+
+    unknown_top_level = set(cfg) - TOP_LEVEL_KEYS
+    if unknown_top_level:
+        failures.append(f"{path}: has unknown top-level key(s) {sorted(unknown_top_level)}")
+
+    schema_version = cfg.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        failures.append(f"{path}: schema_version must be an integer (got {schema_version!r})")
+    elif schema_version != SUPPORTED_SCHEMA_VERSION:
+        failures.append(
+            f"{path}: schema_version={schema_version!r} is unsupported; "
+            f"supported version is {SUPPORTED_SCHEMA_VERSION}"
+        )
 
     for removed in ("default_tier", "default_method"):
         if removed in cfg:
@@ -630,6 +687,18 @@ for path in config_paths:
             failures.append(
                 f"{path}: [strategy.{name}].min_agents is only valid on a multi-agent topology "
                 f"{sorted(MULTI_AGENT_TOPOLOGIES)} (got topology={topology!r})"
+            )
+
+        required_by_topology = []
+        if topology == "lead-and-workers":
+            required_by_topology.extend(["coordination", "min_agents"])
+        if topology == "independent-proposals":
+            required_by_topology.extend(["selection", "synthesis", "min_agents"])
+        missing_by_topology = [field for field in required_by_topology if field not in tbl]
+        if missing_by_topology:
+            failures.append(
+                f"{path}: [strategy.{name}] topology={topology!r} is missing required field(s) "
+                f"{sorted(missing_by_topology)}"
             )
 
         if "coordination" in tbl and tbl["coordination"] not in COORDINATION_ENUM:
@@ -1200,6 +1269,145 @@ with tempfile.TemporaryDirectory() as tmp:
           and out["config_source"] == "merge-base"
           and out["selections"]["rigor"] == {"value": "trivial", "source": "default"})
 
+# A v1 config that loses any required table is invalid to the resolver too,
+# not merely to the root-only validator. The tier tables sit last in the
+# shipped file, so this creates a syntactically valid partial config without
+# disturbing the other profile references.
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial.toml")
+    open(partial_path, "w").write(open(config).read().split("[tier.local]", 1)[0])
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+check("a schema-v1 config missing [tier.*] is invalid to the resolver",
+      result.returncode == 1
+      and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    broken_path = os.path.join(tmp, "non-table-tier.toml")
+    open(broken_path, "w").write(open(config).read().split("[tier.local]", 1)[0] + 'tier = "broken"\n')
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", broken_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 non-table tier registry is invalid_config, never a traceback",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "tier" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial-tier-ladder.toml")
+    open(partial_path, "w").write(open(config).read().split("[tier.economy]", 1)[0])
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 config missing concrete tier maps is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "economy" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    native_path = os.path.join(tmp, "native-tier-value.toml")
+    open(native_path, "w").write(open(config).read().replace(
+        'escalate_to = ["economy"]', 'escalate_to = [2026-08-25]', 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", native_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a TOML-native uniqueItems value is invalid_config, never a traceback",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "tier.local.escalate_to" in e["detail"]
+                  for e in out["errors"]))
+
+# Required nested fields are part of the same v1 structural contract. A
+# missing cap must not make a resolver silently emit a policy that a consumer
+# can mistake for a zero/default cap.
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial-review.toml")
+    open(partial_path, "w").write(open(config).read().replace("challenge  = 3\n", "", 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+check("a schema-v1 config missing a required review cap is invalid to the resolver",
+      result.returncode == 1
+      and any(e["code"] == "invalid_config" and "review.standard" in e["detail"]
+                  and "challenge" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    partial_path = os.path.join(tmp, "partial-strategy.toml")
+    open(partial_path, "w").write(open(config).read().replace("min_agents   = 2\n", "", 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", partial_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 multi-agent strategy missing min_agents is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "min_agents" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    topology_path = os.path.join(tmp, "wrong-topology-field.toml")
+    open(topology_path, "w").write(open(config).read().replace(
+        'delegation  = "optional"\nhuman_gates',
+        'delegation  = "optional"\ncoordination = "parallel-when-independent"\nhuman_gates', 1,
+    ))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", topology_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 topology-only strategy field is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "coordination" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    endpoint_path = os.path.join(tmp, "wrong-tier-endpoint.toml")
+    open(endpoint_path, "w").write(open(config).read().replace(
+        '[tier.economy]\nescalate_to', '[tier.economy]\nendpoint = "local"\nescalate_to', 1,
+    ))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", endpoint_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 non-local tier endpoint is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "endpoint" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    impossible_path = os.path.join(tmp, "impossible-review.toml")
+    open(impossible_path, "w").write(open(config).read().replace("min_rounds = 1\n", "min_rounds = 99\n", 1))
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", impossible_path, "--config-unchanged"],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a schema-v1 review floor above its stage caps is invalid to the resolver",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "min_rounds" in e["detail"] for e in out["errors"]))
+
+with tempfile.TemporaryDirectory() as tmp:
+    branch_path = os.path.join(tmp, "branch.toml")
+    merge_base_path = os.path.join(tmp, "merge-base.toml")
+    branch_text = open(config).read()
+    merge_base_text = branch_text.replace("schema_version = 1\n\n", "", 1)
+    open(branch_path, "w").write(branch_text.replace("schema_version = 1", "schema_version = 2", 1))
+    open(merge_base_path, "w").write(merge_base_text)
+    result = subprocess.run(
+        [sys.executable, resolver, "--config", branch_path, "--merge-base-config", merge_base_path],
+        capture_output=True, text=True,
+    )
+    out = json.loads(result.stdout)
+    check("a legacy merge-base transition requires a valid schema-v1 branch config",
+          result.returncode == 1
+          and any(e["code"] == "invalid_config" and "schema_version=2" in e["detail"] for e in out["errors"]))
+
 # absent config -> builtin (--config-unchanged: the branch's OWN copy is
 # the one that's absent, not a merge-base extraction)
 result = subprocess.run(
@@ -1319,6 +1527,11 @@ run_malformed(
     "default_rigor as a list (not a scalar string) -> invalid_config, not a TypeError",
     'default_rigor    = "standard"', 'default_rigor    = ["standard"]',
     "must be a string",
+)
+run_malformed(
+    "strategy topology as a list -> invalid_config, not a TypeError",
+    'topology    = "single-agent"', 'topology    = ["single-agent"]',
+    "topology must be a string",
 )
 
 # labels outside rigor:/strategy:/tier: are silently irrelevant — no warning
@@ -1456,3 +1669,9 @@ print("devflow-resolve.py case table OK: rigor/strategy conflicts, incompatibili
       "configs (invalid_config, never a traceback), and the rigor:/strategy:/tier: namespace "
       "filter all resolve as documented")
 PY
+
+# The portable fixture corpus is separate from the resolver's regression
+# table above. Run it against BOTH copies, so a consumer can verify its own
+# config without relying on root-only dogfood values.
+python3 scripts/test-devflow-conformance.py --repo "$PWD" --fixture "$CONFORMANCE_ROOT"
+python3 scripts/test-devflow-conformance.py --repo "$PWD" --fixture "$CONFORMANCE_TEMPLATE" --config template/.devflow.toml
