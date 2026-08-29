@@ -97,6 +97,14 @@ grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/o
     fail "missing preserved hosted-array outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted array was rewritten"; fi
 
+echo "==> multi-label GitHub-hosted arrays fail closed"
+GH_PRIVATE=true GH_VARIABLE_VALUE='["ubuntu-latest","windows-latest"]' \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 1 ] || fail "multi-label hosted array exited $run_rc"
+grep -Fq '[ ] Actions runner routing - existing CI_RUNS_ON is not valid hosted or self-hosted JSON' "$tmp/out" ||
+    fail "multi-label hosted array was not rejected"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "multi-label hosted array was rewritten"; fi
+
 echo "==> ambiguous scalar runner labels fail closed"
 GH_PRIVATE=true GH_VARIABLE_VALUE='"self-hosted"' \
     run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'
@@ -124,12 +132,22 @@ GH_PRIVATE=true run_case --repo owner/private --ci-runs-on 'not-json "self-hoste
 [ "$run_rc" -eq 2 ] || fail "malformed runner JSON exited $run_rc"
 if [ -s "$stub_calls" ]; then fail "malformed runner JSON reached GitHub"; fi
 
-echo "==> public repositories reject self-hosted routing"
+echo "==> public repositories force self-hosted selections to GitHub-hosted routing"
 GH_PRIVATE=false run_case --repo owner/public --ci-runs-on "$desired"
-[ "$run_rc" -eq 1 ] || fail "public self-hosted path exited $run_rc"
-grep -Fq '[ ] Actions runner routing - refusing self-hosted CI_RUNS_ON' "$tmp/out" ||
-    fail "missing public-repo refusal"
-if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "public repo received self-hosted routing"; fi
+[ "$run_rc" -eq 0 ] || fail "public self-hosted path exited $run_rc"
+grep -Fq '[?] Actions runner routing - public repository selected self-hosted; enforcing GitHub-hosted CI_RUNS_ON' "$tmp/out" ||
+    fail "missing public-repo safety override explanation"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "public repo did not receive a GitHub-hosted safety override"
+
+echo "==> public repositories replace ambiguous self-hosted scalar routing"
+GH_PRIVATE=false GH_VARIABLE_VALUE='"self-hosted"' \
+    run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 0 ] || fail "public ambiguous self-hosted path exited $run_rc"
+grep -Fq '[x] Actions runner routing - replaced unsafe public CI_RUNS_ON with GitHub-hosted routing' "$tmp/out" ||
+    fail "public ambiguous self-hosted routing was not explained"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "public ambiguous self-hosted routing was not replaced"
 
 echo "==> public repositories enable every requested setting and collaborator"
 GH_PRIVATE=false GH_PERMISSION=write GH_VARIABLE_VALUE= \

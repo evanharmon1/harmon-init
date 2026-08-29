@@ -92,8 +92,8 @@ esac
 
 if [ "$repo_private" = false ]; then
     if [ -n "$ci_runs_on" ] && [ "$(printf '%s\n' "$ci_runs_on" | jq -r type)" = array ]; then
-        fail_step 1 "Actions runner routing" "refusing self-hosted CI_RUNS_ON on a public repository"
-        exit 1
+        checkline unknown "Actions runner routing" "public repository selected self-hosted; enforcing GitHub-hosted CI_RUNS_ON"
+        ci_runs_on='"ubuntu-latest"'
     fi
     if output_run "Enabling private vulnerability reporting" \
         gh api "repos/$repo/private-vulnerability-reporting" --method PUT; then
@@ -128,11 +128,20 @@ if [ -n "$ci_runs_on" ]; then
                     type == "string" and test("^(ubuntu|windows|macos)-[A-Za-z0-9._-]+$");
                  if type == "array" and index("self-hosted") != null then "self-hosted"
                  elif hosted_label then "hosted"
-                 elif type == "array" and length > 0 and all(.[]; hosted_label) then "hosted"
+                 elif type == "array" and length == 1 and all(.[]; hosted_label) then "hosted"
                  else "invalid"
                  end' \
                 2>/dev/null || printf '%s' invalid)"
-            if [ "$current_kind" = self-hosted ]; then
+            if [ "$repo_private" = false ] && [ "$current_kind" != hosted ]; then
+                if output_run "Enforcing public repository runner safety" \
+                    gh variable set CI_RUNS_ON --repo "$repo" --body '"ubuntu-latest"'; then
+                    checkline ok "Actions runner routing" "replaced unsafe public CI_RUNS_ON with GitHub-hosted routing"
+                else
+                    rc=$?
+                    fail_step "$rc" "Actions runner routing" "could not enforce GitHub-hosted routing on a public repository"
+                    exit "$rc"
+                fi
+            elif [ "$current_kind" = self-hosted ]; then
                 if output_run "Updating self-hosted runner routing" \
                     gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
                     checkline ok "Actions runner routing" "standardized CI_RUNS_ON"
