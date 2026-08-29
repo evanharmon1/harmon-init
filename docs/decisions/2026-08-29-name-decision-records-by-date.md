@@ -32,13 +32,16 @@ it is accepted or rejected, and the `Status` line carries the outcome, so no
 review ever waits on a rename. This amends
 [ADR 0001](0001-record-architecture-decisions.md)'s naming clause.
 
-- Records already numbered — `0001` through `0008` in this repo, including
-  whichever number PR #1114's Dev flow v2 record lands as — keep their
-  existing names. Both the `NNNN-` and `YYYY-MM-DD-` forms are valid; nothing
-  is renamed.
+- Records already numbered when this was filed keep their existing names,
+  as does any numbered record still in flight on a branch at that time (PR
+  #1114's Dev flow v2 record, for one). Both the `NNNN-` and `YYYY-MM-DD-`
+  forms are valid; nothing is renamed.
 - `template/docs/decisions/README.md` and the template's copy of
   `0001-record-architecture-decisions.md` carry the same convention into
-  every generated repo (harmon-init#1112).
+  every generated repo (harmon-init#1112). The seed record's original
+  Decision bullet is left as written and the change rides in a dated
+  Amendments entry, so a consumer's `copier update` three-way merge adds
+  history to its accepted record rather than rewriting it.
 
 ## Consequences
 
