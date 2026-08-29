@@ -28,20 +28,24 @@ information a reader can use before opening the file.
 New decision records are named `YYYY-MM-DD-<kebab-title>.md`, where the date
 is the day the record was filed. The name is fixed at creation and never
 changes with status: a record filed as `Proposed` keeps its filing date when
-it is accepted or rejected, and the `Status` line carries the outcome, so no
-review ever waits on a rename. This amends
+it is accepted or rejected (`Rejected` joins the status vocabulary), and the `Status` line
+carries the outcome, so no review ever waits on a rename. This amends
 [ADR 0001](0001-record-architecture-decisions.md)'s naming clause.
 
 - Records already numbered when this was filed keep their existing names,
   as does any numbered record still in flight on a branch at that time (PR
   #1114's Dev flow v2 record, for one). Both the `NNNN-` and `YYYY-MM-DD-`
   forms are valid; nothing is renamed.
-- `template/docs/decisions/README.md` and the template's copy of
-  `0001-record-architecture-decisions.md` carry the same convention into
-  every generated repo (harmon-init#1112). The seed record's original
-  Decision bullet is left as written and the change rides in a dated
-  Amendments entry, so a consumer's `copier update` three-way merge adds
-  history to its accepted record rather than rewriting it.
+- `template/docs/decisions/README.md` and the template's seed
+  `0001-record-architecture-decisions.md` carry the convention into every
+  generated repo (harmon-init#1112). The seed states the date form directly
+  — a new project never made the numbered decision, so it has no history to
+  amend — while this repo's own `0001` keeps its original bullet and records
+  the change in a dated Amendments entry; the two are an allowlisted
+  dogfood-parity divergence for that reason. An existing consumer's accepted
+  `0001` is reconciled by its `copier update` PR with repository-aware
+  judgment (append an amendment there, or accept the seed's new bullet),
+  per the "regular rolling updates" rule in `AGENTS.md`.
 
 ## Consequences
 
@@ -49,9 +53,12 @@ review ever waits on a rename. This amends
   adding records in parallel never collide on a number; only the same title
   filed on the same day shares a path, which is a duplicate decision to
   reconcile, not a numbering race.
-- Filenames sort chronologically, and the name itself tells a reader when the
-  question was raised before they open the file; the `Date:` and `Status`
-  lines inside say when and whether it was accepted.
+- Among date-named records, filenames sort chronologically, and the name
+  itself tells a reader when the question was raised before they open the
+  file; the `Date:` and `Status` lines inside say when and whether it was
+  accepted. Across both forms the directory order is not a chronology —
+  every `NNNN-` name sorts before every `YYYY-` name — so sort by the
+  recorded `Date:` when the grandfathered records matter.
 - A repo's `docs/decisions/` mixes both filename forms indefinitely; a reader
   or tool must treat both as valid ADRs rather than assuming one prefix
   shape.

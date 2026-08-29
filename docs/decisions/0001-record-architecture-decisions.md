@@ -23,7 +23,7 @@ We will use Architecture Decision Records (ADRs), as
   *Amended 2026-08-29 — see Amendments below: new records are named
   `YYYY-MM-DD-<kebab-title>.md` by filing date; this bullet is kept as the
   original decision.*
-- Each ADR has: Status (Proposed / Accepted / Deprecated / Superseded), Context,
+- Each ADR has: Status (Proposed / Accepted / Rejected / Deprecated / Superseded), Context,
   Decision, and Consequences. Keep them short.
 - ADRs are immutable once accepted; to change a decision, add a new ADR that
   supersedes the old one (and update the old one's Status).
@@ -44,4 +44,5 @@ We will use Architecture Decision Records (ADRs), as
   adding records never collide on the next one. Records already numbered
   keep their names — renaming would break inbound links — so both forms are
   valid. The Decision bullet above is left as written, per this record's own
-  supersede-don't-edit rule.
+  supersede-don't-edit rule, and `Rejected` joins the status vocabulary so a
+  `Proposed` record that is turned down can say so without renaming.
