@@ -53,15 +53,14 @@ sandboxed = false
 # entries (docker, ports, untrusted-input) run additionally where the
 # capability is present. Whatever does not run in-unit is CI's job.
 [% if use_node %]
-# `task ci` includes the port-binding `test:e2e` tier, while `task verify` is
-# port-free by design (docs/architecture/tests.md). With max_parallel > 1 that
-# matters only once this app ships a playwright.config.* — before then test:e2e
-# skips, so nothing binds a port. When you add the e2e suite, pick one: point
-# [verify] default at ["task", "verify"], drop max_parallel to 1, or give the
-# Playwright config a per-worktree port.
+# The pre-PR gate is `task verify` + `task security`, not `task ci`. `task ci`
+# includes the port-binding `test:e2e` tier, while `task verify` is port-free
+# by design (docs/architecture/tests.md). With max_parallel > 1 that means
+# concurrent dispatches never fight over a port. `task ci` remains available on
+# demand when CI is red and you want to iterate the full mirror locally.
 [% endif %]
 [verify]
-default = ["task", "ci"]
+default = ["bash", "-c", "task verify && task security"]
 
 [budgets]
 dispatch_usd = 20.0
