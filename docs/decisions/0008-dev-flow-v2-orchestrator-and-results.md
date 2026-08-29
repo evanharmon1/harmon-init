@@ -10,7 +10,7 @@ Proposed — becomes Accepted when the anchor spec merges
 Extends [ADR 0007](0007-rigor-and-strategy-axes.md): rigor and strategy stay
 the two primary axes, and this record adds the execution model those axes
 select — who decides what during a run, and what form the evidence takes.
-**Amends ADR 0007 D4, D8, and D9** where they define the `shepherd` cap as
+**Amends ADR 0007 D3, D4, D8, and D9** — D3 where it names the `[review.*]` policy tables this record renames to `[caps.*]` (the shipped policies survive under the new name; the legacy section names do not), and the others the `shepherd` cap as
 bounding CI, human-review, and Codex findings alike: under this record the
 renamed `integration` cap bounds Codex re-review cycles only, answering CI
 and human findings is unconditional, and fix pushes in that stage are bounded
@@ -85,7 +85,7 @@ tier.
 ### D3 — Consequences carried into this repository
 
 - `.devflow.toml` gains `[caps.*]` (renamed from `[review.*]`; keys
-  `challenge`, `review`, `integration`, `min_rounds`), `[gates]`,
+  `challenge`, `review`, `integration`, `remediation`, `min_rounds`), `[gates]`,
   `[convergence]` (a composed predicate catalog), `[role.*]` tier baselines,
   and `[stage.*].finders[]`; the legacy shape is refused (#1081).
 - The integration cap bounds Codex re-review cycles only — answering human
