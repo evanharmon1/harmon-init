@@ -4,13 +4,22 @@ Date: 2026-08-29
 
 ## Status
 
-Accepted
+Proposed — becomes Accepted when the anchor spec merges
+(evanharmon1/harmon-devkit#665).
 
 Extends [ADR 0007](0007-rigor-and-strategy-axes.md): rigor and strategy stay
 the two primary axes, and this record adds the execution model those axes
 select — who decides what during a run, and what form the evidence takes.
-Authoritative requirements live in harmon-devkit's
-[`specs/dev-flow-v2.md`](https://github.com/evanharmon1/harmon-devkit/blob/main/specs/dev-flow-v2.md);
+**Amends ADR 0007 D4, D8, and D9** where they define the `shepherd` cap as
+bounding CI, human-review, and Codex findings alike: under this record the
+renamed `integration` cap bounds Codex re-review cycles only, answering CI
+and human findings is unconditional, and fix pushes in that stage are bounded
+by a separate `remediation` cap whose terminal action is escalation. ADR 0007
+carries the reciprocal notice.
+Authoritative requirements live in harmon-devkit's `specs/dev-flow-v2.md` —
+the reviewed revision is
+[3509de7](https://github.com/evanharmon1/harmon-devkit/blob/3509de75c73d4615362825155c3e1e3aa42cda77/specs/dev-flow-v2.md),
+and the `main` path becomes the live link once #665 merges;
 on any conflict the spec wins. Planned under the "Dev flow v2" milestones in
 harmon-devkit, harmon-init (#1080–#1082, #1113), and ponderousdev/foreman.
 
@@ -38,7 +47,9 @@ The **orchestrator** is the session that dispatched the roles — an
 interactive Claude Code session or a Foreman-dispatched headless one — with
 one procedure for both. It owns severity adjudication, dispositions, the PR
 body, and promotion to ready-for-review. When the exit script says
-`converged`, the orchestrator may spend one more round with a recorded reason;
+`converged` and the stage cap and budget still have headroom, the orchestrator
+may spend one more round with a recorded reason — a converged final round at
+the cap is final;
 when it says `diverging`, the orchestrator must change approach (a `delete`
 or `restructure` disposition on the findings that feed on earlier fixes) or
 stop; when it says `capped` with P0/P1 remaining, the orchestrator escalates

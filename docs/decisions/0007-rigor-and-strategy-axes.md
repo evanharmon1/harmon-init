@@ -4,7 +4,11 @@ Date: 2026-08-24
 
 ## Status
 
-Accepted
+Accepted — D4, D8, and D9 are amended by
+[ADR 0008](0008-dev-flow-v2-orchestrator-and-results.md) where they define
+the `shepherd` cap as bounding CI, human-review, and Codex findings alike:
+the renamed `integration` cap bounds Codex re-review cycles only, and a
+separate `remediation` cap bounds fix pushes in that stage.
 
 Supersedes [ADR 0006](0006-method-and-tier-axes.md) D4 (the method rank and
 its `[method]` table are retired along with `method:*`) and amends its D5
