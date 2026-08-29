@@ -46,7 +46,9 @@ review ever waits on a rename. This amends
 ## Consequences
 
 - Filing a new ADR needs no "what's the next number" lookup, and two branches
-  adding records in parallel never collide.
+  adding records in parallel never collide on a number; only the same title
+  filed on the same day shares a path, which is a duplicate decision to
+  reconcile, not a numbering race.
 - Filenames sort chronologically, and the name itself tells a reader when the
   question was raised before they open the file; the `Date:` and `Status`
   lines inside say when and whether it was accepted.
