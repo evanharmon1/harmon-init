@@ -6,11 +6,12 @@ Date: 2026-08-29
 
 Accepted
 
-Amends the naming clause of
-[ADR 0001](0001-record-architecture-decisions.md) ("Numbered sequentially and
-zero-padded" becomes the date form below). The rest of 0001 — one ADR per
-file, the Status/Context/Decision/Consequences shape, supersede-don't-edit —
-stands unchanged.
+Amends two clauses of [ADR 0001](0001-record-architecture-decisions.md):
+the naming rule ("Numbered sequentially and zero-padded" becomes the date
+form below) and the status vocabulary (`Rejected` is added, so a `Proposed`
+record that is turned down can say so without renaming). The rest of 0001 —
+one ADR per file, the Context/Decision/Consequences shape,
+supersede-don't-edit — stands unchanged.
 
 ## Context
 
