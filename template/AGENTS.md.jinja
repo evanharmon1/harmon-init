@@ -42,13 +42,13 @@ and humans run the same targets):
 ```bash
 task check       # FAST gate (<~1 min) — run constantly; safe for hooks/agents
 task verify      # definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test; run before finishing
-task ci          # FULL CI mirror — run before/instead of opening a PR
+task ci          # full CI mirror — on demand when CI is red and you want to iterate locally
 task fix         # auto-format then lint
 task test        # tests
 task security    # Semgrep CE + gitleaks + dependency audit
 [% if use_codex_review %]
 task challenge   # adversarial Codex second-model review — advisory, not in verify/ci
-task review      # Codex verification checkpoint before task ci
+task review      # Codex verification checkpoint
 [% endif %]
 [% if use_foreman %]
 task foreman:plan -- --milestone <n>  # foreman: dry-run the dispatch graph
@@ -76,13 +76,13 @@ AI agents can run it on every change without getting bogged down. `verify` is
 the definition-of-done gate — check[% if use_node %] + build[% endif %] + validate + test plus the quick
 Taskfile/hook guards (the Foreman v2 vocabulary: verify = check + build +
 test). `ci` mirrors the CI pipeline locally ([% if use_node %]`verify`, `test:e2e`, `security`[% else %]`verify`, `security`[% endif %][% if use_skills_sync %], the
-network skills-drift check[% endif %][% if devcontainer %], the devcontainer permission assert[% endif %]) — so you can
-reproduce a CI run on demand instead of waiting on a PR. Keep it that way: a
-check the build workflow **gates on** and that can run locally belongs in `ci`
-too, or the "mirror" quietly stops being one. The one carve-out: a check that
-needs **CI-only infrastructure** (a browser install, a service container,
-credentials that only exist on a runner) stays out of `ci` and is documented as
-an exception here rather than being faked locally.
+network skills-drift check[% endif %][% if devcontainer %], the devcontainer permission assert[% endif %]) — use it on demand when
+CI is red and you want to iterate locally instead of waiting on each PR push.
+Keep it that way: a check the build workflow **gates on** and that can run
+locally belongs in `ci` too, or the "mirror" quietly stops being one. The one
+carve-out: a check that needs **CI-only infrastructure** (a browser install, a
+service container, credentials that only exist on a runner) stays out of `ci`
+and is documented as an exception here rather than being faked locally.
 [% if use_node %]
 
 **Port-free vs. port-binding — the tier boundary.** `check`, `build`, `test`,
@@ -127,7 +127,7 @@ permission for.
 - **Merged PR** — always a separate human decision. Agents never merge.
 
 ```text
-implement → task verify → [% if use_codex_review %]task challenge → task review → [% endif %]task ci
+implement → task verify → [% if use_codex_review %]task challenge → task review → [% endif %]task security
   → create DRAFT PR → shepherd the draft (CI, deferred findings, reviewers)
   → readiness gate → mark ready for review → human review → human merge
 ```
@@ -162,8 +162,8 @@ always in this shape, with this legend, in every stage:
 | **Next** | fix P1 → `task verify` → push → 🚢 shepherd round 3 |
 [% endif %]
 
-Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review · 🏗️ ci ·
-🚢 shepherd. Status glyphs: ✅ clean/green · 🔴 P0/P1 open · 🟡 P2 deferred ·
+Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review · 🛡️ security ·
+🏗️ ci · 🚢 shepherd. Status glyphs: ✅ clean/green · 🔴 P0/P1 open · 🟡 P2 deferred ·
 ⚪ P3 noted · ⏳ waiting on CI or a reviewer · ⛔ blocked/escalating · 🏁 stage
 converged. The same glyph always means the same thing, so a reader can tell
 the state at a glance without parsing prose. `Stage` names the stage and,
@@ -409,8 +409,8 @@ cap allowed.
   before it is pushed.** Where the `pre-push` hook is installed it is
   automatic; where it is not — `run_task_install` defaults to no, so a repo
   that has not run `task install:hooks` has no hooks at all — run
-  `task security:secrets` yourself first. The rest of the security suite still
-  runs at `task ci` before the PR exists. **Push to the branch's own writable
+  `task security:secrets` yourself first. The full security suite (`task
+  security`) runs before the draft PR as the pre-publication gate. **Push to the branch's own writable
   remote** — the one `gh pr create` will push to — and set it on the first
   push (`git push -u <remote> <branch>`), since a new branch has no upstream
   to infer.
@@ -436,7 +436,9 @@ cap allowed.
   capped separately, even where the level gives them equal numbers: a converged
   challenge says nothing about review.
 [% endif %]
-- **`task ci`** — the full CI mirror; fix anything it catches.
+- **`task security`** — Semgrep CE + gitleaks + dependency audit; the
+  pre-publication security gate (~1 min). `task ci` remains available on demand
+  when CI is red and you want to iterate the full mirror locally.
 - **Open the draft PR** — conventional commit, push [% if use_codex_review %]whatever the rounds above
   have not already pushed[% else %]the branch[% endif %],
   **`gh pr create --draft`** with a clear what/why/verification summary. Then
@@ -707,7 +709,7 @@ Setup and mechanics: [docs/guides/codex-review.md](docs/guides/codex-review.md).
   needless complexity. Steer it with e.g.
   `task challenge -- --base main focus on the migration path`.
 - `task review` (→ `review:codex`) — verification checkpoint: double-checks
-  the implementation, consistency, and test coverage before `task ci`.
+  the implementation, consistency, and test coverage before the draft PR.
 - `task codex:gate:enable` / `:disable` / `:status` — the automatic
   Claude Code → Codex stop-gate (the codex plugin's Stop hook reviews each
   editing turn and blocks completion on material findings). Per-repo,
@@ -718,7 +720,7 @@ Setup and mechanics: [docs/guides/codex-review.md](docs/guides/codex-review.md).
   past a BLOCK** — adjudicate the finding or escalate to the maintainer instead.
 
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
-before `task ci` — and where the optional `/gauntlet` skill is vendored **and
+before `task security` and the draft PR — and where the optional `/gauntlet` skill is vendored **and
 its supported topology holds (`origin` is the repository the PR will
 target)**, the procedure for running them to convergence is that skill,
 entered by reading `.claude/skills/gauntlet/SKILL.md`; otherwise the Dev
