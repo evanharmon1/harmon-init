@@ -13,6 +13,7 @@ OUTPUT_FD=2
 repo=""
 bot_collaborator=""
 ci_runs_on=""
+replace_ci_runs_on=false
 bot_pending=false
 bot_unverified=false
 while [ "$#" -gt 0 ]; do
@@ -29,6 +30,10 @@ while [ "$#" -gt 0 ]; do
         ci_runs_on="${2:-}"
         shift 2
         ;;
+    --replace-ci-runs-on)
+        replace_ci_runs_on=true
+        shift
+        ;;
     *)
         echo "Unknown argument: $1" >&2
         exit 2
@@ -37,7 +42,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$repo" ]; then
-    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--ci-runs-on <json-array>]" >&2
+    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--ci-runs-on <json-array>] [--replace-ci-runs-on]" >&2
+    exit 2
+fi
+if $replace_ci_runs_on && [ -z "$ci_runs_on" ]; then
+    echo "--replace-ci-runs-on requires --ci-runs-on" >&2
     exit 2
 fi
 if ! command -v gh >/dev/null 2>&1; then
@@ -51,7 +60,7 @@ if [ -n "$ci_runs_on" ]; then
     fi
     if ! printf '%s\n' "$ci_runs_on" | jq -e '
         (type == "string" and . == "ubuntu-latest") or
-        (type == "array" and length > 0 and all(.[]; type == "string") and index("self-hosted") != null)
+        (type == "array" and length > 0 and all(.[]; type == "string" and length > 0) and index("self-hosted") != null)
     ' >/dev/null; then
         echo "--ci-runs-on must be \"ubuntu-latest\" or a JSON string array containing self-hosted" >&2
         exit 2
@@ -101,24 +110,6 @@ if [ -n "$ci_runs_on" ]; then
                 exit "$rc"
             fi
         else
-            current_kind="$(printf '%s\n' "$current_ci_runs_on" | jq -r \
-                'def nonempty_string: type == "string" and length > 0;
-                 def labels_value:
-                    nonempty_string or
-                    (type == "array" and length > 0 and all(.[]; nonempty_string));
-                 def explicit_routing:
-                    nonempty_string or
-                    (type == "array" and length > 0 and all(.[]; nonempty_string)) or
-                    (type == "object" and
-                     (has("group") or has("labels")) and
-                     all(keys[]; . == "group" or . == "labels") and
-                     ((has("group") | not) or (.group | nonempty_string)) and
-                     ((has("labels") | not) or (.labels | labels_value)));
-                 if type == "array" and index("self-hosted") != null then "self-hosted"
-                 elif explicit_routing then "explicit"
-                 else "invalid"
-                 end' \
-                2>/dev/null || printf '%s' invalid)"
             if [ "$repo_private" = false ]; then
                 if output_run "Enforcing public repository runner safety" \
                     gh variable set CI_RUNS_ON --repo "$repo" --body '"ubuntu-latest"'; then
@@ -128,20 +119,17 @@ if [ -n "$ci_runs_on" ]; then
                     fail_step "$rc" "Actions runner routing" "could not enforce GitHub-hosted routing on a public repository"
                     exit "$rc"
                 fi
-            elif [ "$current_kind" = self-hosted ]; then
-                if output_run "Updating self-hosted runner routing" \
+            elif $replace_ci_runs_on; then
+                if output_run "Replacing Actions runner routing" \
                     gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
-                    checkline ok "Actions runner routing" "standardized CI_RUNS_ON"
+                    checkline ok "Actions runner routing" "replaced CI_RUNS_ON by explicit request"
                 else
                     rc=$?
                     fail_step "$rc" "Actions runner routing" "could not update CI_RUNS_ON"
                     exit "$rc"
                 fi
-            elif [ "$current_kind" = explicit ]; then
-                checkline na "Actions runner routing" "preserved explicit non-template CI_RUNS_ON override"
             else
-                fail_step 1 "Actions runner routing" "existing CI_RUNS_ON is not a supported runs-on JSON shape"
-                exit 1
+                checkline na "Actions runner routing" "preserved existing private CI_RUNS_ON; pass --replace-ci-runs-on to replace it"
             fi
         fi
     else

@@ -75,15 +75,14 @@ this comment. -->
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
-      reporting**. A self-hosted template also reconciles the private
-      repository's `CI_RUNS_ON` variable from the selected runner settings;
-      explicit non-template overrides are preserved on private repositories. The repository value is
-      intentional and takes precedence over an organization fallback. Public
-      repositories are standardized to `"ubuntu-latest"` even when the Copier
-      answers or an existing variable select different routing. Re-run this task after changing
-      Copier runner answers; a private explicit override remains
-      authoritative and must be removed manually before adopting self-hosted
-      routing. Do not add `dependabot.yml`: Renovate owns routine
+      reporting**. A self-hosted template creates a missing private
+      `CI_RUNS_ON` value from the selected runner settings, but preserves every
+      existing private value; the repository value is intentional and takes
+      precedence over an organization fallback. Replacing an existing private
+      value requires the setup script's explicit `--replace-ci-runs-on` flag.
+      Public repositories are standardized to `"ubuntu-latest"` even when the
+      Copier answers or an existing variable select different routing. Do not
+      add `dependabot.yml`: Renovate owns routine
       and vulnerability-remediation PRs; Dependabot owns advisory alerts.
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is

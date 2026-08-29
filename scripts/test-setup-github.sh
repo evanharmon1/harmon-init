@@ -73,19 +73,28 @@ GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" run_case --repo owner/private --ci-
 grep -Fq '[x] Actions runner routing - CI_RUNS_ON already matches' "$tmp/out" || fail "missing matching routing outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "matching CI_RUNS_ON was rewritten"; fi
 
-echo "==> stale self-hosted labels are standardized"
+echo "==> existing private self-hosted labels are preserved by default"
 GH_PRIVATE=true GH_VARIABLE_VALUE='["self-hosted","linux"]' \
     run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "stale-variable path exited $run_rc"
-grep -Fq '[x] Actions runner routing - standardized CI_RUNS_ON' "$tmp/out" || fail "missing standardized routing outcome"
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
+    fail "missing conservative preserve outcome"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "existing private routing was rewritten"; fi
+
+echo "==> explicit replace flag updates an existing private value"
+GH_PRIVATE=true GH_VARIABLE_VALUE='["self-hosted","linux"]' \
+    run_case --repo owner/private --ci-runs-on "$desired" --replace-ci-runs-on
+[ "$run_rc" -eq 0 ] || fail "explicit replace path exited $run_rc"
+grep -Fq '[x] Actions runner routing - replaced CI_RUNS_ON by explicit request' "$tmp/out" ||
+    fail "missing explicit replace outcome"
 grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
-    fail "stale self-hosted CI_RUNS_ON was not updated"
+    fail "explicit replace did not update CI_RUNS_ON"
 
 echo "==> explicit private runner overrides are preserved"
 GH_PRIVATE=true GH_VARIABLE_VALUE='"ubuntu-24.04-16core"' \
     run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "hosted-override path exited $run_rc"
-grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
     fail "missing preserved override outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted override was rewritten"; fi
 
@@ -93,7 +102,7 @@ echo "==> private group and label runner objects are preserved"
 GH_PRIVATE=true GH_VARIABLE_VALUE='{"group":"ubuntu-runners","labels":"ubuntu-24.04-16core"}' \
     run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "runner-object path exited $run_rc"
-grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
     fail "missing preserved runner-object outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "runner object was rewritten"; fi
 
@@ -101,7 +110,7 @@ echo "==> private multi-label runner arrays are preserved"
 GH_PRIVATE=true GH_VARIABLE_VALUE='["ubuntu-latest","windows-latest"]' \
     run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "multi-label runner array exited $run_rc"
-grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
     fail "multi-label runner array was not preserved"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "multi-label hosted array was rewritten"; fi
 
@@ -109,16 +118,32 @@ echo "==> private scalar runner labels are preserved as explicit overrides"
 GH_PRIVATE=true GH_VARIABLE_VALUE='"self-hosted"' \
     run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'
 [ "$run_rc" -eq 0 ] || fail "explicit-scalar path exited $run_rc"
-grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
     fail "explicit scalar was not preserved"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "ambiguous scalar was rewritten"; fi
 
-echo "==> switching a template to GitHub-hosted clears its stale self-hosted routing"
+echo "==> changing template answers does not replace existing private routing implicitly"
 GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" \
     run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'
 [ "$run_rc" -eq 0 ] || fail "hosted transition exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
+    fail "template answer change did not preserve existing routing"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "template answer change rewrote private routing"; fi
+
+echo "==> explicit replace can switch an existing private route to GitHub-hosted"
+GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" \
+    run_case --repo owner/private --ci-runs-on '"ubuntu-latest"' --replace-ci-runs-on
+[ "$run_rc" -eq 0 ] || fail "explicit hosted transition exited $run_rc"
 grep -Fq 'variable set CI_RUNS_ON --repo owner/private --body "ubuntu-latest"' "$stub_calls" ||
-    fail "stale self-hosted routing was not changed to GitHub-hosted"
+    fail "explicit hosted transition did not replace private routing"
+
+echo "==> unrecognized existing private JSON is preserved without ownership inference"
+GH_PRIVATE=true GH_VARIABLE_VALUE='{"custom":"runner-contract"}' \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "custom existing value exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
+    fail "custom existing private value was not preserved"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "custom existing private value was rewritten"; fi
 
 echo "==> variable lookup failures stop before a write"
 GH_PRIVATE=true GH_VARIABLE_GET_RC=23 run_case --repo owner/private --ci-runs-on "$desired"
@@ -131,6 +156,16 @@ echo "==> malformed runner JSON is rejected before GitHub access"
 GH_PRIVATE=true run_case --repo owner/private --ci-runs-on 'not-json "self-hosted"'
 [ "$run_rc" -eq 2 ] || fail "malformed runner JSON exited $run_rc"
 if [ -s "$stub_calls" ]; then fail "malformed runner JSON reached GitHub"; fi
+
+echo "==> empty self-hosted labels are rejected before GitHub access"
+GH_PRIVATE=true run_case --repo owner/private --ci-runs-on '["self-hosted",""]'
+[ "$run_rc" -eq 2 ] || fail "empty runner label exited $run_rc"
+if [ -s "$stub_calls" ]; then fail "empty runner label reached GitHub"; fi
+
+echo "==> replace flag requires an explicit desired value"
+GH_PRIVATE=true run_case --repo owner/private --replace-ci-runs-on
+[ "$run_rc" -eq 2 ] || fail "replace-without-value exited $run_rc"
+if [ -s "$stub_calls" ]; then fail "replace-without-value reached GitHub"; fi
 
 echo "==> public repositories force self-hosted selections to GitHub-hosted routing"
 GH_PRIVATE=false run_case --repo owner/public --ci-runs-on "$desired"
