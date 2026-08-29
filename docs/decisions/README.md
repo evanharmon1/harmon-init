@@ -14,4 +14,5 @@ one's status.
   [0001-record-architecture-decisions.md](0001-record-architecture-decisions.md)
   — the meta-ADR for the process; copy it as the template for new ADRs.
 - [0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
+- [0009-dev-flow-v2-orchestrator-and-results.md](0009-dev-flow-v2-orchestrator-and-results.md)
   — proposed v1 contract for portable devflow consumers.

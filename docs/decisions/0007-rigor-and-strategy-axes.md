@@ -5,9 +5,9 @@ Date: 2026-08-24
 ## Status
 
 Accepted — a **pending amendment** to D3 (the `[review.*]` tables become `[caps.*]`), D4, D8, and D9 is proposed by
-[ADR 0008](0008-dev-flow-v2-orchestrator-and-results.md) and takes effect
+[ADR 0009](0009-dev-flow-v2-orchestrator-and-results.md) and takes effect
 when that record becomes Accepted; until then these decisions stand as
-written. ADR 0008 amends D4, D8, and D9 where they define
+written. ADR 0009 amends D4, D8, and D9 where they define
 the `shepherd` cap as bounding CI, human-review, and Codex findings alike:
 the renamed `integration` cap bounds Codex re-review cycles only, and a
 separate `remediation` cap bounds fix pushes in that stage.

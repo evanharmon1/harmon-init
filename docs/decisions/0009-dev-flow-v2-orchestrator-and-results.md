@@ -1,4 +1,4 @@
-# 8. Dev flow v2 — the session orchestrates; results are schema-bound
+# 9. Dev flow v2 — the session orchestrates; results are schema-bound
 
 Date: 2026-08-29
 
@@ -84,6 +84,12 @@ tier.
 
 ### D3 — Consequences carried into this repository
 
+- The `[review.*]` → `[caps.*]` rename is an incompatible change under
+  [ADR 0008](0008-versioned-devflow-compatibility-contract.md): `.devflow.toml`
+  declares `schema_version = 2`, `.devflow.schema.json` gains the v2 branch,
+  and `.devflow-conformance-v2.json` is the fixture corpus consumers (the
+  skills, Foreman) test against; v1 consumers reject the v2 file with the
+  migration hint, which is the refusal #1081 and devkit#604 specify.
 - `.devflow.toml` gains `[caps.*]` (renamed from `[review.*]`; keys
   `challenge`, `review`, `integration`, `remediation`, `min_rounds`), `[gates]`,
   `[convergence]` (a composed predicate catalog), `[role.*]` tier baselines,
