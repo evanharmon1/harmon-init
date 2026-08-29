@@ -149,6 +149,24 @@ grep -Fq '[x] Actions runner routing - replaced unsafe public CI_RUNS_ON with Gi
 grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "public ambiguous self-hosted routing was not replaced"
 
+echo "==> public repositories do not infer hosted ownership from a custom label prefix"
+GH_PRIVATE=false GH_VARIABLE_VALUE='"ubuntu-owner-runner"' \
+    run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 0 ] || fail "public custom-label path exited $run_rc"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "custom self-hosted-looking label was mistaken for GitHub-hosted"
+
+echo "==> public runner safety is written before unrelated settings can fail"
+GH_PRIVATE=false GH_VARIABLE_VALUE='["self-hosted","linux"]' \
+    GH_FAIL_MATCH=vulnerability-alerts GH_FAIL_RC=23 \
+    run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 23 ] || fail "post-routing failure exited $run_rc"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "public routing was not repaired before the unrelated failure"
+set_line="$(grep -n 'variable set CI_RUNS_ON' "$stub_calls" | cut -d: -f1)"
+fail_line="$(grep -n 'vulnerability-alerts' "$stub_calls" | cut -d: -f1)"
+[ "$set_line" -lt "$fail_line" ] || fail "public routing ran after the fallible setting"
+
 echo "==> public repositories enable every requested setting and collaborator"
 GH_PRIVATE=false GH_PERMISSION=write GH_VARIABLE_VALUE= \
     run_case --repo owner/public --ci-runs-on '"ubuntu-latest"' --bot-collaborator owner-bot

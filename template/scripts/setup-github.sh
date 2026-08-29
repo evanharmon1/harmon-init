@@ -66,15 +66,6 @@ fail_step() {
 action_banner setup "GitHub repository" "Safety, vulnerability reporting, and automation access"
 kv "Repository" "$repo"
 
-if output_run "Enabling Dependabot alerts" \
-    gh api "repos/$repo/vulnerability-alerts" --method PUT; then
-    checkline ok "Dependabot alerts" "enabled"
-else
-    rc=$?
-    fail_step "$rc" "Dependabot alerts" "GitHub API request failed"
-    exit "$rc"
-fi
-
 if repo_private="$(gh api "repos/$repo" --jq '.private')"; then
     :
 else
@@ -90,24 +81,11 @@ true | false) ;;
     ;;
 esac
 
-if [ "$repo_private" = false ]; then
-    if [ -n "$ci_runs_on" ] && [ "$(printf '%s\n' "$ci_runs_on" | jq -r type)" = array ]; then
+if [ -n "$ci_runs_on" ]; then
+    if [ "$repo_private" = false ] && [ "$(printf '%s\n' "$ci_runs_on" | jq -r type)" = array ]; then
         checkline unknown "Actions runner routing" "public repository selected self-hosted; enforcing GitHub-hosted CI_RUNS_ON"
         ci_runs_on='"ubuntu-latest"'
     fi
-    if output_run "Enabling private vulnerability reporting" \
-        gh api "repos/$repo/private-vulnerability-reporting" --method PUT; then
-        checkline ok "Private vulnerability reporting" "enabled"
-    else
-        rc=$?
-        fail_step "$rc" "Private vulnerability reporting" "GitHub API request failed"
-        exit "$rc"
-    fi
-else
-    checkline na "Private vulnerability reporting" "skipped: private repository; feature is public-repo-only"
-fi
-
-if [ -n "$ci_runs_on" ]; then
     current_ci_runs_on=""
     if current_ci_runs_on="$(gh variable list --repo "$repo" --json name,value \
         --jq '.[] | select(.name == "CI_RUNS_ON") | .value')"; then
@@ -125,7 +103,14 @@ if [ -n "$ci_runs_on" ]; then
         else
             current_kind="$(printf '%s\n' "$current_ci_runs_on" | jq -r \
                 'def hosted_label:
-                    type == "string" and test("^(ubuntu|windows|macos)-[A-Za-z0-9._-]+$");
+                    type == "string" and IN(
+                        "ubuntu-slim", "ubuntu-latest", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04",
+                        "ubuntu-22.04-arm", "ubuntu-24.04-arm", "ubuntu-26.04-arm",
+                        "windows-latest", "windows-2022", "windows-2025", "windows-2025-vs2026",
+                        "windows-11-arm", "windows-11-vs2026-arm",
+                        "macos-latest", "macos-14", "macos-15", "macos-26",
+                        "macos-15-intel", "macos-26-intel", "xcode-27"
+                    );
                  if type == "array" and index("self-hosted") != null then "self-hosted"
                  elif hosted_label then "hosted"
                  elif type == "array" and length == 1 and all(.[]; hosted_label) then "hosted"
@@ -162,6 +147,31 @@ if [ -n "$ci_runs_on" ]; then
         fail_step "$rc" "Actions runner routing" "could not list repository variables"
         exit "$rc"
     fi
+fi
+
+# Runner routing is the security-relevant mutation. Complete it before the
+# independent repository settings below so an unrelated API failure cannot
+# leave a public repository on a previously unsafe route.
+if output_run "Enabling Dependabot alerts" \
+    gh api "repos/$repo/vulnerability-alerts" --method PUT; then
+    checkline ok "Dependabot alerts" "enabled"
+else
+    rc=$?
+    fail_step "$rc" "Dependabot alerts" "GitHub API request failed"
+    exit "$rc"
+fi
+
+if [ "$repo_private" = false ]; then
+    if output_run "Enabling private vulnerability reporting" \
+        gh api "repos/$repo/private-vulnerability-reporting" --method PUT; then
+        checkline ok "Private vulnerability reporting" "enabled"
+    else
+        rc=$?
+        fail_step "$rc" "Private vulnerability reporting" "GitHub API request failed"
+        exit "$rc"
+    fi
+else
+    checkline na "Private vulnerability reporting" "skipped: private repository; feature is public-repo-only"
 fi
 
 if [ -n "$bot_collaborator" ]; then
