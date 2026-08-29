@@ -23,7 +23,7 @@ case "$*" in
 esac
 case "$*" in
 *"collaborators/"*" --method PUT"*) printf '%s' "${GH_COLLAB_RESPONSE:-}" ;;
-*"variable get CI_RUNS_ON --repo "*)
+*"variable list --repo "*" --json name,value --jq "*)
     [ "${GH_VARIABLE_GET_RC:-0}" -eq 0 ] || exit "$GH_VARIABLE_GET_RC"
     printf '%s\n' "${GH_VARIABLE_VALUE:-}"
     ;;
@@ -61,7 +61,7 @@ fi
 desired='["self-hosted","linux","x64","owner"]'
 
 echo "==> missing private CI_RUNS_ON variables are created"
-GH_PRIVATE=true GH_VARIABLE_GET_RC=1 run_case --repo owner/private --ci-runs-on "$desired"
+GH_PRIVATE=true GH_VARIABLE_VALUE= run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "missing-variable path exited $run_rc"
 grep -Fq '[x] Actions runner routing - created CI_RUNS_ON' "$tmp/out" || fail "missing created routing outcome"
 grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
@@ -89,6 +89,25 @@ grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/o
     fail "missing preserved override outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted override was rewritten"; fi
 
+echo "==> switching a template to GitHub-hosted clears its stale self-hosted routing"
+GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" \
+    run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 0 ] || fail "hosted transition exited $run_rc"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/private --body "ubuntu-latest"' "$stub_calls" ||
+    fail "stale self-hosted routing was not changed to GitHub-hosted"
+
+echo "==> variable lookup failures stop before a write"
+GH_PRIVATE=true GH_VARIABLE_GET_RC=23 run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 23 ] || fail "variable lookup exit 23 became $run_rc"
+grep -Fq '[ ] Actions runner routing - could not list repository variables (exit 23)' "$tmp/out" ||
+    fail "missing variable-lookup failure"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "lookup failure attempted a write"; fi
+
+echo "==> malformed runner JSON is rejected before GitHub access"
+GH_PRIVATE=true run_case --repo owner/private --ci-runs-on 'not-json "self-hosted"'
+[ "$run_rc" -eq 2 ] || fail "malformed runner JSON exited $run_rc"
+if [ -s "$stub_calls" ]; then fail "malformed runner JSON reached GitHub"; fi
+
 echo "==> public repositories reject self-hosted routing"
 GH_PRIVATE=false run_case --repo owner/public --ci-runs-on "$desired"
 [ "$run_rc" -eq 1 ] || fail "public self-hosted path exited $run_rc"
@@ -97,13 +116,16 @@ grep -Fq '[ ] Actions runner routing - refusing self-hosted CI_RUNS_ON' "$tmp/ou
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "public repo received self-hosted routing"; fi
 
 echo "==> public repositories enable every requested setting and collaborator"
-GH_PRIVATE=false GH_PERMISSION=write run_case --repo owner/public --bot-collaborator owner-bot
+GH_PRIVATE=false GH_PERMISSION=write GH_VARIABLE_VALUE= \
+    run_case --repo owner/public --ci-runs-on '"ubuntu-latest"' --bot-collaborator owner-bot
 [ "$run_rc" -eq 0 ] || fail "public path exited $run_rc"
 grep -Fq '[x] Private vulnerability reporting - enabled' "$tmp/out" || fail "missing reporting success"
 grep -Fq '[x] Bot collaborator - owner-bot has write access' "$tmp/out" || fail "missing collaborator success"
 grep -q 'private-vulnerability-reporting --method PUT' "$stub_calls" || fail "reporting API was not called"
 grep -q 'collaborators/owner-bot --method PUT -f permission=push' "$stub_calls" || fail "collaborator API was not called"
 grep -q 'collaborators/owner-bot/permission --jq .permission' "$stub_calls" || fail "collaborator access was not verified"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "public repository did not receive explicit GitHub-hosted routing"
 
 echo "==> a new collaborator invitation is reported as pending until accepted"
 GH_PRIVATE=false GH_COLLAB_RESPONSE='{"id":42,"invitee":{"login":"owner-bot"}}' \

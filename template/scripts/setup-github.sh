@@ -40,18 +40,22 @@ if [ -z "$repo" ]; then
     echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--ci-runs-on <json-array>]" >&2
     exit 2
 fi
-if [ -n "$ci_runs_on" ]; then
-    case "$ci_runs_on" in
-    *'"self-hosted"'*) ;;
-    *)
-        echo "--ci-runs-on must be a JSON label array containing self-hosted" >&2
-        exit 2
-        ;;
-    esac
-fi
 if ! command -v gh >/dev/null 2>&1; then
     echo "Required tool not found: gh" >&2
     exit 1
+fi
+if [ -n "$ci_runs_on" ]; then
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Required tool not found: jq" >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$ci_runs_on" | jq -e '
+        (type == "string" and . == "ubuntu-latest") or
+        (type == "array" and length > 0 and all(.[]; type == "string") and index("self-hosted") != null)
+    ' >/dev/null; then
+        echo "--ci-runs-on must be \"ubuntu-latest\" or a JSON string array containing self-hosted" >&2
+        exit 2
+    fi
 fi
 
 fail_step() {
@@ -87,7 +91,7 @@ true | false) ;;
 esac
 
 if [ "$repo_private" = false ]; then
-    if [ -n "$ci_runs_on" ]; then
+    if [ -n "$ci_runs_on" ] && [ "$(printf '%s\n' "$ci_runs_on" | jq -r type)" = array ]; then
         fail_step 1 "Actions runner routing" "refusing self-hosted CI_RUNS_ON on a public repository"
         exit 1
     fi
@@ -105,12 +109,24 @@ fi
 
 if [ -n "$ci_runs_on" ]; then
     current_ci_runs_on=""
-    if current_ci_runs_on="$(gh variable get CI_RUNS_ON --repo "$repo" 2>/dev/null)"; then
+    if current_ci_runs_on="$(gh variable list --repo "$repo" --json name,value \
+        --jq '.[] | select(.name == "CI_RUNS_ON") | .value')"; then
         if [ "$current_ci_runs_on" = "$ci_runs_on" ]; then
-            checkline ok "Actions runner routing" "CI_RUNS_ON already matches the self-hosted labels"
+            checkline ok "Actions runner routing" "CI_RUNS_ON already matches the selected runner settings"
+        elif [ -z "$current_ci_runs_on" ]; then
+            if output_run "Creating Actions runner routing" \
+                gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
+                checkline ok "Actions runner routing" "created CI_RUNS_ON"
+            else
+                rc=$?
+                fail_step "$rc" "Actions runner routing" "could not create CI_RUNS_ON"
+                exit "$rc"
+            fi
         else
-            case "$current_ci_runs_on" in
-            *'"self-hosted"'*)
+            current_kind="$(printf '%s\n' "$current_ci_runs_on" | jq -r \
+                'if type == "array" and index("self-hosted") != null then "self-hosted" elif type == "string" then "hosted" else "invalid" end' \
+                2>/dev/null || printf '%s' invalid)"
+            if [ "$current_kind" = self-hosted ]; then
                 if output_run "Updating self-hosted runner routing" \
                     gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
                     checkline ok "Actions runner routing" "standardized CI_RUNS_ON"
@@ -119,18 +135,16 @@ if [ -n "$ci_runs_on" ]; then
                     fail_step "$rc" "Actions runner routing" "could not update CI_RUNS_ON"
                     exit "$rc"
                 fi
-                ;;
-            *)
+            elif [ "$current_kind" = hosted ]; then
                 checkline na "Actions runner routing" "preserved explicit GitHub-hosted CI_RUNS_ON override"
-                ;;
-            esac
+            else
+                fail_step 1 "Actions runner routing" "existing CI_RUNS_ON is not valid hosted or self-hosted JSON"
+                exit 1
+            fi
         fi
-    elif output_run "Creating self-hosted runner routing" \
-        gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
-        checkline ok "Actions runner routing" "created CI_RUNS_ON"
     else
         rc=$?
-        fail_step "$rc" "Actions runner routing" "could not create CI_RUNS_ON"
+        fail_step "$rc" "Actions runner routing" "could not list repository variables"
         exit "$rc"
     fi
 fi

@@ -43,7 +43,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 9 | `include_terraform` | bool | `project_type == 'iac'` | always | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |
 | 10 | `include_ansible` | bool | `project_type == 'iac'` | always | `ansible/`, `.ansible-lint`; seeds `use_python` |
 | 11 | `ci_runner` | choice `ubuntu-latest`/`self-hosted` | `ubuntu-latest` | always | Render-time `runs-on`; self-hosted also enables repository-variable setup |
-| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux,x64` | `ci_runner == 'self-hosted'` | Workflow fallback and private-repo `CI_RUNS_ON` reconciliation |
+| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux` | `ci_runner == 'self-hosted'` | Workflow fallback and repository `CI_RUNS_ON` reconciliation; add an architecture or host label when intentional |
 | 12 | `deploy_cloudflare_workers` | bool | `project_type == 'web-astro'` | `project_type in ['web-astro','web-app']` | `wrangler.jsonc`, `deploy-preview.yml` |
 | 13 | `license` | choice `mit`/`private` | `mit` | always | `LICENSE` (Licensor = the hidden `organization`) |
 | 14 | `use_release_please` | bool | **yes** | always | `release.yml`, release-please config/manifest, changelog scripts |
