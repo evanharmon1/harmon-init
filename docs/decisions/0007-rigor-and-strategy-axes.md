@@ -4,8 +4,10 @@ Date: 2026-08-24
 
 ## Status
 
-Accepted — D4, D8, and D9 are amended by
-[ADR 0008](0008-dev-flow-v2-orchestrator-and-results.md) where they define
+Accepted — a **pending amendment** to D4, D8, and D9 is proposed by
+[ADR 0008](0008-dev-flow-v2-orchestrator-and-results.md) and takes effect
+when that record becomes Accepted; until then these decisions stand as
+written. ADR 0008 amends them where they define
 the `shepherd` cap as bounding CI, human-review, and Codex findings alike:
 the renamed `integration` cap bounds Codex re-review cycles only, and a
 separate `remediation` cap bounds fix pushes in that stage.

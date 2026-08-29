@@ -88,8 +88,10 @@ tier.
   `challenge`, `review`, `integration`, `min_rounds`), `[gates]`,
   `[convergence]` (a composed predicate catalog), `[role.*]` tier baselines,
   and `[stage.*].finders[]`; the legacy shape is refused (#1081).
-- The integration cap bounds Codex re-review cycles only; answering human and
-  CI findings is uncapped, which is why a policy may lower it.
+- The integration cap bounds Codex re-review cycles only — answering human
+  and CI findings is never bounded by it, which is why a policy may lower it —
+  while the fix pushes that remediation takes are bounded by the separate
+  `remediation` cap, whose terminal action is escalation, never abandonment.
 - `AGENTS.md`'s Dev Loop shrinks to the stage table, the constitution rules,
   and references (#1082); the pre-PR gate is `task security` on a head that
   already carries a round-gate marker (#1080).
