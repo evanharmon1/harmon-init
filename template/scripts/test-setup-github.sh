@@ -23,6 +23,10 @@ case "$*" in
 esac
 case "$*" in
 *"collaborators/"*" --method PUT"*) printf '%s' "${GH_COLLAB_RESPONSE:-}" ;;
+*"variable get CI_RUNS_ON --repo "*)
+    [ "${GH_VARIABLE_GET_RC:-0}" -eq 0 ] || exit "$GH_VARIABLE_GET_RC"
+    printf '%s\n' "${GH_VARIABLE_VALUE:-}"
+    ;;
 *"/permission --jq .permission")
     [ -n "${GH_PERMISSION:-}" ] || exit 1
     printf '%s\n' "$GH_PERMISSION"
@@ -53,6 +57,44 @@ LC_ALL=C od -An -tu1 -v "$tmp/out" | awk '
 if grep -q 'private-vulnerability-reporting' "$stub_calls"; then
     fail "private repository attempted to enable public-only reporting"
 fi
+
+desired='["self-hosted","linux","x64","owner"]'
+
+echo "==> missing private CI_RUNS_ON variables are created"
+GH_PRIVATE=true GH_VARIABLE_GET_RC=1 run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "missing-variable path exited $run_rc"
+grep -Fq '[x] Actions runner routing - created CI_RUNS_ON' "$tmp/out" || fail "missing created routing outcome"
+grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
+    fail "missing CI_RUNS_ON variable was not created"
+
+echo "==> matching private CI_RUNS_ON variables are unchanged"
+GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "matching-variable path exited $run_rc"
+grep -Fq '[x] Actions runner routing - CI_RUNS_ON already matches' "$tmp/out" || fail "missing matching routing outcome"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "matching CI_RUNS_ON was rewritten"; fi
+
+echo "==> stale self-hosted labels are standardized"
+GH_PRIVATE=true GH_VARIABLE_VALUE='["self-hosted","linux"]' \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "stale-variable path exited $run_rc"
+grep -Fq '[x] Actions runner routing - standardized CI_RUNS_ON' "$tmp/out" || fail "missing standardized routing outcome"
+grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
+    fail "stale self-hosted CI_RUNS_ON was not updated"
+
+echo "==> explicit GitHub-hosted overrides are preserved"
+GH_PRIVATE=true GH_VARIABLE_VALUE='"ubuntu-latest"' \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "hosted-override path exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/out" ||
+    fail "missing preserved override outcome"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted override was rewritten"; fi
+
+echo "==> public repositories reject self-hosted routing"
+GH_PRIVATE=false run_case --repo owner/public --ci-runs-on "$desired"
+[ "$run_rc" -eq 1 ] || fail "public self-hosted path exited $run_rc"
+grep -Fq '[ ] Actions runner routing - refusing self-hosted CI_RUNS_ON' "$tmp/out" ||
+    fail "missing public-repo refusal"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "public repo received self-hosted routing"; fi
 
 echo "==> public repositories enable every requested setting and collaborator"
 GH_PRIVATE=false GH_PERMISSION=write run_case --repo owner/public --bot-collaborator owner-bot

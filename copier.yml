@@ -121,6 +121,16 @@ ci_runner:
     - self-hosted
   default: ubuntu-latest
 
+ci_runner_labels:
+  type: str
+  help: "CI RUNNER LABELS: comma-separated labels for self-hosted jobs (include self-hosted; add org/host labels to control routing)"
+  default: self-hosted,linux,x64
+  when: "[[ ci_runner == 'self-hosted' ]]"
+  validator: >-
+    [% if 'self-hosted' not in (ci_runner_labels.split(',') | map('trim') | select | list) %]
+    Include the self-hosted label.
+    [% endif %]
+
 deploy_cloudflare_workers:
   type: bool
   help: "DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-site pattern)"
@@ -481,7 +491,12 @@ repo_url:
 # downed self-hosted runner box is a variable flip, not a template update.
 ci_runs_on_default:
   type: str
-  default: "[% if ci_runner == 'self-hosted' %][\"self-hosted\", \"linux\"][% else %]\"ubuntu-latest\"[% endif %]"
+  default: >-
+    [% if ci_runner == 'self-hosted' %]
+    [[ (ci_runner_labels.split(',') | map('trim') | select | list) | tojson ]]
+    [% else %]
+    "ubuntu-latest"
+    [% endif %]
   when: false
 
 # Gates .github/workflows/claim-release.yml, which releases the claim markers

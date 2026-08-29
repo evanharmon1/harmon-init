@@ -12,6 +12,7 @@ OUTPUT_FD=2
 
 repo=""
 bot_collaborator=""
+ci_runs_on=""
 bot_pending=false
 bot_unverified=false
 while [ "$#" -gt 0 ]; do
@@ -24,6 +25,10 @@ while [ "$#" -gt 0 ]; do
         bot_collaborator="${2:-}"
         shift 2
         ;;
+    --ci-runs-on)
+        ci_runs_on="${2:-}"
+        shift 2
+        ;;
     *)
         echo "Unknown argument: $1" >&2
         exit 2
@@ -32,8 +37,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$repo" ]; then
-    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>]" >&2
+    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--ci-runs-on <json-array>]" >&2
     exit 2
+fi
+if [ -n "$ci_runs_on" ]; then
+    case "$ci_runs_on" in
+    *'"self-hosted"'*) ;;
+    *)
+        echo "--ci-runs-on must be a JSON label array containing self-hosted" >&2
+        exit 2
+        ;;
+    esac
 fi
 if ! command -v gh >/dev/null 2>&1; then
     echo "Required tool not found: gh" >&2
@@ -73,6 +87,10 @@ true | false) ;;
 esac
 
 if [ "$repo_private" = false ]; then
+    if [ -n "$ci_runs_on" ]; then
+        fail_step 1 "Actions runner routing" "refusing self-hosted CI_RUNS_ON on a public repository"
+        exit 1
+    fi
     if output_run "Enabling private vulnerability reporting" \
         gh api "repos/$repo/private-vulnerability-reporting" --method PUT; then
         checkline ok "Private vulnerability reporting" "enabled"
@@ -83,6 +101,38 @@ if [ "$repo_private" = false ]; then
     fi
 else
     checkline na "Private vulnerability reporting" "skipped: private repository; feature is public-repo-only"
+fi
+
+if [ -n "$ci_runs_on" ]; then
+    current_ci_runs_on=""
+    if current_ci_runs_on="$(gh variable get CI_RUNS_ON --repo "$repo" 2>/dev/null)"; then
+        if [ "$current_ci_runs_on" = "$ci_runs_on" ]; then
+            checkline ok "Actions runner routing" "CI_RUNS_ON already matches the self-hosted labels"
+        else
+            case "$current_ci_runs_on" in
+            *'"self-hosted"'*)
+                if output_run "Updating self-hosted runner routing" \
+                    gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
+                    checkline ok "Actions runner routing" "standardized CI_RUNS_ON"
+                else
+                    rc=$?
+                    fail_step "$rc" "Actions runner routing" "could not update CI_RUNS_ON"
+                    exit "$rc"
+                fi
+                ;;
+            *)
+                checkline na "Actions runner routing" "preserved explicit GitHub-hosted CI_RUNS_ON override"
+                ;;
+            esac
+        fi
+    elif output_run "Creating self-hosted runner routing" \
+        gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
+        checkline ok "Actions runner routing" "created CI_RUNS_ON"
+    else
+        rc=$?
+        fail_step "$rc" "Actions runner routing" "could not create CI_RUNS_ON"
+        exit "$rc"
+    fi
 fi
 
 if [ -n "$bot_collaborator" ]; then

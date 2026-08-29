@@ -42,7 +42,8 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 8 | `snyk_scan_schedule` | choice `off`/`weekly`/`daily` | `off` | always | `snyk-scheduled.yml` + its cron (`weekly` = Sunday `23 6 * * 0`) |
 | 9 | `include_terraform` | bool | `project_type == 'iac'` | always | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |
 | 10 | `include_ansible` | bool | `project_type == 'iac'` | always | `ansible/`, `.ansible-lint`; seeds `use_python` |
-| 11 | `ci_runner` | choice `ubuntu-latest`/`self-hosted` | `ubuntu-latest` | always | Render-time `runs-on` only — the `CI_RUNS_ON` variable overrides at runtime |
+| 11 | `ci_runner` | choice `ubuntu-latest`/`self-hosted` | `ubuntu-latest` | always | Render-time `runs-on`; self-hosted also enables repository-variable setup |
+| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux,x64` | `ci_runner == 'self-hosted'` | Workflow fallback and private-repo `CI_RUNS_ON` reconciliation |
 | 12 | `deploy_cloudflare_workers` | bool | `project_type == 'web-astro'` | `project_type in ['web-astro','web-app']` | `wrangler.jsonc`, `deploy-preview.yml` |
 | 13 | `license` | choice `mit`/`private` | `mit` | always | `LICENSE` (Licensor = the hidden `organization`) |
 | 14 | `use_release_please` | bool | **yes** | always | `release.yml`, release-please config/manifest, changelog scripts |
@@ -128,7 +129,7 @@ overridable per repo (defaults unchanged), per the
 |---|---|
 | `author_full_name` | `author_first_name + ' ' + author_last_name` |
 | `repo_url` | `https://github.com/<github_org>/<project_slug>` |
-| `ci_runs_on_default` | `["self-hosted","linux"]` when `ci_runner == 'self-hosted'`, else `"ubuntu-latest"` |
+| `ci_runs_on_default` | JSON array rendered from `ci_runner_labels` when self-hosted, else `"ubuntu-latest"` |
 | `claim_release_available` | `use_skills_sync` — gates `claim-release.yml` |
 | `use_node` | `project_type in ['web-astro','web-app']` |
 | `use_python` | `include_ansible or project_type == 'iac'` |
@@ -236,7 +237,7 @@ A generated repo's behavior also depends on state no answer captures.
 
 | Variable | Effect |
 |---|---|
-| `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON: `"ubuntu-latest"` or `["self-hosted","linux"]`) — a downed runner box is a variable flip, not a template update |
+| `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON string or label array). For self-hosted projects, `task setup:github` creates or standardizes this repository variable on private repos while preserving an explicit GitHub-hosted value; public repos reject self-hosted setup. |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
 | `FULL_SECURITY_SCAN` | On a repo rendered with `use_codeql: true`, opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, suppresses the Semgrep CE step in `build.yml` — a swap, not an addition. Compared as the string `'true'`. **Inert on a `use_codeql: false` repo** — see the note below |
 | `ORG_PROJECT_ID` | Org Projects V2 board the automation writes to |
