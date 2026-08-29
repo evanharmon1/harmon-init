@@ -9,7 +9,9 @@ Each record captures one choice: its context, the decision, and the **explicit
 change a decision, add a new ADR that supersedes the old one and mark the old
 one's status.
 
-- One ADR per file, numbered sequentially (`0001-…`, `0002-…`).
+- One ADR per file, named `YYYY-MM-DD-<kebab-title>.md` — the date the
+  decision was accepted. Records from before this convention keep their
+  numbered `NNNN-` names; both forms are valid.
 - Start with
   [0001-record-architecture-decisions.md](0001-record-architecture-decisions.md)
   — the meta-ADR for the process; copy it as the template for new ADRs.
