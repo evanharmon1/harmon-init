@@ -19,7 +19,9 @@ We will use Architecture Decision Records (ADRs), as
 [described by Michael Nygard](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions).
 
 - One ADR per decision, stored in `docs/decisions/`.
-- Named `YYYY-MM-DD-<kebab-title>.md` — the date the decision was accepted.
+- Named `YYYY-MM-DD-<kebab-title>.md` — the date the record was filed. The
+  name is fixed at creation: a `Proposed` record keeps it when accepted or
+  rejected, and the Status line carries the outcome.
 - Each ADR has: Status (Proposed / Accepted / Deprecated / Superseded), Context,
   Decision, and Consequences. Keep them short.
 - ADRs are immutable once accepted; to change a decision, add a new ADR that

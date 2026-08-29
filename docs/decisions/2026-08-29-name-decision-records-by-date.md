@@ -26,7 +26,10 @@ information a reader can use before opening the file.
 ## Decision
 
 New decision records are named `YYYY-MM-DD-<kebab-title>.md`, where the date
-is the day the decision was accepted. This amends
+is the day the record was filed. The name is fixed at creation and never
+changes with status: a record filed as `Proposed` keeps its filing date when
+it is accepted or rejected, and the `Status` line carries the outcome, so no
+review ever waits on a rename. This amends
 [ADR 0001](0001-record-architecture-decisions.md)'s naming clause.
 
 - Records already numbered — `0001` through `0008` in this repo, including
@@ -42,7 +45,8 @@ is the day the decision was accepted. This amends
 - Filing a new ADR needs no "what's the next number" lookup, and two branches
   adding records in parallel never collide.
 - Filenames sort chronologically, and the name itself tells a reader when the
-  decision was made before they open the file.
+  question was raised before they open the file; the `Date:` and `Status`
+  lines inside say when and whether it was accepted.
 - A repo's `docs/decisions/` mixes both filename forms indefinitely; a reader
   or tool must treat both as valid ADRs rather than assuming one prefix
   shape.
@@ -56,6 +60,12 @@ inbound link — from other ADRs, `docs/conventions.md`, `specs/`, PR
 descriptions, and outside the repo — targets the current filename; renaming
 is a broken-link cost for a purely cosmetic gain, since old records are
 already dated in their own `Date:` field.
+
+**Not:** dating the file by acceptance. A `Proposed` record has no
+acceptance date while it is under review, so an acceptance-dated name would
+have to be guessed and then renamed — invalidating the review's links —
+exactly the churn this decision removes. The filing date is known the moment
+the file exists.
 
 **Not:** keeping sequential numbers and documenting a coordination rule
 instead (e.g. "check open PRs before picking a number"). That trades one
