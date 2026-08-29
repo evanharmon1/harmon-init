@@ -65,10 +65,11 @@ environment — against the items below
       variable from the selected runner settings (the repository value
       intentionally takes precedence over an organization fallback)[% if github_org != author_git_provider_username %], and adds
       the `[[ author_git_provider_username ]]-bot` machine account as a Write
-      collaborator[% endif %]. Explicit GitHub-hosted overrides are preserved,
-      and public repositories are forced to an explicit GitHub-hosted override
-      even when the Copier answers select self-hosted routing. Re-run this task
-      after changing Copier runner answers; an explicit GitHub-hosted override
+      collaborator[% endif %]. Explicit non-template overrides are preserved on
+      private repositories, and public repositories are standardized to
+      `"ubuntu-latest"` even when the Copier answers or an existing variable
+      select different routing. Re-run this task
+      after changing Copier runner answers; a private explicit override
       remains authoritative and must be removed manually before adopting
       self-hosted routing. Do not add
       `dependabot.yml`: Renovate owns routine

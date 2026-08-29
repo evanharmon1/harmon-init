@@ -81,36 +81,36 @@ grep -Fq '[x] Actions runner routing - standardized CI_RUNS_ON' "$tmp/out" || fa
 grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
     fail "stale self-hosted CI_RUNS_ON was not updated"
 
-echo "==> explicit GitHub-hosted overrides are preserved"
-GH_PRIVATE=true GH_VARIABLE_VALUE='"ubuntu-latest"' \
+echo "==> explicit private runner overrides are preserved"
+GH_PRIVATE=true GH_VARIABLE_VALUE='"ubuntu-24.04-16core"' \
     run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "hosted-override path exited $run_rc"
-grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/out" ||
+grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
     fail "missing preserved override outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted override was rewritten"; fi
 
-echo "==> GitHub-hosted runner arrays are preserved"
-GH_PRIVATE=true GH_VARIABLE_VALUE='["ubuntu-latest"]' \
+echo "==> private group and label runner objects are preserved"
+GH_PRIVATE=true GH_VARIABLE_VALUE='{"group":"ubuntu-runners","labels":"ubuntu-24.04-16core"}' \
     run_case --repo owner/private --ci-runs-on "$desired"
-[ "$run_rc" -eq 0 ] || fail "hosted-array path exited $run_rc"
-grep -Fq '[-] Actions runner routing - preserved explicit GitHub-hosted' "$tmp/out" ||
-    fail "missing preserved hosted-array outcome"
-if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "hosted array was rewritten"; fi
+[ "$run_rc" -eq 0 ] || fail "runner-object path exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+    fail "missing preserved runner-object outcome"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "runner object was rewritten"; fi
 
-echo "==> multi-label GitHub-hosted arrays fail closed"
+echo "==> private multi-label runner arrays are preserved"
 GH_PRIVATE=true GH_VARIABLE_VALUE='["ubuntu-latest","windows-latest"]' \
     run_case --repo owner/private --ci-runs-on "$desired"
-[ "$run_rc" -eq 1 ] || fail "multi-label hosted array exited $run_rc"
-grep -Fq '[ ] Actions runner routing - existing CI_RUNS_ON is not valid hosted or self-hosted JSON' "$tmp/out" ||
-    fail "multi-label hosted array was not rejected"
+[ "$run_rc" -eq 0 ] || fail "multi-label runner array exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+    fail "multi-label runner array was not preserved"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "multi-label hosted array was rewritten"; fi
 
-echo "==> ambiguous scalar runner labels fail closed"
+echo "==> private scalar runner labels are preserved as explicit overrides"
 GH_PRIVATE=true GH_VARIABLE_VALUE='"self-hosted"' \
     run_case --repo owner/private --ci-runs-on '"ubuntu-latest"'
-[ "$run_rc" -eq 1 ] || fail "ambiguous-scalar path exited $run_rc"
-grep -Fq '[ ] Actions runner routing - existing CI_RUNS_ON is not valid hosted or self-hosted JSON' "$tmp/out" ||
-    fail "ambiguous scalar was not rejected"
+[ "$run_rc" -eq 0 ] || fail "explicit-scalar path exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved explicit non-template' "$tmp/out" ||
+    fail "explicit scalar was not preserved"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "ambiguous scalar was rewritten"; fi
 
 echo "==> switching a template to GitHub-hosted clears its stale self-hosted routing"
@@ -135,7 +135,7 @@ if [ -s "$stub_calls" ]; then fail "malformed runner JSON reached GitHub"; fi
 echo "==> public repositories force self-hosted selections to GitHub-hosted routing"
 GH_PRIVATE=false run_case --repo owner/public --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "public self-hosted path exited $run_rc"
-grep -Fq '[?] Actions runner routing - public repository selected self-hosted; enforcing GitHub-hosted CI_RUNS_ON' "$tmp/out" ||
+grep -Fq '[?] Actions runner routing - public repository selected non-canonical routing; enforcing ubuntu-latest' "$tmp/out" ||
     fail "missing public-repo safety override explanation"
 grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "public repo did not receive a GitHub-hosted safety override"
@@ -144,7 +144,7 @@ echo "==> public repositories replace ambiguous self-hosted scalar routing"
 GH_PRIVATE=false GH_VARIABLE_VALUE='"self-hosted"' \
     run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
 [ "$run_rc" -eq 0 ] || fail "public ambiguous self-hosted path exited $run_rc"
-grep -Fq '[x] Actions runner routing - replaced unsafe public CI_RUNS_ON with GitHub-hosted routing' "$tmp/out" ||
+grep -Fq '[x] Actions runner routing - standardized public CI_RUNS_ON to ubuntu-latest' "$tmp/out" ||
     fail "public ambiguous self-hosted routing was not explained"
 grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "public ambiguous self-hosted routing was not replaced"
@@ -155,6 +155,13 @@ GH_PRIVATE=false GH_VARIABLE_VALUE='"ubuntu-owner-runner"' \
 [ "$run_rc" -eq 0 ] || fail "public custom-label path exited $run_rc"
 grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "custom self-hosted-looking label was mistaken for GitHub-hosted"
+
+echo "==> public larger-runner labels are canonicalized without ownership inference"
+GH_PRIVATE=false GH_VARIABLE_VALUE='"ubuntu-24.04-16core"' \
+    run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 0 ] || fail "public larger-runner path exited $run_rc"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "public larger-runner label was not canonicalized"
 
 echo "==> public runner safety is written before unrelated settings can fail"
 GH_PRIVATE=false GH_VARIABLE_VALUE='["self-hosted","linux"]' \

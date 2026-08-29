@@ -77,11 +77,11 @@ this comment. -->
       re-run): enables **Dependabot alerts** and **private vulnerability
       reporting**. A self-hosted template also reconciles the private
       repository's `CI_RUNS_ON` variable from the selected runner settings;
-      explicit GitHub-hosted overrides are preserved. The repository value is
+      explicit non-template overrides are preserved on private repositories. The repository value is
       intentional and takes precedence over an organization fallback. Public
-      repositories are forced to an explicit GitHub-hosted override even when
-      the Copier answers select self-hosted routing. Re-run this task after changing
-      Copier runner answers; an explicit GitHub-hosted override remains
+      repositories are standardized to `"ubuntu-latest"` even when the Copier
+      answers or an existing variable select different routing. Re-run this task after changing
+      Copier runner answers; a private explicit override remains
       authoritative and must be removed manually before adopting self-hosted
       routing. Do not add `dependabot.yml`: Renovate owns routine
       and vulnerability-remediation PRs; Dependabot owns advisory alerts.

@@ -82,8 +82,8 @@ true | false) ;;
 esac
 
 if [ -n "$ci_runs_on" ]; then
-    if [ "$repo_private" = false ] && [ "$(printf '%s\n' "$ci_runs_on" | jq -r type)" = array ]; then
-        checkline unknown "Actions runner routing" "public repository selected self-hosted; enforcing GitHub-hosted CI_RUNS_ON"
+    if [ "$repo_private" = false ] && [ "$ci_runs_on" != '"ubuntu-latest"' ]; then
+        checkline unknown "Actions runner routing" "public repository selected non-canonical routing; enforcing ubuntu-latest"
         ci_runs_on='"ubuntu-latest"'
     fi
     current_ci_runs_on=""
@@ -102,25 +102,27 @@ if [ -n "$ci_runs_on" ]; then
             fi
         else
             current_kind="$(printf '%s\n' "$current_ci_runs_on" | jq -r \
-                'def hosted_label:
-                    type == "string" and IN(
-                        "ubuntu-slim", "ubuntu-latest", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04",
-                        "ubuntu-22.04-arm", "ubuntu-24.04-arm", "ubuntu-26.04-arm",
-                        "windows-latest", "windows-2022", "windows-2025", "windows-2025-vs2026",
-                        "windows-11-arm", "windows-11-vs2026-arm",
-                        "macos-latest", "macos-14", "macos-15", "macos-26",
-                        "macos-15-intel", "macos-26-intel", "xcode-27"
-                    );
+                'def nonempty_string: type == "string" and length > 0;
+                 def labels_value:
+                    nonempty_string or
+                    (type == "array" and length > 0 and all(.[]; nonempty_string));
+                 def explicit_routing:
+                    nonempty_string or
+                    (type == "array" and length > 0 and all(.[]; nonempty_string)) or
+                    (type == "object" and
+                     (has("group") or has("labels")) and
+                     all(keys[]; . == "group" or . == "labels") and
+                     ((has("group") | not) or (.group | nonempty_string)) and
+                     ((has("labels") | not) or (.labels | labels_value)));
                  if type == "array" and index("self-hosted") != null then "self-hosted"
-                 elif hosted_label then "hosted"
-                 elif type == "array" and length == 1 and all(.[]; hosted_label) then "hosted"
+                 elif explicit_routing then "explicit"
                  else "invalid"
                  end' \
                 2>/dev/null || printf '%s' invalid)"
-            if [ "$repo_private" = false ] && [ "$current_kind" != hosted ]; then
+            if [ "$repo_private" = false ]; then
                 if output_run "Enforcing public repository runner safety" \
                     gh variable set CI_RUNS_ON --repo "$repo" --body '"ubuntu-latest"'; then
-                    checkline ok "Actions runner routing" "replaced unsafe public CI_RUNS_ON with GitHub-hosted routing"
+                    checkline ok "Actions runner routing" "standardized public CI_RUNS_ON to ubuntu-latest"
                 else
                     rc=$?
                     fail_step "$rc" "Actions runner routing" "could not enforce GitHub-hosted routing on a public repository"
@@ -135,10 +137,10 @@ if [ -n "$ci_runs_on" ]; then
                     fail_step "$rc" "Actions runner routing" "could not update CI_RUNS_ON"
                     exit "$rc"
                 fi
-            elif [ "$current_kind" = hosted ]; then
-                checkline na "Actions runner routing" "preserved explicit GitHub-hosted CI_RUNS_ON override"
+            elif [ "$current_kind" = explicit ]; then
+                checkline na "Actions runner routing" "preserved explicit non-template CI_RUNS_ON override"
             else
-                fail_step 1 "Actions runner routing" "existing CI_RUNS_ON is not valid hosted or self-hosted JSON"
+                fail_step 1 "Actions runner routing" "existing CI_RUNS_ON is not a supported runs-on JSON shape"
                 exit 1
             fi
         fi
