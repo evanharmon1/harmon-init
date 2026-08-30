@@ -555,7 +555,23 @@ decisions_seed_date:
   type: str
   help: "DOCS: Date (YYYY-MM-DD) that names the seed decision record docs/decisions/<date>-record-architecture-decisions.md (defaults to today; recorded once so updates never rename it)"
   default: "[[ '%Y-%m-%d' | strftime ]]"
-  validator: "[% if not (decisions_seed_date | regex_search('^\\d{4}-\\d{2}-\\d{2}$')) %]Enter the date as YYYY-MM-DD.[% endif %]"
+  # A real calendar date, not just digit placement: month 1-12, day within the
+  # month, Gregorian leap years. Written without `[`/`]` — inside this
+  # template's `[[ ]]`/`[% %]` delimiters a stray bracket breaks the lexer.
+  validator: >-
+    [% set ok = decisions_seed_date | regex_search('^\\d{4}-\\d{2}-\\d{2}$') %]
+    [% if ok %]
+    [% set y = decisions_seed_date | truncate(4, true, '', 0) | int %]
+    [% set m = decisions_seed_date | replace('-', '') | truncate(6, true, '', 0) | int % 100 %]
+    [% set d = decisions_seed_date | replace('-', '') | int % 100 %]
+    [% set leap = (y % 4 == 0 and y % 100 != 0) or y % 400 == 0 %]
+    [% if m in (1, 3, 5, 7, 8, 10, 12) %][% set dim = 31 %]
+    [% elif m in (4, 6, 9, 11) %][% set dim = 30 %]
+    [% elif m == 2 %][% set dim = 29 if leap else 28 %]
+    [% else %][% set dim = 0 %][% endif %]
+    [% set ok = 1 <= m and m <= 12 and 1 <= d and d <= dim %]
+    [% endif %]
+    [% if not ok %]Enter a real calendar date as YYYY-MM-DD.[% endif %]
 
 current_date:
   type: str
