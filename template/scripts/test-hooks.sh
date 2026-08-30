@@ -138,7 +138,12 @@ echo "==> guard-process-kill passes expansion confined to an argument position"
 # #1118 P1 fix: expansion syntax is only an approval boundary in command
 # position (or a wrapper's candidate command word) or alongside a terminator
 # token. These carry expansion but never as the command word, so they pass.
-assert_guard_allows 'env FOO=$X printf safe'
+# NOTE: `env FOO=$X printf safe` is NOT here — a tracked executor (env is in
+# WRAPPERS) now asks on expansion anywhere in its own arguments, assignment
+# values included (review round 1 P1 fix below), so that case moved to the
+# ask loop. A bare, wrapper-free assignment prefix is still stripped by
+# effective_command before any wrapper rule runs, so it still allows.
+assert_guard_allows 'FOO=$X printf safe'
 assert_guard_allows 'echo $(date)'
 assert_guard_allows 'for f in *.sh; do echo "$f"; done'
 assert_guard_allows "printf '%s\\n' \"\$killer\""
@@ -305,6 +310,12 @@ for command in \
     "runuser -u root \$killer -9 42" \
     "su -c \"\$cmd\"" \
     "ssh host \$killer 42" \
+    "ssh -oProxyCommand=\"\$killer -9 42\" host" \
+    "ssh -o ProxyCommand=\"\$killer -9 42\" host" \
+    "su --command=\"\$cmd\"" \
+    "runuser --command=\"\$cmd\" root" \
+    "env FOO=\$X printf safe" \
+    "sudo -u \$USER printf safe" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done

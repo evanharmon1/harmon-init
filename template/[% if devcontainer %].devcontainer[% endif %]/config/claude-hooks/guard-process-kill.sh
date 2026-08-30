@@ -309,14 +309,14 @@ def inspect_segment(segment):
     # Wrapper args can launch a shell through nested wrappers or option forms.
     if command in WRAPPERS and any(name(token) in SHELLS for token in args):
         return "ask"
-    # A wrapper's candidate command word can be masked by expansion syntax the
-    # same way a bare command word can; assignment prefixes and flags are not
-    # candidate command words.
-    if command in WRAPPERS and any(
-        has_expansion(token)
-        for token in args
-        if not token.startswith("-") and not ASSIGNMENT_WORD.fullmatch(token)
-    ):
+    # A tracked executor is fail-closed on expansion anywhere in its
+    # arguments, not just a bare candidate command word: an option payload
+    # (ssh -oProxyCommand=..., su --command=...) or an assignment value
+    # (docker run -e FOO=$X) can itself be an executable payload, so there is
+    # no flag or assignment shape that is safe to exempt here. Only an
+    # executor outside WRAPPERS entirely (the header's documented residual)
+    # escapes this check.
+    if command in WRAPPERS and any(has_expansion(token) for token in args):
         return "ask"
     if command == "sudo" and sudo_uses_shell(args):
         return "ask"
