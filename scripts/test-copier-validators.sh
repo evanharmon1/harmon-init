@@ -79,6 +79,70 @@ render_coder_uri() {
         . "$out" >"$work/render.log" 2>&1
 }
 
+render_runner_labels() {
+    local answer="$1" out="$2"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data ci_runner=self-hosted \
+        --data "ci_runner_labels=$answer" \
+        . "$out" >"$work/render.log" 2>&1
+}
+
+render_hosted_runner() {
+    local out="$1"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data ci_runner=ubuntu-latest \
+        . "$out" >"$work/render.log" 2>&1
+}
+
+echo "==> self-hosted runner labels enforce safe, complete label lists"
+if render_runner_labels 'self-hosted,linux,x64,contraption' "$work/good-runner-labels"; then
+    if grep -Fq 'CI_RUNS_ON' "$work/good-runner-labels/.github/workflows/build.yml" &&
+        grep -Fq '"contraption"' "$work/good-runner-labels/.github/workflows/build.yml"; then
+        pass "accepted and rendered a valid custom runner label list"
+    else
+        fail "valid custom runner labels did not reach the workflow fallback"
+    fi
+else
+    fail "rejected a valid custom runner label list"
+    sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
+fi
+
+for bad_runner_labels in \
+    'linux,x64' \
+    'self-hosted,,linux' \
+    'self-hosted,bad label' \
+    'self-hosted,$unsafe'; do
+    if render_runner_labels "$bad_runner_labels" "$work/bad-runner-labels"; then
+        fail "accepted unsafe or incomplete runner labels: $bad_runner_labels"
+    elif grep -q 'Validation error' "$work/render.log"; then
+        pass "rejected unsafe or incomplete runner labels"
+    else
+        fail "rejected runner labels for an unexpected reason: $bad_runner_labels"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
+
+echo "==> GitHub-hosted runner JSON renders without surrounding whitespace"
+if render_hosted_runner "$work/hosted-runner"; then
+    if grep -Fq -- "--ci-runs-on '\"ubuntu-latest\"'" "$work/hosted-runner/Taskfile.yml"; then
+        pass "rendered the canonical GitHub-hosted runner JSON"
+    else
+        fail "GitHub-hosted runner JSON was not canonical in the generated setup task"
+    fi
+else
+    fail "could not render the GitHub-hosted runner profile"
+    sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
+fi
+
 echo "==> unsafe characters are rejected at answer time"
 # Each of these breaks the YAML scalar, the shell quoting, or both.
 i=0
@@ -188,6 +252,43 @@ if [ -n "$image_pin" ] && [ -n "$install_pin" ]; then
         echo "  ok — both pin ${image_pin}"
     fi
 fi
+
+echo "==> decisions_seed_date accepts only a real calendar date"
+render_seed_date() {
+    local answer="$1" out="$2"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data "decisions_seed_date=$answer" \
+        . "$out" >"$work/render.log" 2>&1
+}
+for bad_date in 2026-99-99 2026-00-10 2025-02-29 2026-04-31 2026-13-01 20260101 2026-1-1 yesterday '２０２６-０８-３０' '٢٠٢٦-٠٨-٣٠' $'2026-08-30\n'; do
+    if render_seed_date "$bad_date" "$work/bad-date"; then
+        fail "accepted an impossible seed date: $bad_date"
+    elif grep -q 'Validation error' "$work/render.log"; then
+        pass "rejected: $bad_date"
+    else
+        fail "rejected $bad_date, but not by the validator — copier failed for another reason"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
+for good_date in 2024-02-29 2026-12-31 2000-02-29; do
+    if render_seed_date "$good_date" "$work/good-date"; then
+        if [ -f "$work/good-date/docs/decisions/${good_date}-record-architecture-decisions.md" ] &&
+            grep -q "^Date: ${good_date}\$" "$work/good-date/docs/decisions/${good_date}-record-architecture-decisions.md" &&
+            grep -q "${good_date}-record-architecture-decisions.md" "$work/good-date/docs/decisions/README.md"; then
+            pass "accepted $good_date and named, dated, and linked the seed record by it"
+        else
+            fail "accepted $good_date but the seed record was not rendered by that date"
+        fi
+    else
+        fail "rejected a valid seed date: $good_date"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
 
 if [ "$failures" -gt 0 ]; then
     echo "test-copier-validators: FAILED ($failures)" >&2
