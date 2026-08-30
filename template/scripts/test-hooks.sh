@@ -109,6 +109,108 @@ assert_guard_allows "env . ./cleanup.sh"
 assert_guard_allows "env printf -- -Sfoo"
 assert_guard_allows "env FOO=bar printf -Sfoo"
 
+echo "==> guard-process-kill passes terminator-free commands that carry expansion syntax"
+# #1118: expansion syntax is an approval boundary only for commands that
+# already name a terminator token. None of these mention kill/pkill/killall/
+# xkill, so they must never hit the special-character branch.
+assert_guard_allows 'task check > /tmp/log 2>&1; echo "EXIT CODE: $?"'
+assert_guard_allows 'echo "$HOME"'
+assert_guard_allows "printf '%s\\n' \"\$(date)\""
+# NOTE: `echo \`date\`` is NOT here — codex round 1 P1-A fix below makes any
+# token containing a backtick fail closed outright (backticks are rare and
+# their nesting/escaping rules are too messy to parse safely), regardless of
+# what the substitution body actually is. Moved to the ask loop.
+assert_guard_allows $'echo ready\nprintf done'
+assert_guard_allows "[ -f README.md ] && echo present"
+assert_guard_allows 'grep -rln "foo" . | head'
+assert_guard_allows 'grep -rln "foo" . | head; echo "EXIT $?"'
+assert_guard_allows "ls docs/?.md"
+assert_guard_allows "ls *.sh"
+assert_guard_allows "sed -n '1,5p' *.md"
+assert_guard_allows "echo {a,b}"
+assert_guard_allows "{ printf safe; }"
+assert_guard_allows "ls @(a|b).txt"
+assert_guard_allows "ls +(a).txt"
+assert_guard_allows "ls !(a).txt"
+assert_guard_allows $'cat <<EOF\nhello\nEOF'
+assert_guard_allows 'skill --version "$HOME"'
+assert_guard_allows 'echo "$killer"'
+assert_guard_allows 'killswitch=$1 printf safe'
+
+echo "==> guard-process-kill passes expansion confined to an argument position"
+# #1118 P1 fix: expansion syntax is only an approval boundary in command
+# position (or a wrapper's candidate command word) or alongside a terminator
+# token. These carry expansion but never as the command word, so they pass.
+# NOTE: `env FOO=$X printf safe` is NOT here — a tracked executor (env is in
+# WRAPPERS) now asks on expansion anywhere in its own arguments, assignment
+# values included (review round 1 P1 fix below), so that case moved to the
+# ask loop. A bare, wrapper-free assignment prefix is still stripped by
+# effective_command before any wrapper rule runs, so it still allows.
+assert_guard_allows 'FOO=$X printf safe'
+assert_guard_allows 'echo $(date)'
+assert_guard_allows 'for f in *.sh; do echo "$f"; done'
+assert_guard_allows "printf '%s\\n' \"\$killer\""
+assert_guard_allows 'diff <(printf a) <(printf b)'
+
+echo "==> guard-process-kill inspects substitutions kept inside a quoted argument (codex round 1 P1-A)"
+# A quoted "$(...)" is one shlex word, so argument position alone does not
+# make it safe: bash still runs the substitution's body. These bodies are
+# clean, so the whole command still allows.
+assert_guard_allows 'echo "EXIT $(date)"'
+assert_guard_allows 'x="$(git rev-parse HEAD)"'
+assert_guard_allows "printf '%s\n' \"\$(ls *.sh | head -1)\""
+assert_guard_allows 'echo "${HOME}"'
+
+echo "==> guard-process-kill classifies composite Bash operators explicitly (codex round 1 P1-B)"
+# |&, &>, &>>, and >| are now recognized operators/redirects, not stray
+# punctuation runs, so a clean command on either side of one still allows.
+assert_guard_allows "printf safe |& cat"
+assert_guard_allows "ls &>/dev/null"
+assert_guard_allows "printf safe &>>/tmp/log"
+assert_guard_allows "printf safe >| /tmp/log"
+assert_guard_allows "printf safe 2>&1 | head"
+
+echo "==> guard-process-kill challenge round 2 (#1118): redirects, executors, quoted parens"
+# Fix 2: a leading/embedded redirect must not hide the real command word from
+# the shell/wrapper/expansion checks once the redirect and its target are
+# stripped away.
+assert_guard_allows "> /tmp/log printf safe"
+assert_guard_allows "2>/dev/null ls *.sh"
+# Fix 3: strace/ssh/... are executors too, but a clean, non-expanded payload
+# still passes.
+assert_guard_allows "strace -o out.txt ls"
+assert_guard_allows "ssh host uptime"
+assert_guard_allows "busybox ls -la"
+# Fix 4: a quoted literal that happens to end in "(" is ordinary text, not
+# process-substitution/group syntax, and must never be treated as an opener.
+assert_guard_allows 'printf "foo("'
+assert_guard_allows "echo 'a(b'"
+assert_guard_allows 'grep -F "x(" file.txt'
+
+echo "==> guard-process-kill joins a backslash-newline line continuation before inspecting (codex P1-1)"
+# Bash joins ki\<newline>ll into the single word "kill" before running it, so
+# the token regex/parser must see the joined text too, not two safe-looking
+# fragments. A plain, unescaped backslash-newline in a word elsewhere is safe.
+assert_guard_allows $'printf \
+safe'
+assert_guard_allows $'ls \
+  -la'
+
+echo "==> guard-process-kill fails closed on a quote/escape/\${...} inside a substitution body (codex P1-2)"
+# \${...}, a quote, or a backslash inside a "\$(...)"-bearing token can each
+# hide a ")" the character-only matcher cannot tell from the substitution's
+# own close, so the whole token fails closed rather than risking a falsely
+# early match. Bodies with none of these still get the precise recursive
+# check (kept passing above: echo "EXIT \$(date)", x="\$(git rev-parse HEAD)").
+# Accepted consequence: a substitution containing a quoted flag value (e.g.
+# `--format='%h'`) now asks too, even with harmless content.
+
+echo "==> guard-process-kill fails closed on case/select — arms are command boundaries it does not parse (codex P1-3, #1123 tracks proper support)"
+# A "(pattern)" arm is consumed as an ordinary group and discarded, so an arm
+# lacking a trailing ";;" before "esac" can fold its command into case's own
+# arguments instead of ever being seen as a command word. Fail closed on the
+# whole case/select construct rather than parsing arms.
+
 guard_subdir="$tmpdir/guard-subdir"
 mkdir -p "$guard_subdir"
 anchored_guard_output="$(cd "$guard_subdir" &&
@@ -213,13 +315,19 @@ for command in \
     "find . -name 'kill -9 42'" \
     "echo foo#bar; kill -9 42" \
     "\`kill -9 42\`" \
-    "\$killer -9 42" \
     "echo \$(kill -9 42)" \
+    "kill -9 \$pid" \
+    "kill -0 \$pid" \
+    "pkill -f \"\$name\"" \
+    "killall worker*" \
+    "kill -9 42 # \$comment" \
     "find . -exec kill -9 42 \\;" \
     "find . -execdir kill -9 42 \\;" \
     "find . -exec sh -c 'kill -9 42' \\;" \
     $'echo ready\nkill -9 42' \
     "FOO=x kill -9 42" \
+    "{ kill -9 42; }" \
+    "\$killer -9 42" \
     "/bin/ki[l]l -9 42" \
     "/bin/kil? -9 42" \
     "/bin/ki* -9 42" \
@@ -228,7 +336,61 @@ for command in \
     "+(ki)ll -9 42" \
     "!(safe) -9 42" \
     "/usr/bin/@(k)ill -9 42" \
-    "{ kill -9 42; }" \
+    "\$(printf '\\153ill') -9 42" \
+    "\`printf '\\153ill'\` -9 42" \
+    "sudo -u root \$killer -9 42" \
+    "env FOO=x \$killer -9 42" \
+    "exec \$killer -9 42" \
+    "\"\$killer\" -9 42" \
+    "x=\$killer; \$x -9 42" \
+    "if true; then \$killer -9 42; fi" \
+    "for p in 1 2; do \$killer -9 \$p; done" \
+    $'printf safe\n$killer -9 42' \
+    "> /tmp/log \$killer -9 42" \
+    "2>/dev/null \$killer -9 42" \
+    "</dev/null \$killer -9 42" \
+    ">\$log \$killer -9 42" \
+    "kill -0 42 > log" \
+    "strace \$killer -9 42" \
+    "watch -n1 \$killer 42" \
+    "busybox \"\$(printf '\\153ill')\" -9 42" \
+    "toybox \$applet -9 42" \
+    "runuser -u root \$killer -9 42" \
+    "su -c \"\$cmd\"" \
+    "ssh host \$killer 42" \
+    "ssh -oProxyCommand=\"\$killer -9 42\" host" \
+    "ssh -o ProxyCommand=\"\$killer -9 42\" host" \
+    "su --command=\"\$cmd\"" \
+    "runuser --command=\"\$cmd\" root" \
+    "env FOO=\$X printf safe" \
+    "sudo -u \$USER printf safe" \
+    "echo \`date\`" \
+    "echo \"\$(/bin/ki[l]l -9 42)\"" \
+    "x=\"\$(/bin/ki[l]l -9 42)\"" \
+    "echo \"\`/bin/ki[l]l -9 42\`\"" \
+    "printf '%s' \"\$(sudo -u root \$killer -9 42)\"" \
+    "echo \"\$(echo \"\$(/bin/ki[l]l -9 42)\")\"" \
+    "printf safe |& /bin/ki[l]l -9 42" \
+    "&>/tmp/log /bin/ki[l]l -9 42" \
+    "&>>/tmp/log \$killer -9 42" \
+    ">|/tmp/log \$killer -9 42" \
+    "printf safe ;& \$killer -9 42" \
+    $'/bin/ki\\\nll -9 42' \
+    $'kil\\\nl -9 42' \
+    $'pk\\\nill -f worker' \
+    "echo \"\$(printf \${x:-)}; /bin/ki[l]l -9 42)\"" \
+    "echo \"\$(printf ')'; /bin/ki[l]l -9 42)\"" \
+    "echo \"\$(printf \\); /bin/ki[l]l -9 42)\"" \
+    "echo \"\$(git log --format='%h')\"" \
+    $'printf safe\\\r\n/bin/ki[l]l -9 42' \
+    "hash -p /bin/ki[l]l foo; foo -9 42" \
+    "alias foo=/bin/ki[l]l; foo -9 42" \
+    "enable -f /lib/ki[l]l.so foo" \
+    'echo "$((x))"' \
+    'printf -v x %b "a[\\x24\\x28/bin/ki[l]l -9 42\\x29]"; echo "$((x))"' \
+    $'case x in (x) /bin/ki[l]l -9 42\nesac' \
+    "case x in x) /bin/ki[l]l -9 42;; esac" \
+    "case \"\$x\" in a) printf safe;; esac" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done

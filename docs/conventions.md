@@ -26,7 +26,10 @@ it points here.
   for Claude Code, Codex, and agy Bash commands. It requests approval for every
   terminating `kill`, `pkill`, `killall`, or `xkill` invocation; only direct
   `kill -l` and `kill -0 <PID>` probe segments are automatic. Do not infer that
-  a PID belongs to the current session.
+  a PID belongs to the current session. The hook catches *accidental*
+  termination — a plain terminator, a variable or glob resolving to one, an
+  executor handed one — and is not a sandbox against deliberately obfuscated
+  shell; the hard rule binds the agent, the hook only catches slips.
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
 
