@@ -189,6 +189,43 @@ if [ -n "$image_pin" ] && [ -n "$install_pin" ]; then
     fi
 fi
 
+echo "==> decisions_seed_date accepts only a real calendar date"
+render_seed_date() {
+    local answer="$1" out="$2"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data "decisions_seed_date=$answer" \
+        . "$out" >"$work/render.log" 2>&1
+}
+for bad_date in 2026-99-99 2026-00-10 2025-02-29 2026-04-31 2026-13-01 20260101 2026-1-1 yesterday '２０２６-０８-３０' '٢٠٢٦-٠٨-٣٠' $'2026-08-30\n'; do
+    if render_seed_date "$bad_date" "$work/bad-date"; then
+        fail "accepted an impossible seed date: $bad_date"
+    elif grep -q 'Validation error' "$work/render.log"; then
+        pass "rejected: $bad_date"
+    else
+        fail "rejected $bad_date, but not by the validator — copier failed for another reason"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
+for good_date in 2024-02-29 2026-12-31 2000-02-29; do
+    if render_seed_date "$good_date" "$work/good-date"; then
+        if [ -f "$work/good-date/docs/decisions/${good_date}-record-architecture-decisions.md" ] &&
+            grep -q "^Date: ${good_date}\$" "$work/good-date/docs/decisions/${good_date}-record-architecture-decisions.md" &&
+            grep -q "${good_date}-record-architecture-decisions.md" "$work/good-date/docs/decisions/README.md"; then
+            pass "accepted $good_date and named, dated, and linked the seed record by it"
+        else
+            fail "accepted $good_date but the seed record was not rendered by that date"
+        fi
+    else
+        fail "rejected a valid seed date: $good_date"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
+
 if [ "$failures" -gt 0 ]; then
     echo "test-copier-validators: FAILED ($failures)" >&2
     exit 1
