@@ -159,6 +159,7 @@ assert_guard_allows "2>/dev/null ls *.sh"
 # still passes.
 assert_guard_allows "strace -o out.txt ls"
 assert_guard_allows "ssh host uptime"
+assert_guard_allows "busybox ls -la"
 # Fix 4: a quoted literal that happens to end in "(" is ordinary text, not
 # process-substitution/group syntax, and must never be treated as an opener.
 assert_guard_allows 'printf "foo("'
@@ -307,6 +308,8 @@ for command in \
     "kill -0 42 > log" \
     "strace \$killer -9 42" \
     "watch -n1 \$killer 42" \
+    "busybox \"\$(printf '\\153ill')\" -9 42" \
+    "toybox \$applet -9 42" \
     "runuser -u root \$killer -9 42" \
     "su -c \"\$cmd\"" \
     "ssh host \$killer 42" \

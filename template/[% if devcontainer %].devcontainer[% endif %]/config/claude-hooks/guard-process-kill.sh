@@ -79,7 +79,7 @@ WRAPPERS = {
     # gated by the expansion checks below — a known, residual limitation.
     "strace", "ltrace", "watch", "runuser", "su", "script", "unbuffer", "chroot",
     "unshare", "nsenter", "systemd-run", "ssh", "docker", "podman", "at", "batch",
-    "caffeinate", "gdb", "valgrind", "perf", "hyperfine", "entr",
+    "caffeinate", "gdb", "valgrind", "perf", "hyperfine", "entr", "busybox", "toybox",
 }
 CONTROL = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac"}
 OPERATORS = {";", "&&", "||", "|", "&"}
