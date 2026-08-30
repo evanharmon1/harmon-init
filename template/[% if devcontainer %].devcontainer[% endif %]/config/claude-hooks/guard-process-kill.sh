@@ -11,9 +11,14 @@
 # parser below) — either can resolve to a terminator absent from the token
 # stream. Expansion syntax in an argument position elsewhere is not gated: it
 # cannot supply the command word, so it is not a plausible way to invoke a
-# terminator. Known residual: an executor that runs a child process but is not
-# in the parser's tracked list does not get this command-word check — only the
-# literal-terminator-text scan still applies to it.
+# terminator — except a command/process substitution kept inside a quoted
+# argument word, which bash still runs regardless of where the word lands;
+# the parser inspects every such substitution's body the same way it would a
+# bare command. Known residual: an executor that runs a child process but is
+# not in the parser's tracked list does not get this command-word check —
+# only the literal-terminator-text scan still applies to it. A composite
+# operator this parser does not recognize is also an approval boundary,
+# rather than being silently misread as a redirect target or command word.
 set -euo pipefail
 
 emit_ask() {
@@ -82,8 +87,8 @@ WRAPPERS = {
     "caffeinate", "gdb", "valgrind", "perf", "hyperfine", "entr", "busybox", "toybox",
 }
 CONTROL = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac"}
-OPERATORS = {";", "&&", "||", "|", "&"}
-REDIRECTS = {"<", ">", ">>", "<<", "<<<", "<>", ">&", "<&"}
+OPERATORS = {";", "&&", "||", "|", "&", "|&"}
+REDIRECTS = {"<", ">", ">>", "<<", "<<<", "<>", ">&", "<&", "&>", "&>>", ">|", "<<-"}
 PID = re.compile(r"[1-9][0-9]*")
 ASSIGNMENT_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\+)?=.*")
 # A command-word or wrapper-argument token that still carries any of these
@@ -100,6 +105,11 @@ PUNCTUATION_CHARS = set("();<>|&\n")
 # inspect_tokens) so is_paren_open can tell it apart from an ordinary word
 # that merely ends in "(". Never appears in real shell text.
 GLUE_MARKER = "\x01"
+# Every token this parser assigns a specific meaning to among
+# punctuation-run tokens: real operators, real redirects, and the group
+# delimiters (a bare "(" is also caught here; "<(" / ">(" are punctuation-
+# only process-substitution openers, matched later by is_paren_open).
+KNOWN_PUNCTUATION_TOKENS = OPERATORS | REDIRECTS | {"(", ")", "{", "}", "<(", ">("}
 ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 SUDO_SHORT_OPTIONS_WITH_ARGUMENT = {"a", "C", "D", "g", "h", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_SHORT_OPTIONS_WITHOUT_ARGUMENT = {"A", "b", "B", "E", "e", "H", "K", "k", "l", "n", "P", "S", "v", "V"}
@@ -130,6 +140,53 @@ def has_expansion(token):
     if token in ("[", "]"):
         return False
     return bool(EXPANSION.search(token))
+
+
+def find_matching_paren(text, open_index):
+    # text[open_index] is the "(" itself. Returns the index of its matching
+    # ")" within text, tracking nested "("/")" pairs, or -1 if it never closes
+    # within this token.
+    depth = 0
+    for index in range(open_index, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def has_substitution_risk(token):
+    # A quoted argument keeps a command/process substitution as one shlex
+    # word — argument position does not make it safe the way plain expansion
+    # syntax is, because bash still runs the substitution's body regardless
+    # of where the resulting word lands. Every such body is approval-gated
+    # exactly like a bare command would be. Backtick substitutions fail
+    # closed outright rather than trying to find a matching backtick:
+    # backticks are rare and their nesting/escaping rules are too messy to
+    # reproduce here. The glue-marker synthetic word (e.g. "$(\x01") is
+    # exempt: its "(...)" content was already fully inspected by the group
+    # recursion in inspect_tokens that produced it, and the marker itself
+    # looks like an unbalanced "$(" to naive scanning.
+    if not token or GLUE_MARKER in token:
+        return False
+    if "`" in token:
+        return True
+    index = 0
+    while index < len(token):
+        if token[index:index + 2] in ("$(", "<(", ">("):
+            open_paren = index + 1
+            close_paren = find_matching_paren(token, open_paren)
+            if close_paren == -1:
+                return True
+            body = token[open_paren + 1:close_paren]
+            if inspect_command(body) == "ask":
+                return True
+            index = close_paren + 1
+            continue
+        index += 1
+    return False
 
 
 def safe_kill(args):
@@ -288,6 +345,13 @@ def strip_redirects(tokens):
 def inspect_segment(segment):
     if not segment:
         return "allow"
+    # Check every word of the segment — command word and arguments alike —
+    # for a command/process substitution before anything else, including the
+    # assignment-prefix stripping below: `x="$(/bin/ki[l]l -9 42)"` is a pure
+    # assignment with no command word of its own, so it would otherwise never
+    # reach a check that could see the substitution it still runs.
+    if any(has_substitution_risk(token) for token in segment):
+        return "ask"
     effective = effective_command(segment)
     if not effective:
         return "allow"
@@ -410,6 +474,13 @@ def inspect_tokens(tokens):
             index = end
             continue
         if token in {")", "}"}:
+            return "ask"
+        # A token built entirely from punctuation_chars that is not a
+        # recognized operator, redirect, or group opener is a composite this
+        # parser does not know the meaning of (an unlisted Bash operator like
+        # `;&`, or any other stray punctuation run) — an approval boundary
+        # rather than a guess about what it does.
+        if token and all(ch in PUNCTUATION_CHARS for ch in token) and token not in KNOWN_PUNCTUATION_TOKENS:
             return "ask"
         if token in OPERATORS:
             if inspect_segment(segment) == "ask":

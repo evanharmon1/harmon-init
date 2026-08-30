@@ -116,7 +116,10 @@ echo "==> guard-process-kill passes terminator-free commands that carry expansio
 assert_guard_allows 'task check > /tmp/log 2>&1; echo "EXIT CODE: $?"'
 assert_guard_allows 'echo "$HOME"'
 assert_guard_allows "printf '%s\\n' \"\$(date)\""
-assert_guard_allows "echo \`date\`"
+# NOTE: `echo \`date\`` is NOT here — codex round 1 P1-A fix below makes any
+# token containing a backtick fail closed outright (backticks are rare and
+# their nesting/escaping rules are too messy to parse safely), regardless of
+# what the substitution body actually is. Moved to the ask loop.
 assert_guard_allows $'echo ready\nprintf done'
 assert_guard_allows "[ -f README.md ] && echo present"
 assert_guard_allows 'grep -rln "foo" . | head'
@@ -148,6 +151,24 @@ assert_guard_allows 'echo $(date)'
 assert_guard_allows 'for f in *.sh; do echo "$f"; done'
 assert_guard_allows "printf '%s\\n' \"\$killer\""
 assert_guard_allows 'diff <(printf a) <(printf b)'
+
+echo "==> guard-process-kill inspects substitutions kept inside a quoted argument (codex round 1 P1-A)"
+# A quoted "$(...)" is one shlex word, so argument position alone does not
+# make it safe: bash still runs the substitution's body. These bodies are
+# clean, so the whole command still allows.
+assert_guard_allows 'echo "EXIT $(date)"'
+assert_guard_allows 'x="$(git rev-parse HEAD)"'
+assert_guard_allows "printf '%s\n' \"\$(ls *.sh | head -1)\""
+assert_guard_allows 'echo "${HOME}"'
+
+echo "==> guard-process-kill classifies composite Bash operators explicitly (codex round 1 P1-B)"
+# |&, &>, &>>, and >| are now recognized operators/redirects, not stray
+# punctuation runs, so a clean command on either side of one still allows.
+assert_guard_allows "printf safe |& cat"
+assert_guard_allows "ls &>/dev/null"
+assert_guard_allows "printf safe &>>/tmp/log"
+assert_guard_allows "printf safe >| /tmp/log"
+assert_guard_allows "printf safe 2>&1 | head"
 
 echo "==> guard-process-kill challenge round 2 (#1118): redirects, executors, quoted parens"
 # Fix 2: a leading/embedded redirect must not hide the real command word from
@@ -319,6 +340,17 @@ for command in \
     "runuser --command=\"\$cmd\" root" \
     "env FOO=\$X printf safe" \
     "sudo -u \$USER printf safe" \
+    "echo \`date\`" \
+    "echo \"\$(/bin/ki[l]l -9 42)\"" \
+    "x=\"\$(/bin/ki[l]l -9 42)\"" \
+    "echo \"\`/bin/ki[l]l -9 42\`\"" \
+    "printf '%s' \"\$(sudo -u root \$killer -9 42)\"" \
+    "echo \"\$(echo \"\$(/bin/ki[l]l -9 42)\")\"" \
+    "printf safe |& /bin/ki[l]l -9 42" \
+    "&>/tmp/log /bin/ki[l]l -9 42" \
+    "&>>/tmp/log \$killer -9 42" \
+    ">|/tmp/log \$killer -9 42" \
+    "printf safe ;& \$killer -9 42" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done
