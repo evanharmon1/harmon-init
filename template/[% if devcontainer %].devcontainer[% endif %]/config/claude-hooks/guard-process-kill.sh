@@ -25,6 +25,20 @@
 # character-only paren matcher to see through it; and case/select are not
 # parsed at all — the whole construct is approval-gated (#1123 tracks proper
 # support).
+#
+# Threat model (maintainer decision, PR #1122): this guard defends against an
+# agent terminating a process ACCIDENTALLY — a plain kill/pkill/killall/xkill,
+# a variable or glob that happens to resolve to one, an executor handed one.
+# It is not a sandbox against a deliberately obfuscated shell command: a
+# command that spells a terminator only through constructs the parser cannot
+# see through (mapfile -C callbacks, indexed-array subscript arithmetic,
+# escapes that survive a second shell parse inside a wrapper payload, an
+# external /usr/bin/time, PS4 under set -x, job text piped into at/batch, an
+# executor outside the tracked list) is a known, accepted residual recorded in
+# #1123. Closing that class means asking on every expansion, which is the
+# over-prompting #1118 removed. An agent bound by AGENTS.md's hard rule must
+# not rely on this hook to stop it; the rule binds the agent, the hook only
+# catches slips.
 set -euo pipefail
 
 emit_ask() {
