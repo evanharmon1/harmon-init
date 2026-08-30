@@ -134,6 +134,16 @@ assert_guard_allows 'skill --version "$HOME"'
 assert_guard_allows 'echo "$killer"'
 assert_guard_allows 'killswitch=$1 printf safe'
 
+echo "==> guard-process-kill passes expansion confined to an argument position"
+# #1118 P1 fix: expansion syntax is only an approval boundary in command
+# position (or a wrapper's candidate command word) or alongside a terminator
+# token. These carry expansion but never as the command word, so they pass.
+assert_guard_allows 'env FOO=$X printf safe'
+assert_guard_allows 'echo $(date)'
+assert_guard_allows 'for f in *.sh; do echo "$f"; done'
+assert_guard_allows "printf '%s\\n' \"\$killer\""
+assert_guard_allows 'diff <(printf a) <(printf b)'
+
 guard_subdir="$tmpdir/guard-subdir"
 mkdir -p "$guard_subdir"
 anchored_guard_output="$(cd "$guard_subdir" &&
@@ -250,24 +260,27 @@ for command in \
     $'echo ready\nkill -9 42' \
     "FOO=x kill -9 42" \
     "{ kill -9 42; }" \
+    "\$killer -9 42" \
+    "/bin/ki[l]l -9 42" \
+    "/bin/kil? -9 42" \
+    "/bin/ki* -9 42" \
+    "k{i..i}ll -9 42" \
+    "@(ki|noop)ll -9 42" \
+    "+(ki)ll -9 42" \
+    "!(safe) -9 42" \
+    "/usr/bin/@(k)ill -9 42" \
+    "\$(printf '\\153ill') -9 42" \
+    "\`printf '\\153ill'\` -9 42" \
+    "sudo -u root \$killer -9 42" \
+    "env FOO=x \$killer -9 42" \
+    "exec \$killer -9 42" \
+    "\"\$killer\" -9 42" \
+    "x=\$killer; \$x -9 42" \
+    "if true; then \$killer -9 42; fi" \
+    "for p in 1 2; do \$killer -9 \$p; done" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done
-
-echo "==> guard-process-kill passes expansion-only spellings of a terminator name"
-# Narrowed by #1118: expansion-only spellings of a terminator name no token
-# (matched_command stays empty), so the special-character branch does not
-# gate them and the parser below allows them too. This is the accepted
-# trade-off documented in the hook's header comment, not a gap to close here.
-assert_guard_allows "\$killer -9 42"
-assert_guard_allows "/bin/ki[l]l -9 42"
-assert_guard_allows "/bin/kil? -9 42"
-assert_guard_allows "/bin/ki* -9 42"
-assert_guard_allows "k{i..i}ll -9 42"
-assert_guard_allows "@(ki|noop)ll -9 42"
-assert_guard_allows "+(ki)ll -9 42"
-assert_guard_allows "!(safe) -9 42"
-assert_guard_allows "/usr/bin/@(k)ill -9 42"
 
 assert_guard_ask_names "sudo killall worker" "killall"
 assert_guard_ask_names "printf safe && pkill worker" "pkill"

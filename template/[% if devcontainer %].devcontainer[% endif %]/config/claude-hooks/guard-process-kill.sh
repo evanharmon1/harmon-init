@@ -5,10 +5,12 @@
 # no authoritative session-owned PID list in this hook contract, so ownership is
 # never inferred. Only exact, non-terminating `kill -l` and `kill -0 <PID>...`
 # segments are allowed without an explicit user decision. Expansion syntax is an
-# approval boundary only for commands that already name a terminator token: it
-# can hide a terminator's *form*, but a command with no terminator token
-# anywhere cannot terminate a process through expansion this hook is willing to
-# guess about, so such commands fall through to the parser below instead.
+# approval boundary in two places: alongside a terminator token anywhere in the
+# command (the bash check below), and in a command-position word or a
+# wrapper's (sudo/env/exec/...) candidate command word (the parser below) —
+# either can resolve to a terminator absent from the token stream. Expansion
+# syntax in an argument position elsewhere is not gated: it cannot supply the
+# command word, so it is not a plausible way to invoke a terminator.
 set -euo pipefail
 
 emit_ask() {
@@ -37,12 +39,15 @@ if [[ "$command" =~ (^|[^[:alnum:]_])(kill|pkill|killall|xkill)($|[^[:alnum:]_])
     matched_command="${BASH_REMATCH[2]}"
 fi
 
-# A shell grammar is deliberately not reimplemented here. Expansion syntax can
-# produce a command that is absent from the token stream, so once a terminator
+# A shell grammar is deliberately not reimplemented here. Once a terminator
 # token is already present, expansion syntax anywhere in the command is an
-# approval boundary rather than an input to guess about. A command that names
-# no terminator token at all cannot terminate a process through expansion this
-# hook is willing to guess about, so it falls through to the parser below.
+# approval boundary rather than an input to guess about — it could be hiding
+# the terminator's *form* (e.g. an obfuscated flag or PID). A command that
+# names no terminator token at all falls through to the parser below, which
+# still gates expansion in a command-position word or a wrapper's candidate
+# command word (an expansion there could hide the terminator's *identity*,
+# not just its form); expansion confined to an argument position is not
+# gated, since it cannot supply the command word.
 if [[ -n "$matched_command" ]] && [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ||
     "$command" == *'['* || "$command" == *'?'* || "$command" == *'*'* ||
     "$command" == *'{'* || "$command" == *'}'* ||
@@ -72,6 +77,12 @@ OPERATORS = {";", "&&", "||", "|", "&"}
 REDIRECTS = {"<", ">", ">>", "<<", "<<<", "<>", ">&", "<&"}
 PID = re.compile(r"[1-9][0-9]*")
 ASSIGNMENT_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\+)?=.*")
+# A command-word or wrapper-argument token that still carries any of these
+# characters could resolve to something absent from the token stream, so it
+# is an approval boundary rather than an input to guess about. Argument-
+# position expansion elsewhere is not: it cannot supply the command word.
+EXPANSION = re.compile(r"[$`\[\]?*{}()]")
+GLUE_CHARS = set("$@+!?*")
 ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 SUDO_SHORT_OPTIONS_WITH_ARGUMENT = {"a", "C", "D", "g", "h", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_SHORT_OPTIONS_WITHOUT_ARGUMENT = {"A", "b", "B", "E", "e", "H", "K", "k", "l", "n", "P", "S", "v", "V"}
@@ -92,6 +103,16 @@ def name(token):
 
 def ascii_lower(value):
     return value.translate(ASCII_LOWER)
+
+
+def has_expansion(token):
+    # A lone "[" or "]" is the complete, literal `test` command word (or its
+    # closing argument) — not a partial glob/character-class that could still
+    # resolve to something else. Only a bracket combined with other characters
+    # in the same token is a plausible obfuscation.
+    if token in ("[", "]"):
+        return False
+    return bool(EXPANSION.search(token))
 
 
 def safe_kill(args):
@@ -239,6 +260,11 @@ def inspect_segment(segment):
     if not effective:
         return "allow"
     command, args = name(effective[0]), effective[1:]
+    # A command word built from expansion syntax can resolve to a name absent
+    # from the token stream, so it is approval-gated the same way a terminator
+    # token is, regardless of what it is.
+    if has_expansion(effective[0]):
+        return "ask"
     # Shells can read executable text from `-c` arguments or redirects, so ask
     # for every shell launcher before redirect handling.
     if command in SHELLS or command in EVALUATORS:
@@ -250,6 +276,15 @@ def inspect_segment(segment):
         return "ask"
     # Wrapper args can launch a shell through nested wrappers or option forms.
     if command in WRAPPERS and any(name(token) in SHELLS for token in args):
+        return "ask"
+    # A wrapper's candidate command word can be masked by expansion syntax the
+    # same way a bare command word can; assignment prefixes and flags are not
+    # candidate command words.
+    if command in WRAPPERS and any(
+        has_expansion(token)
+        for token in args
+        if not token.startswith("-") and not ASSIGNMENT_WORD.fullmatch(token)
+    ):
         return "ask"
     if command == "sudo" and sudo_uses_shell(args):
         return "ask"
@@ -280,16 +315,36 @@ def inspect_segment(segment):
     return "allow"
 
 
+def is_group_open(token):
+    # A standalone "(" is a bare subshell/group open. A token merely ending in
+    # "(" is a punctuation run shlex already glued together (process
+    # substitution's "<(", or a synthetic marker glued below) and opens the
+    # same way.
+    return token == "{" or token.endswith("(")
+
+
 def inspect_tokens(tokens):
     segment = []
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in {"(", "{"}:
-            close = ")" if token == "(" else "}"
+        # A bare "(" immediately after a word ending in one of these characters
+        # is command/process substitution splitting the word from its "(" only
+        # because "(" is a shlex punctuation char, not because the two are
+        # unrelated. Glue it back onto the word so the word carries visible
+        # expansion syntax wherever it is later inspected (command position or
+        # a wrapper argument), instead of vanishing when the group below is
+        # consumed.
+        if token == "(" and segment and segment[-1] and segment[-1][-1] in GLUE_CHARS:
+            segment[-1] += "("
+            token = segment[-1]
+        if is_group_open(token):
+            close = "}" if token == "{" else ")"
             depth, end = 1, index + 1
             while end < len(tokens) and depth:
-                depth += (tokens[end] == token) - (tokens[end] == close)
+                nested = tokens[end]
+                opens = (nested == "{") if close == "}" else nested.endswith("(")
+                depth += opens - (nested == close)
                 end += 1
             if depth or inspect_tokens(tokens[index + 1:end - 1]) == "ask":
                 return "ask"
@@ -309,6 +364,10 @@ def inspect_tokens(tokens):
 
 def inspect_command(command):
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    # Split on whitespace only, so an expansion-prefixed word ($killer,
+    # /bin/ki[l]l, k{i..i}ll) stays one token instead of shlex's default
+    # wordchars splitting it apart mid-word.
+    lexer.whitespace_split = True
     # Preserve assignment operators within adjacent words. Whitespace still
     # separates `printf + =value`, so it cannot be mistaken for `NAME+=value`.
     lexer.wordchars += "+="
