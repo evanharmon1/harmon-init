@@ -4,7 +4,11 @@
 # A process can belong to another interactive session, agent, or user. There is
 # no authoritative session-owned PID list in this hook contract, so ownership is
 # never inferred. Only exact, non-terminating `kill -l` and `kill -0 <PID>...`
-# segments are allowed without an explicit user decision.
+# segments are allowed without an explicit user decision. Expansion syntax is an
+# approval boundary only for commands that already name a terminator token: it
+# can hide a terminator's *form*, but a command with no terminator token
+# anywhere cannot terminate a process through expansion this hook is willing to
+# guess about, so such commands fall through to the parser below instead.
 set -euo pipefail
 
 emit_ask() {
@@ -34,9 +38,12 @@ if [[ "$command" =~ (^|[^[:alnum:]_])(kill|pkill|killall|xkill)($|[^[:alnum:]_])
 fi
 
 # A shell grammar is deliberately not reimplemented here. Expansion syntax can
-# produce a command that is absent from the token stream, so it is an approval
-# boundary rather than an input to guess about.
-if [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ||
+# produce a command that is absent from the token stream, so once a terminator
+# token is already present, expansion syntax anywhere in the command is an
+# approval boundary rather than an input to guess about. A command that names
+# no terminator token at all cannot terminate a process through expansion this
+# hook is willing to guess about, so it falls through to the parser below.
+if [[ -n "$matched_command" ]] && [[ "$command" == *'$'* || "$command" == *'`'* || "$command" == *$'\n'* || "$command" == *$'\r'* ||
     "$command" == *'['* || "$command" == *'?'* || "$command" == *'*'* ||
     "$command" == *'{'* || "$command" == *'}'* ||
     "$command" == *'@('* || "$command" == *'+('* || "$command" == *'!('* ]]; then

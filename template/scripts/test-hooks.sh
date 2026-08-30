@@ -109,6 +109,31 @@ assert_guard_allows "env . ./cleanup.sh"
 assert_guard_allows "env printf -- -Sfoo"
 assert_guard_allows "env FOO=bar printf -Sfoo"
 
+echo "==> guard-process-kill passes terminator-free commands that carry expansion syntax"
+# #1118: expansion syntax is an approval boundary only for commands that
+# already name a terminator token. None of these mention kill/pkill/killall/
+# xkill, so they must never hit the special-character branch.
+assert_guard_allows 'task check > /tmp/log 2>&1; echo "EXIT CODE: $?"'
+assert_guard_allows 'echo "$HOME"'
+assert_guard_allows "printf '%s\\n' \"\$(date)\""
+assert_guard_allows "echo \`date\`"
+assert_guard_allows $'echo ready\nprintf done'
+assert_guard_allows "[ -f README.md ] && echo present"
+assert_guard_allows 'grep -rln "foo" . | head'
+assert_guard_allows 'grep -rln "foo" . | head; echo "EXIT $?"'
+assert_guard_allows "ls docs/?.md"
+assert_guard_allows "ls *.sh"
+assert_guard_allows "sed -n '1,5p' *.md"
+assert_guard_allows "echo {a,b}"
+assert_guard_allows "{ printf safe; }"
+assert_guard_allows "ls @(a|b).txt"
+assert_guard_allows "ls +(a).txt"
+assert_guard_allows "ls !(a).txt"
+assert_guard_allows $'cat <<EOF\nhello\nEOF'
+assert_guard_allows 'skill --version "$HOME"'
+assert_guard_allows 'echo "$killer"'
+assert_guard_allows 'killswitch=$1 printf safe'
+
 guard_subdir="$tmpdir/guard-subdir"
 mkdir -p "$guard_subdir"
 anchored_guard_output="$(cd "$guard_subdir" &&
@@ -213,25 +238,36 @@ for command in \
     "find . -name 'kill -9 42'" \
     "echo foo#bar; kill -9 42" \
     "\`kill -9 42\`" \
-    "\$killer -9 42" \
     "echo \$(kill -9 42)" \
+    "kill -9 \$pid" \
+    "kill -0 \$pid" \
+    "pkill -f \"\$name\"" \
+    "killall worker*" \
+    "kill -9 42 # \$comment" \
     "find . -exec kill -9 42 \\;" \
     "find . -execdir kill -9 42 \\;" \
     "find . -exec sh -c 'kill -9 42' \\;" \
     $'echo ready\nkill -9 42' \
     "FOO=x kill -9 42" \
-    "/bin/ki[l]l -9 42" \
-    "/bin/kil? -9 42" \
-    "/bin/ki* -9 42" \
-    "k{i..i}ll -9 42" \
-    "@(ki|noop)ll -9 42" \
-    "+(ki)ll -9 42" \
-    "!(safe) -9 42" \
-    "/usr/bin/@(k)ill -9 42" \
     "{ kill -9 42; }" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done
+
+echo "==> guard-process-kill passes expansion-only spellings of a terminator name"
+# Narrowed by #1118: expansion-only spellings of a terminator name no token
+# (matched_command stays empty), so the special-character branch does not
+# gate them and the parser below allows them too. This is the accepted
+# trade-off documented in the hook's header comment, not a gap to close here.
+assert_guard_allows "\$killer -9 42"
+assert_guard_allows "/bin/ki[l]l -9 42"
+assert_guard_allows "/bin/kil? -9 42"
+assert_guard_allows "/bin/ki* -9 42"
+assert_guard_allows "k{i..i}ll -9 42"
+assert_guard_allows "@(ki|noop)ll -9 42"
+assert_guard_allows "+(ki)ll -9 42"
+assert_guard_allows "!(safe) -9 42"
+assert_guard_allows "/usr/bin/@(k)ill -9 42"
 
 assert_guard_ask_names "sudo killall worker" "killall"
 assert_guard_ask_names "printf safe && pkill worker" "pkill"
