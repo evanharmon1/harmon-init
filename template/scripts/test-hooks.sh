@@ -144,6 +144,22 @@ assert_guard_allows 'for f in *.sh; do echo "$f"; done'
 assert_guard_allows "printf '%s\\n' \"\$killer\""
 assert_guard_allows 'diff <(printf a) <(printf b)'
 
+echo "==> guard-process-kill challenge round 2 (#1118): redirects, executors, quoted parens"
+# Fix 2: a leading/embedded redirect must not hide the real command word from
+# the shell/wrapper/expansion checks once the redirect and its target are
+# stripped away.
+assert_guard_allows "> /tmp/log printf safe"
+assert_guard_allows "2>/dev/null ls *.sh"
+# Fix 3: strace/ssh/... are executors too, but a clean, non-expanded payload
+# still passes.
+assert_guard_allows "strace -o out.txt ls"
+assert_guard_allows "ssh host uptime"
+# Fix 4: a quoted literal that happens to end in "(" is ordinary text, not
+# process-substitution/group syntax, and must never be treated as an opener.
+assert_guard_allows 'printf "foo("'
+assert_guard_allows "echo 'a(b'"
+assert_guard_allows 'grep -F "x(" file.txt'
+
 guard_subdir="$tmpdir/guard-subdir"
 mkdir -p "$guard_subdir"
 anchored_guard_output="$(cd "$guard_subdir" &&
@@ -278,6 +294,17 @@ for command in \
     "x=\$killer; \$x -9 42" \
     "if true; then \$killer -9 42; fi" \
     "for p in 1 2; do \$killer -9 \$p; done" \
+    $'printf safe\n$killer -9 42' \
+    "> /tmp/log \$killer -9 42" \
+    "2>/dev/null \$killer -9 42" \
+    "</dev/null \$killer -9 42" \
+    ">\$log \$killer -9 42" \
+    "kill -0 42 > log" \
+    "strace \$killer -9 42" \
+    "watch -n1 \$killer 42" \
+    "runuser -u root \$killer -9 42" \
+    "su -c \"\$cmd\"" \
+    "ssh host \$killer 42" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done

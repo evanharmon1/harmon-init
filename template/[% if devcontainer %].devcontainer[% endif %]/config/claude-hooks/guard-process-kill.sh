@@ -6,11 +6,14 @@
 # never inferred. Only exact, non-terminating `kill -l` and `kill -0 <PID>...`
 # segments are allowed without an explicit user decision. Expansion syntax is an
 # approval boundary in two places: alongside a terminator token anywhere in the
-# command (the bash check below), and in a command-position word or a
-# wrapper's (sudo/env/exec/...) candidate command word (the parser below) —
-# either can resolve to a terminator absent from the token stream. Expansion
-# syntax in an argument position elsewhere is not gated: it cannot supply the
-# command word, so it is not a plausible way to invoke a terminator.
+# command (the bash check below), and in a command-position word or a known
+# executor's (sudo/env/exec/ssh/docker/strace/...) candidate command word (the
+# parser below) — either can resolve to a terminator absent from the token
+# stream. Expansion syntax in an argument position elsewhere is not gated: it
+# cannot supply the command word, so it is not a plausible way to invoke a
+# terminator. Known residual: an executor that runs a child process but is not
+# in the parser's tracked list does not get this command-word check — only the
+# literal-terminator-text scan still applies to it.
 set -euo pipefail
 
 emit_ask() {
@@ -71,6 +74,12 @@ EVALUATOR_CONTROLS = {"if", "then", "elif", "else", "while", "until", "do"}
 WRAPPERS = {
     "chrt", "command", "builtin", "doas", "env", "exec", "flock", "ionice",
     "nice", "nohup", "setsid", "stdbuf", "sudo", "taskset", "time", "timeout", "xargs",
+    # Known child-executing commands beyond the core wrapper set. An executor
+    # NOT in this list that receives an expansion-built command word is not
+    # gated by the expansion checks below — a known, residual limitation.
+    "strace", "ltrace", "watch", "runuser", "su", "script", "unbuffer", "chroot",
+    "unshare", "nsenter", "systemd-run", "ssh", "docker", "podman", "at", "batch",
+    "caffeinate", "gdb", "valgrind", "perf", "hyperfine", "entr",
 }
 CONTROL = {"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac"}
 OPERATORS = {";", "&&", "||", "|", "&"}
@@ -83,6 +92,14 @@ ASSIGNMENT_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\+)?=.*")
 # position expansion elsewhere is not: it cannot supply the command word.
 EXPANSION = re.compile(r"[$`\[\]?*{}()]")
 GLUE_CHARS = set("$@+!?*")
+# Only a punctuation-run token (every character in this set) that ends in
+# "(" is genuine process-substitution/group syntax ("(", "<(", ">("); an
+# ordinary word that happens to end in "(" after quote removal is not.
+PUNCTUATION_CHARS = set("();<>|&\n")
+# Tags a word fused with a "(" that followed it (see the glue step in
+# inspect_tokens) so is_paren_open can tell it apart from an ordinary word
+# that merely ends in "(". Never appears in real shell text.
+GLUE_MARKER = "\x01"
 ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 SUDO_SHORT_OPTIONS_WITH_ARGUMENT = {"a", "C", "D", "g", "h", "p", "R", "r", "t", "T", "U", "u"}
 SUDO_SHORT_OPTIONS_WITHOUT_ARGUMENT = {"A", "b", "B", "E", "e", "H", "K", "k", "l", "n", "P", "S", "v", "V"}
@@ -253,6 +270,21 @@ def effective_command(segment):
     return []
 
 
+def strip_redirects(tokens):
+    # Drop each redirect operator, its target token, and an all-digit token
+    # immediately preceding it (the fd number of `2>`), leaving only what the
+    # segment would execute once every redirection is set up.
+    drop = [False] * len(tokens)
+    for index, token in enumerate(tokens):
+        if token in REDIRECTS:
+            drop[index] = True
+            if index + 1 < len(tokens):
+                drop[index + 1] = True
+            if index - 1 >= 0 and tokens[index - 1].isdigit():
+                drop[index - 1] = True
+    return [token for index, token in enumerate(tokens) if not drop[index]]
+
+
 def inspect_segment(segment):
     if not segment:
         return "allow"
@@ -294,7 +326,20 @@ def inspect_segment(segment):
         if payload is not None and name(payload) in EVALUATORS:
             return "ask"
     if any(token in REDIRECTS for token in effective):
-        return "ask" if any(name(token) in TERMINATORS for token in effective) else "allow"
+        # A literal terminator anywhere in a redirect-bearing segment is
+        # approval-gated outright, regardless of where the real command word
+        # ends up.
+        if any(name(token) in TERMINATORS for token in effective):
+            return "ask"
+        # A leading (or embedded) redirect makes its own operator/target the
+        # segment's first token, hiding the real command word from every
+        # check above. Strip every redirect operator, its target, and an fd
+        # number immediately preceding it (`2>`), then re-run the checks
+        # above on what is left.
+        stripped = strip_redirects(effective)
+        if stripped != effective:
+            return inspect_segment(stripped)
+        return "allow"
 
     if command == "kill":
         return "allow" if safe_kill(args) else "ask"
@@ -315,12 +360,24 @@ def inspect_segment(segment):
     return "allow"
 
 
+def is_paren_open(token):
+    # A "("-family opener is either the synthetic glue marker below (an
+    # expansion-char word fused with the "(" that followed it, e.g. "$(" or
+    # "@(") or a token built entirely from punctuation_chars that itself ends
+    # in "(" ("(", "<(", ">(" — shlex already glued these together because
+    # every character in them is a punctuation char). An ordinary *word* that
+    # merely happens to end in "(" after quote removal (`printf "foo("`) is
+    # neither: it is quoted literal text, not expansion or process
+    # substitution syntax, so it must never open a group.
+    if not token:
+        return False
+    if GLUE_MARKER in token:
+        return True
+    return token.endswith("(") and all(ch in PUNCTUATION_CHARS for ch in token)
+
+
 def is_group_open(token):
-    # A standalone "(" is a bare subshell/group open. A token merely ending in
-    # "(" is a punctuation run shlex already glued together (process
-    # substitution's "<(", or a synthetic marker glued below) and opens the
-    # same way.
-    return token == "{" or token.endswith("(")
+    return token == "{" or is_paren_open(token)
 
 
 def inspect_tokens(tokens):
@@ -331,19 +388,21 @@ def inspect_tokens(tokens):
         # A bare "(" immediately after a word ending in one of these characters
         # is command/process substitution splitting the word from its "(" only
         # because "(" is a shlex punctuation char, not because the two are
-        # unrelated. Glue it back onto the word so the word carries visible
-        # expansion syntax wherever it is later inspected (command position or
-        # a wrapper argument), instead of vanishing when the group below is
+        # unrelated. Glue it back onto the word (tagged with GLUE_MARKER, so
+        # is_paren_open recognizes it as an opener without mistaking an
+        # ordinary quoted word for one) so the word carries visible expansion
+        # syntax wherever it is later inspected (command position or a
+        # wrapper argument), instead of vanishing when the group below is
         # consumed.
         if token == "(" and segment and segment[-1] and segment[-1][-1] in GLUE_CHARS:
-            segment[-1] += "("
+            segment[-1] += "(" + GLUE_MARKER
             token = segment[-1]
         if is_group_open(token):
             close = "}" if token == "{" else ")"
             depth, end = 1, index + 1
             while end < len(tokens) and depth:
                 nested = tokens[end]
-                opens = (nested == "{") if close == "}" else nested.endswith("(")
+                opens = (nested == "{") if close == "}" else is_paren_open(nested)
                 depth += opens - (nested == close)
                 end += 1
             if depth or inspect_tokens(tokens[index + 1:end - 1]) == "ask":
@@ -362,8 +421,35 @@ def inspect_tokens(tokens):
     return inspect_segment(segment)
 
 
+def split_newline_tokens(tokens):
+    # A newline is bash's statement separator, but it is routed through
+    # punctuation_chars below (not whitespace) so it never vanishes as
+    # insignificant whitespace — otherwise a second line's command word lands
+    # as an argument to the first line's command. It therefore surfaces inside
+    # punctuation-run tokens ("\n", ";\n", "&&\n", "(\n"); split each such
+    # token on its embedded newlines and splice in a ";" for each one, so a
+    # new line always starts a new segment exactly like a real ";" would.
+    result = []
+    for token in tokens:
+        if token and "\n" in token and all(ch in PUNCTUATION_CHARS for ch in token):
+            pieces = token.split("\n")
+            for index, piece in enumerate(pieces):
+                if piece:
+                    result.append(piece)
+                if index != len(pieces) - 1:
+                    result.append(";")
+        else:
+            result.append(token)
+    return result
+
+
 def inspect_command(command):
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    # Newline is an explicit punctuation char (not True's implicit
+    # '();<>|&') specifically so it can be routed away from whitespace next.
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="();<>|&\n")
+    # A newline must separate segments like a shell's own statement
+    # terminator, not be consumed as whitespace and disappear.
+    lexer.whitespace = " \t\r"
     # Split on whitespace only, so an expansion-prefixed word ($killer,
     # /bin/ki[l]l, k{i..i}ll) stays one token instead of shlex's default
     # wordchars splitting it apart mid-word.
@@ -374,7 +460,7 @@ def inspect_command(command):
     # Bash starts a comment only when `#` begins a word. Python shlex treats an
     # in-word hash as a comment too, which could hide a later command segment.
     lexer.commenters = ""
-    return inspect_tokens(list(lexer))
+    return inspect_tokens(split_newline_tokens(list(lexer)))
 
 
 try:
