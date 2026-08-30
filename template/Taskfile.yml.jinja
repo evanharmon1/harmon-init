@@ -1114,12 +1114,11 @@ tasks:
   setup:github:
     desc: >-
       Apply idempotent GitHub repo settings via gh (Dependabot alerts, private
-      vulnerability reporting, Actions runner routing[% if github_org != author_git_provider_username %], bot collaborator[% endif %])
+      vulnerability reporting[% if github_org != author_git_provider_username %], bot collaborator[% endif %])
     vars:
       REPO: "[[ github_org ]]/[[ project_slug ]]"
     cmds:
-      - >-
-        ./scripts/setup-github.sh --repo "{{.REPO}}" --ci-runs-on '[[ ci_runs_on_default ]]'[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %]
+      - ./scripts/setup-github.sh --repo "{{.REPO}}"[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %]
 [% if project_management == 'github' %]
 
   setup:github-project:

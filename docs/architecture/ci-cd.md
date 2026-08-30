@@ -194,12 +194,6 @@ Jobs use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`, so th
 `CI_RUNS_ON` repository variable can move CI to different runners without a
 commit.
 
-`task setup:github` creates this variable when it is missing and preserves every
-existing value on non-public repositories; it never infers ownership from a JSON
-shape. An intentional replacement requires `scripts/setup-github.sh` with
-`--replace-ci-runs-on`. Public repositories are the safety exception and are
-always canonicalized to `"ubuntu-latest"`.
-
 That convenience is also the risk: it is a runtime change with no diff and no
 review. **Do not point a public repository at a persistent self-hosted runner.**
 Workflows here already refuse to check out fork-controlled code on the trusted
