@@ -64,7 +64,12 @@ set -e
 stderr_out="$(cat "$stderr_log")"
 
 if [ "$event_type" = "PreToolUse" ]; then
-    if [ $exit_code -ne 0 ]; then
+    claude_decision="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecision // empty' 2>/dev/null || true)"
+    claude_reason="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty' 2>/dev/null || true)"
+    if [ "$claude_decision" = "ask" ]; then
+        jq -n --arg r "$claude_reason" '{decision: "ask", reason: $r}'
+    elif [ $exit_code -ne 0 ] || [ "$claude_decision" = "deny" ]; then
+        [ -n "$claude_reason" ] && stderr_out="$claude_reason"
         jq -n --arg r "$stderr_out" '{decision: "deny", reason: $r}'
     else
         echo '{"decision": "allow"}'

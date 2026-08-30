@@ -75,10 +75,10 @@ this comment. -->
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
-      reporting**. A self-hosted template creates a missing private
+      reporting**. A self-hosted template creates a missing non-public
       `CI_RUNS_ON` value from the selected runner settings, but preserves every
-      existing private value; the repository value is intentional and takes
-      precedence over an organization fallback. Replacing an existing private
+      existing non-public value; the repository value is intentional and takes
+      precedence over an organization fallback. Replacing an existing non-public
       value requires the setup script's explicit `--replace-ci-runs-on` flag.
       Public repositories are standardized to `"ubuntu-latest"` even when the
       Copier answers or an existing variable select different routing. Do not

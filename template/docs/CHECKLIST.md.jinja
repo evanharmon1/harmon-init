@@ -66,10 +66,10 @@ environment — against the items below
       intentionally takes precedence over an organization fallback)[% if github_org != author_git_provider_username %], and adds
       the `[[ author_git_provider_username ]]-bot` machine account as a Write
       collaborator[% endif %]. Explicit non-template overrides are preserved on
-      private repositories, and public repositories are standardized to
+      non-public repositories, and public repositories are standardized to
       `"ubuntu-latest"` even when the Copier answers or an existing variable
       select different routing. Re-run this task
-      after changing Copier runner answers; a private explicit override
+      after changing Copier runner answers; a non-public explicit override
       remains authoritative and must be changed intentionally by running
       `scripts/setup-github.sh` with `--replace-ci-runs-on`. Do not add
       `dependabot.yml`: Renovate owns routine
@@ -468,12 +468,12 @@ environment — against the items below
       already run, so `astro preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
-- [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
-      parallel Foreman worktrees would then race for the Playwright port. Pick
-      one before you dispatch: point the `[verify]` default at
-      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
-      set `max_parallel = 1`, or derive a per-worktree port in
+- [ ] **Adding that config makes `task ci` bind a port.** `.foreman.toml`
+      ships `[verify] default = ["bash", "-c", "task verify && task security"]`
+      with `max_parallel = 3` — this is port-free and runs the pre-PR gate.
+      If you override it to `["task", "ci"]` for full local CI mirroring,
+      parallel Foreman worktrees will race for the Playwright port. In that
+      case, set `max_parallel = 1` or derive a per-worktree port in
       `playwright.config.ts`.
 [% endif %]
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
@@ -542,12 +542,12 @@ environment — against the items below
       already run, so `vite preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
-- [ ] **Adding that config makes `task ci` bind a port**, and `.foreman.toml`
-      ships `[verify] default = ["task", "ci"]` with `max_parallel = 3` —
-      parallel Foreman worktrees would then race for the Playwright port. Pick
-      one before you dispatch: point the `[verify]` default at
-      `["task", "verify"]` (port-free, but drops e2e + security from the gate),
-      set `max_parallel = 1`, or derive a per-worktree port in
+- [ ] **Adding that config makes `task ci` bind a port.** `.foreman.toml`
+      ships `[verify] default = ["bash", "-c", "task verify && task security"]`
+      with `max_parallel = 3` — this is port-free and runs the pre-PR gate.
+      If you override it to `["task", "ci"]` for full local CI mirroring,
+      parallel Foreman worktrees will race for the Playwright port. In that
+      case, set `max_parallel = 1` or derive a per-worktree port in
       `playwright.config.ts`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in

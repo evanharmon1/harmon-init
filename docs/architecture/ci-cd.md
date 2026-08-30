@@ -195,7 +195,7 @@ Jobs use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`, so th
 commit.
 
 `task setup:github` creates this variable when it is missing and preserves every
-existing value on private repositories; it never infers ownership from a JSON
+existing value on non-public repositories; it never infers ownership from a JSON
 shape. An intentional replacement requires `scripts/setup-github.sh` with
 `--replace-ci-runs-on`. Public repositories are the safety exception and are
 always canonicalized to `"ubuntu-latest"`.
