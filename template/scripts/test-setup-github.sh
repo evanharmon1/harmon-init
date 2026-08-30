@@ -64,8 +64,16 @@ echo "==> missing private CI_RUNS_ON variables are created"
 GH_PRIVATE=true GH_VARIABLE_VALUE= run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "missing-variable path exited $run_rc"
 grep -Fq '[x] Actions runner routing - created CI_RUNS_ON' "$tmp/out" || fail "missing created routing outcome"
-grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
+grep -Fq "api repos/owner/private/actions/variables --method POST -f name=CI_RUNS_ON -f value=$desired" "$stub_calls" ||
     fail "missing CI_RUNS_ON variable was not created"
+
+echo "==> missing private CI_RUNS_ON creation fails closed on a concurrent create"
+GH_PRIVATE=true GH_VARIABLE_VALUE= GH_FAIL_MATCH='actions/variables --method POST' GH_FAIL_RC=17 \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 17 ] || fail "concurrent-create conflict exited $run_rc"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then
+    fail "concurrent create fell back to an overwriting upsert"
+fi
 
 echo "==> matching private CI_RUNS_ON variables are unchanged"
 GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" run_case --repo owner/private --ci-runs-on "$desired"
@@ -157,6 +165,11 @@ GH_PRIVATE=true run_case --repo owner/private --ci-runs-on 'not-json "self-hoste
 [ "$run_rc" -eq 2 ] || fail "malformed runner JSON exited $run_rc"
 if [ -s "$stub_calls" ]; then fail "malformed runner JSON reached GitHub"; fi
 
+echo "==> multiple JSON documents are rejected before GitHub access"
+GH_PRIVATE=true run_case --repo owner/private --ci-runs-on '42 "ubuntu-latest"'
+[ "$run_rc" -eq 2 ] || fail "multiple JSON documents exited $run_rc"
+if [ -s "$stub_calls" ]; then fail "multiple JSON documents reached GitHub"; fi
+
 echo "==> empty self-hosted labels are rejected before GitHub access"
 GH_PRIVATE=true run_case --repo owner/private --ci-runs-on '["self-hosted",""]'
 [ "$run_rc" -eq 2 ] || fail "empty runner label exited $run_rc"
@@ -172,7 +185,7 @@ GH_PRIVATE=false run_case --repo owner/public --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "public self-hosted path exited $run_rc"
 grep -Fq '[?] Actions runner routing - public repository selected non-canonical routing; enforcing ubuntu-latest' "$tmp/out" ||
     fail "missing public-repo safety override explanation"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'api repos/owner/public/actions/variables --method POST -f name=CI_RUNS_ON -f value="ubuntu-latest"' "$stub_calls" ||
     fail "public repo did not receive a GitHub-hosted safety override"
 
 echo "==> public repositories replace ambiguous self-hosted scalar routing"
@@ -218,7 +231,7 @@ grep -Fq '[x] Bot collaborator - owner-bot has write access' "$tmp/out" || fail 
 grep -q 'private-vulnerability-reporting --method PUT' "$stub_calls" || fail "reporting API was not called"
 grep -q 'collaborators/owner-bot --method PUT -f permission=push' "$stub_calls" || fail "collaborator API was not called"
 grep -q 'collaborators/owner-bot/permission --jq .permission' "$stub_calls" || fail "collaborator access was not verified"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'api repos/owner/public/actions/variables --method POST -f name=CI_RUNS_ON -f value="ubuntu-latest"' "$stub_calls" ||
     fail "public repository did not receive explicit GitHub-hosted routing"
 
 echo "==> a new collaborator invitation is reported as pending until accepted"

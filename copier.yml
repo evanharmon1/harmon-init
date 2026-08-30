@@ -506,11 +506,11 @@ repo_url:
 ci_runs_on_default:
   type: str
   default: >-
-    [% if ci_runner == 'self-hosted' %]
+    [%- if ci_runner == 'self-hosted' -%]
     [[ (ci_runner_labels.split(',') | map('trim') | select | list) | tojson ]]
-    [% else %]
+    [%- else -%]
     "ubuntu-latest"
-    [% endif %]
+    [%- endif -%]
   when: false
 
 # Gates .github/workflows/claim-release.yml, which releases the claim markers

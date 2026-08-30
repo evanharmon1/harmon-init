@@ -58,9 +58,11 @@ if [ -n "$ci_runs_on" ]; then
         echo "Required tool not found: jq" >&2
         exit 1
     fi
-    if ! printf '%s\n' "$ci_runs_on" | jq -e '
-        (type == "string" and . == "ubuntu-latest") or
-        (type == "array" and length > 0 and all(.[]; type == "string" and length > 0) and index("self-hosted") != null)
+    if ! printf '%s\n' "$ci_runs_on" | jq -se '
+        length == 1 and (
+            (.[0] | type == "string" and . == "ubuntu-latest") or
+            (.[0] | type == "array" and length > 0 and all(.[]; type == "string" and length > 0) and index("self-hosted") != null)
+        )
     ' >/dev/null; then
         echo "--ci-runs-on must be \"ubuntu-latest\" or a JSON string array containing self-hosted" >&2
         exit 2
@@ -102,7 +104,8 @@ if [ -n "$ci_runs_on" ]; then
             checkline ok "Actions runner routing" "CI_RUNS_ON already matches the selected runner settings"
         elif [ -z "$current_ci_runs_on" ]; then
             if output_run "Creating Actions runner routing" \
-                gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
+                gh api "repos/$repo/actions/variables" --method POST \
+                -f name=CI_RUNS_ON -f value="$ci_runs_on"; then
                 checkline ok "Actions runner routing" "created CI_RUNS_ON"
             else
                 rc=$?

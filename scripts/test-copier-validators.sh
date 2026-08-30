@@ -90,6 +90,16 @@ render_runner_labels() {
         . "$out" >"$work/render.log" 2>&1
 }
 
+render_hosted_runner() {
+    local out="$1"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data ci_runner=ubuntu-latest \
+        . "$out" >"$work/render.log" 2>&1
+}
+
 echo "==> self-hosted runner labels enforce safe, complete label lists"
 if render_runner_labels 'self-hosted,linux,x64,contraption' "$work/good-runner-labels"; then
     if grep -Fq 'CI_RUNS_ON' "$work/good-runner-labels/.github/workflows/build.yml" &&
@@ -119,6 +129,19 @@ for bad_runner_labels in \
         hint_stale_worktree
     fi
 done
+
+echo "==> GitHub-hosted runner JSON renders without surrounding whitespace"
+if render_hosted_runner "$work/hosted-runner"; then
+    if grep -Fq -- "--ci-runs-on '\"ubuntu-latest\"'" "$work/hosted-runner/Taskfile.yml"; then
+        pass "rendered the canonical GitHub-hosted runner JSON"
+    else
+        fail "GitHub-hosted runner JSON was not canonical in the generated setup task"
+    fi
+else
+    fail "could not render the GitHub-hosted runner profile"
+    sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
+fi
 
 echo "==> unsafe characters are rejected at answer time"
 # Each of these breaks the YAML scalar, the shell quoting, or both.

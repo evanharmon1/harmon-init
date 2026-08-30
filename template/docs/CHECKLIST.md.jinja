@@ -70,8 +70,8 @@ environment — against the items below
       `"ubuntu-latest"` even when the Copier answers or an existing variable
       select different routing. Re-run this task
       after changing Copier runner answers; a private explicit override
-      remains authoritative and must be removed manually before adopting
-      self-hosted routing. Do not add
+      remains authoritative and must be changed intentionally by running
+      `scripts/setup-github.sh` with `--replace-ci-runs-on`. Do not add
       `dependabot.yml`: Renovate owns routine
       and vulnerability-remediation PRs; Dependabot owns advisory alerts.
 [% if devcontainer %]
