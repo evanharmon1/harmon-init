@@ -58,8 +58,8 @@ carries the outcome, so no review ever waits on a rename. This amends
   reconcile, not a numbering race.
 - Among date-named records, filenames sort chronologically, and the name
   itself tells a reader when the question was raised before they open the
-  file; the `Date:` and `Status` lines inside say when and whether it was
-  accepted. Across both forms the directory order is not a chronology —
+  file; the `Date:` line inside repeats the filing date and `Status` records
+  the outcome. Across both forms the directory order is not a chronology —
   every `NNNN-` name sorts before every `YYYY-` name — so sort by the
   recorded `Date:` when the grandfathered records matter.
 - A repo's `docs/decisions/` mixes both filename forms indefinitely; a reader

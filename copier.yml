@@ -561,7 +561,7 @@ decisions_seed_date:
   # without `[`/`]` — inside this template's `[[ ]]`/`[% %]` delimiters a
   # stray bracket breaks the lexer.
   validator: >-
-    [% set ok = decisions_seed_date | regex_search('(?a)^\\d{4}-\\d{2}-\\d{2}$') %]
+    [% set ok = decisions_seed_date | regex_search('(?a)^\\d{4}-\\d{2}-\\d{2}\\Z') %]
     [% if ok %]
     [% set y = decisions_seed_date | truncate(4, true, '', 0) | int %]
     [% set m = decisions_seed_date | replace('-', '') | truncate(6, true, '', 0) | int % 100 %]

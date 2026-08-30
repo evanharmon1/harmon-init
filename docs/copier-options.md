@@ -10,7 +10,7 @@ re-run them and update this stamp whenever `copier.yml` changes shape.
 | Kind | Count |
 |---|---|
 | Questions in `copier.yml` (asked + hidden) | **60** |
-| — asked | **39** |
+| — asked | **40** |
 | — hidden (`when: false`) | **20** |
 | Template-level `_`-prefixed keys | **7** |
 | Distinct Jinja path-gate conditions under `template/` | **29** (over 87 gated paths, 5 of them directories) |

@@ -199,7 +199,7 @@ render_seed_date() {
         --data "decisions_seed_date=$answer" \
         . "$out" >"$work/render.log" 2>&1
 }
-for bad_date in 2026-99-99 2026-00-10 2025-02-29 2026-04-31 2026-13-01 20260101 2026-1-1 yesterday '２０２６-０８-３０' '٢٠٢٦-٠٨-٣٠'; do
+for bad_date in 2026-99-99 2026-00-10 2025-02-29 2026-04-31 2026-13-01 20260101 2026-1-1 yesterday '２０２６-０８-３０' '٢٠٢٦-٠٨-٣٠' $'2026-08-30\n'; do
     if render_seed_date "$bad_date" "$work/bad-date"; then
         fail "accepted an impossible seed date: $bad_date"
     elif grep -q 'Validation error' "$work/render.log"; then
