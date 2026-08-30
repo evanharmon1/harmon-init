@@ -382,6 +382,12 @@ for command in \
     "echo \"\$(printf ')'; /bin/ki[l]l -9 42)\"" \
     "echo \"\$(printf \\); /bin/ki[l]l -9 42)\"" \
     "echo \"\$(git log --format='%h')\"" \
+    $'printf safe\\\r\n/bin/ki[l]l -9 42' \
+    "hash -p /bin/ki[l]l foo; foo -9 42" \
+    "alias foo=/bin/ki[l]l; foo -9 42" \
+    "enable -f /lib/ki[l]l.so foo" \
+    'echo "$((x))"' \
+    'printf -v x %b "a[\\x24\\x28/bin/ki[l]l -9 42\\x29]"; echo "$((x))"' \
     $'case x in (x) /bin/ki[l]l -9 42\nesac' \
     "case x in x) /bin/ki[l]l -9 42;; esac" \
     "case \"\$x\" in a) printf safe;; esac" \

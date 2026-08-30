@@ -51,13 +51,15 @@ fi
 # Bash joins a backslash immediately followed by a newline (a line
 # continuation) into one line before tokenizing, so `ki\<newline>ll` is the
 # single word `kill` to bash but two separate tokens to the checks below.
-# Remove every backslash-newline pair (and backslash-CRLF) before either the
-# token regex or the parser ever sees the command text. This is applied
+# Remove every backslash-LF pair before either the token regex or the parser
+# ever sees the command text. Only backslash-LF is a continuation: a
+# backslash before CR-LF escapes the CR and the LF still ends the line, so
+# stripping that pair would fold two commands into one (Codex #1122 r3) —
+# it is left alone and the newline stays a separator. This is applied
 # everywhere, including inside single quotes, where bash would NOT actually
 # join the line — but that direction only ever creates a token that still
 # gets asked about (more text can look like a terminator), never one that
 # hides a real terminator, so over-applying it here is safe.
-command="${command//$'\\\r\n'/}"
 command="${command//$'\\\n'/}"
 
 matched_command=""
@@ -190,6 +192,11 @@ def has_substitution_risk(token):
     if not token or GLUE_MARKER in token:
         return False
     if "`" in token:
+        return True
+    # Arithmetic expansion evaluates variable VALUES recursively, so
+    # "$((x))" can run a substitution stored in x. Fail closed on any
+    # arithmetic expansion rather than modelling that.
+    if "$((" in token:
         return True
     has_opener = "$(" in token or "<(" in token or ">(" in token
     # ${...} parameter expansion, a quote, or an escape can each contain a
@@ -392,6 +399,12 @@ def inspect_segment(segment):
     # on the whole construct rather than parsing case/esac properly; proper
     # support is tracked in #1123.
     if command in {"case", "select"}:
+        return "ask"
+    # Command-resolution builtins bind a name to a pathname or body that a
+    # later segment invokes (`hash -p /bin/ki[l]l foo; foo -9 42`,
+    # `alias foo=...`). The mapping is not carried between segments, so the
+    # builtins that create one are approval-gated outright.
+    if command in {"hash", "alias", "enable", "function"}:
         return "ask"
     # A command word built from expansion syntax can resolve to a name absent
     # from the token stream, so it is approval-gated the same way a terminator
