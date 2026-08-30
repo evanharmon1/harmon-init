@@ -77,32 +77,45 @@ fail_step() {
 action_banner setup "GitHub repository" "Safety, vulnerability reporting, and automation access"
 kv "Repository" "$repo"
 
-if repo_private="$(gh api "repos/$repo" --jq '.private')"; then
+if repo_visibility="$(gh api "repos/$repo" --jq '.visibility')"; then
     :
 else
     rc=$?
-    fail_step "$rc" "Repository visibility" "could not determine public/private state"
+    fail_step "$rc" "Repository visibility" "could not determine repository visibility"
     exit "$rc"
 fi
-case "$repo_private" in
-true | false) ;;
+case "$repo_visibility" in
+public | private | internal) ;;
 *)
-    fail_step 1 "Repository visibility" "unexpected '.private' value: ${repo_private:-<empty>}"
+    fail_step 1 "Repository visibility" "unexpected '.visibility' value: ${repo_visibility:-<empty>}"
     exit 1
     ;;
 esac
 
 if [ -n "$ci_runs_on" ]; then
-    if [ "$repo_private" = false ] && [ "$ci_runs_on" != '"ubuntu-latest"' ]; then
+    if [ "$repo_visibility" = public ] && [ "$ci_runs_on" != '"ubuntu-latest"' ]; then
         checkline unknown "Actions runner routing" "public repository selected non-canonical routing; enforcing ubuntu-latest"
         ci_runs_on='"ubuntu-latest"'
     fi
+    current_ci_runs_on_records=""
+    current_ci_runs_on_present=false
     current_ci_runs_on=""
-    if current_ci_runs_on="$(gh variable list --repo "$repo" --json name,value \
-        --jq '.[] | select(.name == "CI_RUNS_ON") | .value')"; then
-        if [ "$current_ci_runs_on" = "$ci_runs_on" ]; then
-            checkline ok "Actions runner routing" "CI_RUNS_ON already matches the selected runner settings"
-        elif [ -z "$current_ci_runs_on" ]; then
+    if current_ci_runs_on_records="$(gh variable list --repo "$repo" --json name,value \
+        --jq '[.[] | select(.name == "CI_RUNS_ON")]')"; then
+        current_ci_runs_on_count="$(jq -r 'length' <<<"$current_ci_runs_on_records")"
+        case "$current_ci_runs_on_count" in
+        0) ;;
+        1)
+            current_ci_runs_on_present=true
+            current_ci_runs_on="$(jq -r '.[0].value' <<<"$current_ci_runs_on_records")"
+            ;;
+        *)
+            fail_step 1 "Actions runner routing" "GitHub returned multiple CI_RUNS_ON variables"
+            exit 1
+            ;;
+        esac
+
+        if ! $current_ci_runs_on_present; then
             if output_run "Creating Actions runner routing" \
                 gh api "repos/$repo/actions/variables" --method POST \
                 -f name=CI_RUNS_ON -f value="$ci_runs_on"; then
@@ -112,8 +125,10 @@ if [ -n "$ci_runs_on" ]; then
                 fail_step "$rc" "Actions runner routing" "could not create CI_RUNS_ON"
                 exit "$rc"
             fi
+        elif [ "$current_ci_runs_on" = "$ci_runs_on" ]; then
+            checkline ok "Actions runner routing" "CI_RUNS_ON already matches the selected runner settings"
         else
-            if [ "$repo_private" = false ]; then
+            if [ "$repo_visibility" = public ]; then
                 if output_run "Enforcing public repository runner safety" \
                     gh variable set CI_RUNS_ON --repo "$repo" --body '"ubuntu-latest"'; then
                     checkline ok "Actions runner routing" "standardized public CI_RUNS_ON to ubuntu-latest"
@@ -132,7 +147,7 @@ if [ -n "$ci_runs_on" ]; then
                     exit "$rc"
                 fi
             else
-                checkline na "Actions runner routing" "preserved existing private CI_RUNS_ON; pass --replace-ci-runs-on to replace it"
+                checkline na "Actions runner routing" "preserved existing ${repo_visibility} CI_RUNS_ON; pass --replace-ci-runs-on to replace it"
             fi
         fi
     else
@@ -154,7 +169,7 @@ else
     exit "$rc"
 fi
 
-if [ "$repo_private" = false ]; then
+if [ "$repo_visibility" = public ]; then
     if output_run "Enabling private vulnerability reporting" \
         gh api "repos/$repo/private-vulnerability-reporting" --method PUT; then
         checkline ok "Private vulnerability reporting" "enabled"
@@ -164,7 +179,7 @@ if [ "$repo_private" = false ]; then
         exit "$rc"
     fi
 else
-    checkline na "Private vulnerability reporting" "skipped: private repository; feature is public-repo-only"
+    checkline na "Private vulnerability reporting" "skipped: ${repo_visibility} repository; feature is public-repo-only"
 fi
 
 if [ -n "$bot_collaborator" ]; then

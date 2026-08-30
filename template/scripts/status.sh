@@ -1086,7 +1086,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline no "Private vuln reporting" "Settings → Advanced Security"
                 fi
-                if [ "${IS_PRIVATE}" != "true" ]; then
+                if [ "${VISIBILITY}" = "public" ]; then
                     if jq -e 'type == "object"' "${d}/ci-runs-on.json" >/dev/null 2>&1; then
                         current_ci_runs_on="$(jq -r '.value // empty' "${d}/ci-runs-on.json")"
                         if [ "${current_ci_runs_on}" = '"ubuntu-latest"' ]; then

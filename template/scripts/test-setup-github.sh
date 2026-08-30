@@ -25,13 +25,29 @@ case "$*" in
 *"collaborators/"*" --method PUT"*) printf '%s' "${GH_COLLAB_RESPONSE:-}" ;;
 *"variable list --repo "*" --json name,value --jq "*)
     [ "${GH_VARIABLE_GET_RC:-0}" -eq 0 ] || exit "$GH_VARIABLE_GET_RC"
-    printf '%s\n' "${GH_VARIABLE_VALUE:-}"
+    variable_present="${GH_VARIABLE_PRESENT:-}"
+    if [ -z "$variable_present" ]; then
+        [ -n "${GH_VARIABLE_VALUE:-}" ] && variable_present=true || variable_present=false
+    fi
+    if [ "$variable_present" = true ]; then
+        jq -cn --arg value "${GH_VARIABLE_VALUE:-}" '[{name:"CI_RUNS_ON",value:$value}]'
+    else
+        printf '[]\n'
+    fi
     ;;
 *"/permission --jq .permission")
     [ -n "${GH_PERMISSION:-}" ] || exit 1
     printf '%s\n' "$GH_PERMISSION"
     ;;
-*" --jq .private") printf '%s\n' "${GH_PRIVATE:-true}" ;;
+*" --jq .visibility")
+    if [ -n "${GH_VISIBILITY:-}" ]; then
+        printf '%s\n' "$GH_VISIBILITY"
+    elif [ "${GH_PRIVATE:-true}" = true ]; then
+        printf 'private\n'
+    else
+        printf 'public\n'
+    fi
+    ;;
 esac
 STUB
 chmod +x "$tmp/bin/gh"
@@ -75,6 +91,16 @@ if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then
     fail "concurrent create fell back to an overwriting upsert"
 fi
 
+echo "==> an existing empty private CI_RUNS_ON is preserved instead of duplicate-created"
+GH_PRIVATE=true GH_VARIABLE_PRESENT=true GH_VARIABLE_VALUE= \
+    run_case --repo owner/private --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "empty existing private variable exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
+    fail "empty existing private variable was not preserved"
+if grep -q 'actions/variables --method POST\|variable set CI_RUNS_ON' "$stub_calls"; then
+    fail "empty existing private variable was rewritten"
+fi
+
 echo "==> matching private CI_RUNS_ON variables are unchanged"
 GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" run_case --repo owner/private --ci-runs-on "$desired"
 [ "$run_rc" -eq 0 ] || fail "matching-variable path exited $run_rc"
@@ -88,6 +114,14 @@ GH_PRIVATE=true GH_VARIABLE_VALUE='["self-hosted","linux"]' \
 grep -Fq '[-] Actions runner routing - preserved existing private CI_RUNS_ON' "$tmp/out" ||
     fail "missing conservative preserve outcome"
 if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "existing private routing was rewritten"; fi
+
+echo "==> internal repositories preserve existing self-hosted routing"
+GH_VISIBILITY=internal GH_VARIABLE_VALUE='["self-hosted","linux"]' \
+    run_case --repo owner/internal --ci-runs-on "$desired"
+[ "$run_rc" -eq 0 ] || fail "internal repository path exited $run_rc"
+grep -Fq '[-] Actions runner routing - preserved existing internal CI_RUNS_ON' "$tmp/out" ||
+    fail "internal runner routing was not preserved"
+if grep -q 'variable set CI_RUNS_ON' "$stub_calls"; then fail "internal routing was rewritten"; fi
 
 echo "==> explicit replace flag updates an existing private value"
 GH_PRIVATE=true GH_VARIABLE_VALUE='["self-hosted","linux"]' \
@@ -187,6 +221,18 @@ grep -Fq '[?] Actions runner routing - public repository selected non-canonical 
     fail "missing public-repo safety override explanation"
 grep -Fq 'api repos/owner/public/actions/variables --method POST -f name=CI_RUNS_ON -f value="ubuntu-latest"' "$stub_calls" ||
     fail "public repo did not receive a GitHub-hosted safety override"
+
+echo "==> an existing empty public CI_RUNS_ON is repaired instead of duplicate-created"
+GH_PRIVATE=false GH_VARIABLE_PRESENT=true GH_VARIABLE_VALUE= \
+    run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
+[ "$run_rc" -eq 0 ] || fail "empty existing public variable exited $run_rc"
+grep -Fq '[x] Actions runner routing - standardized public CI_RUNS_ON to ubuntu-latest' "$tmp/out" ||
+    fail "empty existing public variable was not repaired"
+grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+    fail "empty existing public variable was not updated"
+if grep -q 'actions/variables --method POST' "$stub_calls"; then
+    fail "empty existing public variable was duplicate-created"
+fi
 
 echo "==> public repositories replace ambiguous self-hosted scalar routing"
 GH_PRIVATE=false GH_VARIABLE_VALUE='"self-hosted"' \

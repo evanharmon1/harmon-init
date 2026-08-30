@@ -505,6 +505,16 @@ case "$out" in
 *) fail "expected an unsafe public runner-routing status, got: ${out}" ;;
 esac
 
+internal_repo='{"nameWithOwner":"owner/internal","visibility":"INTERNAL","isPrivate":false,"defaultBranchRef":{"name":"main"}}'
+out="$(GH_REPO_JSON="$internal_repo" \
+    GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
+    GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"}' \
+    run_setup_section project)"
+case "$out" in
+*"Actions runner routing"*) fail "internal repository routing was audited as public: ${out}" ;;
+*) ;;
+esac
+
 echo "==> a token with 'project' reports the board as writable"
 out="$(run_gh_section project)"
 case "$out" in
