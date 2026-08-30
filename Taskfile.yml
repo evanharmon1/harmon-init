@@ -779,11 +779,12 @@ tasks:
       - lefthook install
 
   setup:github:
-    desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting)
+    desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting, Actions runner routing)
     vars:
       REPO: "evanharmon1/harmon-init"
     cmds:
-      - ./scripts/setup-github.sh --repo "{{.REPO}}"
+      - >-
+        ./scripts/setup-github.sh --repo "{{.REPO}}" --ci-runs-on '"ubuntu-latest"'
   setup:github-project:
     desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires the Projects scopes — `task setup:gh-scopes`.
     cmds:
