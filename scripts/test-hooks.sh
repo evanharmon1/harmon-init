@@ -187,6 +187,30 @@ assert_guard_allows 'printf "foo("'
 assert_guard_allows "echo 'a(b'"
 assert_guard_allows 'grep -F "x(" file.txt'
 
+echo "==> guard-process-kill joins a backslash-newline line continuation before inspecting (codex P1-1)"
+# Bash joins ki\<newline>ll into the single word "kill" before running it, so
+# the token regex/parser must see the joined text too, not two safe-looking
+# fragments. A plain, unescaped backslash-newline in a word elsewhere is safe.
+assert_guard_allows $'printf \
+safe'
+assert_guard_allows $'ls \
+  -la'
+
+echo "==> guard-process-kill fails closed on a quote/escape/\${...} inside a substitution body (codex P1-2)"
+# \${...}, a quote, or a backslash inside a "\$(...)"-bearing token can each
+# hide a ")" the character-only matcher cannot tell from the substitution's
+# own close, so the whole token fails closed rather than risking a falsely
+# early match. Bodies with none of these still get the precise recursive
+# check (kept passing above: echo "EXIT \$(date)", x="\$(git rev-parse HEAD)").
+# Accepted consequence: a substitution containing a quoted flag value (e.g.
+# `--format='%h'`) now asks too, even with harmless content.
+
+echo "==> guard-process-kill fails closed on case/select — arms are command boundaries it does not parse (codex P1-3, #1123 tracks proper support)"
+# A "(pattern)" arm is consumed as an ordinary group and discarded, so an arm
+# lacking a trailing ";;" before "esac" can fold its command into case's own
+# arguments instead of ever being seen as a command word. Fail closed on the
+# whole case/select construct rather than parsing arms.
+
 guard_subdir="$tmpdir/guard-subdir"
 mkdir -p "$guard_subdir"
 anchored_guard_output="$(cd "$guard_subdir" &&
@@ -351,6 +375,16 @@ for command in \
     "&>>/tmp/log \$killer -9 42" \
     ">|/tmp/log \$killer -9 42" \
     "printf safe ;& \$killer -9 42" \
+    $'/bin/ki\\\nll -9 42' \
+    $'kil\\\nl -9 42' \
+    $'pk\\\nill -f worker' \
+    "echo \"\$(printf \${x:-)}; /bin/ki[l]l -9 42)\"" \
+    "echo \"\$(printf ')'; /bin/ki[l]l -9 42)\"" \
+    "echo \"\$(printf \\); /bin/ki[l]l -9 42)\"" \
+    "echo \"\$(git log --format='%h')\"" \
+    $'case x in (x) /bin/ki[l]l -9 42\nesac' \
+    "case x in x) /bin/ki[l]l -9 42;; esac" \
+    "case \"\$x\" in a) printf safe;; esac" \
     "kill 'unterminated"; do
     assert_guard_asks "$command"
 done

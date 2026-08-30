@@ -18,7 +18,13 @@
 # not in the parser's tracked list does not get this command-word check —
 # only the literal-terminator-text scan still applies to it. A composite
 # operator this parser does not recognize is also an approval boundary,
-# rather than being silently misread as a redirect target or command word.
+# rather than being silently misread as a redirect target or command word. A
+# backslash-newline line continuation is removed before any of this runs, so
+# it cannot split a terminator token in two; a quoted substitution whose body
+# contains a quote, an escape, or "${" fails closed rather than trusting a
+# character-only paren matcher to see through it; and case/select are not
+# parsed at all — the whole construct is approval-gated (#1123 tracks proper
+# support).
 set -euo pipefail
 
 emit_ask() {
@@ -41,6 +47,18 @@ if ! command="$(printf '%s' "$input" | jq -er '.tool_input.command // empty')"; 
     exit 0
 fi
 [[ -n "$command" ]] || exit 0
+
+# Bash joins a backslash immediately followed by a newline (a line
+# continuation) into one line before tokenizing, so `ki\<newline>ll` is the
+# single word `kill` to bash but two separate tokens to the checks below.
+# Remove every backslash-newline pair (and backslash-CRLF) before either the
+# token regex or the parser ever sees the command text. This is applied
+# everywhere, including inside single quotes, where bash would NOT actually
+# join the line — but that direction only ever creates a token that still
+# gets asked about (more text can look like a terminator), never one that
+# hides a real terminator, so over-applying it here is safe.
+command="${command//$'\\\r\n'/}"
+command="${command//$'\\\n'/}"
 
 matched_command=""
 if [[ "$command" =~ (^|[^[:alnum:]_])(kill|pkill|killall|xkill)($|[^[:alnum:]_]) ]]; then
@@ -172,6 +190,16 @@ def has_substitution_risk(token):
     if not token or GLUE_MARKER in token:
         return False
     if "`" in token:
+        return True
+    has_opener = "$(" in token or "<(" in token or ">(" in token
+    # ${...} parameter expansion, a quote, or an escape can each contain a
+    # ")" the character-only matcher below cannot tell apart from the
+    # substitution's own closing paren (e.g. "${x:-)}", a quoted ")", or an
+    # escaped "\)"), letting the matcher stop early and miss a terminator
+    # past the false close. Fail closed on the whole token rather than
+    # reproducing that grammar; a token with none of these still gets the
+    # precise recursive check below.
+    if has_opener and ("${" in token or "'" in token or '"' in token or "\\" in token):
         return True
     index = 0
     while index < len(token):
@@ -356,6 +384,15 @@ def inspect_segment(segment):
     if not effective:
         return "allow"
     command, args = name(effective[0]), effective[1:]
+    # case/select arms are command boundaries this parser does not track: an
+    # arm pattern like "(x)" is consumed as an ordinary group (its content
+    # discarded once inspected), so the arm's actual command can end up
+    # folded into case's own arguments instead of being seen as a command
+    # word at all (e.g. a final arm with no ";;" before "esac"). Fail closed
+    # on the whole construct rather than parsing case/esac properly; proper
+    # support is tracked in #1123.
+    if command in {"case", "select"}:
+        return "ask"
     # A command word built from expansion syntax can resolve to a name absent
     # from the token stream, so it is approval-gated the same way a terminator
     # token is, regardless of what it is.
