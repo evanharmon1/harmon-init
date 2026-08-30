@@ -2,6 +2,10 @@
 
 Date: 2026-06-19
 
+*harmon-init is the template, so this copy is maintained by hand as the
+dogfood render of the seed; its date is the `decisions_seed_date` value in
+`.dogfood-answers.yml`, the day harmon-init first committed its seed record.*
+
 ## Status
 
 Accepted
@@ -21,11 +25,7 @@ We will use Architecture Decision Records (ADRs), as
 - One ADR per decision, stored in `docs/decisions/`.
 - Named `YYYY-MM-DD-<kebab-title>.md` — the date the record was filed. The
   name is fixed at creation: a `Proposed` record keeps it when accepted or
-  rejected, and the Status line carries the outcome. This seed record is the
-  one the project template maintains: its date is the `decisions_seed_date`
-  answer recorded when the repository was scaffolded (or when a template
-  update first introduced the date form), so its name is stable across
-  updates and the seed follows its own rule.
+  rejected, and the Status line carries the outcome.
 - Each ADR has: Status (Proposed / Accepted / Rejected / Deprecated / Superseded), Context,
   Decision, and Consequences. Keep them short.
 - ADRs are immutable once accepted; to change a decision, add a new ADR that

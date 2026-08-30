@@ -13,10 +13,16 @@ one's status.
   record was filed, fixed at creation and never changed by a later status
   change (a `Proposed` record keeps its filing date when accepted; the
   `Status` line carries the outcome). Records from before this convention
-  keep their numbered `NNNN-` names; both forms are valid.
+  keep their numbered `NNNN-` names; both forms are valid. The one
+  exception is the seed record below: the project template maintains it,
+  so a template update re-titles a numbered seed to the date form.
 - Start with
   [[ '[' ~ decisions_seed_date ~ '-record-architecture-decisions.md](' ~ decisions_seed_date ~ '-record-architecture-decisions.md)' ]]
-  — the meta-ADR for the process, maintained by the project template and
-  named by the date it was seeded; copy it as the template for new ADRs.
+  — the meta-ADR for the process. The project template maintains it: its
+  name and `Date:` come from the `decisions_seed_date` answer recorded when
+  the repository was scaffolded (or when an update first introduced the
+  date form), so updates keep improving its content without renaming it.
+  Copy it as the starting point for new ADRs — the copy is an ordinary
+  record and nothing in its body is seed-specific.
 - [0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
   — proposed v1 contract for portable devflow consumers.
