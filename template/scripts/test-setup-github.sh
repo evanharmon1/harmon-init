@@ -209,6 +209,13 @@ GH_PRIVATE=true run_case --repo owner/private --ci-runs-on '["self-hosted",""]'
 [ "$run_rc" -eq 2 ] || fail "empty runner label exited $run_rc"
 if [ -s "$stub_calls" ]; then fail "empty runner label reached GitHub"; fi
 
+echo "==> an explicitly empty runner value is rejected before GitHub access"
+GH_PRIVATE=true run_case --repo owner/private --ci-runs-on ''
+[ "$run_rc" -eq 2 ] || fail "explicitly empty runner value exited $run_rc"
+grep -Fq -- '--ci-runs-on requires a non-empty value' "$tmp/out" ||
+    fail "explicitly empty runner value did not name the invalid option"
+if [ -s "$stub_calls" ]; then fail "explicitly empty runner value reached GitHub"; fi
+
 echo "==> replace flag requires an explicit desired value"
 GH_PRIVATE=true run_case --repo owner/private --replace-ci-runs-on
 [ "$run_rc" -eq 2 ] || fail "replace-without-value exited $run_rc"

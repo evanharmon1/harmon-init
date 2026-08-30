@@ -13,6 +13,7 @@ OUTPUT_FD=2
 repo=""
 bot_collaborator=""
 ci_runs_on=""
+ci_runs_on_set=false
 replace_ci_runs_on=false
 bot_pending=false
 bot_unverified=false
@@ -28,6 +29,7 @@ while [ "$#" -gt 0 ]; do
         ;;
     --ci-runs-on)
         ci_runs_on="${2:-}"
+        ci_runs_on_set=true
         shift 2
         ;;
     --replace-ci-runs-on)
@@ -45,7 +47,11 @@ if [ -z "$repo" ]; then
     echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--ci-runs-on <json-array>] [--replace-ci-runs-on]" >&2
     exit 2
 fi
-if $replace_ci_runs_on && [ -z "$ci_runs_on" ]; then
+if $ci_runs_on_set && [ -z "$ci_runs_on" ]; then
+    echo "--ci-runs-on requires a non-empty value" >&2
+    exit 2
+fi
+if $replace_ci_runs_on && ! $ci_runs_on_set; then
     echo "--replace-ci-runs-on requires --ci-runs-on" >&2
     exit 2
 fi
@@ -53,7 +59,7 @@ if ! command -v gh >/dev/null 2>&1; then
     echo "Required tool not found: gh" >&2
     exit 1
 fi
-if [ -n "$ci_runs_on" ]; then
+if $ci_runs_on_set; then
     if ! command -v jq >/dev/null 2>&1; then
         echo "Required tool not found: jq" >&2
         exit 1
@@ -92,7 +98,7 @@ public | private | internal) ;;
     ;;
 esac
 
-if [ -n "$ci_runs_on" ]; then
+if $ci_runs_on_set; then
     if [ "$repo_visibility" = public ] && [ "$ci_runs_on" != '"ubuntu-latest"' ]; then
         checkline unknown "Actions runner routing" "public repository selected non-canonical routing; enforcing ubuntu-latest"
         ci_runs_on='"ubuntu-latest"'

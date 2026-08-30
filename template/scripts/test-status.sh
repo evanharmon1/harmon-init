@@ -505,6 +505,12 @@ case "$out" in
 *) fail "expected an unsafe public runner-routing status, got: ${out}" ;;
 esac
 
+out="$(GH_REPO_JSON="$public_repo" run_setup_section project)"
+case "$out" in
+*"[?] Actions runner routing - could not determine whether public CI_RUNS_ON exists"*) ;;
+*) fail "failed public variable probes were reported as missing: ${out}" ;;
+esac
+
 internal_repo='{"nameWithOwner":"owner/internal","visibility":"INTERNAL","isPrivate":false,"defaultBranchRef":{"name":"main"}}'
 out="$(GH_REPO_JSON="$internal_repo" \
     GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \

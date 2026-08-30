@@ -891,13 +891,23 @@ if [[ "${SECTION}" == "setup" ]]; then
             # --json name fetches ONLY names, never secret/variable values.
             (run_timeout "${NETWORK_TIMEOUT}" gh secret list --json name \
                 >"${d}/secrets.json" 2>/dev/null || echo '[]' >"${d}/secrets.json") &
-            (run_timeout "${NETWORK_TIMEOUT}" gh variable list --json name \
-                >"${d}/vars.json" 2>/dev/null || echo '[]' >"${d}/vars.json") &
+            (if run_timeout "${NETWORK_TIMEOUT}" gh variable list --json name \
+                >"${d}/vars.json" 2>/dev/null; then
+                echo yes >"${d}/vars-probe"
+            else
+                echo '[]' >"${d}/vars.json"
+                echo no >"${d}/vars-probe"
+            fi) &
             # CI_RUNS_ON is a non-secret Actions variable whose exact public
             # value is a security boundary. Fetch only that value; never widen
             # the general variable inventory from names to values.
-            (run_timeout "${NETWORK_TIMEOUT}" gh variable get CI_RUNS_ON --json name,value \
-                >"${d}/ci-runs-on.json" 2>/dev/null || echo 'null' >"${d}/ci-runs-on.json") &
+            (if run_timeout "${NETWORK_TIMEOUT}" gh variable get CI_RUNS_ON --json name,value \
+                >"${d}/ci-runs-on.json" 2>/dev/null; then
+                echo yes >"${d}/ci-runs-on-probe"
+            else
+                echo 'null' >"${d}/ci-runs-on.json"
+                echo no >"${d}/ci-runs-on-probe"
+            fi) &
             (run_timeout "${NETWORK_TIMEOUT}" gh release list --limit 1 >"${d}/release.txt" 2>/dev/null || :) &
             # shellcheck disable=SC2016 # $o/$r are GraphQL variables, not shell
             (run_timeout "${NETWORK_TIMEOUT}" gh api graphql \
@@ -1095,6 +1105,12 @@ if [[ "${SECTION}" == "setup" ]]; then
                             checkline no "Actions runner routing" \
                                 "public CI_RUNS_ON must be exact ubuntu-latest JSON — run task setup:github"
                         fi
+                    elif [ "$(cat "${d}/ci-runs-on-probe" 2>/dev/null)" = yes ]; then
+                        checkline unknown "Actions runner routing" \
+                            "CI_RUNS_ON lookup returned an unexpected payload"
+                    elif [ "$(cat "${d}/vars-probe" 2>/dev/null)" != yes ]; then
+                        checkline unknown "Actions runner routing" \
+                            "could not determine whether public CI_RUNS_ON exists"
                     elif has_cred "${d}/vars.json" "CI_RUNS_ON"; then
                         checkline unknown "Actions runner routing" \
                             "CI_RUNS_ON exists but its public safety value was unreadable"
