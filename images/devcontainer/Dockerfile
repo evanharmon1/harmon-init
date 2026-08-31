@@ -70,15 +70,15 @@ ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
 ARG FX_VERSION=39.2.0
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
-ARG GLOW_VERSION=2.1.2
+ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
 ARG LAZYGIT_VERSION=0.64.1
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
-ARG TOKEI_VERSION=13.0.0-alpha.0
+ARG TOKEI_VERSION=14.0.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
 ARG GH_DASH_VERSION=4.25.2
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
-ARG GUM_VERSION=0.17.0
+ARG GUM_VERSION=2.0.0
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
 ARG ONEFETCH_VERSION=2.27.1
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
