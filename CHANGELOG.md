@@ -8,6 +8,20 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.42.0](https://github.com/evanharmon1/harmon-init/compare/v4.41.0...v4.42.0) (2026-08-31)
+
+
+### Features
+
+* reconcile CI runner routing safely ([#1121](https://github.com/evanharmon1/harmon-init/issues/1121)) ([295ce07](https://github.com/evanharmon1/harmon-init/commit/295ce07d31d23e4d2e556d33b1ad6b9867d01f44))
+* **template:** name decision records by date instead of sequence number ([#1119](https://github.com/evanharmon1/harmon-init/issues/1119)) ([65a002d](https://github.com/evanharmon1/harmon-init/commit/65a002dff93490f05ab8bf9d423e12461abe9249))
+
+
+### Bug Fixes
+
+* **hooks:** ask only on commands that can terminate a process ([#1122](https://github.com/evanharmon1/harmon-init/issues/1122)) ([73657b5](https://github.com/evanharmon1/harmon-init/commit/73657b58732c9a020de6f6a15cc2a2fa50ed9655))
+* widen Claude Code Bash allowlist for read-only commands ([#1129](https://github.com/evanharmon1/harmon-init/issues/1129)) ([4000447](https://github.com/evanharmon1/harmon-init/commit/400044776890b9ab63517875ef071c5130c6cfe2))
+
 ## [4.41.0](https://github.com/evanharmon1/harmon-init/compare/v4.40.0...v4.41.0) (2026-08-29)
 
 
