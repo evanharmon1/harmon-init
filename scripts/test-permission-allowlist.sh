@@ -39,13 +39,17 @@ note_fail() {
 # ---------------------------------------------------------------------------
 
 # Commands narrowed to a bare literal (no arguments) after a wider grant was
-# found to allow an unsafe variant. Each entry: exact allow string, then the
-# unsafe wider patterns that must never reappear.
+# found to allow an unsafe variant. Once narrowed, the command may NEVER carry
+# arguments again — any allow entry that starts with the bare command followed
+# by a space (arguments) or a colon (the "cmd:*" wildcard idiom) reintroduces
+# the escape, regardless of what comes after. Checking only the two specific
+# spellings seen so far (" *" / ":*") would miss e.g. a new exact rule such as
+# `Bash(gh auth status --show-token)` added straight back in.
 narrowed_commands=(
-    'Bash(gh auth status)|Bash(gh auth status *)|Bash(gh auth status:*)'
-    'Bash(actionlint)|Bash(actionlint *)|Bash(actionlint:*)'
-    'Bash(ps)|Bash(ps *)|Bash(ps:*)'
-    'Bash(tree)|Bash(tree *)|Bash(tree:*)'
+    'Bash(gh auth status)'
+    'Bash(actionlint)'
+    'Bash(ps)'
+    'Bash(tree)'
 )
 
 # Commands whose allow rule was dropped entirely (not narrowed) because no
@@ -59,17 +63,21 @@ check_file() {
     local file="$1" content
     content="$(cat "$file")"
 
-    for spec in "${narrowed_commands[@]}"; do
-        IFS='|' read -r exact wide1 wide2 <<<"$spec"
+    for exact in "${narrowed_commands[@]}"; do
         case "$content" in
         *"\"${exact}\""*) : ;;
         *) note_fail "$file: missing exact narrowed grant \"${exact}\"" ;;
         esac
-        for wide in "$wide1" "$wide2"; do
-            case "$content" in
-            *"\"${wide}\""*) note_fail "$file: unsafe widened grant \"${wide}\" has reappeared" ;;
-            esac
-        done
+        # Strip the trailing ")" to get the bare "Bash(<command>" prefix: any
+        # entry starting with that prefix followed by a space (an argument) or
+        # a colon (the "cmd:*" wildcard idiom) reintroduces the escape,
+        # whatever text follows.
+        prefix="${exact%)}"
+        case "$content" in
+        *"\"${prefix} "* | *"\"${prefix}:"*)
+            note_fail "$file: an argument-bearing or wildcard form of the narrowed grant \"${exact}\" has reappeared"
+            ;;
+        esac
     done
 
     for prefix in "${dropped_prefixes[@]}"; do
@@ -90,8 +98,11 @@ extract_allow_block() {
     # Both files hold the allow array as a plain, non-conditional JSON list —
     # no jinja markers appear between "allow": [ and its closing "],". Extract
     # that span verbatim (including the bracket lines) so a byte diff catches
-    # any divergence, including whitespace/ordering.
-    sed -n '/"allow": \[/,/^\s*\],\?\s*$/p' "$1"
+    # any divergence, including whitespace/ordering. POSIX bracket expressions
+    # and -E (not GNU's \s / \? escapes) so this works under BSD sed too —
+    # without -E, macOS sed silently fails to match the closing line and the
+    # extraction runs to EOF instead, producing a false parity failure.
+    sed -E -n '/"allow": \[/,/^[[:space:]]*\],?[[:space:]]*$/p' "$1"
 }
 
 root_block="$(extract_allow_block "$root_settings")"
