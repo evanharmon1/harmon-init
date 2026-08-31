@@ -17,7 +17,7 @@ ARG ACTIONLINT_VERSION=1.7.12
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
-ARG TERRAFORM_VERSION=1.15.9
+ARG TERRAFORM_VERSION=1.16.0
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
 ARG TFLINT_VERSION=0.64.0
 # TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
@@ -27,25 +27,25 @@ ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e78
 # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
 ARG YQ_VERSION=4.53.6
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
-ARG ZELLIJ_VERSION=0.45.0
+ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.242
+ARG WORKMUX_VERSION=0.1.248
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.14.1
+ARG AOE_VERSION=1.15.1
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.238
+ARG CLAUDE_CODE_VERSION=2.1.250
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.149.0
+ARG CODEX_VERSION=0.150.1
 # renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.56.0
+ARG GEMINI_CLI_VERSION=0.57.0
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.19
+ARG OPENCODE_VERSION=1.18.25
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.13.0
+ARG AGENT_DECK_VERSION=1.15.0
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.28.0
 # renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
@@ -54,7 +54,7 @@ ARG HERDR_VERSION=0.8.0
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.174.0
+ARG SEMGREP_VERSION=1.175.0
 # renovate: datasource=pypi depName=copier
 ARG COPIER_VERSION=9.17.2
 # renovate: datasource=npm depName=@playwright/test
@@ -86,7 +86,7 @@ ARG WTF_VERSION=0.50.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
 ARG XH_VERSION=0.26.2
 # renovate: datasource=github-releases depName=evilmartians/lefthook extractVersion=^v?(?<version>.+)$
-ARG LEFTHOOK_VERSION=2.1.10
+ARG LEFTHOOK_VERSION=2.1.12
 # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
 ARG GITLEAKS_VERSION=8.30.1
 # renovate: datasource=github-releases depName=lycheeverse/lychee extractVersion=^lychee-v(?<version>.+)$
@@ -94,7 +94,7 @@ ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
-ARG UV_VERSION=0.12.5
+ARG UV_VERSION=0.12.7
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
 ARG STARSHIP_VERSION=1.26.0
 
