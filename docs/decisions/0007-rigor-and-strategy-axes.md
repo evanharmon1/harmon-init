@@ -59,7 +59,7 @@ edge cases the old floor forbade.
 
 ### D1 — Two primary axes; lower-level controls are not peers
 
-`rigor` answers *how much*; `strategy` answers *how*. Model tier, review
+`rigor` answers _how much_; `strategy` answers _how_. Model tier, review
 policy, and budget envelope are **components of a rigor level**, not
 independent top-level defaults — `.devflow.toml` has exactly two selection
 defaults, `default_rigor` and `default_strategy`. **Not:** `default_tier`
@@ -174,10 +174,10 @@ policies make the low end of the range a first-class, frequently-selected
 configuration rather than a rare edge case.
 
 A shepherd cap of 0 specifically is worth spelling out, because shepherd is
-the one stage that bounds *other people's* findings rather than the agent's
+the one stage that bounds _other people's_ findings rather than the agent's
 own generated work (AGENTS.md, Dev Loop). Disabling it removes exactly two
 things: the agent's own shepherd fix-rounds, and the readiness gate's
-current-head Codex-cycle *requirement* — the same way that requirement
+current-head Codex-cycle _requirement_ — the same way that requirement
 already drops out wherever Codex review is not enabled at all (AGENTS.md,
 Readiness gate). It removes neither the readiness gate itself nor any of
 its other conditions: CI still has to conclude successfully, every human
@@ -202,7 +202,7 @@ self-generated stage caps — an all-zero `challenge`/`review` pair forces
 `min_rounds` to 0 by the same rule, rather than needing a special case.
 **Not, either:** including `shepherd` in that minimum, which is where an
 earlier version of this bound started and which D4 already establishes as
-the wrong shape for a different reason — `shepherd` bounds *other people's*
+the wrong shape for a different reason — `shepherd` bounds _other people's_
 findings (CI, human review, Codex), not rounds the agent runs on its own
 initiative, so it cannot MANUFACTURE a round to satisfy a floor the way a
 self-generated challenge/review pass can. A policy whose `shepherd` happens

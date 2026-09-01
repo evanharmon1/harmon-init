@@ -11,20 +11,20 @@ run from GitHub Actions via `cloudflare/wrangler-action`. Custom domains are
 managed outside wrangler (Terraform `cloudflare_workers_custom_domain`, or the
 dashboard).
 
-- **Preview**: every same-repo PR uploads a non-production Worker *version*
+- **Preview**: every same-repo PR uploads a non-production Worker _version_
   (`deploy-preview.yml`) — versioned + branch-alias URLs on workers.dev,
   posted as a sticky PR comment. Preview versions never receive production
   traffic. Skips gracefully when `CLOUDFLARE_API_TOKEN` is unavailable.
 - **Production**: merging the release-please release PR makes `release.yml`
   build the tagged commit and run `wrangler deploy`. Normal merges to `main`
   do **not** deploy production.
-- **Bootstrap / rollback**: Actions → *Release Please* → *Run workflow* with a
+- **Bootstrap / rollback**: Actions → _Release Please_ → _Run workflow_ with a
   branch or tag deploys that ref directly — used once to create the Worker,
   and to redeploy the previous release tag.
 
 > **Bootstrap before the first preview.** A preview (`wrangler versions upload`)
 > **requires the Worker to already exist** — the very first preview otherwise
-> fails with *"cannot upload a new version of a Worker that does not yet exist."*
+> fails with _"cannot upload a new version of a Worker that does not yet exist."_
 > On a brand-new repo, run the Bootstrap dispatch (a production `wrangler deploy`)
 > **once** to create the Worker; preview deploys work from then on.
 

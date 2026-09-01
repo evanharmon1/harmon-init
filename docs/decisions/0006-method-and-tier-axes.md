@@ -28,7 +28,7 @@ unenforced: **tier** (which model stratum works an issue) and **method** (which
 execution topology). The `tier:*` and `method:*` labels were seeded and are
 provisioned from the manifest, but nothing behind them said how a consumer
 resolves a label to a concrete model or workflow, how the two axes handle
-conflicts, or — the load-bearing part — how an *unattended* consumer may trust a
+conflicts, or — the load-bearing part — how an _unattended_ consumer may trust a
 label at all. This ADR records those semantics; the config that parameterizes
 them lands in `.devflow.toml` under the same harmon-init#855.
 
@@ -67,7 +67,7 @@ opt-in per family until more are registered.
 ### D3 — When escalation fires, and how a candidate is chosen
 
 `escalate_to` chains validate as **referential, acyclic, and monotonic toward
-`apex`**. *When* escalation fires is a policy, not a cost heuristic: **failure,
+`apex`**. _When_ escalation fires is a policy, not a cost heuristic: **failure,
 refusal, or operator policy — never cost alone**.
 
 Candidate selection is **deterministic**. The resolved tier names the stratum; a
@@ -79,7 +79,7 @@ or harness picks. A tier with no eligible configured candidate escalates along
 the chain, and an **exhausted chain stops with a report** — never a silent
 vendor switch or downgrade.
 
-**Deferred (follow-up):** `escalate_to` here validates the chain's *shape*, not
+**Deferred (follow-up):** `escalate_to` here validates the chain's _shape_, not
 that each step maps to a not-weaker model. Encoding per-model capability in the
 registry and validating tier maps monotonically ("a label only ever buys more")
 is deferred to a follow-up issue rather than blocking harmon-init#855; until then the
@@ -131,7 +131,7 @@ here is the contract every consumer must satisfy:
    resolution** — above or below, since one direction skips oversight and the
    other spends money — arising from a label not applied by an actor the
    operator has **authorized** (the operator themselves, or a login their
-   configuration trusts). Attribution to *some* identifiable actor is **not**
+   configuration trusts). Attribution to _some_ identifiable actor is **not**
    authorization.
 3. **Advisory families fail open** to the config default; **arming stays
    fail-closed**.

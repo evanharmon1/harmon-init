@@ -4,7 +4,7 @@ Worked diagnoses of real failures in this devcontainer, and where the shipped
 fix for each lives. Every one is already handled — by the scripts in
 `.devcontainer/` or by the shared
 `ghcr.io/evanharmon1/harmon-devcontainer` toolchain image the Dockerfile
-extends — so this exists so that when something *looks* like one of these,
+extends — so this exists so that when something _looks_ like one of these,
 you can tell quickly whether the guard failed or you have found something new.
 
 For everyday problems see [troubleshooting.md](troubleshooting.md); this file is
@@ -42,7 +42,7 @@ immutable `tag@digest` of that image and carries no tool pins of its own.
 the Feature returns or the image pin goes floating or missing.
 
 **Generalize this one.** Any build-time call to an unauthenticated public API
-is a flake waiting to happen. Pinning the Feature's own version does *not* fix
+is a flake waiting to happen. Pinning the Feature's own version does _not_ fix
 it: the lookup happens inside the Feature's install script whichever version of
 it runs. Remove the lookup, don't version it.
 
@@ -69,12 +69,12 @@ Shipped fix: `corepack enable pnpm` in the shared image's Node layer
 
 **Generalize this one.** Any non-zero exit in `postCreateCommand` silently
 cancels `postStartCommand`. If a start-time service is mysteriously absent,
-read the *create* log before investigating the service.
+read the _create_ log before investigating the service.
 
 ### 2. A status grep matched the wrong process
 
 The conductor start was guarded by `! grep -qi "running"` over
-`conductor status`, which also matched the *bridge's* "RUNNING" line — so the
+`conductor status`, which also matched the _bridge's_ "RUNNING" line — so the
 conductor block was skipped whenever the bridge was up.
 
 Shipped fix: grep for `"stopped"` specifically, and start the conductor before
@@ -100,7 +100,7 @@ Python, but the devcontainer Python feature installs its own and takes over
 crashes on restart under the feature's.
 
 Shipped fix: `pip install --quiet toml aiogram` in `post-create-common.sh`,
-which runs *after* features are installed.
+which runs _after_ features are installed.
 
 **Generalize this one too.** Anything the image installs into a runtime a
 devcontainer feature later replaces must be reinstalled post-create.
@@ -120,7 +120,7 @@ to run only on a clean main branch.
 but launching `claude` interactively forces a full OAuth flow again.
 
 The split between working headless and broken interactive is the clue: the
-credentials are fine, the *session state* is missing.
+credentials are fine, the _session state_ is missing.
 
 ### 1. Volume names that change with the image
 
@@ -156,7 +156,7 @@ not the individual tools.
 
 ### 2. `~/.claude.json` sits outside the persistent volume
 
-Interactive session state lives in `~/.claude.json` — the home directory, *not*
+Interactive session state lives in `~/.claude.json` — the home directory, _not_
 the `~/.claude/` volume. Credentials in `~/.claude/.credentials.json` survive, so
 headless keeps working while the TUI re-prompts.
 

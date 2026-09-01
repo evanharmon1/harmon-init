@@ -59,7 +59,7 @@ effect even after editing the file.
 
 Before tuning, find out which side is starved:
 
-- **Inside the container**, check what the container *sees*:
+- **Inside the container**, check what the container _sees_:
   `nproc` (CPUs) and `free -h` (memory). If these are already low, the host is
   capping you — raise the Coder quota or `.wslconfig` above.
 - **On the host**, watch real usage during the slow operation (Activity Monitor

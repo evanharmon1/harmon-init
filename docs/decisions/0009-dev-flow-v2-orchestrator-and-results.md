@@ -25,8 +25,8 @@ harmon-devkit, harmon-init (#1080–#1082, #1113), and ponderousdev/foreman.
 
 ## Context
 
-The dev loop's hardest decisions — *is this review round converging?* and *is
-this finding real?* — were made by feel inside the session running the loop,
+The dev loop's hardest decisions — _is this review round converging?_ and _is
+this finding real?_ — were made by feel inside the session running the loop,
 from ~470 lines of prose in `AGENTS.md`. The retro of ponderousdev/omator#397
 (seven confidence-stage rounds, 67 findings, both stages capped with P1s every
 round, most round-2 findings about round-1's own fixes) showed that a loop
@@ -56,7 +56,7 @@ stop; when it says `capped` with P0/P1 remaining, the orchestrator escalates
 to a human. It may never turn a computed `continue` or `diverging` into an
 exit.
 
-**Not** an orchestrator *agent*: a dispatched agent's context is exactly what
+**Not** an orchestrator _agent_: a dispatched agent's context is exactly what
 a dispatcher must not accumulate, headless and interactive runs would then
 run different loops, and a second decision-maker is a second place for the
 harmon-devkit#276-style drift this design removes. **Not** a downward override: the

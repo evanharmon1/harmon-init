@@ -114,7 +114,7 @@ Issues become cheap to classify and route, for humans and agents alike:
       resolve to the registry's `-local` endpoint-variant harnesses (ADR 0005 D9), and
       validation fails a local entry whose family has no registered `-local` harness.
       `escalate_to` chains validate as referential, acyclic, and monotonic toward `apex`;
-      *when* escalation fires (failure, refusal, operator policy — never cost alone) is
+      _when_ escalation fires (failure, refusal, operator policy — never cost alone) is
       defined in ADR 0006. Candidate selection is deterministic, also in ADR 0006: the
       resolved tier names the stratum; a `suggest:<family>[:<model>]` narrows within it only
       when that family is configured and eligible (otherwise it is ignored with a note) —
@@ -179,7 +179,7 @@ Issues become cheap to classify and route, for humans and agents alike:
          above or below, since one direction skips oversight and the other spends money —
          arising from a label that was not applied by an actor the operator has
          **authorized** (the operator themselves, or a login their configuration trusts);
-         attribution to *some* identifiable actor is not authorization.
+         attribution to _some_ identifiable actor is not authorization.
       3. Advisory families fail open to the config default; arming stays fail-closed.
       Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
       model axis. (#855)

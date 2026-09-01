@@ -23,7 +23,9 @@ export default tseslint.config(
       'convex/_generated/',
       'src/routeTree.gen.ts',
       'specs/',
-      '.claude/'
+      '.claude/',
+      '.worktrees/',
+      '.agents/'
     ]
   },
   js.configs.recommended,

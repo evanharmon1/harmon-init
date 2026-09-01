@@ -26,7 +26,7 @@ it points here.
   for Claude Code, Codex, and agy Bash commands. It requests approval for every
   terminating `kill`, `pkill`, `killall`, or `xkill` invocation; only direct
   `kill -l` and `kill -0 <PID>` probe segments are automatic. Do not infer that
-  a PID belongs to the current session. The hook catches *accidental*
+  a PID belongs to the current session. The hook catches _accidental_
   termination — a plain terminator, a variable or glob resolving to one, an
   executor handed one — and is not a sandbox against deliberately obfuscated
   shell; the hard rule binds the agent, the hook only catches slips.
@@ -68,7 +68,7 @@ it points here.
   `check-rules`, the exemption deliberately stays per-tree rather than
   failing closed, so clean sparse worktrees remain removable on e.g. macOS
   system git (harmon-init#919).
-  Ignored *directories* (`node_modules/`, `.venv/`, `dist/`) do not block it:
+  Ignored _directories_ (`node_modules/`, `.venv/`, `dist/`) do not block it:
   `worktree:new` reinstalls them, and refusing there would make `--force`
   routine and so meaningless. It also prunes the registry and clears leftover
   gitlink directories — stale ones make later tooling treat a dead path as a
@@ -78,7 +78,7 @@ it points here.
   thing keeping a commit alive, and a raw prune makes it unreachable. The task
   removes records only (never a worktree directory), refuses records carrying
   single-copy state, and pins a detached commit as
-  `refs/session-cleanup/pin/<record>` *before* the record goes; pins are
+  `refs/session-cleanup/pin/<record>` _before_ the record goes; pins are
   settled only by explicit human action (`task audit:session-artifacts` lists
   the pending ones). Removal serializes with `worktree:new`/`worktree:rm`
   through the shared lifecycle lock — for trees under the blessed
@@ -165,9 +165,10 @@ it points here.
 - **YAML:** 2-space indent, linted by yamllint. Use whichever extension
   (`.yml` or `.yaml`) each tool conventionally uses (e.g. `Taskfile.yml`,
   `.yamllint.yml`) — don't normalize extensions repo-wide.
-- **Markdown:** markdownlint — ATX headings, no duplicate headings, emphasis and
-  strong markers consistent within a file; line-length and first-line-heading
-  rules are off.
+- **Markdown:** markdownlint — ATX headings, no duplicate headings; emphasis is
+  pinned to underscore (`_emphasis_`) and strong is pinned to asterisk
+  (`**strong**`), matching Prettier; line-length and first-line-heading rules
+  are off.
 - **Shell:** must pass `shellcheck --severity=error` and `shfmt -d`, and stay
   portable to macOS bash 3.2 (no `mapfile`, no `grep -P`).
 
@@ -250,7 +251,7 @@ has.
   three — the `.skills-sync.yaml` seed loop and two prose mentions). So adding
   a legitimate new mention costs one allowlist line, and that line is the point
   — it forces the "is this a gate or a seed?" question at review time. An
-  earlier revision enumerated the *banned* forms instead and was evaded three
+  earlier revision enumerated the _banned_ forms instead and was evaded three
   times in three review rounds by ordinary Jinja (a wrapped conditional,
   `[%+ if`, `[% if(...)`); a denylist over an open-ended grammar can only be as
   complete as the last author's imagination, and it reports success over
@@ -271,7 +272,7 @@ has.
   [`claim-release.yml`](../.github/workflows/claim-release.yml) is the worked
   example: it renders whenever the skills sync is on, and its `run:` guard exits
   0 with a notice when `release-claim.sh` is absent. Iterating the answer to
-  *seed* a file — how `.skills-sync.yaml` gets its category list — stays
+  _seed_ a file — how `.skills-sync.yaml` gets its category list — stays
   correct; it is the conditional use that rots.
 
   Written after `claim_release_available` shipped as
@@ -293,7 +294,7 @@ has.
   Fixes** (patch), `feat!` / `BREAKING CHANGE:` → major. The rest (`build`,
   `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`) don't cut
   a release on their own — they ride along in the next one.
-- **On a squash-merge repo the PR title *is* the release type.** GitHub sets the
+- **On a squash-merge repo the PR title _is_ the release type.** GitHub sets the
   squash commit subject from the PR title for a multi-commit PR, and release-please
   reads only that subject — the individual `fix:`/`feat:` commits inside the PR are
   invisible in the squashed body. So a PR whose title is `chore:`/`docs:` merges

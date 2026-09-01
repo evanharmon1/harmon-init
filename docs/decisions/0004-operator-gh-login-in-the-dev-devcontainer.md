@@ -30,7 +30,7 @@ narrower and confusingly labelled.
 
 This is adjacent to but distinct from
 [#362](https://github.com/evanharmon1/harmon-init/issues/362), which moves the
-*autonomous* identity from a PAT to a GitHub App. That issue lists "acting on
+_autonomous_ identity from a PAT to a GitHub App. That issue lists "acting on
 behalf of the human operator" as an explicit non-goal, so the operator path was
 unowned.
 
@@ -45,7 +45,7 @@ Six forks came with that, each decided here:
 1. **The gh credential is not persisted.** `~/.config/gh` gets no volume, so a
    rebuild costs a fresh login.
 
-   *Not* a `gh-config-*` volume, which was the obvious convenience. The
+   _Not_ a `gh-config-*` volume, which was the obvious convenience. The
    container has no keyring, so `gh` stores the token as plaintext
    `hosts.yml`; persisting it would leave a broad, long-lived, multi-org
    credential at rest on a docker volume — strictly worse at rest than the
@@ -59,9 +59,9 @@ Six forks came with that, each decided here:
    plain CLI, `gh auth login` + `gh auth setup-git` covers both. Documented as
    such.
 
-   *Not* forced into one mechanism. The VS Code branch predates this change and
+   _Not_ forced into one mechanism. The VS Code branch predates this change and
    already yields the operator's identity; the divergence it creates is in
-   plumbing, and it stopped being an *identity* divergence the moment
+   plumbing, and it stopped being an _identity_ divergence the moment
    `GH_TOKEN` left.
 
 3. **Unauthenticated is loud, never fatal.** Nothing in the dev profile hard-
@@ -70,7 +70,7 @@ Six forks came with that, each decided here:
    clones public harmon-devkit over plain HTTPS. `post-create` prints the exact
    commands to run.
 
-   *Not* a 1Password fallback, even though `op` exists in this profile.
+   _Not_ a 1Password fallback, even though `op` exists in this profile.
    Non-interactive `op` needs `OP_SERVICE_ACCOUNT_TOKEN` — another long-lived
    secret at rest, which is the thing being removed. A fallback that
    reintroduces the problem is not a fallback.
@@ -80,13 +80,13 @@ Six forks came with that, each decided here:
    operator's full multi-org reach, and this change removes the ceiling that
    previously bounded that damage. `dev/` is for attended work.
 
-   *Not* a code guard (e.g. a `DEVCONTAINER_PROFILE` marker that foreman
+   _Not_ a code guard (e.g. a `DEVCONTAINER_PROFILE` marker that foreman
    refuses to dispatch under). That is new machinery across the configs and
    the then-vendored `scripts/foreman/`, needing its own tests and two-layer
    twins, to enforce a rule whose violation is already a deliberate act by
    the operator.
 
-   *Amended (foreman v2 extraction):* the marker guard now exists anyway —
+   _Amended (foreman v2 extraction):_ the marker guard now exists anyway —
    upstream. Foreman v2's own D2 tripwire refuses to start unless
    `FOREMAN_DEVCONTAINER=bot`, so the bot profile sets that marker in
    `containerEnv`. The rationale above stands for what THIS repo builds: the
@@ -108,14 +108,14 @@ Six forks came with that, each decided here:
    org genuinely cannot, the documented fallback is `gh auth login --with-token`
    with an SSO-authorized **classic** PAT.
 
-   *Not* a per-org fine-grained PAT. One resource owner per token is exactly
+   _Not_ a per-org fine-grained PAT. One resource owner per token is exactly
    the constraint this ADR exists to escape; solving an SSO edge case with the
    original problem would be circular.
 
 6. **Template consumers get this unconditionally.** Every generated repo's dev
    profile drops `GH_TOKEN` on its next `copier update`.
 
-   *Not* a copier answer. A consumer without a bot account loses nothing, and
+   _Not_ a copier answer. A consumer without a bot account loses nothing, and
    one with a bot account is in exactly this situation. An opt-out knob would
    grow the render matrix to encode "has not migrated yet".
 

@@ -1100,7 +1100,7 @@ full) # project_management=github; github_org=test-org (an org repo)
 minimal) # project_management=github on a PERSONAL account, use_foreman=false
     [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
     grep -q 'Not planned' docs/project-management.md || err "GitHub project-management.md missing expected content"
-    grep -qF '**Area** — which codebase subsystem the work lives in (the *solution*' docs/project-management.md ||
+    grep -qF '**Area** — which codebase subsystem the work lives in (the _solution_' docs/project-management.md ||
         err "project-management.md omits the area: solution-space label-family guidance"
     grep -qF 'At most one each of `area:`/`domain:`/`layer:` per issue' docs/project-management.md ||
         err "project-management.md omits the area/domain/layer cardinality guidance"

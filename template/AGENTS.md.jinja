@@ -136,7 +136,7 @@ Creating the draft is a phase transition, not a terminal state, and every stop
 short of the readiness gate leaves the PR **draft** with a blocker report — a
 non-draft PR must always mean the automated work is done.
 
-This assumes the repository *can* open drafts: GitHub restricts draft PRs on
+This assumes the repository _can_ open drafts: GitHub restricts draft PRs on
 private repositories to paid plans (docs/CHECKLIST.md). If `gh pr create
 --draft` is rejected, stop and report it — dropping `--draft` to get past the
 error silently reverts the lifecycle rather than fixing anything.
@@ -242,8 +242,8 @@ moment that pass adjudicates clean — the relevant bullet below [% if use_codex
 challenge/review) [% endif %]describes exactly how that exit is confirmed.
 The **shepherd cap now moves with the resolved review policy**[% if use_codex_review %] the same
 way challenge and review do,[% endif %] rather than holding one repo-wide
-number regardless of depth — but it still bounds a different thing: *other
-people's* findings (CI, human review, Codex) rather than work the agent
+number regardless of depth — but it still bounds a different thing: _other
+people's_ findings (CI, human review, Codex) rather than work the agent
 generated itself, so a shallower rigor level legitimately expects to answer
 fewer of them before promoting, not that lowering it saves effort already
 spent.
@@ -266,7 +266,7 @@ and either direction is an **off-profile** decision, recorded and disclosed
 rather than silently applied.
 
 **When the change under review edits `.devflow.toml` itself**, resolve
-*every* parameter — every rigor level, review policy, budget envelope,
+_every_ parameter — every rigor level, review policy, budget envelope,
 strategy definition, tier map, and both top-level defaults — from the
 **merge-base** copy rather than the branch copy: a branch that lowers a cap,
 drops a level, or repoints a tier map is lowering the very gate it is being
@@ -287,7 +287,7 @@ with no push access to `.devflow.toml` at all. An **interactive session**
 treats every label that way and requires operator confirmation for **any
 off-default resolution** — above or below, since one direction skips
 oversight and the other spends money — arising from a label the operator has
-not authorized (attribution to *some* actor is not authorization).
+not authorized (attribution to _some_ actor is not authorization).
 **Unattended automation** acts on a label only after verifying its
 provenance end-to-end from its own trusted-actor configuration, re-read
 immediately before acting, and otherwise falls back to the config default
@@ -364,7 +364,7 @@ cap allowed.
   came back empty, all-P2 as labeled, or P1-labeled and adjudicated down to
   P2. Severity is read off the **adjudicated** column of your adjudication
   table, not off the reviewer's label, and nothing further is owed after the
-  second such round: the second round *is* the confirmation, so there is no
+  second such round: the second round _is_ the confirmation, so there is no
   extra clean run to buy. A round that returns **no findings at all** ends
   the stage on its own **once at least `min_rounds` rounds have run** (0 is a
   legal floor — it buys nothing beyond what the cap and the two-consecutive
@@ -374,7 +374,7 @@ cap allowed.
   a clean post-fix re-run pays for a confirmation pass, but a policy that sets a
   floor above 0 buys the rounds it asked for before that shortcut opens. The other two
   exits need no separate floor check: two consecutive clean
-  rounds *are* two rounds regardless of any floor, and a capped final round runs
+  rounds _are_ two rounds regardless of any floor, and a capped final round runs
   exactly the cap, which is always `>= min_rounds` by construction — so `min_rounds` binds only the empty-round path and nothing
   else. Fixing the findings is still not the exit
   condition; adjudicated-clean rounds are. The exit carries one
@@ -396,13 +396,13 @@ cap allowed.
   check is owed rather than optional.
   **Each adjudicated round, before the draft PR exists, ends in one
   conventional commit, pushed.** Per
-  *round*, not per finding: five fixes are one commit, and a round adjudicated
+  _round_, not per finding: five fixes are one commit, and a round adjudicated
   clean with nothing to fix commits and pushes nothing. Before the draft PR
   exists this costs essentially nothing — the generated `build.yml` triggers
   on `pull_request` and pushes to the default branch only (re-check your own
   triggers if you have changed them),[% if use_codex_cloud_review %] Codex
   cloud review is comment-triggered,[% endif %]
-  and a bare `task challenge`/`task review` covers branch commits *and*
+  and a bare `task challenge`/`task review` covers branch commits _and_
   working tree alike, so commit boundaries never change what a round reviews.
   It must not outrun secret scanning, though, and that is an obligation rather
   than a claim about your setup: **every round's commit is secret-scanned
@@ -415,7 +415,7 @@ cap allowed.
   push (`git push -u <remote> <branch>`), since a new branch has no upstream
   to infer.
   What it buys is that a lost environment costs at most the current round's
-  *code* rather than every round's, and that a push-permission gap surfaces at
+  _code_ rather than every round's, and that a push-permission gap surfaces at
   round 1 rather than at `gh pr create`. It buys nothing beyond the code: it
   does **not** carry the deferred-findings sidecar
   or the adjudication ledger, which live in the git directory and are never
@@ -452,7 +452,7 @@ cap allowed.
   HTTPS credential that works for both. Never work around an SSH failure by
   pushing to a raw `https://…` URL — a URL push bypasses the named remote and
   leaves stale tracking refs. On an unprovisioned host, force the helper
-  and the rewrite against the *named* remote:
+  and the rewrite against the _named_ remote:
   `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix
   matching — every SSH form needs its own mapping, hence all four).
@@ -559,7 +559,7 @@ cap allowed.
   needs fixing; waiting on CI or a reviewer is never a round, and this cap is
   independent of any other stage's. What it bounds is other people's findings,
   not self-generated work. It is not wholly immune, though — a reviewer can
-  flag the fix your *last* round pushed, so if the rounds start circling your
+  flag the fix your _last_ round pushed, so if the rounds start circling your
   own patches, step back and ask whether the findings are about the change you
   set out to make or about a previous round's fix. Whether anything more has
   landed is settled by "Checks green is a non-terminal state" below, not by
@@ -576,7 +576,7 @@ cap allowed.
   If checks still fail or findings remain at the shepherd cap,
   stop and summarize what's unresolved on the PR for the maintainer. That cap
   now moves with the resolved review policy the same way challenge and review
-  do, but the reason to stop at it is unchanged: it bounds *other people's*
+  do, but the reason to stop at it is unchanged: it bounds _other people's_
   findings, not your own work, so reaching it — even a low cap from a shallow
   rigor level — means escalate rather than keep spending rounds. A cap of 0
   (`trivial` rigor) means the very first thing that needs an answer is
@@ -600,7 +600,7 @@ cap allowed.
   cadence and can lag a policy change made here.
 - **Checks green is a non-terminal state.** Reporting "all checks pass"
   without having polled reviews and inline comments is not a handoff — it is
-  the middle of the shepherd stage. Bot and human reviews land *after* checks
+  the middle of the shepherd stage. Bot and human reviews land _after_ checks
   settle, so `gh pr checks --watch` returns at exactly the moment the review
   has not run yet: an empty comment list read at that instant means "not
   reviewed yet", not "nothing to answer".
@@ -616,7 +616,7 @@ cap allowed.
 [% endif %]
 - **Stop at ready-for-review.** When the readiness gate below passes, promote
   the draft **exactly once** with `gh pr ready <n>`, confirm `isDraft == false`
-  on the same head, report, and stop. Human approval is deliberately *not* a
+  on the same head, report, and stop. Human approval is deliberately _not_ a
   precondition: ready-for-review is the request for that review, not permission
   to merge. Merging is always a human decision.
 
@@ -628,7 +628,7 @@ draft may be marked ready for review only when **all** of the following hold for
 its current `headRefOid`:
 
 - Required CI checks have concluded successfully. An empty check list is
-  *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
+  _indeterminate_, not a pass — GitHub populates it asynchronously, so a read
   taken moments after the push reports nothing having run rather than nothing
   to run.
 [% if use_codex_cloud_review %]
@@ -668,7 +668,7 @@ unproven condition means stay draft, not promote and watch.
   green and the ruleset would allow it. Open the draft PR and shepherd it —
   checks green with reviews unpolled is not the stopping point — then promote
   it through the readiness gate, report, and stop; merging is always a human
-  decision. `gh pr ready` is *not* a merge and you may run it — but only out of
+  decision. `gh pr ready` is _not_ a merge and you may run it — but only out of
   a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as
@@ -738,7 +738,7 @@ attempt.
 on three events: opening a PR for review, marking a draft ready, and an
 explicit `@codex review`. The first two fire too late to inform a draft
 workbench, and the second is actively harmful here — `gh pr ready` would kick
-off a fresh asynchronous review *after* the gate that was supposed to complete
+off a fresh asynchronous review _after_ the gate that was supposed to complete
 the automated work, so non-draft would stop meaning "ready for a human". The
 lifecycle therefore uses explicit `@codex review` requests while the PR is
 draft, per the current-head cycle above. Turn personal Auto review off and set
@@ -772,10 +772,10 @@ These local tasks do not imply that Codex cloud review is installed or required.
    written to.
 
 **Between rounds, check what the findings are about.** Those six steps are all
-*per-finding*, so a reviewer can be right every round while the loop as a whole
+_per-finding_, so a reviewer can be right every round while the loop as a whole
 diverges: each fix adds surface, the next round attacks that surface, and the
 findings stay individually defensible right up to the cap. Before starting a
-round's fixes, ask where they *live* — in the change you set out to make, or in
+round's fixes, ask where they _live_ — in the change you set out to make, or in
 code that exists only because an earlier round asked for it. **A round whose
 findings are all about the previous round's fix is the tell**, and it is
 visible in round 2 — the first round that can show it. Do not wait for the
@@ -805,13 +805,13 @@ remedy is a fix or a deletion; the remedy either way is input to the **next**
 round, and only that later round's review of the changed tree counts toward
 convergence. What deletion buys is that the next round finds nothing left to
 re-raise. Name the mooted findings
-in the adjudication table *and* in the message of the commit that removes the
+in the adjudication table _and_ in the message of the commit that removes the
 code — the table is scrollback, but the commit is why the code is gone, and it
 is the record a later round or a different session can still find.
 
 **Restructuring to invariants is the same move where deletion is unavailable**
 — deletion by abstraction. When the artifact is a spec or a document whose
-accreted procedure-prose *cannot* simply be dropped because earlier rounds
+accreted procedure-prose _cannot_ simply be dropped because earlier rounds
 legitimately demanded it, replace the attackable procedure with the
 universally-quantified property it was approximating, delegate the mechanism to
 the implementation surface that can be tested, and carry the review's attack
@@ -820,7 +820,7 @@ attack, and the obligation is preserved rather than dropped — which is what
 separates this from quietly deleting a requirement. Name it on the table and in
 the commit message exactly as a deletion is named.
 
-One endpoint is worth knowing: if the deletion empties the change *entirely*,
+One endpoint is worth knowing: if the deletion empties the change _entirely_,
 there is no round to converge on — `codex-review.sh` refuses an empty scope
 non-zero by design, so the stage cannot pass and re-running will not change
 that. Treat it as the answer rather than a failure to work around: a change
@@ -837,7 +837,7 @@ gating). The scale is defined in
 the gate keeps its meaning if Codex changes its output; a finding badged off
 that scale, or not badged at all, is adjudicated as **at least a P2**. A label
 is a hypothesis and the **adjudicated** severity is the verdict — P3 included,
-whatever reviewer produced it. The sidecar records what is *deferred*, so an entry is
+whatever reviewer produced it. The sidecar records what is _deferred_, so an entry is
 owed only for a finding left unresolved and carried forward — one fixed in
 place, or adjudicated genuinely cosmetic, leaves nothing to defer. What the
 badge may never do is skip the adjudication that decides which it is.

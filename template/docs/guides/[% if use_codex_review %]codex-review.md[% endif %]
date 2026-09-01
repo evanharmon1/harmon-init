@@ -52,7 +52,7 @@ primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
    toggle changes). Codex triggers a cloud review on three events: opening a
    PR for review, marking a draft ready, and an explicit `@codex review`. Only
    the third is usable here: the PR is a draft for the whole automated
-   lifecycle, so the first never fires, and the second fires *after* the
+   lifecycle, so the first never fires, and the second fires _after_ the
    readiness gate — starting a new asynchronous review at the exact moment
    "non-draft" is supposed to mean the automated work is done. Record the
    three knobs under docs/CHECKLIST.md's [human-only] item; once recorded it
@@ -78,7 +78,7 @@ task challenge -- --base main focus on the update/migration path
 
 With no target flag, **both halves of the change are in scope**: the commits
 beyond the auto-detected base (`origin/HEAD`, else a local `main`/`master`)
-*and* the working tree. When both exist the prompt carries one manifest split
+_and_ the working tree. When both exist the prompt carries one manifest split
 into a `Committed changes` and an `Uncommitted changes` section, so the
 reviewer knows which diff to collect for each path; when only one exists it is
 reviewed on its own. If the base cannot be resolved at all, the run refuses
@@ -106,7 +106,7 @@ and it is advisory: an intentionally older base still runs. Partly-updated
 branches count too — rebasing onto a mid-point of the gap still leaves those
 commits in scope. It stays quiet when the base has no upstream (a tag, a sha,
 `origin/main` itself), when your branch carries none of the upstream commits,
-when the base has run *ahead* of its upstream rather than behind, and when the
+when the base has run _ahead_ of its upstream rather than behind, and when the
 gap changes no files at all (a change and its revert) — the two scopes are
 byte-identical there, so there is nothing to warn about.
 
@@ -119,7 +119,7 @@ background runs.
 ### Duration and backgrounding
 
 A round is **minutes, not seconds** — 5–15 is ordinary and passing ten is not
-unusual. The cost tracks how much the reviewer *reads*, not how large the diff
+unusual. The cost tracks how much the reviewer _reads_, not how large the diff
 is: it re-reads AGENTS.md, this guide, and whatever those point at on every
 round, so a three-line docs change can run as long as a feature branch.
 
@@ -138,11 +138,11 @@ Two things not to change when backgrounding:
 
 - **The target.** Bare `task challenge` keeps the auto-selection above — the
   branch's commits and the working tree, whichever exist. At this point in the
-  loop the tree is normally dirty *and* the branch has commits, so a hardcoded
+  loop the tree is normally dirty _and_ the branch has commits, so a hardcoded
   `-- --base main` would review the committed branch and silently skip the
   very work being challenged (and name the wrong base in a repo that does not
   use `main`). Add a target flag only when you mean to narrow. Note
-  `origin/HEAD` is a *cached* ref: if the remote's default branch moved,
+  `origin/HEAD` is a _cached_ ref: if the remote's default branch moved,
   refresh it with `git remote set-head origin --auto`, or the auto-selected
   base is silently the old one.
 
@@ -289,7 +289,7 @@ A stage — `challenge` and `review`, counted separately — ends when
 rounds may come back empty, all-P2 as labeled, or P1-labeled and adjudicated
 down to
 P2; what counts is the **adjudicated** column of your adjudication table, not
-the label Codex attached. The second such round *is* the confirmation, so no
+the label Codex attached. The second such round _is_ the confirmation, so no
 extra run is owed after it. A stage whose resolved cap is **0 never opens**:
 zero rounds run, and none of what follows applies to it — every deterministic
 gate and adjudication obligation elsewhere is unaffected. For any stage whose
@@ -297,7 +297,7 @@ cap is 1 or more, two cases exit faster still than the two-consecutive rule.
 A round with **no
 findings at all** ends the stage on the spot **once the level's `min_rounds`
 floor is met** (`0 <= min_rounds <= cap`; the built-in fallback of 1 applies
-only when `.devflow.toml` is entirely absent — a *present* config's review
+only when `.devflow.toml` is entirely absent — a _present_ config's review
 policy omitting `min_rounds` is a validation error, never a silent default)
 — an empty round is exactly
 the older "clean re-run" exit, so neither a trivial change nor a clean
@@ -392,7 +392,7 @@ holds for every finding from every reviewer, and P3 is not an exception to it:
   the one the reviewer wrote. That is already how P0 and P1 are handled; the
   scale just makes it explicit at the bottom too.
 - **Adjudication alone decides deferral.** The sidecar records what is
-  *deferred*, so an entry is owed only for a finding that is both unresolved
+  _deferred_, so an entry is owed only for a finding that is both unresolved
   and carried forward: one fixed in place leaves nothing to defer, and one
   adjudicated genuinely cosmetic leaves nothing to carry. What the badge may
   never do is skip the adjudication that decides which of those it is — the
@@ -423,7 +423,7 @@ symmetric:
 - A badged finding stated **outside** an inline thread has no reply linkage,
   and `settle` currently refuses a badge it does not recognize as `p[0-2]`.
   So an unfixed, non-inline cloud P3 has no way to be recorded as settled
-  *by that checker*: fix it and push (which starts a fresh-head cycle and
+  _by that checker_: fix it and push (which starts a fresh-head cycle and
   resolves it), or if it genuinely needs no change, report the blocker and
   leave the PR draft. That gap is being fixed upstream in
   evanharmon1/harmon-devkit#530 and re-pinned here; it is a limitation of the
@@ -495,7 +495,7 @@ nothing looks for them again. Account for every file the sweep shows: adopt an
 orphan if it belongs to this work, otherwise leave it and mention it. One
 command beats rename-migration logic that would need its own correctness
 argument. The location is deterministic, so a later session finds it the same
-way, and `git status` never sees it — a note left in the *worktree* would be
+way, and `git status` never sees it — a note left in the _worktree_ would be
 worse than none, because a dirty tree puts it in the next bare
 `task challenge`'s scope: a file of open findings, handed to the reviewer as
 part of the change to adjudicate.

@@ -1,6 +1,6 @@
 # Runbooks
 
-Named-incident, step-by-step procedures read *under pressure* when prod breaks
+Named-incident, step-by-step procedures read _under pressure_ when prod breaks
 (the calm counterpart is [guides/](../guides/)).
 
 A runbook is one specific operational procedure — e.g. "rotate the API key",
@@ -16,11 +16,11 @@ runbook nobody reads.
 
 | Runbook | Use it when |
 | --- | --- |
-| *(none yet)* | |
+| _(none yet)_ | |
 
 Two rules for the "use it when" column:
 
-- **Say what the runbook does *not* cover** when a neighbouring procedure could
+- **Say what the runbook does _not_ cover** when a neighbouring procedure could
   be confused with it. Scoping is often the half someone needs while scanning.
 - **Never advertise coverage you have not verified.** A wrong pointer is worse
   than a missing one — it costs time under pressure and can walk someone

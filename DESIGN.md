@@ -1,7 +1,7 @@
 # DESIGN.md
 
 AI-facing statement of design intent for **Harmon Init**. This file
-carries the *why* and the prose rules that code and config can't encode — read
+carries the _why_ and the prose rules that code and config can't encode — read
 it before making design, UX, or structural decisions. `AGENTS.md` covers how to
 work in the repo; this covers what "good" looks like for the product itself.
 
@@ -14,7 +14,7 @@ work in the repo; this covers what "good" looks like for the product itself.
 Copier project template that scaffolds repos with pre-configured DevOps tooling, CI/CD, linting, security checks, git hooks, and task runners
 
 TODO: who is this for, what is it trying to achieve, and what would make it
-clearly *worse* if changed? State the single most important quality (e.g.
+clearly _worse_ if changed? State the single most important quality (e.g.
 "boringly reliable", "fast to read", "delightful to demo").
 
 ## Principles
@@ -35,4 +35,4 @@ file wins if they disagree.
 
 Significant or hard-to-reverse design choices get an ADR in
 [`docs/decisions/`](docs/decisions/). Deviating from a rule here is allowed when
-justified — record *why* in an ADR rather than silently drifting.
+justified — record _why_ in an ADR rather than silently drifting.

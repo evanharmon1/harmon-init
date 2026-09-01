@@ -1,6 +1,6 @@
 # Guides
 
-Calm, repeatable how-tos read *in advance* (the crisis counterpart is
+Calm, repeatable how-tos read _in advance_ (the crisis counterpart is
 [runbooks/](../runbooks/)).
 
 - [onboarding.md](onboarding.md) — get a new dev or agent productive: setup,

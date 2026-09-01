@@ -33,7 +33,7 @@ wrong for one of the two. This ADR records why the template splits them.
 **`web-astro` sites are release-gated. `web-app` projects are not.**
 
 - **`web-astro` → release-gated production.** A normal merge to `main` only
-  *stages*. Production ships when the **release-please release PR is merged** (a
+  _stages_. Production ships when the **release-please release PR is merged** (a
   deliberate human act that cuts the tag + CHANGELOG), and `release.yml`'s
   `deploy-production` job deploys the **tagged commit**. `workflow_dispatch`
   stays as the bootstrap/rollback escape hatch. This is wired via the
@@ -48,7 +48,7 @@ The rationale each way:
 
 **Why release-gate `web-astro`:**
 
-- **Intentional releases.** Decouple *integrated* (merged) from *shipped*
+- **Intentional releases.** Decouple _integrated_ (merged) from _shipped_
   (deployed): batch several merges into one release, review the accumulated
   CHANGELOG, and choose when to ship independently of when you merge.
 - **Automation-merge safety.** If `main` → prod were automatic, any
@@ -60,7 +60,7 @@ The rationale each way:
   environment or long-lived branch required.
 - **Versioned + revertable.** Prod deploys a **tag**, not a moving `main` HEAD,
   so releases are versioned, changelog'd, and rollback is "redeploy the
-  previous tag." Cheap and safe *because the site is stateless*.
+  previous tag." Cheap and safe _because the site is stateless_.
 
 **Why NOT release-gate `web-app` (the explicit "not"):**
 

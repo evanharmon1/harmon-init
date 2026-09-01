@@ -53,9 +53,9 @@ this comment. -->
       — and the next automated run aborts with `pin disagreement` until someone
       reconciles them by hand. Only this fully manual route has that trap: the
       workflow and `task sync:devkit-release` both write both manifests.
-      **Both mistakes are caught, by different gates.** Editing the *root*
+      **Both mistakes are caught, by different gates.** Editing the _root_
       manifest without re-syncing fails `verify:skills` in CI and
-      `verify:skills:offline` pre-push. Editing *only the template* manifest is
+      `verify:skills:offline` pre-push. Editing _only the template_ manifest is
       invisible to those two — they read the root manifest, whose pin still
       matches the provenance — so `task test:skills-pin-parity` (in `verify` and
       CI) compares the two pins directly and fails on disagreement.
@@ -119,7 +119,7 @@ this comment. -->
       and arms across every Follow-personal repo at once the moment the
       personal toggle changes. The draft-workbench lifecycle drives Codex with
       explicit `@codex review` requests while the PR is draft; left on,
-      `gh pr ready` starts a *new* asynchronous review after the readiness gate,
+      `gh pr ready` starts a _new_ asynchronous review after the readiness gate,
       and non-draft stops truthfully meaning "ready for a human". Ticking this
       item records that all three knobs are set; once recorded it is settled
       configuration — nothing in the lifecycle gates on it — and the one thing
@@ -128,7 +128,7 @@ this comment. -->
 - [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example — foreman trusts its
       findings via `trusted_actors`), turn on its draft-review option.
-      A reviewer that skips drafts first reports *after* promotion, so the
+      A reviewer that skips drafts first reports _after_ promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
 - [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
@@ -198,7 +198,7 @@ this comment. -->
 - [ ] **Install** the App on this repo — **Install App → Only select repositories**
       (the harmon-init repos that run release-please / claude-* / project-automation),
       **not "All"**. **Creating the App is not enough:** an App whose credentials are
-      set but which is *not installed* on the repo makes
+      set but which is _not installed_ on the repo makes
       `actions/create-github-app-token` fail at runtime with a **404**
       (`Not Found` — "not installed on this repository"). This is the single
       easiest step to miss.
@@ -362,7 +362,7 @@ this comment. -->
       [project-management.md](project-management.md).
 - [ ] GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
-      point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
+      point it at this repo (filter `is:issue`, `is:pr`) so _every_ new issue and
       PR lands on the board automatically, however it's created. GitHub's native
       built-in — no Actions or tokens, and it's the reliable way to guarantee
       coverage (the issue-form `projects:` key only covers form-created issues and

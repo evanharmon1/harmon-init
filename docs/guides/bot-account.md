@@ -4,11 +4,11 @@ How the `evanharmon1-bot` machine account gets access, and
 how to mint the fine-grained PAT it authenticates with.
 
 Read this when standing up a new bot account, adding the bot to a new repo, or
-rotating the token. The *why* lives in
+rotating the token. The _why_ lives in
 [architecture/security.md](../architecture/security.md); the permission table is
 owned by
 [architecture/branch-protection.md](../architecture/branch-protection.md#bot-account-pat-permissions);
-this is the *procedure*.
+this is the _procedure_.
 
 ## Why a separate account
 
@@ -24,7 +24,7 @@ rather than by convention. Anything running in the bot devcontainer can read thi
 token out of the environment, so treat it as the agent's own credential and give
 it nothing you would not give the agent.
 
-CI *workflows* are a **third** identity — they authenticate as the
+CI _workflows_ are a **third** identity — they authenticate as the
 `evanharmon1-ci` GitHub App with short-lived tokens, not this PAT. Don't
 conflate them; see [architecture/security.md](../architecture/security.md).
 
@@ -32,7 +32,7 @@ conflate them; see [architecture/security.md](../architecture/security.md).
 
 **Effective access = min(collaborator grant, PAT permissions).**
 
-A fine-grained PAT is a *delegation of its owner's access* and can never exceed
+A fine-grained PAT is a _delegation of its owner's access_ and can never exceed
 it. Two layers must both allow an operation:
 
 | Layer | Granularity | Sets |
@@ -55,9 +55,9 @@ Two consequences worth internalising, because both cause confusing failures:
 
 ## One PAT per resource owner
 
-A fine-grained PAT is scoped to a single **resource owner** — a user *or* an org,
-never both. A token owned by a *user* cannot reach org-owned repos, and a token
-owned by an *org* cannot reach user-owned repos.
+A fine-grained PAT is scoped to a single **resource owner** — a user _or_ an org,
+never both. A token owned by a _user_ cannot reach org-owned repos, and a token
+owned by an _org_ cannot reach user-owned repos.
 
 So you need **one PAT per owner whose repos the bot works on**, each with its own
 selected-repo list. This is the same containment logic as one CI App per org: a
@@ -99,7 +99,7 @@ access tokens → **Fine-grained tokens** → Generate new token.
 | Field | Value | Why |
 |---|---|---|
 | **Resource owner** | the owner of the repos — `evanharmon1` | Pick the wrong owner and the target repos are unreachable, no matter the permissions. If the owner is an org, it may require approval before the token works. |
-| **Repository access** | *Only select repositories* — exactly the repos the bot works on | This list **is** the blast radius. Never "All repositories". |
+| **Repository access** | _Only select repositories_ — exactly the repos the bot works on | This list **is** the blast radius. Never "All repositories". |
 | **Repository permissions** | the table in [branch-protection.md](../architecture/branch-protection.md#bot-account-pat-permissions), and nothing more | Notably **no Workflows** and **no Administration** — see [security.md](../architecture/security.md). |
 | **Expiration** | set one; record the date | A token that never expires is a credential you will never rotate. |
 
@@ -173,6 +173,6 @@ you did not create.
 - **Reach production secrets** — the bot devcontainer installs no 1Password CLI
   and no Tailscale.
 
-No single layer is sufficient alone: the PAT limits what the token may *attempt*,
-the ruleset limits what GitHub *allows*, and CODEOWNERS decides *whose approval
-counts*.
+No single layer is sufficient alone: the PAT limits what the token may _attempt_,
+the ruleset limits what GitHub _allows_, and CODEOWNERS decides _whose approval
+counts_.

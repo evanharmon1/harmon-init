@@ -106,7 +106,7 @@ version coupling exists to break.
 
 The staged path is chosen for rollback safety, **not** as a security boundary,
 and it should not be described as one. The staged directory is root-owned while
-the container runs as `vscode`, so an *unprivileged* write cannot modify it —
+the container runs as `vscode`, so an _unprivileged_ write cannot modify it —
 but that is the whole of the property. `vscode` has passwordless `sudo` (the
 Microsoft devcontainer base grants it, and the lifecycle scripts rely on it
 non-interactively), and the bot profile runs Claude in `bypassPermissions`, so

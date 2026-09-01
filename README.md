@@ -94,10 +94,10 @@ that delta to your working tree as a three-way merge. So:
   task, an updated `status.sh` land in your files automatically.
 - **Your customizations are preserved** — edits to template-owned files (a project
   task in `Taskfile.yml`, a custom `status` section in `scripts/status.sh`) survive;
-  only a region you *and* the template both changed becomes a conflict to resolve.
+  only a region you _and_ the template both changed becomes a conflict to resolve.
 - **No special repo structure** — generated repos stay plain. Customize files **in
   place**; there's nothing harmon-init-specific to learn to work in one, and no
-  "template-owned vs custom" file split. (Reconcile a conflict by keeping *both*
+  "template-owned vs custom" file split. (Reconcile a conflict by keeping _both_
   the template's change and your edit in the same file — never extract anything
   into a separate file.)
 
@@ -109,7 +109,7 @@ Two `copier.yml` settings keep updates safe (both invisible to repo users):
   release.
 - `_skip_if_exists` is kept to just **`CHANGELOG.md`** (owned by release-please).
   Everything else is deliberately left out so the three-way merge can deliver its
-  improvements to existing repos — listing a file there *freezes* it and blocks all
+  improvements to existing repos — listing a file there _freezes_ it and blocks all
   template updates to it.
 
 For the repeatable, verified workflow (preview drift → update → reconcile → verify),

@@ -126,7 +126,7 @@ These are **ceilings, never quotas**:
   nothing of that stage's own to adjudicate or defer. Nothing else moves: the
   deterministic gates this repository already has (tests, CI, security
   scanners, branch protection, required human review) are unaffected, and the
-  obligation to adjudicate and record any finding that *does* surface from
+  obligation to adjudicate and record any finding that _does_ surface from
   another source is unchanged. Zero AI review rounds is a valid choice for
   `trivial` — it is not a bypass of anything else.
 - **A cap of 1 is an ordinary small cap**, not a special case. The stage takes
@@ -141,7 +141,7 @@ These are **ceilings, never quotas**:
 every rigor level regardless of depth. The reason is what it bounds:
 `challenge` and `review` bound work the agent generates for itself — each
 round's fixes are the next round's input, which is exactly what makes a low,
-self-referential cap safe. `shepherd` bounds *other people's* findings — CI
+self-referential cap safe. `shepherd` bounds _other people's_ findings — CI
 failures, human review comments, Codex cloud review — and a shallower rigor
 level legitimately expects to answer fewer of them before promoting.
 Lowering `shepherd` does not reduce effort already spent; at the cap, the
@@ -234,7 +234,7 @@ The fields, explained without leaning on their names:
   the task, decomposes it, and hands bounded pieces of that plan to the
   workers it delegates to. `independent-proposals` (`council`'s topology)
   also makes the delegate first-class, but delegates a different kind of
-  unit: a coordinating agent hands each proposer the *whole problem*,
+  unit: a coordinating agent hands each proposer the _whole problem_,
   planning nothing about how the proposer gets there (`planning =
   independent`, below) — no proposer is in charge of, or aware of, the
   others — and later judges what comes back. `human-directed`
@@ -275,7 +275,7 @@ The fields, explained without leaning on their names:
   never counted. See "Strategy × rigor compatibility" below for what that
   scoping difference means for the budget check — it is the only place the
   two strategies' checks actually diverge; `orchestrate`'s `min_agents`
-  already *is* its true agent count, with no adjustment in either
+  already _is_ its true agent count, with no adjustment in either
   direction.
 - **`human_gates`** — explicit pause points this strategy inserts, drawn from
   the allowed set below. This is the **only** configurable human-gate
@@ -321,7 +321,7 @@ concrete instruction; an operator who wants adaptive resolution applies the
 label instead. A **scoped** `tier:<role>:adaptive` label is not provisioned
 either — only the unqualified form reaches the preflight path. `adaptive`
 is never a legal value for a `[rigor.*]` role tier in `.devflow.toml`, and
-it never appears as a *resolved* role tier either: a role always ends up on
+it never appears as a _resolved_ role tier either: a role always ends up on
 a concrete rung, one way or another.
 
 **A caller that has already run its own preflight supplies the concrete
@@ -386,7 +386,7 @@ budget, every strategy field — comes from the resolved rigor and strategy
 alone.
 
 **Rigor conflicts resolve to the strongest label present**, ordered by
-`.devflow.toml`'s `rigor_order` (weakest to strongest — the *only* place
+`.devflow.toml`'s `rigor_order` (weakest to strongest — the _only_ place
 "strongest" is defined for rigor). Two rigor labels on one issue therefore
 resolve to a single, whole, internally-consistent profile — the stronger
 level's review policy, all three of its role tiers, and its budget — never a
@@ -429,7 +429,7 @@ label alone — see "Disclosure" below.
 ## The merge-base rule
 
 When the change under review **edits `.devflow.toml` itself**, resolve
-*every* parameter it needs — every rigor level, every review policy, every
+_every_ parameter it needs — every rigor level, every review policy, every
 budget envelope, every strategy definition, every tier map, and both
 top-level defaults — from the **merge-base** copy rather than the branch
 copy. Otherwise a branch could lower the very gate it is being reviewed
@@ -461,8 +461,8 @@ config-basis flags; omitting all three, or passing more than one, is a hard
 
 - **`--merge-base-config PATH`** — the change under review edits
   `.devflow.toml` itself. `PATH` is the merge-base's extracted copy (e.g.
-  from `git show <merge-base-sha>:.devflow.toml`), and it is read *instead
-  of* the branch's own copy — the merge-base rule above, enforced
+  from `git show <merge-base-sha>:.devflow.toml`), and it is read _instead
+  of_ the branch's own copy — the merge-base rule above, enforced
   mechanically rather than left to a reviewer to remember. `PATH` **must
   exist**: naming one that does not is an `invalid_input` error, never
   treated as "genuinely absent" — a missing path here is far more likely a
@@ -491,12 +491,12 @@ Two distinct things get disclosed in the PR body, and they are not the same
 fact:
 
 - **Off-default resolution** — the resolved `rigor` or `strategy` differs
-  from `default_rigor`/`default_strategy`, in *either* direction. Above
+  from `default_rigor`/`default_strategy`, in _either_ direction. Above
   default spends more than the repository's baseline; below default spends
   less oversight — both are worth a human seeing, for opposite reasons.
 - **Off-profile role tier** — an explicit override sets a role's tier to
   anything other than what its resolved rigor level's built-in profile
-  specifies for that role, in *either* direction. Raising a tier spends more
+  specifies for that role, in _either_ direction. Raising a tier spends more
   than the resolved rigor implies; lowering one spends less oversight —
   parallel to off-default resolution above, both are worth a human seeing,
   for opposite reasons. Lowering can additionally violate
@@ -522,7 +522,7 @@ produces a false ranking:
 
 - **`reviewer_tier`** is the required **capability stratum** — a floor for
   the primary reviewer's model, on the same ladder as every other role tier.
-  It is not a global quality ranking of review *products*.
+  It is not a global quality ranking of review _products_.
 - **A review harness** is the **executable mechanism** that actually
   performs the review — Codex CLI, Codex cloud review, CodeRabbit, Copilot,
   Claude Code Action, or any other configured integration. `agent-registry.json`
@@ -538,7 +538,7 @@ tier; fall back to an eligible **same-family** reviewer at the required tier
 **with disclosure** when no different-family candidate is configured. An
 explicit policy may instead require a different family outright — that hard
 requirement **fails resolution** rather than silently weakening itself back
-to same-family. Moving a reviewer *above* the requested tier is permitted
+to same-family. Moving a reviewer _above_ the requested tier is permitted
 only by the effective escalation/budget policy (above), never as a free
 upgrade nobody asked for. A lower-tier reviewer is **supplemental only** — a
 fast, cheap pass alongside the real one — and does not satisfy the
@@ -612,7 +612,7 @@ of the picture; none of them re-derive each other's numbers:
 not rendered from Copier answers, so every repository starts from the exact
 same rigor/strategy/review/budget/tier model described above. From that
 point on, it is yours: edit it the way you would edit your own `AGENTS.md`.
-harmon-init remains the upstream authority for what the *shipped* defaults
+harmon-init remains the upstream authority for what the _shipped_ defaults
 mean and recommends, but a `copier update` treats a locally-edited
 `.devflow.toml` the same way it treats any other file you have changed —
 ordinary three-way merge, with conflict markers where your edit and an
@@ -661,7 +661,7 @@ through in a pure council — so "both role tiers" reads as
 `tier:implementer:economy` + `tier:reviewer:economy`, leaving orchestrator at
 standard's built-in tier. Resolved: rigor `standard` (review policy
 `standard`; budget `standard`) with the implementer and reviewer tiers both
-overridden to `economy` — *both* are off-profile against `standard`'s
+overridden to `economy` — _both_ are off-profile against `standard`'s
 built-in tiers and are disclosed in the PR body. Council still resolves:
 `standard`'s budget comfortably covers its floor.
 
@@ -676,7 +676,7 @@ adjustment — that's `council`'s exception, not this one; see "Strategy ×
 rigor compatibility" below) — `max_agent_runs` clears it with slack,
 `max_parallel_agents` clears it exactly, with none. The same request under
 `trivial` rigor would be reported as an incompatibility instead —
-`trivial`'s budget is below `orchestrate`'s `min_agents` on *both* fields,
+`trivial`'s budget is below `orchestrate`'s `min_agents` on _both_ fields,
 not just one.
 
 **"Take a deep one-shot at this, then stop."**

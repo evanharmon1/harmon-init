@@ -2,9 +2,9 @@
 
 Date: 2026-06-19
 
-*harmon-init is the template, so this copy is maintained by hand as the
+_harmon-init is the template, so this copy is maintained by hand as the
 dogfood render of the seed; its date is the `decisions_seed_date` value in
-`.dogfood-answers.yml`, the day harmon-init first committed its seed record.*
+`.dogfood-answers.yml`, the day harmon-init first committed its seed record._
 
 ## Status
 
@@ -14,7 +14,7 @@ Accepted
 
 We need to record the architectural decisions made on this project — the ones
 that are significant, hard to reverse, or surprising to a newcomer (including an
-AI agent). Without a durable record, the *why* behind a choice is lost and gets
+AI agent). Without a durable record, the _why_ behind a choice is lost and gets
 relitigated.
 
 ## Decision

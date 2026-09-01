@@ -4,7 +4,7 @@ Herdr is the agent-session runtime for this repo's agents — in the
 devcontainers where the profile ships them, and on your own machine: a
 terminal workspace manager that recognizes the coding agent running
 in each pane, tracks its state, and exposes the whole thing through the
-`herdr` CLI. This guide is how to *use* it for real work — the mental model,
+`herdr` CLI. This guide is how to _use_ it for real work — the mental model,
 the everyday workflows, how it pairs with the repo's worktree tooling, running
 several agents (and several harnesses) at once, and the lifecycle and cleanup
 that keep the sidebar meaningful. [% if devcontainer %]Installation, the devcontainer volumes, and
@@ -25,13 +25,13 @@ what follows is the human's map of the same ground.
 | **Workspace** | A project root: a directory (or a worktree) plus its tabs | `w1` | `herdr workspace create --cwd PATH` or `herdr worktree create/open` |
 | **Tab** | A layout page inside a workspace | `w1:t1` | `herdr tab create --workspace w1` |
 | **Pane** | One terminal (shell) inside a tab | `w1:p1` | `herdr pane split --pane ID --direction right` or `down` |
-| **Agent** | The coding agent Herdr recognizes *occupying* a pane | pane ID or a unique name | `herdr agent start NAME --kind KIND --pane ID` |
+| **Agent** | The coding agent Herdr recognizes _occupying_ a pane | pane ID or a unique name | `herdr agent start NAME --kind KIND --pane ID` |
 | **Session** | A whole Herdr server (the `default` one, or `herdr --session NAME`) | name | `herdr` / `herdr --session NAME` |
 
 The relationships that matter:
 
 - **A pane exists whether or not it hosts an agent.** `pane run` drives an
-  ordinary shell; `agent start` requires an *available* shell pane (at its
+  ordinary shell; `agent start` requires an _available_ shell pane (at its
   prompt, nothing in the foreground) and never creates layout itself.
 - **An agent is a full, independent process in its pane** — a real `claude`,
   `codex`, `agy`, `opencode`, … session with its own context, auth, and
@@ -42,7 +42,7 @@ The relationships that matter:
   terminal ID or a bare kind.
 - **Two kinds of workspace.** `workspace create` makes a plain
   directory-rooted workspace — no git involvement. `worktree create` makes a
-  git worktree *and* a workspace rooted at it, and records the binding; one
+  git worktree _and_ a workspace rooted at it, and records the binding; one
   worktree ↔ one workspace. Creating a workspace never creates a worktree;
   creating a worktree always creates a workspace.
 - **Caller context.** Herdr injects `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID`,
@@ -56,7 +56,7 @@ Herdr classifies a pane's agent by watching its terminal:
 
 - `working` — producing output / running tools.
 - `blocked` — Herdr recognized an approval or question UI; it needs input.
-- `idle` — ready for input, and its tab has been *seen* in the focused UI.
+- `idle` — ready for input, and its tab has been _seen_ in the focused UI.
 - `done` — the same underlying idle state after unseen background work
   finished. Focusing the tab or targeting the pane/agent with a focus command
   marks it seen; CLI reads do not. `done` is therefore the sidebar's
@@ -72,7 +72,7 @@ evidence — the first thing to run when a state looks wrong.
 **One agent, one repo (the default).** Open or attach with `herdr`, create a
 workspace for the repo if it is not there, start the agent in the root pane
 (or just run `claude` in the shell — Herdr recognizes it either way). Use
-tabs for parallel *contexts* (a second agent on a different task, a shell for
+tabs for parallel _contexts_ (a second agent on a different task, a shell for
 logs), panes within a tab for things you want side by side.
 
 **A second pane for a command or a helper agent, keeping your focus:**
@@ -88,7 +88,7 @@ herdr pane read <id> --source recent-unwrapped --lines 120
 Split a wide pane right and a tall one down; avoid repeated same-direction
 splits that leave unusable slivers. `pane run` sends text plus Enter
 atomically; `wait-output` matches the current snapshot immediately, so output
-that already exists counts. Wait on a marker *you* append (unique per run, one
+that already exists counts. Wait on a marker _you_ append (unique per run, one
 alternative per outcome, as above) — most tasks print no stable "done" line of
 their own, and a wait that only matches success sits silent through a failure.
 
@@ -117,7 +117,7 @@ the path, then read the file.
 
 Herdr's `worktree create` is `git worktree add` plus a workspace, checked out
 under `[worktrees] directory` (default `~/.herdr/worktrees/<repo>/<branch>`);
-`worktree open` binds an *existing* checkout to a new workspace; `worktree
+`worktree open` binds an _existing_ checkout to a new workspace; `worktree
 list` shows worktrees for the repo, including ones Herdr did not create;
 `worktree remove --workspace ID [--force]` tears down the workspace — tabs,
 panes, sessions — **and deletes the checkout** with a plain `git worktree
@@ -161,7 +161,7 @@ another pane; Herdr has no parent/child concept — the topology is conversation
 matter:
 
 - A **subagent** (Claude Code's `Agent` tool, `.claude/agents/*.md`) runs
-  *inside* the parent session's process: its own context window, no terminal,
+  _inside_ the parent session's process: its own context window, no terminal,
   one structured return value, dies when done. Only the parent can talk to
   it, and Herdr cannot see it — there is no pane to watch.
 - A **pane worker** (a "worker session", "sibling agent", "teammate") is a
@@ -192,7 +192,7 @@ belongs in a separate user, container, or VM, not a sibling pane.
    with a distinctive name per unit (`triage-omator`, `prune-site`).
 3. **Prompt** — one self-contained brief per worker, ending with a
    **file-based report** at a known path and a **sentinel line** printed
-   last. Make both unique per *attempt*, not just per worker — a nonce such
+   last. Make both unique per _attempt_, not just per worker — a nonce such
    as `TRIAGE-DONE omator 7f3a` in the sentinel and the report filename —
    because `pane wait-output` matches the existing snapshot immediately, so
    a reused pane's previous sentinel satisfies the next wait and hands you
@@ -213,7 +213,7 @@ belongs in a separate user, container, or VM, not a sibling pane.
    detection stays `unknown` or whose harness hangs would otherwise block
    the orchestrator forever. On timeout, `agent get` / `agent read` /
    `agent explain` it and decide — nudge, take over, or retire — rather than
-   waiting again blind. `done`/`idle` means *stopped*, not *succeeded*: the
+   waiting again blind. `done`/`idle` means _stopped_, not _succeeded_: the
    sentinel and the report file are the success signals.
 5. **Harvest and verify** — `agent read` / read the report files, then
    **verify ground truth yourself** (the diff, the labels on GitHub, the test
@@ -254,7 +254,7 @@ That is the permitted shape, and it is worth being precise about why. Each
 worker is the vendor's **official CLI**, authenticated as you, driven through
 its terminal by a multiplexer that never touches tokens or APIs — the same as
 typing into it yourself. What vendors prohibit is using one product's
-subscription credentials *inside a different product*: Anthropic's consumer
+subscription credentials _inside a different product_: Anthropic's consumer
 terms forbid Claude Free/Pro/Max OAuth tokens in any third-party tool or
 harness (enforced by token blocking since early 2026); Google and OpenAI keep
 similar lines. Running the official `claude`, `codex`, `agy`, or `opencode`
@@ -269,7 +269,7 @@ Per-harness notes that shape the launch line:
 
 - **`claude`** — `-- --model <m> --tools '<exact list>' --allowedTools '<the
   same list>'`. The two flags do different halves of least privilege:
-  `--tools` restricts which tools *exist* in the session, `--allowedTools`
+  `--tools` restricts which tools _exist_ in the session, `--allowedTools`
   pre-approves them so no prompt blocks an unattended worker. `--allowedTools`
   alone is not a restriction — every other tool is still there behind a
   prompt, and the repo's and devcontainer's `settings.json` permissions
@@ -280,7 +280,7 @@ Per-harness notes that shape the launch line:
   would otherwise prompt on (typically network-touching writes like
   `gh issue edit`) — nothing more. Ordinary build/test commands run inside
   `workspace-write` without any rule, and an `allow` rule executes its
-  matches *outside* the sandbox, so blanket-allowing the task's whole command
+  matches _outside_ the sandbox, so blanket-allowing the task's whole command
   set trades the sandbox away. The failure mode to know: with `-a never`,
   any command a rule marks as prompt-worthy is rejected before a shell spawns (`Rejected("approval required by policy, but
   AskForApproval is set to Never")`) with no stderr. Rules match a leading

@@ -6,7 +6,7 @@ import astro from 'eslint-plugin-astro'
 export default [
   // specs/*/ holds vendored design handoff bundles (deleted at sign-off);
   // .claude/ holds vendored agent skills whose .ts/.mjs assets must never be linted.
-  { ignores: ['**/dist/', '**/.astro/', 'specs/', '.claude/'] },
+  { ignores: ['**/dist/', '**/.astro/', 'specs/', '.claude/', '.worktrees/', '.agents/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...astro.configs.recommended,

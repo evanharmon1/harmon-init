@@ -18,7 +18,7 @@ re-run them and update this stamp whenever `copier.yml` changes shape.
 > The historical snapshots in
 > [#544](https://github.com/evanharmon1/harmon-init/issues/544) read
 > `grep -cE '^[a-z][a-z_]*:'` as "asked questions". It is not — it counts
-> *every* top-level question key, asked and hidden alike. **Asked = total −
+> _every_ top-level question key, asked and hidden alike. **Asked = total −
 > hidden.** The drift so far: 54/21 (v4.14.3) → 55/20 (v4.17.1) → 56/20
 > (v4.25.1) → 57/20 (#850) → 58/20 → 59/20 (#1042) → 60/20 → 61/20.
 
@@ -28,11 +28,11 @@ re-run them and update this stamp whenever `copier.yml` changes shape.
 
 In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 `when:`; when the condition is false the key is **absent** from the repo's
-`.copier-answers.yml` — absence means *not applicable*, not `false`.
+`.copier-answers.yml` — absence means _not applicable_, not `false`.
 
 | # | Question | Type | Default | Asked when | Drives |
 |---|---|---|---|---|---|
-| 1 | `project_name` | str | *(placeholder)* | always | Titles across README/docs; the `.meta` Bunch/Obsidian filenames |
+| 1 | `project_name` | str | _(placeholder)_ | always | Titles across README/docs; the `.meta` Bunch/Obsidian filenames |
 | 2 | `project_slug` | str | slugified `project_name` | always | Directory/repo name, GHCR image, `.code-workspace` |
 | 3 | `project_description` | str | `TODO: project_description` | always | README, package metadata |
 | 4 | `github_org` | str | `[[ author_git_provider_username ]]` | always | Repo URL, GHCR namespace; **≠ author ⇒ org-only files render** |
@@ -62,7 +62,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 27 | `use_statusline_pr_lookup` | bool | no | `devcontainer` | `statusline-pr-lookup.enabled`; read-only, bounded cached `gh pr view` fallback when Claude omits PR data — requires authenticated GitHub CLI and never prompts |
 | 28 | `devcontainer_coder_folder_uri` | str | `""` | `devcontainer` | Optional captured `vscode-remote://dev-container+…` URI for the personal Coder README badge; **validator**, empty keeps only the local fallback |
 | 29 | `use_antigravity_cli` | bool | no | `devcontainer` | Prompt-free Google Antigravity CLI in the bot profile — **validator** |
-| 30 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into *both* profiles |
+| 30 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into _both_ profiles |
 | 31 | `project_management` | choice `none`/`github`/`linear` | `none` | always | `docs/project-management.md`, `setup:github-project` / `-labels`, `close-milestone-on-release.yml` |
 | 32 | `git_init` | bool | **yes** | always | `_tasks`: `git init` + scaffold commit (copy only); also the fresh-scaffold signal for the other side effects |
 | 33 | `github_remote_create` | bool | no | always | `_tasks`: `gh repo create --private --push` (copy only) |
@@ -154,7 +154,7 @@ analysis; do not restate it here.
 **29 distinct conditions** gate 89 paths under `template/`, 5 of which are
 directories: `terraform`, `ansible`, `taskfiles`, the main `.devcontainer`, and
 the separately gated `.devcontainer` tree containing the status-line marker. The
-condition lives in the *filename*, so a false condition renders the name empty
+condition lives in the _filename_, so a false condition renders the name empty
 and copier drops the path.
 
 | Condition | Renders (selection) |
@@ -252,7 +252,7 @@ A generated repo's behavior also depends on state no answer captures.
 reads of the variable are gated on that answer. `codeql.yml` exists only when
 the repo was rendered with `use_codeql: true` (it is a gated path — see the
 derived-switch table). The Semgrep CE step in `build.yml` is always rendered,
-but the `if:` that suppresses it is *itself* wrapped in `[% if use_codeql %]`
+but the `if:` that suppresses it is _itself_ wrapped in `[% if use_codeql %]`
 (`template/.github/workflows/build.yml.jinja`, the `SAST (Semgrep Community
 Edition)` step) — so a `use_codeql: false` render emits the step with **no
 `if:` at all** and Semgrep runs regardless of the variable. On a private repo:
@@ -265,7 +265,7 @@ Edition)` step) — so a `use_codeql: false` render emits the step with **no
 So the variable never leaves a repo without SAST; it also cannot add CodeQL to
 a repo that was not rendered with it. To move a `use_codeql: false` repo onto
 CodeQL, re-render with the answer flipped — setting the variable alone changes
-nothing. (On a *public* repo rendered with `use_codeql: true` the variable is
+nothing. (On a _public_ repo rendered with `use_codeql: true` the variable is
 likewise redundant: `codeql.yml` runs because the repo is public, and the
 Semgrep step's `if:` is false either way.)
 
@@ -297,14 +297,14 @@ block introducing `_skip_if_exists` and beside each entry:
 | `.devcontainer/related-repos.txt` | The repo's curated sibling list; the scripts stay template-owned, the list does not |
 | `.release-please-manifest.json` | release-please state (current released version), not template content — an unfrozen copy conflicts on every update |
 
-Also consumer-owned but *not* frozen: `.skills-sync.yaml` (the devkit pin +
+Also consumer-owned but _not_ frozen: `.skills-sync.yaml` (the devkit pin +
 category list, editable post-generation — which is exactly why nothing may gate
 on `skill_categories`).
 
 ### Human-configured prerequisites (no API confirms these)
 
-- **Codex Auto review left off**, with the repository preference *and* its
-  review Trigger set to *Follow personal* — settled configuration once
+- **Codex Auto review left off**, with the repository preference _and_ its
+  review Trigger set to _Follow personal_ — settled configuration once
   recorded under docs/CHECKLIST.md's [human-only] item (`AGENTS.md`, "Codex
   Automatic reviews must stay disabled"). Nothing in the lifecycle gates on
   it; an unsolicited Codex review is the drift signature worth reporting.
@@ -333,7 +333,7 @@ not a consumer.
 
 | Repo | project_type | foreman | foreman_trusted_extra | codex_review | codex_cloud | coderabbit | skills_sync | skill_categories | shared_agents | codeql | codeql_languages | devcontainer | alt_providers | project_mgmt | snyk |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| harmon-init *(dogfood)* | general | ✅ | AdmiralFraggle | ✅ | ✅ | ❌ | ✅ | universal, repo | ✅ | ❌ | — | ✅ | ✅ | github | weekly |
+| harmon-init _(dogfood)_ | general | ✅ | AdmiralFraggle | ✅ | ✅ | ❌ | ✅ | universal, repo | ✅ | ❌ | — | ✅ | ✅ | github | weekly |
 | harmon-devkit | general | ✅ | — | ✅ | ✅ | ❌ | ✅ | universal, repo | ✅ | ❌ | — | ✅ | ✅ | github | weekly |
 | evanharmon-site | web-astro | ✅ | — | ✅ | ✅ | ❌ | ✅ | universal, frontend | ✅ | ✅ | js-ts, python | ✅ | ✅ | github | weekly |
 | harmon-dotfiles | general | ✅ | — | ✅ | ✅ | ❌ | ✅ | universal | ✅ | ❌ | — | ❌ | n/a | github | off |

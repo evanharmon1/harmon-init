@@ -34,11 +34,11 @@ repositories and for profiles without a CodeQL workflow.
 | Axis | Catches | Default tool | Where it runs |
 |---|---|---|---|
 [% if use_codeql %]
-| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** for public repos; **Semgrep CE** for free private repos | CodeQL runs automatically in public CI. Private CI uses Semgrep unless paid GitHub Code Security + `FULL_SECURITY_SCAN=true` opts into CodeQL |
+| **SAST** — flaws in _your own code_ | injection, XSS, SSRF, path traversal, crypto/auth misuse | **CodeQL** for public repos; **Semgrep CE** for free private repos | CodeQL runs automatically in public CI. Private CI uses Semgrep unless paid GitHub Code Security + `FULL_SECURITY_SCAN=true` opts into CodeQL |
 [% else %]
-| **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **Semgrep CE** | CI and `task security:sast`; this profile has no generated CodeQL workflow |
+| **SAST** — flaws in _your own code_ | injection, XSS, SSRF, path traversal, crypto/auth misuse | **Semgrep CE** | CI and `task security:sast`; this profile has no generated CodeQL workflow |
 [% endif %]
-| **SCA** — CVEs in *dependencies* | vulnerable third-party packages | **Dependabot alerts** + **`task security:audit`**[% if use_node or use_python %] ([% if use_node %]`pnpm audit`[% endif %][% if use_node and use_python %] / [% endif %][% if use_python %]`pip-audit`[% endif %])[% endif %] | Dependabot continuous; audit in the CI `security` job + `task security` locally |
+| **SCA** — CVEs in _dependencies_ | vulnerable third-party packages | **Dependabot alerts** + **`task security:audit`**[% if use_node or use_python %] ([% if use_node %]`pnpm audit`[% endif %][% if use_node and use_python %] / [% endif %][% if use_python %]`pip-audit`[% endif %])[% endif %] | Dependabot continuous; audit in the CI `security` job + `task security` locally |
 | **Secrets** — committed credentials | keys, tokens, certs, `.env` | **gitleaks** (`task security:secrets`) | pre-push git hook + CI `security` job |
 | **IaC** — insecure infrastructure | open security groups, public buckets, … | **checkov** (`task lint:terraform:security`) | CI `lint` job + `task check` locally (Terraform repos) |
 | **Freshness/remediation** — stale or vulnerable dependencies | a widening exposure window | **Renovate** (`minimumReleaseAge: 3 days`, Dependabot-alert remediation enabled) | continuous update and vulnerability-fix PRs |
@@ -251,7 +251,7 @@ It carries **no `GH_TOKEN`** — not as tidiness, but because there is no other 
 to get this right. `gh` prefers `GH_TOKEN` over any stored credential
 unconditionally and exposes no precedence knob, so a bot PAT sitting in a human
 container silently wins every `gh` call and, through the credential helper, every
-`git push`. Removing it *is* the mechanism. `init-env.sh` evicts a stale value
+`git push`. Removing it _is_ the mechanism. `init-env.sh` evicts a stale value
 from the dev env-file on every rebuild, and `scripts/devcontainer-assert.sh`
 asserts the absence in both the config and the running container.
 
@@ -309,7 +309,7 @@ creating one is [guides/bot-account.md](../guides/bot-account.md).
   1Password CLI, so there is **no path to pull arbitrary secrets on demand**, and
   no Tailscale, so no tailnet reach (see
   [guides/devcontainers.md](../guides/devcontainers.md)). Note what this does
-  *not* say: the container is not secret-free. It holds whatever the env-file
+  _not_ say: the container is not secret-free. It holds whatever the env-file
   carries. That set is a **property of the 1Password Environment behind the
   env-file** — a convention you maintain, not a guarantee the profile enforces.
   Put a production credential in that Environment and it lands in the container,
@@ -318,9 +318,9 @@ creating one is [guides/bot-account.md](../guides/bot-account.md).
 ### Effective access = min(collaborator grant, PAT permissions)
 
 A fine-grained PAT is a **delegation of its owner's access** and can never exceed
-it. Two independent layers must *both* allow an operation:
+it. Two independent layers must _both_ allow an operation:
 
-1. **The repo collaborator grant** on the bot account — *per repo*, and where
+1. **The repo collaborator grant** on the bot account — _per repo_, and where
    granularity actually lives.
 2. **The PAT's selected-repo list and permission set** — the permission set is
    **uniform across every selected repo**; there is no per-repo matrix.
@@ -332,9 +332,9 @@ back a mix of read-only and writable repos.
 Two practical consequences:
 
 - **Two levers, different jobs** — picking the wrong one is why this gets
-  confusing. To change the *level* on a repo the bot still works (write → read),
+  confusing. To change the _level_ on a repo the bot still works (write → read),
   change the **collaborator grant**; a PAT cannot express per-repo levels. To stop
-  *this token* reaching a repo while the bot keeps access, remove it from the PAT's
+  _this token_ reaching a repo while the bot keeps access, remove it from the PAT's
   **selected-repo list**. To revoke the bot entirely, drop the grant — and the list
   entry too, so the token stops carrying reach it cannot use.
 - **Adding a repo to the PAT's list is not enough** if the bot has no access to
@@ -400,9 +400,9 @@ Set both once as **org-level** Actions variable + secret (every repo in the org
 inherits them); for a personal-account repo, set them per-repo.
 
 > **Free-org caveat:** org-level Actions variables/secrets only reach **private**
-> repos on GitHub **Team/Enterprise**. On a **Free** org they resolve to *empty*
+> repos on GitHub **Team/Enterprise**. On a **Free** org they resolve to _empty_
 > in a private repo's workflows — a silent failure (e.g. an empty
-> `TF_VAR_cloudflare_account_id` makes Terraform plan a resource *replacement*).
+> `TF_VAR_cloudflare_account_id` makes Terraform plan a resource _replacement_).
 > On a Free org, set org-wide values **per-repo** instead. Public repos are
 > unaffected.
 
@@ -457,14 +457,14 @@ a machine-readable reference; mirror it in the form.
 the value once from the `.pem` file (above), scoped with `--visibility selected
 --repos` to whatever repos make sense at the time (selecting them all is fine if
 that's the reality). From then on, **finalize and maintain which repos can read
-it in the GitHub UI** — org → *Settings → Secrets and variables → Actions* → the
+it in the GitHub UI** — org → _Settings → Secrets and variables → Actions_ → the
 secret → **Repository access**. Editing the list there changes scope **without**
 re-entering the value, and the page doubles as a sanity check of exactly who has
 access. Don't reach for `--visibility all` as a shortcut: it exposes the key to
 every org repo until you narrow it.
 
 Keep list-management in the UI because `gh secret set` is **declarative** — the
-`--repos` form *replaces* the secret's value **and** its whole repo allow-list on
+`--repos` form _replaces_ the secret's value **and** its whole repo allow-list on
 every run, so re-running it from a second repo silently evicts the first. The UI
 (or `PUT /orgs/{org}/actions/secrets/{name}/repositories/{repo_id}`) is the
 non-destructive way to add a repo.
@@ -579,8 +579,8 @@ dashboard — R2 tokens are not regular API tokens:
 `TF_VAR_cloudflare_api_token`):
 
 1. Dashboard → select the account → **Manage Account → Account API Tokens →
-   Create Token** → custom token. (Account tokens, not *My Profile → API
-   Tokens* — CI is a service identity, so the credential should be owned by
+   Create Token** → custom token. (Account tokens, not _My Profile → API
+   Tokens_ — CI is a service identity, so the credential should be owned by
    the account, not a user.)
 2. Name it for the audit log, e.g. `[[ project_slug ]]-terraform`.
 3. Permissions: least privilege for what this repo's Terraform actually

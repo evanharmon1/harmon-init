@@ -6,6 +6,8 @@
   "MD034": false,
   "MD036": false,
   "MD041": false,
+  "MD049": { "style": "underscore" },
+  "MD050": { "style": "asterisk" },
   "MD060": false,
   "blanks-around-headings": false,
   "blanks-around-lists": false

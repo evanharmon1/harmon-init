@@ -3,8 +3,8 @@
 Task-scoped specifications — the **source of truth for WHAT to build**. A spec
 captures the intent, requirements, and acceptance criteria for a feature or
 change before it is built, in a form a contributor or AI agent can implement
-against. (Specs cover *what* and *why*; `docs/architecture/` covers *how*, and
-`docs/decisions/` records *why a choice was made*.)
+against. (Specs cover _what_ and _why_; `docs/architecture/` covers _how_, and
+`docs/decisions/` records _why a choice was made_.)
 
 ## How to write a spec
 

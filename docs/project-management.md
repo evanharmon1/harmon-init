@@ -23,7 +23,7 @@ board writes that do nothing.
 
 | Scope | Grants | Enough for |
 |---|---|---|
-| *(neither)* | — | nothing here — every board read and write fails |
+| _(neither)_ | — | nothing here — every board read and write fails |
 | `read:project` | read Projects | reading a card's current `Status`; **no writes** |
 | `project` | read **and write** Projects | everything on this page |
 
@@ -33,7 +33,7 @@ board writes that do nothing.
 task setup:gh-scopes
 ```
 
-**Operator / dev profile only.** It refreshes *your* interactive `gh` login —
+**Operator / dev profile only.** It refreshes _your_ interactive `gh` login —
 so it refuses when a `GH_TOKEN`/`GITHUB_TOKEN` env credential is set (an env
 token overrides the stored one, so a refresh would repair something this shell
 never uses — reissue that token at its source instead) and refuses without a
@@ -93,7 +93,7 @@ an escape hatch, and one that freezes today's defaults, so a requirement added
 upstream silently stops being checked. Prefer `GH_EXTRA_SCOPES`.
 
 Whitespace separates requirements; `|` joins alternatives that each satisfy one
-requirement. `gh auth refresh` is asked for *every* alternative, which is why
+requirement. `gh auth refresh` is asked for _every_ alternative, which is why
 the raw command above lists both Projects scopes.
 
 The Projects requirement is itself conditional: it applies only where
@@ -124,7 +124,7 @@ hint at `gh auth refresh -s read:project,project` — a subset of what
 
 The table above is about **classic OAuth scopes**, which is what `gh auth login`
 issues and `gh auth refresh` edits. A **fine-grained PAT** or a GitHub App
-installation token has none of them: its Projects access is a *permission*
+installation token has none of them: its Projects access is a _permission_
 granted where the token was issued. `gh auth status` reports no scope list for
 one, so `task status:gh` can only report the check as **unknown**, and
 `gh auth refresh` cannot help — a token supplied through the environment as
@@ -183,13 +183,13 @@ Archived-items view), so aged `Done` items leave the board automatically instead
 of sitting in an "Archived" column.
 
 **Agent Queue is the hand-off lane to AI coding agents.** An item lands there once
-it's shaped and ready for an *agent* rather than a human to implement — a
+it's shaped and ready for an _agent_ rather than a human to implement — a
 **`suggest:*`** label says which family (and optionally model) should take it.
 The hand-off itself is manual: suggest the agent, then trigger it — an
 `@claude` mention naming `implement` (see
 [The Claude Actions workflows](#the-claude-actions-workflows)), or point Claude
 Code at the item. The lane is built for automation, though — an agent can watch
-*Agent Queue + suggest-labelled + priority* (the Agent-queue view below) and
+_Agent Queue + suggest-labelled + priority_ (the Agent-queue view below) and
 pull the top item on its own — and either way the item moves to **In Progress**
 once work starts.
 
@@ -213,8 +213,8 @@ common way to make a board lie:
 - **Issue state** — `open` / `closed`, native to the issue.
 - **Status** — the custom pipeline field above, layered on top.
 
-`Status` answers *"where in the delivery flow is this."* It is **not** where you
-record *why something left the flow without shipping* — GitHub has a dedicated
+`Status` answers _"where in the delivery flow is this."_ It is **not** where you
+record _why something left the flow without shipping_ — GitHub has a dedicated
 axis for that, the **close reason**.
 
 ### Canceled and Duplicate are close reasons, not statuses
@@ -231,14 +231,14 @@ close an issue you pick **Completed**, **Not planned**, or **Duplicate**:
 
 Neither needs a `Status` value, and **Done** stays the single terminal status
 meaning "shipped." Why not add `Canceled`/`Duplicate` columns anyway, given
-Linear has a Canceled group? Because in Linear the status *is* the state, so
+Linear has a Canceled group? Because in Linear the status _is_ the state, so
 "Canceled" closes the work atomically with that meaning. GitHub split them:
 `Status` is a custom field layered on an issue that keeps its own independent
 open/closed state.
 
 ### Automation gotcha
 
-The built-in **"issue closed → Done"** rule doesn't look at *why* the issue
+The built-in **"issue closed → Done"** rule doesn't look at _why_ the issue
 closed, so closing something as Not planned or Duplicate would paint it **Done**
 on the board — wrong. Gate it:
 
@@ -263,7 +263,7 @@ tools:
 
 - **Blocked by another issue** (the common case) — use the native **"Mark as
   blocked by"** relationship (issue dependencies, GA 2025-08-21). It records
-  *what's* blocking (the actual issue, not a bare flag), shows the **Blocked**
+  _what's_ blocking (the actual issue, not a bare flag), shows the **Blocked**
   icon on the board and Issues page automatically, is queryable with
   `is:blocked`, and is fully programmatic (`gh issue view` shows Blocked by /
   Blocking; `--json blockedBy,blocking`; REST endpoints add/list/remove).
@@ -275,7 +275,7 @@ tools:
   so this is the **`blocked` label's** job: it means "stuck on a non-issue
   thing," with the actual reason in a comment.
 
-One upgrade for that second case: model a *significant or shared* external
+One upgrade for that second case: model a _significant or shared_ external
 blocker as its own **tracking issue** ("Twilio 10DLC brand approval") and mark
 the real work blocked-by it — that pulls the external dependency into the native
 mechanism (board icon, `is:blocked`, auto-resolve). Worth it when several items
@@ -286,7 +286,7 @@ wait on the same thing; reserve the bare label for one-off, transient blockers.
 Projects are **org-level** objects, but automations trigger from **events**, and
 issue/PR events are repo-local. That splits automation three ways:
 
-1. **Triggered by repo activity (issue/PR events)** — the workflow *must* live in
+1. **Triggered by repo activity (issue/PR events)** — the workflow _must_ live in
    the repo where the activity happens; a workflow in one repo never sees
    another's PR events. In a polyrepo org the same automation runs in every repo
    whose issues/PRs feed the project.
@@ -311,8 +311,8 @@ What is automated, and by which of the three:
 | Build run concludes `failure`, `cancelled`, `timed_out` or `action_required` | **Verifying** (stays) | Actions (`project-automation.yml`) |
 | Review submitted as approved | **Ready to Merge** | Actions (`project-automation.yml`) — only when the PR's `reviewDecision` is `APPROVED`; head repo and reviewer association are pre-filters |
 | PR merged | **Done** | Actions (`project-automation.yml`) + built-in |
-| Issue closed, for any reason | *(nothing)* | not automated — see below |
-| PR closed unmerged | *(nothing)* | deliberately not automated |
+| Issue closed, for any reason | _(nothing)_ | not automated — see below |
+| PR closed unmerged | _(nothing)_ | deliberately not automated |
 | 90 days in Done | **auto-archived** off the board | built-in auto-archive (not a `Status`) |
 
 `In Progress` is deliberately **not** automated: it means a human or an agent
@@ -322,7 +322,7 @@ is written by the [claim lifecycle](#claiming--making-an-agents-work-visible-whi
 **Closing an issue moves nothing, on purpose.** Nothing shipped here listens for
 `issues: closed`, and GitHub's built-in "item closed → Done" rule cannot read
 the close reason — so leave that built-in **off**. Turned on, it paints every
-issue closed as *Not planned* or *Duplicate* **Done**, which is exactly the
+issue closed as _Not planned_ or _Duplicate_ **Done**, which is exactly the
 misfiling the [close-reason axis](#canceled-and-duplicate-are-close-reasons-not-statuses)
 exists to prevent, and every one of them needs correcting by hand. Left off,
 `Done` keeps meaning shipped: it arrives from the merge path above, and the
@@ -339,7 +339,7 @@ the PR body.
 
 **Only this repository's own branches move the board.** The branch name is the
 routing key and its author chooses it, so a fork pushing `claude/issue-N` would
-otherwise steer issue N's card. Trust comes from the head *repository*
+otherwise steer issue N's card. Trust comes from the head _repository_
 instead: a `pull_request`, `workflow_run` or `pull_request_review` event whose
 head repo is not this repository is not acted on. On the review path that test — plus a reviewer
 `author_association` of `OWNER`, `MEMBER` or `COLLABORATOR` — is only a
@@ -349,7 +349,7 @@ permission, and `MEMBER` / `COLLABORATOR` include read-only and triage access.
 
 **Ready to Merge is written only when the PR's `reviewDecision` is `APPROVED`.**
 The event says somebody approved; `reviewDecision` is GitHub's own computation
-of whether the PR *is* approved — required reviewers honoured, dismissals and
+of whether the PR _is_ approved — required reviewers honoured, dismissals and
 stale reviews accounted for — which is exactly what the status means. Any other
 value logs and writes nothing. That includes an **empty** decision, which is
 what GitHub returns when no required-review rule exists at all, even after a
@@ -359,7 +359,7 @@ board write is advisory state and merging stays ruleset-protected either way;
 this keeps the card honest, it is not the merge security.
 
 The status write itself is `continue-on-error`, so a board that cannot be
-written never fails a build. That tolerance starts *after* the App token is
+written never fails a build. That tolerance starts _after_ the App token is
 minted, though — missing `CI_APP_CLIENT_ID` / `CI_APP_PRIVATE_KEY`, or an App
 without **Projects: Read and write**, fails the token step, and
 `project-automation-verify` fails with it.
@@ -377,16 +377,16 @@ The work-metadata fields:
   a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 
-There is deliberately **no `Agent` field**. Which agent *should* take an issue
+There is deliberately **no `Agent` field**. Which agent _should_ take an issue
 is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
-*is* working it is the claim label (see **Claiming** below). A field could carry
+_is_ working it is the claim label (see **Claiming** below). A field could carry
 neither answer without duplicating the label vocabulary, and on an organization
 the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field) and
 [ADR 0005](decisions/0005-unified-agent-vocabulary.md).
 
 There is likewise deliberately **no `Domain` or `Layer` field** (#875). Both
-used to exist as a field *and* a label — `domain:` / `layer:` below — with
+used to exist as a field _and_ a label — `domain:` / `layer:` below — with
 nothing syncing an issue's field value to its label, which is exactly the
 [Label or field?](#label-or-field) trade-off: a label is readable without
 project scope, writable with plain repo scope, and available on personal
@@ -417,7 +417,7 @@ destroys every value on it, unrecoverably.
      filter on the `suggest:*` labels instead of the `Agent` field. A view still
      filtered on the field loses its routing predicate the moment the field is
      deleted.
-  5. Only then delete the field — Project settings → the field → *Delete field*
+  5. Only then delete the field — Project settings → the field → _Delete field_
      on a personal project. On an organization the field is **org-wide**:
      deleting it under **Settings → Planning → Issue fields** removes the value
      from every issue in every repository and project the org owns, not just
@@ -451,8 +451,8 @@ destroys every value on it, unrecoverably.
      label, so a view built for the per-domain/per-layer rollup or ordering
      loses that; keep the grouping on `Product` (still a field) and reach for
      a label filter instead.
-  4. Only then delete the field(s) — Project settings → the field → *Delete
-     field* on a personal project; **Settings → Planning → Issue fields** on an
+  4. Only then delete the field(s) — Project settings → the field → _Delete
+     field_ on a personal project; **Settings → Planning → Issue fields** on an
      organization, org-wide as above.
 
 On a personal account there are no issue fields, so `task setup:github-project`
@@ -473,7 +473,7 @@ release lands on the next run.
 | **Product** | text | free text | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
 
 Two org-only notes. GitHub ships **Priority** and **Effort** (plus **Start
-date** and **Target date**) as built-in *issue* fields, and both setup scripts
+date** and **Target date**) as built-in _issue_ fields, and both setup scripts
 leave them at their defaults — so on an organization `Priority` is GitHub's own
 field with GitHub's own options, and the Urgent/High/Medium/Low list above is
 the personal-account project field. And `Effort` cannot hold the estimate:
@@ -483,7 +483,7 @@ can be summed in a view's group header, which is `Size`'s whole job.
 ## Labels
 
 Labels are **repo-level** and orthogonal to `Status` (pipeline position) and
-`Type` (kind of work) — they tag cross-cutting *facets*, with one exception:
+`Type` (kind of work) — they tag cross-cutting _facets_, with one exception:
 personal-account repos have no native issue Type, so six labels (`bug`,
 `feature`, `documentation`, `question`, `task`, `research`) carry that
 classification instead; an organization carries it in `Type` alone and never
@@ -503,13 +503,13 @@ the taxonomy table below is generated from) and the starter set is created by
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
-- **Domain** — which product capability the work serves (the *problem* space).
+- **Domain** — which product capability the work serves (the _problem_ space).
   Domain values are per-repository vocabulary — grow them from your product's
   own capabilities; the label family is the only surface for this taxonomy
 - **Work type** — what kind of work the issue is, on personal-account repos
   where native issue Type is unavailable; the issue forms apply it, and org
   repos use native Type with no work-type label
-- **Area** — which codebase subsystem the work lives in (the *solution*
+- **Area** — which codebase subsystem the work lives in (the _solution_
   space). At most one each of `area:`/`domain:`/`layer:` per issue. On these
   exclusive axes, a generic bucket defers to the most specific matching value;
   write that single-owner boundary into the value's registry description
@@ -543,7 +543,7 @@ the taxonomy table below is generated from) and the starter set is created by
   scoped values (3 roles × 5 concrete tiers) are **provisioned** like every
   other tier value, not created on demand.
 
-The prose above describes what each family *means*; the actual values — names,
+The prose above describes what each family _means_; the actual values — names,
 colors, writers, lifecycle — live in `label-registry.json` and appear in the
 generated taxonomy table below, so vocabulary is never restated here.
 
@@ -553,13 +553,13 @@ and their vocabulary is not hand-listed anywhere: it is rendered from
 so provisioning and documentation cannot fork from each other.
 
 - **Suggest** — `suggest:<family>` — which agent family
-  *should* implement the issue, set at triage. Advisory only: it routes
+  _should_ implement the issue, set at triage. Advisory only: it routes
   nothing by itself and must never be read as Foreman arming (that is the
   `foreman:*` family). A model-level label (`suggest:<family>:<model>`, created on
   demand) **refines** the family label, never replaces it — apply both, so
   views filtered on the family labels keep seeing the issue
 - **Claim** — `claim:<family>` — which agent family is working
-  the issue *right now*, written by the agent itself (see **Claiming** below).
+  the issue _right now_, written by the agent itself (see **Claiming** below).
   Model-level (`claim:<family>:<model>`) refines it the same way
 
 > **Transition — the retired `agent:*` family.** Repos seeded before the
@@ -573,21 +573,21 @@ so provisioning and documentation cannot fork from each other.
 > carries. Do not seed `agent:*` into new repos; a repo carrying neither
 > family tracks a claim by assignee and claim comment alone.
 
-The `layer:`, `domain:`, and `area:` families are the *only* surface for this
+The `layer:`, `domain:`, and `area:` families are the _only_ surface for this
 taxonomy (see Fields) — there is no more paired project/issue field to keep
 in step with, so extend the label lists alone as the product grows. `domain:`
 (problem space) and `area:` (solution space) are both per-repository
 vocabulary whose starter values are a floor; `layer:` is product-independent
 and normally needs no edits.
 
-The `claim:` and `suggest:` families share a vocabulary and *nothing else*.
+The `claim:` and `suggest:` families share a vocabulary and _nothing else_.
 `suggest:` is the planned implementer, `claim:` is the active one — see
 **Claiming** below. Never treat one as a copy of the other: rewriting the
 suggestion to match the claim overwrites a planning decision.
 
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
-org's **default labels** (org Settings → Repository, UI-only) to seed *new* repos
+org's **default labels** (org Settings → Repository, UI-only) to seed _new_ repos
 (it won't change existing ones). The default path is additive: it creates or
 updates only provisioned labels and never deletes a live label. To inspect live
 labels outside the registry inventory (including adopted, tool-owned, and
@@ -702,8 +702,8 @@ that can only stop work:
 | Family | Triggers execution? | How the consumer establishes trust |
 |---|---|---|
 | `foreman:<adapter>`, `foreman:approved` | **yes** — arms an issue for dispatch | Foreman reads the `labeled` **timeline event**, takes the actor from it, and requires that login in `trusted_actors` (`.foreman.toml`). Unattributable arming is a fail-closed refusal, never a dispatch — which is also why issue-field arming is refused outright: GitHub exposes no actor for a field change |
-| the Claude Actions workflows | **no** — labels trigger nothing at all | Execution starts only on an explicit `@claude` mention naming `plan`, `implement`, or `review`, from a login on the workflow's sender allowlist. The allowlist is enforced in the job `if:` and re-asserted in a token-free step *before* any credential is minted |
-| `claim:*` (and legacy `agent:*`) | **no** — read as a gate, not a trigger | Those workflows refuse to start on a target that already carries one. No actor check is needed for a signal that can only *withhold* execution: the worst outcome is a visible, reversible refusal |
+| the Claude Actions workflows | **no** — labels trigger nothing at all | Execution starts only on an explicit `@claude` mention naming `plan`, `implement`, or `review`, from a login on the workflow's sender allowlist. The allowlist is enforced in the job `if:` and re-asserted in a token-free step _before_ any credential is minted |
+| `claim:*` (and legacy `agent:*`) | **no** — read as a gate, not a trigger | Those workflows refuse to start on a target that already carries one. No actor check is needed for a signal that can only _withhold_ execution: the worst outcome is a visible, reversible refusal |
 | `autorelease: *` | **no** | release-please writes them on its own release PRs and reads only what it wrote; nothing dispatches from one |
 | everything else | **no** | human-facing facets, read by people and saved views |
 
@@ -873,33 +873,33 @@ with no adapter behind it is a false capability that can strand armed work.
 
 ## Claiming — making an agent's work visible while it happens
 
-An issue being worked on *right now* is the one fact the tracker holds worst.
+An issue being worked on _right now_ is the one fact the tracker holds worst.
 The assignee is buried on the issue page and a claim comment is one entry in a
 thread — neither shows on the board, which is where work is actually watched.
 So two agents, or an agent and a human, start the same issue because nothing
 visible said it was taken.
 
-An agent starting work therefore writes every one of these it *can*, because
+An agent starting work therefore writes every one of these it _can_, because
 each is blind where the others see:
 
 | Signal | Answers | Shows up in |
 |---|---|---|
 | `Status` = `In Progress` | where it is in delivery | the board |
 | claim label (`claim:*`; `agent:*` pre-migration) | which agent is working it **right now** | the issue page, `gh issue list --label` |
-| assignee | that *someone* has it | notifications, `gh issue list --assignee` |
+| assignee | that _someone_ has it | notifications, `gh issue list --assignee` |
 
 **`suggest:*` is not on that list, and a claim must not write it.** The two
 look like the same fact and are not:
 
 | | Means | Set by | When |
 |---|---|---|---|
-| **`suggest:*`** label | which agent *should* implement it | whoever plans/triages | at planning, before the work starts |
-| **`claim:*`** label | which agent *is* implementing it | the agent itself | at claim, released at hand-off |
+| **`suggest:*`** label | which agent _should_ implement it | whoever plans/triages | at planning, before the work starts |
+| **`claim:*`** label | which agent _is_ implementing it | the agent itself | at claim, released at hand-off |
 
 They share one vocabulary — the agent-registry families — but they answer
 different questions. Rewriting the suggestion at claim time would destroy the
 planning assignment the **Agent queue** view is built on (that view lists
-issues *carrying a `suggest:*` label*), and would silently reassign work
+issues _carrying a `suggest:*` label_), and would silently reassign work
 planned for one agent to whichever agent happened to pick it up.
 
 So a claim writes the **claim label only**. If the claim and the suggestion
@@ -912,7 +912,7 @@ write.
 
 **A board write can fail without anyone learning.** Every `Status` write in the
 lifecycle needs the [`project` scope](#token-scopes). Without it each one exits
-2 — "could not verify" — and the steps handle that correctly *individually*:
+2 — "could not verify" — and the steps handle that correctly _individually_:
 it is an auth condition they cannot fix, so they note it and carry on. In
 aggregate that is the worst outcome available. The agent reports the issue
 claimed, the board says nothing was ever started, and neither is wrong from
@@ -975,7 +975,7 @@ in the vendored `track-work` skill.
 > name alone reports half the supported pins as un-automated.
 >
 > A match means claiming is automated end to end. No match means the claim
-> labels above are applied by hand, and no *skill* will move the card. On an
+> labels above are applied by hand, and no _skill_ will move the card. On an
 > organization `project-automation.yml` still syncs `Status` from PR and CI
 > events, so that is not the same as nothing moving it — check what the
 > workflow already does before setting the field manually.
@@ -998,7 +998,7 @@ review workflow additionally authorizes `renovate[bot]` and `dependabot[bot]`
 as senders, so their update PRs can request their own reviews — treat those
 fixed bot principals as part of the trust surface when auditing. The allowlist
 is checked twice — in the job `if:`, and again in a token-free step that
-re-asserts it *before* any App token is minted — so a gap in the expression can
+re-asserts it _before_ any App token is minted — so a gap in the expression can
 never mint a credential.
 
 **Claim-aware, fail-closed.** After the sender gate passes and before the token
@@ -1012,13 +1012,13 @@ is minted, the run acquires `claim:claude` on the target:
 | The label list cannot be read | **refuses** — it cannot prove the target is free |
 | The label will not apply | **refuses** — it would work the target unmarked |
 
-`suggest:*` is deliberately not matched: it is advice about who *should* do the
+`suggest:*` is deliberately not matched: it is advice about who _should_ do the
 work, never ownership of it. The label is created if the repository does not
 have it, with the registry's own color and description, so a later
 `task setup:github-labels` reconciles that label instead of fighting it.
 
 Release is loud, and bounded. An `always()` step releases the claim — but only
-when *this* run acquired it, so a claim that was already there is never stolen.
+when _this_ run acquired it, so a claim that was already there is never stolen.
 It covers the failure, step-timeout and cancellation paths, which is why the
 model step carries a cap well inside the job's: a job-level timeout kills the
 runner outright and the cleanup never runs at all. A release that cannot be
@@ -1050,8 +1050,8 @@ could all masquerade as milestones, so keep the lanes clean:
 - **Labels** — orthogonal, cross-cutting concerns
 - **Sub-issues** — hierarchy
 
-None of those answers *"which shippable batch does this belong to, and how done
-is that batch?"* — that's the milestone's unique contribution: a finite
+None of those answers _"which shippable batch does this belong to, and how done
+is that batch?"_ — that's the milestone's unique contribution: a finite
 delivery container with a **live completion bar** and, when useful, a due date.
 Labels are for classification; milestones are for goal tracking. An open-ended
 concern with no completion condition is still a label or saved view.
@@ -1101,7 +1101,7 @@ is right and the iteration's is actively wrong.
 slices + frequent deploys + a release cadence**, which you already have (PR-sized
 sub-issues, per-PR previews to prod, release-please cutting incremental releases
 from accumulated commits). You can sprint and ship zero user value, or run
-milestones and ship continuously; the delivery job routes through the *release*
+milestones and ship continuously; the delivery job routes through the _release_
 mechanism (milestone-adjacent), not sprints.
 
 **So run small, frequent milestones** — a shippable chunk every ~2–4 weeks, not one
@@ -1120,7 +1120,7 @@ tiny team can't make hard anyway.
 
 **Why this phase picks milestones:** early development is **discovery-driven** —
 you're figuring out scope as you go, capacity is erratic, and the priority is
-shipping the *right* thing, not a predictable amount. Iterations shine in the
+shipping the _right_ thing, not a predictable amount. Iterations shine in the
 opposite regime (a known backlog, steady team, predictable capacity metered at a
 constant clip) — steady-state maturity, not pre-launch. (Honest counter:
 time-boxing can curb rabbit-holing during discovery — but the Lean answer is
@@ -1129,15 +1129,15 @@ build-measure-learn, get it in front of a user fast, for which the clock is your
 it at the work level more directly. You already have those.)
 
 **Iterations also don't fit the agent queue.** Agents run when triggered, not "this
-week"; scoping the queue to `iteration:@current` adds nothing over *agent-set +
-Ready + priority*. Iteration is a human-cadence concept your agents don't have.
+week"; scoping the queue to `iteration:@current` adds nothing over _agent-set +
+Ready + priority_. Iteration is a human-cadence concept your agents don't have.
 (The native Iteration field stays available if you reach steady-state and want it.)
 
 ## Hierarchy (sub-issues, not Epics)
 
 There's **no Epic type, by design.** The "big initiative" role splits cleanly
-into two natives — **sub-issues** carry the *hierarchy* axis and **milestones**
-carry the *delivery-batch* axis — and GitHub stitches them together for you: a
+into two natives — **sub-issues** carry the _hierarchy_ axis and **milestones**
+carry the _delivery-batch_ axis — and GitHub stitches them together for you: a
 **sub-issue inherits its parent's Project and Milestone by default** (shipped
 2025-09). Assign them once on the parent and the child tree picks them up — no
 per-child bookkeeping.
@@ -1168,7 +1168,7 @@ batch; the parent-issue tree for a single feature.
 
 **Where metadata lives — parent vs. leaf.** The **parent** holds the durable
 context: the spec (your Given/When/Then acceptance criteria), the "why," the
-explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
+explicit _not_-doing reasoning, and — since sub-issues auto-inherit it — the
 **milestone and project** assignment. Set those once on the parent and the tree
 inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
 the milestone per child.
@@ -1187,13 +1187,13 @@ issue," leave it a **checkbox** in the body. Don't promote every checkbox (that'
 sprawl), and don't spin up a sub-issue where a checkbox suffices.
 
 **Research child as a blocking gate.** When a Feature has an unknown, spawn a
-**Research** sub-issue and let it *block* the implementation children. It closes
+**Research** sub-issue and let it _block_ the implementation children. It closes
 when it produces a decision record (the Research closure rule), which unblocks the
 rest — encoding "figure this out first, then build" in the tree itself, and tying
 Research, sub-issues, and the ADR discipline together.
 
-**Hierarchy is not dependency.** A sub-issue means *"part of,"* not *"must happen
-before."* If A must finish before B but B isn't part of A, that's a **dependency**
+**Hierarchy is not dependency.** A sub-issue means _"part of,"_ not _"must happen
+before."_ If A must finish before B but B isn't part of A, that's a **dependency**
 — the native blocked-by relationship, or the `blocked` label + a note (see
 **Blocked is not a status** above) — not a parent-child link. Conflating them
 corrupts the tree; keep composition (sub-issues) and sequencing (dependencies) in
@@ -1202,16 +1202,16 @@ separate mechanisms.
 ## Cross-repo work
 
 The one board already spans every repo (the single default project per owner). For
-work that *itself* crosses repos, reach for the tree, not a new field:
+work that _itself_ crosses repos, reach for the tree, not a new field:
 
 **A cross-repo feature → a parent sub-issue tree. No field needed.** A feature that
 touches app + infra + marketing is one cohesive thing, so it's a legitimate parent:
 the parent **Feature** issue lives in the app repo, its **Task** children live in
 whichever repos they belong to (sub-issues cross repos freely), and the parent's
-rollup counts completion across all of them. The tree *is* the cross-repo grouping
+rollup counts completion across all of them. The tree _is_ the cross-repo grouping
 — you track it by opening the parent, not by tagging a field.
 
-**A cross-repo *release* is mostly a smell.** Repos with genuinely independent
+**A cross-repo _release_ is mostly a smell.** Repos with genuinely independent
 deploy cadences shouldn't share a release: the app cuts versions via release-please
 on its own rhythm, an Astro marketing site deploys continuously on copy changes,
 infra changes when infra changes. Forcing "app v1.1.0 + a pricing-page edit + a

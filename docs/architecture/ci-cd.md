@@ -105,7 +105,7 @@ human merges the sync PR, then harmon-init's release PR
   with `GH_TOKEN` scrubbed. A contents:write credential is therefore never
   visible to the copier renders, `npx`, and `uvx` that `task verify` spawns.
   The workflow is not `workflow_dispatch`-able for the same reason: GitHub
-  would run the *selected ref's* workflow definition, so an unreviewed branch
+  would run the _selected ref's_ workflow definition, so an unreviewed branch
   could rewrite the token-minting step itself — a checkout pinned to `main`
   cannot help, because the token exists by then.
 - **Base integrity:** the checkout is pinned to `main`, and the run refuses to
@@ -120,13 +120,13 @@ human merges the sync PR, then harmon-init's release PR
   and surface only when the next sync run aborts. Root-only: a generated repo
   has one manifest and nothing to compare.
 - **Fail-closed:** the run aborts before any push if the two pins already
-  disagree, if the tag would move the pin *backwards* — measured against the
+  disagree, if the tag would move the pin _backwards_ — measured against the
   newest tag in flight, so a delayed dispatch cannot drag an open sync PR back
   either; only a manual run may downgrade, as the recovery path off a bad
   release — if `task sync:skills` writes a path outside the manifests,
   provenance, and managed skills, or if `task verify:skills:offline`,
   `task security:secrets`, `task verify:skills`, or `task verify` fails.
-  gitleaks runs *before* the push, not just on the PR: this step vendors files
+  gitleaks runs _before_ the push, not just on the PR: this step vendors files
   from another repository, and a pushed secret needs rotating whether or not
   the PR ever merges.
 - **One rolling PR:** a deterministic `bot/sync-harmon-devkit` branch, rebuilt

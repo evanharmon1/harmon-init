@@ -64,8 +64,8 @@ The following decisions are adopted together:
    who selects the model. The family and harness axes are intentionally distinct.
 8. **D8 — Family slugs name vendor intelligence, never the harness product.**
    OpenAI's family slug is `gpt`; model segments, such as `sol` or `luna`, live
-   below that stable family slug, and `codex-cli` is the *harness* that runs
-   it. Microsoft AI's family slug is `mai`; `copilot-cli` is a *harness* — a
+   below that stable family slug, and `codex-cli` is the _harness_ that runs
+   it. Microsoft AI's family slug is `mai`; `copilot-cli` is a _harness_ — a
    broker (D9 amendment below) whose picker defaults to `mai` but can route
    to other families. **Amended 2026-08-10**: the family slug was originally
    `codex`, and `copilot` was originally recorded as a family with no models.
@@ -101,7 +101,7 @@ The following decisions are adopted together:
    `gh-action`. **Amended 2026-08-10 — sanction the `-local` endpoint-variant
    suffix**: a provider-rewired harness may append `-local` to mark a variant
    that talks to a local endpoint instead of the family's hosted one, while
-   staying fixed to the *same* family — `claude-code-qwen-local` is family
+   staying fixed to the _same_ family — `claude-code-qwen-local` is family
    `qwen`, not a separate `qwen-local` family. The suffix names an endpoint,
    not intelligence, so it never appears in a family slug or as a
    `family_constraint.family` value; the next local-lane wrapper reuses this
@@ -128,7 +128,7 @@ The following decisions are adopted together:
     replaces overloading the `none` kind — schema v1's "unconstrained" escape
     hatch — for the same meaning: a `none` constraint could not name a
     default, so `copilot-cli` could only be recorded `runner-config`-owned
-    with no way to say *which* family it defaults to, which undersold what
+    with no way to say _which_ family it defaults to, which undersold what
     the picker actually does. `kind: "broker"` is a distinct, self-describing
     value rather than "`fixed` with nothing fixed", and `default_family`,
     when present, is validated against the family roster like any other
@@ -151,12 +151,12 @@ The following decisions are adopted together:
 14. **D14 — Model-slug conventions (recorded 2026-08-10).** Family and tier
     slugs are lowercase words. A version that gets its own slug is
     hyphenated with a dotted display name (slug `5-2`, display `5.2`) —
-    dots are declined *in slugs* because registry slugs feed
+    dots are declined _in slugs_ because registry slugs feed
     `suggest:`/`claim:` label segments, and a `.` there would either break
     label-name syntax or need escaping every consumer would have to
-    remember. A model slug names either a durable capability *tier* the
+    remember. A model slug names either a durable capability _tier_ the
     vendor itself supports across versions (`claude`'s `opus`/`sonnet`/
-    `haiku`/`fable`, `gpt`'s `sol`/`terra`/`luna`) or a *version* where the
+    `haiku`/`fable`, `gpt`'s `sol`/`terra`/`luna`) or a _version_ where the
     vendor does not offer that abstraction (`glm`'s `5-2`, `kimi`'s `k3`).
     A provider-rewired local-endpoint variant's harness slug may append
     `-local` per the D9 amendment above; it stays a harness-slug suffix, and

@@ -183,7 +183,7 @@ a checked-in copy of Ghostty's own entry (`infocmp -x xterm-ghostty`), and the
 image build compiles it with `tic -x` before any shell exists — refresh it when
 a Ghostty release changes the entry, since nothing here notices on its own. Like
 the Claude policy above it lives in the **image**, so a volume wipe cannot take
-it away, and it is a *required* config file — a missing `ghostty.terminfo` fails
+it away, and it is a _required_ config file — a missing `ghostty.terminfo` fails
 the build rather than shipping a container that breaks only for Ghostty users. It earns its keep on every path
 that actually carries your `TERM` inside — SSH forwards it by protocol, so a
 `coder ssh` session lands as `xterm-ghostty` and resolves.
@@ -232,13 +232,13 @@ shell-integration-features = ssh-env,ssh-terminfo
 - `ghostty +ssh-cache` lists and clears the cache; it is keyed on
   `user@hostname` (not the port), never expires, and a hit is trusted without
   re-checking — so a rebuilt host needs its entry cleared, and a Ghostty upgrade
-  needs that *plus* replacing the entry the remote resolves, because the
+  needs that _plus_ replacing the entry the remote resolves, because the
   installer treats any existing `xterm-ghostty` as success and never re-runs
   `tic`.
 
 Whichever you choose: features you leave out keep their defaults, so on a config that does not already
 set the key, that one line is the whole change and `cursor`, `title`, and `path`
-are untouched. If you *do* already set it, merge the two features into your
+are untouched. If you _do_ already set it, merge the two features into your
 existing value rather than replacing it — whatever you drop reverts to its
 default. For the same reason, do not paste the full list that
 `ghostty +show-config --default` prints: it **pins** every feature in it,
@@ -276,7 +276,7 @@ pinned, tested version remains stable until the shared image is rebuilt.
 coding agents run in and tracks each one's state (working / blocked / idle) so
 you can see at a glance which agent is waiting on you. `zellij` and `tmux` are
 still installed and still the right tool for general terminal multiplexing —
-Herdr is not a replacement for them, it is the layer that knows what an *agent*
+Herdr is not a replacement for them, it is the layer that knows what an _agent_
 pane is doing.
 
 The server **auto-starts on the first `herdr` invocation**. There is no `herdr
@@ -308,7 +308,7 @@ would attach to a host-side Herdr or nothing.
 `~/.config/herdr` is a **named volume** (`herdr-config-…`, per profile; on
 Coder it is symlinked into the `~/.persistent` volume instead), so Herdr's own
 state survives a rebuild: snapshot restore brings the workspace shape back —
-tabs, panes, cwds, layout — as fresh shells. Whether an agent *conversation*
+tabs, panes, cwds, layout — as fresh shells. Whether an agent _conversation_
 resumes inside its restored pane is a separate mechanism:
 `resume_agents_on_restore` only works for agents whose Herdr integration has
 recorded a native session reference. post-create installs the Claude Code,
@@ -384,7 +384,7 @@ browser cannot capture the flow. Both the initial `gh auth login --web` and the
 browser flow used by `task setup:gh-scopes` inherit this behavior from
 `GH_BROWSER`.
 
-`--scopes` is *additive* to gh's defaults (`repo`, `read:org`, `gist`). `project`
+`--scopes` is _additive_ to gh's defaults (`repo`, `read:org`, `gist`). `project`
 is what Projects V2 writes need — without it `task status:gh` reports the board
 as unreachable — and `workflow` lets you edit `.github/workflows/`, which the bot
 is deliberately denied. `--web` opens a browser when there is one and otherwise
@@ -406,7 +406,7 @@ reads `GITHUB_TOKEN` at runtime gets an empty string and needs a different
 variable name. That is the deliberate trade: one container cannot let the same
 name mean both "who `gh` is" and "the app's credential", and in the profile whose
 defining property is its GitHub identity, `gh`'s meaning wins. Note this is the
-*runtime* value only — the env-file keeps whatever it held; blanking shadows it
+_runtime_ value only — the env-file keeps whatever it held; blanking shadows it
 rather than deleting it, which is why this is not done by evicting the names in
 `init-env.sh` (that would destroy the value in **both** profiles' env-files).
 
@@ -425,12 +425,12 @@ Nothing fails hard before you log in. `post-create` prints the commands above,
 sibling repos are skipped with a warning (re-run
 `bash .devcontainer/scripts/bootstrap-related-repos.sh` afterwards), and
 `task verify` is unaffected — the skills sync clones the public harmon-devkit
-over plain HTTPS. What does not work is anything that talks to GitHub *as you*:
+over plain HTTPS. What does not work is anything that talks to GitHub _as you_:
 `git push`, `gh pr`, `gh api`.
 
 Under **VS Code Remote-Containers** this differs in mechanism, not identity:
 `post-create-common.sh` unsets the in-container gh credential helpers and lets
-VS Code forward the host's, so *git* already acts as you on attach while `gh`
+VS Code forward the host's, so _git_ already acts as you on attach while `gh`
 still needs its own login. Run `gh auth login` there but **not**
 `gh auth setup-git` — re-adding the helper fights the one VS Code manages, which
 is why post-create unset it. On Coder and the plain CLI, where nothing else
@@ -611,7 +611,7 @@ seeing it at all means rebuild rather than debug.
 ### The standard flow, step by step
 
 Coder is still how you reach the workspace **host** — the split above is only
-about which layer makes the *container* hop. The extension path, concretely:
+about which layer makes the _container_ hop. The extension path, concretely:
 
 1. **Connect to the workspace itself** (Coder UI button or "Coder: Open
    Workspace"). If the picker offers both the workspace and a
@@ -694,7 +694,7 @@ hostname; echo "RC=$REMOTE_CONTAINERS CODER=$CODER LANG=$LANG"; readlink -f ~/.c
 ```
 
 - `hostname` — which container you are actually in. A window attached to the
-  *wrong* target is the failure that looks like everything else.
+  _wrong_ target is the failure that looks like everything else.
 - `RC=` / `CODER=` — which manager attached you, per the table above.
 - `LANG=` — an empty or `POSIX` value is the usual cause of mangled glyphs and
   sort order.
@@ -721,7 +721,7 @@ Recognizing a recreation after the fact:
   long-running container accumulates several;
 - `gh auth status` in the **dev** profile reporting no login. This is the most
   visible symptom, and the easiest to misread: `~/.config/gh` is deliberately on
-  no volume, so re-authenticating after a *genuine* rebuild is the intended cost
+  no volume, so re-authenticating after a _genuine_ rebuild is the intended cost
   — but re-authenticating when you did not rebuild anything is this bug, not that
   trade;
 - anything under `~/` that is not on a named volume reverted to image defaults.
@@ -753,13 +753,13 @@ that state lands on the volume.
 
 The migration is deliberately non-destructive
 (`.devcontainer/scripts/link-claude-json.sh`), and the failure it prevents is
-worth knowing. Anything that launches `claude` *before* the symlink exists makes
+worth knowing. Anything that launches `claude` _before_ the symlink exists makes
 Claude Code write a fresh, near-empty **real** file at `~/.claude.json` — little
 more than a trust-dialog acceptance. Post-start then used to `mv` that stub over
 the persisted copy, so a container recreation logged you out, dropped plan
 detection to usage credits, and broke remote-control session resume. The helper
 now runs **early** in post-create, before anything that can spawn `claude`, and
-the volume copy always wins: a stray file is deep-merged *into* it (contributing
+the volume copy always wins: a stray file is deep-merged _into_ it (contributing
 only keys the volume lacks), and if it cannot be merged safely it is parked
 beside the volume copy as a timestamped `.bak` rather than either side being
 lost. `readlink -f ~/.claude.json` above is the one-second check that it worked.

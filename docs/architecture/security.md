@@ -229,7 +229,7 @@ It carries **no `GH_TOKEN`** — not as tidiness, but because there is no other 
 to get this right. `gh` prefers `GH_TOKEN` over any stored credential
 unconditionally and exposes no precedence knob, so a bot PAT sitting in a human
 container silently wins every `gh` call and, through the credential helper, every
-`git push`. Removing it *is* the mechanism. `init-env.sh` evicts a stale value
+`git push`. Removing it _is_ the mechanism. `init-env.sh` evicts a stale value
 from the dev env-file on every rebuild, and `scripts/devcontainer-assert.sh`
 asserts the absence in both the config and the running container.
 
@@ -286,7 +286,7 @@ creating one is [guides/bot-account.md](../guides/bot-account.md).
   1Password CLI, so there is **no path to pull arbitrary secrets on demand**, and
   no Tailscale, so no tailnet reach (see
   [guides/devcontainers.md](../guides/devcontainers.md)). Note what this does
-  *not* say: the container is not secret-free. It holds whatever the env-file
+  _not_ say: the container is not secret-free. It holds whatever the env-file
   carries. That set is a **property of the 1Password Environment behind the
   env-file** — a convention you maintain, not a guarantee the profile enforces.
   Put a production credential in that Environment and it lands in the container,
@@ -295,9 +295,9 @@ creating one is [guides/bot-account.md](../guides/bot-account.md).
 ### Effective access = min(collaborator grant, PAT permissions)
 
 A fine-grained PAT is a **delegation of its owner's access** and can never exceed
-it. Two independent layers must *both* allow an operation:
+it. Two independent layers must _both_ allow an operation:
 
-1. **The repo collaborator grant** on the bot account — *per repo*, and where
+1. **The repo collaborator grant** on the bot account — _per repo_, and where
    granularity actually lives.
 2. **The PAT's selected-repo list and permission set** — the permission set is
    **uniform across every selected repo**; there is no per-repo matrix.
@@ -309,9 +309,9 @@ back a mix of read-only and writable repos.
 Two practical consequences:
 
 - **Two levers, different jobs** — picking the wrong one is why this gets
-  confusing. To change the *level* on a repo the bot still works (write → read),
+  confusing. To change the _level_ on a repo the bot still works (write → read),
   change the **collaborator grant**; a PAT cannot express per-repo levels. To stop
-  *this token* reaching a repo while the bot keeps access, remove it from the PAT's
+  _this token_ reaching a repo while the bot keeps access, remove it from the PAT's
   **selected-repo list**. To revoke the bot entirely, drop the grant — and the list
   entry too, so the token stops carrying reach it cannot use.
 - **Both layers, in order.** Adding a repo to the PAT's list does nothing if the
@@ -411,14 +411,14 @@ a machine-readable reference; mirror it in the form.
 the value once from the `.pem` file (above), scoped with `--visibility selected
 --repos` to whatever repos make sense at the time (selecting them all is fine if
 that's the reality). From then on, **finalize and maintain which repos can read
-it in the GitHub UI** — org → *Settings → Secrets and variables → Actions* → the
+it in the GitHub UI** — org → _Settings → Secrets and variables → Actions_ → the
 secret → **Repository access**. Editing the list there changes scope **without**
 re-entering the value, and the page doubles as a sanity check of exactly who has
 access. Don't reach for `--visibility all` as a shortcut: it exposes the key to
 every org repo until you narrow it.
 
 Keep list-management in the UI because `gh secret set` is **declarative** — the
-`--repos` form *replaces* the secret's value **and** its whole repo allow-list on
+`--repos` form _replaces_ the secret's value **and** its whole repo allow-list on
 every run, so re-running it from a second repo silently evicts the first. The UI
 (or `PUT /orgs/{org}/actions/secrets/{name}/repositories/{repo_id}`) is the
 non-destructive way to add a repo.
@@ -457,7 +457,7 @@ even the in-org radius small:
 - **Never put `workflow_dispatch` on a workflow that mints an App token.** For
   that trigger GitHub runs the workflow definition from whichever ref the
   operator selects, so any branch — reviewed or not — could rewrite the
-  token-minting step and use the credential. Pinning the *checkout* to `main`
+  token-minting step and use the credential. Pinning the _checkout_ to `main`
   does not help: the token already exists. Every App-token workflow here is
   reachable only through triggers that pin the definition to the default
   branch — `push` (release), the issue/PR events (`claude-*`), and
