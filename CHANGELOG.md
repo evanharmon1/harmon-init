@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.42.2](https://github.com/evanharmon1/harmon-init/compare/v4.42.1...v4.42.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* document Coder bot access and Herdr ([#1138](https://github.com/evanharmon1/harmon-init/issues/1138)) ([92fd541](https://github.com/evanharmon1/harmon-init/commit/92fd5414f24e6451da55f60a26df5b6187a7c609))
+
 ## [4.42.1](https://github.com/evanharmon1/harmon-init/compare/v4.42.0...v4.42.1) (2026-08-31)
 
 
