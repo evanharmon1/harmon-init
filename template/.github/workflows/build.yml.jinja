@@ -411,9 +411,12 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Install Playwright browsers
-        if: steps.pw.outputs.present == 'true'
+      - name: Install Playwright browsers (hosted runner — apt via sudo)
+        if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
         run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright browsers (self-hosted — no sudo/apt)
+        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install chromium
       - name: Accessibility (axe) tests
         run: task test:a11y
 [% endif %]
