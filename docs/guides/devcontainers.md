@@ -287,7 +287,7 @@ status`.
 To attach from a laptop, either SSH in and run it there:
 
 ```bash
-coder ssh <workspace>
+coder ssh <workspace>.devcontainer
 herdr
 ```
 
@@ -296,14 +296,13 @@ so install Herdr on the laptop first (`brew install herdr`, or the installer
 at [herdr.dev](https://herdr.dev/)):
 
 ```bash
-herdr --remote coder.<workspace>
+herdr --remote coder.<workspace>.devcontainer
 ```
 
-`coder config-ssh` is what writes those `coder.<workspace>` host aliases into
-your SSH config, so run it once before the `--remote` form. Both forms work
-because Coder's agent executes **inside** the workspace container, where Herdr
-and its socket live; an SSH route that terminates on a Docker host instead
-would attach to a host-side Herdr or nothing.
+`coder config-ssh` is what writes the `Host coder.*` ProxyCommand aliases into
+your SSH config, so run it once before the `--remote` form. Both forms target
+the Coder `devcontainer` agent; the topology, transport, security rationale,
+and rebuild caveats are in [Bot-profile access from Coder](#bot-profile-access-from-coder).
 
 `~/.config/herdr` is a **named volume** (`herdr-config-…`, per profile; on
 Coder it is symlinked into the `~/.persistent` volume instead), so Herdr's own
@@ -576,6 +575,96 @@ repo** (one template serves every repo). To stand this repo up in Coder:
 > immutable `tag@digest`), so no registry credential is needed for the base —
 > only the repo's own `-devcontainer` cache image matters.
 
+### Bot-profile access from Coder
+
+The Coder `devcontainer` template exposes **two agents per workspace**:
+
+- **`host`** — the outer workspace container, running as `coder`, with Docker
+  and the repo checkout at `~/<repo>`, but no toolchain.
+- **`devcontainer`** — the inner devcontainer, running as `vscode`, with the
+  repo at `/workspaces/<repo>`, all tools, and Herdr.
+
+These two profiles both name their inner Coder agent `devcontainer`; the
+`.devcontainer` suffix selects the inner agent, not the security profile. These
+commands assume the workspace was created from the **Bot** profile
+(`.devcontainer/devcontainer.json`), not the human **Dev** profile
+(`.devcontainer/dev/devcontainer.json`). Verify the selected config before
+allowing a bot to run; if it is the Dev profile, use the human workflow and do
+not treat this target as a bot boundary. `coder ssh <workspace>` fails with
+`multiple agents found, please specify the agent name, available agents:
+[devcontainer host]`. The working forms are:
+
+```bash
+coder ssh <workspace>.devcontainer
+
+# After `coder config-ssh` has written the Host coder.* ProxyCommand alias:
+ssh coder.<workspace>.devcontainer
+
+# Herdr wraps that SSH transport as a local thin client:
+herdr --remote coder.<workspace>.devcontainer
+```
+
+In a Coder-hosted bot workspace, the devcontainer has no `sshd`, no
+`tailscale`/`tailscaled`, and no inbound listener. The Coder remote-access
+process is `/.coder-agent/coder agent`, which holds an **outbound** connection
+to the Coder server. Every SSH session is carried down that tunnel: the local
+`coder ssh --stdio` ProxyCommand authenticates to the Coder control plane with
+the operator's CLI session, and the agent terminates the SSH protocol
+in-process. Other ordinary processes may make outbound network requests, but
+they do not create an inbound SSH or tailnet path. Access is gated by Coder
+login and RBAC and appears in Coder's audit log. Coder's transport embeds its
+own WireGuard/DERP mesh internally; that is inside the `coder` binaries and is
+unrelated to the operator's Tailscale tailnet.
+
+This is the deliberate access model for an AI-agent container because the bot
+is the **untrusted** party: Claude runs `bypassPermissions`, Codex runs
+`danger-full-access`, and the container holds the bot PAT plus whatever the
+env-file carries. Adding Tailscale would not "open a port" — Tailscale is also
+outbound-only WireGuard, and Tailscale SSH is deny-by-default until an ACL
+grants it. The risk is the other direction: the container would gain a tailnet
+identity and outbound reach to every node that ACL allows, a second credential
+class (`TS_AUTHKEY`) would live beside the agent, and a second access path
+would exist outside Coder's RBAC and audit trail. That is why the bot profile
+strips `TS_AUTHKEY` and omits the Tailscale feature. The tailnet is reserved for
+the **dev/operator** profile: humans using their own identity, including the
+case that needs Coder-independent access such as a phone SSH client that
+cannot run the `coder` CLI.
+
+The trade-off is explicit: the Coder control plane is the **single trust
+root**. It is an internet-exposed web app, and a compromised Coder session or
+server yields a shell in every workspace. Put the controls there: SSO/MFA on
+the Coder account, short session lifetimes, and timely patching of the Coder
+server and agents.
+
+#### Herdr over Coder
+
+`herdr --remote` needs only working OpenSSH, so it works against the bot
+container exactly as it does against a dev container — the ProxyCommand is the
+transport; no Tailscale is needed. Herdr stays a thin client on the laptop,
+providing local keybindings and clipboard/image-paste bridging, while the
+server and agents run in the container. Detach with `ctrl+b q` and reattach
+with the same `herdr --remote coder.<workspace>.devcontainer` command.
+
+`herdr --remote` prefers a remote binary matching the local client version.
+The image pins `HERDR_VERSION` (0.8.0 today), while a laptop may run a newer
+version (0.8.2). On a mismatch, an interactive run prompts to install a
+matching binary into `~/.local/bin` on the remote. That directory is first on
+the container `PATH` but is **not** a persisted volume, so the prompt recurs
+after every container rebuild until the image's `HERDR_VERSION` catches up;
+Renovate tracks that pin.
+
+#### Rebuild before attaching to a changed image
+
+A Coder workspace **restart** reuses the cached `vsc-<repo>-<hash>` devcontainer
+image. A repo bump to `.devcontainer/Dockerfile`'s base therefore does not
+reach a running workspace until the devcontainer is explicitly **rebuilt**.
+The symptom is `herdr` missing and `HERDR_SOCKET_PATH` unset inside the
+container, even though the pinned base image ships both. Do not work around it
+by letting `--remote` install into `~/.local/bin` on a pre-Herdr image: with
+`HERDR_SOCKET_PATH` unset, the socket lands in the volume-persisted
+`~/.config/herdr`, which is exactly the stale-socket hazard described above.
+Rebuild first, then attach.
+
 ## Attach paths and container managers
 
 **Two different managers can attach VS Code to the same dev container**, and
@@ -584,7 +673,7 @@ they are not interchangeable:
 | Manager | How you start it | `REMOTE_CONTAINERS` | `devcontainer.json` `customizations.vscode` |
 |---|---|---|---|
 | **Dev Containers extension** | "Dev Containers: Reopen in Container" | `true` | applied |
-| **Coder devcontainer integration** | the Coder UI **VS Code** button, or the `coder` CLI | unset | **not** applied |
+| **Coder devcontainer integration** | the Coder UI **VS Code** button, or a Coder-direct connection to the `devcontainer` agent | unset | **not** applied |
 
 That second row is the one that surprises people. A Coder-attached window is a
 perfectly good shell in the right container, but nothing in
@@ -592,6 +681,9 @@ perfectly good shell in the right container, but nothing in
 whatever your Coder-side configuration provides. `post-create-common.sh` already
 branches on `REMOTE_CONTAINERS` for the git-credential handling, so the two
 paths differ in mechanism even where they agree on identity.
+
+For a direct bot shell or Herdr session, use the `devcontainer` agent and the
+explicit target forms in [Bot-profile access from Coder](#bot-profile-access-from-coder).
 
 **Standardize on the Dev Containers extension path.** It builds from the current
 checkout and applies `customizations.vscode`, so what you attach to matches what
@@ -610,13 +702,16 @@ seeing it at all means rebuild rather than debug.
 
 ### The standard flow, step by step
 
-Coder is still how you reach the workspace **host** — the split above is only
-about which layer makes the *container* hop. The extension path, concretely:
+Coder is still how you reach the workspace **host** — the outer agent described
+in [Bot-profile access from Coder](#bot-profile-access-from-coder). The split
+below is only about which layer makes the *container* hop. The extension path,
+concretely:
 
 1. **Connect to the workspace itself** (Coder UI button or "Coder: Open
    Workspace"). If the picker offers both the workspace and a
-   `devcontainer` sub-agent target, choose the **workspace** — the sub-agent
-   target is exactly the Coder-direct hop the table above warns about.
+   `devcontainer` sub-agent target, choose the **workspace** (the host agent)
+   for this nested extension path — the sub-agent target is the Coder-direct
+   hop described above.
 2. In that host window: **File → Open Folder** → the repo checkout on the
    host.
 3. VS Code detects `.devcontainer/` and offers **"Reopen in Container"** —
