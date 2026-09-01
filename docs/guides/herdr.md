@@ -9,7 +9,10 @@ the everyday workflows, how it pairs with the repo's worktree tooling, running
 several agents (and several harnesses) at once, and the lifecycle and cleanup
 that keep the sidebar meaningful. Installation, the devcontainer volumes, and
 attaching from a laptop are in [devcontainers.md](devcontainers.md) § Persistent
-agent sessions; the
+agent sessions. Coder bot-container access, the remote-attach target, Herdr
+version matching, and the stale-image rebuild gotcha are in
+[Bot-profile access from Coder](devcontainers.md#bot-profile-access-from-coder).
+The
 decision rule for worktrees is [worktrees.md](worktrees.md).
 
 The installed binary is the authority for syntax: `herdr --help`, then a
