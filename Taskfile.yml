@@ -19,6 +19,10 @@ includes:
   # and fetched via uvx in taskfiles/foreman.yml)
   foreman: taskfiles/foreman.yml
 
+vars:
+  # renovate: datasource=npm depName=@fission-ai/openspec
+  OPENSPEC_VERSION: "1.11.0"
+
 tasks:
   default:
     desc: Interactive task menu (tv)
@@ -116,6 +120,7 @@ tasks:
       - task: test:open-devcontainer
       - task: test:codex-review
       - task: test:template-helpers
+      - task: spec:validate
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -696,6 +701,39 @@ tasks:
     desc: Show whether the Claude → Codex stop-gate review is enabled
     cmds:
       - ./scripts/codex-gate.sh status
+
+  # ── Spec-driven changes (OpenSpec) ──────────────────────────────
+  # Root-only: openspec/ is this repo's own change-proposal workflow, never
+  # shipped to generated repos (no copier answer, nothing under template/).
+  # The CLI is pinned via OPENSPEC_VERSION above and fetched through npx —
+  # there is no root package.json to install it into.
+  spec:validate:
+    desc: "Validate every OpenSpec change proposal and spec (openspec validate --all)"
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/openspec.sh validate --all --no-interactive
+
+  spec:list:
+    desc: List active OpenSpec change proposals
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/openspec.sh list
+
+  spec:update:
+    desc: Refresh generated OpenSpec instruction files for configured tools
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/openspec.sh update
+
+  spec:run:
+    desc: "Run an arbitrary OpenSpec CLI command (usage: task spec:run -- <args>)"
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/openspec.sh {{.CLI_ARGS}}
 
   # ── Security ──────────────────────────────────────────────────
   security:

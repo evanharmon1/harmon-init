@@ -1,0 +1,37 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  harmon-init is a Copier project template (https://copier.readthedocs.io), not
+  an application: it scaffolds new repos with DevOps tooling — CI/CD, linting,
+  security checks, git hooks, and task runners — and can also standardize an
+  existing repo. It has two layers: the repo root (tooling for maintaining the
+  template itself, dogfooding its own conventions) and template/ (the Copier
+  template root; jinja-templated, excluded from root lint, becomes generated
+  projects). Most root files have a template/ counterpart that must change in
+  lockstep ("dogfood parity"). Conventional Commits are required, and
+  `task verify` (lint + guards + rendered-template tests) is the local
+  definition-of-done gate. A PR touching template/ must carry a fix:/feat:/
+  breaking title — squash-merge feeds the PR title to release-please, and only
+  those types cut the release `copier update` delivers downstream. See
+  AGENTS.md for the full conventions catalog.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+rules:
+  proposal:
+    - Always include a "Non-goals" section stating what this change
+      deliberately does not do.
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

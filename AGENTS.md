@@ -783,6 +783,24 @@ unproven condition means stay draft, not promote and watch.
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
 
+### Spec-driven changes (OpenSpec)
+
+Root-only tooling — generated repos do not receive it (no copier answer,
+nothing under `template/`, no `copier.yml` change; see
+[docs/decisions/2026-09-01-adopt-openspec.md](docs/decisions/2026-09-01-adopt-openspec.md)).
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) drives this repository's
+own changes: `/opsx:propose` drafts one, `/opsx:apply` implements its tasks,
+and `/opsx:archive` folds it into `openspec/specs/` once done.
+`openspec/changes/<name>/` is the spec of record for a change while it is in
+flight — not `specs/`, which keeps `issue-strategy.md` and design handoff
+bundles (see `specs/README.md`).
+
+- `task spec:validate` — `openspec validate --all`; wired into `task verify`.
+- `task spec:list` — list active change proposals.
+- `task spec:update` — refresh generated instruction files (after an
+  `OPENSPEC_VERSION` bump, e.g.).
+- `task spec:run -- <args>` — passthrough to the pinned CLI for anything else.
+
 ## Second-Model Review (Codex)
 
 A second AI model (the OpenAI Codex CLI) reviews changes on demand — opt-in

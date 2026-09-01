@@ -14,6 +14,14 @@
   // staged files explicitly) would still touch them even though
   // `task lint:markdown` skips them via its glob.
   //
+  // .agents/workflows/**, .github/prompts/**, .github/skills/**, .opencode/**,
+  // .pi/**, and .omp/** are the same situation, one layer down: `openspec
+  // init`/`update` (task spec:update) regenerates them for the Codex,
+  // GitHub Copilot, OpenCode, Pi, and Oh My Pi tool integrations, and they
+  // follow OpenSpec's own upstream markdown conventions, not this repo's.
+  // openspec/ itself is NOT listed here — hand-written proposals and specs
+  // there are ordinary tracked markdown.
+  //
   // The remaining entries are gitignored artifact/cache dirs that can exist on
   // disk (terraform provider cache, uv venv, go-task cache, npm deps) —
   // markdownlint-cli2 does not read .gitignore, and while `task lint:markdown`
@@ -23,6 +31,12 @@
     "CHANGELOG.md",
     ".claude/**",
     ".agents/skills/**",
+    ".agents/workflows/**",
+    ".github/prompts/**",
+    ".github/skills/**",
+    ".opencode/**",
+    ".pi/**",
+    ".omp/**",
     "_bmad/**",
     "**/.terraform/**",
     "**/.venv/**",
