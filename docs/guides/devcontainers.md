@@ -577,10 +577,10 @@ repo** (one template serves every repo). To stand this repo up in Coder:
 
 ### Bot-profile access from Coder
 
-The org's Coder `devcontainer` template exposes **two agents per workspace**:
+The Coder `devcontainer` template exposes **two agents per workspace**:
 
 - **`host`** — the outer workspace container, running as `coder`, with Docker
-  and the repo checkout at `/home/coder/<repo>`, but no toolchain.
+  and the repo checkout at `~/<repo>`, but no toolchain.
 - **`devcontainer`** — the inner devcontainer, running as `vscode`, with the
   repo at `/workspaces/<repo>`, all tools, and Herdr.
 
@@ -601,9 +601,9 @@ herdr --remote coder.<workspace>.devcontainer
 
 The bot devcontainer has no `sshd`, no `tailscale`/`tailscaled`, and no
 listening service. Its only network process is `/.coder-agent/coder agent`,
-which holds an **outbound** connection to the Coder server
-(`coder.harmonlab.net`). Every SSH session is carried down that tunnel: the
-local `coder ssh --stdio` ProxyCommand authenticates to the Coder control plane
+which holds an **outbound** connection to the Coder server. Every SSH session
+is carried down that tunnel: the local `coder ssh --stdio` ProxyCommand
+authenticates to the Coder control plane
 with the operator's CLI session, and the agent terminates the SSH protocol
 in-process. There is no inbound port, NAT hole, or tailnet membership. Access
 is gated by Coder login and RBAC and appears in Coder's audit log. Coder's
