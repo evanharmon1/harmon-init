@@ -284,16 +284,18 @@ creating one is [guides/bot-account.md](../guides/bot-account.md).
   be dropped.
 - **Tailscale and on-demand secret fetch** — the bot profile installs no
   1Password CLI, so there is **no path to pull arbitrary secrets on demand**, and
-  no Tailscale, so no tailnet reach. Its access path is the outbound Coder agent
-  tunnel, gated by Coder login/RBAC and recorded in Coder's audit log; the
-  [Bot-profile access from Coder](../guides/devcontainers.md#bot-profile-access-from-coder)
-  section explains why that keeps the bot away from a second tailnet identity,
-  credential class, and access path. Note what this does *not* say: the
-  container is not secret-free. It holds whatever the env-file carries. That
-  set is a **property of the 1Password Environment behind the env-file** — a
-  convention you maintain, not a guarantee the profile enforces. Put a
-  production credential in that Environment and it lands in the container,
-  next to the agent.
+  no Tailscale, so no tailnet reach. In a Coder-hosted bot workspace, its access
+  path is the outbound Coder agent tunnel, gated by Coder login/RBAC and
+  recorded in Coder's audit log; the [Bot-profile access from
+  Coder](../guides/devcontainers.md#bot-profile-access-from-coder) section
+  explains why that keeps the bot away from a second tailnet identity,
+  credential class, and access path. Local Docker and Codespaces do not have
+  that Coder path, so use their own host/platform access controls. Note what
+  this does *not* say: the container is not secret-free. It holds whatever the
+  env-file carries. That set is a **property of the 1Password Environment
+  behind the env-file** — a convention you maintain, not a guarantee the
+  profile enforces. Put a production credential in that Environment and it
+  lands in the container, next to the agent.
 
 ### Effective access = min(collaborator grant, PAT permissions)
 

@@ -584,10 +584,15 @@ The Coder `devcontainer` template exposes **two agents per workspace**:
 - **`devcontainer`** — the inner devcontainer, running as `vscode`, with the
   repo at `/workspaces/<repo>`, all tools, and Herdr.
 
-Target the `devcontainer` agent when you need the bot profile or a Herdr
-session. `coder ssh <workspace>` fails with `multiple agents found, please
-specify the agent name, available agents: [devcontainer host]`. The working
-forms are:
+These two profiles both name their inner Coder agent `devcontainer`; the
+`.devcontainer` suffix selects the inner agent, not the security profile. These
+commands assume the workspace was created from the **Bot** profile
+(`.devcontainer/devcontainer.json`), not the human **Dev** profile
+(`.devcontainer/dev/devcontainer.json`). Verify the selected config before
+allowing a bot to run; if it is the Dev profile, use the human workflow and do
+not treat this target as a bot boundary. `coder ssh <workspace>` fails with
+`multiple agents found, please specify the agent name, available agents:
+[devcontainer host]`. The working forms are:
 
 ```bash
 coder ssh <workspace>.devcontainer
@@ -599,16 +604,17 @@ ssh coder.<workspace>.devcontainer
 herdr --remote coder.<workspace>.devcontainer
 ```
 
-The bot devcontainer has no `sshd`, no `tailscale`/`tailscaled`, and no
-listening service. Its only network process is `/.coder-agent/coder agent`,
-which holds an **outbound** connection to the Coder server. Every SSH session
-is carried down that tunnel: the local `coder ssh --stdio` ProxyCommand
-authenticates to the Coder control plane
-with the operator's CLI session, and the agent terminates the SSH protocol
-in-process. There is no inbound port, NAT hole, or tailnet membership. Access
-is gated by Coder login and RBAC and appears in Coder's audit log. Coder's
-transport embeds its own WireGuard/DERP mesh internally; that is inside the
-`coder` binaries and is unrelated to the operator's Tailscale tailnet.
+In a Coder-hosted bot workspace, the devcontainer has no `sshd`, no
+`tailscale`/`tailscaled`, and no inbound listener. The Coder remote-access
+process is `/.coder-agent/coder agent`, which holds an **outbound** connection
+to the Coder server. Every SSH session is carried down that tunnel: the local
+`coder ssh --stdio` ProxyCommand authenticates to the Coder control plane with
+the operator's CLI session, and the agent terminates the SSH protocol
+in-process. Other ordinary processes may make outbound network requests, but
+they do not create an inbound SSH or tailnet path. Access is gated by Coder
+login and RBAC and appears in Coder's audit log. Coder's transport embeds its
+own WireGuard/DERP mesh internally; that is inside the `coder` binaries and is
+unrelated to the operator's Tailscale tailnet.
 
 This is the deliberate access model for an AI-agent container because the bot
 is the **untrusted** party: Claude runs `bypassPermissions`, Codex runs
