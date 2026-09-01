@@ -580,7 +580,7 @@ repo** (one template serves every repo). To stand this repo up in Coder:
 The org's Coder `devcontainer` template exposes **two agents per workspace**:
 
 - **`host`** — the outer workspace container, running as `coder`, with Docker
-  and the repo checkout at `~/<repo>`, but no toolchain.
+  and the repo checkout at `/home/coder/<repo>`, but no toolchain.
 - **`devcontainer`** — the inner devcontainer, running as `vscode`, with the
   repo at `/workspaces/<repo>`, all tools, and Herdr.
 
