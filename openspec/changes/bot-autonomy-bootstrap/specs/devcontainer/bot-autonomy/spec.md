@@ -43,11 +43,28 @@ provider configuration; or an entry in an explicit `unsupported` set
 carrying a reason. A unit test SHALL enumerate the full registry and fail if
 any slug falls into none of the three buckets, or into more than one.
 
+An `unsupported` entry's reason determines whether the exemption survives
+the slug becoming installed. A reason of **out of image scope** (the
+harness is not part of this shared image and installing it is not planned)
+exempts the slug regardless of install status. A reason of **pending a
+follow-on module** (the harness is registered and intended to be covered,
+but its module has not shipped yet) exempts the slug ONLY while its
+executable is absent: `verify` SHALL fail an installed executable whose
+slug carries a pending-module `unsupported` entry and no real module, the
+same as it fails an uncovered slug. This is what keeps the fail-closed
+guarantee intact through a rollout window instead of silently suspending
+it — the moment `harness-matrix` installs `copilot-cli` or `pi` before
+`bot-autonomy-new-harnesses` modules them, `verify` fails loudly rather
+than reporting success over a harness that is, in fact, still
+prompt-enabled.
+
 #### Scenario: registry completeness is unit-tested across all three buckets
 - **WHEN** the bot-autonomy unit test runs
 - **THEN** it fails if any `agent-registry.json` harness slug has no
   module, no alias to a moduled slug, and no `unsupported` entry with a
-  reason, and fails if any slug is covered by more than one bucket
+  reason; fails if any slug is covered by more than one bucket; and fails
+  if an `unsupported` entry's reason is neither "out of image scope" nor
+  "pending a follow-on module"
 
 #### Scenario: provider-rewired Claude Code variants alias to the claude-code module
 - **WHEN** the bot-autonomy module directory and its alias table are
@@ -59,26 +76,36 @@ any slug falls into none of the three buckets, or into more than one.
   functions and environment variables (`claude-providers.sh`), and so share
   its `/etc/claude-code/managed-settings.json` boundary
 
-#### Scenario: harnesses absent from the bot image are unsupported with a reason
+#### Scenario: harnesses out of image scope are unsupported regardless of install status
 - **WHEN** the bot-autonomy unsupported set is inspected
-- **THEN** `qwen-code`, `goose`, and `cline` each carry a reason stating
-  they are not installed in the shared devcontainer image, and
-  `claude-code-action` carries a reason stating it runs as a GitHub Actions
-  workflow and is never installed or launched inside a devcontainer
+- **THEN** `qwen-code`, `goose`, and `cline` each carry an out-of-scope
+  reason stating they are not installed in the shared devcontainer image,
+  and `claude-code-action` carries an out-of-scope reason stating it runs
+  as a GitHub Actions workflow and is never installed or launched inside a
+  devcontainer — and each remains exempt even if a future image build were
+  to install one of them
 
-#### Scenario: harnesses pending a later change are unsupported with a reason, not silently absent
+#### Scenario: harnesses pending a later change satisfy static completeness now
 - **WHEN** the bot-autonomy unsupported set is inspected
-- **THEN** `copilot-cli` and `pi` each carry a reason stating they are
-  registered but not yet installed in the bot image — `harness-matrix`
-  installs the binaries and `bot-autonomy-new-harnesses` adds their
-  modules — and this entry holds regardless of which change merges first,
-  so an installed-but-unmoduled Copilot CLI or pi binary never fails
-  `verify` before its module exists
+- **THEN** `copilot-cli` and `pi` each carry a pending-module reason
+  stating they are registered but not yet installed in the bot image —
+  `harness-matrix` installs the binaries and `bot-autonomy-new-harnesses`
+  adds their modules — satisfying the registry-completeness test before
+  either binary is installed
+
+#### Scenario: an installed pending-module harness fails verify until it gets a real module
+- **WHEN** `bot-autonomy.sh verify` runs and finds `copilot-cli` or `pi`
+  installed while it still only carries a pending-module `unsupported`
+  entry (no module, no alias)
+- **THEN** `verify` exits non-zero naming the harness — the pending-module
+  exemption does not survive installation, so a rollout that lands
+  `harness-matrix`'s image before `bot-autonomy-new-harnesses`'s modules
+  fails CI loudly instead of silently reporting success
 
 #### Scenario: an installed executable with no covering entry fails verify
 - **WHEN** `bot-autonomy.sh verify` runs and finds an executable on `PATH`
   that corresponds to a registry harness slug with no module, no alias, and
-  no `unsupported` entry
+  no `unsupported` entry at all
 - **THEN** `verify` exits non-zero and names the uncovered harness
 
 ### Requirement: Fail-closed enforcement at apply, both verify points, and CI
@@ -112,6 +139,15 @@ policy.
 - **THEN** it runs `devcontainer-assert.sh container` against the running
   built image and fails the workflow if any supported installed harness is
   prompt-enabled or sandboxed below its declared bot policy
+
+#### Scenario: the CI assertion covers every module, not only Codex
+- **WHEN** `devcontainer-assert.sh container` runs against the bot profile
+- **THEN** its coverage is not limited to Codex's `sandbox_mode`/
+  `approval_policy` (the only boundary it checks today) — it additionally
+  proves Claude Code, Antigravity, and OpenCode's effective policies, by
+  invoking `bot-autonomy.sh verify` inside the running container (via
+  `docker exec`) rather than by duplicating each boundary's check a second
+  time in the assertion script
 
 ### Requirement: Claude Code non-interactive boundary
 The bot profile SHALL set `permissions.defaultMode` to `bypassPermissions` in
@@ -179,8 +215,19 @@ passing against the stale copy.
 The bot profile SHALL set `toolPermission: always-proceed` (and the existing
 managed keys) in `~/.gemini/antigravity-cli/settings.json`, AND the bot
 post-create SHALL install an executable wrapper at `~/.local/bin/agy` that
-adds `--dangerously-skip-permissions` to every launch that does not already
-carry it. `verify` SHALL fail if either boundary is missing.
+adds `--dangerously-skip-permissions` to every **agent/headless execution**
+launch that does not already carry it. `verify` SHALL fail if either
+boundary is missing. The wrapper SHALL pass a fixed set of subcommands and
+flags through unmodified, without appending the flag: a bare `agy`
+(interactive, already covered by the settings-file policy),
+`agent`/`agents`, `changelog`, `help`/`-h`/`--help`, `install`, `models`,
+`plugin`/`plugins`, `update`, and `--version` — matching the passthrough
+list already proven correct in `agy-autonomy.sh`, the shell-function
+mechanism this wrapper replaces. Appending the flag to any of these is
+either rejected by `agy` or meaningless, and `--version` specifically is
+relied on elsewhere (`ensure-antigravity-cli.sh` calls `agy --version` to
+compare installed versions) — a literal "every launch" rule would break
+routine CLI use and the compatibility installer alike.
 
 #### Scenario: apply sets always-proceed in Antigravity settings
 - **WHEN** the `antigravity` module's `apply` runs in the bot profile
@@ -204,6 +251,15 @@ carry it. `verify` SHALL fail if either boundary is missing.
   `--dangerously-skip-permissions`
 - **THEN** the wrapper does not add the flag a second time
 
+#### Scenario: passthrough subcommands and flags are not modified
+- **WHEN** the wrapper is invoked as a bare `agy`, or with `agent`,
+  `agents`, `changelog`, `help`, `-h`, `--help`, `install`, `models`,
+  `plugin`, `plugins`, `update`, or `--version`
+- **THEN** it execs the underlying `agy` binary unchanged, without
+  appending `--dangerously-skip-permissions` — including when
+  `ensure-antigravity-cli.sh` calls `agy --version` during post-create,
+  which must keep working exactly as it does today
+
 #### Scenario: verify fails if the wrapper is missing or inert
 - **WHEN** `verify` runs in the bot profile and `~/.local/bin/agy` is
   missing, not executable, or does not inject the flag
@@ -213,8 +269,11 @@ carry it. `verify` SHALL fail if either boundary is missing.
 The bot profile SHALL force `permission.*` to `"allow"` in
 `~/.config/opencode/opencode.json` on every `apply`, overriding any existing
 value for that key, while preserving every other key already present in the
-file. `verify` SHALL fail if the effective permission policy is not
-allow-all.
+file. `verify` SHALL fail if the **fully resolved** effective permission
+policy — global config layered with any workspace-level `opencode.json` the
+current repository provides — is not allow-all, since OpenCode resolves a
+workspace-level `permission` value over the global one and a global-only
+check would recreate the effective-state gap this change exists to close.
 
 #### Scenario: apply seeds permission allow-all on a fresh volume
 - **WHEN** the `opencode` module's `apply` runs and
@@ -230,9 +289,19 @@ allow-all.
   unchanged
 
 #### Scenario: verify fails on a non-allow-all effective policy
-- **WHEN** `verify` reads the effective OpenCode permission policy and it is
-  not allow-all
+- **WHEN** `verify` reads the fully resolved OpenCode permission policy
+  (via OpenCode's own config-resolution surface, run from the repository
+  being worked in — not a raw read of the global file alone) and it is not
+  allow-all
 - **THEN** `verify` exits non-zero naming OpenCode
+
+#### Scenario: a workspace-level override is not silently missed
+- **WHEN** the current repository provides its own `opencode.json` (project
+  or `.opencode/opencode.json`) whose `permission.*` is not `"allow"`,
+  overriding the global default `apply` set
+- **THEN** `verify` fails, naming the workspace-level file as the cause —
+  forcing the global default alone is not sufficient when a workspace file
+  can override it
 
 ### Requirement: OpenCode and Antigravity policy changes are individually reversible
 Because `~/.config/opencode` and `~/.gemini` are named volumes that persist

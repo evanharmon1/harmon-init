@@ -9,19 +9,26 @@
       alias table (`claude-code-deepseek`, `claude-code-glm`,
       `claude-code-kimi`, `claude-code-minimax`, `claude-code-qwen`,
       `claude-code-qwen-local` → `claude-code`) and the `unsupported` set
-      (slug → reason) covering `claude-code-action` (runs as a GitHub
-      Action), `qwen-code`/`goose`/`cline` (not installed in the shared
-      image), and `copilot-cli`/`pi` (registered, not yet installed —
-      `harness-matrix` installs them, `bot-autonomy-new-harnesses` adds
-      their modules); verify the registry schema
-      (`agent-registry.schema.json`) is unchanged (`git diff` shows no
-      schema edit)
+      (slug → reason, reason typed as `out-of-scope` or `pending-module`)
+      covering `claude-code-action`/`qwen-code`/`goose`/`cline`
+      (`out-of-scope` — not installed in the shared image, or not launched
+      in one) and `copilot-cli`/`pi` (`pending-module` — registered, not
+      yet installed; `harness-matrix` installs them,
+      `bot-autonomy-new-harnesses` adds their modules); verify the registry
+      schema (`agent-registry.schema.json`) is unchanged (`git diff` shows
+      no schema edit)
 - [ ] 1.3 Add a unit test asserting every one of the registry's 16 harness
-      slugs falls into exactly one of the three buckets, and that an
-      installed executable with none of the three fails `verify`; verify
+      slugs falls into exactly one of the three buckets, that an
+      `unsupported` entry's reason is one of the two valid types, and that
+      an installed executable with none of the three fails `verify`; verify
       with `task test:bot-autonomy` (or the chosen test task name) passing
       and failing on injected fixtures (an uncovered slug, a
-      doubly-covered slug)
+      doubly-covered slug, a mistyped reason)
+- [ ] 1.4 Make `verify` fail a `pending-module` `unsupported` slug the
+      instant its executable is installed but it still has no real module
+      (an `out-of-scope` entry keeps its exemption unconditionally); verify
+      with a fixture that installs a fake `copilot` executable against the
+      `pending-module` entry and confirms `verify` now fails naming it
 
 ## 2. Per-harness modules
 
@@ -53,17 +60,27 @@
 - [ ] 2.5 Install `~/.local/bin/agy` as an executable wrapper from the bot
       post-create only (retiring the `agy()` shell function in
       `agy-autonomy.sh`), injecting `--dangerously-skip-permissions` unless
-      already present, passthrough for subcommands/help/version; verify with
-      a fixture invoking the wrapper directly (not via a sourced shell) and
-      asserting the flag lands
+      already present, porting `agy-autonomy.sh`'s exact passthrough list
+      unmodified (bare `agy`, `agent`/`agents`/`changelog`/`help`/`-h`/
+      `--help`/`install`/`models`/`plugin`/`plugins`/`update`/`--version`);
+      verify with a fixture invoking the wrapper directly (not via a
+      sourced shell) asserting the flag lands on a non-passthrough
+      invocation and is absent on every passthrough case, and confirm
+      `ensure-antigravity-cli.sh`'s `agy --version` call still behaves
+      identically through the wrapper
 - [ ] 2.6 Add `bot-autonomy/opencode.sh`: apply force-overwrites
       `"permission": {"*": "allow"}` in `~/.config/opencode/opencode.json`
       (create-if-absent, preserve every other existing key, override any
       prior `permission` value), recording the prior `permission` value (or
-      its absence) in a form `restore` can read; verify reads the effective
-      policy; verify with fixtures covering fresh-file creation,
-      overriding an existing `ask`/`deny` value, preserving unrelated keys,
-      and a full apply→restore round trip
+      its absence) in a form `restore` can read; verify reads OpenCode's
+      **fully resolved** configuration (global layered with any
+      workspace-level `opencode.json`/`.opencode/opencode.json` the
+      current repository provides) rather than the global file alone, and
+      names the workspace file when that is the cause of a failure; verify
+      with fixtures covering fresh-file creation, overriding an existing
+      `ask`/`deny` value, preserving unrelated keys, a full apply→restore
+      round trip, and a workspace-level `opencode.json` that overrides the
+      global allow-all back to `ask`/`deny`
 
 ## 3. Fail-closed wiring
 
@@ -74,11 +91,18 @@
 - [ ] 3.2 Call `bot-autonomy.sh verify` at the end of bot post-create and
       again in bot post-start; verify a deliberately broken fixture fails
       both lifecycle points
-- [ ] 3.3 Add a `devcontainer-assert.sh container` invocation for the bot
-      profile to `.github/workflows/devcontainer-build.yml`, after the image
-      build/push step; verify by running the updated workflow (or a local
-      `act`/manual dry run) and confirming it fails against a deliberately
-      misconfigured image and passes against the real one
+- [ ] 3.3 Extend `scripts/devcontainer-assert.sh`'s existing `container`
+      mode to additionally `docker exec` the running container and run
+      `bot-autonomy.sh verify` — its current checks cover only Codex's
+      `sandbox_mode`/`approval_policy`, so wiring it into CI unmodified
+      would leave Claude Code, Antigravity, and OpenCode's modules
+      completely unchecked there despite the spec's "every supported
+      installed harness" claim; then add the (now-extended) invocation for
+      the bot profile to `.github/workflows/devcontainer-build.yml`, after
+      the image build/push step; verify by running the updated workflow (or
+      a local `act`/manual dry run) and confirming it fails against a
+      deliberately misconfigured image (e.g. Antigravity's settings
+      reverted) and passes against the real one
 - [ ] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
       and the `agy()` function in `agy-autonomy.sh` per the design's open
       question; verify no remaining caller references a retired script

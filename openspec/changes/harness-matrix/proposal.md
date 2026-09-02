@@ -17,9 +17,14 @@ installed binaries.
   `copilot`, tracked by Renovate's npm datasource; disable auto-update if the
   CLI exposes a switch for it.
 - Add **pi**: npm `@earendil-works/pi-coding-agent@0.84.4` installed with
-  `--ignore-scripts` (the correct current package name — the older
-  `@mariozechner`-scoped package is deprecated); binary `pi`; disable
-  auto-update via `PI_SKIP_VERSION_CHECK`.
+  `--ignore-scripts` in its own separate `npm install -g` invocation, not
+  folded into the combined layer that installs the other npm-based
+  harnesses (`--ignore-scripts` applies to every package in whatever
+  invocation it is part of, and Copilot CLI's install may depend on a
+  lifecycle step — see below); the correct current package name is
+  `@earendil-works/pi-coding-agent` (the older `@mariozechner`-scoped
+  package is deprecated); binary `pi`; disable auto-update via
+  `PI_SKIP_VERSION_CHECK`.
 - Add **oh-my-pi**: the npm distribution is bun-only, so install the
   prebuilt `omp-linux-{x64,arm64}` binary from GitHub release `v18.1.2`
   (`can1357/oh-my-pi`), verified against that release's `SHA256SUMS.txt`;

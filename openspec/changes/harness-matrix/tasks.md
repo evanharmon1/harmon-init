@@ -19,9 +19,16 @@
       verify the annotation matches the existing generic ARG-pin regex
       (`renovate-config-validator` or a `git grep` self-check against
       `renovate.json`'s pattern)
-- [ ] 2.2 Install with `npm install -g
-      "@earendil-works/pi-coding-agent@${PI_VERSION}" --ignore-scripts` in
-      the combined npm layer; verify `pi --version` in the built image
+- [ ] 2.2 Install pi in its **own** `RUN npm install -g
+      "@earendil-works/pi-coding-agent@${PI_VERSION}" --ignore-scripts`
+      layer, separate from the combined npm layer that installs Claude
+      Code/Codex/OpenCode/dmux/Copilot CLI — `--ignore-scripts` applies to
+      every package in whatever invocation it is part of, and Copilot
+      CLI's `npm-loader.js` may depend on a lifecycle step to fetch its
+      platform binary (see task 1.3), so combining the two would risk
+      silently breaking Copilot instead of only hardening pi; verify
+      `pi --version` in the built image and that the combined layer's other
+      tools are unaffected
 - [ ] 2.3 Set `PI_SKIP_VERSION_CHECK` in the image `ENV` block; verify with
       `smoke.sh`
 

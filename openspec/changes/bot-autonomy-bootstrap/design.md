@@ -148,27 +148,37 @@ unsupported list") asks for exactly the static property, and narrowing it
 would let a slug silently fall through the cracks the way OpenCode did
 originally, just at the registry layer instead of the image layer.
 
-**Cross-change sequencing: the `unsupported` bucket is the bridge, not
-atomicity.** `harness-matrix` installs `copilot-cli`'s and `pi`'s binaries
-before `bot-autonomy-new-harnesses` gives them modules — an ordinary
-consequence of shipping them as separate changes. Under a stricter "every
-**installed** executable needs a module" reading, the window between those
-two changes landing would fail `verify` on every fresh bot container,
-through no fault of anything a container's own configuration did wrong.
-Rather than requiring the two changes to land atomically (operationally
-fragile across separately reviewed, separately merged, separately published
-PRs), this change puts `copilot-cli` and `pi` in the `unsupported` set now,
-with a reason naming the follow-on. An `unsupported` entry exempts a slug
-from the fail-closed check **regardless of whether it later becomes
-installed** — that is what makes the exemption a safe bridge: whichever of
-`harness-matrix` and `bot-autonomy-bootstrap` merges first, the window
-between "installed" and "moduled" is covered, and `bot-autonomy-new-harnesses`
-closes it by replacing the `unsupported` entry with a real module rather than
-by racing a rollout. The same reasoning applies going forward to `oh-my-pi`:
-`harness-matrix` adds its registry row, so whichever of `harness-matrix` and
-this change merges second is responsible for making sure `oh-my-pi` lands in
-the `unsupported` set too — see harness-matrix's design.md, which states this
-from the other side.
+**Cross-change sequencing: the `unsupported` bucket satisfies static
+completeness now; it does not — and must not — silence the dynamic
+fail-closed check once the harness is actually installed.** `harness-matrix`
+installs `copilot-cli`'s and `pi`'s binaries before
+`bot-autonomy-new-harnesses` gives them modules — an ordinary consequence of
+shipping them as separate changes. A first pass at this design put both
+slugs in the `unsupported` set with an exemption that survived installation,
+reasoning that the alternative (verify failing during the rollout window)
+was worse than a temporary silent gap. That reasoning was backwards: a
+`verify` that reports success while a registered, intended-to-be-supported
+harness sits installed and still prompt-enabled is exactly the silent
+effective-state divergence issue #1137 exists to eliminate — worse than a
+loud CI failure, not better than one. The fix keeps the `unsupported` bucket
+(so the *static* registry-completeness test can pass before either binary is
+installed) but makes its exemption conditional on the entry's **reason**:
+an out-of-scope reason (harness never installed by this image, e.g.
+`qwen-code`) exempts unconditionally; a pending-follow-on reason (`copilot-cli`,
+`pi`) exempts only while the executable is **absent** — the instant one is
+installed, `verify` treats it exactly like any other uncovered slug and
+fails. This makes the sequencing hazard self-detecting: if the rolling
+`sync-pin` PR ever bumps a bot image to a revision with Copilot CLI or pi
+installed before `bot-autonomy-new-harnesses` has shipped their modules, CI
+goes red immediately, naming the harness — which is the correct outcome,
+and turns "land the pin after the modules exist" into an enforced invariant
+rather than a documentation-only convention. The same reasoning applies
+going forward to `oh-my-pi`: `harness-matrix` adds its registry row with a
+pending-follow-on reason, so whichever of `harness-matrix` and this change
+merges second is responsible for adding that entry — see harness-matrix's
+design.md, which states this from the other side — and if `oh-my-pi` is
+ever installed before `bot-autonomy-new-harnesses` covers it, the same
+loud-failure behavior applies.
 
 **Codex: ship a complete `codex-managed-config.bot.toml`, installed and
 verified by checksum, replacing the awk rewrite — plus a structural parity
@@ -224,6 +234,55 @@ put it back, while every other key in the file (`theme`, anything else)
 merges normally and is left alone. Reusing an already-reviewed pattern from
 the same codebase, rather than inventing a second one, is deliberate.
 
+**OpenCode `verify` inspects the fully resolved configuration, not the
+global file alone.** OpenCode layers a workspace-level `opencode.json` (or
+`.opencode/opencode.json`) over the global `~/.config/opencode/opencode.json`
+— `opencode debug config` shows a project-level `permission.*` overriding a
+global `"allow"`. `apply` can only ever set the global default: it has no
+business rewriting a generated repository's own tracked files. A `verify`
+that only re-reads the global file would therefore report success in
+exactly the scenario this change exists to prevent — a repository whose own
+`opencode.json` still denies or prompts, with the harness effectively
+non-autonomous despite a clean bot-autonomy report. `verify` instead reads
+OpenCode's own resolved view (its config-resolution surface, run from the
+actual working directory being verified), and fails naming the
+workspace-level file when that is the cause — giving whoever hits this a
+concrete, actionable answer rather than a report that quietly didn't check
+the thing that mattered.
+
+**The Antigravity wrapper's flag injection is scoped to agent/headless
+execution, with a fixed passthrough list — not "every launch."** An earlier
+draft of the Antigravity requirement said the wrapper adds
+`--dangerously-skip-permissions` to every invocation that doesn't already
+carry it. That is stricter than the mechanism it replaces:
+`agy-autonomy.sh`'s existing shell function already passes a specific list
+of subcommands and flags straight through
+(`agent`/`agents`/`changelog`/`help`/`-h`/`--help`/`install`/`models`/
+`plugin`/`plugins`/`update`/`--version`, and a bare `agy`), because `agy`
+either rejects the flag on those or the flag is meaningless there. Losing
+that nuance in the port to an executable wrapper would break routine CLI
+use — and, concretely, `ensure-antigravity-cli.sh` itself calls
+`agy --version` during every post-create, so an unconditional wrapper would
+break the very script that installs it. The wrapper keeps the reference
+implementation's passthrough list rather than reinventing one.
+
+**The CI container assertion invokes `bot-autonomy.sh verify` itself, rather
+than duplicating each boundary's check a second time.**
+`scripts/devcontainer-assert.sh`'s existing `container` mode checks only
+Codex's `sandbox_mode`/`approval_policy` (plus git identity and
+TS_AUTHKEY/GH_TOKEN placement) — it has no knowledge of Claude Code,
+Antigravity, or OpenCode at all. Simply adding an invocation of that
+existing function to `devcontainer-build.yml`, as an early draft of this
+change's tasks proposed, would make CI report success while three of the
+four new modules go completely unchecked — the same shape of false
+confidence the checksum-only Codex check was designed to avoid, one layer
+up. Rather than hand-writing three more boundary checks into
+`devcontainer-assert.sh` (duplicating logic `bot-autonomy.sh verify` already
+has, and now two places that can drift from each other), the container
+assertion runs `docker exec <container> bot-autonomy.sh verify` — the same
+verifier post-create and post-start already run, against the same
+already-covered set of boundaries, with one implementation to keep correct.
+
 **`verify` re-reads effective runtime state independently of `apply`'s
 internals.** This mirrors the incident's actual root cause: the template
 said the right thing while the applied file did not match it. Each module's
@@ -268,14 +327,17 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   [Mitigation] this is precisely acceptance criterion 3's [CI] requirement;
   `task test:devcontainer:root` already pays an equivalent cost locally, so
   CI gains coverage it was missing rather than adopting new mechanism.
-- [Risk] The `unsupported`-bucket bridge for `copilot-cli`/`pi`/`oh-my-pi`
-  could be forgotten when `harness-matrix` or `bot-autonomy-new-harnesses`
-  actually lands, reopening the exact "installed but unmoduled" gap it
-  exists to prevent → [Mitigation] both changes' tasks.md carry an explicit
-  cross-referencing task naming the other change and the specific slug to
-  reconcile; the registry-completeness unit test would also fail loudly the
-  moment `oh-my-pi`'s row exists with no covering entry, rather than passing
-  silently.
+- [Risk] The pending-follow-on `unsupported` entries for
+  `copilot-cli`/`pi`/`oh-my-pi` could be forgotten when `harness-matrix` or
+  `bot-autonomy-new-harnesses` actually lands, reopening the exact
+  "installed but unmoduled" gap they exist to bound → [Mitigation] both
+  changes' tasks.md carry an explicit cross-referencing task naming the
+  other change and the specific slug to reconcile; the
+  registry-completeness unit test fails loudly the moment `oh-my-pi`'s row
+  exists with no covering entry, and — since a pending-follow-on exemption
+  no longer survives installation — `verify` itself fails loudly if any of
+  the three is ever installed before its module ships, so the risk
+  surfaces as a red CI check rather than a silent pass either way.
 - [Risk] Resolving the OpenCode `OPENCODE_CONFIG_CONTENT` open question later
   could make today's file-seed implementation redundant work →
   [Mitigation] the scenario contract (effective permission policy is

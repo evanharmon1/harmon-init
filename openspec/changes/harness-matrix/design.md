@@ -95,8 +95,9 @@ against, unlike TFLint's release (which does not).
 
 **pi: npm install with `--ignore-scripts`, as stated in the proposal, kept as
 the sole mechanism rather than offering the prebuilt tarball as a
-parallel path.** The published package metadata shows no `install` or
-`postinstall` lifecycle script on `@earendil-works/pi-coding-agent@0.84.4` —
+parallel path — installed in its own `RUN` layer, not the combined one.**
+The published package metadata shows no `install` or `postinstall`
+lifecycle script on `@earendil-works/pi-coding-agent@0.84.4` —
 `--ignore-scripts` defends against any *transitive* dependency's lifecycle
 script running during a global install (standard supply-chain hardening for
 `npm install -g` of a third-party package), not a workaround this package
@@ -105,7 +106,14 @@ itself needs. Since the npm path is complete and verifiably functional
 download step), it is decided rather than left open; the prebuilt-tarball
 alternative the proposal also named is documented here as the fallback if a
 future pi release regresses (adds a real postinstall step that
-`--ignore-scripts` would then break).
+`--ignore-scripts` would then break). `--ignore-scripts` is an npm-invocation
+flag, not a per-package one: it silences lifecycle scripts for every
+package named in the same `npm install -g a b c --ignore-scripts` command.
+Copilot CLI's `npm-loader.js` (see below) is small enough that its platform
+binary looks fetched by a separate step, plausibly a lifecycle script —
+folding pi into the same combined layer as Copilot and the other harnesses
+would therefore risk silently breaking Copilot's install to harden a
+package that never needed it. pi gets its own `RUN` layer.
 
 **Copilot CLI: install via plain `npm install -g`, in the same combined
 layer as the other npm-native harnesses.** `npm-loader.js`'s small unpacked
