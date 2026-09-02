@@ -800,11 +800,9 @@ bundles (see `specs/README.md`).
 - `task spec:update` — refresh generated instruction files (after an
   `OPENSPEC_VERSION` bump, e.g.).
 - `task spec:run -- <args>` — passthrough to the pinned CLI for anything else.
-
-The generated `/opsx:*` skills invoke a bare `openspec` command; this repo
-does not put one on `PATH` (root-only, no package.json). Install it yourself
-to match the pin (`npm install -g @fission-ai/openspec@1.11.0`) for that
-interactive flow, or drive everything through `task spec:run -- <args>`.
+- `task spec:install` — puts the CLI on `PATH` (`~/.local/bin`) so the
+  generated `/opsx:*` skills' bare `openspec` invocations resolve; devcontainer
+  bootstrap already runs it, so only run it yourself outside one.
 
 ## Second-Model Review (Codex)
 

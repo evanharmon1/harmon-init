@@ -95,19 +95,24 @@ proposal is a follow-up PR.
 - `task spec:validate` runs through `scripts/spec-validate.sh`, not the CLI
   directly: `task verify` is documented and relied on to run offline, but
   `scripts/openspec.sh` execs through `npx`, which needs the network on a
-  cold cache even to report "nothing to validate." The wrapper checks
-  `openspec/changes/` and `openspec/specs/` for any entries itself first and
-  skips the CLI entirely when there is nothing to validate — the state this
-  PR leaves the repo in — so the common case never touches the network; only
-  an actual proposal pays the `npx` cost, at which point the author already
-  needs the network for `openspec` itself.
-- The generated `/opsx:*` skills invoke a bare `openspec` command, which this
-  repo does not put on `PATH` (no package.json, no global install, by
-  design). Fixing that would mean either hand-editing OpenSpec's own
-  generated skill content — which `task spec:update` would silently
-  overwrite on the next run — or aliasing `openspec` in the shared
-  devcontainer image or its dogfood-paired `.devcontainer/`, which would
-  break for every other consumer of that image or require the `template/`
-  change this decision explicitly rules out. Documented as a known
-  limitation instead (AGENTS.md): install OpenSpec yourself to match the pin
-  for that interactive flow, or use `task spec:run -- <args>`.
+  cold cache even to report "nothing to validate." The wrapper skips the CLI
+  entirely when `openspec/changes/` and `openspec/specs/` are both empty —
+  the state this PR leaves the repo in — so the common case never touches
+  the network. Once a change or archived spec exists (the permanent steady
+  state from that point on), the CLI has to run; a failure whose output
+  matches npm/npx's own network-error codes is then treated as indeterminate
+  (exit 0, warned) rather than an invalid change, so a network-denied
+  checkout is never blocked by a check it cannot run — but an actual invalid
+  item, once the CLI can reach the registry, still fails the gate normally.
+- The generated `/opsx:*` skills invoke a bare `openspec` command. Hand-
+  editing that generated content was rejected — `task spec:update` would
+  silently overwrite it on the next run — so `scripts/install-openspec.sh`
+  (`task spec:install`) instead installs the pinned CLI user-locally
+  (`npm install -g --prefix ~/.local`); `~/.local/bin` is already first on
+  `PATH` in the devcontainer. The root-only `post-create.sh` and
+  `dev/post-create.sh` call it on every container build; anyone working
+  outside the devcontainer runs `task spec:install` themselves. This adds one
+  intentional-divergence line to each post-create script — neither has a
+  template twin to update, since generated repos never receive OpenSpec
+  (noted in `scripts/audit-dogfood.sh`, which already reports both files as
+  differing from their template renders for unrelated, pre-existing reasons).

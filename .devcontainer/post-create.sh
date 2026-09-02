@@ -31,3 +31,9 @@ if [ -d .devcontainer/hooks ]; then
     cp .devcontainer/hooks/* .git/hooks/
     chmod +x .git/hooks/*
 fi
+
+# Root-only: put the pinned OpenSpec CLI on PATH so the generated /opsx/*
+# skills' bare `openspec` invocations resolve (harmon-init's own spec-driven
+# change tooling; docs/decisions/2026-09-01-adopt-openspec.md). Generated
+# repos never receive OpenSpec, so this line has no template counterpart.
+task spec:install

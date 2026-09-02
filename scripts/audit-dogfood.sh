@@ -57,6 +57,14 @@ scripts/sync-devkit-release.sh
 scripts/test-sync-devkit-release.sh
 "
 
+# .devcontainer/post-create.sh and .devcontainer/dev/post-create.sh are NOT
+# in SKIP above (they already carry other real, reportable drift — the
+# per-profile git identity — so hiding them would lose that signal). Their
+# report will additionally always show one intentional root-only block: a
+# `task spec:install` call putting the pinned OpenSpec CLI on PATH
+# (docs/decisions/2026-09-01-adopt-openspec.md). Generated repos never
+# receive OpenSpec, so neither template twin ever gains this line.
+
 have() { command -v "$1" >/dev/null 2>&1; }
 if ! have copier; then
     echo "SKIP: copier is not installed — cannot render the template." >&2

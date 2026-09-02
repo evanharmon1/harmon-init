@@ -738,6 +738,16 @@ tasks:
     cmds:
       - ./scripts/openspec.sh {{.CLI_ARGS}}
 
+  spec:install:
+    # Devcontainer bootstrap only (called from the ROOT post-create.sh /
+    # dev/post-create.sh — no template twin, since generated repos don't get
+    # OpenSpec). Puts the pinned CLI on PATH so the generated /opsx:* skills'
+    # bare `openspec` invocations resolve; task spec:* still use npx and never
+    # need this.
+    desc: "Install the pinned OpenSpec CLI onto PATH (npm install -g --prefix ~/.local)"
+    cmds:
+      - ./scripts/install-openspec.sh {{.OPENSPEC_VERSION}}
+
   # ── Security ──────────────────────────────────────────────────
   security:
     desc: Run all free local security checks (Semgrep CE + gitleaks + dependency audit)
