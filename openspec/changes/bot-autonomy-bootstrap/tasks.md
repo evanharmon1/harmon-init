@@ -145,6 +145,12 @@
 - [ ] 4.4 Apply every change in groups 1-3 to the `template/` twin in the
       same PR (`template/[% if devcontainer %].devcontainer[% endif %]/...`);
       verify with `task test:dogfood-parity` and `task test:dogfood-structure`
+- [ ] 4.4a Apply 4.1's and 4.3's doc edits to their own template twins too:
+      `template/docs/guides/[% if devcontainer %]devcontainers.md[% endif %].jinja`
+      and `template/docs/architecture/security.md.jinja` — both exist
+      today and are structure twins, so a root-only doc edit leaves them
+      stale in generated repos; verify with `task test:dogfood-structure`
+      and `task lint:markdown`
 - [ ] 4.5 File or link the cross-change coordination noted in design.md's
       Decisions: when `harness-matrix` adds the `oh-my-pi` registry row,
       whichever of that change and this one merges second must add

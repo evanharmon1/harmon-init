@@ -77,9 +77,11 @@
       `GEMINI.md` symlink convention are untouched; verify by diffing this
       change against those three surfaces and confirming no edits
 - [ ] 4.5 Drop "Gemini" from the "(Claude Code, Codex, Gemini, OpenCode)"
-      prose in `docs/guides/devcontainers.md` and both `devcontainer.json`
-      twins' profile-table comments; verify with `task lint:markdown` and a
-      grep for the retired phrase
+      prose in `docs/guides/devcontainers.md` **and its own jinja twin**
+      `template/docs/guides/[% if devcontainer %]devcontainers.md[% endif %].jinja`,
+      plus both `devcontainer.json` twins' profile-table comments; verify
+      with `task lint:markdown`, `task test:dogfood-structure`, and a grep
+      for the retired phrase across all four files
 - [ ] 4.6 Update `docs/guides/herdr.md` (root) and its jinja twin
       `template/docs/guides/herdr.md.jinja`: drop `gemini` from the list of
       harnesses the pinned image includes (line ~248) and update every

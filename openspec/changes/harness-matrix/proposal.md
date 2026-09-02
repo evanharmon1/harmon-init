@@ -68,8 +68,12 @@ installed binaries.
 
 - Does not add bot-autonomy policy modules for Copilot CLI, pi, or
   oh-my-pi — that is the separate follow-on change
-  `bot-autonomy-new-harnesses`, gated on this change's image publishing and
-  its pin landing in both `Dockerfile` twins.
+  `bot-autonomy-new-harnesses`. It depends on this change publishing the
+  binaries (there is nothing to write a module against otherwise), but
+  not on the `sync-pin` PR that puts them in this repo's own bot image —
+  see "State the sequencing explicitly" above: the modules merge
+  independently of that pin, in either order, since an absent binary is
+  already skipped by construction.
 - Does not remove the `~/.gemini` named volume, the `gemini` registry
   family, or the `GEMINI.md` symlink convention — only the Gemini CLI binary
   and its image-layer footprint are removed.
