@@ -9,26 +9,27 @@
       alias table (`claude-code-deepseek`, `claude-code-glm`,
       `claude-code-kimi`, `claude-code-minimax`, `claude-code-qwen`,
       `claude-code-qwen-local` → `claude-code`) and the `unsupported` set
-      (slug → reason, reason typed as `out-of-scope` or `pending-module`)
-      covering `claude-code-action`/`qwen-code`/`goose`/`cline`
-      (`out-of-scope` — not installed in the shared image, or not launched
-      in one) and `copilot-cli`/`pi` (`pending-module` — registered, not
-      yet installed; `harness-matrix` installs them,
-      `bot-autonomy-new-harnesses` adds their modules); verify the registry
-      schema (`agent-registry.schema.json`) is unchanged (`git diff` shows
-      no schema edit)
+      (slug → reason, reason is documentation only — it never changes
+      `verify`'s behavior) covering `claude-code-action`/`qwen-code`/
+      `goose`/`cline` (not installed in the shared image, or not launched
+      in one) and `copilot-cli`/`pi` (registered, not yet installed;
+      `harness-matrix` installs them, `bot-autonomy-new-harnesses` adds
+      their modules); verify the registry schema
+      (`agent-registry.schema.json`) is unchanged (`git diff` shows no
+      schema edit)
 - [ ] 1.3 Add a unit test asserting every one of the registry's 16 harness
-      slugs falls into exactly one of the three buckets, that an
-      `unsupported` entry's reason is one of the two valid types, and that
-      an installed executable with none of the three fails `verify`; verify
+      slugs falls into exactly one of the three buckets, and that an
+      installed executable with none of the three fails `verify`; verify
       with `task test:bot-autonomy` (or the chosen test task name) passing
-      and failing on injected fixtures (an uncovered slug, a
-      doubly-covered slug, a mistyped reason)
-- [ ] 1.4 Make `verify` fail a `pending-module` `unsupported` slug the
-      instant its executable is installed but it still has no real module
-      (an `out-of-scope` entry keeps its exemption unconditionally); verify
-      with a fixture that installs a fake `copilot` executable against the
-      `pending-module` entry and confirms `verify` now fails naming it
+      and failing on injected fixtures (an uncovered slug, a doubly-covered
+      slug)
+- [ ] 1.4 Make `verify` fail ANY `unsupported` slug the instant its
+      executable is installed but it still has no real module or alias —
+      uniformly, regardless of the entry's reason (no reason category
+      grants an exemption that survives installation); verify with
+      fixtures that install a fake `copilot` executable against its
+      `unsupported` entry AND a fake `qwen-code`/`goose`/`cline` executable
+      against theirs, confirming `verify` fails naming each
 
 ## 2. Per-harness modules
 
@@ -72,14 +73,19 @@
       `"permission": {"*": "allow"}` in `~/.config/opencode/opencode.json`
       (create-if-absent, preserve every other existing key, override any
       prior `permission` value), recording the prior `permission` value (or
-      its absence) in a form `restore` can read; verify reads OpenCode's
-      **fully resolved** configuration (global layered with any
-      workspace-level `opencode.json`/`.opencode/opencode.json` the
-      current repository provides) rather than the global file alone, and
-      names the workspace file when that is the cause of a failure; verify
-      with fixtures covering fresh-file creation, overriding an existing
-      `ask`/`deny` value, preserving unrelated keys, a full apply→restore
-      round trip, and a workspace-level `opencode.json` that overrides the
+      its absence) in a form `restore` can read — gated on **no backup file
+      existing yet**, matching `apply-antigravity-settings.sh`'s
+      `[ ! -f "$backup_path" ]` guard, so a second or later `apply` never
+      overwrites the first backup with the already-managed `"allow"` value;
+      verify reads OpenCode's **fully resolved** configuration (global
+      layered with any workspace-level `opencode.json`/
+      `.opencode/opencode.json` the current repository provides) rather
+      than the global file alone, and names the workspace file when that
+      is the cause of a failure; verify with fixtures covering fresh-file
+      creation, overriding an existing `ask`/`deny` value, preserving
+      unrelated keys, an `apply → apply → restore` sequence confirming the
+      restore returns the value from *before the first* apply (not the
+      second), and a workspace-level `opencode.json` that overrides the
       global allow-all back to `ask`/`deny`
 
 ## 3. Fail-closed wiring

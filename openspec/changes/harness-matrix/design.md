@@ -171,18 +171,21 @@ the proposal's Non-goals section heads off.
 - [Risk] Once this change's image is published and the rolling `sync-pin`
   PR bumps both `Dockerfile` twins, `copilot-cli` and `pi` become installed
   executables before `bot-autonomy-new-harnesses` gives them bot-autonomy
-  modules — and `bot-autonomy-bootstrap`'s own fail-closed contract would,
-  read strictly as "every installed executable needs a module," break every
-  fresh bot container in that window → [Mitigation] this is not this
-  change's contract to fix, but it does share the fix:
+  modules → [Mitigation] this is not this change's contract to fix, and it
+  is deliberately **not** silently bridged either:
   `bot-autonomy-bootstrap` places `copilot-cli` and `pi` in its
   `unsupported` set (with a reason naming this pin and the follow-on
-  module change) regardless of which change merges first, so the window is
-  exempted rather than raced. This change's own new registry addition,
-  `oh-my-pi`, needs the same treatment: whichever of `harness-matrix` and
-  `bot-autonomy-bootstrap` merges **second** must add `oh-my-pi` to that
-  `unsupported` set — tracked as task 3.4 here and task 4.5 in
-  `bot-autonomy-bootstrap`'s tasks.md, so the obligation is not left to
+  module change), which satisfies the *static* registry-completeness check
+  before either binary is installed — but the *dynamic* `verify` check
+  fails loudly the instant either is actually installed without a real
+  module, regardless of which change merges first. That is the intended,
+  fail-closed outcome: it turns "don't land this pin before the modules
+  ship" into an enforced CI signal instead of a convention someone has to
+  remember. This change's own new registry addition, `oh-my-pi`, needs the
+  same treatment: whichever of `harness-matrix` and `bot-autonomy-bootstrap`
+  merges **second** must add `oh-my-pi` to that `unsupported` set —
+  tracked as task 3.4 here and task 4.5 in `bot-autonomy-bootstrap`'s
+  tasks.md, so the obligation is not left to
   memory in only one of the two changes.
 
 ## Migration Plan

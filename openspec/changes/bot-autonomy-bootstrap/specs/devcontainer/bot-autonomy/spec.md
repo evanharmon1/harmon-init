@@ -43,28 +43,27 @@ provider configuration; or an entry in an explicit `unsupported` set
 carrying a reason. A unit test SHALL enumerate the full registry and fail if
 any slug falls into none of the three buckets, or into more than one.
 
-An `unsupported` entry's reason determines whether the exemption survives
-the slug becoming installed. A reason of **out of image scope** (the
-harness is not part of this shared image and installing it is not planned)
-exempts the slug regardless of install status. A reason of **pending a
-follow-on module** (the harness is registered and intended to be covered,
-but its module has not shipped yet) exempts the slug ONLY while its
-executable is absent: `verify` SHALL fail an installed executable whose
-slug carries a pending-module `unsupported` entry and no real module, the
-same as it fails an uncovered slug. This is what keeps the fail-closed
-guarantee intact through a rollout window instead of silently suspending
-it — the moment `harness-matrix` installs `copilot-cli` or `pi` before
-`bot-autonomy-new-harnesses` modules them, `verify` fails loudly rather
-than reporting success over a harness that is, in fact, still
-prompt-enabled.
+An `unsupported` entry's reason is documentation only — it explains WHY a
+slug has no module today (not installed in this image, not launched inside
+one, or a module pending a named follow-on change) — and never changes what
+`verify` does. Every `unsupported` entry, regardless of reason, exempts its
+slug ONLY while the slug's executable is absent. The instant any
+`unsupported` slug's executable is installed, it is treated exactly like an
+uncovered slug — `verify` fails naming it — unless a real module (or an
+alias to one) now covers it. There is deliberately no reason category whose
+exemption survives installation: an entry that seems permanently
+out-of-scope today (`qwen-code`, `goose`, `cline`, `claude-code-action`) is
+just as capable of silently drifting into scope tomorrow — a future image
+build installing one without anyone updating this table — as `copilot-cli`
+and `pi` are today, and the fail-closed guarantee this change exists to
+add must not depend on someone remembering to update a table; that is the
+same failure mode issue #1137 itself was.
 
 #### Scenario: registry completeness is unit-tested across all three buckets
 - **WHEN** the bot-autonomy unit test runs
 - **THEN** it fails if any `agent-registry.json` harness slug has no
-  module, no alias to a moduled slug, and no `unsupported` entry with a
-  reason; fails if any slug is covered by more than one bucket; and fails
-  if an `unsupported` entry's reason is neither "out of image scope" nor
-  "pending a follow-on module"
+  module, no alias to a moduled slug, and no `unsupported` entry, and fails
+  if any slug is covered by more than one bucket
 
 #### Scenario: provider-rewired Claude Code variants alias to the claude-code module
 - **WHEN** the bot-autonomy module directory and its alias table are
@@ -76,31 +75,27 @@ prompt-enabled.
   functions and environment variables (`claude-providers.sh`), and so share
   its `/etc/claude-code/managed-settings.json` boundary
 
-#### Scenario: harnesses out of image scope are unsupported regardless of install status
+#### Scenario: the unsupported set documents why, today, for every remaining slug
 - **WHEN** the bot-autonomy unsupported set is inspected
-- **THEN** `qwen-code`, `goose`, and `cline` each carry an out-of-scope
-  reason stating they are not installed in the shared devcontainer image,
-  and `claude-code-action` carries an out-of-scope reason stating it runs
-  as a GitHub Actions workflow and is never installed or launched inside a
-  devcontainer — and each remains exempt even if a future image build were
-  to install one of them
+- **THEN** `qwen-code`, `goose`, and `cline` each carry a reason stating
+  they are not installed in the shared devcontainer image;
+  `claude-code-action` carries a reason stating it runs as a GitHub Actions
+  workflow and is never installed or launched inside a devcontainer; and
+  `copilot-cli` and `pi` each carry a reason stating they are registered
+  but not yet installed — `harness-matrix` installs the binaries and
+  `bot-autonomy-new-harnesses` adds their modules — satisfying the
+  registry-completeness test before any of the five is installed
 
-#### Scenario: harnesses pending a later change satisfy static completeness now
-- **WHEN** the bot-autonomy unsupported set is inspected
-- **THEN** `copilot-cli` and `pi` each carry a pending-module reason
-  stating they are registered but not yet installed in the bot image —
-  `harness-matrix` installs the binaries and `bot-autonomy-new-harnesses`
-  adds their modules — satisfying the registry-completeness test before
-  either binary is installed
-
-#### Scenario: an installed pending-module harness fails verify until it gets a real module
-- **WHEN** `bot-autonomy.sh verify` runs and finds `copilot-cli` or `pi`
-  installed while it still only carries a pending-module `unsupported`
-  entry (no module, no alias)
-- **THEN** `verify` exits non-zero naming the harness — the pending-module
-  exemption does not survive installation, so a rollout that lands
-  `harness-matrix`'s image before `bot-autonomy-new-harnesses`'s modules
-  fails CI loudly instead of silently reporting success
+#### Scenario: an installed unsupported harness fails verify until it gets real coverage
+- **WHEN** `bot-autonomy.sh verify` runs and finds any currently-unsupported
+  slug's executable installed (whether that is `copilot-cli`/`pi` after
+  `harness-matrix` lands, or, hypothetically, `qwen-code`/`goose`/`cline`/
+  `claude-code-action` if a future image ever installed one) while it still
+  has no module and no alias
+- **THEN** `verify` exits non-zero naming the harness — no `unsupported`
+  reason grants an exemption that survives installation, so any rollout
+  that lands an image with a newly-installed, still-uncovered harness fails
+  CI loudly instead of silently reporting success
 
 #### Scenario: an installed executable with no covering entry fails verify
 - **WHEN** `bot-autonomy.sh verify` runs and finds an executable on `PATH`
@@ -313,17 +308,28 @@ to put the prior value back — matching the pattern
 Reverting the implementation PR alone does not undo a value already written
 to a persisted volume; `restore` is what does.
 
-#### Scenario: OpenCode apply records the prior permission value
-- **WHEN** the `opencode` module's `apply` runs and
+#### Scenario: OpenCode apply records the prior permission value on the first run only
+- **WHEN** the `opencode` module's `apply` runs, no backup exists yet, and
   `~/.config/opencode/opencode.json` already has a `permission` key
-- **THEN** the prior value is captured in a form a restore step can read
-  back, before `apply` overrides it
+- **THEN** that pre-`apply` value is captured in a form a restore step can
+  read back, before `apply` overrides it
 
-#### Scenario: OpenCode restore returns the prior permission value
+#### Scenario: a second apply does not overwrite the first backup
+- **WHEN** `apply` runs again after a backup already exists (from a prior
+  `apply`)
+- **THEN** the existing backup is left untouched — `apply` does not
+  re-capture the current (already-managed, `"allow"`) value over it, which
+  would otherwise silently replace the true pre-first-`apply` value (e.g.
+  `"ask"`/`"deny"`) with the value `apply` itself wrote, making the original
+  state unrecoverable
+
+#### Scenario: OpenCode restore returns the value captured before the first apply
 - **WHEN** an operator runs the `opencode` module's restore step after
-  `apply` has run at least once
-- **THEN** `permission.*` returns to the value captured before the first
-  `apply`, and every key `apply` did not manage is untouched
+  `apply` has run one or more times (an `apply → apply → restore`
+  sequence, not only a single `apply → restore`)
+- **THEN** `permission.*` returns to the value captured before the *first*
+  `apply` in that sequence, and every key `apply` did not manage is
+  untouched
 
 #### Scenario: Antigravity's existing restore mechanism is reused, not reinvented
 - **WHEN** the bot-autonomy `antigravity` module's restore path is invoked

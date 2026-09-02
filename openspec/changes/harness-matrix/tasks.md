@@ -80,6 +80,13 @@
       prose in `docs/guides/devcontainers.md` and both `devcontainer.json`
       twins' profile-table comments; verify with `task lint:markdown` and a
       grep for the retired phrase
+- [ ] 4.6 Update `docs/guides/herdr.md` (root) and its jinja twin
+      `template/docs/guides/herdr.md.jinja`: drop `gemini` from the list of
+      harnesses the pinned image includes (line ~248) and update every
+      "0.8.0" version reference to match the new herdr pin (task 5.1);
+      verify with `task lint:markdown`, `task test:dogfood-structure`
+      (jinja twin), and a grep confirming no stale `gemini`/`0.8.0`
+      reference remains in either file
 
 ## 5. Bump herdr
 

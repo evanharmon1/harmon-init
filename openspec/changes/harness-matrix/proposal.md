@@ -48,10 +48,15 @@ installed binaries.
   twins (root + `template/`) to the new digest; the follow-on
   `bot-autonomy-new-harnesses` change waits for that pin to land before it
   has real binaries to bind modules to. The gap this opens — Copilot CLI and
-  pi installed before they have bot-autonomy modules — is closed on the
-  `bot-autonomy-bootstrap` side (its `unsupported` set exempts both slugs
-  until their modules exist, order-independent of which change merges
-  first); see design.md - Risks.
+  pi installed before they have bot-autonomy modules — is NOT silently
+  bridged: `bot-autonomy-bootstrap`'s `unsupported` set only satisfies the
+  *static* registry-completeness check before either binary is installed;
+  the moment either is actually installed without a real module, its
+  `verify` fails loudly and fails CI, by design (this is the correct,
+  fail-closed outcome, not a defect to route around). The operational
+  implication is that the `sync-pin` PR bumping a bot image with Copilot
+  CLI or pi installed should not land before `bot-autonomy-new-harnesses`
+  has shipped their modules — see design.md - Risks.
 
 ## Non-goals
 
@@ -99,7 +104,9 @@ installed binaries.
   `github-releases` ARGs side by side today); see design.md - Context.
 - Docs: `docs/guides/devcontainers.md` (drop Gemini from the harness-list
   prose); `.devcontainer/devcontainer.json` and its `template/` twin (drop
-  "Gemini" from the profile-table comment).
+  "Gemini" from the profile-table comment); `docs/guides/herdr.md` and its
+  jinja twin `template/docs/guides/herdr.md.jinja` (drop `gemini` from the
+  pinned-image tool list, update the "0.8.0" version references).
 - Downstream, sequenced separately: the rolling `sync-pin` PR (bumps
   `.devcontainer/Dockerfile` + its `template/` twin to the new image
   digest), and the follow-on `bot-autonomy-new-harnesses` change.

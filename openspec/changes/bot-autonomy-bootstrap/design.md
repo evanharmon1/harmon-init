@@ -149,36 +149,42 @@ would let a slug silently fall through the cracks the way OpenCode did
 originally, just at the registry layer instead of the image layer.
 
 **Cross-change sequencing: the `unsupported` bucket satisfies static
-completeness now; it does not — and must not — silence the dynamic
-fail-closed check once the harness is actually installed.** `harness-matrix`
-installs `copilot-cli`'s and `pi`'s binaries before
+completeness now; it never silences the dynamic fail-closed check once a
+harness is actually installed — for ANY reason, uniformly.**
+`harness-matrix` installs `copilot-cli`'s and `pi`'s binaries before
 `bot-autonomy-new-harnesses` gives them modules — an ordinary consequence of
-shipping them as separate changes. A first pass at this design put both
-slugs in the `unsupported` set with an exemption that survived installation,
-reasoning that the alternative (verify failing during the rollout window)
-was worse than a temporary silent gap. That reasoning was backwards: a
-`verify` that reports success while a registered, intended-to-be-supported
-harness sits installed and still prompt-enabled is exactly the silent
-effective-state divergence issue #1137 exists to eliminate — worse than a
-loud CI failure, not better than one. The fix keeps the `unsupported` bucket
-(so the *static* registry-completeness test can pass before either binary is
-installed) but makes its exemption conditional on the entry's **reason**:
-an out-of-scope reason (harness never installed by this image, e.g.
-`qwen-code`) exempts unconditionally; a pending-follow-on reason (`copilot-cli`,
-`pi`) exempts only while the executable is **absent** — the instant one is
-installed, `verify` treats it exactly like any other uncovered slug and
-fails. This makes the sequencing hazard self-detecting: if the rolling
-`sync-pin` PR ever bumps a bot image to a revision with Copilot CLI or pi
-installed before `bot-autonomy-new-harnesses` has shipped their modules, CI
-goes red immediately, naming the harness — which is the correct outcome,
-and turns "land the pin after the modules exist" into an enforced invariant
-rather than a documentation-only convention. The same reasoning applies
-going forward to `oh-my-pi`: `harness-matrix` adds its registry row with a
-pending-follow-on reason, so whichever of `harness-matrix` and this change
+shipping them as separate changes. Two successive passes at this design got
+the exemption's scope wrong in opposite directions, and the second mistake
+is as informative as the first. Pass one put both slugs in the
+`unsupported` set with an exemption that survived installation outright,
+reasoning that `verify` failing during the rollout window was worse than a
+temporary silent gap — backwards: a `verify` that reports success while a
+registered, intended-to-be-supported harness sits installed and still
+prompt-enabled is exactly the silent effective-state divergence the
+motivating issue (proposal.md - Why) exists to eliminate. Pass two fixed
+that, but only for entries
+reasoned "pending a follow-on module," leaving entries reasoned "out of
+image scope" (`qwen-code`, `goose`, `cline`, `claude-code-action`) exempt
+unconditionally — on the theory that those harnesses would never actually
+be installed. That is a claim about the future this design has no way to
+enforce: nothing stops a later change from adding `qwen-code` to the image
+without anyone remembering to update this table, and the entire point of a
+fail-closed system is to not depend on someone remembering. The reason
+field is documentation only; it does not change what `verify` does. Every
+`unsupported` entry, regardless of reason, exempts its slug ONLY while the
+executable is absent — the instant any of them is installed, `verify`
+treats it exactly like an uncovered slug and fails, unless a real module
+now covers it. This makes the sequencing hazard self-detecting for
+`copilot-cli`/`pi` today and for any future addition to the `unsupported`
+set: if the rolling `sync-pin` PR ever bumps a bot image to a revision with
+a still-`unsupported` harness installed, CI goes red immediately, naming
+it — turning "land the pin after the module exists" into an enforced
+invariant rather than a documentation-only convention, for every entry in
+the table, not a privileged subset of it. The same reasoning applies going
+forward to `oh-my-pi`: `harness-matrix` adds its registry row with a
+pending-module reason, so whichever of `harness-matrix` and this change
 merges second is responsible for adding that entry — see harness-matrix's
-design.md, which states this from the other side — and if `oh-my-pi` is
-ever installed before `bot-autonomy-new-harnesses` covers it, the same
-loud-failure behavior applies.
+design.md, which states this from the other side.
 
 **Codex: ship a complete `codex-managed-config.bot.toml`, installed and
 verified by checksum, replacing the awk rewrite — plus a structural parity
@@ -232,7 +238,19 @@ managed-keys list (here, just `permission`) that is always force-overwritten,
 with the prior value captured before the overwrite so a `restore` step can
 put it back, while every other key in the file (`theme`, anything else)
 merges normally and is left alone. Reusing an already-reviewed pattern from
-the same codebase, rather than inventing a second one, is deliberate.
+the same codebase, rather than inventing a second one, is deliberate — and
+that includes the one guard that pattern already gets right and an early
+draft of the OpenCode requirement did not state explicitly: the backup
+capture is gated on **no backup existing yet**
+(`apply-antigravity-settings.sh`'s own `[ ! -f "$backup_path" ]` check), so
+only the *first* `apply` records the true pre-`apply` value. Without that
+guard, a second `apply` would capture the current, already-managed
+`"allow"` value as if it were "the prior value," silently replacing the
+real original (`"ask"`/`"deny"`) with the value `apply` itself wrote — an
+`apply → apply → restore` sequence would then "restore" to `"allow"`,
+making genuine restoration impossible. The requirement states this guard
+explicitly rather than leaving it implicit, since the OpenCode module is a
+new port of the pattern, not a call into the existing script.
 
 **OpenCode `verify` inspects the fully resolved configuration, not the
 global file alone.** OpenCode layers a workspace-level `opencode.json` (or
