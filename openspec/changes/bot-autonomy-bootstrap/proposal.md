@@ -28,17 +28,34 @@ with one dispatch point that can prove every installed harness is covered.
   that reads back the *effective* runtime value — not the source file.
 - Add modules for the harnesses present in the bot image today: `claude-code`,
   `codex-cli`, `antigravity`, `opencode`.
-- Add a unit test asserting every `agent-registry.json` harness slug has a
-  bot-autonomy module, or is listed in an explicit `unsupported` set with a
-  reason; an installed executable with no matching module fails `verify`.
+- Add a unit test asserting every `agent-registry.json` harness slug (16
+  today) resolves to exactly one of three buckets: a bot-autonomy module; an
+  alias to another slug's module, for a slug that launches the same
+  executable under a different provider configuration (the six
+  `claude-code-*` provider-rewired variants alias to `claude-code`); or an
+  explicit `unsupported` entry with a reason (`claude-code-action`,
+  `qwen-code`, `goose`, `cline` — not installed or not launched in a
+  devcontainer; `copilot-cli`, `pi` — registered but not yet installed,
+  pending `harness-matrix`). An installed executable in none of the three
+  buckets fails `verify`.
 - Replace the Codex awk rewrite with a complete, shipped
-  `codex-managed-config.bot.toml`, installed and verified by checksum.
+  `codex-managed-config.bot.toml`, installed and verified by checksum, plus
+  a structural parity test asserting it matches the shared
+  `codex-managed-config.toml` baseline on every key except `sandbox_mode`
+  and `approval_policy` — so an edit to the shared baseline cannot silently
+  go stale in the bot copy.
 - Replace Antigravity's shell-function wrapper with a real executable
   installed to `~/.local/bin/agy` by the bot post-create only, so headless
   and programmatic launches (`agy -p …`, or any exec off PATH) get
   `--dangerously-skip-permissions` without depending on a login shell.
-- Add an OpenCode module: seed `~/.config/opencode/opencode.json` with
-  `"permission": {"*": "allow"}` (no such file is seeded today).
+- Add an OpenCode module: force `"permission": {"*": "allow"}` in
+  `~/.config/opencode/opencode.json` on every apply — overriding any prior
+  value for that key while preserving every other key — with the prior
+  value backed up for restore, matching the pattern
+  `apply-antigravity-settings.sh` already uses for Antigravity (no
+  OpenCode file is seeded today, and both `~/.config/opencode` and
+  `~/.gemini` are named volumes that outlive a container rebuild, so a
+  reversible write matters here as much as it already does for Antigravity).
 - Fail closed at three points: `apply` exits non-zero so
   `postCreateCommand` fails visibly; `verify` runs at the end of post-create
   AND in post-start; `.github/workflows/devcontainer-build.yml` runs
@@ -92,8 +109,14 @@ changes in this PR introduce new capabilities.)
 - New: `.devcontainer/scripts/bot-autonomy.sh`,
   `.devcontainer/config/bot-autonomy/{claude-code,codex-cli,antigravity,opencode}.sh`,
   `.devcontainer/config/codex-managed-config.bot.toml`, a registry-completeness
-  unit test (e.g. `scripts/test-bot-autonomy.sh` or folded into
-  `scripts/devcontainer-assert.sh`).
+  unit test covering all three coverage buckets (e.g.
+  `scripts/test-bot-autonomy.sh` or folded into
+  `scripts/devcontainer-assert.sh`), and a Codex baseline/bot-config
+  structural parity test.
+- Cross-change: this proposal's `unsupported` set names `copilot-cli` and
+  `pi`; `harness-matrix`'s implementation (or this change's, whichever
+  merges second) is responsible for reconciling `oh-my-pi` into the same
+  set once its registry row exists — see design.md - Decisions.
 - Retired/replaced: `.devcontainer/scripts/enable-claude-bypass.sh`,
   `.devcontainer/scripts/enable-codex-bypass.sh`, the `agy()` shell function in
   `.devcontainer/config/agy-autonomy.sh`.

@@ -19,10 +19,49 @@ See proposal.md - Why for the motivating incident. Current state, precisely:
   conditionally pushes both profile images but never runs the container to
   assert anything against it.
 - `agent-registry.json` is schema v3, shared with Foreman's adapter
-  classification. Of its 14 `harnesses[]` entries, only `claude-code`,
-  `codex-cli`, `antigravity`, and `opencode` are installed in the bot
-  devcontainer image today (see `harness-matrix` for what image change adds
-  `copilot-cli` and the not-yet-registered `pi`/`oh-my-pi`).
+  classification, and has a verbatim `template/agent-registry.json` twin
+  (byte-identical today; a dogfood-parity twin per AGENTS.md). It lists
+  exactly 16 harnesses: `claude-code`, `claude-code-action`,
+  `claude-code-deepseek`, `claude-code-glm`, `claude-code-kimi`,
+  `claude-code-minimax`, `claude-code-qwen`, `claude-code-qwen-local`,
+  `codex-cli`, `copilot-cli`, `qwen-code`, `antigravity`, `opencode`, `pi`,
+  `goose`, `cline`. There is no `gemini` harness slug at all — Antigravity is
+  the registered Google-family harness, and `gemini` appears only as a
+  **model family** its `family_constraint` references, not as a harness of
+  its own. Of the 16, only `claude-code`, `codex-cli`, `antigravity`, and
+  `opencode` correspond to executables installed in the bot devcontainer
+  image today (confirmed against both `.devcontainer/Dockerfile` and
+  `images/devcontainer/Dockerfile` — neither installs `qwen-code`, `goose`,
+  `cline`, `@github/copilot`, or a `pi` package). `copilot-cli` and `pi` are
+  registered but not yet installed; `harness-matrix` is what installs them.
+  `claude-code-action` runs as a GitHub Actions workflow and is never
+  installed or launched inside any devcontainer. The six `claude-code-*`
+  provider-rewired slugs (`-deepseek`, `-glm`, `-kimi`, `-minimax`, `-qwen`,
+  `-qwen-local`) all launch the same `claude` executable, reconfigured by
+  wrapper functions and environment variables in
+  `.devcontainer/config/claude-providers.sh` — they are not separate
+  binaries with their own boundary to police.
+- `~/.config/opencode` and `~/.gemini` are both bot-profile **named
+  volumes** (`.devcontainer/devcontainer.json`'s `mounts`), and Coder
+  additionally persists them through its own `~/.persistent` symlink layer
+  (`persist-opencode.sh`, the Coder block in `post-create-common.sh`). A
+  value `apply` writes into either survives a container rebuild; reverting
+  the implementation PR does not touch what is already on disk in a
+  persisted volume.
+- `apply-antigravity-settings.sh` already solves exactly that problem for
+  Antigravity: it captures the pre-existing value of every key it manages
+  before overriding it, and a `restore` mode puts those values back. No
+  equivalent exists for OpenCode today, because no OpenCode mechanism exists
+  today at all.
+- `.devcontainer/config/codex-managed-config.toml` (the shared human/bot
+  baseline `enable-codex-bypass.sh` mutates in place) carries far more than
+  `sandbox_mode`/`approval_policy`: `model`, `model_reasoning_effort`,
+  `project_doc_max_bytes`, an entire `[features]`/`[tui]` status-line
+  configuration, and the managed Codex hooks
+  (`claude-compat.sh`/`block-no-verify.sh`,
+  `file-payload.sh`/`protect-files.sh`). A standalone bot file that is only
+  checksum-compared against **itself** has no way to notice that the shared
+  baseline changed underneath it.
 - Constraints below were decided by Evan on 2026-09-01 and are stated here as
   requirements, not reopened: profile selection by file
   (`.devcontainer/devcontainer.json` = bot,
@@ -38,21 +77,30 @@ See proposal.md - Why for the motivating incident. Current state, precisely:
 
 **Goals:**
 - One dispatch point that can enumerate "every registered harness slug has a
-  module or an explicit, reasoned exemption" — the property that would have
-  caught the Codex regression before a human did.
+  module, an alias, or an explicit, reasoned exemption" — the property that
+  would have caught the Codex regression before a human did, made precise
+  enough to actually be checkable against the real 16-entry registry.
 - `verify` independently re-derives the effective state `apply` was supposed
   to produce, so a broken or no-op `apply` cannot pass by construction.
 - Close the specific headless/programmatic-launch gap the issue names for
   Antigravity, and confirm no equivalent gap exists for the other three
   in-image harnesses.
+- Every persisted-volume policy write is individually reversible, not just
+  "revert the PR."
+- The image-rollout sequencing between this change, `harness-matrix`, and
+  `bot-autonomy-new-harnesses` cannot put a fresh bot container into a state
+  where `verify` fails through no fault of its own configuration.
 
 **Non-Goals:**
-- Not designing the Copilot CLI / pi / oh-my-pi modules — `harness-matrix`
-  has not put those binaries in the image yet, so there is nothing to bind a
-  module to. Their known boundaries are recorded in proposal.md as a
-  follow-on only.
+- Not designing the Copilot CLI / pi / oh-my-pi **modules** —
+  `harness-matrix` has not put those binaries in the image yet, so there is
+  nothing to bind a module to. Their known boundaries are recorded in
+  proposal.md as a follow-on only. This change does register them in the
+  `unsupported` set (see Decisions), which is coverage bookkeeping, not a
+  module.
 - Not redesigning `agent-registry.json` — schema v3 stays as-is; the
-  unsupported-harness set is bootstrap-owned data, not a registry field.
+  unsupported-harness set and the alias table are bootstrap-owned data, not
+  registry fields.
 - Not deciding whether `enable-claude-bypass.sh` / `enable-codex-bypass.sh` /
   `agy-autonomy.sh`'s function are deleted outright or kept briefly as
   deprecated shims — an implementation-time call with no spec consequence
@@ -64,27 +112,86 @@ See proposal.md - Why for the motivating incident. Current state, precisely:
 `.devcontainer/config/bot-autonomy/<slug>.sh`, vs. keeping today's four
 independent scripts.** Registry-driven completeness — the property this
 change exists to add — is only checkable with one dispatch point that can
-enumerate "every slug, module-or-unsupported." Four independent scripts
-called ad hoc from `post-create.sh` is exactly today's state, and it is what
-let the Codex divergence in #1137 ship unnoticed: nothing enumerated the
-scripts against the registry to notice OpenCode had no script at all.
-Alternative considered: inline each harness's apply/verify logic directly in
+enumerate "every slug, covered." Four independent scripts called ad hoc from
+`post-create.sh` is exactly today's state, and it is what let the Codex
+divergence in #1137 ship unnoticed: nothing enumerated the scripts against
+the registry to notice OpenCode had no script at all. Alternative
+considered: inline each harness's apply/verify logic directly in
 `post-create.sh`/`post-start.sh` — rejected, since per-harness unit testing
 and the registry-completeness assertion both need a discoverable module
 boundary (a directory listing), not a hand-parsed shell script.
 
+**Registry coverage is three buckets — module, alias, unsupported — not
+two.** An earlier draft of this proposal only planned modules for the four
+in-image harnesses plus "unsupported" entries for `gemini` and "DeepSeek
+Harness," neither of which is an actual registry slug (there is no `gemini`
+harness; "DeepSeek Harness" is a future, not-yet-registered idea, distinct
+from the already-registered `claude-code-deepseek`). Checked against the
+real 16-slug registry, that left ten slugs — the six provider-rewired
+`claude-code-*` variants, `claude-code-action`, `qwen-code`, `goose`, and
+`cline` — with no fate at all, so the completeness unit test as originally
+specified could never pass. Two things were missing, not one: an **alias**
+bucket for slugs that share another slug's executable (the six
+`claude-code-*` variants all launch the same `claude` binary,
+provider-rewired — policing `claude-code`'s boundary already covers them,
+and giving them their own modules would mean five redundant copies of the
+same jq patch against the same file), and a complete, verified enumeration
+of the **unsupported** bucket's actual membership (`claude-code-action`: a
+GitHub Action, never installed in a devcontainer; `qwen-code`/`goose`/
+`cline`: registered but not installed in the shared image at all;
+`copilot-cli`/`pi`: registered, not yet installed, pending
+`harness-matrix`). Alternative considered: narrow the completeness
+requirement to "every **installed** executable," dropping static
+registry-wide coverage — rejected, because the brief's own instruction ("a
+unit test asserts every registry slug has a module or is in an explicit
+unsupported list") asks for exactly the static property, and narrowing it
+would let a slug silently fall through the cracks the way OpenCode did
+originally, just at the registry layer instead of the image layer.
+
+**Cross-change sequencing: the `unsupported` bucket is the bridge, not
+atomicity.** `harness-matrix` installs `copilot-cli`'s and `pi`'s binaries
+before `bot-autonomy-new-harnesses` gives them modules — an ordinary
+consequence of shipping them as separate changes. Under a stricter "every
+**installed** executable needs a module" reading, the window between those
+two changes landing would fail `verify` on every fresh bot container,
+through no fault of anything a container's own configuration did wrong.
+Rather than requiring the two changes to land atomically (operationally
+fragile across separately reviewed, separately merged, separately published
+PRs), this change puts `copilot-cli` and `pi` in the `unsupported` set now,
+with a reason naming the follow-on. An `unsupported` entry exempts a slug
+from the fail-closed check **regardless of whether it later becomes
+installed** — that is what makes the exemption a safe bridge: whichever of
+`harness-matrix` and `bot-autonomy-bootstrap` merges first, the window
+between "installed" and "moduled" is covered, and `bot-autonomy-new-harnesses`
+closes it by replacing the `unsupported` entry with a real module rather than
+by racing a rollout. The same reasoning applies going forward to `oh-my-pi`:
+`harness-matrix` adds its registry row, so whichever of `harness-matrix` and
+this change merges second is responsible for making sure `oh-my-pi` lands in
+the `unsupported` set too — see harness-matrix's design.md, which states this
+from the other side.
+
 **Codex: ship a complete `codex-managed-config.bot.toml`, installed and
-verified by checksum, replacing the awk rewrite.** The awk approach mutates
-two root-level keys in place and is the exact mechanism that diverged
-silently in the field: a pattern miss prints a warning but the script still
-exits 0, so nothing downstream notices. A shipped, complete file plus a
-checksum comparison in `verify` turns drift into a hard failure instead of a
-warning. Alternative considered: keep the awk rewrite and add a stricter
-post-condition check (assert the two keys read back correctly) — rejected;
-that still leaves a partial, mutated file as the source of truth, and the
-"shared baseline file, bot changes two keys" structure is what made the awk
-script's failure mode silent in the first place. A whole-file checksum has
-no partial-success state to hide behind.
+verified by checksum, replacing the awk rewrite — plus a structural parity
+test against the shared baseline.** The awk approach mutates two root-level
+keys in place and is the exact mechanism that diverged silently in the
+field: a pattern miss prints a warning but the script still exits 0, so
+nothing downstream notices. A shipped, complete file plus a checksum
+comparison in `verify` turns installation drift into a hard failure instead
+of a warning. But a standalone file checksummed only against itself is
+blind to a different failure mode: the shared baseline
+(`codex-managed-config.toml`) carries model, reasoning-effort, and hook
+settings well beyond the two bot-specific keys, and nothing stops the bot
+file from silently going stale if the baseline is edited later without a
+matching edit to the bot copy — `verify`'s checksum would still pass,
+against a fork nobody meant to create. A structural parity test (every key
+except `sandbox_mode`/`approval_policy` must match between the two files)
+closes that gap at authoring time, independent of the runtime checksum
+check. Alternative considered: generate the bot file from the baseline at
+apply time (a templating/sed step that copies the baseline and overrides two
+keys) — rejected, because that reintroduces exactly the awk rewrite's
+fragility (a generation-script bug is the same silent-divergence shape the
+whole file-replacement approach exists to avoid); a parity **test** catches
+drift without reintroducing a rewrite mechanism.
 
 **Antigravity: an executable wrapper installed to `~/.local/bin/agy` by bot
 post-create, replacing the shell-function approach.** A shell function
@@ -99,18 +206,23 @@ not. Alternative considered: keep the shell function and add the wrapper
 alongside it — rejected as redundant once the wrapper exists on `PATH`; the
 function covered a strict subset of what the wrapper covers.
 
-**OpenCode: seed the config file via a deep-merge, not an overwrite.**
-OpenCode documents no per-invocation bypass flag equivalent to Antigravity's
-`--dangerously-skip-permissions`; `"permission": {"*": "allow"}` in
-`~/.config/opencode/opencode.json` is the mechanism. Merge (existing keys
-win, matching the pattern `claude-user-defaults.json` already uses) rather
-than overwrite, so a human inspecting or customizing the bot container's
-OpenCode config later does not have every rebuild silently discard their
-edits. Whether `OPENCODE_CONFIG_CONTENT` (an env-var-based full-config
-override OpenCode also documents) could replace the file-write mechanism
-entirely is recorded as an open question rather than decided — the answer
-does not change the behavioral contract (effective permission policy is
-allow-all), only which mechanism satisfies it.
+**OpenCode: force the managed `permission` key on every apply; preserve
+everything else; back up the prior value for restore.** An earlier draft of
+this design proposed a plain deep-merge where "existing values win" — copied
+from the `claude-user-defaults.json` pattern, where letting a human's own
+customization win is the point. That pattern is wrong for a
+security-relevant key: if a persisted `opencode.json` already carries
+`permission.* = "ask"` or `"deny"` (a prior balanced policy, a human edit, an
+unmanaged default), "existing wins" would leave the prompt-enabled value in
+place, and `verify`'s own allow-all check would then correctly fail every
+rebuild — the merge direction directly contradicted the requirement it was
+supposed to satisfy. The fix is the same shape
+`apply-antigravity-settings.sh` already uses for Antigravity: a small
+managed-keys list (here, just `permission`) that is always force-overwritten,
+with the prior value captured before the overwrite so a `restore` step can
+put it back, while every other key in the file (`theme`, anything else)
+merges normally and is left alone. Reusing an already-reviewed pattern from
+the same codebase, rather than inventing a second one, is deliberate.
 
 **`verify` re-reads effective runtime state independently of `apply`'s
 internals.** This mirrors the incident's actual root cause: the template
@@ -125,14 +237,25 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
 - [Risk] A module silently no-ops the way the current awk fallback can →
   [Mitigation] `verify` never trusts `apply`'s exit code alone; it
   independently re-reads the effective value or checksum, and the
-  registry-completeness test fails any installed executable lacking both
-  `apply` and `verify`.
+  registry-completeness test fails any installed executable lacking
+  coverage in all three buckets.
+- [Risk] The alias bucket could be used to paper over a harness that
+  actually needs its own boundary (declaring a false alias instead of doing
+  the work) → [Mitigation] the alias table names a specific shared
+  executable claim ("launches the same `claude` binary, provider-rewired");
+  a reviewer checking a new alias entry against `claude-providers.sh` (or
+  its future equivalent) is the intended check, the same way a code
+  reviewer checks any other design claim — this is a documentation
+  discipline the design records explicitly rather than a mechanism that
+  verifies itself.
 - [Risk] Checksum-verifying `codex-managed-config.bot.toml` could look like
   it hard-codes a checksum that then goes stale on every edit to that file →
   [Mitigation] the checksum is computed from the shipped file at
   install/verify time, not hand-maintained, so only a corrupted or
   partially-written install fails — a deliberate content change to the
-  shipped file simply changes what "correct" reads as.
+  shipped file simply changes what "correct" reads as. The structural
+  parity test is the separate, complementary guard against the bot file
+  going stale relative to the shared baseline it was forked from.
 - [Risk] An executable at `~/.local/bin/agy` could be shadowed by a stale
   binary a previous image version left in a persisted volume →
   [Mitigation] bot-autonomy `apply` runs after `ensure-antigravity-cli.sh`
@@ -145,34 +268,50 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   [Mitigation] this is precisely acceptance criterion 3's [CI] requirement;
   `task test:devcontainer:root` already pays an equivalent cost locally, so
   CI gains coverage it was missing rather than adopting new mechanism.
-- [Risk] Resolving the OpenCode open question later could make today's
-  file-seed implementation redundant work →
+- [Risk] The `unsupported`-bucket bridge for `copilot-cli`/`pi`/`oh-my-pi`
+  could be forgotten when `harness-matrix` or `bot-autonomy-new-harnesses`
+  actually lands, reopening the exact "installed but unmoduled" gap it
+  exists to prevent → [Mitigation] both changes' tasks.md carry an explicit
+  cross-referencing task naming the other change and the specific slug to
+  reconcile; the registry-completeness unit test would also fail loudly the
+  moment `oh-my-pi`'s row exists with no covering entry, rather than passing
+  silently.
+- [Risk] Resolving the OpenCode `OPENCODE_CONFIG_CONTENT` open question later
+  could make today's file-seed implementation redundant work →
   [Mitigation] the scenario contract (effective permission policy is
-  allow-all) is mechanism-agnostic; whichever mechanism wins, the spec does
-  not need to change.
+  allow-all, individually reversible) is mechanism-agnostic; whichever
+  mechanism wins, the spec does not need to change.
 
 ## Migration Plan
 
 - A single implementation PR (not this planning change) adds
-  `bot-autonomy.sh` and its modules, switches `post-create.sh`/`post-start.sh`
-  to call `apply`/`verify`, retires or shims the four existing scripts, and
+  `bot-autonomy.sh`, its modules, and its alias/unsupported tables, switches
+  `post-create.sh`/`post-start.sh` to call `apply`/`verify`, retires or shims
+  the four existing scripts, adds the Codex structural parity test, and
   wires `devcontainer-build.yml`. It touches both the root `.devcontainer/`
   and its `template/` twin in the same PR per AGENTS.md dogfood parity;
   `task test:dogfood-parity` and `test:dogfood-structure` gate it.
-- No data migration: bot devcontainers are ephemeral and routinely rebuilt.
-  A container that predates this change simply picks up the bootstrap on its
-  next rebuild; `verify` in post-start catches anything that attached to a
-  stale container without rebuilding.
-- Rollback: revert the implementation PR. Neither `agent-registry.json` nor
-  the human `dev/` profile is touched by this change, so rollback carries no
-  downstream migration.
+- No data migration for the image-baked boundaries (Claude Code's
+  `/etc/claude-code/managed-settings.json`, Codex's
+  `/etc/codex/managed_config.toml`): both live under `/etc`, not a named
+  volume, so every image rebuild resets them automatically.
+- The two volume-persisted boundaries (Antigravity's
+  `~/.gemini/antigravity-cli/settings.json`, OpenCode's
+  `~/.config/opencode/opencode.json`) are **not** self-resetting. Rollback
+  for either is: run that module's `restore` (Antigravity already has one;
+  this change adds OpenCode's), not merely revert-and-rebuild — a reverted
+  PR does not touch a value already written into a persisted volume.
+- Rollback for the implementation as a whole: revert the PR, then run
+  `restore` for Antigravity and OpenCode against any bot container that had
+  already run `apply`. `agent-registry.json` and the human `dev/` profile are
+  untouched by this change either way.
 
 ## Open Questions
 
 - Can `OPENCODE_CONFIG_CONTENT` replace the `~/.config/opencode/opencode.json`
   file write entirely? Left for the implementation PR to spike; the
-  behavioral contract (effective permission policy is allow-all) is
-  unaffected either way.
+  behavioral contract (effective permission policy is allow-all,
+  individually reversible) is unaffected either way.
 - Delete `enable-claude-bypass.sh` / `enable-codex-bypass.sh` /
   `agy-autonomy.sh`'s function outright, or keep them briefly as deprecated
   shims for one release? Implementation-time judgment call with no spec

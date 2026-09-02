@@ -36,12 +36,22 @@
       then `install -m 0755` the binary as `omp`; verify the build fails
       when the checksum is deliberately corrupted in a scratch test and
       succeeds against the real asset
-- [ ] 3.3 Add a new `oh-my-pi` harness row to `agent-registry.json`
+- [ ] 3.3 Add a new `oh-my-pi` harness row to **both** `agent-registry.json`
+      and its verbatim twin `template/agent-registry.json`
       (`family_constraint: {kind: broker}`,
       `model_resolution.owner: harness-runtime`,
       `roles: [orchestrate, implement, review]`, matching `pi`'s shape);
-      verify with `scripts/validate-agent-registry.mjs` and
-      `task test:agent-registry`
+      verify with `scripts/validate-agent-registry.mjs`,
+      `task test:agent-registry`, and `task test:dogfood-parity` (the two
+      files must stay byte-identical per AGENTS.md's dogfood-parity table)
+- [ ] 3.4 Reconcile with `bot-autonomy-bootstrap`'s registry-completeness
+      unit test: whichever of that change and this one merges second must
+      add `oh-my-pi` to `bot-autonomy-bootstrap`'s `unsupported` set (reason:
+      pending `bot-autonomy-new-harnesses`) in the same PR that adds the
+      `oh-my-pi` registry row here; verify by confirming
+      `bot-autonomy-bootstrap`'s registry-completeness test still passes
+      after this row lands (see that change's design.md - Decisions and its
+      task 4.5)
 
 ## 4. Remove Gemini CLI
 

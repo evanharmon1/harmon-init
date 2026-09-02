@@ -13,12 +13,15 @@ The bot devcontainer SHALL provide a single entrypoint,
 per-harness policy modules under `.devcontainer/config/bot-autonomy/<slug>.sh`
 keyed by `agent-registry.json` harness slugs. Each module SHALL declare the
 executable it governs, an idempotent `apply`, and a `verify` that reads the
-harness's effective runtime configuration.
+harness's effective runtime configuration. A slug aliased to another slug's
+module (see the registry-coverage requirement below) is governed by that
+module and dispatches no separate one.
 
 #### Scenario: apply dispatches every installed harness to its module
 - **WHEN** `bot-autonomy.sh apply` runs in the bot devcontainer
 - **THEN** it invokes the `apply` step of the module for every registry
-  harness slug whose executable is present in the image, and none other
+  harness slug whose executable is present in the image — resolving an
+  aliased slug to its target module — and none other
 
 #### Scenario: verify reads effective runtime state, not the source file
 - **WHEN** `bot-autonomy.sh verify` runs after `apply`
@@ -29,31 +32,54 @@ harness's effective runtime configuration.
 #### Scenario: a registry harness without an installed executable is skipped
 - **WHEN** `bot-autonomy.sh apply` or `verify` runs and a registry harness
   slug's executable is not present in the image
-- **THEN** that harness's module is skipped without failing the run
+- **THEN** that harness's module (or, for an aliased slug, its target
+  module) is skipped without failing the run
 
-### Requirement: Explicit unsupported-harness declaration
-Every `agent-registry.json` harness slug SHALL have either a bot-autonomy
-module or an entry in an explicit `unsupported` set carrying a reason. An
-executable that is installed in the bot image but matches neither a module
-nor an `unsupported` entry SHALL fail `verify`.
+### Requirement: Every registry harness slug resolves to one of three coverage buckets
+Every `agent-registry.json` harness slug SHALL be covered by exactly one of:
+a bot-autonomy module; an alias naming another slug's module, used only
+where both slugs launch the same underlying executable under a different
+provider configuration; or an entry in an explicit `unsupported` set
+carrying a reason. A unit test SHALL enumerate the full registry and fail if
+any slug falls into none of the three buckets, or into more than one.
 
-#### Scenario: registry completeness is unit-tested
+#### Scenario: registry completeness is unit-tested across all three buckets
 - **WHEN** the bot-autonomy unit test runs
-- **THEN** it fails if any `agent-registry.json` harness slug has neither a
-  bot-autonomy module nor an `unsupported` entry with a reason
+- **THEN** it fails if any `agent-registry.json` harness slug has no
+  module, no alias to a moduled slug, and no `unsupported` entry with a
+  reason, and fails if any slug is covered by more than one bucket
 
-#### Scenario: an installed executable with no module fails verify
+#### Scenario: provider-rewired Claude Code variants alias to the claude-code module
+- **WHEN** the bot-autonomy module directory and its alias table are
+  inspected
+- **THEN** `claude-code-deepseek`, `claude-code-glm`, `claude-code-kimi`,
+  `claude-code-minimax`, `claude-code-qwen`, and `claude-code-qwen-local`
+  each alias to the `claude-code` module rather than carrying their own —
+  all six launch the same `claude` executable, provider-rewired by wrapper
+  functions and environment variables (`claude-providers.sh`), and so share
+  its `/etc/claude-code/managed-settings.json` boundary
+
+#### Scenario: harnesses absent from the bot image are unsupported with a reason
+- **WHEN** the bot-autonomy unsupported set is inspected
+- **THEN** `qwen-code`, `goose`, and `cline` each carry a reason stating
+  they are not installed in the shared devcontainer image, and
+  `claude-code-action` carries a reason stating it runs as a GitHub Actions
+  workflow and is never installed or launched inside a devcontainer
+
+#### Scenario: harnesses pending a later change are unsupported with a reason, not silently absent
+- **WHEN** the bot-autonomy unsupported set is inspected
+- **THEN** `copilot-cli` and `pi` each carry a reason stating they are
+  registered but not yet installed in the bot image — `harness-matrix`
+  installs the binaries and `bot-autonomy-new-harnesses` adds their
+  modules — and this entry holds regardless of which change merges first,
+  so an installed-but-unmoduled Copilot CLI or pi binary never fails
+  `verify` before its module exists
+
+#### Scenario: an installed executable with no covering entry fails verify
 - **WHEN** `bot-autonomy.sh verify` runs and finds an executable on `PATH`
-  that corresponds to a registry harness slug with no module and no
-  `unsupported` entry
+  that corresponds to a registry harness slug with no module, no alias, and
+  no `unsupported` entry
 - **THEN** `verify` exits non-zero and names the uncovered harness
-
-#### Scenario: Gemini and DeepSeek Harness are recorded unsupported, not silently absent
-- **WHEN** the bot-autonomy unit test runs
-- **THEN** the `gemini` and `deepseek` harness families' relevant slugs (to
-  the extent DeepSeek Harness is registered) appear in the `unsupported` set
-  with a reason, rather than being absent from both the module directory and
-  the unsupported set
 
 ### Requirement: Fail-closed enforcement at apply, both verify points, and CI
 `apply` SHALL exit non-zero on any module failure so `postCreateCommand`
@@ -90,7 +116,8 @@ policy.
 ### Requirement: Claude Code non-interactive boundary
 The bot profile SHALL set `permissions.defaultMode` to `bypassPermissions` in
 `/etc/claude-code/managed-settings.json`, and `verify` SHALL fail if the
-effective value differs.
+effective value differs. This boundary governs `claude-code` and every
+slug aliased to it.
 
 #### Scenario: apply sets bypassPermissions in the managed settings
 - **WHEN** the `claude-code` module's `apply` runs in the bot profile
@@ -128,6 +155,26 @@ config rather than pattern-matching individual keys.
 - **THEN** `sandbox_mode` reads `danger-full-access` and `approval_policy`
   reads `never`
 
+### Requirement: Codex bot config stays structurally derived from the shared baseline
+`codex-managed-config.bot.toml` SHALL match
+`.devcontainer/config/codex-managed-config.toml` on every key except
+`sandbox_mode` and `approval_policy`. A structural parity test SHALL fail
+when the two files diverge on any other key, so an edit to the shared
+baseline (model, reasoning effort, project-doc budget, hooks, status line)
+cannot silently go stale in the bot file while checksum `verify` keeps
+passing against the stale copy.
+
+#### Scenario: a parity test catches baseline drift
+- **WHEN** the structural parity test runs
+- **THEN** it fails if `codex-managed-config.bot.toml` and
+  `codex-managed-config.toml` differ on any key other than `sandbox_mode`
+  or `approval_policy`
+
+#### Scenario: the two intentional overrides are exempt
+- **WHEN** the structural parity test runs and only `sandbox_mode` and
+  `approval_policy` differ between the two files
+- **THEN** the test passes
+
 ### Requirement: Antigravity non-interactive boundary covers headless and programmatic launches
 The bot profile SHALL set `toolPermission: always-proceed` (and the existing
 managed keys) in `~/.gemini/antigravity-cli/settings.json`, AND the bot
@@ -162,27 +209,58 @@ carry it. `verify` SHALL fail if either boundary is missing.
   missing, not executable, or does not inject the flag
 - **THEN** `verify` exits non-zero naming Antigravity
 
-### Requirement: OpenCode non-interactive boundary
-The bot profile SHALL seed `~/.config/opencode/opencode.json` with
-`"permission": {"*": "allow"}`, merging into any existing file rather than
-overwriting it, and `verify` SHALL fail if the effective permission policy is
-not allow-all.
+### Requirement: OpenCode non-interactive boundary forces the managed permission key
+The bot profile SHALL force `permission.*` to `"allow"` in
+`~/.config/opencode/opencode.json` on every `apply`, overriding any existing
+value for that key, while preserving every other key already present in the
+file. `verify` SHALL fail if the effective permission policy is not
+allow-all.
 
 #### Scenario: apply seeds permission allow-all on a fresh volume
 - **WHEN** the `opencode` module's `apply` runs and
   `~/.config/opencode/opencode.json` does not yet exist
 - **THEN** the file is created with `"permission": {"*": "allow"}`
 
-#### Scenario: apply merges into an existing config without discarding other settings
-- **WHEN** `apply` runs and `~/.config/opencode/opencode.json` already exists
-  with unrelated user settings
-- **THEN** `"permission": {"*": "allow"}` is present afterward and the
-  unrelated settings are preserved
+#### Scenario: apply overrides a prior non-allow permission value
+- **WHEN** `apply` runs and `~/.config/opencode/opencode.json` already
+  exists with `permission.* = "ask"` or `"deny"` (from a human edit, a prior
+  balanced policy, or an unmanaged default)
+- **THEN** `permission.*` reads `"allow"` afterward — the prior value does
+  not win — and every unrelated key in the file (for example `theme`) is
+  unchanged
 
 #### Scenario: verify fails on a non-allow-all effective policy
 - **WHEN** `verify` reads the effective OpenCode permission policy and it is
   not allow-all
 - **THEN** `verify` exits non-zero naming OpenCode
+
+### Requirement: OpenCode and Antigravity policy changes are individually reversible
+Because `~/.config/opencode` and `~/.gemini` are named volumes that persist
+across a container rebuild (and across a Coder workspace, via its own
+persistence layer), `apply` SHALL record each managed key's prior value (or
+its absence) before overriding it, in a form a `restore` operation can use
+to put the prior value back — matching the pattern
+`apply-antigravity-settings.sh` already implements for Antigravity.
+Reverting the implementation PR alone does not undo a value already written
+to a persisted volume; `restore` is what does.
+
+#### Scenario: OpenCode apply records the prior permission value
+- **WHEN** the `opencode` module's `apply` runs and
+  `~/.config/opencode/opencode.json` already has a `permission` key
+- **THEN** the prior value is captured in a form a restore step can read
+  back, before `apply` overrides it
+
+#### Scenario: OpenCode restore returns the prior permission value
+- **WHEN** an operator runs the `opencode` module's restore step after
+  `apply` has run at least once
+- **THEN** `permission.*` returns to the value captured before the first
+  `apply`, and every key `apply` did not manage is untouched
+
+#### Scenario: Antigravity's existing restore mechanism is reused, not reinvented
+- **WHEN** the bot-autonomy `antigravity` module's restore path is invoked
+- **THEN** it delegates to `apply-antigravity-settings.sh restore`, the
+  existing mechanism that already backs up and restores the keys it
+  manages, rather than a new parallel implementation
 
 ### Requirement: Human dev profile is unaffected by construction
 The bot-autonomy wrappers and modules SHALL be installed by the bot
@@ -202,26 +280,6 @@ this capability's existence rather than by a separate runtime check.
   prompt-on-action), Codex's managed config reads `workspace-write`/
   `on-request`, and Antigravity's settings reflect the balanced
   `antigravity-settings-dev.json` policy — none of them the bot's values
-
-### Requirement: Scope excludes harnesses not present in the bot image
-Harnesses not installed in the bot devcontainer image SHALL have no
-bot-autonomy module. Gemini CLI has none, consistent with its removal from
-the image. DeepSeek Harness has none, deferred to a follow-up issue. Copilot
-CLI, pi, and oh-my-pi have none in this change; their modules are the
-follow-on change `bot-autonomy-new-harnesses`, which depends on
-`harness-matrix` landing first.
-
-#### Scenario: gemini has no bot-autonomy module
-- **WHEN** the bot-autonomy module directory is inspected
-- **THEN** no module exists for the `gemini` harness family, and the
-  registry-completeness test's `unsupported` entry (not a module) covers it
-
-#### Scenario: Copilot CLI, pi, and oh-my-pi have no module in this change
-- **WHEN** the bot-autonomy module directory is inspected after this change
-  ships
-- **THEN** no module exists for `copilot-cli`, `pi`, or `oh-my-pi`, and their
-  boundaries are recorded only as a follow-on in proposal.md, not as modules
-  or `unsupported` entries requiring one
 
 ### Requirement: End-to-end effective autonomy
 A freshly rebuilt, generated bot devcontainer SHALL run a representative

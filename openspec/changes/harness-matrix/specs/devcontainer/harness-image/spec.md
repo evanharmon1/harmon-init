@@ -69,11 +69,12 @@ before installing it, and SHALL expose the `omp` binary on `PATH`.
   downloaded `omp-linux-${arch}` asset against the matching line, and fails
   the build on a mismatch — it does not install an unverified binary
 
-#### Scenario: oh-my-pi is a registered harness
-- **WHEN** `agent-registry.json` is validated
-- **THEN** it contains a harness row with slug `oh-my-pi`, and
+#### Scenario: oh-my-pi is a registered harness in both registry twins
+- **WHEN** `agent-registry.json` and its verbatim twin
+  `template/agent-registry.json` are validated
+- **THEN** both contain an identical harness row with slug `oh-my-pi`,
   `scripts/validate-agent-registry.mjs` accepts it against the unchanged v3
-  schema
+  schema, and `task test:dogfood-parity` passes on the pair
 
 ### Requirement: Gemini CLI is fully removed while its dependents are preserved
 The shared image SHALL NOT install Gemini CLI (`@google/gemini-cli`): its

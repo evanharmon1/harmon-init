@@ -42,7 +42,11 @@ installed binaries.
   `main`; the existing rolling `sync-pin` PR then bumps both `Dockerfile`
   twins (root + `template/`) to the new digest; the follow-on
   `bot-autonomy-new-harnesses` change waits for that pin to land before it
-  has real binaries to bind modules to.
+  has real binaries to bind modules to. The gap this opens — Copilot CLI and
+  pi installed before they have bot-autonomy modules — is closed on the
+  `bot-autonomy-bootstrap` side (its `unsupported` set exempts both slugs
+  until their modules exist, order-independent of which change merges
+  first); see design.md - Risks.
 
 ## Non-goals
 
