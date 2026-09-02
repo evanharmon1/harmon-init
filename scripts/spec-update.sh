@@ -19,7 +19,15 @@ cd "$repo_root"
 : "${OPENSPEC_VERSION:?OPENSPEC_VERSION is not set — run via task spec:update or export it}"
 
 if command -v openspec >/dev/null 2>&1; then
-    installed="$(openspec --version 2>/dev/null)"
+    # A bare command substitution assignment is NOT exempt from `set -e`: if
+    # the resolved `openspec` is a broken shim that exits non-zero on
+    # --version (rather than printing a wrong-but-valid one), this would
+    # abort the whole script right here instead of ever reaching the
+    # reinstall below. `|| true` makes a failed probe read as an empty,
+    # non-matching version -- a mismatch that correctly triggers
+    # install-openspec.sh, whose own post-install resolution check reports
+    # loudly if the broken shim still shadows ~/.local/bin afterward.
+    installed="$(openspec --version 2>/dev/null || true)"
     if [ "$installed" != "$OPENSPEC_VERSION" ]; then
         # install-openspec.sh itself verifies the bare `openspec` command
         # actually resolves to the refreshed install afterward and exits
