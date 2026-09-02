@@ -43,26 +43,38 @@ installed binaries.
   presence + `--version` probe, and confirmation both `amd64` and `arm64`
   build (the publish workflow's candidate job already matrix-builds both
   architectures).
-- State the sequencing explicitly, and make it acyclic: this change
-  publishes a new image from `main`; the rolling `sync-pin` PR bumps both
-  `Dockerfile` twins (root + `template/`) to the new digest; the follow-on
-  `bot-autonomy-new-harnesses` change does **not** wait for that pin —
-  it merges independently, in either order relative to the pin. Its
-  modules for `copilot-cli`/`pi` are safe to exist before either binary
-  is installed, because `bot-autonomy.sh` already skips a module whose
-  executable is absent (the same behavior every other module has from
-  day one). Once both `bot-autonomy-new-harnesses` and the pin have
-  landed — in whichever order — the modules cover the binaries the
-  moment they appear installed, with no window where an installed,
-  supported harness lacks coverage. Waiting for the pin before
-  implementing the modules was the earlier draft of this sequencing, and
-  it was self-contradictory: `bot-autonomy-bootstrap`'s `unsupported`
-  entries for `copilot-cli`/`pi` exempt them only while absent (see that
-  change's spec), so a pin that installs them before their modules exist
-  fails `verify` and fails CI — meaning the pin genuinely cannot land
-  first either, which would have made "wait for the pin" impossible to
-  satisfy. Landing the modules independently removes the ordering
-  constraint entirely rather than picking a side of it.
+- State the sequencing explicitly, distinguishing what is *correct in
+  either order* from what is *operationally smooth in only one*: this
+  change publishes a new image from `main`; the rolling `sync-pin` PR
+  bumps both `Dockerfile` twins (root + `template/`) to the new digest;
+  the follow-on `bot-autonomy-new-harnesses` change does **not need to
+  wait** for that pin to be *implemented* — its modules for
+  `copilot-cli`/`pi` are safe to write and merge before either binary is
+  installed, because `bot-autonomy.sh` already skips a module whose
+  executable is absent (the same behavior every other module has from day
+  one). That removes the circular *implementation* dependency an earlier
+  draft had (see below). It does **not** mean either merge order is
+  equally smooth operationally: `bot-autonomy-bootstrap`'s `unsupported`
+  entries for `copilot-cli`/`pi` exempt them only while their executables
+  are absent, so if the `sync-pin` PR merges **before**
+  `bot-autonomy-new-harnesses`, every fresh bot container fails
+  `bot-autonomy.sh verify` from the moment the pin lands until the
+  modules ship — correctly and loudly (the fail-closed guarantee is never
+  violated; nothing silently reports a non-autonomous harness as clean),
+  but that is still a real build-breakage window, not a null one. The
+  recommended, operationally clean order is **modules before pin**:
+  merge `bot-autonomy-new-harnesses` first (or at least before the
+  `sync-pin` PR that carries Copilot/pi into this repo's own bot image),
+  so there is never a window in which they are installed without
+  coverage. If the pin lands first anyway, the fail-closed check is what
+  catches it — self-diagnosing, not silent, but not a substitute for
+  sequencing the merges correctly. An earlier draft of this sequencing
+  had the opposite problem — a literal contradiction where one sentence
+  required the modules to wait for the pin while another required the
+  pin to wait for the modules, which no merge order could satisfy;
+  removing the *implementation* dependency (modules don't need the pin to
+  exist) fixed that self-contradiction without claiming the *rollout*
+  order stops mattering, which it still does.
 
 ## Non-goals
 
@@ -117,8 +129,13 @@ installed binaries.
   "Gemini" from the profile-table comment); `docs/guides/herdr.md` and its
   jinja twin `template/docs/guides/herdr.md.jinja` (drop `gemini` from the
   pinned-image tool list, update the "0.8.0" version references).
-- Downstream, independent of each other and of this change's own merge
-  order: the rolling `sync-pin` PR (bumps `.devcontainer/Dockerfile` + its
-  `template/` twin to the new image digest), and the follow-on
-  `bot-autonomy-new-harnesses` change — see "State the sequencing
-  explicitly" above for why neither needs to wait on the other.
+- Downstream, implementable independently of this change's own merge order
+  (but recommended to land in this order operationally — modules before
+  the pin, not the other way): the rolling `sync-pin` PR (bumps
+  `.devcontainer/Dockerfile` + its `template/` twin to the new image
+  digest), and the follow-on `bot-autonomy-new-harnesses` change — see
+  "State the sequencing explicitly" above for the full picture:
+  implementing the modules never needs to wait on the pin, but landing
+  the pin ahead of the modules opens a real, self-diagnosing (not
+  silent) build-failure window that landing them in the recommended
+  order avoids.

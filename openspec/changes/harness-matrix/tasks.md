@@ -84,11 +84,18 @@
       for the retired phrase across all four files
 - [ ] 4.6 Update `docs/guides/herdr.md` (root) and its jinja twin
       `template/docs/guides/herdr.md.jinja`: drop `gemini` from the list of
-      harnesses the pinned image includes (line ~248) and update every
-      "0.8.0" version reference to match the new herdr pin (task 5.1);
-      verify with `task lint:markdown`, `task test:dogfood-structure`
-      (jinja twin), and a grep confirming no stale `gemini`/`0.8.0`
-      reference remains in either file
+      harnesses the pinned image includes (line ~248), AND rewrite the
+      version-mismatch worked example at root line ~649 / template line
+      ~654 ("The image pins `HERDR_VERSION` (0.8.0 today), while a laptop
+      may run a newer version (0.8.2)") — this is a specific illustration
+      of a mismatch, not a bare version stamp, so once the image pin
+      becomes 0.8.2 the example must either cite a still-current
+      hypothetical newer laptop version or be reworded so it does not
+      claim two different pins are simultaneously current; a blind
+      0.8.0→0.8.2 substitution would leave both numbers identical and the
+      example nonsensical; verify with `task lint:markdown`,
+      `task test:dogfood-structure` (jinja twin), and a grep confirming no
+      stale `gemini`/`0.8.0` reference remains in either file
 
 ## 5. Bump herdr
 
