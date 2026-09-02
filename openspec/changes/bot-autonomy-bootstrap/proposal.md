@@ -44,10 +44,18 @@ with one dispatch point that can prove every installed harness is covered.
   `codex-managed-config.toml` baseline on every key except `sandbox_mode`
   and `approval_policy` — so an edit to the shared baseline cannot silently
   go stale in the bot copy.
-- Replace Antigravity's shell-function wrapper with a real executable
-  installed to `~/.local/bin/agy` by the bot post-create only, so headless
-  and programmatic launches (`agy -p …`, or any exec off PATH) get
-  `--dangerously-skip-permissions` without depending on a login shell.
+- Replace Antigravity's shell-function wrapper with a real executable,
+  installed to `~/.local/bin/agy` by the bot post-create only WHEN
+  `use_antigravity_cli` is enabled, so headless and programmatic launches
+  (`agy -p …`, or any exec off PATH) get `--dangerously-skip-permissions`
+  without depending on a login shell. `use_antigravity_cli` is an existing,
+  default-off Copier answer (interactive-auth caveat and free-tier/
+  private-repo terms already documented next to it); the `antigravity`
+  module follows the same module-always-exists/policy-conditional pattern
+  the Copilot module (below) also follows —
+  `disabled-by-option` (the default: settings restored via
+  `apply-antigravity-settings.sh restore`, wrapper absent) or `autonomous`
+  (this repository's own `.dogfood-answers.yml` sets the option on).
 - Add an OpenCode module: force `"permission": {"*": "allow"}` in
   `~/.config/opencode/opencode.json` on every apply — overriding any prior
   value for that key while preserving every other key — with the prior
@@ -90,6 +98,22 @@ with one dispatch point that can prove every installed harness is covered.
   change is planning artifacts only (`openspec/changes/bot-autonomy-bootstrap/`).
   The implementation PR that follows edits both the root and `template/`
   layers in lockstep per AGENTS.md's dogfood-parity rule.
+- Does not promote the CI container assertion to a required branch-protection
+  status check — that is a separate follow-on change. Promoting it needs an
+  always-emitted aggregator (so a required check never sits permanently
+  pending on a PR the assertion job's paths filter excludes), both ruleset
+  layers (this repository's live ruleset and the
+  `Branch Protection Ruleset - Protect Main.json` template artifact), a
+  trusted validation path for fork PRs (this job needs credentials/build
+  access a fork PR's workflow run does not have), a `merge_group` trigger
+  with a credential-free container-validation path (so merge-queue runs are
+  covered without handing queue-time credentials to arbitrary PR code), and
+  the mirrored `docs/architecture/branch-protection.md` updates. #1137's
+  actual fail-closed gate does not depend on branch protection at all: it
+  is satisfied by `apply`/`verify` failing post-create and post-start
+  directly (a bad configuration fails container creation, not merely a CI
+  check), with this same-repository CI job adding a second, PR-visible
+  signal on top.
 
 ## Capabilities
 

@@ -90,6 +90,10 @@ See proposal.md - Why for the motivating incident. Current state, precisely:
 - The image-rollout sequencing between this change, `harness-matrix`, and
   `bot-autonomy-new-harnesses` cannot put a fresh bot container into a state
   where `verify` fails through no fault of its own configuration.
+- #1137's fail-closed gate is satisfied by `apply`/`verify` at post-create
+  and post-start plus the CI container-assertion workflow job — not by a
+  required branch-protection status check, which this change does not
+  build (see Non-Goals).
 
 **Non-Goals:**
 - Not designing the Copilot CLI / pi / oh-my-pi **modules** —
@@ -105,6 +109,13 @@ See proposal.md - Why for the motivating incident. Current state, precisely:
   `agy-autonomy.sh`'s function are deleted outright or kept briefly as
   deprecated shims — an implementation-time call with no spec consequence
   either way (see Open Questions).
+- Not promoting the CI container assertion (or a future aggregator) to a
+  required branch-protection status check. See proposal.md - Non-goals for
+  what that follow-on change needs (an always-emitted aggregator, both
+  ruleset layers, a trusted fork-PR validation path, a `merge_group`
+  trigger with a credential-free container-validation path, and mirrored
+  `docs/architecture/branch-protection.md` updates) and the Decisions/Risks
+  below for why #1137's actual fail-closed gate does not depend on it.
 
 ## Decisions
 
@@ -240,28 +251,28 @@ treats it exactly like an uncovered slug and fails, unless a real module
 now covers it. This makes the sequencing hazard self-detecting for
 `copilot-cli`/`pi` today and for any future addition to the `unsupported`
 set: if the rolling `sync-pin` PR ever bumps a bot image to a revision with
-a still-`unsupported` harness installed, CI goes red immediately, naming
-it. "Goes red" is not by itself an enforcement mechanism — a failing,
-non-required check does not block a merge — so this design also requires
-an **always-on aggregator** in `devcontainer-build.yml` (matching
-`build.yml`'s own `verify` job) that depends on the container-mode
-assertion and is itself the **required status check** on the default
-branch — confirmed today that nothing from `devcontainer-build.yml` is
-required, only `verify`/`security` from `build.yml`. The aggregator, not
-the assertion job directly, is what must be required: the assertion job
-stays path-filtered (building a container on every unrelated PR would be
-wasteful), and requiring a path-filtered job directly would wedge every PR
-outside that path — see the Risk entry below and
-`docs/architecture/branch-protection.md`, which documents that exact
-failure mode. With the aggregator in place, "land the pin after the module
-exists" is an *enforced* invariant, not a documentation-only convention or
-a red check someone could merge past — for every entry in the table, not
-a privileged subset of it, and without blocking PRs the devcontainer never
-touches. The same
-reasoning applies going forward to `oh-my-pi`: `harness-matrix` adds its
-registry row with a pending-module reason, so whichever of `harness-matrix`
-and this change merges second is responsible for adding that entry — see
-harness-matrix's design.md, which states this from the other side.
+a still-`unsupported` harness installed, the container-assertion job in
+`devcontainer-build.yml` goes red on that PR, naming the harness. That
+check is not required by branch protection today — this change
+deliberately does not promote it to one (see Non-Goals; the prerequisites
+are real: an always-emitted aggregator, both ruleset layers, a trusted
+fork-PR validation path, a `merge_group` trigger with a credential-free
+path, and mirrored branch-protection docs, none of which this change
+builds), so a reviewer *could* merge past a red, non-required check. Two
+things bound that gap even without a required check. First, the CI signal
+is loud and PR-visible, not silent — the opposite of the original
+incident, where nothing enumerated the scripts against the registry at
+all. Second, and more fundamentally, #1137's actual fail-closed guarantee
+never depended on CI in the first place: `bot-autonomy.sh verify` running
+in post-create and post-start (the Fail-closed requirement above) means a
+real bot container built from a bad-ordering pin fails to *create or
+start*, not merely fails a check someone could ignore — the sequencing
+hazard is caught at container-build time for every consumer, whether or
+not anyone was watching the PR's CI. The same reasoning applies going
+forward to `oh-my-pi`: `harness-matrix` adds its registry row with a
+pending-module reason, so whichever of `harness-matrix` and this change
+merges second is responsible for adding that entry — see harness-matrix's
+design.md, which states this from the other side.
 
 **Codex: ship a complete `codex-managed-config.bot.toml`, installed and
 verified by checksum, replacing the awk rewrite — plus a structural parity
@@ -308,6 +319,39 @@ only interactive ones. Alternative considered: keep the shell function and
 add the wrapper alongside it — rejected as redundant once the wrapper
 exists on the container-wide `PATH`; the function covered a strict subset
 of what the wrapper covers.
+
+**Antigravity's autonomous policy is gated by the existing
+`use_antigravity_cli` Copier answer, using the same
+module-always-exists/policy-conditional pattern as Copilot.** Every
+version of this design before now had the `antigravity` module apply the
+always-proceed policy and install the wrapper unconditionally, with no
+reference to `use_antigravity_cli` at all — even though that Copier answer
+already exists, already defaults off, and already documents the same
+free-tier/private-repo/interactive-auth terms AGENTS.md's Hard Rule
+requires (see `harness-matrix`'s Copilot CLI requirement for the terms
+Antigravity's own help text states). Forcing every generated bot container
+into Antigravity's autonomous, always-proceed posture regardless of that
+answer is exactly the default this repository's Hard Rule exists to
+prevent: the binary is installed unconditionally in the shared image
+(unaffected by this decision), but the *autonomy policy* is
+consumer-facing configuration precisely as Copilot's is. The fix applies
+the pattern this design already committed to for Copilot's future module
+(see "A Copier-gated harness's module always exists" below) to
+Antigravity's module today, since Antigravity's module is not a future
+follow-on — it is being defined in this very change.
+`bot-autonomy/antigravity.sh` SHALL support the same two policy states:
+`autonomous` when `use_antigravity_cli` is enabled (today's
+always-proceed settings plus the `~/.local/bin/agy` wrapper) and
+`disabled-by-option` when it is not (the default) — `apply` calls
+`apply-antigravity-settings.sh restore` to put the settings file back to
+its pre-managed state and ensures the wrapper is absent (removing it if a
+prior run or a stale image left one behind), and `verify` asserts that
+restored/absent state rather than unconditionally asserting
+`always-proceed`. This repository's own `.dogfood-answers.yml` sets
+`use_antigravity_cli` on, so this repository's own bot container runs
+Antigravity autonomously — a freshly generated repo defaults to
+`disabled-by-option`, matching Copilot's own concrete example on the exact
+same line of reasoning.
 
 **OpenCode: force the managed `permission` key on every apply; preserve
 everything else; back up the prior value for restore.** An earlier draft of
@@ -388,6 +432,25 @@ assertion runs `docker exec <container> bot-autonomy.sh verify` — the same
 verifier post-create and post-start already run, against the same
 already-covered set of boundaries, with one implementation to keep correct.
 
+**The CI container assertion — and any repeated local smoke run — uses
+run-specific, uniquely-named volumes for `~/.gemini`/`~/.config/opencode`,
+never the persistent ones a real container reuses.** Both the OpenCode and
+Antigravity modules gate their backup capture on no backup existing yet
+(see their Decisions above) — correct for a real, long-lived bot
+container, where only the very first `apply` after a fresh volume should
+capture the pre-managed value. But it means a container-assertion run that
+reused the *same* persistent volume across CI runs (or across a
+developer's own repeated local `devcontainer-smoke.sh` invocations) would
+only exercise that first-run behavior once, ever: every subsequent run
+would see an already-existing backup and skip re-proving it, silently
+defeating the absent→apply→restore fixtures (task 2.6) and the
+option-toggle fixtures this change adds for Antigravity (tasks 2.4/2.5)
+the moment they matter most — on a second or later run. The fix is to give
+every run its own uniquely-named volumes, created fresh and torn down
+afterward, so `apply`'s absent-state behavior is proven identically on run
+1, run 2, and run N — not just once, coincidentally, on whichever run
+happened to hit a clean volume first.
+
 **`verify` re-reads effective runtime state independently of `apply`'s
 internals.** This mirrors the incident's actual root cause: the template
 said the right thing while the applied file did not match it. Each module's
@@ -432,36 +495,28 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   [Mitigation] this is precisely acceptance criterion 3's [CI] requirement;
   `task test:devcontainer:root` already pays an equivalent cost locally, so
   CI gains coverage it was missing rather than adopting new mechanism.
-- [Risk] Making the container-assertion job itself a required status check
-  would wedge every PR that does *not* touch `.devcontainer/**` — the job
-  is (and must stay) path-filtered, so on an unrelated PR it never runs and
-  never reports, and a required check with nothing to emit it "stays
-  pending forever and blocks every pull request," per this repository's own
-  `docs/architecture/branch-protection.md` → [Mitigation] task 3.3c
-  requires an **always-on aggregator** instead — the same shape
-  `build.yml`'s own `verify` job already uses (`if: always()`, depending on
-  its leaf jobs, reporting via `scripts/verify-ci-results.sh`) — and makes
-  *that* the required context. The aggregator itself carries no path
-  filter, so it reports on every PR: success without running anything when
-  a job-level change-detection step says nothing devcontainer-related
-  changed, and the real assertion's result when it did. Every PR that
-  *does* touch `.devcontainer/**` still cannot merge past a red assertion
-  by choice or oversight — task 3.3d's scenario (a docs-only PR merges on
-  an automatic pass) is what proves the fix actually closes the wedge
-  risk, not merely asserts it away.
 - [Risk] The pending-follow-on `unsupported` entries for
   `copilot-cli`/`pi`/`oh-my-pi` could be forgotten when `harness-matrix` or
   `bot-autonomy-new-harnesses` actually lands, reopening the exact
-  "installed but unmoduled" gap they exist to bound → [Mitigation] both
-  changes' tasks.md carry an explicit cross-referencing task naming the
-  other change and the specific slug to reconcile; the
-  registry-completeness unit test fails loudly the moment `oh-my-pi`'s row
-  exists with no covering entry, and — since a pending-follow-on exemption
-  no longer survives installation, and the required aggregator (task 3.3c)
-  depends on the container assertion that would catch it whenever the
-  change-detection filter matches — the sync-pin PR that would introduce
-  the gap is mechanically blocked from merging, not merely flagged, so a
-  forgotten reconciliation is caught at merge time, not after.
+  "installed but unmoduled" gap they exist to bound → [Mitigation] two
+  different failure shapes, caught two different ways. Forgetting to add
+  `oh-my-pi`'s `unsupported` entry when its registry row lands is caught by
+  the registry-completeness unit test (task 1.3) — that test carries no
+  devcontainer `paths:` filter (it runs as part of `task verify`, which
+  `build.yml` already requires unconditionally), so a PR that adds the row
+  without the entry fails an already-required check and cannot merge, full
+  stop. Forgetting the reconciliation is not what lets an *installed*
+  harness stay uncovered, though — that is the `sync-pin` PR bumping the
+  image itself, which the container-assertion job (tasks 3.3/3.3b) catches
+  by actually installing and probing the image; that job is **not** a
+  required status check (see Non-Goals and the Decision above), so it is a
+  loud, PR-visible red rather than a merge block. Both changes' tasks.md
+  still carry the explicit cross-referencing task naming the other change
+  and the specific slug to reconcile, so the registry-side gap is closed by
+  construction; the image-side gap relies on the reviewer noticing the red
+  check, or on the always-fail-closed post-create/post-start behavior
+  making a bad pin obvious the moment anyone actually builds the
+  container.
 - [Risk] Resolving the OpenCode `OPENCODE_CONFIG_CONTENT` open question later
   could make today's file-seed implementation redundant work →
   [Mitigation] the scenario contract (effective permission policy is

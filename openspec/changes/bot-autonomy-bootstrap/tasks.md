@@ -56,25 +56,33 @@
       and `codex-managed-config.bot.toml` asserting every key matches except
       `sandbox_mode`/`approval_policy`; verify it fails when a fixture edits
       `model` in only one of the two files, and passes on the real pair
-- [ ] 2.4 Add `bot-autonomy/antigravity.sh`: apply sets
-      `toolPermission: always-proceed` (reusing `apply-antigravity-settings.sh`
-      apply semantics) and confirms the bot post-create step below installed
-      the wrapper; verify checks both; wire its restore path to
-      `apply-antigravity-settings.sh restore` rather than a new
-      implementation; verify with the existing
-      `apply-antigravity-settings.sh` fixture pattern in
-      `scripts/devcontainer-assert.sh`
+- [ ] 2.4 Add `bot-autonomy/antigravity.sh`, gated by the existing
+      `use_antigravity_cli` Copier answer (default off): WHEN enabled,
+      apply sets `toolPermission: always-proceed` (reusing
+      `apply-antigravity-settings.sh` apply semantics) and confirms the bot
+      post-create step below installed the wrapper; WHEN disabled (the
+      default), apply instead calls `apply-antigravity-settings.sh restore`
+      and confirms `~/.local/bin/agy` is absent (removing it if present);
+      verify checks whichever state the answer selects; verify with the
+      existing `apply-antigravity-settings.sh` fixture pattern in
+      `scripts/devcontainer-assert.sh`, run once with the option enabled and
+      once with it disabled, plus a toggle-off-after-apply fixture
+      confirming a prior autonomous state reaches disabled-by-option
 - [ ] 2.5 Install `~/.local/bin/agy` as an executable wrapper from the bot
-      post-create only (retiring the `agy()` shell function in
-      `agy-autonomy.sh`), injecting `--dangerously-skip-permissions` unless
-      already present, porting `agy-autonomy.sh`'s exact passthrough list
-      unmodified (bare `agy`, `agent`/`agents`/`changelog`/`help`/`-h`/
+      post-create only, and only WHEN `use_antigravity_cli` is enabled
+      (retiring the `agy()` shell function in `agy-autonomy.sh`
+      unconditionally either way), injecting `--dangerously-skip-permissions`
+      unless already present, porting `agy-autonomy.sh`'s exact passthrough
+      list unmodified (bare `agy`, `agent`/`agents`/`changelog`/`help`/`-h`/
       `--help`/`install`/`models`/`plugin`/`plugins`/`update`/`--version`);
-      verify with a fixture invoking the wrapper directly (not via a
-      sourced shell) asserting the flag lands on a non-passthrough
-      invocation and is absent on every passthrough case, and confirm
-      `ensure-antigravity-cli.sh`'s `agy --version` call still behaves
-      identically through the wrapper
+      when the option is disabled, ensure no wrapper is left at
+      `~/.local/bin/agy` (removing one a prior apply or a stale image may
+      have left behind); verify with a fixture invoking the wrapper
+      directly (not via a sourced shell) asserting the flag lands on a
+      non-passthrough invocation and is absent on every passthrough case,
+      confirm `ensure-antigravity-cli.sh`'s `agy --version` call still
+      behaves identically through the wrapper, and confirm the wrapper's
+      absence when the option is disabled
 - [ ] 2.5a Add `containerEnv.PATH` to the bot `devcontainer.json` (and its
       `template/` twin) prepending `/home/vscode/.local/bin` ahead of
       `/usr/local/bin`, so the wrapper's precedence is container-wide
@@ -147,56 +155,60 @@
       `act`/manual dry run) and confirming it fails against a
       deliberately misconfigured image (e.g. Antigravity's settings
       reverted) and passes against the real one
-- [ ] 3.3a Add `scripts/devcontainer-assert.sh` to
-      `devcontainer-build.yml`'s (and its jinja twin's) `paths:` filter for
-      both `push` and `pull_request` triggers — today's filter
-      (`.devcontainer/**`, the workflow file itself,
-      `scripts/verify-ci-results.sh`) does not include it, so once task
-      3.3 makes the workflow depend on this script, a future PR that
-      changes only `devcontainer-assert.sh` would not trigger the one
-      workflow that runs it against a built image; verify by confirming
-      the path appears in both files and `task test:dogfood-structure`
-      passes
-- [ ] 3.3c Add an **always-on aggregator job** to `devcontainer-build.yml`
-      — matching `build.yml`'s own `verify` job shape (`if: always()`,
-      `needs: [...]`, calling `scripts/verify-ci-results.sh`) — and make
-      *only that aggregator* a required status check. Do **not** require
-      the path-filtered `build`/container-assertion jobs directly: this
-      repo's own `docs/architecture/branch-protection.md` names the exact
-      failure mode that would cause ("a required check that has never
-      reported blocks every pull request... Importing first wedges the
-      repository: a required check with no workflow to emit it stays
-      pending forever") — a required check tied to a path-filtered job
-      never reports on a PR outside that path, so every non-devcontainer
-      PR (a docs change, a pure `openspec/changes/**` change like this
-      one) would show that context "Expected — Waiting for status to be
-      reported" **forever** and could never merge. Concretely: remove the
-      workflow-level `paths:` filter from `devcontainer-build.yml`'s
-      `on:` triggers (so the workflow always runs, the same reason
-      `build.yml` has no `paths:` filter at all — confirmed above); add a
-      lightweight, unconditional first job that detects whether
-      devcontainer-related paths actually changed (its own output, not a
-      workflow-level filter); gate `build` and the container-assertion
-      job on that output (`if: needs.changes.outputs.devcontainer ==
-      'true'`) so they still skip — and their expensive work still does
-      not run — on an unrelated PR; then add the aggregator, `if:
-      always()`, depending on all three, that reports success either when
-      the detection job says nothing devcontainer-related changed (the
-      other two were skipped, which is not a failure) or when they were
-      not skipped and both succeeded; verify by confirming the ruleset
-      lists only the aggregator's job name after the change, matching how
-      `verify`/`security`/`closing-keywords` (not `lint`/`template-test`)
-      are the three required contexts today
-- [ ] 3.3d Add a scenario-matching manual/CI check: open a docs-only PR
-      (touching only `openspec/changes/**` or another path outside
-      `devcontainer-build.yml`'s detection filter) and confirm the
-      aggregator job's context reports **success** without the `build` or
-      container-assertion jobs running at all — proving the required
-      check does not wedge a PR that has nothing to do with the
-      devcontainer
+- [ ] 3.3a Add `scripts/devcontainer-assert.sh` and, if the
+      registry-completeness unit test (task 1.3) lands as a standalone
+      script rather than folded into `devcontainer-assert.sh`, that script
+      too (e.g. `scripts/test-bot-autonomy.sh`) to `devcontainer-build.yml`'s
+      (and its jinja twin's) `paths:` filter for both `push` and
+      `pull_request` triggers — today's filter (`.devcontainer/**`, the
+      workflow file itself, `scripts/verify-ci-results.sh`) does not include
+      either, since both live under root `scripts/`, not `.devcontainer/`;
+      the bot-autonomy module tree itself
+      (`.devcontainer/scripts/bot-autonomy.sh`,
+      `.devcontainer/config/bot-autonomy/**`) is already covered by the
+      existing `.devcontainer/**` entry. Without this, once task 3.3 makes
+      the workflow depend on these scripts, a PR that changes only one of
+      them would not trigger the workflow that runs it against a built
+      image; verify by confirming every added path appears in both files
+      and `task test:dogfood-structure` passes
+- [ ] 3.3c Make the CI container-assertion run (task 3.3b) and any
+      repeated local `devcontainer-smoke.sh` run mount run-specific,
+      uniquely-named volumes for `~/.gemini` and `~/.config/opencode`
+      (for example, suffixed with the CI run ID or a generated UUID),
+      created fresh for that run and removed afterward — rather than the
+      same persistent named volumes a real bot devcontainer (or a
+      developer's own repeated local runs) reuses across rebuilds. Both
+      the OpenCode and Antigravity modules gate their backup capture on
+      **no backup existing yet** (design.md), so reusing the same
+      persistent volume across CI runs would only exercise the true
+      first-run/absent state once, ever — every later run would see an
+      already-existing backup and silently skip re-proving it, defeating
+      the absent→apply→restore fixture (task 2.6) and the option-toggle
+      fixtures this change adds for Antigravity (tasks 2.4/2.5); verify by
+      running the container-assertion job (or `devcontainer-smoke.sh`)
+      twice in a row and confirming both runs independently observe the
+      same first-run, absent-backup behavior, and that no volume from
+      either run survives to affect a later, unrelated run
 - [ ] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
       and the `agy()` function in `agy-autonomy.sh` per the design's open
       question; verify no remaining caller references a retired script
+- [ ] 3.5 Add `task test:devcontainer:root` (and the equivalent
+      `template/` target) to the root and template `ci` Taskfile targets,
+      so `task ci` actually runs the devcontainer container-assertion smoke
+      test its own description already promises ("verify's checks + skills
+      drift + devcontainer assert + security") — per AGENTS.md's
+      `ci`-mirror rule, a check the build workflow gates on and that can
+      run locally belongs in `ci` too. State the existing semantics
+      explicitly rather than changing them: `test:devcontainer:root`
+      already skips with a message (not a failure) when the `devcontainer`
+      CLI or Docker daemon is unavailable, so adding it to `ci` costs
+      nothing on a machine without Docker and exercises the real
+      container-assertion path (including this change's `bot-autonomy.sh
+      verify` invocation) wherever Docker is present; verify by running
+      `task ci` on a machine with Docker and confirming
+      `test:devcontainer:root` actually executes (not merely skips), and
+      on one without Docker confirming it skips with the documented
+      message rather than failing
 
 ## 4. Docs, template parity, and cross-change coordination
 

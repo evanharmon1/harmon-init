@@ -69,8 +69,12 @@ See proposal.md - Why for the motivating gap. Current state, precisely:
 - Not adding `agent-registry.json` rows for Copilot CLI or pi — they already
   exist. Only `oh-my-pi` is new to the registry.
 - Not deciding bot-autonomy boundaries for these three harnesses — that is
-  `bot-autonomy-new-harnesses`, sequenced strictly after this change's image
-  publishes and the `sync-pin` PR lands it in both `Dockerfile` twins.
+  `bot-autonomy-new-harnesses`, which merges after this change's image is
+  published (there is nothing to write a module against before then) and,
+  by the recommended rollout order, before the `sync-pin` PR lands the
+  binaries in this repository's own `Dockerfile` twins — see Risks below
+  for why that order is recommended and self-detecting rather than a
+  merge-time-enforced implementation dependency.
 - Not resolving whether `@github/copilot` exposes an auto-update-disable
   switch (see Open Questions) — the spec states the requirement
   conditionally, matching how the proposal itself phrased it.
@@ -221,23 +225,30 @@ the proposal's Non-goals section heads off.
   `bot-autonomy.sh` already skips a module whose executable is absent
   (true for every module since `bot-autonomy-bootstrap`) — so
   implementing the modules never has to wait on this change's pin.
-  Second, and separately: that does **not** make the *rollout* order
-  irrelevant, and it is no longer left to a recommendation.
-  `bot-autonomy-bootstrap` makes an **always-on aggregator job** in
-  `devcontainer-build.yml` — not the path-filtered container-assertion job
-  directly, which would wedge every PR that never touches the devcontainer
-  — the **required status check** on the default branch. The assertion
-  the aggregator depends on runs on any change to
-  `.devcontainer/Dockerfile`, including the `sync-pin` PR this change
-  feeds. If the pin merges before the modules do, that assertion fails,
-  the aggregator reports failure — loud, not silent, the fail-closed
-  guarantee holds — and the PR **cannot merge** while it fails, not merely
-  "should not." Land `bot-autonomy-new-harnesses` before the `sync-pin` PR
-  that carries these binaries into this repo's own bot image, and the
-  required aggregator enforces that ordering rather than depending on
-  someone following the recommendation — while still reporting an
-  automatic pass for any PR the devcontainer change-detection filter
-  doesn't match. This change's own new registry addition, `oh-my-pi`,
+  Second, and separately: that does **not** make the *rollout* order a
+  non-issue, even though it is, deliberately, not mechanically enforced by
+  branch protection. `bot-autonomy-bootstrap`'s container-assertion job in
+  `devcontainer-build.yml` runs on any change matching its `paths:` filter,
+  including the `sync-pin` PR this change feeds (task 3.3a widens that
+  filter to cover the assertion script and the bot-autonomy module tree).
+  If the pin merges before the modules do, that job fails, visibly, on the
+  `sync-pin` PR — but it is an ordinary, non-required workflow job, not a
+  required status check (promoting it to one is `bot-autonomy-bootstrap`'s
+  stated follow-on — see its Non-Goals — requiring an always-emitted
+  aggregator, both ruleset layers, a trusted fork-PR validation path, a
+  `merge_group` trigger with a credential-free path, and mirrored
+  branch-protection docs, none of which either change builds), so a
+  reviewer *could* merge the `sync-pin` PR past a red check. What does not
+  depend on anyone noticing that check: `bot-autonomy.sh verify` runs in
+  post-create and post-start on every real bot container
+  (`bot-autonomy-bootstrap`'s Fail-closed requirement), so a bad-ordering
+  pin produces a bot devcontainer that fails to create or start for every
+  consumer who takes it — not a silent gap, just one enforced by the
+  container's own boot sequence rather than by GitHub's merge button. Land
+  `bot-autonomy-new-harnesses` before the `sync-pin` PR that carries these
+  binaries into this repo's own bot image: that ordering is recommended and
+  self-detecting (a red CI check, then a broken container if ignored), not
+  merge-blocked today. This change's own new registry addition, `oh-my-pi`,
   still needs its own
   coordination: whichever of `harness-matrix` and `bot-autonomy-bootstrap`
   merges **second** must add `oh-my-pi` to that `unsupported` set —
