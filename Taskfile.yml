@@ -121,6 +121,7 @@ tasks:
       - task: test:codex-review
       - task: test:template-helpers
       - task: spec:validate
+      - task: test:openspec-generated-pin
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -748,6 +749,11 @@ tasks:
     desc: "Install the pinned OpenSpec CLI onto PATH (npm install -g --prefix ~/.local)"
     cmds:
       - ./scripts/install-openspec.sh {{.OPENSPEC_VERSION}}
+
+  test:openspec-generated-pin:
+    desc: "Guard: generated OpenSpec assets' generatedBy matches the pinned OPENSPEC_VERSION"
+    cmds:
+      - ./scripts/test-openspec-generated-pin.sh
 
   # ── Security ──────────────────────────────────────────────────
   security:

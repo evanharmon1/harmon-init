@@ -124,3 +124,18 @@ proposal is a follow-up PR.
   template twin to update, since generated repos never receive OpenSpec
   (noted in `scripts/audit-dogfood.sh`, which already reports both files as
   differing from their template renders for unrelated, pre-existing reasons).
+  `npm install --prefix` cannot modify a shell's `PATH` itself, so outside
+  the devcontainer (a stock macOS shell, e.g., where `~/.local/bin` is not
+  on `PATH` by default) the install alone does not make the bare command
+  work; `install-openspec.sh` detects that case and prints the exact line to
+  add to a shell rc, rather than leaving a silent "command not found" as the
+  only signal.
+- `task test:openspec-generated-pin` statically checks that every generated
+  asset's `generatedBy` field (OpenSpec's own record of which CLI version
+  last regenerated it) matches the pinned `OPENSPEC_VERSION`, so a Renovate
+  bump that lands without a `task spec:update` regeneration fails loudly
+  instead of merging with every other check green. It cannot verify the
+  generated *content* is current — only running `spec:update` does that —
+  but it catches exactly the "forgot to regenerate" mistake, which is what a
+  three-times-repeated review finding (across both the challenge and review
+  stages) asked for.
