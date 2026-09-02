@@ -43,27 +43,36 @@ provider configuration; or an entry in an explicit `unsupported` set
 carrying a reason. A unit test SHALL enumerate the full registry and fail if
 any slug falls into none of the three buckets, or into more than one.
 
-An `unsupported` entry's reason is documentation only — it explains WHY a
-slug has no module today (not installed in this image, not launched inside
-one, or a module pending a named follow-on change) — and never changes what
-`verify` does. Every `unsupported` entry, regardless of reason, exempts its
-slug ONLY while the slug's executable is absent. The instant any
-`unsupported` slug's executable is installed, it is treated exactly like an
-uncovered slug — `verify` fails naming it — unless a real module (or an
-alias to one) now covers it. There is deliberately no reason category whose
-exemption survives installation: an entry that seems permanently
-out-of-scope today (`qwen-code`, `goose`, `cline`, `claude-code-action`) is
-just as capable of silently drifting into scope tomorrow — a future image
-build installing one without anyone updating this table — as `copilot-cli`
-and `pi` are today, and the fail-closed guarantee this change exists to
-add must not depend on someone remembering to update a table; that is the
-same failure mode issue #1137 itself was.
+An `unsupported` entry carries two fields: a `reason` (documentation only —
+explains WHY a slug has no module today; never changes what `verify` does)
+and an `executable`, either a binary name or the literal `null`. `verify`
+checks a named `executable` for presence on `PATH` (via `command -v`) to
+decide whether the slug's absent-only exemption still applies; an
+`executable: null` entry has no standalone binary this image could ever
+install, so its exemption cannot be defeated by installation and is not
+re-checked. The instant a **named** `unsupported` executable is found
+installed, that slug is treated exactly like an uncovered slug — `verify`
+fails naming it — unless a real module (or an alias to one) now covers it.
+There is deliberately no *reason*-based category whose exemption survives
+installation: an entry that seems permanently out-of-scope today
+(`qwen-code`, `goose`, `cline`) is just as capable of silently drifting
+into scope tomorrow — a future image build installing one without anyone
+updating this table — as `copilot-cli` and `pi` are today, and the
+fail-closed guarantee this change exists to add must not depend on someone
+remembering to update a table; that is the same failure mode issue #1137
+itself was. `executable: null` is not a reason-based exception to that
+rule — it is a structural one: `claude-code-action` runs as a GitHub
+Actions workflow and has no CLI binary of its own to ever detect, so there
+is nothing an installation check could observe in a devcontainer image in
+the first place.
 
 #### Scenario: registry completeness is unit-tested across all three buckets
 - **WHEN** the bot-autonomy unit test runs
 - **THEN** it fails if any `agent-registry.json` harness slug has no
-  module, no alias to a moduled slug, and no `unsupported` entry, and fails
-  if any slug is covered by more than one bucket
+  module, no alias to a moduled slug, and no `unsupported` entry; fails if
+  any slug is covered by more than one bucket; and fails if an
+  `unsupported` entry omits its `executable` field or sets it to something
+  other than a binary name or `null`
 
 #### Scenario: provider-rewired Claude Code variants alias to the claude-code module
 - **WHEN** the bot-autonomy module directory and its alias table are
@@ -75,27 +84,38 @@ same failure mode issue #1137 itself was.
   functions and environment variables (`claude-providers.sh`), and so share
   its `/etc/claude-code/managed-settings.json` boundary
 
-#### Scenario: the unsupported set documents why, today, for every remaining slug
+#### Scenario: the unsupported set documents why and what to detect, for every remaining slug
 - **WHEN** the bot-autonomy unsupported set is inspected
-- **THEN** `qwen-code`, `goose`, and `cline` each carry a reason stating
-  they are not installed in the shared devcontainer image;
-  `claude-code-action` carries a reason stating it runs as a GitHub Actions
-  workflow and is never installed or launched inside a devcontainer; and
-  `copilot-cli` and `pi` each carry a reason stating they are registered
-  but not yet installed — `harness-matrix` installs the binaries and
-  `bot-autonomy-new-harnesses` adds their modules — satisfying the
-  registry-completeness test before any of the five is installed
+- **THEN** `qwen-code` carries `executable: "qwen"`, `goose` carries
+  `executable: "goose"`, and `cline` carries `executable: "clite"` (its
+  published `@cline/cli` package's binary name), each with a reason
+  stating it is not installed in the shared devcontainer image;
+  `claude-code-action` carries `executable: null` with a reason stating it
+  runs as a GitHub Actions workflow and has no devcontainer-installable
+  binary; and `copilot-cli` and `pi` carry `executable: "copilot"` and
+  `executable: "pi"` respectively, with a reason stating they are
+  registered but not yet installed — `harness-matrix` installs the
+  binaries and `bot-autonomy-new-harnesses` adds their modules —
+  satisfying the registry-completeness test before any of the five is
+  installed
 
 #### Scenario: an installed unsupported harness fails verify until it gets real coverage
-- **WHEN** `bot-autonomy.sh verify` runs and finds any currently-unsupported
-  slug's executable installed (whether that is `copilot-cli`/`pi` after
-  `harness-matrix` lands, or, hypothetically, `qwen-code`/`goose`/`cline`/
-  `claude-code-action` if a future image ever installed one) while it still
-  has no module and no alias
+- **WHEN** `bot-autonomy.sh verify` runs and finds a named `unsupported`
+  executable installed (whether that is `copilot`/`pi` after
+  `harness-matrix` lands, or, hypothetically, `qwen`/`goose`/`clite` if a
+  future image ever installed one) while its slug still has no module and
+  no alias
 - **THEN** `verify` exits non-zero naming the harness — no `unsupported`
-  reason grants an exemption that survives installation, so any rollout
-  that lands an image with a newly-installed, still-uncovered harness fails
-  CI loudly instead of silently reporting success
+  reason grants a named executable's exemption that survives installation,
+  so any rollout that lands an image with a newly-installed, still-uncovered
+  harness fails CI loudly instead of silently reporting success
+
+#### Scenario: a null-executable entry is never re-checked for installation
+- **WHEN** `bot-autonomy.sh verify` runs and `claude-code-action` (the
+  only `executable: null` entry) is inspected
+- **THEN** `verify` performs no `command -v` check for it and does not
+  fail on its account — there is no binary a devcontainer image could
+  install for a GitHub Actions workflow to begin with
 
 #### Scenario: an installed executable with no covering entry fails verify
 - **WHEN** `bot-autonomy.sh verify` runs and finds an executable on `PATH`

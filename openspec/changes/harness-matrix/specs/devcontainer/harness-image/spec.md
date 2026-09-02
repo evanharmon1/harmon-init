@@ -127,9 +127,12 @@ contract every existing tool in the image already follows.
 
 #### Scenario: every new tool is smoke-tested
 - **WHEN** `smoke.sh` runs against the built image
-- **THEN** it asserts `copilot`, `pi`, and `omp` are on `PATH` and each
+- **THEN** it asserts `copilot`, `pi`, and `omp` are on `PATH`, each
   responds to a version/help probe without a loader or command-not-found
-  failure
+  failure, AND each tool's reported version is explicitly compared against
+  its manifest entry — the generic exit-status-only probe alone would let
+  a successfully-running wrong version satisfy this scenario while
+  violating the version-pin scenarios above
 
 ### Requirement: both supported architectures build
 Every addition SHALL build successfully for both `amd64` and `arm64`.

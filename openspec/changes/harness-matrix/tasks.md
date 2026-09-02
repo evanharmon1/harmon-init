@@ -98,6 +98,15 @@
 - [ ] 6.1 Confirm every new/removed tool has a matching manifest arg and
       smoke probe (groups 1-4); verify with a single `smoke.sh` run against
       the built image
+- [ ] 6.1a Extend `smoke.sh` with explicit reported-version-vs-manifest
+      comparisons for `copilot`, `pi`, and `omp` — matching the pattern
+      already used for `task`/`terraform`/`tflint`/`agy` (parse the
+      version out of the tool's own output and assert it equals
+      `jq -r '.tools.<key>' "$manifest"`), not the generic `run_version`
+      helper alone, which only checks exit status and would let a
+      successfully-running wrong version pass; verify by deliberately
+      mismatching one tool's manifest entry in a fixture and confirming
+      `smoke.sh` fails
 - [ ] 6.2 Build both `amd64` and `arm64` via the publish workflow's
       candidate job (or local `docker buildx build --platform`); verify both
       succeed and both pass `smoke.sh`

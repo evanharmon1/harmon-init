@@ -148,6 +148,27 @@ unsupported list") asks for exactly the static property, and narrowing it
 would let a slug silently fall through the cracks the way OpenCode did
 originally, just at the registry layer instead of the image layer.
 
+**Each `unsupported` entry names the executable `verify` checks for, or
+states there is none.** The "installed executable loses its exemption"
+rule (see the next Decision) is not implementable without knowing *which*
+executable to check — `agent-registry.json` carries no binary-name field,
+and a bare `slug → reason` map, as an earlier draft specified, gives
+`verify` nothing to run `command -v` against. Each entry now carries an
+`executable` field: a verified binary name (`qwen-code` → `qwen`, `goose`
+→ `goose`, `cline` → `clite` — its published `@cline/cli` npm package's
+`bin` entry; `copilot-cli` → `copilot`, `pi` → `pi`, both already stated
+in `harness-matrix`), or the literal `null` for a slug that has no
+standalone binary a devcontainer image could ever install in the first
+place. `claude-code-action` is the one `null` case today: it runs as a
+GitHub Actions workflow, not a CLI, so there is nothing for an
+installation check to observe — its exemption is structural, not a special
+reason category the way an earlier draft's "out-of-scope" reason type
+tried to be (see the Decision above rejecting reason-typed exemptions).
+Verifying the four binary names against each project's published package
+metadata before writing them down, rather than guessing, is what makes
+this concrete rather than another placeholder the implementation PR would
+have had to resolve from scratch.
+
 **Cross-change sequencing: the `unsupported` bucket satisfies static
 completeness now; it never silences the dynamic fail-closed check once a
 harness is actually installed — for ANY reason, uniformly.**

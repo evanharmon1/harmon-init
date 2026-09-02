@@ -9,20 +9,26 @@
       alias table (`claude-code-deepseek`, `claude-code-glm`,
       `claude-code-kimi`, `claude-code-minimax`, `claude-code-qwen`,
       `claude-code-qwen-local` → `claude-code`) and the `unsupported` set
-      (slug → reason, reason is documentation only — it never changes
-      `verify`'s behavior) covering `claude-code-action`/`qwen-code`/
-      `goose`/`cline` (not installed in the shared image, or not launched
-      in one) and `copilot-cli`/`pi` (registered, not yet installed;
+      as `slug → {reason, executable}` — `reason` is documentation only,
+      `executable` is the binary name `verify` checks for on `PATH`, or
+      `null` when the slug has no standalone binary at all. Entries:
+      `claude-code-action` (`executable: null` — a GitHub Action, no CLI to
+      detect); `qwen-code` (`executable: "qwen"`), `goose`
+      (`executable: "goose"`), `cline` (`executable: "clite"`, its
+      published `@cline/cli` package's bin name) — none installed in the
+      shared image; `copilot-cli` (`executable: "copilot"`), `pi`
+      (`executable: "pi"`) — registered, not yet installed;
       `harness-matrix` installs them, `bot-autonomy-new-harnesses` adds
-      their modules); verify the registry schema
+      their modules; verify the registry schema
       (`agent-registry.schema.json`) is unchanged (`git diff` shows no
       schema edit)
 - [ ] 1.3 Add a unit test asserting every one of the registry's 16 harness
-      slugs falls into exactly one of the three buckets, and that an
-      installed executable with none of the three fails `verify`; verify
-      with `task test:bot-autonomy` (or the chosen test task name) passing
-      and failing on injected fixtures (an uncovered slug, a doubly-covered
-      slug)
+      slugs falls into exactly one of the three buckets, that every
+      `unsupported` entry's `executable` is a non-empty string or `null`,
+      and that an installed executable with none of the three fails
+      `verify`; verify with `task test:bot-autonomy` (or the chosen test
+      task name) passing and failing on injected fixtures (an uncovered
+      slug, a doubly-covered slug, a missing/malformed `executable` field)
 - [ ] 1.4 Make `verify` fail ANY `unsupported` slug the instant its
       executable is installed but it still has no real module or alias —
       uniformly, regardless of the entry's reason (no reason category
@@ -109,6 +115,16 @@
       a local `act`/manual dry run) and confirming it fails against a
       deliberately misconfigured image (e.g. Antigravity's settings
       reverted) and passes against the real one
+- [ ] 3.3a Add `scripts/devcontainer-assert.sh` to
+      `devcontainer-build.yml`'s (and its jinja twin's) `paths:` filter for
+      both `push` and `pull_request` triggers — today's filter
+      (`.devcontainer/**`, the workflow file itself,
+      `scripts/verify-ci-results.sh`) does not include it, so once task
+      3.3 makes the workflow depend on this script, a future PR that
+      changes only `devcontainer-assert.sh` would not trigger the one
+      workflow that runs it against a built image; verify by confirming
+      the path appears in both files and `task test:dogfood-structure`
+      passes
 - [ ] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
       and the `agy()` function in `agy-autonomy.sh` per the design's open
       question; verify no remaining caller references a retired script

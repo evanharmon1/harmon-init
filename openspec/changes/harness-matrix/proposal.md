@@ -43,20 +43,26 @@ installed binaries.
   presence + `--version` probe, and confirmation both `amd64` and `arm64`
   build (the publish workflow's candidate job already matrix-builds both
   architectures).
-- State the sequencing explicitly: this change publishes a new image from
-  `main`; the existing rolling `sync-pin` PR then bumps both `Dockerfile`
-  twins (root + `template/`) to the new digest; the follow-on
-  `bot-autonomy-new-harnesses` change waits for that pin to land before it
-  has real binaries to bind modules to. The gap this opens — Copilot CLI and
-  pi installed before they have bot-autonomy modules — is NOT silently
-  bridged: `bot-autonomy-bootstrap`'s `unsupported` set only satisfies the
-  *static* registry-completeness check before either binary is installed;
-  the moment either is actually installed without a real module, its
-  `verify` fails loudly and fails CI, by design (this is the correct,
-  fail-closed outcome, not a defect to route around). The operational
-  implication is that the `sync-pin` PR bumping a bot image with Copilot
-  CLI or pi installed should not land before `bot-autonomy-new-harnesses`
-  has shipped their modules — see design.md - Risks.
+- State the sequencing explicitly, and make it acyclic: this change
+  publishes a new image from `main`; the rolling `sync-pin` PR bumps both
+  `Dockerfile` twins (root + `template/`) to the new digest; the follow-on
+  `bot-autonomy-new-harnesses` change does **not** wait for that pin —
+  it merges independently, in either order relative to the pin. Its
+  modules for `copilot-cli`/`pi` are safe to exist before either binary
+  is installed, because `bot-autonomy.sh` already skips a module whose
+  executable is absent (the same behavior every other module has from
+  day one). Once both `bot-autonomy-new-harnesses` and the pin have
+  landed — in whichever order — the modules cover the binaries the
+  moment they appear installed, with no window where an installed,
+  supported harness lacks coverage. Waiting for the pin before
+  implementing the modules was the earlier draft of this sequencing, and
+  it was self-contradictory: `bot-autonomy-bootstrap`'s `unsupported`
+  entries for `copilot-cli`/`pi` exempt them only while absent (see that
+  change's spec), so a pin that installs them before their modules exist
+  fails `verify` and fails CI — meaning the pin genuinely cannot land
+  first either, which would have made "wait for the pin" impossible to
+  satisfy. Landing the modules independently removes the ordering
+  constraint entirely rather than picking a side of it.
 
 ## Non-goals
 
@@ -107,6 +113,8 @@ installed binaries.
   "Gemini" from the profile-table comment); `docs/guides/herdr.md` and its
   jinja twin `template/docs/guides/herdr.md.jinja` (drop `gemini` from the
   pinned-image tool list, update the "0.8.0" version references).
-- Downstream, sequenced separately: the rolling `sync-pin` PR (bumps
-  `.devcontainer/Dockerfile` + its `template/` twin to the new image
-  digest), and the follow-on `bot-autonomy-new-harnesses` change.
+- Downstream, independent of each other and of this change's own merge
+  order: the rolling `sync-pin` PR (bumps `.devcontainer/Dockerfile` + its
+  `template/` twin to the new image digest), and the follow-on
+  `bot-autonomy-new-harnesses` change — see "State the sequencing
+  explicitly" above for why neither needs to wait on the other.

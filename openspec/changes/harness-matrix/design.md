@@ -170,23 +170,27 @@ the proposal's Non-goals section heads off.
   are actually driven.
 - [Risk] Once this change's image is published and the rolling `sync-pin`
   PR bumps both `Dockerfile` twins, `copilot-cli` and `pi` become installed
-  executables before `bot-autonomy-new-harnesses` gives them bot-autonomy
-  modules → [Mitigation] this is not this change's contract to fix, and it
-  is deliberately **not** silently bridged either:
-  `bot-autonomy-bootstrap` places `copilot-cli` and `pi` in its
-  `unsupported` set (with a reason naming this pin and the follow-on
-  module change), which satisfies the *static* registry-completeness check
-  before either binary is installed — but the *dynamic* `verify` check
-  fails loudly the instant either is actually installed without a real
-  module, regardless of which change merges first. That is the intended,
-  fail-closed outcome: it turns "don't land this pin before the modules
-  ship" into an enforced CI signal instead of a convention someone has to
-  remember. This change's own new registry addition, `oh-my-pi`, needs the
-  same treatment: whichever of `harness-matrix` and `bot-autonomy-bootstrap`
-  merges **second** must add `oh-my-pi` to that `unsupported` set —
-  tracked as task 3.4 here and task 4.5 in `bot-autonomy-bootstrap`'s
-  tasks.md, so the obligation is not left to
-  memory in only one of the two changes.
+  executables. If `bot-autonomy-new-harnesses` has not yet given them real
+  modules by then, `bot-autonomy-bootstrap`'s `unsupported` exemption for
+  them (absent-only) no longer applies, and `verify` fails loudly on every
+  fresh bot container → [Mitigation] an earlier draft of this risk (and of
+  proposal.md's sequencing) tried to resolve this by ordering the two
+  changes — "the pin must not land before the modules ship" — which
+  directly contradicted the *other* statement that `bot-autonomy-new-
+  harnesses` waits for the pin: neither change could safely go first. The
+  actual fix removes the ordering constraint instead of choosing a side of
+  it: `bot-autonomy-new-harnesses`'s modules are safe to add **before**
+  the pin lands, because `bot-autonomy.sh` already skips a module whose
+  executable is absent (true for every module since `bot-autonomy-
+  bootstrap`). So `bot-autonomy-new-harnesses` merges independently,
+  whenever its modules are ready, with no dependency on this change's pin
+  — and the pin can then land whenever it lands, in either order, with no
+  window where an installed harness lacks coverage. This change's own new
+  registry addition, `oh-my-pi`, still needs its own coordination:
+  whichever of `harness-matrix` and `bot-autonomy-bootstrap` merges
+  **second** must add `oh-my-pi` to that `unsupported` set — tracked as
+  task 3.4 here and task 4.5 in `bot-autonomy-bootstrap`'s tasks.md — but
+  that is registry-row bookkeeping, not a rollout-ordering dependency.
 
 ## Migration Plan
 
