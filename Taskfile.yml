@@ -708,11 +708,14 @@ tasks:
   # The CLI is pinned via OPENSPEC_VERSION above and fetched through npx —
   # there is no root package.json to install it into.
   spec:validate:
+    # Offline-safe: scripts/spec-validate.sh skips the (network-dependent npx)
+    # CLI entirely when there is nothing to validate, so this stays a no-op
+    # in the common case without depending on the network `verify` must not need.
     desc: "Validate every OpenSpec change proposal and spec (openspec validate --all)"
     env:
       OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
     cmds:
-      - ./scripts/openspec.sh validate --all --no-interactive
+      - ./scripts/spec-validate.sh
 
   spec:list:
     desc: List active OpenSpec change proposals

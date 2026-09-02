@@ -801,6 +801,11 @@ bundles (see `specs/README.md`).
   `OPENSPEC_VERSION` bump, e.g.).
 - `task spec:run -- <args>` — passthrough to the pinned CLI for anything else.
 
+The generated `/opsx:*` skills invoke a bare `openspec` command; this repo
+does not put one on `PATH` (root-only, no package.json). Install it yourself
+to match the pin (`npm install -g @fission-ai/openspec@1.11.0`) for that
+interactive flow, or drive everything through `task spec:run -- <args>`.
+
 ## Second-Model Review (Codex)
 
 A second AI model (the OpenAI Codex CLI) reviews changes on demand — opt-in

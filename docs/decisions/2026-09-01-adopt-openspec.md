@@ -92,3 +92,22 @@ proposal is a follow-up PR.
   future OpenSpec releases and tool-support changes; bumping
   `OPENSPEC_VERSION` is how this repo takes a new OpenSpec release, the same
   pattern `FOREMAN_VERSION` already establishes for the pinned Foreman CLI.
+- `task spec:validate` runs through `scripts/spec-validate.sh`, not the CLI
+  directly: `task verify` is documented and relied on to run offline, but
+  `scripts/openspec.sh` execs through `npx`, which needs the network on a
+  cold cache even to report "nothing to validate." The wrapper checks
+  `openspec/changes/` and `openspec/specs/` for any entries itself first and
+  skips the CLI entirely when there is nothing to validate — the state this
+  PR leaves the repo in — so the common case never touches the network; only
+  an actual proposal pays the `npx` cost, at which point the author already
+  needs the network for `openspec` itself.
+- The generated `/opsx:*` skills invoke a bare `openspec` command, which this
+  repo does not put on `PATH` (no package.json, no global install, by
+  design). Fixing that would mean either hand-editing OpenSpec's own
+  generated skill content — which `task spec:update` would silently
+  overwrite on the next run — or aliasing `openspec` in the shared
+  devcontainer image or its dogfood-paired `.devcontainer/`, which would
+  break for every other consumer of that image or require the `template/`
+  change this decision explicitly rules out. Documented as a known
+  limitation instead (AGENTS.md): install OpenSpec yourself to match the pin
+  for that interactive flow, or use `task spec:run -- <args>`.
