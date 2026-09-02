@@ -164,6 +164,29 @@ policy.
   `docker exec`) rather than by duplicating each boundary's check a second
   time in the assertion script
 
+### Requirement: The CI container assertion is a required status check
+The CI job that runs `devcontainer-assert.sh container` against the built
+bot image SHALL be a required status check on the repository's default
+branch, so a failing assertion blocks a merge rather than merely being
+visible. This is what turns "an installed, still-`unsupported` harness
+fails CI" into an enforced prerequisite for any PR that changes the bot
+image's harness inventory — including the rolling `sync-pin` PR that
+carries `harness-matrix`'s new binaries into this repository's own
+`.devcontainer/Dockerfile` — rather than a check a merge can proceed past.
+
+#### Scenario: the assertion job is required
+- **WHEN** the repository's branch protection ruleset for the default
+  branch is inspected
+- **THEN** it lists the CI job that runs `devcontainer-assert.sh
+  container` among its required status checks
+
+#### Scenario: a PR that installs an uncovered harness cannot merge
+- **WHEN** a PR (including the rolling `sync-pin` PR) changes
+  `.devcontainer/Dockerfile` to a base image where a registered harness is
+  newly installed but still carries no bot-autonomy module or alias
+- **THEN** the required container assertion fails, and the PR cannot merge
+  while that required check is failing
+
 ### Requirement: Claude Code non-interactive boundary
 The bot profile SHALL set `permissions.defaultMode` to `bypassPermissions` in
 `/etc/claude-code/managed-settings.json`, and `verify` SHALL fail if the
@@ -231,8 +254,17 @@ The bot profile SHALL set `toolPermission: always-proceed` (and the existing
 managed keys) in `~/.gemini/antigravity-cli/settings.json`, AND the bot
 post-create SHALL install an executable wrapper at `~/.local/bin/agy` that
 adds `--dangerously-skip-permissions` to every **agent/headless execution**
-launch that does not already carry it. `verify` SHALL fail if either
-boundary is missing. The wrapper SHALL pass a fixed set of subcommands and
+launch that does not already carry it. The wrapper's precedence over the
+system `agy` binary SHALL be established at the **container level** —
+`containerEnv.PATH` in the bot `devcontainer.json` prepending
+`/home/vscode/.local/bin` (or installing the wrapper at a system path that
+already precedes `/usr/local/bin` in the container's default `PATH`) — not
+by a shell rc file's `PATH` export, since a shell function or an
+rc-dependent `PATH` prepend is invisible to exactly the population this
+wrapper exists to cover: a process that never sources an interactive login
+shell (a `docker exec` without a login/interactive shell, a Foreman-
+dispatched process, a cron job). `verify` SHALL fail if either boundary is
+missing. The wrapper SHALL pass a fixed set of subcommands and
 flags through unmodified, without appending the flag: a bare `agy`
 (interactive, already covered by the settings-file policy),
 `agent`/`agents`, `changelog`, `help`/`-h`/`--help`, `install`, `models`,
@@ -251,8 +283,23 @@ routine CLI use and the compatibility installer alike.
 
 #### Scenario: bot post-create installs the executable wrapper
 - **WHEN** the bot profile's post-create completes
-- **THEN** `~/.local/bin/agy` exists, is executable, and is ordered ahead of
-  the system `agy` binary on `PATH`
+- **THEN** `~/.local/bin/agy` exists and is executable
+
+#### Scenario: the wrapper precedes the system binary on the container-wide PATH
+- **WHEN** the bot `devcontainer.json` is inspected
+- **THEN** its `containerEnv.PATH` prepends `/home/vscode/.local/bin` ahead
+  of `/usr/local/bin` (where the system `agy` binary is installed), so the
+  ordering applies to every process the container runs — not only shells
+  that source `.bashrc`/`.zshrc`
+
+#### Scenario: a process with no shell rc still resolves the wrapper
+- **WHEN** `agy --version` is resolved by a process that has not sourced
+  any shell rc file — a `docker exec` invocation that does not start a
+  login/interactive shell, or an equivalent `env -i
+  PATH=$CONTAINER_PATH agy --version` using the container's own
+  `containerEnv.PATH` value
+- **THEN** the resolved `agy` is `~/.local/bin/agy` (the wrapper), not the
+  system binary at `/usr/local/bin/agy`
 
 #### Scenario: a headless invocation off PATH still receives the flag
 - **WHEN** a programmatic launcher that never sources a login shell execs
@@ -350,6 +397,23 @@ to a persisted volume; `restore` is what does.
 - **THEN** `permission.*` returns to the value captured before the *first*
   `apply` in that sequence, and every key `apply` did not manage is
   untouched
+
+#### Scenario: restore removes the permission key when it was absent before apply
+- **WHEN** `opencode.json` had no `permission` key at all (or did not
+  exist) immediately before the first `apply`, and an operator later runs
+  `restore`
+- **THEN** the `permission` key is removed from `opencode.json` entirely —
+  not set to some default value — matching how
+  `apply-antigravity-settings.sh`'s restore only re-adds keys that were
+  actually present in the backup
+
+#### Scenario: restore clears the backup so the next cycle starts fresh
+- **WHEN** `restore` completes
+- **THEN** the backup file itself is deleted (matching
+  `apply-antigravity-settings.sh`'s `rm -f "$backup_path"` at the end of
+  its own restore case), so a subsequent `apply` captures a fresh
+  pre-`apply` value instead of reading a stale backup left over from the
+  prior `apply`/`restore` cycle
 
 #### Scenario: Antigravity's existing restore mechanism is reused, not reinvented
 - **WHEN** the bot-autonomy `antigravity` module's restore path is invoked

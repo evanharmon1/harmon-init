@@ -11,6 +11,15 @@
       switch; if so, set it in the image `ENV` block matching the
       `DISABLE_AUTOUPDATER`/`OPENCODE_DISABLE_AUTOUPDATE`/
       `AGY_CLI_DISABLE_AUTO_UPDATE` pattern; verify with `smoke.sh`
+- [ ] 1.4 Determine whether `@github/copilot`'s platform binary is fetched
+      separately from the npm package (its `npm-loader.js` bin's small
+      unpacked size suggests it is) or already bundled; if fetched
+      separately, force that fetch inside the same `RUN` layer as the
+      `npm install -g` (e.g. running `copilot --version` once, or
+      whatever the loader documents as triggering the download) so the
+      built image never needs network access to run `copilot`; verify
+      with a container run that blocks network access and confirms
+      `copilot --version` still succeeds
 
 ## 2. Add pi
 
@@ -36,13 +45,24 @@
 
 - [ ] 3.1 Add `# renovate: datasource=github-releases
       depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$` +
-      `ARG OH_MY_PI_VERSION=18.1.2` to the Dockerfile
-- [ ] 3.2 Add a `TARGETARCH`-cased install block (mirroring the Terraform
-      block's shape): download `omp-linux-${arch}` and that release's
-      `SHA256SUMS.txt`, `grep` the matching line, `sha256sum --check -`,
-      then `install -m 0755` the binary as `omp`; verify the build fails
-      when the checksum is deliberately corrupted in a scratch test and
-      succeeds against the real asset
+      `ARG OH_MY_PI_VERSION=18.1.2` to the Dockerfile, plus reviewed
+      per-architecture digest `ARG`s **mirroring TFLint's
+      `TFLINT_SHA256_AMD64`/`ARM64` shape**, not a build-time
+      `SHA256SUMS.txt` fetch (see design.md - Decisions): `ARG
+      OH_MY_PI_SHA256_AMD64=c6a306347a57c872bf38587e81132db50490228867e3e179a363a4cf874da1a0`
+      (`omp-linux-x64`) and `ARG
+      OH_MY_PI_SHA256_ARM64=2865c21a73ae8b893fd5553bf302afc5be8a0bcafa015af99732349d518830da`
+      (`omp-linux-arm64`) — both fetched and verified against release
+      `v18.1.2`'s published `SHA256SUMS.txt` while writing this proposal;
+      re-verify against the actual release at implementation time before
+      trusting them
+- [ ] 3.2 Add a `TARGETARCH`-cased install block (mirroring TFLint's
+      hardcoded-digest shape, not Terraform's fetch-and-verify shape):
+      download `omp-linux-${arch}`, check its SHA-256 against the
+      matching `OH_MY_PI_SHA256_${ARCH}` `ARG` (no `SHA256SUMS.txt`
+      download), then `install -m 0755` the binary as `omp`; verify the
+      build fails when the checksum is deliberately corrupted in a
+      scratch test and succeeds against the real asset
 - [ ] 3.3 Add a new `oh-my-pi` harness row to **both** `agent-registry.json`
       and its verbatim twin `template/agent-registry.json`
       (`family_constraint: {kind: broker}`,
@@ -79,9 +99,23 @@
 - [ ] 4.5 Drop "Gemini" from the "(Claude Code, Codex, Gemini, OpenCode)"
       prose in `docs/guides/devcontainers.md` **and its own jinja twin**
       `template/docs/guides/[% if devcontainer %]devcontainers.md[% endif %].jinja`,
-      plus both `devcontainer.json` twins' profile-table comments; verify
-      with `task lint:markdown`, `task test:dogfood-structure`, and a grep
-      for the retired phrase across all four files
+      plus both `devcontainer.json` twins' profile-table comments, AND the
+      Herdr-resume paragraph at root line ~315-318 ("post-create installs
+      the Claude Code, Codex, and OpenCode integrations automatically
+      (`herdr integration install`, idempotent) — Gemini has no resume
+      integration in v0.8. The conversations themselves persist
+      regardless, in the `~/.claude`, `~/.codex`, `~/.gemini`, and
+      `~/.local/share/opencode` volumes...") and its jinja twin: once
+      Gemini CLI is not installed, "Gemini has no resume integration"
+      reads as describing a still-present harness rather than a removed
+      one, and listing `~/.gemini` alongside the other three
+      *conversation*-persistence volumes is misleading once that volume
+      holds only Antigravity's OAuth/session state, not Gemini CLI
+      conversations — drop the Gemini clause and either drop `~/.gemini`
+      from this specific volume list or note it now persists Antigravity's
+      state instead; verify with `task lint:markdown`, `task
+      test:dogfood-structure`, and a grep for the retired phrase across
+      all four files (both edits)
 - [ ] 4.6 Update `docs/guides/herdr.md` (root) and its jinja twin
       `template/docs/guides/herdr.md.jinja`: drop `gemini` from the list of
       harnesses the pinned image includes (line ~248), AND rewrite the

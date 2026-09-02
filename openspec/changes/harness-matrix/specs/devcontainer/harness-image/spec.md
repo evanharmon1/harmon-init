@@ -12,7 +12,10 @@ follow-on depend on to have real binaries to bind policy modules to.
 The shared image SHALL install GitHub Copilot CLI via npm at a
 Renovate-tracked version pin and expose the `copilot` binary on `PATH`. If
 Copilot CLI documents a mechanism to disable its own auto-update check, the
-image SHALL set it.
+image SHALL set it. If Copilot CLI's platform binary is fetched separately
+from the npm package (rather than bundled), the Dockerfile's install layer
+SHALL force that fetch at build time, so a freshly created container never
+needs network access to run `copilot` the first time.
 
 #### Scenario: copilot is present and pinned
 - **WHEN** the shared image is built
@@ -29,6 +32,14 @@ image SHALL set it.
 - **WHEN** the built image is inspected and Copilot CLI documents an
   environment variable or flag that disables its own update check
 - **THEN** that variable or flag is set in the image
+
+#### Scenario: a fresh container needs no network to run copilot
+- **WHEN** a container built from the image runs `copilot --version` (or
+  any invocation that would trigger a first-run platform-binary fetch)
+  with network access blocked
+- **THEN** it succeeds — the platform binary was already fetched during
+  the image build, in the same `RUN` layer as the npm install, or the npm
+  package already bundles it
 
 ### Requirement: pi is installed and version-pinned
 The shared image SHALL install pi via `npm install -g
@@ -54,20 +65,30 @@ check.
 ### Requirement: oh-my-pi is installed, checksum-verified, and registered
 The shared image SHALL install oh-my-pi from the prebuilt
 `omp-linux-{x64,arm64}` asset of `can1357/oh-my-pi` release `v18.1.2`,
-verifying the downloaded binary against that release's `SHA256SUMS.txt`
-before installing it, and SHALL expose the `omp` binary on `PATH`.
-`agent-registry.json` SHALL carry a new `oh-my-pi` harness row.
+verifying the downloaded binary against a **per-architecture SHA-256
+digest pinned in the Dockerfile** (as a reviewed `ARG` alongside the
+version pin — the same pattern TFLint and Antigravity already use in this
+file), not by fetching and trusting that release's own `SHA256SUMS.txt` at
+build time. `agent-registry.json` SHALL carry a new `oh-my-pi` harness
+row.
 
 #### Scenario: omp is present and pinned
 - **WHEN** the shared image is built
 - **THEN** `omp --version` succeeds in the built image and its reported
   version matches the pinned oh-my-pi release recorded in the manifest
 
-#### Scenario: the downloaded binary is checksum-verified before install
+#### Scenario: the downloaded binary is checksum-verified against a pinned digest
 - **WHEN** the Dockerfile's oh-my-pi install layer runs
-- **THEN** it downloads that release's `SHA256SUMS.txt`, checks the
-  downloaded `omp-linux-${arch}` asset against the matching line, and fails
-  the build on a mismatch — it does not install an unverified binary
+- **THEN** it checks the downloaded `omp-linux-${arch}` asset's SHA-256
+  against a per-architecture digest hardcoded in the Dockerfile (not one
+  fetched from the release at build time) and fails the build on a
+  mismatch — it does not install an unverified binary
+
+#### Scenario: the pinned digests are updated alongside the version
+- **WHEN** `OH_MY_PI_VERSION` is bumped to a new release
+- **THEN** the per-architecture SHA-256 `ARG`s are reviewed and updated in
+  the same change, the way `TFLINT_SHA256_AMD64`/`ARM64` already are
+  alongside `TFLINT_VERSION`
 
 #### Scenario: oh-my-pi is a registered harness in both registry twins
 - **WHEN** `agent-registry.json` and its verbatim twin
@@ -101,9 +122,12 @@ convention SHALL remain unchanged.
   unchanged
 
 #### Scenario: harness-list prose drops Gemini
-- **WHEN** `docs/guides/devcontainers.md` and both `devcontainer.json`
-  twins' profile-table comments are inspected
-- **THEN** neither lists Gemini among the bot profile's agent harnesses
+- **WHEN** `docs/guides/devcontainers.md` (and its jinja twin) and both
+  `devcontainer.json` twins' profile-table comments are inspected
+- **THEN** neither lists Gemini among the bot profile's agent harnesses,
+  and the Herdr-resume paragraph no longer describes Gemini's resume
+  integration status or lists `~/.gemini` as a Gemini-CLI conversation
+  volume
 
 ### Requirement: herdr is bumped to a version that recognizes the new harness kinds
 The shared image SHALL pin herdr to `0.8.2` or later.

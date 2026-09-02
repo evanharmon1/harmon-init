@@ -52,10 +52,11 @@ See proposal.md - Why for the motivating gap. Current state, precisely:
 **Goals:**
 - Install and verifiably pin three new harness binaries using the pattern
   already established in this Dockerfile for their respective distribution
-  shapes (npm for Copilot CLI and pi; fetch-and-checksum-verify for
-  oh-my-pi, matching the Terraform block's self-updating
-  fetch-SHA256SUMS-at-build-time shape rather than TFLint's hardcoded-digest
-  shape).
+  shapes (npm for Copilot CLI and pi; a checksum-verified binary fetch for
+  oh-my-pi, matching TFLint's and Antigravity's reviewed-per-architecture-
+  digest shape rather than Terraform's fetch-and-verify-a-signed-manifest
+  shape, since oh-my-pi's release ships no signature to give a fetched
+  manifest independent trust).
 - Remove Gemini CLI's image footprint completely (ARG, install layer,
   manifest entry, smoke probe, prose) while leaving every dependency
   Antigravity has on the same namespace (`~/.gemini` volume, `gemini` model
@@ -78,20 +79,32 @@ See proposal.md - Why for the motivating gap. Current state, precisely:
 
 ## Decisions
 
-**oh-my-pi: fetch `SHA256SUMS.txt` at build time and verify against it,
-rather than hardcoding a per-architecture digest.** This Dockerfile already
-contains both shapes: Terraform fetches `_SHA256SUMS`/`_SHA256SUMS.sig` fresh
-every build and verifies via GPG signature + `sha256sum --check`; TFLint
-instead hardcodes reviewed `TFLINT_SHA256_AMD64`/`ARM64` `ARG`s that a human
-must update by hand alongside every Renovate version bump. oh-my-pi ships a
-`SHA256SUMS.txt` per release (confirmed above), so the Terraform shape
-applies directly: download it alongside the platform binary, `grep` the
-`omp-linux-${arch}` line, `sha256sum --check`. This self-updates on every
-version bump with no companion manual-digest PR, and matches the proposal's
-own "verified against its `SHA256SUMS.txt`" phrasing. Alternative considered:
-hardcode reviewed digests like TFLint — rejected as unnecessary extra review
-burden when the release itself publishes a checksum manifest to verify
-against, unlike TFLint's release (which does not).
+**oh-my-pi: hardcode reviewed per-architecture SHA-256 digests as `ARG`s
+pinned in the Dockerfile, matching TFLint's (and Antigravity's) pattern —
+not fetch-and-trust `SHA256SUMS.txt` at build time.** An earlier draft of
+this decision chose the opposite shape (fetch `SHA256SUMS.txt` fresh every
+build, `grep` the matching line, `sha256sum --check`), reasoning it
+self-updates on every version bump with no companion manual-digest PR.
+That draft's own Risks section (below) already named the gap this
+creates: fetching **both** the binary and its checksum manifest from the
+**same mutable GitHub release** means a compromised release or account
+could replace both and still pass verification — unlike Terraform's shape
+(the closest apparent precedent), which verifies its fetched checksums
+against a **GPG signature over a separate key the publisher controls**,
+giving the fetched manifest an independent trust anchor oh-my-pi's plain
+`SHA256SUMS.txt` does not have. oh-my-pi publishes no such signature, so
+the Terraform shape does not actually apply here despite the surface
+similarity (both fetch a checksums file) — only Terraform's *signature*
+step supplies the independence that makes fetching safe. TFLint's shape
+(and Antigravity's own hardcoded-per-version SHA-512 pins, already used in
+this same Dockerfile for a release that similarly ships no signature) is
+the correct precedent instead: a human reviews and pins the digest as part
+of the version-bump review, so the trust anchor is the reviewer, not the
+same release the binary comes from. This is a companion manual-digest
+`ARG` alongside every version bump, the same review cost TFLint already
+pays — accepted here in exchange for closing the compromised-release gap,
+rather than optimizing for the self-updating convenience that gap was the
+cost of.
 
 **pi: npm install with `--ignore-scripts`, as stated in the proposal, kept as
 the sole mechanism rather than offering the prebuilt tarball as a
@@ -116,17 +129,33 @@ would therefore risk silently breaking Copilot's install to harden a
 package that never needed it. pi gets its own `RUN` layer.
 
 **Copilot CLI: install via plain `npm install -g`, in the same combined
-layer as the other npm-native harnesses.** `npm-loader.js`'s small unpacked
-size indicates the platform binary is fetched separately (likely on first
-run, an already-established pattern for npm-distributed native CLIs); this
-needs no different Dockerfile mechanism than the existing harnesses in that
-layer, since every `RUN` layer in this Dockerfile already has build-time
-network access. Whether that first-run fetch needs to happen once during the
-image build (so a bot/dev container never pays a first-run download cost) or
-is acceptable at container-create/first-invoke time is an implementation
-question for the image-authoring task, not a spec-level behavioral
-requirement — either way, `copilot --version` on the built image is what
-`smoke.sh` and this capability's scenarios assert.
+layer as the other npm-native harnesses — and force the platform-binary
+fetch into that same build-time `RUN` layer, not leave it for first
+invocation.** `npm-loader.js`'s small unpacked size (13 KB) indicates the
+real platform binary is not bundled in the npm package and is fetched
+separately; an earlier draft of this decision left the timing of that
+fetch (build time vs. first run) as an implementation choice with "no
+externally observable difference." That understated the difference: a
+container whose first `copilot` invocation silently reaches the network
+is a container that (a) fails cold in a network-restricted environment
+(exactly the posture the bot profile's isolation model assumes it can
+rely on for a pinned, reproducible toolchain) and (b) behaves differently
+from every other harness in this image, all of which are fully
+functional, network-free, the instant the container starts. The
+Dockerfile's install layer SHALL force this fetch — running `copilot
+--version` (or an equivalent command documented to trigger the loader's
+one-time download) inside the same `RUN` instruction that installs the
+package — and the image build SHALL fail if that forced run does not
+leave a runnable, network-free `copilot` behind. If a future
+`@github/copilot` release bundles the platform binary directly (no
+separate fetch), the implementation PR SHALL instead prove that directly
+(the loader's own `npm-loader.js` no longer performs a network fetch) and
+this forcing step becomes unnecessary — either way, the built image must
+demonstrably not need network access to run `copilot` a second time.
+`smoke.sh`'s `copilot --version` probe is what proves this from the
+built image, but only if the image was built to guarantee it rather than
+happening to have a warm cache from the build environment's own network
+access.
 
 **Gemini CLI removal keeps the `~/.gemini` volume, the `gemini` model
 family, and `GEMINI.md`.** These three are independent of the CLI binary:
@@ -147,20 +176,28 @@ the proposal's Non-goals section heads off.
   enumeration point; removing `gemini` from it is what makes any remaining
   reference to the binary itself (not the volume/family/symlink) fail loudly
   in CI rather than staying silently broken in a generated repo.
-- [Risk] `@github/copilot`'s first-run/postinstall binary fetch could fail or
-  behave differently across `amd64`/`arm64` in ways a bare `npm install -g`
-  does not surface at build time → [Mitigation] `smoke.sh`'s
-  `copilot --version` probe runs on both architectures via the existing
-  candidate-build matrix, so a platform-specific fetch failure fails the
-  build rather than shipping silently.
-- [Risk] oh-my-pi's fetch-SHA256SUMS-at-build-time pattern trusts the
-  release's checksum file itself, with no GPG signature to verify it against
-  (unlike Terraform's signed `SHA256SUMS.sig`) → [Mitigation] this is the
-  same trust level Antigravity's hardcoded-per-version SHA512 already
-  accepts (trusting the publisher's checksum, not a signature chain);
-  recorded here rather than treated as a blocking gap, since the proposal's
-  own instruction is "verified against its SHA256SUMS.txt," not "verified
-  against a signature."
+- [Risk] `@github/copilot`'s platform-binary fetch could fail or behave
+  differently across `amd64`/`arm64` in ways a bare `npm install -g`
+  alone would not surface at build time → [Mitigation] the Dockerfile
+  forces this fetch into the same `RUN` layer as the install (see
+  Decisions), so a platform-specific fetch failure fails the build
+  directly, and `smoke.sh`'s `copilot --version` probe (run on both
+  architectures via the existing candidate-build matrix, with network
+  blocked) independently confirms the fetch already happened rather than
+  quietly succeeding by reaching the network a second time.
+- [Risk] Hardcoded per-architecture digests (the now-decided approach)
+  require a human to actually update them on every `OH_MY_PI_VERSION` bump
+  — unlike a fetch-at-build pattern, a Renovate-only version bump with no
+  matching digest update would either fail closed (if the old digest no
+  longer matches the new release, which is the likely outcome and a safe
+  failure) or, worse, silently keep verifying against a stale digest that
+  happens to still match if the binary is unchanged → [Mitigation] this is
+  the same review discipline TFLint's `TFLINT_SHA256_AMD64`/`ARM64` `ARG`s
+  already require in this same Dockerfile, and the failure mode on a
+  missed update is fail-closed (build breaks) in the overwhelmingly likely
+  case, not silent — the earlier fetch-at-build draft traded this review
+  cost away in exchange for trusting the same mutable release the binary
+  itself comes from, which is the worse trade for a security boundary.
 - [Risk] herdr 0.8.2's new `pi`/`omp`/`copilot` kind recognition could still
   mis-detect a session if those harnesses' on-disk session formats differ
   from what 0.8.2 expects → [Mitigation] out of this change's control (herdr
@@ -185,14 +222,19 @@ the proposal's Non-goals section heads off.
   (true for every module since `bot-autonomy-bootstrap`) — so
   implementing the modules never has to wait on this change's pin.
   Second, and separately: that does **not** make the *rollout* order
-  irrelevant. If the pin merges before the modules do, the build-failure
-  window above is real — loud and self-diagnosing (the fail-closed
-  guarantee holds; nothing reports a non-autonomous harness as clean),
-  but still a real window bot containers cannot build in. The
-  recommendation stands regardless of the (now acyclic) implementation
-  dependency: land `bot-autonomy-new-harnesses` before the `sync-pin` PR
-  that carries these binaries into this repo's own bot image. This
-  change's own new registry addition, `oh-my-pi`, still needs its own
+  irrelevant, and it is no longer left to a recommendation.
+  `bot-autonomy-bootstrap` makes the CI job that runs
+  `devcontainer-assert.sh container` a **required status check** on the
+  default branch; that job triggers on any change to
+  `.devcontainer/Dockerfile`, including the `sync-pin` PR this change
+  feeds. If the pin merges before the modules do, that required check
+  fails — loud, not silent, the fail-closed guarantee holds — and the PR
+  **cannot merge** while it fails, not merely "should not." Land
+  `bot-autonomy-new-harnesses` before the `sync-pin` PR that carries these
+  binaries into this repo's own bot image, and the required check enforces
+  that ordering rather than depending on someone following the
+  recommendation. This change's own new registry addition, `oh-my-pi`,
+  still needs its own
   coordination: whichever of `harness-matrix` and `bot-autonomy-bootstrap`
   merges **second** must add `oh-my-pi` to that `unsupported` set —
   tracked as
@@ -229,8 +271,3 @@ the proposal's Non-goals section heads off.
   implementation PR resolves this by checking Copilot CLI's own
   documentation/`--help` output. Does not change the spec's contract, which
   is written to hold either way.
-- Whether `npm-loader.js`'s platform-binary fetch should be forced during
-  the image `RUN` layer (so no container pays a first-run download) or is
-  acceptable lazily at first invocation is an implementation choice with no
-  externally observable difference once a container has been used once;
-  left to the implementation PR.

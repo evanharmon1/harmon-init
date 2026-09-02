@@ -15,7 +15,35 @@ installed binaries.
 
 - Add **GitHub Copilot CLI**: npm `@github/copilot@1.0.82`, binary
   `copilot`, tracked by Renovate's npm datasource; disable auto-update if the
-  CLI exposes a switch for it.
+  CLI exposes a switch for it. Installing the binary in the **shared image**
+  follows the same precedent Claude Code, Codex, and OpenCode already set
+  (and Antigravity's binary install follows too): the binary is present
+  unconditionally, but no generated-repo configuration forces its use — a
+  human or bot opts in by authenticating and invoking it with their own
+  account, exactly as they would `claude`/`codex`/`opencode`. Documented
+  next to that precedent, since Copilot is a paid-tier product: GitHub
+  Copilot requires a GitHub account and a Copilot plan — a free tier
+  exists (limited monthly completions/chat requests; historically also
+  free for verified students/teachers via GitHub Education and for
+  maintainers of popular open-source projects), with paid tiers (Pro/
+  Business/Enterprise) raising those limits. Unlike some competing tools,
+  Copilot documents that it operates on both public and private
+  repositories for an authorized account, but plan eligibility, quotas,
+  and data-handling terms change — review GitHub's current terms before
+  relying on it for proprietary code, the same review the
+  `use_antigravity_cli` help text already asks for regarding Google's
+  terms. Per AGENTS.md's Hard Rule ("never make generated output depend
+  on paid or trial-only SaaS by default"), any **consumer-facing** Copilot
+  integration — including the future `bot-autonomy-new-harnesses` module
+  that would configure Copilot's non-interactive/allow-all mode for the
+  bot profile — SHALL be gated by a Copier option defaulting off,
+  mirroring `use_antigravity_cli`'s shape (interactive-auth caveat,
+  free-tier/private-repo terms documented next to the question, bot vs.
+  dev profile posture). This proposal's own scope (the binary in the
+  shared image) needs no such gate, by the same precedent the other three
+  harnesses already establish; the gate is a requirement on the follow-on
+  change, stated here so it is not overlooked when that change is
+  proposed.
 - Add **pi**: npm `@earendil-works/pi-coding-agent@0.84.4` installed with
   `--ignore-scripts` in its own separate `npm install -g` invocation, not
   folded into the combined layer that installs the other npm-based
@@ -27,8 +55,12 @@ installed binaries.
   `PI_SKIP_VERSION_CHECK`.
 - Add **oh-my-pi**: the npm distribution is bun-only, so install the
   prebuilt `omp-linux-{x64,arm64}` binary from GitHub release `v18.1.2`
-  (`can1357/oh-my-pi`), verified against that release's `SHA256SUMS.txt`;
-  Renovate `github-releases` datasource; binary `omp`; add a new `oh-my-pi`
+  (`can1357/oh-my-pi`), verified against a **per-architecture SHA-256
+  digest reviewed and pinned in the Dockerfile** (the TFLint/Antigravity
+  pattern — not fetching and trusting that release's own `SHA256SUMS.txt`
+  at build time, which would trust a checksum manifest from the same
+  mutable source as the binary itself); Renovate `github-releases`
+  datasource; binary `omp`; add a new `oh-my-pi`
   harness row to `agent-registry.json`.
 - Remove **Gemini CLI** (`@google/gemini-cli`): the Dockerfile `ARG`, its
   `npm install -g` line, its `generate-manifest.sh` manifest entry, its
@@ -44,7 +76,7 @@ installed binaries.
   build (the publish workflow's candidate job already matrix-builds both
   architectures).
 - State the sequencing explicitly, distinguishing what is *correct in
-  either order* from what is *operationally smooth in only one*: this
+  either order* from what is *mergeable in only one*: this
   change publishes a new image from `main`; the rolling `sync-pin` PR
   bumps both `Dockerfile` twins (root + `template/`) to the new digest;
   the follow-on `bot-autonomy-new-harnesses` change does **not need to
@@ -54,27 +86,27 @@ installed binaries.
   executable is absent (the same behavior every other module has from day
   one). That removes the circular *implementation* dependency an earlier
   draft had (see below). It does **not** mean either merge order is
-  equally smooth operationally: `bot-autonomy-bootstrap`'s `unsupported`
-  entries for `copilot-cli`/`pi` exempt them only while their executables
-  are absent, so if the `sync-pin` PR merges **before**
-  `bot-autonomy-new-harnesses`, every fresh bot container fails
-  `bot-autonomy.sh verify` from the moment the pin lands until the
-  modules ship — correctly and loudly (the fail-closed guarantee is never
-  violated; nothing silently reports a non-autonomous harness as clean),
-  but that is still a real build-breakage window, not a null one. The
-  recommended, operationally clean order is **modules before pin**:
-  merge `bot-autonomy-new-harnesses` first (or at least before the
-  `sync-pin` PR that carries Copilot/pi into this repo's own bot image),
-  so there is never a window in which they are installed without
-  coverage. If the pin lands first anyway, the fail-closed check is what
-  catches it — self-diagnosing, not silent, but not a substitute for
-  sequencing the merges correctly. An earlier draft of this sequencing
-  had the opposite problem — a literal contradiction where one sentence
-  required the modules to wait for the pin while another required the
-  pin to wait for the modules, which no merge order could satisfy;
+  equally smooth operationally, and the rollout order is no longer left to
+  a recommendation someone could merge past: `bot-autonomy-bootstrap`'s
+  `unsupported` entries for `copilot-cli`/`pi` exempt them only while
+  their executables are absent, `bot-autonomy-bootstrap` makes the CI job
+  that runs `devcontainer-assert.sh container` a **required status
+  check** on the default branch, and that job triggers on any change to
+  `.devcontainer/Dockerfile` — including the `sync-pin` PR that carries
+  Copilot/pi into this repo's own bot image. **Modules before pin is
+  therefore an enforced prerequisite, not a convention**: if the
+  `sync-pin` PR ever bumps to an image with `copilot`/`pi` installed
+  before `bot-autonomy-new-harnesses` has shipped their modules, the
+  required check fails and the PR cannot merge — correctly and loudly
+  (the fail-closed guarantee is never violated), but as a merge block, not
+  merely a visible, bypassable failure. An earlier draft of this
+  sequencing had the opposite problem — a literal contradiction where one
+  sentence required the modules to wait for the pin while another required
+  the pin to wait for the modules, which no merge order could satisfy;
   removing the *implementation* dependency (modules don't need the pin to
-  exist) fixed that self-contradiction without claiming the *rollout*
-  order stops mattering, which it still does.
+  exist) fixed that self-contradiction, and requiring the CI check is what
+  makes the *rollout* order a property the repository actually enforces
+  rather than a claim resting on someone remembering it.
 
 ## Non-goals
 
@@ -130,12 +162,12 @@ installed binaries.
   jinja twin `template/docs/guides/herdr.md.jinja` (drop `gemini` from the
   pinned-image tool list, update the "0.8.0" version references).
 - Downstream, implementable independently of this change's own merge order
-  (but recommended to land in this order operationally — modules before
-  the pin, not the other way): the rolling `sync-pin` PR (bumps
+  but not mergeable in the wrong rollout order — modules before the pin is
+  enforced, not recommended: the rolling `sync-pin` PR (bumps
   `.devcontainer/Dockerfile` + its `template/` twin to the new image
   digest), and the follow-on `bot-autonomy-new-harnesses` change — see
   "State the sequencing explicitly" above for the full picture:
-  implementing the modules never needs to wait on the pin, but landing
-  the pin ahead of the modules opens a real, self-diagnosing (not
-  silent) build-failure window that landing them in the recommended
-  order avoids.
+  implementing the modules never needs to wait on the pin, but
+  `bot-autonomy-bootstrap`'s required container-assertion status check
+  blocks the `sync-pin` PR from merging if it would land Copilot/pi ahead
+  of their modules.

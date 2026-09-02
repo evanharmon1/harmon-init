@@ -199,13 +199,19 @@ now covers it. This makes the sequencing hazard self-detecting for
 `copilot-cli`/`pi` today and for any future addition to the `unsupported`
 set: if the rolling `sync-pin` PR ever bumps a bot image to a revision with
 a still-`unsupported` harness installed, CI goes red immediately, naming
-it — turning "land the pin after the module exists" into an enforced
-invariant rather than a documentation-only convention, for every entry in
-the table, not a privileged subset of it. The same reasoning applies going
-forward to `oh-my-pi`: `harness-matrix` adds its registry row with a
-pending-module reason, so whichever of `harness-matrix` and this change
-merges second is responsible for adding that entry — see harness-matrix's
-design.md, which states this from the other side.
+it. "Goes red" is not by itself an enforcement mechanism — a failing,
+non-required check does not block a merge — so this design also requires
+the CI job that runs the container-mode assertion to be a **required
+status check** on the default branch (it is not, today; confirmed against
+the repository's branch-protection ruleset, which lists only `verify` and
+`security` from `build.yml`). With that requirement in place, "land the
+pin after the module exists" is an *enforced* invariant, not a
+documentation-only convention or a red check someone could merge past —
+for every entry in the table, not a privileged subset of it. The same
+reasoning applies going forward to `oh-my-pi`: `harness-matrix` adds its
+registry row with a pending-module reason, so whichever of `harness-matrix`
+and this change merges second is responsible for adding that entry — see
+harness-matrix's design.md, which states this from the other side.
 
 **Codex: ship a complete `codex-managed-config.bot.toml`, installed and
 verified by checksum, replacing the awk rewrite — plus a structural parity
@@ -231,17 +237,27 @@ whole file-replacement approach exists to avoid); a parity **test** catches
 drift without reintroducing a rewrite mechanism.
 
 **Antigravity: an executable wrapper installed to `~/.local/bin/agy` by bot
-post-create, replacing the shell-function approach.** A shell function
-defined in `shell-aliases.sh` exists only inside a shell that has sourced it
-— it is invisible to a programmatic launcher (a Foreman-dispatched process, a
-cron job, any direct exec) that resolves `agy` off `PATH` without going
-through a login shell. That is the literal gap issue #1137 names for
-Antigravity. An installed executable ahead of the system binary on `PATH`
-(the same ordering `ensure-antigravity-cli.sh` already establishes for its
-compatibility copy) intercepts every launch path uniformly, interactive or
-not. Alternative considered: keep the shell function and add the wrapper
-alongside it — rejected as redundant once the wrapper exists on `PATH`; the
-function covered a strict subset of what the wrapper covers.
+post-create, replacing the shell-function approach — with its `PATH`
+precedence set at the container level, not a shell rc file.** A shell
+function defined in `shell-aliases.sh` exists only inside a shell that has
+sourced it — it is invisible to a programmatic launcher (a Foreman-
+dispatched process, a cron job, any direct exec) that resolves `agy` off
+`PATH` without going through a login shell. That is the literal gap issue
+# 1137 names for Antigravity. An installed executable is necessary but not
+sufficient: if its precedence over the system binary at `/usr/local/bin`
+depends on a `.bashrc`/`.zshrc` `PATH` export the way `ensure-
+antigravity-cli.sh`'s own compatibility-copy ordering historically has,
+that ordering is invisible to exactly the same non-interactive population
+the wrapper exists to cover — a `docker exec` without a login shell sees
+the *unedited* container `PATH`, not a shell's rc-modified one. The bot
+`devcontainer.json`'s `containerEnv.PATH` is what Docker applies
+universally, to every process the container runs regardless of shell, so
+prepending `/home/vscode/.local/bin` there (rather than relying on rc-file
+`PATH` exports) is what actually closes the gap for every launch path, not
+only interactive ones. Alternative considered: keep the shell function and
+add the wrapper alongside it — rejected as redundant once the wrapper
+exists on the container-wide `PATH`; the function covered a strict subset
+of what the wrapper covers.
 
 **OpenCode: force the managed `permission` key on every apply; preserve
 everything else; back up the prior value for restore.** An earlier draft of
@@ -366,6 +382,15 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   [Mitigation] this is precisely acceptance criterion 3's [CI] requirement;
   `task test:devcontainer:root` already pays an equivalent cost locally, so
   CI gains coverage it was missing rather than adopting new mechanism.
+- [Risk] Making the container-assertion job a required status check
+  (task 3.3c) blocks every future PR that touches `.devcontainer/**` on it,
+  including PRs unrelated to harness rollout — a stricter gate than exists
+  today → [Mitigation] this is the accepted cost of "enforced" rather than
+  "self-diagnosing": the whole point of requiring the check is that a
+  human cannot merge past a red assertion by choice or oversight, which is
+  exactly what closes the sequencing hazard below. The check is the same
+  one `task test:devcontainer:root` already runs locally, so a PR author
+  can always reproduce and fix a failure before pushing.
 - [Risk] The pending-follow-on `unsupported` entries for
   `copilot-cli`/`pi`/`oh-my-pi` could be forgotten when `harness-matrix` or
   `bot-autonomy-new-harnesses` actually lands, reopening the exact
@@ -374,9 +399,11 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   other change and the specific slug to reconcile; the
   registry-completeness unit test fails loudly the moment `oh-my-pi`'s row
   exists with no covering entry, and — since a pending-follow-on exemption
-  no longer survives installation — `verify` itself fails loudly if any of
-  the three is ever installed before its module ships, so the risk
-  surfaces as a red CI check rather than a silent pass either way.
+  no longer survives installation, and the assertion that would catch it
+  is now a required status check (task 3.3c) — the sync-pin PR that would
+  introduce the gap is mechanically blocked from merging, not merely
+  flagged, so a forgotten reconciliation is caught at merge time, not
+  after.
 - [Risk] Resolving the OpenCode `OPENCODE_CONFIG_CONTENT` open question later
   could make today's file-seed implementation redundant work →
   [Mitigation] the scenario contract (effective permission policy is
