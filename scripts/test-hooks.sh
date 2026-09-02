@@ -130,13 +130,19 @@ probe_line="$(cat "$agy_probe_log")"
 [ "$probe_line" = "PWD=$agy_expected_root CPD=$agy_expected_root" ] ||
     fail "agy-adapter (worktree Cwd) expected PWD/CPD=$agy_expected_root, got: $probe_line"
 
+# The fixture asks only when the adapter delivered Antigravity's CommandLine as
+# Claude's .tool_input.command, so a passing test proves the translation the
+# registered block-no-verify and enforce-conventional-commits hooks rely on,
+# not merely that an "ask" string survives the round trip.
 cat >"$agy_fixture/.claude/hooks/ask.sh" <<'EOF'
 #!/usr/bin/env bash
-cat >/dev/null
-printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"fixture asks"}}'
+received="$(jq -r '.tool_input.command // empty')"
+if [ "$received" = "ls --fixture-marker" ]; then
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"fixture asks"}}'
+fi
 EOF
 chmod +x "$agy_fixture/.claude/hooks/ask.sh"
-payload_ask="$(jq -n --arg cwd "$agy_wt/some/subdir" '{toolCall: {name: "run_command", args: {CommandLine: "ls", Cwd: $cwd}}}')"
+payload_ask="$(jq -n --arg cwd "$agy_wt/some/subdir" '{toolCall: {name: "run_command", args: {CommandLine: "ls --fixture-marker", Cwd: $cwd}}}')"
 result_ask="$(cd "$tmpdir" && bash -c 'printf "%s" "$1" | bash "$2" ./.claude/hooks/ask.sh PreToolUse' _ "$payload_ask" "$agy_fixture/.agents/agy-adapter.sh")"
 printf '%s' "$result_ask" | jq -e '
     .decision == "ask" and (.reason | type == "string" and length > 0)

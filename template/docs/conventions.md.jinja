@@ -30,8 +30,8 @@ it points here.
   probes are exempt, and a PID is never inferred to belong to the current
   session. No hook enforces this any more: the parser-based
   `guard-process-kill.sh` prompted on ordinary commands and stalled
-  unattended workers, and it was removed
-  (`docs/decisions/2026-09-02-remove-guard-process-kill-hook.md`).
+  unattended workers, and the template removed it (the decision record is
+  <https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-09-02-remove-guard-process-kill-hook.md>).
 - Run **`task verify`** before pushing; the pre-push hook runs secret scanning
   (and type/IaC checks where applicable).
 
