@@ -451,6 +451,27 @@ afterward, so `apply`'s absent-state behavior is proven identically on run
 1, run 2, and run N — not just once, coincidentally, on whichever run
 happened to hit a clean volume first.
 
+**The container-assertion smoke run stays out of the local `ci` Taskfile
+target — a documented AGENTS.md carve-out, not an oversight.**
+`scripts/devcontainer-smoke.sh` has no graceful skip: when the
+`devcontainer` CLI is absent it falls back to `npx @devcontainers/cli`
+rather than skipping (a live network dependency, not a no-op), it exits
+non-zero when the `docker` binary or a running daemon is unavailable, and
+it refuses outright to run from a linked git worktree (its own documented
+exclusion, `scripts/devcontainer-smoke.sh` lines 28-39) — a real gap for
+this repository's own `task worktree:new`-based workflow, not a
+slow-machine inconvenience. An earlier draft of this design proposed
+wiring `task test:devcontainer:root` into `task ci`, reasoning it already
+skipped gracefully when Docker was unavailable — that reasoning does not
+hold: every one of the three preconditions above is a hard failure, not a
+skip, so adding it to `ci` would break `task ci` on any machine or
+worktree lacking one of them, including this repository's own worktree-
+based dev loop. AGENTS.md's `ci`-mirror rule already carves out exactly
+this shape: a check that needs CI-only infrastructure stays out of `ci`
+and is documented as an exception rather than being faked locally.
+`task test:devcontainer:root` therefore remains a separate, manually
+invoked verification step (task 5.2) rather than part of `task ci`.
+
 **`verify` re-reads effective runtime state independently of `apply`'s
 internals.** This mirrors the incident's actual root cause: the template
 said the right thing while the applied file did not match it. Each module's

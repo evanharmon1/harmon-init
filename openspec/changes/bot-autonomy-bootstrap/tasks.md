@@ -192,23 +192,22 @@
 - [ ] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
       and the `agy()` function in `agy-autonomy.sh` per the design's open
       question; verify no remaining caller references a retired script
-- [ ] 3.5 Add `task test:devcontainer:root` (and the equivalent
-      `template/` target) to the root and template `ci` Taskfile targets,
-      so `task ci` actually runs the devcontainer container-assertion smoke
-      test its own description already promises ("verify's checks + skills
-      drift + devcontainer assert + security") — per AGENTS.md's
-      `ci`-mirror rule, a check the build workflow gates on and that can
-      run locally belongs in `ci` too. State the existing semantics
-      explicitly rather than changing them: `test:devcontainer:root`
-      already skips with a message (not a failure) when the `devcontainer`
-      CLI or Docker daemon is unavailable, so adding it to `ci` costs
-      nothing on a machine without Docker and exercises the real
-      container-assertion path (including this change's `bot-autonomy.sh
-      verify` invocation) wherever Docker is present; verify by running
-      `task ci` on a machine with Docker and confirming
-      `test:devcontainer:root` actually executes (not merely skips), and
-      on one without Docker confirming it skips with the documented
-      message rather than failing
+- [ ] 3.5 Document in `docs/architecture/ci-cd.md`'s
+      `devcontainer-build.yml` description (and its `template/` twin) that
+      the container-assertion smoke run stays a CI-only, manually-invoked
+      check — never wired into the root or template `ci` Taskfile targets
+      — because `scripts/devcontainer-smoke.sh` has no skip semantics to
+      fall back on locally: it falls back to `npx @devcontainers/cli` (a
+      live network dependency, not a no-op) when the `devcontainer` CLI is
+      absent, exits non-zero when the `docker` binary or a running daemon
+      is unavailable, and refuses outright to run from a linked git
+      worktree (its own documented exclusion, lines 28-39) — a real gap
+      for this repository's own `task worktree:new`-based workflow, not a
+      slow-machine inconvenience. This is AGENTS.md's own `ci`-mirror
+      carve-out: a check that needs CI-only infrastructure stays out of
+      `ci` and is documented as an exception rather than being faked
+      locally. `task test:devcontainer:root` remains the separate, manual
+      verification step (task 5.2); verify with `task lint:markdown`
 
 ## 4. Docs, template parity, and cross-change coordination
 
@@ -245,8 +244,11 @@
 
 - [ ] 5.1 Run `task check`, `task verify`, and `task security` locally;
       verify all green
-- [ ] 5.2 Run `task test:devcontainer:permissions` and (where a Docker daemon
-      is available) `task test:devcontainer:root`; verify both pass
+- [ ] 5.2 Run `task test:devcontainer:permissions` and (where a Docker
+      daemon, the `devcontainer` CLI, and a primary — non-worktree —
+      checkout are all available) `task test:devcontainer:root`; this
+      stays a manual step, not wired into `task ci` (see task 3.5's
+      documented exception); verify both pass
 - [ ] 5.3 Rebuild a freshly generated bot devcontainer and manually exercise
       one filesystem and one GitHub operation through each of Claude Code,
       Codex, Antigravity, and OpenCode; verify zero approval prompts
