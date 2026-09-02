@@ -10,19 +10,6 @@
   "enabledPlugins": {
     "codex@openai-codex": true
   },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-process-kill.sh"
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "additionalDirectories": [
       "../harmon-devkit",

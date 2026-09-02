@@ -34,7 +34,7 @@ brew "lychee"
 [% endif %]
 # Python tool runner (Semgrep CE[% if use_python %] + project dependencies[% endif %][% if use_foreman %] + the pinned foreman CLI[% endif %] use uv/uvx)
 brew "uv"
-# guard-process-kill.sh parses Bash commands with bare `python3`.
+# Repository scripts (status, secret helpers) parse JSON with bare `python3`.
 [% if use_python %]# This project also targets Python >= 3.11.
 [% elif use_foreman %]# lint-hygiene.sh also parses .foreman.toml with bare `python3` + tomllib (>= 3.11).
 [% endif %]
