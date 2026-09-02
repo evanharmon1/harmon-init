@@ -28,8 +28,11 @@ Adopt [OpenSpec](https://github.com/Fission-AI/OpenSpec) `1.11.0` as this
 repository's own spec-driven change process, **at the repo root only**:
 
 - The CLI is pinned via a Renovate-annotated Taskfile var
-  (`OPENSPEC_VERSION`) and fetched through `npx` via `scripts/openspec.sh` —
-  never installed, since the repo has no `package.json`.
+  (`OPENSPEC_VERSION`). `scripts/openspec.sh` prefers a user-local install
+  (`task spec:install`, `npm install -g --prefix ~/.local`) whenever its
+  version matches the pin, falling back to ephemeral `npx` otherwise —
+  never a `package.json` or repo-local `node_modules`, since the repo has
+  neither.
 - `openspec init` was run with seven tool integrations:
   `claude,codex,opencode,github-copilot,antigravity,pi,oh-my-pi`, generating
   `openspec/config.yaml`, `.claude/commands/opsx/*`,

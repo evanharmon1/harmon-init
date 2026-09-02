@@ -744,8 +744,9 @@ tasks:
     # Devcontainer bootstrap only (called from the ROOT post-create.sh /
     # dev/post-create.sh — no template twin, since generated repos don't get
     # OpenSpec). Puts the pinned CLI on PATH so the generated /opsx:* skills'
-    # bare `openspec` invocations resolve; task spec:* still use npx and never
-    # need this.
+    # bare `openspec` invocations resolve. task spec:* also benefit: once this
+    # has run, openspec.sh prefers that install over npx whenever its version
+    # matches the pin.
     desc: "Install the pinned OpenSpec CLI onto PATH (npm install -g --prefix ~/.local)"
     cmds:
       - ./scripts/install-openspec.sh {{.OPENSPEC_VERSION}}
