@@ -223,17 +223,21 @@ the proposal's Non-goals section heads off.
   implementing the modules never has to wait on this change's pin.
   Second, and separately: that does **not** make the *rollout* order
   irrelevant, and it is no longer left to a recommendation.
-  `bot-autonomy-bootstrap` makes the CI job that runs
-  `devcontainer-assert.sh container` a **required status check** on the
-  default branch; that job triggers on any change to
+  `bot-autonomy-bootstrap` makes an **always-on aggregator job** in
+  `devcontainer-build.yml` — not the path-filtered container-assertion job
+  directly, which would wedge every PR that never touches the devcontainer
+  — the **required status check** on the default branch. The assertion
+  the aggregator depends on runs on any change to
   `.devcontainer/Dockerfile`, including the `sync-pin` PR this change
-  feeds. If the pin merges before the modules do, that required check
-  fails — loud, not silent, the fail-closed guarantee holds — and the PR
-  **cannot merge** while it fails, not merely "should not." Land
-  `bot-autonomy-new-harnesses` before the `sync-pin` PR that carries these
-  binaries into this repo's own bot image, and the required check enforces
-  that ordering rather than depending on someone following the
-  recommendation. This change's own new registry addition, `oh-my-pi`,
+  feeds. If the pin merges before the modules do, that assertion fails,
+  the aggregator reports failure — loud, not silent, the fail-closed
+  guarantee holds — and the PR **cannot merge** while it fails, not merely
+  "should not." Land `bot-autonomy-new-harnesses` before the `sync-pin` PR
+  that carries these binaries into this repo's own bot image, and the
+  required aggregator enforces that ordering rather than depending on
+  someone following the recommendation — while still reporting an
+  automatic pass for any PR the devcontainer change-detection filter
+  doesn't match. This change's own new registry addition, `oh-my-pi`,
   still needs its own
   coordination: whichever of `harness-matrix` and `bot-autonomy-bootstrap`
   merges **second** must add `oh-my-pi` to that `unsupported` set —

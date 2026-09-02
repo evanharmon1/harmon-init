@@ -123,6 +123,60 @@ the first place.
   no `unsupported` entry at all
 - **THEN** `verify` exits non-zero and names the uncovered harness
 
+### Requirement: A Copier-gated harness's module always exists; only its effective policy is conditional
+When a harness's autonomy policy is gated behind a Copier option (per
+AGENTS.md's Hard Rule on paid or trial-only SaaS dependencies — see
+`harness-matrix`'s Copilot CLI requirement for the current example), the
+harness SHALL still resolve to a real module — never to the `unsupported`
+bucket and never to no module at all — because the harness IS installed in
+the image regardless of the Copier answer, and an installed, registered
+harness with no module fails `verify` by the coverage requirement above.
+What the Copier option gates is the module's **effective policy**, not its
+existence: the module SHALL support exactly two policy states —
+`autonomous` (the option is on: `apply` writes the harness's non-interactive
+configuration, e.g. an allow-all environment variable and, if the harness
+needs one for headless launches, a wrapper) and `disabled-by-option` (the
+option is off, the default: `apply` ensures the autonomy configuration is
+**absent** — no allow-all variable set, no wrapper installed — leaving the
+harness in its own out-of-the-box, prompt-enabled posture rather than
+forcing any policy on it). `verify` SHALL assert whichever state the
+Copier answer selects, not unconditionally assert `autonomous` — a
+`disabled-by-option` harness that still prompts is the **correct**,
+verified state, not a failure to cover up. This is what makes "every
+installed executable has a module" and "no generated output depends on
+paid SaaS by default" simultaneously true instead of contradictory: the
+coverage requirement is satisfied by the module's existence, and the
+Hard Rule is satisfied by what that module's `apply` is allowed to write
+by default.
+
+#### Scenario: a Copier-gated harness resolves to a module, never to unsupported
+- **WHEN** the bot-autonomy module directory is inspected for a harness
+  whose autonomy policy is gated behind a Copier option (Copilot CLI is
+  the current example, added by the `bot-autonomy-new-harnesses` follow-on
+  once `harness-matrix` installs the binary)
+- **THEN** that harness has its own module file — it does not appear in
+  the `unsupported` set, and `verify` does not skip it merely because the
+  option happens to be off
+
+#### Scenario: the disabled-by-option state is verified, not merely defaulted
+- **WHEN** the Copier option is off (the default) and `bot-autonomy.sh
+  apply` runs the harness's module
+- **THEN** `apply` ensures the harness's allow-all environment variable is
+  unset and no autonomy wrapper is installed, and `verify` asserts exactly
+  that absence — a prompt-enabled Copilot CLI is the verified-correct
+  state in this configuration, not an uncovered gap
+
+#### Scenario: the autonomous state is verified when the option is on
+- **WHEN** the Copier option is on and `bot-autonomy.sh apply` runs the
+  harness's module
+- **THEN** `apply` sets the harness's allow-all environment variable (and
+  installs a wrapper if the harness needs one for headless launches, the
+  same reasoning as Antigravity's), and `verify` asserts that state —
+  including confirming this repository's own `.dogfood-answers.yml` sets
+  the Copilot option on, so this repository's own bot container runs
+  Copilot autonomously, while a freshly generated repo defaults to
+  `disabled-by-option`
+
 ### Requirement: Fail-closed enforcement at apply, both verify points, and CI
 `apply` SHALL exit non-zero on any module failure so `postCreateCommand`
 fails visibly. `verify` SHALL run at the end of post-create and again in
@@ -164,27 +218,50 @@ policy.
   `docker exec`) rather than by duplicating each boundary's check a second
   time in the assertion script
 
-### Requirement: The CI container assertion is a required status check
-The CI job that runs `devcontainer-assert.sh container` against the built
-bot image SHALL be a required status check on the repository's default
-branch, so a failing assertion blocks a merge rather than merely being
-visible. This is what turns "an installed, still-`unsupported` harness
+### Requirement: An always-on aggregator, not the path-filtered assertion job, is the required status check
+`devcontainer-build.yml` SHALL emit an always-on aggregator status —
+matching `build.yml`'s own `verify` job (`if: always()`, depending on its
+leaf jobs, calling `scripts/verify-ci-results.sh`) — and *that aggregator*,
+not the path-filtered `build`/container-assertion jobs themselves, SHALL be
+the repository's required status check. A required check tied directly to
+a path-filtered job never reports on a PR outside that path: this
+repository's own `docs/architecture/branch-protection.md` documents the
+resulting failure mode exactly ("a required check with no workflow to emit
+it stays pending forever and blocks every pull request"). Since
+`devcontainer-build.yml` is (and must stay) path-filtered — building and
+pushing a container image on every unrelated PR would be wasteful — the
+workflow's *trigger* SHALL have no `paths:` filter (so it always runs, the
+same reason `build.yml` has none at all), while a job-level change
+detection step gates the expensive `build` and container-assertion jobs;
+the aggregator alone is unconditional and reports success when nothing
+devcontainer-related changed (those jobs skipped) or when they ran and
+succeeded. This is what turns "an installed, still-`unsupported` harness
 fails CI" into an enforced prerequisite for any PR that changes the bot
 image's harness inventory — including the rolling `sync-pin` PR that
 carries `harness-matrix`'s new binaries into this repository's own
-`.devcontainer/Dockerfile` — rather than a check a merge can proceed past.
+`.devcontainer/Dockerfile` — without wedging every PR that has nothing to
+do with the devcontainer.
 
-#### Scenario: the assertion job is required
+#### Scenario: the aggregator, not the leaf jobs, is required
 - **WHEN** the repository's branch protection ruleset for the default
   branch is inspected
-- **THEN** it lists the CI job that runs `devcontainer-assert.sh
-  container` among its required status checks
+- **THEN** it lists `devcontainer-build.yml`'s always-on aggregator job
+  among its required status checks, and does **not** list the
+  path-filtered `build` or container-assertion job names directly
+
+#### Scenario: a docs-only PR gets a passing required context without building
+- **WHEN** a PR changes only paths outside `devcontainer-build.yml`'s
+  change-detection filter (for example, files under `openspec/changes/**`)
+- **THEN** the `build` and container-assertion jobs do not run (skipped,
+  not failed), and the aggregator job still reports success — the required
+  context is satisfied without a container ever being built
 
 #### Scenario: a PR that installs an uncovered harness cannot merge
 - **WHEN** a PR (including the rolling `sync-pin` PR) changes
   `.devcontainer/Dockerfile` to a base image where a registered harness is
   newly installed but still carries no bot-autonomy module or alias
-- **THEN** the required container assertion fails, and the PR cannot merge
+- **THEN** the container-assertion job runs (the change-detection filter
+  matches), fails, the aggregator reports failure, and the PR cannot merge
   while that required check is failing
 
 ### Requirement: Claude Code non-interactive boundary

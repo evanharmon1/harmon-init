@@ -157,22 +157,43 @@
       workflow that runs it against a built image; verify by confirming
       the path appears in both files and `task test:dogfood-structure`
       passes
-- [ ] 3.3c Add the CI job that now runs the container-mode assertion
-      (task 3.3b) to the repository's **required status checks**
-      (`.github/Branch Protection Ruleset - Protect Main.json` /
-      `gh api repos/{owner}/{repo}/rulesets`) — confirmed today that only
-      `verify` and `security` (from `build.yml`) are required; nothing
-      from `devcontainer-build.yml` is, so a red container assertion
-      currently cannot by itself block a merge. This is what makes
-      "the pin cannot land before the modules exist" an *enforced*
-      prerequisite rather than a visible-but-bypassable failure: the
-      rolling `sync-pin` PR touches `.devcontainer/Dockerfile`, which
-      triggers `devcontainer-build.yml`: once its assertion job is
-      required, that PR cannot merge while it bumps to an image with a
-      newly-installed, still-`unsupported` harness — see design.md -
-      Decisions (the cross-change sequencing entry) and harness-matrix's
-      corresponding update; verify by confirming the ruleset lists the
-      job name after the change
+- [ ] 3.3c Add an **always-on aggregator job** to `devcontainer-build.yml`
+      — matching `build.yml`'s own `verify` job shape (`if: always()`,
+      `needs: [...]`, calling `scripts/verify-ci-results.sh`) — and make
+      *only that aggregator* a required status check. Do **not** require
+      the path-filtered `build`/container-assertion jobs directly: this
+      repo's own `docs/architecture/branch-protection.md` names the exact
+      failure mode that would cause ("a required check that has never
+      reported blocks every pull request... Importing first wedges the
+      repository: a required check with no workflow to emit it stays
+      pending forever") — a required check tied to a path-filtered job
+      never reports on a PR outside that path, so every non-devcontainer
+      PR (a docs change, a pure `openspec/changes/**` change like this
+      one) would show that context "Expected — Waiting for status to be
+      reported" **forever** and could never merge. Concretely: remove the
+      workflow-level `paths:` filter from `devcontainer-build.yml`'s
+      `on:` triggers (so the workflow always runs, the same reason
+      `build.yml` has no `paths:` filter at all — confirmed above); add a
+      lightweight, unconditional first job that detects whether
+      devcontainer-related paths actually changed (its own output, not a
+      workflow-level filter); gate `build` and the container-assertion
+      job on that output (`if: needs.changes.outputs.devcontainer ==
+      'true'`) so they still skip — and their expensive work still does
+      not run — on an unrelated PR; then add the aggregator, `if:
+      always()`, depending on all three, that reports success either when
+      the detection job says nothing devcontainer-related changed (the
+      other two were skipped, which is not a failure) or when they were
+      not skipped and both succeeded; verify by confirming the ruleset
+      lists only the aggregator's job name after the change, matching how
+      `verify`/`security`/`closing-keywords` (not `lint`/`template-test`)
+      are the three required contexts today
+- [ ] 3.3d Add a scenario-matching manual/CI check: open a docs-only PR
+      (touching only `openspec/changes/**` or another path outside
+      `devcontainer-build.yml`'s detection filter) and confirm the
+      aggregator job's context reports **success** without the `build` or
+      container-assertion jobs running at all — proving the required
+      check does not wedge a PR that has nothing to do with the
+      devcontainer
 - [ ] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
       and the `agy()` function in `agy-autonomy.sh` per the design's open
       question; verify no remaining caller references a retired script

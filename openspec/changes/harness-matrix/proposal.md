@@ -33,17 +33,25 @@ installed binaries.
   relying on it for proprietary code, the same review the
   `use_antigravity_cli` help text already asks for regarding Google's
   terms. Per AGENTS.md's Hard Rule ("never make generated output depend
-  on paid or trial-only SaaS by default"), any **consumer-facing** Copilot
-  integration — including the future `bot-autonomy-new-harnesses` module
-  that would configure Copilot's non-interactive/allow-all mode for the
-  bot profile — SHALL be gated by a Copier option defaulting off,
-  mirroring `use_antigravity_cli`'s shape (interactive-auth caveat,
-  free-tier/private-repo terms documented next to the question, bot vs.
-  dev profile posture). This proposal's own scope (the binary in the
-  shared image) needs no such gate, by the same precedent the other three
-  harnesses already establish; the gate is a requirement on the follow-on
-  change, stated here so it is not overlooked when that change is
-  proposed.
+  on paid or trial-only SaaS by default"), Copilot's **non-interactive/
+  allow-all mode for the bot profile** — the future
+  `bot-autonomy-new-harnesses` module's actual autonomy configuration, not
+  the binary this proposal installs — SHALL be gated by a Copier option
+  defaulting off, mirroring `use_antigravity_cli`'s shape (interactive-auth
+  caveat, free-tier/private-repo terms documented next to the question,
+  bot vs. dev profile posture). The module **itself** is not what the
+  option gates: it always exists once `bot-autonomy-new-harnesses` ships,
+  because the binary is installed unconditionally (this proposal's own
+  scope) and `bot-autonomy-bootstrap`'s own completeness rule fails
+  `verify` on any installed, registered harness with no module — what the
+  Copier option selects is that module's effective policy
+  (`disabled-by-option`, the default, vs. `autonomous`), a resolved
+  contradiction recorded in `bot-autonomy-bootstrap`'s design.md and spec
+  (its new "Copier-gated harness" requirement) rather than restated here.
+  This proposal's own scope (the binary in the shared image) needs no
+  gate at all, by the same precedent the other three harnesses already
+  establish; the policy gate is a requirement on the follow-on change,
+  stated here so it is not overlooked when that change is proposed.
 - Add **pi**: npm `@earendil-works/pi-coding-agent@0.84.4` installed with
   `--ignore-scripts` in its own separate `npm install -g` invocation, not
   folded into the combined layer that installs the other npm-based
@@ -89,17 +97,21 @@ installed binaries.
   equally smooth operationally, and the rollout order is no longer left to
   a recommendation someone could merge past: `bot-autonomy-bootstrap`'s
   `unsupported` entries for `copilot-cli`/`pi` exempt them only while
-  their executables are absent, `bot-autonomy-bootstrap` makes the CI job
-  that runs `devcontainer-assert.sh container` a **required status
-  check** on the default branch, and that job triggers on any change to
-  `.devcontainer/Dockerfile` — including the `sync-pin` PR that carries
-  Copilot/pi into this repo's own bot image. **Modules before pin is
-  therefore an enforced prerequisite, not a convention**: if the
+  their executables are absent, and `bot-autonomy-bootstrap` makes an
+  **always-on aggregator job** in `devcontainer-build.yml` — not the
+  path-filtered container-assertion job directly, which would wedge every
+  PR outside that path — the **required status check** on the default
+  branch. That aggregator depends on the assertion, which runs on any
+  change to `.devcontainer/Dockerfile` — including the `sync-pin` PR that
+  carries Copilot/pi into this repo's own bot image. **Modules before pin
+  is therefore an enforced prerequisite, not a convention**: if the
   `sync-pin` PR ever bumps to an image with `copilot`/`pi` installed
   before `bot-autonomy-new-harnesses` has shipped their modules, the
-  required check fails and the PR cannot merge — correctly and loudly
-  (the fail-closed guarantee is never violated), but as a merge block, not
-  merely a visible, bypassable failure. An earlier draft of this
+  assertion fails, the aggregator reports failure, and the PR cannot merge
+  — correctly and loudly (the fail-closed guarantee is never violated),
+  but as a merge block, not merely a visible, bypassable failure. A PR
+  that never touches the devcontainer is unaffected: the aggregator
+  reports success on its own. An earlier draft of this
   sequencing had the opposite problem — a literal contradiction where one
   sentence required the modules to wait for the pin while another required
   the pin to wait for the modules, which no merge order could satisfy;

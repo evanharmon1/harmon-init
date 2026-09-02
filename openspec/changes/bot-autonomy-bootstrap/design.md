@@ -169,6 +169,48 @@ metadata before writing them down, rather than guessing, is what makes
 this concrete rather than another placeholder the implementation PR would
 have had to resolve from scratch.
 
+**A Copier-gated harness's module always exists; its Copier answer
+selects the module's policy, not whether the module exists.** An earlier
+draft (`harness-matrix`'s Copilot CLI requirement) required that "any
+consumer-facing Copilot integration — including the future
+`bot-autonomy-new-harnesses` module — SHALL be gated by a Copier option
+defaulting off," without stating what that means for the module's
+*existence*. Read literally, "gated off by default" could mean the module
+itself is absent when the option is off — but `harness-matrix` installs
+the Copilot binary in the shared image **unconditionally** (following the
+same precedent as Claude Code/Codex/OpenCode/Antigravity), so a generated
+repo with the option at its default (off) would have `copilot` installed
+and, under that reading, no module for it — which fails this change's own
+completeness requirement above ("every registry harness slug resolves to
+one of three coverage buckets," and an installed executable with no
+module fails `verify`). Putting `copilot-cli` in the `unsupported` bucket
+to route around this would be worse: `unsupported` means "not yet
+supported, pending a follow-on" (see the earlier Decision), not "supported,
+but the operator declined it" — conflating the two would make a
+deliberately-declined harness indistinguishable from a genuinely
+uncovered one, exactly the ambiguity the three-bucket model exists to
+remove. The resolution is that the Copier option gates the module's
+**effective policy**, not its existence: the module for a Copier-gated
+harness is always present and always covers the harness, but its `apply`
+writes one of two policy states depending on the answer —
+`disabled-by-option` (the default: no allow-all environment variable, no
+wrapper — the harness's own out-of-the-box, prompt-enabled behavior,
+left alone rather than forced) or `autonomous` (the option is on: the
+allow-all configuration `harness-matrix`'s known-boundaries note already
+named, `COPILOT_ALLOW_ALL` plus a wrapper injecting `--allow-all` for
+headless launches, the same shape as the Antigravity wrapper). `verify`
+asserts whichever state the answer selects — a prompt-enabled Copilot CLI
+under the default answer is the *verified-correct* state, not a gap.
+Concretely for this repository: `.dogfood-answers.yml` sets the Copilot
+option on, so this repository's own bot container runs Copilot
+autonomously; a freshly generated repo's default answer leaves it
+`disabled-by-option`. This pattern — module always present, Copier answer
+selects policy state, `verify` checks the selected state rather than one
+fixed expectation — is the contract any future Copier-gated harness module
+must follow, not something specific to Copilot; it is recorded here as a
+constraint on `bot-autonomy-new-harnesses` even though that change (not
+this one) implements the actual module.
+
 **Cross-change sequencing: the `unsupported` bucket satisfies static
 completeness now; it never silences the dynamic fail-closed check once a
 harness is actually installed — for ANY reason, uniformly.**
@@ -201,13 +243,21 @@ set: if the rolling `sync-pin` PR ever bumps a bot image to a revision with
 a still-`unsupported` harness installed, CI goes red immediately, naming
 it. "Goes red" is not by itself an enforcement mechanism — a failing,
 non-required check does not block a merge — so this design also requires
-the CI job that runs the container-mode assertion to be a **required
-status check** on the default branch (it is not, today; confirmed against
-the repository's branch-protection ruleset, which lists only `verify` and
-`security` from `build.yml`). With that requirement in place, "land the
-pin after the module exists" is an *enforced* invariant, not a
-documentation-only convention or a red check someone could merge past —
-for every entry in the table, not a privileged subset of it. The same
+an **always-on aggregator** in `devcontainer-build.yml` (matching
+`build.yml`'s own `verify` job) that depends on the container-mode
+assertion and is itself the **required status check** on the default
+branch — confirmed today that nothing from `devcontainer-build.yml` is
+required, only `verify`/`security` from `build.yml`. The aggregator, not
+the assertion job directly, is what must be required: the assertion job
+stays path-filtered (building a container on every unrelated PR would be
+wasteful), and requiring a path-filtered job directly would wedge every PR
+outside that path — see the Risk entry below and
+`docs/architecture/branch-protection.md`, which documents that exact
+failure mode. With the aggregator in place, "land the pin after the module
+exists" is an *enforced* invariant, not a documentation-only convention or
+a red check someone could merge past — for every entry in the table, not
+a privileged subset of it, and without blocking PRs the devcontainer never
+touches. The same
 reasoning applies going forward to `oh-my-pi`: `harness-matrix` adds its
 registry row with a pending-module reason, so whichever of `harness-matrix`
 and this change merges second is responsible for adding that entry — see
@@ -382,15 +432,23 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   [Mitigation] this is precisely acceptance criterion 3's [CI] requirement;
   `task test:devcontainer:root` already pays an equivalent cost locally, so
   CI gains coverage it was missing rather than adopting new mechanism.
-- [Risk] Making the container-assertion job a required status check
-  (task 3.3c) blocks every future PR that touches `.devcontainer/**` on it,
-  including PRs unrelated to harness rollout — a stricter gate than exists
-  today → [Mitigation] this is the accepted cost of "enforced" rather than
-  "self-diagnosing": the whole point of requiring the check is that a
-  human cannot merge past a red assertion by choice or oversight, which is
-  exactly what closes the sequencing hazard below. The check is the same
-  one `task test:devcontainer:root` already runs locally, so a PR author
-  can always reproduce and fix a failure before pushing.
+- [Risk] Making the container-assertion job itself a required status check
+  would wedge every PR that does *not* touch `.devcontainer/**` — the job
+  is (and must stay) path-filtered, so on an unrelated PR it never runs and
+  never reports, and a required check with nothing to emit it "stays
+  pending forever and blocks every pull request," per this repository's own
+  `docs/architecture/branch-protection.md` → [Mitigation] task 3.3c
+  requires an **always-on aggregator** instead — the same shape
+  `build.yml`'s own `verify` job already uses (`if: always()`, depending on
+  its leaf jobs, reporting via `scripts/verify-ci-results.sh`) — and makes
+  *that* the required context. The aggregator itself carries no path
+  filter, so it reports on every PR: success without running anything when
+  a job-level change-detection step says nothing devcontainer-related
+  changed, and the real assertion's result when it did. Every PR that
+  *does* touch `.devcontainer/**` still cannot merge past a red assertion
+  by choice or oversight — task 3.3d's scenario (a docs-only PR merges on
+  an automatic pass) is what proves the fix actually closes the wedge
+  risk, not merely asserts it away.
 - [Risk] The pending-follow-on `unsupported` entries for
   `copilot-cli`/`pi`/`oh-my-pi` could be forgotten when `harness-matrix` or
   `bot-autonomy-new-harnesses` actually lands, reopening the exact
@@ -399,11 +457,11 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   other change and the specific slug to reconcile; the
   registry-completeness unit test fails loudly the moment `oh-my-pi`'s row
   exists with no covering entry, and — since a pending-follow-on exemption
-  no longer survives installation, and the assertion that would catch it
-  is now a required status check (task 3.3c) — the sync-pin PR that would
-  introduce the gap is mechanically blocked from merging, not merely
-  flagged, so a forgotten reconciliation is caught at merge time, not
-  after.
+  no longer survives installation, and the required aggregator (task 3.3c)
+  depends on the container assertion that would catch it whenever the
+  change-detection filter matches — the sync-pin PR that would introduce
+  the gap is mechanically blocked from merging, not merely flagged, so a
+  forgotten reconciliation is caught at merge time, not after.
 - [Risk] Resolving the OpenCode `OPENCODE_CONFIG_CONTENT` open question later
   could make today's file-seed implementation redundant work →
   [Mitigation] the scenario contract (effective permission policy is
