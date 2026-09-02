@@ -19,6 +19,10 @@ includes:
   # and fetched via uvx in taskfiles/foreman.yml)
   foreman: taskfiles/foreman.yml
 
+vars:
+  # renovate: datasource=npm depName=@fission-ai/openspec
+  OPENSPEC_VERSION: "1.11.0"
+
 tasks:
   default:
     desc: Interactive task menu (tv)
@@ -116,6 +120,8 @@ tasks:
       - task: test:open-devcontainer
       - task: test:codex-review
       - task: test:template-helpers
+      - task: spec:validate
+      - task: test:openspec-generated-pin
       - task: test:template
 
   # ── Quality Checks ────────────────────────────────────────────
@@ -696,6 +702,59 @@ tasks:
     desc: Show whether the Claude → Codex stop-gate review is enabled
     cmds:
       - ./scripts/codex-gate.sh status
+
+  # ── Spec-driven changes (OpenSpec) ──────────────────────────────
+  # Root-only: openspec/ is this repo's own change-proposal workflow, never
+  # shipped to generated repos (no copier answer, nothing under template/).
+  # The CLI is pinned via OPENSPEC_VERSION above and fetched through npx —
+  # there is no root package.json to install it into.
+  spec:validate:
+    # Offline-safe: scripts/spec-validate.sh skips the CLI entirely when there
+    # is nothing to validate; openspec.sh separately prefers the user-local
+    # install `task spec:install` puts on PATH, so this needs no network in
+    # the devcontainer even once real changes/specs exist.
+    desc: "Validate every OpenSpec change proposal and spec (openspec validate --all)"
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/spec-validate.sh
+
+  spec:list:
+    desc: List active OpenSpec change proposals
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/openspec.sh list
+
+  spec:update:
+    desc: Refresh generated OpenSpec instruction files (and the local CLI install if it drifted from the pin)
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/spec-update.sh
+
+  spec:run:
+    desc: "Run an arbitrary OpenSpec CLI command (usage: task spec:run -- <args>)"
+    env:
+      OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
+    cmds:
+      - ./scripts/openspec.sh {{.CLI_ARGS}}
+
+  spec:install:
+    # Devcontainer bootstrap only (called from the ROOT post-create.sh /
+    # dev/post-create.sh — no template twin, since generated repos don't get
+    # OpenSpec). Puts the pinned CLI on PATH so the generated /opsx:* skills'
+    # bare `openspec` invocations resolve. task spec:* also benefit: once this
+    # has run, openspec.sh prefers that install over npx whenever its version
+    # matches the pin.
+    desc: "Install the pinned OpenSpec CLI onto PATH (npm install -g --prefix ~/.local)"
+    cmds:
+      - ./scripts/install-openspec.sh {{.OPENSPEC_VERSION}}
+
+  test:openspec-generated-pin:
+    desc: "Guard: generated OpenSpec assets' generatedBy matches the pinned OPENSPEC_VERSION"
+    cmds:
+      - ./scripts/test-openspec-generated-pin.sh
 
   # ── Security ──────────────────────────────────────────────────
   security:

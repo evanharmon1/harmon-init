@@ -1,0 +1,144 @@
+# Adopt OpenSpec for spec-driven changes at the repo root
+
+Date: 2026-09-01
+
+## Status
+
+Accepted
+
+## Context
+
+`specs/` has always been a plain template (`_template.md`) plus
+`issue-strategy.md` — a place to write a spec, not a workflow that drives one.
+Nothing enforced that a change had a spec, tracked its status, or gave a pane
+worker a shared vocabulary for proposing, applying, and archiving one.
+
+harmon-init#1137 widened the set of harnesses this repo dogfoods bot access
+for — Claude Code, Codex, OpenCode, GitHub Copilot, Antigravity, Pi, and Oh My
+Pi. Multi-harness pane workers need one shared spec-driven-change vocabulary
+that behaves the same regardless of which harness is driving a given pane,
+rather than each harness growing its own ad hoc propose/apply/archive
+convention. A single spec-of-record location that any harness can read and
+act on consistently is worth adopting deliberately rather than improvising
+per-harness.
+
+## Decision
+
+Adopt [OpenSpec](https://github.com/Fission-AI/OpenSpec) `1.11.0` as this
+repository's own spec-driven change process, **at the repo root only**:
+
+- The CLI is pinned via a Renovate-annotated Taskfile var
+  (`OPENSPEC_VERSION`). `scripts/openspec.sh` prefers a user-local install
+  (`task spec:install`, `npm install -g --prefix ~/.local`) whenever its
+  version matches the pin, falling back to ephemeral `npx` otherwise —
+  never a `package.json` or repo-local `node_modules`, since the repo has
+  neither.
+- `openspec init` was run with seven tool integrations:
+  `claude,codex,opencode,github-copilot,antigravity,pi,oh-my-pi`, generating
+  `openspec/config.yaml`, `.claude/commands/opsx/*`,
+  `.claude/skills/openspec-*`, `.agents/**`, `.opencode/**`,
+  `.github/prompts/**`, `.github/skills/**`, `.pi/**`, and `.omp/**`.
+- `openspec/changes/<name>/` is the spec of record for an in-flight change;
+  archived changes update `openspec/specs/`, the accumulated capability
+  specs. `specs/` at the repo root is unaffected — it keeps
+  `issue-strategy.md` and the Claude Design handoff bundles (see
+  `specs/README.md`).
+- `task spec:validate` (`openspec validate --all`) is wired into `task
+  verify`'s fast-guard section, so an invalid change proposal or spec fails
+  local verification and CI the same way any other guard does.
+- `openspec/config.yaml`'s `context:` carries a short description of this
+  repo's two-layer architecture, Conventional Commits, `task verify` as the
+  gate, and the `template/`-changes-need-`fix:`/`feat:` rule, so an
+  AI-authored proposal starts from an accurate model of the repo. A
+  `rules.proposal` entry requires every proposal to carry a "Non-goals"
+  section.
+
+**Not:** shipped to consumers via the template. No copier answer was added,
+nothing changed under `template/`, and `copier.yml` is untouched. This is
+Evan's explicit decision (2026-09-01): the root dogfoods the workflow first;
+whether and how to offer it to generated repos is a separate, later decision
+with its own review, not a side effect of this one.
+
+**Not:** a `package.json`. The repo has none and this change doesn't add one
+for a single dependency — the CLI is pinned and fetched via `npx` instead,
+the same shape already used for `@devcontainers/cli` and `markdownlint-cli2`.
+
+**Not:** Gemini CLI as a tool integration, even though OpenSpec supports a
+`gemini` target. Gemini CLI is being removed from the devcontainer in favor
+of Antigravity (harmon-init#1137), so adding Gemini-flavored generated files
+here would be dead configuration on arrival.
+
+**Not:** any change proposal created by this PR. Landing the tooling and
+landing the first proposal are separate, reviewable units of work; the first
+proposal is a follow-up PR.
+
+## Consequences
+
+- `task spec:validate` introduces a new class of local/CI failure — an
+  invalid `openspec/changes/*` proposal or `openspec/specs/*` capability spec
+  — that did not exist before. It is a no-op success on a tree with no
+  changes present, which is the state this PR leaves the repo in.
+- Generated markdown under `.agents/workflows/`, `.github/prompts/`,
+  `.github/skills/`, `.opencode/`, `.pi/`, and `.omp/` follows OpenSpec's own
+  upstream conventions rather than this repo's, so `.markdownlint-cli2.jsonc`
+  gained ignore entries for them — the same reasoning already applied to
+  `.claude/**` and `.agents/skills/**`. None of those trees contain YAML, so
+  `.yamllint` needed no matching entries; `openspec/` itself is deliberately
+  **not** ignored by either linter.
+- `.claude/skills/openspec-*` and `.agents/skills/openspec-*` are legitimately
+  different per-harness files (OpenSpec writes a Claude-specific invocation
+  hint into one and a generic one into the other), not an accidental
+  same-name clobber, so they are declared in the new
+  `.agents/skills/.link-ignore` — the escape hatch `scripts/link-agent-skills.sh`
+  already provides for exactly this situation.
+- `task spec:update` (`openspec update`) is how this tree stays current with
+  future OpenSpec releases and tool-support changes; bumping
+  `OPENSPEC_VERSION` is how this repo takes a new OpenSpec release, the same
+  pattern `FOREMAN_VERSION` already establishes for the pinned Foreman CLI.
+- `task spec:validate` runs through `scripts/spec-validate.sh`, not the CLI
+  directly: `task verify` is documented and relied on to run offline, but
+  `scripts/openspec.sh` execs through `npx` by default, which needs the
+  network on a cold cache even to report "nothing to validate." The wrapper
+  skips the CLI entirely when `openspec/changes/` and `openspec/specs/` are
+  both empty — the state this PR leaves the repo in.
+- The generated `/opsx:*` skills invoke a bare `openspec` command. Hand-
+  editing that generated content was rejected — `task spec:update` would
+  silently overwrite it on the next run — so `scripts/install-openspec.sh`
+  (`task spec:install`) instead installs the pinned CLI user-locally
+  (`npm install -g --prefix ~/.local`); `~/.local/bin` is already first on
+  `PATH` in the devcontainer. This turned out to also fix the offline-gate
+  problem more completely than the first attempt did: `scripts/openspec.sh`
+  now prefers that local install whenever its version matches the pin,
+  falling back to `npx` only outside the devcontainer (the same
+  local-binary-or-npx dispatch `scripts/markdownlint.sh` and
+  `scripts/devcontainer-assert.sh` already use) — so once a change or
+  archived spec exists (the permanent steady state from that point on),
+  `task verify` still never touches the network inside the devcontainer,
+  where `spec:install` already ran. Outside it, with no local install and no
+  network, `spec-validate.sh` now fails **closed**: an npx/network error
+  fails the gate like any other failure, rather than being waved through as
+  indeterminate — an earlier version of this fix treated a network error as
+  a pass, which a review round correctly called out as letting an invalid
+  change slip past `verify` whenever the network happened to be down. The
+  root-only `post-create.sh` and
+  `dev/post-create.sh` call it on every container build; anyone working
+  outside the devcontainer runs `task spec:install` themselves. This adds one
+  intentional-divergence line to each post-create script — neither has a
+  template twin to update, since generated repos never receive OpenSpec
+  (noted in `scripts/audit-dogfood.sh`, which already reports both files as
+  differing from their template renders for unrelated, pre-existing reasons).
+  `npm install --prefix` cannot modify a shell's `PATH` itself, so outside
+  the devcontainer (a stock macOS shell, e.g., where `~/.local/bin` is not
+  on `PATH` by default) the install alone does not make the bare command
+  work; `install-openspec.sh` detects that case and prints the exact line to
+  add to a shell rc, rather than leaving a silent "command not found" as the
+  only signal.
+- `task test:openspec-generated-pin` statically checks that every generated
+  asset's `generatedBy` field (OpenSpec's own record of which CLI version
+  last regenerated it) matches the pinned `OPENSPEC_VERSION`, so a Renovate
+  bump that lands without a `task spec:update` regeneration fails loudly
+  instead of merging with every other check green. It cannot verify the
+  generated *content* is current — only running `spec:update` does that —
+  but it catches exactly the "forgot to regenerate" mistake, which is what a
+  three-times-repeated review finding (across both the challenge and review
+  stages) asked for.

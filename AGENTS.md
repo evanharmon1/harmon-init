@@ -783,6 +783,31 @@ unproven condition means stay draft, not promote and watch.
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
 
+### Spec-driven changes (OpenSpec)
+
+Root-only tooling — generated repos do not receive it (no copier answer,
+nothing under `template/`, no `copier.yml` change; see
+[docs/decisions/2026-09-01-adopt-openspec.md](docs/decisions/2026-09-01-adopt-openspec.md)).
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) drives this repository's
+own changes through a propose → apply → archive flow, spelled per harness:
+Claude Code's `/opsx:propose` → `/opsx:apply` → `/opsx:archive`; Codex's
+`$openspec-propose` → `$openspec-apply-change` → `$openspec-archive-change`
+skills; and OpenCode/GitHub Copilot/Antigravity/Pi/Oh My Pi's
+`/opsx-propose` → `/opsx-apply` → `/opsx-archive`. `openspec/changes/<name>/`
+is the spec of record for a change while it is in flight — not `specs/`,
+which keeps `issue-strategy.md` and design handoff bundles (see
+`specs/README.md`).
+
+- `task spec:validate` — `openspec validate --all`; wired into `task verify`.
+- `task spec:list` — list active change proposals.
+- `task spec:update` — refresh generated instruction files after an
+  `OPENSPEC_VERSION` bump; also refreshes the local CLI install (`task
+  spec:install`) first if it has drifted from the pin.
+- `task spec:run -- <args>` — passthrough to the pinned CLI for anything else.
+- `task spec:install` — puts the CLI on `PATH` (`~/.local/bin`) for the
+  generated commands'/skills' bare `openspec` calls; devcontainer bootstrap
+  already runs it, so only needed manually outside one.
+
 ## Second-Model Review (Codex)
 
 A second AI model (the OpenAI Codex CLI) reviews changes on demand — opt-in

@@ -6,6 +6,15 @@ change before it is built, in a form a contributor or AI agent can implement
 against. (Specs cover *what* and *why*; `docs/architecture/` covers *how*, and
 `docs/decisions/` records *why a choice was made*.)
 
+## Relationship to `openspec/`
+
+[`openspec/`](../openspec/) (see [docs/decisions/2026-09-01-adopt-openspec.md](../docs/decisions/2026-09-01-adopt-openspec.md))
+now owns change proposals and capability specs for developing this
+repository itself — `openspec/changes/<name>/` is the spec of record for an
+in-flight change, and archiving one updates `openspec/specs/`. This
+directory keeps its other two jobs: `issue-strategy.md`, and the Claude
+Design handoff bundles below; it is not otherwise superseded by OpenSpec.
+
 ## How to write a spec
 
 1. Copy the [spec template](_template.md) to a task-scoped file, e.g.

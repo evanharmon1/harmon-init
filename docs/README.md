@@ -39,3 +39,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 
 Design intent is at [`../DESIGN.md`](../DESIGN.md); specs (WHAT to build) in
 [`../specs/`](../specs/) and tests in [`../tests/`](../tests/) — all at the repo root.
+Spec-driven change proposals and capability specs for developing this repo
+itself live in [`../openspec/`](../openspec/) (root-only tooling; see
+[decisions/2026-09-01-adopt-openspec.md](decisions/2026-09-01-adopt-openspec.md)),
+distinct from `specs/`'s `issue-strategy.md` and design handoff bundles.

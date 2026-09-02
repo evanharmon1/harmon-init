@@ -81,6 +81,13 @@ jobs:
       - run: task test:setup-github
       - run: task test:starship-glyphs
       - run: task test:template-helpers
+      # Root-only, like the category/parity/independence guards below: no
+      # template/ twin, so this job enumerates it by hand for the same
+      # reason as the block above (#614/#962) — a check added to `verify`
+      # alone never runs in CI, and an invalid OpenSpec proposal could merge
+      # with required checks green.
+      - run: task spec:validate
+      - run: task test:openspec-generated-pin
       # Meaningful only because this job checks out with fetch-depth: 0 above.
       - name: Tag hygiene (no non-release tag where git describe would select it)
         run: task test:tag-hygiene

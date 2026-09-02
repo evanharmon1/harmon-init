@@ -23,9 +23,13 @@ cd "$(dirname "$0")/.."
 #               against their own reviewed lockfiles and diffs the shared
 #               family metadata, so the divergence is checked, just not
 #               byte-checked.
+#   specs/README.md — the root copy adds a paragraph on openspec/ (root-only
+#               spec-driven tooling, docs/decisions/2026-09-01-adopt-openspec.md);
+#               generated repos never receive OpenSpec, so the template twin
+#               stays generic.
 #   (.claude/settings.json is a jinja twin now — root additionally grants the
 #   sibling-repo read permissions/sandbox dirs, reconciled by hand.)
-ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt label-registry.json scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh"
+ALLOW_DIVERGE=".yamllint .devcontainer/related-repos.txt label-registry.json scripts/sync-devkit-release.sh scripts/test-sync-devkit-release.sh specs/README.md"
 
 fail=0
 checked=0
