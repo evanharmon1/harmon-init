@@ -797,8 +797,9 @@ bundles (see `specs/README.md`).
 
 - `task spec:validate` — `openspec validate --all`; wired into `task verify`.
 - `task spec:list` — list active change proposals.
-- `task spec:update` — refresh generated instruction files (after an
-  `OPENSPEC_VERSION` bump, e.g.).
+- `task spec:update` — refresh generated instruction files after an
+  `OPENSPEC_VERSION` bump; also refreshes the local CLI install (`task
+  spec:install`) first if it has drifted from the pin.
 - `task spec:run -- <args>` — passthrough to the pinned CLI for anything else.
 - `task spec:install` — puts the CLI on `PATH` (`~/.local/bin`) so the
   generated `/opsx:*` skills' bare `openspec` invocations resolve; devcontainer
