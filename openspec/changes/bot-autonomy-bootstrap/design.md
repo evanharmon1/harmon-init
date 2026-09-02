@@ -330,77 +330,142 @@ add the wrapper alongside it — rejected as redundant once the wrapper
 exists on the container-wide `PATH`; the function covered a strict subset
 of what the wrapper covers.
 
-**The wrapper and `ensure-antigravity-cli.sh`'s compatibility copy cannot
-share the path `~/.local/bin/agy` — the compatibility copy moves to
-`~/.local/bin/agy-real`, and the wrapper execs it in preference to the
-system binary.** Every version of this design before now assumed the
-wrapper (a thin shell script injecting `--dangerously-skip-permissions`)
-could simply be installed at `~/.local/bin/agy` — the exact path
-`ensure-antigravity-cli.sh` already uses for its own compatibility copy of
-the *real* Antigravity binary
-(`.devcontainer/config/ensure-antigravity-cli.sh:57`,
-`install -m 0755 "$work_dir/antigravity" "$install_dir/agy"`). Both cannot
-be true at one path: whichever writes last silently overwrites the other
-— either the wrapper clobbers a freshly downloaded, correctly pinned
-compatibility binary (defeating `ensure-antigravity-cli.sh`'s entire
-purpose of protecting against a stale system-image binary on an older
-pinned image), or the compatibility copy clobbers the wrapper (silently
-reintroducing the exact headless/programmatic-launch gap issue #1137
-names, since a `docker exec` invoking `agy` would then resolve straight
-to the unwrapped real binary with no flag injection). The fix separates
-the two files: `ensure-antigravity-cli.sh`'s target moves to
-`~/.local/bin/agy-real` (every internal reference — the version check,
-the reconciliation `install`, and the download `install`). Because dev
-post-create also runs `ensure-antigravity-cli.sh` and has no bot-autonomy
-wrapper to fall back on, that script SHALL also leave a plain
-`agy → agy-real` symlink at `~/.local/bin/agy` on every invocation,
-including its early-return paths, so dev's interactive `agy` keeps
-resolving to the freshest pinned binary exactly as it does today. The
-bot-autonomy `antigravity` module's wrapper, installed by bot post-create
-*after* `ensure-antigravity-cli.sh` runs (already the stated ordering —
-see the Risk below), then overwrites that symlink at `~/.local/bin/agy`
-with the real wrapper script; the wrapper itself execs
-`~/.local/bin/agy-real` in preference to the system binary at
-`/usr/local/bin/agy` (or `$HARMON_ANTIGRAVITY_SYSTEM_BINARY`) — mirroring
-`ensure-antigravity-cli.sh`'s own established precedence rule (the
-freshest binary wins) rather than inventing a new one. This is why the
-wrapper needs the *bot-only, after-ensure-antigravity-cli.sh* ordering to
-hold precisely: a wrapper installed before that script runs would
-immediately be overwritten by the script's own (now-unconditional)
-symlink refresh, silently reverting to the unwrapped state.
+**`~/.local/bin/agy` is exactly one of three states — never a dangling
+link — and every task/scenario in this design states the same three.**
+Two prior rounds of this design each fixed one half of a problem and left
+the other half broken. Round 1 gave the wrapper and
+`ensure-antigravity-cli.sh`'s compatibility copy the same path,
+`~/.local/bin/agy` — whichever installed last would silently clobber the
+other (`.devcontainer/config/ensure-antigravity-cli.sh:57`,
+`install -m 0755 "$work_dir/antigravity" "$install_dir/agy"`, is the exact
+line that collides with the wrapper). Round 2 fixed the collision by
+moving the compatibility copy to `~/.local/bin/agy-real` and having
+`ensure-antigravity-cli.sh` maintain an *unconditional* `agy → agy-real`
+symlink — but "unconditional" was wrong: a default-off *generated* render
+never invokes the compatibility installer's download path in the first
+place (see the marker Decision below), so there is no `agy-real` for an
+unconditional symlink to point at, and a symlink to a target that was
+never created is exactly the dangling link this restructuring exists to
+rule out. The corrected, single invariant: **(a)** the flag-injecting
+autonomy wrapper, present only in the bot profile with
+`HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled`, delegating to `agy-real` when
+present, else the system binary at `/usr/local/bin/agy`; **(b)** a plain
+symlink to `agy-real`, present only when `agy-real` itself exists; **(c)**
+absent. `ensure-antigravity-cli.sh` owns states (b)/(c) and the
+`agy-real` file: in **either** profile, when the marker reads `enabled`,
+it downloads/reconciles the pinned binary at `agy-real` and (re)points
+the symlink at `agy`, on every invocation including its early-return
+paths; when the marker reads anything else, it ensures **neither**
+`agy-real` nor `agy` exists, removing them if a prior run (before a
+Copier-answer toggle) or a stale image left them behind. The bot-autonomy
+`antigravity` module, bot-only, acts only on top of that: when its own
+read of the marker is `enabled`, `apply` overwrites `~/.local/bin/agy` —
+symlink or absence, whatever `ensure-antigravity-cli.sh` left — with the
+wrapper (state a); when the marker is not `enabled`, `apply` does
+**nothing** to `agy` at all, because `ensure-antigravity-cli.sh` (which
+the ordering below guarantees runs first) has already left it in the
+correct disabled state — state (c) — and re-touching it would be
+redundant, not corrective. This is why the ordering
+(`ensure-antigravity-cli.sh` before the `antigravity` module's `apply`,
+both bot-only) is load-bearing rather than incidental: a wrapper installed
+before `ensure-antigravity-cli.sh` runs would be overwritten by that
+script's own symlink/removal logic, silently reverting to state (b) or
+(c).
 
-**Antigravity's autonomous policy is gated by the existing
-`use_antigravity_cli` Copier answer, using the same
-module-always-exists/policy-conditional pattern as Copilot.** Every
-version of this design before now had the `antigravity` module apply the
-always-proceed policy and install the wrapper unconditionally, with no
-reference to `use_antigravity_cli` at all — even though that Copier answer
-already exists, already defaults off, and already documents the same
-free-tier/private-repo/interactive-auth terms AGENTS.md's Hard Rule
-requires (see `harness-matrix`'s Copilot CLI requirement for the terms
-Antigravity's own help text states). Forcing every generated bot container
-into Antigravity's autonomous, always-proceed posture regardless of that
-answer is exactly the default this repository's Hard Rule exists to
-prevent: the binary is installed unconditionally in the shared image
-(unaffected by this decision), but the *autonomy policy* is
-consumer-facing configuration precisely as Copilot's is. The fix applies
-the pattern this design already committed to for Copilot's future module
-(see "A Copier-gated harness's module always exists" below) to
-Antigravity's module today, since Antigravity's module is not a future
-follow-on — it is being defined in this very change.
-`bot-autonomy/antigravity.sh` SHALL support the same two policy states:
-`autonomous` when `use_antigravity_cli` is enabled (today's
-always-proceed settings plus the `~/.local/bin/agy` wrapper) and
-`disabled-by-option` when it is not (the default) — `apply` calls
-`apply-antigravity-settings.sh restore` to put the settings file back to
-its pre-managed state and ensures the wrapper is absent (removing it if a
-prior run or a stale image left one behind), and `verify` asserts that
-restored/absent state rather than unconditionally asserting
-`always-proceed`. This repository's own `.dogfood-answers.yml` sets
-`use_antigravity_cli` on, so this repository's own bot container runs
-Antigravity autonomously — a freshly generated repo defaults to
-`disabled-by-option`, matching Copilot's own concrete example on the exact
-same line of reasoning.
+**A rendered `containerEnv` marker, not a Copier-answer-aware script, is
+what lets a verbatim twin behave per repo.**
+`.devcontainer/config/ensure-antigravity-cli.sh` and every `bot-autonomy`
+module are **verbatim** template twins (AGENTS.md's dogfood-parity
+table): the exact same bytes ship to every generated repo regardless of
+that repo's Copier answers, because Jinja never touches a verbatim file.
+A verbatim script therefore cannot contain `{{ use_antigravity_cli }}`
+-style logic — there is no template-time substitution for it to read.
+What *can* vary per repo is a **jinja** file: `devcontainer.json` (bot)
+and `dev/devcontainer.json`, both already `[% if devcontainer %]`
+-conditional twins, render `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY`
+to the literal string `enabled` or `disabled` from
+`{{ use_antigravity_cli }}` at copy/update time — and, for the future
+`bot-autonomy-new-harnesses` follow-on's Copilot module,
+`containerEnv.HARMON_BOT_AUTONOMY_COPILOT` from `harness-matrix`'s new,
+default-off Copilot Copier answer (see its Non-goals). Every verbatim
+script that needs to know a Copier answer — `ensure-antigravity-cli.sh`,
+the `antigravity` module, and (once it exists) the `copilot-cli` module —
+reads **only** that rendered environment variable, never re-derives the
+answer any other way (no `copier.yml` introspection, no
+`.copier-answers.yml` read, nothing keyed to the render-time file tree).
+This repository's own root `.devcontainer/devcontainer.json` (not a jinja
+twin — the rendered form, per AGENTS.md's two-layer architecture) carries
+the root's own literal values matching `.dogfood-answers.yml`:
+`HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled` today, and
+`HARMON_BOT_AUTONOMY_COPILOT=enabled` once that answer exists.
+`containerEnv` values are injected by the devcontainer runtime itself
+before any lifecycle script runs, so every consumer — a verbatim script,
+`bot-autonomy.sh apply`/`verify`, a human's interactive shell — sees the
+same marker from the first line of post-create onward, with no ordering
+dependency on any other script having run first. This same pattern —
+module always present, a rendered marker (not the module) carrying the
+per-repo answer, `verify` checking whichever state the marker selects —
+is the concrete mechanism behind "A Copier-gated harness's module always
+exists" (below); Antigravity is its first real implementation, not merely
+its statement.
+
+**In the bot profile, `ensure-antigravity-cli.sh` and `bot-autonomy.sh
+apply` both run before `post-create-common.sh`, not after — because that
+shared script's Agent-Deck conductor-setup block spawns a `claude`
+process.** `post-create-common.sh`'s own comment (line ~303) states
+plainly that `agent-deck conductor setup` spawns a `claude` process on
+first registration. Every prior draft of this design assumed
+`bot-autonomy.sh apply` would replace today's four ad hoc scripts
+(`enable-claude-bypass.sh` etc.) in their existing position in
+`post-create.sh` — which is *after* the call to `post-create-common.sh`
+(today's actual line 12, followed by the four scripts at lines 17-24).
+That ordering means the conductor's spawned `claude` process would run
+under whatever policy was in effect *before* `apply` had written
+`bypassPermissions` — the default, prompt-enabled one — for the bot
+profile specifically: the exact effective-policy divergence #1137 exists
+to close, just relocated to the very first `claude` invocation instead of
+a later one. The fix moves both `ensure-antigravity-cli.sh` and
+`bot-autonomy.sh apply` to be the first bot-specific steps in
+`post-create.sh`, *before* the call to `post-create-common.sh`. Neither
+has an ordering dependency that would break by moving earlier:
+`apply-antigravity-settings.sh` already `mkdir -p`s its own target
+directory rather than relying on `post-create-common.sh`'s
+directory-creation loop, the OpenCode module SHALL do the same (stated as
+a requirement below, not assumed), Claude Code's and Codex's targets are
+image-baked under `/etc` and exist from the moment the container starts,
+and the `containerEnv` marker (the Decision above) is available from the
+first line of any lifecycle script — none of it needs
+`post-create-common.sh` to have run first. The dev profile is unaffected:
+`ensure-antigravity-cli.sh`'s call in `dev/post-create.sh` keeps its
+existing position (after `post-create-common.sh`), since a
+conductor-spawned `claude` running under dev's default, prompt-enabled
+policy is correct, not a gap — only the bot profile has a policy that
+first `claude` invocation must already reflect.
+
+**Bot `post-start.sh` unsets `NODE_OPTIONS` before calling
+`bot-autonomy.sh verify`, duplicating the one line `post-start-common.sh`
+already runs for the same reason, rather than restructuring the shared
+script.** Moving `verify` to run before `post-start-common.sh` (so a
+drifted policy blocks the Agent-Deck conductor from starting — see the
+Fail-closed requirement) also moved it before that script's own
+`unset NODE_OPTIONS` (its line 6, "Prevent VS Code's JS debug extension
+from breaking Node.js processes" — see `post-create-common.sh` for the
+full explanation it cross-references). Every bot-autonomy module's
+`verify` step that shells out to a Node-based harness CLI (Claude Code,
+Codex, OpenCode, and — once it exists — Copilot CLI/pi are all
+npm-distributed) would inherit whatever `NODE_OPTIONS` VS Code's JS debug
+extension injected, the same class of breakage `post-start-common.sh`'s
+existing unset already guards against elsewhere. Two shapes were
+available: unset `NODE_OPTIONS` in `post-start.sh` itself before calling
+`verify`, or restructure `post-start-common.sh` so its sanitization runs
+before a `verify` call inserted partway through the shared script. The
+first is chosen: one idempotent line duplicated into a bot-only file
+(`post-start-common.sh` unsets it again immediately afterward, harmlessly)
+is simpler than splitting a shared bot/dev script around a bot-only call
+— the same minimal-footprint reasoning that already governs how
+`post-create.sh` layers bot-specific lines around the shared
+`post-create-common.sh` rather than parameterizing the shared script
+itself.
 
 **OpenCode: force the managed `permission` key on every apply; preserve
 everything else; back up the prior value for restore.** An earlier draft of
@@ -578,16 +643,24 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   both wanting `~/.local/bin/agy` would let whichever installs last
   silently clobber the other — the wrapper losing its flag injection, or
   the compatibility copy losing its pinned-version guarantee on an older
-  pinned image → [Mitigation] the Decision above separates the two paths
-  (`agy-real` for the compatibility copy, `agy` for the wrapper or, when
-  disabled, a plain symlink to it) and requires `ensure-antigravity-
-  cli.sh` (unconditionally, including its early-return paths) to run
-  before the bot-autonomy `antigravity` module's `apply` in the same
-  post-create — already today's ordering, now load-bearing rather than
-  incidental. `verify` additionally checks the wrapper's own behavior
-  (that it injects the flag and resolves to the currently-freshest real
-  binary), not merely a path's existence, so a regression in either
-  script's target or ordering is caught rather than silently passing.
+  pinned image → [Mitigation] the Decisions above separate the two paths
+  (`agy-real` for the compatibility copy, `agy` for the wrapper, a symlink,
+  or absence — never both a wrapper and a compatibility install racing for
+  one path) and require `ensure-antigravity-cli.sh` to run before the
+  bot-autonomy `antigravity` module's `apply`, both bot-only and both now
+  gated by the same marker. `verify` additionally checks the wrapper's own
+  behavior (that it injects the flag and resolves to the
+  currently-freshest real binary) and independently fails on a dangling
+  symlink regardless of the marker, so a regression in either script's
+  target, ordering, or marker handling is caught rather than silently
+  passing.
+- [Risk] A default-off render's `ensure-antigravity-cli.sh` invocation
+  could still leave a stale `agy-real`/`agy` behind from an image built
+  before this marker existed, or from a Copier-answer toggle from enabled
+  to disabled → [Mitigation] the script's disabled branch is stated as an
+  unconditional cleanup (remove both if either exists), not merely "skip
+  the download" — every invocation reconciles toward the correct state
+  for the *current* marker value, not just the first one it ever sees.
 - [Risk] Wiring `devcontainer-assert.sh container` into
   `devcontainer-build.yml` adds a real container run to a workflow that
   today only builds and pushes, lengthening that job →

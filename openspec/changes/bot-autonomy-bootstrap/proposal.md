@@ -44,18 +44,27 @@ with one dispatch point that can prove every installed harness is covered.
   `codex-managed-config.toml` baseline on every key except `sandbox_mode`
   and `approval_policy` — so an edit to the shared baseline cannot silently
   go stale in the bot copy.
-- Replace Antigravity's shell-function wrapper with a real executable,
-  installed to `~/.local/bin/agy` by the bot post-create only WHEN
-  `use_antigravity_cli` is enabled, so headless and programmatic launches
-  (`agy -p …`, or any exec off PATH) get `--dangerously-skip-permissions`
-  without depending on a login shell. `use_antigravity_cli` is an existing,
-  default-off Copier answer (interactive-auth caveat and free-tier/
-  private-repo terms already documented next to it); the `antigravity`
-  module follows the same module-always-exists/policy-conditional pattern
-  the Copilot module (below) also follows —
-  `disabled-by-option` (the default: settings restored via
-  `apply-antigravity-settings.sh restore`, wrapper absent) or `autonomous`
-  (this repository's own `.dogfood-answers.yml` sets the option on).
+- Replace Antigravity's shell-function wrapper with a real executable at
+  `~/.local/bin/agy`, so headless and programmatic launches (`agy -p …`,
+  or any exec off PATH) get `--dangerously-skip-permissions` without
+  depending on a login shell. `~/.local/bin/agy` is exactly one of three
+  states, never a dangling link: the flag-injecting wrapper (bot profile,
+  option enabled); a plain symlink to `~/.local/bin/agy-real` (either
+  profile, whenever `ensure-antigravity-cli.sh`'s compatibility copy
+  exists); or absent. `use_antigravity_cli` is an existing, default-off
+  Copier answer (interactive-auth caveat and free-tier/private-repo terms
+  already documented next to it); the `antigravity` module follows the
+  same module-always-exists/policy-conditional pattern the Copilot module
+  (below) also follows — `disabled-by-option` (the default: settings
+  restored via `apply-antigravity-settings.sh restore`, `agy` absent) or
+  `autonomous` (this repository's own `.dogfood-answers.yml` sets the
+  option on). Because `ensure-antigravity-cli.sh` and every bot-autonomy
+  module are **verbatim** template twins — identical bytes in every
+  generated repo, regardless of that repo's Copier answers — neither can
+  read `use_antigravity_cli` directly; both read a rendered
+  `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` marker instead, set by
+  the **jinja** `devcontainer.json` twins (bot and dev) from that answer
+  (see Impact).
 - Add an OpenCode module: force `"permission": {"*": "allow"}` in
   `~/.config/opencode/opencode.json` on every apply — overriding any prior
   value for that key while preserving every other key — with the prior
@@ -145,12 +154,29 @@ changes in this PR introduce new capabilities.)
   `.devcontainer/scripts/enable-codex-bypass.sh`, the `agy()` shell function in
   `.devcontainer/config/agy-autonomy.sh`.
 - Changed: `.devcontainer/post-create.sh`, `.devcontainer/post-start.sh`
-  (call `bot-autonomy.sh apply` / `verify`),
+  (call `bot-autonomy.sh apply` / `verify`, ordered ahead of the shared
+  `post-create-common.sh`/`post-start-common.sh` calls), `devcontainer.json`
+  and `dev/devcontainer.json` (add the `HARMON_BOT_AUTONOMY_ANTIGRAVITY`
+  `containerEnv` marker), `ensure-antigravity-cli.sh` (retarget to
+  `agy-real`, gate on the marker),
   `.github/workflows/devcontainer-build.yml` (add the container-mode assert
   step).
 - Read-only: `agent-registry.json` (schema v3, consulted but not modified).
 - Docs: `docs/guides/devcontainers.md`, `copier.yml`, `docs/architecture/security.md`.
 - Template twins: every `.devcontainer/config/bot-autonomy/*` and
-  `.devcontainer/scripts/bot-autonomy.sh` file is a **verbatim** template
-  twin; `post-create.sh.jinja` is a **structure** twin (per AGENTS.md's
-  dogfood-parity table) — the implementation PR changes both layers.
+  `.devcontainer/scripts/bot-autonomy.sh` file (including
+  `ensure-antigravity-cli.sh`) is a **verbatim** template twin;
+  `post-create.sh.jinja`/`post-start.sh.jinja` are **structure** twins
+  (per AGENTS.md's dogfood-parity table) — the implementation PR changes
+  both layers. This distinction is load-bearing, not bookkeeping: a
+  verbatim twin ships identical bytes regardless of a generated repo's
+  Copier answers, so it structurally cannot contain
+  `{{ use_antigravity_cli }}`-style logic. What carries the per-repo
+  answer is a **jinja** twin instead — `devcontainer.json` (bot) and
+  `dev/devcontainer.json`, both already `[% if devcontainer %]`
+  -conditional — rendering `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY`
+  to `enabled`/`disabled` at copy/update time; this repository's own root
+  `.devcontainer/devcontainer.json` and `.devcontainer/dev/
+  devcontainer.json` (the rendered form, not jinja twins) carry the
+  literal value matching `.dogfood-answers.yml`. Every verbatim script
+  that needs the answer reads that rendered marker and nothing else.

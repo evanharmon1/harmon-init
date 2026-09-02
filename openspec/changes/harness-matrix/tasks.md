@@ -74,11 +74,19 @@
 - [ ] 3.4 Reconcile with `bot-autonomy-bootstrap`'s registry-completeness
       unit test: whichever of that change and this one merges second must
       add `oh-my-pi` to `bot-autonomy-bootstrap`'s `unsupported` set (reason:
-      pending `bot-autonomy-new-harnesses`) in the same PR that adds the
-      `oh-my-pi` registry row here; verify by confirming
+      pending `bot-autonomy-new-harnesses`; **`executable: "omp"`** — the
+      mapped binary name this change installs, per task 3.2, not the
+      `oh-my-pi` slug itself, matching how `verify` checks `command -v
+      <executable>` against every other `unsupported` entry) in the same
+      PR that adds the `oh-my-pi` registry row here; verify by confirming
       `bot-autonomy-bootstrap`'s registry-completeness test still passes
-      after this row lands (see that change's design.md - Decisions and its
-      task 4.5)
+      after this row lands, AND by adding a fixture (in whichever change's
+      test suite the reconciling PR touches) that installs a fake `omp`
+      executable while `oh-my-pi` is still `unsupported` and confirms
+      `bot-autonomy.sh verify` fails naming it — matching
+      `bot-autonomy-bootstrap`'s existing pattern for
+      `copilot`/`qwen`/`goose`/`clite` (see that change's design.md -
+      Decisions and its tasks 1.4 and 4.5)
 
 ## 4. Remove Gemini CLI
 
