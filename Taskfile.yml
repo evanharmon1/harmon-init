@@ -727,11 +727,11 @@ tasks:
       - ./scripts/openspec.sh list
 
   spec:update:
-    desc: Refresh generated OpenSpec instruction files for configured tools
+    desc: Refresh generated OpenSpec instruction files (and the local CLI install if it drifted from the pin)
     env:
       OPENSPEC_VERSION: "{{.OPENSPEC_VERSION}}"
     cmds:
-      - ./scripts/openspec.sh update
+      - ./scripts/spec-update.sh
 
   spec:run:
     desc: "Run an arbitrary OpenSpec CLI command (usage: task spec:run -- <args>)"

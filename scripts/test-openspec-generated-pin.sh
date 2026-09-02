@@ -23,6 +23,10 @@ pinned="$(sed -nE 's/^[[:space:]]*OPENSPEC_VERSION:[[:space:]]*"?([^"[:space:]]+
 
 fail=0
 checked=0
+# git ls-files, not a filesystem scan: an ignored or untracked path under
+# these trees (a stray .claude/worktrees/ checkout, local agent scratch
+# state, ...) must never be able to fail this gate — only what is actually
+# committed is a real "forgot to regenerate" instance.
 while IFS= read -r f; do
     checked=$((checked + 1))
     found="$(sed -nE 's/^[[:space:]]*generatedBy:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$f" | head -1)"
@@ -30,7 +34,8 @@ while IFS= read -r f; do
         echo "FAIL: ${f} declares generatedBy \"${found}\", pinned OPENSPEC_VERSION is \"${pinned}\" — run 'task spec:update' after bumping the pin" >&2
         fail=1
     fi
-done < <(grep -rl "generatedBy:" .claude .agents .opencode .github .pi .omp 2>/dev/null | sort)
+done < <(git ls-files -z -- .claude .agents .opencode .github .pi .omp |
+    xargs -0 grep -l "generatedBy:" 2>/dev/null | sort)
 
 [ "$checked" -gt 0 ] || {
     echo "FAIL: no generatedBy-carrying OpenSpec assets found — did openspec init/update move where it writes them?" >&2
