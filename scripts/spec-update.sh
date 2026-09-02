@@ -21,6 +21,12 @@ cd "$repo_root"
 if command -v openspec >/dev/null 2>&1; then
     installed="$(openspec --version 2>/dev/null)"
     if [ "$installed" != "$OPENSPEC_VERSION" ]; then
+        # install-openspec.sh itself verifies the bare `openspec` command
+        # actually resolves to the refreshed install afterward and exits
+        # non-zero if not (a shadowing PATH entry, e.g.); no `|| true` here
+        # on purpose, so that failure aborts this script under `set -e`
+        # rather than silently proceeding to `openspec.sh update` below
+        # against a CLI that never actually got refreshed.
         ./scripts/install-openspec.sh "$OPENSPEC_VERSION"
     fi
 fi
