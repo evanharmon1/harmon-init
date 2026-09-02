@@ -33,10 +33,6 @@
           {
             "type": "command",
             "command": "/etc/claude-code/hooks/enforce-conventional-commits.sh"
-          },
-          {
-            "type": "command",
-            "command": "/usr/local/share/devcontainer-config/claude-hooks/guard-process-kill.sh"
           }
         ]
       }

@@ -41,9 +41,9 @@ brew "yq"
 # Python tool runner (Semgrep CE and the pinned foreman CLI run via uvx,
 # which provisions its own interpreter)
 brew "uv"
-# lint-hygiene.sh parses .foreman.toml and guard-process-kill.sh parses Bash
-# commands with bare `python3`; stock macOS ships 3.9 and uv provides no
-# `python3` shim, so the interpreter itself is still a dependency.
+# lint-hygiene.sh parses .foreman.toml (tomllib, >= 3.11) and several repo
+# scripts parse JSON with bare `python3`; stock macOS ships 3.9 and uv
+# provides no `python3` shim, so the interpreter itself is still a dependency.
 brew "python"
 
 # Runtime for npx-based tools (commitlint, markdownlint-cli2)

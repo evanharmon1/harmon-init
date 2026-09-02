@@ -26,3 +26,5 @@ one's status.
   record and nothing in its body is seed-specific.
 - [0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
   — proposed v1 contract for portable devflow consumers.
+- [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
+  — the process-kill guard hook is removed; the hard rule binds the agent directly.

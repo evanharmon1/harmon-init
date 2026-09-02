@@ -95,7 +95,7 @@ status line:
 Two rows for hooks, because they are not installed the same way. A **mandatory**
 hook is listed in the image installer's `required_files`, so every image is
 guaranteed to place it under `/etc/claude-code/hooks/`. **Optional** hooks —
-currently `session-end-archive.sh` and `guard-process-kill.sh` — are installed
+currently `session-end-archive.sh` — are installed
 only when the repository ships them, so a settings entry naming the `/etc` copy
 would break the moment the image pin were rolled back past the release that
 added one. Those are registered at their **staged** path instead, where the
