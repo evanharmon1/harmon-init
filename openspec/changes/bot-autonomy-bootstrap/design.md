@@ -253,26 +253,36 @@ now covers it. This makes the sequencing hazard self-detecting for
 set: if the rolling `sync-pin` PR ever bumps a bot image to a revision with
 a still-`unsupported` harness installed, the container-assertion job in
 `devcontainer-build.yml` goes red on that PR, naming the harness. That
-check is not required by branch protection today — this change
-deliberately does not promote it to one (see Non-Goals; the prerequisites
-are real: an always-emitted aggregator, both ruleset layers, a trusted
-fork-PR validation path, a `merge_group` trigger with a credential-free
-path, and mirrored branch-protection docs, none of which this change
-builds), so a reviewer *could* merge past a red, non-required check. Two
-things bound that gap even without a required check. First, the CI signal
-is loud and PR-visible, not silent — the opposite of the original
-incident, where nothing enumerated the scripts against the registry at
-all. Second, and more fundamentally, #1137's actual fail-closed guarantee
-never depended on CI in the first place: `bot-autonomy.sh verify` running
-in post-create and post-start (the Fail-closed requirement above) means a
-real bot container built from a bad-ordering pin fails to *create or
-start*, not merely fails a check someone could ignore — the sequencing
-hazard is caught at container-build time for every consumer, whether or
-not anyone was watching the PR's CI. The same reasoning applies going
-forward to `oh-my-pi`: `harness-matrix` adds its registry row with a
-pending-module reason, so whichever of `harness-matrix` and this change
-merges second is responsible for adding that entry — see harness-matrix's
-design.md, which states this from the other side.
+check is not a required branch-protection status check today — this
+change deliberately does not promote it to one (see Non-Goals; the
+prerequisites are real: an always-emitted aggregator, both ruleset
+layers, a trusted fork-PR validation path, a `merge_group` trigger with a
+credential-free path, and mirrored branch-protection docs, none of which
+this change builds). Modules-before-pin is nonetheless an **enforced**
+merge prerequisite for the sync-pin PR specifically, not a recommendation
+a reviewer could merge past: task 4.6 adds a standing, unchecked checklist
+item to `scripts/sync-devcontainer-image.sh publish`'s PR-body template
+for the sync-pin PR — "bot-autonomy-new-harnesses has merged, covering
+every harness this bump installs" — so its human reviewer (the sync-pin
+PR is already reviewed before merge, never auto-merged — see
+`docs/architecture/ci-cd.md`) has an explicit gate to check off,
+corroborated by the container-assertion job's red/green result rather
+than relying on either signal alone. Two things also bound the gap a
+missed checklist item would leave, independent of anyone reading it.
+First, the CI signal is loud and PR-visible, not silent — the opposite of
+the original incident, where nothing enumerated the scripts against the
+registry at all. Second, and more fundamentally, #1137's actual
+fail-closed guarantee never depended on CI or a checklist in the first
+place: `bot-autonomy.sh verify` running in post-create and post-start (the
+Fail-closed requirement above) means a real bot container built from a
+bad-ordering pin fails to *create or start*, not merely fails a check
+someone could ignore — the sequencing hazard is caught at container-build
+time for every consumer, whether or not anyone was watching the PR. The
+same reasoning applies going forward to `oh-my-pi`: `harness-matrix` adds
+its registry row with a pending-module reason, so whichever of
+`harness-matrix` and this change merges second is responsible for adding
+that entry — see harness-matrix's design.md, which states this from the
+other side.
 
 **Codex: ship a complete `codex-managed-config.bot.toml`, installed and
 verified by checksum, replacing the awk rewrite — plus a structural parity
@@ -319,6 +329,45 @@ only interactive ones. Alternative considered: keep the shell function and
 add the wrapper alongside it — rejected as redundant once the wrapper
 exists on the container-wide `PATH`; the function covered a strict subset
 of what the wrapper covers.
+
+**The wrapper and `ensure-antigravity-cli.sh`'s compatibility copy cannot
+share the path `~/.local/bin/agy` — the compatibility copy moves to
+`~/.local/bin/agy-real`, and the wrapper execs it in preference to the
+system binary.** Every version of this design before now assumed the
+wrapper (a thin shell script injecting `--dangerously-skip-permissions`)
+could simply be installed at `~/.local/bin/agy` — the exact path
+`ensure-antigravity-cli.sh` already uses for its own compatibility copy of
+the *real* Antigravity binary
+(`.devcontainer/config/ensure-antigravity-cli.sh:57`,
+`install -m 0755 "$work_dir/antigravity" "$install_dir/agy"`). Both cannot
+be true at one path: whichever writes last silently overwrites the other
+— either the wrapper clobbers a freshly downloaded, correctly pinned
+compatibility binary (defeating `ensure-antigravity-cli.sh`'s entire
+purpose of protecting against a stale system-image binary on an older
+pinned image), or the compatibility copy clobbers the wrapper (silently
+reintroducing the exact headless/programmatic-launch gap issue #1137
+names, since a `docker exec` invoking `agy` would then resolve straight
+to the unwrapped real binary with no flag injection). The fix separates
+the two files: `ensure-antigravity-cli.sh`'s target moves to
+`~/.local/bin/agy-real` (every internal reference — the version check,
+the reconciliation `install`, and the download `install`). Because dev
+post-create also runs `ensure-antigravity-cli.sh` and has no bot-autonomy
+wrapper to fall back on, that script SHALL also leave a plain
+`agy → agy-real` symlink at `~/.local/bin/agy` on every invocation,
+including its early-return paths, so dev's interactive `agy` keeps
+resolving to the freshest pinned binary exactly as it does today. The
+bot-autonomy `antigravity` module's wrapper, installed by bot post-create
+*after* `ensure-antigravity-cli.sh` runs (already the stated ordering —
+see the Risk below), then overwrites that symlink at `~/.local/bin/agy`
+with the real wrapper script; the wrapper itself execs
+`~/.local/bin/agy-real` in preference to the system binary at
+`/usr/local/bin/agy` (or `$HARMON_ANTIGRAVITY_SYSTEM_BINARY`) — mirroring
+`ensure-antigravity-cli.sh`'s own established precedence rule (the
+freshest binary wins) rather than inventing a new one. This is why the
+wrapper needs the *bot-only, after-ensure-antigravity-cli.sh* ordering to
+hold precisely: a wrapper installed before that script runs would
+immediately be overwritten by the script's own (now-unconditional)
+symlink refresh, silently reverting to the unwrapped state.
 
 **Antigravity's autonomous policy is gated by the existing
 `use_antigravity_cli` Copier answer, using the same
@@ -398,6 +447,27 @@ actual working directory being verified), and fails naming the
 workspace-level file when that is the cause — giving whoever hits this a
 concrete, actionable answer rather than a report that quietly didn't check
 the thing that mattered.
+
+**OpenCode's mechanism is decided: a file-backed
+`~/.config/opencode/opencode.json` write, not `OPENCODE_CONFIG_CONTENT`.**
+An earlier draft left this as an Open Question — could an
+`OPENCODE_CONFIG_CONTENT` environment variable, if OpenCode supports one,
+replace the file write entirely? It cannot, and this is a decision rather
+than an implementation-time spike: an environment variable has no prior
+on-disk content to capture before overwriting, so it cannot satisfy
+"`apply` records the pre-existing `permission` value, gated on no backup
+existing yet" (the reversibility requirement above) — there is no file to
+read the *prior* value from once the env var itself becomes the thing
+that sets `permission`. It fares worse on restore: a devcontainer
+environment variable is baked into the container's static configuration
+(`containerEnv` in `devcontainer.json`), not something a runtime `restore`
+step can dynamically unset the way it deletes a JSON key — so "`restore`
+removes the `permission` key entirely when it was absent before" has no
+mechanism to implement it against. The two scenarios this change's
+reversibility requirement already mandates are exactly the ones
+`OPENCODE_CONFIG_CONTENT` cannot satisfy, so the file-backed write already
+specified above (this Decision and "force the managed `permission` key on
+every apply") is final, not provisional.
 
 **The Antigravity wrapper's flag injection is scoped to agent/headless
 execution, with a fixed passthrough list — not "every launch."** An earlier
@@ -504,12 +574,20 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   shipped file simply changes what "correct" reads as. The structural
   parity test is the separate, complementary guard against the bot file
   going stale relative to the shared baseline it was forked from.
-- [Risk] An executable at `~/.local/bin/agy` could be shadowed by a stale
-  binary a previous image version left in a persisted volume →
-  [Mitigation] bot-autonomy `apply` runs after `ensure-antigravity-cli.sh`
-  (which already reconciles a stale user-local copy against the pinned
-  shared-image version), and `verify` checks the wrapper's own behavior, not
-  merely a path's existence.
+- [Risk] The wrapper and `ensure-antigravity-cli.sh`'s compatibility copy
+  both wanting `~/.local/bin/agy` would let whichever installs last
+  silently clobber the other — the wrapper losing its flag injection, or
+  the compatibility copy losing its pinned-version guarantee on an older
+  pinned image → [Mitigation] the Decision above separates the two paths
+  (`agy-real` for the compatibility copy, `agy` for the wrapper or, when
+  disabled, a plain symlink to it) and requires `ensure-antigravity-
+  cli.sh` (unconditionally, including its early-return paths) to run
+  before the bot-autonomy `antigravity` module's `apply` in the same
+  post-create — already today's ordering, now load-bearing rather than
+  incidental. `verify` additionally checks the wrapper's own behavior
+  (that it injects the flag and resolves to the currently-freshest real
+  binary), not merely a path's existence, so a regression in either
+  script's target or ordering is caught rather than silently passing.
 - [Risk] Wiring `devcontainer-assert.sh container` into
   `devcontainer-build.yml` adds a real container run to a workflow that
   today only builds and pushes, lengthening that job →
@@ -530,19 +608,27 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   harness stay uncovered, though — that is the `sync-pin` PR bumping the
   image itself, which the container-assertion job (tasks 3.3/3.3b) catches
   by actually installing and probing the image; that job is **not** a
-  required status check (see Non-Goals and the Decision above), so it is a
-  loud, PR-visible red rather than a merge block. Both changes' tasks.md
-  still carry the explicit cross-referencing task naming the other change
-  and the specific slug to reconcile, so the registry-side gap is closed by
+  required status check (see Non-Goals and the Decision above), but task
+  4.6's checklist item on the sync-pin PR itself is what makes the
+  ordering an enforced merge prerequisite there rather than only a loud,
+  PR-visible red. Both changes' tasks.md still carry the explicit
+  cross-referencing task naming the other change and the specific slug to
+  reconcile, so the registry-side gap is closed by
   construction; the image-side gap relies on the reviewer noticing the red
   check, or on the always-fail-closed post-create/post-start behavior
   making a bad pin obvious the moment anyone actually builds the
   container.
-- [Risk] Resolving the OpenCode `OPENCODE_CONFIG_CONTENT` open question later
-  could make today's file-seed implementation redundant work →
-  [Mitigation] the scenario contract (effective permission policy is
-  allow-all, individually reversible) is mechanism-agnostic; whichever
-  mechanism wins, the spec does not need to change.
+- [Risk] A future OpenCode release could add a first-class
+  non-interactive/allow-all flag or environment variable, making the
+  file-write mechanism feel dated → [Mitigation] the scenario contract
+  (effective permission policy is allow-all, individually reversible) is
+  what the module is actually held to, not the file-write mechanism
+  itself; adopting a new OpenCode-native mechanism later is a
+  reimplementation behind the same contract, not a spec change — but see
+  the Decision above for why `OPENCODE_CONFIG_CONTENT` specifically
+  cannot be that mechanism as long as the reversibility requirement
+  stands: it has no prior state to back up and no runtime-unsettable
+  target to restore.
 
 ## Migration Plan
 
@@ -563,17 +649,21 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   for either is: run that module's `restore` (Antigravity already has one;
   this change adds OpenCode's), not merely revert-and-rebuild — a reverted
   PR does not touch a value already written into a persisted volume.
-- Rollback for the implementation as a whole: revert the PR, then run
-  `restore` for Antigravity and OpenCode against any bot container that had
-  already run `apply`. `agent-registry.json` and the human `dev/` profile are
-  untouched by this change either way.
+- Rollback for the implementation as a whole, in order: **first** run
+  `restore` for Antigravity and OpenCode against every bot container that
+  had already run `apply` — while the PR's `bot-autonomy.sh`,
+  `apply-antigravity-settings.sh`, and the OpenCode module's restore logic
+  still exist to run it — **then** revert the PR. Reversing that order
+  breaks it: a reverted checkout no longer contains the code that
+  implements `restore`, so there is nothing left to invoke against an
+  already-`apply`'d persisted volume once the revert lands first. An
+  earlier version of this plan stated the two steps in the broken order;
+  restore-before-revert is the only sequence that actually works, not a
+  stylistic preference. `agent-registry.json` and the human `dev/` profile
+  are untouched by this change either way.
 
 ## Open Questions
 
-- Can `OPENCODE_CONFIG_CONTENT` replace the `~/.config/opencode/opencode.json`
-  file write entirely? Left for the implementation PR to spike; the
-  behavioral contract (effective permission policy is allow-all,
-  individually reversible) is unaffected either way.
 - Delete `enable-claude-bypass.sh` / `enable-codex-bypass.sh` /
   `agy-autonomy.sh`'s function outright, or keep them briefly as deprecated
   shims for one release? Implementation-time judgment call with no spec

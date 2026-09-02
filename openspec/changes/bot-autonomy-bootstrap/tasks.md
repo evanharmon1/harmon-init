@@ -34,8 +34,14 @@
       uniformly, regardless of the entry's reason (no reason category
       grants an exemption that survives installation); verify with
       fixtures that install a fake `copilot` executable against its
-      `unsupported` entry AND a fake `qwen-code`/`goose`/`cline` executable
-      against theirs, confirming `verify` fails naming each
+      `unsupported` entry AND fake executables named after each entry's
+      **`executable` field, not its slug** — `qwen` (for the `qwen-code`
+      slug), `goose`, and `clite` (for the `cline` slug; its package's
+      actual bin name, not the slug itself) — against theirs, confirming
+      `verify` fails naming each. `verify` checks `command -v <executable>`,
+      so a fixture that installs a binary literally named `qwen-code` or
+      `cline` would never be found and the fixture would silently fail to
+      exercise this behavior at all
 
 ## 2. Per-harness modules
 
@@ -69,20 +75,49 @@
       once with it disabled, plus a toggle-off-after-apply fixture
       confirming a prior autonomous state reaches disabled-by-option
 - [ ] 2.5 Install `~/.local/bin/agy` as an executable wrapper from the bot
-      post-create only, and only WHEN `use_antigravity_cli` is enabled
-      (retiring the `agy()` shell function in `agy-autonomy.sh`
-      unconditionally either way), injecting `--dangerously-skip-permissions`
-      unless already present, porting `agy-autonomy.sh`'s exact passthrough
-      list unmodified (bare `agy`, `agent`/`agents`/`changelog`/`help`/`-h`/
-      `--help`/`install`/`models`/`plugin`/`plugins`/`update`/`--version`);
-      when the option is disabled, ensure no wrapper is left at
-      `~/.local/bin/agy` (removing one a prior apply or a stale image may
-      have left behind); verify with a fixture invoking the wrapper
+      post-create only, and only WHEN `use_antigravity_cli` is enabled,
+      AFTER task 2.5b's `ensure-antigravity-cli.sh` run in the same
+      post-create (retiring the `agy()` shell function in
+      `agy-autonomy.sh` unconditionally either way), injecting
+      `--dangerously-skip-permissions` unless already present, porting
+      `agy-autonomy.sh`'s exact passthrough list unmodified (bare `agy`,
+      `agent`/`agents`/`changelog`/`help`/`-h`/`--help`/`install`/
+      `models`/`plugin`/`plugins`/`update`/`--version`). The wrapper
+      SHALL resolve and exec `~/.local/bin/agy-real` (task 2.5b's
+      compatibility-copy target) when it exists and is executable,
+      falling back to the system binary at `/usr/local/bin/agy` (or
+      `$HARMON_ANTIGRAVITY_SYSTEM_BINARY`) only when `agy-real` is absent
+      — never the reverse — matching `ensure-antigravity-cli.sh`'s own
+      freshest-binary-wins precedence rather than inventing a new one;
+      when the option is disabled, replace `~/.local/bin/agy` with the
+      plain `agy → agy-real` symlink task 2.5b's script maintains (not
+      remove it outright); verify with a fixture invoking the wrapper
       directly (not via a sourced shell) asserting the flag lands on a
       non-passthrough invocation and is absent on every passthrough case,
-      confirm `ensure-antigravity-cli.sh`'s `agy --version` call still
-      behaves identically through the wrapper, and confirm the wrapper's
-      absence when the option is disabled
+      confirm the wrapper resolves `agy-real` over a deliberately stale
+      system binary when both are present, and confirm the plain symlink
+      (not absence) when the option is disabled
+- [ ] 2.5b Retarget `.devcontainer/config/ensure-antigravity-cli.sh` (and
+      its `template/` twin) from `~/.local/bin/agy` to
+      `~/.local/bin/agy-real` for every internal reference — the version
+      check, the reconciliation `install`, and the download `install` —
+      so this script's own idempotency and version-freshness logic
+      operates on the file it actually owns, independent of whatever the
+      bot-autonomy `antigravity` module later does to `agy`. On every
+      invocation, including its early-return paths, additionally
+      (re)point a plain symlink `~/.local/bin/agy → agy-real`, so a
+      profile with no bot-autonomy wrapper (dev, or bot before task 2.5's
+      `apply` has run within the same post-create) still resolves plain
+      `agy` to the freshest pinned binary, exactly as today's single-path
+      behavior does. This script runs only in post-create (never
+      post-start), before the bot-autonomy `antigravity` module's `apply`
+      — already the stated ordering (design.md's Antigravity Decisions) —
+      so its symlink is what the wrapper overwrites, not the reverse;
+      verify by confirming `agy-real` gets the unchanged version-check/
+      download/reconcile behavior (same version and architecture cases as
+      today), and that `agy` is a working symlink to `agy-real`
+      immediately after this script runs on a profile with no wrapper
+      (e.g. dev)
 - [ ] 2.5a Add `containerEnv.PATH` to the bot `devcontainer.json` (and its
       `template/` twin) prepending `/home/vscode/.local/bin` ahead of
       `/usr/local/bin`, so the wrapper's precedence is container-wide
@@ -126,9 +161,24 @@
       (bot profile only) and confirm `.devcontainer/dev/post-create.sh` does
       not call it; verify via `scripts/devcontainer-assert.sh` unit-mode
       grep-style assertions (matching the existing Antigravity/Codex pattern)
-- [ ] 3.2 Call `bot-autonomy.sh verify` at the end of bot post-create and
-      again in bot post-start; verify a deliberately broken fixture fails
-      both lifecycle points
+- [ ] 3.2 Call `bot-autonomy.sh verify` at the end of bot post-create, and
+      again in bot `post-start.sh` — **before** its existing call to the
+      shared `.devcontainer/scripts/post-start-common.sh`, not after:
+      that script is bot/dev-shared and its Agent-Deck conductor-start
+      block (lines 66-79) launches `agent-deck session start`, an
+      autonomous agent session, unconditionally once a conductor is
+      registered for the repository. Starting it before `verify` has
+      confirmed every harness's policy would let a conductor-launched
+      session run against a drifted (prompt-enabled or under-sandboxed)
+      bot profile for its entire lifetime, not just until the next verify
+      point. `post-start.sh` runs under `set -euo pipefail`, so a `verify`
+      failure aborts before `post-start-common.sh` (and its conductor
+      block) is ever reached; dev `post-start.sh` is untouched, mirroring
+      post-create's bot-only wiring; verify with a deliberately broken
+      fixture confirming both lifecycle points fail, AND a fixture that
+      registers a conductor, drifts the policy, runs bot post-start, and
+      confirms no `agent-deck session start` process is ever observed for
+      that container
 - [ ] 3.3 Extend `scripts/devcontainer-assert.sh`'s existing `container`
       mode to additionally `docker exec` the running container and run
       `bot-autonomy.sh verify` — its current checks cover only Codex's
@@ -239,6 +289,19 @@
       test (task 1.3) fails on `oh-my-pi`'s addition until that entry
       exists, demonstrating the coordination is actually enforced rather
       than merely documented
+- [ ] 4.6 Add a standing, unchecked checklist item to
+      `scripts/sync-devcontainer-image.sh publish`'s PR-body template for
+      the sync-pin PR: "bot-autonomy-new-harnesses has merged, covering
+      every harness this Dockerfile bump installs (see the
+      container-assertion job's result on this PR)" — present on every
+      sync-pin PR, so its human reviewer (the sync-pin PR is already
+      reviewed before merge, never auto-merged) has an explicit gate to
+      check off, corroborated by the container-assertion job's red/green
+      result rather than relying on either signal alone; this is what
+      makes modules-before-pin an enforced merge prerequisite for that PR
+      specifically, not a recommendation resting on the reviewer noticing
+      a red check or remembering the ordering; verify the item's literal
+      text appears in a sync-pin PR opened or updated after this change
 
 ## 5. Verification
 
@@ -249,7 +312,11 @@
       checkout are all available) `task test:devcontainer:root`; this
       stays a manual step, not wired into `task ci` (see task 3.5's
       documented exception); verify both pass
-- [ ] 5.3 Rebuild a freshly generated bot devcontainer and manually exercise
-      one filesystem and one GitHub operation through each of Claude Code,
-      Codex, Antigravity, and OpenCode; verify zero approval prompts
-      (acceptance criterion 6, `[HUMAN]`)
+- [ ] 5.3 Rebuild a freshly generated bot devcontainer with
+      `use_antigravity_cli: true` and manually exercise one filesystem and
+      one GitHub operation through each of Claude Code, Codex, Antigravity,
+      and OpenCode; verify zero approval prompts (acceptance criterion 6,
+      `[HUMAN]`). Repeat against a rebuild at the default (disabled)
+      answer and confirm Claude Code/Codex/OpenCode still show zero
+      prompts while Antigravity prompts as expected — the by-design,
+      verified-correct outcome at the default, not a regression

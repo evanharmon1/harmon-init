@@ -184,7 +184,13 @@ by default.
 ### Requirement: Fail-closed enforcement at apply, both verify points, and CI
 `apply` SHALL exit non-zero on any module failure so `postCreateCommand`
 fails visibly. `verify` SHALL run at the end of post-create and again in
-post-start, failing each lifecycle step on divergence.
+post-start, failing each lifecycle step on divergence. In bot
+`post-start.sh`, `verify` SHALL run **before** the call to the shared
+`.devcontainer/scripts/post-start-common.sh` — not after — so that
+script's Agent-Deck conductor-start block (which launches an autonomous
+`agent-deck session start` unconditionally once a conductor is registered)
+never runs against a drifted policy: a `verify` failure aborts
+`post-start.sh` under `set -euo pipefail` before that block is reached.
 `.github/workflows/devcontainer-build.yml` SHALL run
 `devcontainer-assert.sh container` against the built bot image and fail the
 workflow if any supported installed harness is not at its declared bot
@@ -205,6 +211,17 @@ policy.
   already-created container)
 - **THEN** `bot-autonomy.sh verify` runs again in post-start, and a
   divergence fails post-start
+
+#### Scenario: a drifted policy prevents the Agent-Deck conductor from starting
+- **WHEN** the bot container starts with a drifted policy (any harness not
+  at its declared bot state) and a conductor session is already registered
+  for this repository
+- **THEN** `bot-autonomy.sh verify` fails before
+  `post-start-common.sh`'s conductor-start block runs, and no
+  `agent-deck session start` process is observed for this container's
+  conductor — a drifted policy blocks the conductor from starting at all,
+  rather than starting it and leaving it to run for the rest of its
+  lifetime against a policy no later verify point can retroactively fix
 
 #### Scenario: CI asserts the built bot image, not just its source files
 - **WHEN** `.github/workflows/devcontainer-build.yml` builds the bot profile
@@ -303,34 +320,48 @@ enabled, the bot profile SHALL set `toolPermission: always-proceed` (and
 the existing managed keys) in `~/.gemini/antigravity-cli/settings.json`,
 AND the bot post-create SHALL install an executable wrapper at
 `~/.local/bin/agy` that adds `--dangerously-skip-permissions` to every
-**agent/headless execution** launch that does not already carry it. WHEN
-`use_antigravity_cli` is disabled (the default), `apply` SHALL instead
-restore the settings file to its pre-managed state (via
-`apply-antigravity-settings.sh restore`) and SHALL ensure
-`~/.local/bin/agy` is absent. In either state, the wrapper's precedence
-over the system `agy` binary — when the wrapper is installed at all —
-SHALL be established at the **container level**: `containerEnv.PATH` in
-the bot `devcontainer.json` prepends `/home/vscode/.local/bin` (or
-installs the wrapper at a system path that already precedes
-`/usr/local/bin` in the container's default `PATH`), not by a shell rc
-file's `PATH` export, since a shell function or an rc-dependent `PATH`
-prepend is invisible to exactly the population this wrapper exists to
-cover: a process that never sources an interactive login shell (a `docker
-exec` without a login/interactive shell, a Foreman-dispatched process, a
-cron job). `verify` SHALL assert whichever state the Copier answer
-selects — a prompt-enabled Antigravity CLI under the default (disabled)
-answer is the *verified-correct* state, not a gap. When enabled, the
-wrapper SHALL pass a fixed set of subcommands and flags through
-unmodified, without appending the flag: a bare `agy` (interactive, already
-covered by the settings-file policy), `agent`/`agents`, `changelog`,
-`help`/`-h`/`--help`, `install`, `models`, `plugin`/`plugins`, `update`,
-and `--version` — matching the passthrough list already proven correct in
-`agy-autonomy.sh`, the shell-function mechanism this wrapper replaces.
-Appending the flag to any of these is either rejected by `agy` or
-meaningless, and `--version` specifically is relied on elsewhere
-(`ensure-antigravity-cli.sh` calls `agy --version` to compare installed
-versions) — a literal "every launch" rule would break routine CLI use and
-the compatibility installer alike, in either policy state.
+**agent/headless execution** launch that does not already carry it. The
+wrapper SHALL resolve and exec `~/.local/bin/agy-real` — the pinned
+compatibility copy `.devcontainer/config/ensure-antigravity-cli.sh`
+maintains at that separate path — in preference to the system binary at
+`/usr/local/bin/agy`, falling back to the system binary only when
+`agy-real` is absent; the wrapper and the compatibility copy SHALL NOT
+share one path, since whichever installs last would otherwise silently
+overwrite the other (the wrapper losing its flag injection, or the
+compatibility copy losing its pinned-version guarantee on an older pinned
+image). WHEN `use_antigravity_cli` is disabled (the default), `apply`
+SHALL instead restore the settings file to its pre-managed state (via
+`apply-antigravity-settings.sh restore`) and SHALL replace
+`~/.local/bin/agy` with the plain `agy → agy-real` symlink
+`ensure-antigravity-cli.sh` maintains — not remove it outright — so
+interactive `agy` use keeps resolving to the freshest pinned binary
+exactly as the dev profile's does, just without the forced flag. In
+either state, the wrapper's precedence over the system `agy` binary —
+when the wrapper is installed at all — SHALL be established at the
+**container level**: `containerEnv.PATH` in the bot `devcontainer.json`
+prepends `/home/vscode/.local/bin` (or installs the wrapper at a system
+path that already precedes `/usr/local/bin` in the container's default
+`PATH`), not by a shell rc file's `PATH` export, since a shell function or
+an rc-dependent `PATH` prepend is invisible to exactly the population this
+wrapper exists to cover: a process that never sources an interactive login
+shell (a `docker exec` without a login/interactive shell, a
+Foreman-dispatched process, a cron job). `verify` SHALL assert whichever
+state the Copier answer selects — a prompt-enabled Antigravity CLI under
+the default (disabled) answer is the *verified-correct* state, not a gap.
+When enabled, the wrapper SHALL pass a fixed set of subcommands and flags
+through unmodified, without appending the flag: a bare `agy` (interactive,
+already covered by the settings-file policy), `agent`/`agents`,
+`changelog`, `help`/`-h`/`--help`, `install`, `models`, `plugin`/`plugins`,
+`update`, and `--version` — matching the passthrough list already proven
+correct in `agy-autonomy.sh`, the shell-function mechanism this wrapper
+replaces. Appending the flag to any of these is either rejected by `agy`
+or meaningless. `--version` matters beyond routine CLI use:
+`ensure-antigravity-cli.sh` relies on comparing an installed version — its
+own check reads `agy-real --version` directly, not through the wrapper, so
+its idempotency does not depend on the wrapper's passthrough being
+correct — but the wrapper's own `--version` passthrough is still what a
+human or another tool sees when they run `agy --version` interactively
+through it.
 
 #### Scenario: apply sets always-proceed in Antigravity settings when enabled
 - **WHEN** `use_antigravity_cli` is enabled and the `antigravity` module's
@@ -341,23 +372,28 @@ the compatibility installer alike, in either policy state.
 #### Scenario: bot post-create installs the executable wrapper when enabled
 - **WHEN** `use_antigravity_cli` is enabled and the bot profile's
   post-create completes
-- **THEN** `~/.local/bin/agy` exists and is executable
+- **THEN** `~/.local/bin/agy` exists, is executable, and is the wrapper
+  script — not the plain `agy → agy-real` symlink
+  `ensure-antigravity-cli.sh` leaves behind earlier in the same
+  post-create run
 
 #### Scenario: the disabled-by-option state is verified for Antigravity
 - **WHEN** `use_antigravity_cli` is disabled (the default) and the
   `antigravity` module's `apply` runs
-- **THEN** `apply` calls `apply-antigravity-settings.sh restore`, no
-  `~/.local/bin/agy` wrapper is installed (or a previously-installed one is
-  removed), and `verify` asserts both — a prompt-enabled Antigravity CLI is
-  the verified-correct state in this configuration, not an uncovered gap
+- **THEN** `apply` calls `apply-antigravity-settings.sh restore`,
+  `~/.local/bin/agy` is the plain symlink to `agy-real` (not the
+  flag-injecting wrapper, and not absent), and `verify` asserts both — a
+  prompt-enabled Antigravity CLI that still resolves to the freshest
+  pinned binary is the verified-correct state in this configuration, not
+  an uncovered gap
 
 #### Scenario: toggling the option off reaches the disabled state
 - **WHEN** `use_antigravity_cli` was previously enabled (settings and
   wrapper already applied) and a later `apply` runs with the option now
   disabled
-- **THEN** `apply` restores the settings file and removes the wrapper,
-  reaching the same disabled-by-option state as if the option had always
-  been off
+- **THEN** `apply` restores the settings file and replaces the wrapper at
+  `~/.local/bin/agy` with the plain `agy → agy-real` symlink, reaching the
+  same disabled-by-option state as if the option had always been off
 
 #### Scenario: the wrapper precedes the system binary on the container-wide PATH
 - **WHEN** the bot `devcontainer.json` is inspected
@@ -383,6 +419,16 @@ the compatibility installer alike, in either policy state.
 - **THEN** the resolved `~/.local/bin/agy` wrapper adds
   `--dangerously-skip-permissions` to the invocation
 
+#### Scenario: the wrapper prefers the compatibility copy over a stale system binary
+- **WHEN** the container's baked-in system binary at `/usr/local/bin/agy`
+  predates the version `ensure-antigravity-cli.sh` pins (an older pinned
+  image that has not yet picked up the latest shared-image release) and
+  `use_antigravity_cli` is enabled
+- **THEN** `ensure-antigravity-cli.sh` has already downloaded the pinned
+  version to `~/.local/bin/agy-real`, and the wrapper at `~/.local/bin/agy`
+  execs `agy-real` — not the stale `/usr/local/bin/agy` — so both the
+  flag injection and the correct, freshest binary version hold at once
+
 #### Scenario: the wrapper does not duplicate an explicit flag
 - **WHEN** `use_antigravity_cli` is enabled and a caller invokes `agy`
   already passing `--dangerously-skip-permissions`
@@ -393,15 +439,14 @@ the compatibility installer alike, in either policy state.
   bare `agy`, or with `agent`, `agents`, `changelog`, `help`, `-h`,
   `--help`, `install`, `models`, `plugin`, `plugins`, `update`, or
   `--version`
-- **THEN** it execs the underlying `agy` binary unchanged, without
-  appending `--dangerously-skip-permissions` — including when
-  `ensure-antigravity-cli.sh` calls `agy --version` during post-create,
-  which must keep working exactly as it does today
+- **THEN** it execs the resolved real `agy` binary (`agy-real` when
+  present, else the system binary) unchanged, without appending
+  `--dangerously-skip-permissions`
 
-#### Scenario: verify fails if the enabled state's boundary is missing or inert
+#### Scenario: verify fails if the enabled state's boundary is missing, inert, or misdirected
 - **WHEN** `use_antigravity_cli` is enabled, `verify` runs in the bot
-  profile, and `~/.local/bin/agy` is missing, not executable, or does not
-  inject the flag
+  profile, and `~/.local/bin/agy` is missing, not executable, does not
+  inject the flag, or — when `agy-real` exists — does not resolve to it
 - **THEN** `verify` exits non-zero naming Antigravity
 
 ### Requirement: OpenCode non-interactive boundary forces the managed permission key
@@ -498,6 +543,16 @@ to a persisted volume; `restore` is what does.
   existing mechanism that already backs up and restores the keys it
   manages, rather than a new parallel implementation
 
+#### Scenario: rolling back the implementation requires restore before revert, not after
+- **WHEN** an operator rolls back this change's implementation PR on a bot
+  container that had already run `apply`
+- **THEN** the operator runs each module's `restore` **before** reverting
+  the PR — while the code implementing `restore` still exists to run —
+  and reverting the PR first, then attempting `restore`, cannot recover
+  the pre-`apply` value, because a reverted checkout no longer contains
+  `bot-autonomy.sh`, `apply-antigravity-settings.sh`, or the OpenCode
+  module's restore logic to invoke
+
 ### Requirement: Human dev profile is unaffected by construction
 The bot-autonomy wrappers and modules SHALL be installed by the bot
 post-create only. The dev post-create SHALL NOT invoke `bot-autonomy.sh
@@ -520,12 +575,27 @@ this capability's existence rather than by a separate runtime check.
 ### Requirement: End-to-end effective autonomy
 A freshly rebuilt, generated bot devcontainer SHALL run a representative
 filesystem operation and a representative GitHub operation through each
-authenticated, in-scope harness with zero approval prompts.
+authenticated, in-scope, and (for a Copier-gated harness) enabled harness
+with zero approval prompts. For a Copier-gated harness whose option is at
+its default (disabled), the *absence* of a prompt-free run is the
+correct, by-design outcome — not a gap this requirement expects closed.
 
-#### Scenario: representative operations complete without a prompt (manual verification)
-- **WHEN** an operator rebuilds a freshly generated bot devcontainer and, for
-  each of Claude Code, Codex, Antigravity, and OpenCode, authenticates the
-  harness and runs one representative filesystem write and one
-  representative GitHub API read/write
-- **THEN** every operation completes without an approval prompt from any of
-  the four harnesses
+#### Scenario: representative operations complete without a prompt when Antigravity is enabled (manual verification)
+- **WHEN** an operator rebuilds a freshly generated bot devcontainer with
+  `use_antigravity_cli: true` and, for each of Claude Code, Codex,
+  Antigravity, and OpenCode, authenticates the harness and runs one
+  representative filesystem write and one representative GitHub API
+  read/write
+- **THEN** every operation completes without an approval prompt from any
+  of the four harnesses
+
+#### Scenario: Antigravity stays prompt-enabled by design at the default answer (manual verification)
+- **WHEN** an operator rebuilds a freshly generated bot devcontainer with
+  `use_antigravity_cli` left at its default (disabled) and, for each of
+  Claude Code, Codex, Antigravity, and OpenCode, authenticates the harness
+  and runs the same representative operations
+- **THEN** Claude Code, Codex, and OpenCode complete without an approval
+  prompt, and Antigravity prompts as it would out of the box — a
+  prompt-enabled Antigravity CLI at the default answer is the
+  verified-correct outcome (per the disabled-by-option requirement above),
+  not a failure of this requirement

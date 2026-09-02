@@ -99,29 +99,34 @@ installed binaries.
   are absent, and its container-assertion job in `devcontainer-build.yml`
   runs on any change matching its `paths:` filter, including the
   `sync-pin` PR that carries Copilot/pi into this repo's own bot image.
-  **Modules before pin is the recommended rollout order, self-detecting
-  rather than silent, but not merge-blocked today**: if the `sync-pin` PR
-  ever bumps to an image with `copilot`/`pi` installed before
-  `bot-autonomy-new-harnesses` has shipped their modules, the assertion job
-  fails, visibly, on that PR — but it is an ordinary CI job, not a required
+  **Modules before pin is an enforced merge prerequisite for the sync-pin
+  PR, not a recommendation someone could merge past**: the assertion job
+  fails, visibly, on that PR if it ever bumps to an image with
+  `copilot`/`pi` installed before `bot-autonomy-new-harnesses` has shipped
+  their modules — but by itself it is an ordinary CI job, not a required
   status check (promoting it to one is `bot-autonomy-bootstrap`'s explicit
   follow-on, listed in its Non-Goals, needing infrastructure neither
   change builds: an always-emitted aggregator, both ruleset layers, a
   trusted fork-PR validation path, a `merge_group` trigger with a
-  credential-free path, and mirrored branch-protection docs). What is not
-  optional, regardless of CI: `bot-autonomy.sh verify` runs at post-create
-  and post-start on every real bot container, so a bad-ordering pin still
-  fails closed the moment anyone actually builds one — the fail-closed
-  guarantee holds at the container boundary even in the rollout window's
-  worst case, a reviewer merging past a red, non-required check. An
-  earlier draft of this sequencing had the opposite problem — a literal
-  contradiction where one sentence required the modules to wait for the
-  pin while another required the pin to wait for the modules, which no
-  merge order could satisfy; removing the *implementation* dependency
-  (modules don't need the pin to exist) fixed that self-contradiction. The
-  CI check and the container's own fail-closed behavior are what keep the
-  *rollout* order a property the repository can actually observe, even
-  though only the latter is unconditionally enforced.
+  credential-free path, and mirrored branch-protection docs). What makes
+  the ordering enforced rather than advisory is `bot-autonomy-bootstrap`'s
+  task 4.6: a standing, unchecked checklist item on the sync-pin PR's own
+  body — "bot-autonomy-new-harnesses has merged, covering every harness
+  this bump installs" — that its human reviewer (the sync-pin PR is
+  already reviewed before merge, never auto-merged) must check off,
+  corroborated by the assertion job's red/green result rather than relying
+  on either alone. What is not optional regardless of either signal:
+  `bot-autonomy.sh verify` runs at post-create and post-start on every real
+  bot container, so a bad-ordering pin that somehow merged anyway still
+  fails closed the moment anyone actually builds one. An earlier draft of
+  this sequencing had the opposite problem — a literal contradiction where
+  one sentence required the modules to wait for the pin while another
+  required the pin to wait for the modules, which no merge order could
+  satisfy; removing the *implementation* dependency (modules don't need
+  the pin to exist) fixed that self-contradiction, and the checklist item
+  plus the container's own fail-closed behavior are what keep the
+  *rollout* order a property the repository actually enforces rather than
+  a claim resting on someone remembering it.
 
 ## Non-goals
 
@@ -177,15 +182,15 @@ installed binaries.
   jinja twin `template/docs/guides/herdr.md.jinja` (drop `gemini` from the
   pinned-image tool list, update the "0.8.0" version references).
 - Downstream, implementable independently of this change's own merge order,
-  with modules-before-pin as the recommended (self-detecting, not
-  merge-blocked) rollout order: the rolling `sync-pin` PR (bumps
+  with modules-before-pin as an enforced (not merely recommended) rollout
+  order for the sync-pin PR: the rolling `sync-pin` PR (bumps
   `.devcontainer/Dockerfile` + its `template/` twin to the new image
   digest), and the follow-on `bot-autonomy-new-harnesses` change — see
   "State the sequencing explicitly" above for the full picture:
   implementing the modules never needs to wait on the pin, and
-  `bot-autonomy-bootstrap`'s container-assertion job (an ordinary,
-  non-required CI check) fails visibly on the `sync-pin` PR if it would
-  land Copilot/pi ahead of their modules, while `bot-autonomy.sh verify`'s
-  post-create/post-start fail-closed behavior is what actually keeps a
-  bad-ordering pin from producing a working bot container regardless of
-  whether that check was heeded.
+  `bot-autonomy-bootstrap`'s task 4.6 checklist item on the sync-pin PR
+  itself (corroborated by the container-assertion job's red/green result)
+  is what makes the ordering enforced rather than advisory, while
+  `bot-autonomy.sh verify`'s post-create/post-start fail-closed behavior is
+  what actually keeps a bad-ordering pin from producing a working bot
+  container even in the worst case where the checklist item is missed.
