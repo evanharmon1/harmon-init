@@ -409,38 +409,53 @@ is the concrete mechanism behind "A Copier-gated harness's module always
 exists" (below); Antigravity is its first real implementation, not merely
 its statement.
 
-**In the bot profile, `ensure-antigravity-cli.sh` and `bot-autonomy.sh
-apply` both run before `post-create-common.sh`, not after — because that
-shared script's Agent-Deck conductor-setup block spawns a `claude`
-process.** `post-create-common.sh`'s own comment (line ~303) states
-plainly that `agent-deck conductor setup` spawns a `claude` process on
-first registration. Every prior draft of this design assumed
-`bot-autonomy.sh apply` would replace today's four ad hoc scripts
-(`enable-claude-bypass.sh` etc.) in their existing position in
-`post-create.sh` — which is *after* the call to `post-create-common.sh`
-(today's actual line 12, followed by the four scripts at lines 17-24).
-That ordering means the conductor's spawned `claude` process would run
-under whatever policy was in effect *before* `apply` had written
-`bypassPermissions` — the default, prompt-enabled one — for the bot
-profile specifically: the exact effective-policy divergence #1137 exists
-to close, just relocated to the very first `claude` invocation instead of
-a later one. The fix moves both `ensure-antigravity-cli.sh` and
-`bot-autonomy.sh apply` to be the first bot-specific steps in
-`post-create.sh`, *before* the call to `post-create-common.sh`. Neither
-has an ordering dependency that would break by moving earlier:
-`apply-antigravity-settings.sh` already `mkdir -p`s its own target
-directory rather than relying on `post-create-common.sh`'s
-directory-creation loop, the OpenCode module SHALL do the same (stated as
-a requirement below, not assumed), Claude Code's and Codex's targets are
-image-baked under `/etc` and exist from the moment the container starts,
-and the `containerEnv` marker (the Decision above) is available from the
-first line of any lifecycle script — none of it needs
-`post-create-common.sh` to have run first. The dev profile is unaffected:
-`ensure-antigravity-cli.sh`'s call in `dev/post-create.sh` keeps its
-existing position (after `post-create-common.sh`), since a
-conductor-spawned `claude` running under dev's default, prompt-enabled
-policy is correct, not a gap — only the bot profile has a policy that
-first `claude` invocation must already reflect.
+**Bot post-create's real order is: shared setup minus the conductor
+block, `ensure-antigravity-cli.sh`, `bot-autonomy.sh apply`, then the
+conductor block — not "apply before `post-create-common.sh`" as an
+earlier round of this design stated.** That earlier round correctly
+identified the problem (the conductor's spawned `claude` must not run
+before `apply` has written the bot's policy) but drew the wrong boundary
+for the fix: moving `apply` (and `ensure-antigravity-cli.sh`) to run
+before *all* of `post-create-common.sh` skips setup that boundary write
+depends on. `post-create-common.sh`'s ownership-fixing loop (~lines
+141-149: `chown vscode:vscode` on `~/.gemini`, `~/.config/opencode`,
+`~/.agent-deck`, and every other volume-backed directory bot-autonomy
+modules write into) and its Coder persistent-volume symlink block (~lines
+164-195: on Coder, replaces `~/.gemini`/`~/.claude`/etc. with symlinks
+into `~/.persistent/`, migrating any container-local content first) both
+run before anything that writes into those directories is supposed to —
+the second block's own comment states this explicitly ("ORDERING IS
+LOAD-BEARING... until these symlinks exist, ~/.claude on Coder is the
+container-local directory the ownership loop just created"). `apply`
+running before either of these would write Antigravity's/OpenCode's
+settings as the wrong owner, or — on Coder specifically — into
+container-local storage that the persistence block would either clobber
+moments later or leave stranded outside `~/.persistent/`, never actually
+saved. The corrected order keeps the shared setup's ordering-load-bearing
+prefix intact and moves only the conductor's own block: **(i)**
+`post-create-common.sh`, with its Agent-Deck conductor-setup block (the
+comment-delimited section from Telegram-token injection through the
+`agent-deck conductor setup` call, ~lines 285-341) extracted out
+entirely — everything else in that script (ownership, Coder persistence,
+`link-claude-json.sh`, the Claude onboarding seed, Herdr integrations,
+Agent-Deck config seeding, Claude Code user-settings seeding, and the
+general project bootstrapping at the bottom) stays exactly where it is
+and runs first, unconditionally, in both profiles; **(ii)**
+`ensure-antigravity-cli.sh`, meaningful (download/reconcile, or cleanup)
+only when its marker reads `enabled`, per the Decision above; **(iii)**
+`bot-autonomy.sh apply`; **(iv)** the extracted conductor block, now its
+own script (e.g. `.devcontainer/scripts/post-create-conductor.sh` — a
+straight extraction, still a verbatim twin like the script it came from;
+an equally valid alternative is a flag `post-create-common.sh` checks to
+skip its own conductor section, with each profile invoking the extracted
+logic separately at the right point — either shape satisfies the same
+ordering, and the implementation PR may pick), called only after `apply`
+has succeeded. The dev profile's shared-setup-through-`apply-antigravity-
+settings.sh` steps are unaffected; its conductor call simply moves to be
+dev's own last step too, for structural symmetry with bot — dev has no
+ordering *requirement* here (a conductor-spawned `claude` under dev's
+default, prompt-enabled policy was never wrong), so "last" is a
+simplification, not a fix.
 
 **Bot `post-start.sh` unsets `NODE_OPTIONS` before calling
 `bot-autonomy.sh verify`, duplicating the one line `post-start-common.sh`

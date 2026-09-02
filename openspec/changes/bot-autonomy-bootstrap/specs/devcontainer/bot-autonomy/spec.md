@@ -189,13 +189,18 @@ mechanism, which every future Copier-gated harness module follows).
 
 ### Requirement: Fail-closed enforcement at apply, both verify points, and CI
 `apply` SHALL exit non-zero on any module failure so `postCreateCommand`
-fails visibly. In bot `post-create.sh`, `apply` SHALL run **before** the
-call to the shared `.devcontainer/scripts/post-create-common.sh` — not
-after — so that script's Agent-Deck conductor-setup block (which spawns a
-`claude` process on first registration) never runs before `apply` has
-written the bot's non-interactive Claude Code configuration: a fresh bot
-container's very first `claude` invocation SHALL already reflect the bot
-policy, not whatever ran before `apply`. `verify` SHALL run at the end of
+fails visibly. In bot `post-create.sh`, the order SHALL be: **(i)** the
+shared `.devcontainer/scripts/post-create-common.sh` with its Agent-Deck
+conductor-setup block extracted out (its ownership-fixing and Coder
+persistent-volume symlink setup — the ordering-load-bearing prefix `apply`
+depends on for both correct ownership and, on Coder, the correct
+persisted target path — SHALL still run first, unconditionally, exactly
+as today); **(ii)** `ensure-antigravity-cli.sh`; **(iii)** `apply`;
+**(iv)** the extracted conductor-setup step (which spawns a `claude`
+process on first registration), invoked only after `apply` has succeeded.
+A fresh bot container's very first `claude` invocation SHALL already
+reflect the bot policy, not whatever was in effect before `apply` ran.
+`verify` SHALL run at the end of
 post-create and again in post-start, failing each lifecycle step on
 divergence. Bot `post-start.sh` SHALL unset `NODE_OPTIONS` — the same
 sanitization `.devcontainer/scripts/post-start-common.sh` already performs
@@ -218,12 +223,28 @@ policy.
 - **THEN** `bot-autonomy.sh apply` exits non-zero and `postCreateCommand`
   fails, rather than continuing past the failure
 
-#### Scenario: apply runs before any harness process starts in post-create
-- **WHEN** bot `post-create.sh` runs on a fresh container
-- **THEN** `bot-autonomy.sh apply` completes successfully before
-  `post-create-common.sh`'s Agent-Deck conductor-setup block runs, and no
-  `claude` process is observed to start before `apply` has completed —
-  including the conductor-setup's own first-registration `claude` spawn
+#### Scenario: apply runs after ownership/persistence setup but before any harness process starts
+- **WHEN** bot `post-create.sh` runs on a fresh, root-owned volume mount
+- **THEN** `post-create-common.sh`'s ownership-fixing loop and Coder
+  persistent-volume symlink setup have already run by the time `apply`
+  starts, so `apply` succeeds writing into correctly-owned, correctly
+  (on Coder) persisted-target paths rather than failing on a permission
+  error or writing into a container-local directory the persistence step
+  would later disregard; `bot-autonomy.sh apply` completes successfully
+  before the extracted conductor-setup step runs, and no `claude` process
+  is observed to start before `apply` has completed — including the
+  conductor-setup's own first-registration `claude` spawn
+
+#### Scenario: on Coder, no container-local state is copied over persisted settings
+- **WHEN** `CODER=true` and `/home/vscode/.persistent` exists, and bot
+  `post-create.sh` runs in this corrected order
+- **THEN** `post-create-common.sh`'s Coder persistence block has already
+  replaced `~/.gemini`/`~/.config/opencode`/etc. with symlinks into
+  `~/.persistent/` (migrating any pre-existing container-local content
+  first) before `apply` writes anything, so `apply`'s writes land directly
+  in the persisted volume through those symlinks — there is no
+  container-local copy of Antigravity's or OpenCode's settings left behind
+  for a later step to either clobber or silently discard
 
 #### Scenario: post-create verify gates container creation
 - **WHEN** post-create finishes applying every module

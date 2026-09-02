@@ -205,21 +205,38 @@
 
 ## 3. Fail-closed wiring
 
-- [ ] 3.1 Call `bot-autonomy.sh apply` from `.devcontainer/post-create.sh`
-      (bot profile only) as the **first** bot-specific step — **before**
-      the existing call to `.devcontainer/scripts/post-create-common.sh`,
-      not after (today's actual ordering has the four scripts this change
-      retires running *after* that shared script, which this change does
-      not inherit) — because that shared script's Agent-Deck
-      conductor-setup block spawns a `claude` process on first
-      registration, and that process must already run under the bot's
-      `bypassPermissions` policy, not whatever was in effect before
-      `apply`. Confirm `.devcontainer/dev/post-create.sh` does not call
-      `apply` at all; verify via `scripts/devcontainer-assert.sh`
-      unit-mode grep-style assertions (matching the existing
-      Antigravity/Codex pattern) confirming both the call's presence
-      (bot)/absence (dev) and its position relative to the
-      `post-create-common.sh` call
+- [ ] 3.1 Extract `post-create-common.sh`'s "Agent-Deck conductor setup"
+      block (the comment-delimited section from Telegram-token injection
+      through the `agent-deck conductor setup` call, ~lines 285-341) into
+      its own script — e.g. `.devcontainer/scripts/post-create-conductor.sh`
+      (a verbatim twin, matching the script it came from), or equivalently
+      a flag `post-create-common.sh` checks to skip that section, with
+      each profile invoking the extracted logic separately — leaving
+      everything else in `post-create-common.sh` (ownership fixing, Coder
+      persistence symlinks, `link-claude-json.sh`, the Claude onboarding
+      seed, Herdr integrations, Agent-Deck config seeding, Claude Code
+      user-settings seeding, general project bootstrapping) unchanged and
+      in its existing position. Then wire bot `post-create.sh`'s order to:
+      **(i)** `post-create-common.sh` (now without the conductor block);
+      **(ii)** `ensure-antigravity-cli.sh`; **(iii)** `bot-autonomy.sh
+      apply`; **(iv)** the extracted conductor step — call `apply` only
+      after (i)/(ii) have run, and the conductor step only after `apply`
+      succeeds. Wire dev `post-create.sh`'s order to: `post-create-common.sh`
+      (without conductor), `ensure-antigravity-cli.sh`,
+      `apply-antigravity-settings.sh apply` (the dev-balanced policy), then
+      the conductor step last — dev has no ordering *requirement* between
+      these (a conductor-spawned `claude` under dev's default,
+      prompt-enabled policy was never wrong), so this is a structural
+      simplification matching bot's shape, not a correctness fix for dev.
+      Confirm `.devcontainer/dev/post-create.sh` does not call
+      `bot-autonomy.sh apply` at all; verify via
+      `scripts/devcontainer-assert.sh` unit-mode grep-style assertions
+      (matching the existing Antigravity/Codex pattern) confirming: the
+      conductor block is absent from `post-create-common.sh`; bot's
+      `apply` call is present and dev's is absent; and each profile's
+      step order matches the sequence above — including that `apply` runs
+      after `post-create-common.sh`'s ownership/Coder-persistence prefix,
+      not before it
 - [ ] 3.2 Call `bot-autonomy.sh verify` at the end of bot post-create, and
       again in bot `post-start.sh` — **before** its existing call to the
       shared `.devcontainer/scripts/post-start-common.sh`, not after:
@@ -285,11 +302,20 @@
       the bot-autonomy module tree itself
       (`.devcontainer/scripts/bot-autonomy.sh`,
       `.devcontainer/config/bot-autonomy/**`) is already covered by the
-      existing `.devcontainer/**` entry. Without this, once task 3.3 makes
-      the workflow depend on these scripts, a PR that changes only one of
-      them would not trigger the workflow that runs it against a built
-      image; verify by confirming every added path appears in both files
-      and `task test:dogfood-structure` passes
+      existing `.devcontainer/**` entry. If task 3.3b's CI wiring picks
+      the direct-invocation implementation (calling
+      `scripts/devcontainer-smoke.sh` itself as a CI step, rather than
+      porting its up/capture steps inline), add `scripts/devcontainer-
+      smoke.sh` to the same filter for the same reason — it too lives
+      under root `scripts/`, and a PR that changes only that script would
+      not otherwise trigger the workflow that runs it; skip this addition
+      if the inline-porting alternative is chosen instead, since then no
+      new file outside `.devcontainer/**` is on the workflow's critical
+      path. Without these, once task 3.3 makes the workflow depend on
+      these scripts, a PR that changes only one of them would not trigger
+      the workflow that runs it against a built image; verify by
+      confirming every added path appears in both files and
+      `task test:dogfood-structure` passes
 - [ ] 3.3c Make the CI container-assertion run (task 3.3b) and any
       repeated local `devcontainer-smoke.sh` run mount run-specific,
       uniquely-named volumes for `~/.gemini` and `~/.config/opencode`

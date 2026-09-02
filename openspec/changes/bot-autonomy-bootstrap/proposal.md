@@ -153,9 +153,18 @@ changes in this PR introduce new capabilities.)
 - Retired/replaced: `.devcontainer/scripts/enable-claude-bypass.sh`,
   `.devcontainer/scripts/enable-codex-bypass.sh`, the `agy()` shell function in
   `.devcontainer/config/agy-autonomy.sh`.
-- Changed: `.devcontainer/post-create.sh`, `.devcontainer/post-start.sh`
-  (call `bot-autonomy.sh apply` / `verify`, ordered ahead of the shared
-  `post-create-common.sh`/`post-start-common.sh` calls), `devcontainer.json`
+- New: `.devcontainer/scripts/post-create-conductor.sh` (the Agent-Deck
+  conductor-setup block extracted out of `post-create-common.sh`, so bot
+  post-create can run it after `apply` rather than before — a verbatim
+  twin, matching the script it came from; the implementation PR may
+  instead keep it inline behind a skip flag, per design.md - Decisions).
+- Changed: `.devcontainer/scripts/post-create-common.sh` (conductor-setup
+  block removed, everything else unchanged), `.devcontainer/post-create.sh`
+  (call `bot-autonomy.sh apply` after the shared setup completes, and the
+  extracted conductor step only after `apply` succeeds),
+  `.devcontainer/post-start.sh` (call `bot-autonomy.sh verify`, ordered
+  ahead of the shared `post-start-common.sh` call — unlike post-create,
+  `verify` needs no setup that script provides first), `devcontainer.json`
   and `dev/devcontainer.json` (add the `HARMON_BOT_AUTONOMY_ANTIGRAVITY`
   `containerEnv` marker), `ensure-antigravity-cli.sh` (retarget to
   `agy-real`, gate on the marker),
@@ -165,7 +174,8 @@ changes in this PR introduce new capabilities.)
 - Docs: `docs/guides/devcontainers.md`, `copier.yml`, `docs/architecture/security.md`.
 - Template twins: every `.devcontainer/config/bot-autonomy/*` and
   `.devcontainer/scripts/bot-autonomy.sh` file (including
-  `ensure-antigravity-cli.sh`) is a **verbatim** template twin;
+  `ensure-antigravity-cli.sh`, `post-create-common.sh`, and the new
+  `post-create-conductor.sh`) is a **verbatim** template twin;
   `post-create.sh.jinja`/`post-start.sh.jinja` are **structure** twins
   (per AGENTS.md's dogfood-parity table) — the implementation PR changes
   both layers. This distinction is load-bearing, not bookkeeping: a
