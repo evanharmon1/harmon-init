@@ -1708,8 +1708,30 @@ else
         err "Codex Claude-hook adapter missing from devcontainer output"
     [ -x .devcontainer/config/codex-hooks/file-payload.sh ] ||
         err "Codex file-payload adapter missing from devcontainer output"
-    [ -x .devcontainer/scripts/enable-codex-bypass.sh ] ||
-        err "Codex bot-mode helper missing from devcontainer output"
+    [ -x .devcontainer/scripts/bot-autonomy.sh ] ||
+        err "bot-autonomy.sh missing from devcontainer output"
+    [ -x .devcontainer/config/bot-autonomy/codex-cli.sh ] ||
+        err "bot-autonomy Codex module missing from devcontainer output"
+    [ -x .devcontainer/config/bot-autonomy/claude-code.sh ] ||
+        err "bot-autonomy Claude Code module missing from devcontainer output"
+    [ -x .devcontainer/config/bot-autonomy/antigravity.sh ] ||
+        err "bot-autonomy Antigravity module missing from devcontainer output"
+    [ -x .devcontainer/config/bot-autonomy/opencode.sh ] ||
+        err "bot-autonomy OpenCode module missing from devcontainer output"
+    [ -f .devcontainer/config/bot-autonomy/aliases.json ] ||
+        err "bot-autonomy alias table missing from devcontainer output"
+    [ -f .devcontainer/config/bot-autonomy/unsupported.json ] ||
+        err "bot-autonomy unsupported table missing from devcontainer output"
+    [ -f .devcontainer/config/codex-managed-config.bot.toml ] ||
+        err "Codex bot managed config missing from devcontainer output"
+    [ -x scripts/test-bot-autonomy.sh ] ||
+        err "test-bot-autonomy.sh missing from devcontainer output"
+    grep -q -- '- task: test:bot-autonomy' Taskfile.yml ||
+        err "verify task is missing the bot-autonomy registry-completeness test"
+    [ ! -e .devcontainer/scripts/enable-claude-bypass.sh ] ||
+        err "retired enable-claude-bypass.sh still rendered"
+    [ ! -e .devcontainer/scripts/enable-codex-bypass.sh ] ||
+        err "retired enable-codex-bypass.sh still rendered"
     grep -q '^model = "gpt-5.6-sol"$' .devcontainer/config/codex-managed-config.toml ||
         err "Codex devcontainer baseline is not pinned to gpt-5.6-sol"
     grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-managed-config.toml ||
@@ -1719,10 +1741,17 @@ else
     ! grep -Eq 'session-start-context|post-edit-format|enforce-conventional-commits' \
         .devcontainer/config/codex-managed-config.toml ||
         err "system-managed Codex hooks delegate into checkout-controlled tasks"
-    grep -Fq 'enable-codex-bypass.sh' .devcontainer/post-create.sh ||
-        err "bot post-create does not enable high-autonomy Codex mode"
-    ! grep -Fq 'enable-codex-bypass.sh' .devcontainer/dev/post-create.sh ||
-        err "human dev profile disables the Codex sandbox"
+    grep -q '^sandbox_mode = "danger-full-access"$' .devcontainer/config/codex-managed-config.bot.toml ||
+        err "Codex bot managed config does not enable danger-full-access"
+    grep -q '^approval_policy = "never"$' .devcontainer/config/codex-managed-config.bot.toml ||
+        err "Codex bot managed config does not disable approval prompts"
+    grep -Fq 'bot-autonomy.sh apply' .devcontainer/post-create.sh ||
+        err "bot post-create does not call bot-autonomy.sh apply"
+    grep -Fq 'bot-autonomy.sh verify' .devcontainer/post-start.sh ||
+        err "bot post-start does not call bot-autonomy.sh verify"
+    if grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh | grep -Fq 'bot-autonomy.sh'; then
+        err "human dev profile calls bot-autonomy.sh (bot-only)"
+    fi
     grep -q -- '- task: test:devcontainer:permissions' Taskfile.yml || err "ci task is missing the devcontainer permission assertion"
 
     # `task` must reach the RENDERED repo from a pinned release, never from the
@@ -1765,7 +1794,11 @@ else
         err "rendered .devcontainer/Dockerfile still carries a consumer-side TASK_VERSION pin"
 fi
 
-# ── 9e1. Antigravity autonomy is a default-off bot-only opt-in ──────
+# ── 9e1. Antigravity autonomy: module always present, policy Copier-gated ──
+# The bot-autonomy antigravity module (and ensure-antigravity-cli.sh) always
+# exist and are always CALLED, regardless of use_antigravity_cli — only the
+# rendered HARMON_BOT_AUTONOMY_ANTIGRAVITY marker's VALUE varies by profile.
+# See openspec/changes/bot-autonomy-bootstrap/design.md - Decisions.
 if [ -d .devcontainer ]; then
     [ -x .devcontainer/config/apply-antigravity-settings.sh ] ||
         err "Antigravity settings helper missing from devcontainer output"
@@ -1775,38 +1808,46 @@ if [ -d .devcontainer ]; then
         err "Antigravity policy defaults missing from devcontainer output"
     [ -f .devcontainer/config/antigravity-settings-dev.json ] ||
         err "balanced Antigravity dev policy defaults missing from devcontainer output"
-    [ -x .devcontainer/config/agy-autonomy.sh ] ||
-        err "Antigravity bot autonomy wrapper missing from devcontainer output"
-    grep -Fq 'agy-autonomy.sh' .devcontainer/config/shell-aliases.sh ||
-        err "shell-aliases does not source the Antigravity bot autonomy wrapper"
+    [ -x .devcontainer/config/bot-autonomy/antigravity.sh ] ||
+        err "bot-autonomy Antigravity module missing from devcontainer output"
+    [ ! -e .devcontainer/config/agy-autonomy.sh ] ||
+        err "retired agy-autonomy.sh shell-function wrapper still rendered"
+    if grep -Fq 'agy-autonomy.sh' .devcontainer/config/shell-aliases.sh; then
+        err "shell-aliases still sources the retired Antigravity shell-function wrapper"
+    fi
+    grep -Fq 'ensure-antigravity-cli.sh' .devcontainer/post-create.sh ||
+        err "bot post-create does not run ensure-antigravity-cli.sh (now unconditional)"
+    if grep -Fq 'apply-antigravity-settings.sh' .devcontainer/post-create.sh; then
+        err "bot post-create calls apply-antigravity-settings.sh directly (belongs to the bot-autonomy module now)"
+    fi
+    grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY"' .devcontainer/devcontainer.json ||
+        err "bot devcontainer.json does not set the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
+    grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY"' .devcontainer/dev/devcontainer.json ||
+        err "dev devcontainer.json does not set the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
+    grep -Fq '${containerEnv:PATH}' .devcontainer/devcontainer.json ||
+        err "bot devcontainer.json does not prepend onto the container-wide PATH via containerEnv"
+    grep -Fq 'HARMON_BOT_AUTONOMY_ANTIGRAVITY' .devcontainer/dev/post-create.sh ||
+        err "dev post-create does not branch on the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
+    grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/dev/post-create.sh ||
+        err "dev post-create has no restore path for a disabled Antigravity option"
     if [ "$profile" = "full" ]; then
-        grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/post-create.sh ||
-            err "bot post-create does not enable opted-in Antigravity autonomy"
-        grep -Fq 'ensure-antigravity-cli.sh' .devcontainer/post-create.sh ||
-            err "bot post-create cannot bridge the shared-image rollout"
+        grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "enabled"' .devcontainer/devcontainer.json ||
+            err "bot devcontainer.json marker is not enabled for the opted-in profile"
+        grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "enabled"' .devcontainer/dev/devcontainer.json ||
+            err "dev devcontainer.json marker is not enabled for the opted-in profile"
         grep -Fq '"AGY_CLI_DISABLE_AUTO_UPDATE": "true"' .devcontainer/devcontainer.json ||
             err "bot runtime does not disable fallback Antigravity auto-updates"
         grep -Fq 'Antigravity autonomy is enabled' docs/guides/devcontainers.md ||
             err "devcontainer guide omits opted-in Antigravity account/policy guidance"
-        grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/dev/post-create.sh ||
-            err "dev post-create does not apply the balanced Antigravity policy"
-        grep -Fq 'antigravity-settings-dev.json' .devcontainer/dev/post-create.sh ||
-            err "dev post-create applies a policy other than the balanced dev defaults"
     else
-        grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/post-create.sh ||
-            err "default-off Antigravity path does not restore an earlier opt-in"
-        ! grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/post-create.sh ||
-            err "Antigravity autonomy rendered without explicit opt-in"
-        ! grep -Fq 'ensure-antigravity-cli.sh' .devcontainer/post-create.sh ||
-            err "Antigravity CLI downloads without explicit opt-in"
+        grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "disabled"' .devcontainer/devcontainer.json ||
+            err "bot devcontainer.json marker is not disabled for the default-off profile"
+        grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "disabled"' .devcontainer/dev/devcontainer.json ||
+            err "dev devcontainer.json marker is not disabled for the default-off profile"
         ! grep -Fq 'AGY_CLI_DISABLE_AUTO_UPDATE' .devcontainer/devcontainer.json ||
             err "Antigravity runtime policy rendered without explicit opt-in"
         grep -Fq 'Antigravity autonomy is off by default' docs/guides/devcontainers.md ||
             err "devcontainer guide omits default-off Antigravity posture"
-        grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/dev/post-create.sh ||
-            err "default-off dev profile does not restore an earlier balanced opt-in"
-        ! grep -Fq 'apply-antigravity-settings.sh apply' .devcontainer/dev/post-create.sh ||
-            err "balanced Antigravity dev policy rendered without explicit opt-in"
     fi
     # The dev profile may apply its own balanced policy (antigravity-settings-dev.json)
     # but must never apply the bot's always-proceed policy (antigravity-settings.json).

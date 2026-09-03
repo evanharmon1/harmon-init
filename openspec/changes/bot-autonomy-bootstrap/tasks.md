@@ -1,11 +1,11 @@
 ## 1. Bootstrap entrypoint and registry completeness
 
-- [ ] 1.1 Add `.devcontainer/scripts/bot-autonomy.sh apply|verify`, enumerating
+- [x] 1.1 Add `.devcontainer/scripts/bot-autonomy.sh apply|verify`, enumerating
       `agent-registry.json` `harnesses[]` slugs and dispatching to
       `.devcontainer/config/bot-autonomy/<slug>.sh` modules (resolving an
       aliased slug to its target module); verify it exits non-zero on any
       module failure
-- [ ] 1.2 Define the three coverage buckets inside `bot-autonomy.sh`: the
+- [x] 1.2 Define the three coverage buckets inside `bot-autonomy.sh`: the
       alias table (`claude-code-deepseek`, `claude-code-glm`,
       `claude-code-kimi`, `claude-code-minimax`, `claude-code-qwen`,
       `claude-code-qwen-local` → `claude-code`) and the `unsupported` set
@@ -22,14 +22,14 @@
       their modules; verify the registry schema
       (`agent-registry.schema.json`) is unchanged (`git diff` shows no
       schema edit)
-- [ ] 1.3 Add a unit test asserting every one of the registry's 16 harness
+- [x] 1.3 Add a unit test asserting every one of the registry's 16 harness
       slugs falls into exactly one of the three buckets, that every
       `unsupported` entry's `executable` is a non-empty string or `null`,
       and that an installed executable with none of the three fails
       `verify`; verify with `task test:bot-autonomy` (or the chosen test
       task name) passing and failing on injected fixtures (an uncovered
       slug, a doubly-covered slug, a missing/malformed `executable` field)
-- [ ] 1.4 Make `verify` fail ANY `unsupported` slug the instant its
+- [x] 1.4 Make `verify` fail ANY `unsupported` slug the instant its
       executable is installed but it still has no real module or alias —
       uniformly, regardless of the entry's reason (no reason category
       grants an exemption that survives installation); verify with
@@ -45,24 +45,24 @@
 
 ## 2. Per-harness modules
 
-- [ ] 2.1 Add `bot-autonomy/claude-code.sh`: apply sets
+- [x] 2.1 Add `bot-autonomy/claude-code.sh`: apply sets
       `permissions.defaultMode=bypassPermissions` in
       `/etc/claude-code/managed-settings.json`; verify reads it back; verify
       by running `bot-autonomy.sh apply verify` in a scratch container/fixture
       and confirming the managed file, including when launched via one of
       the six aliased `claude-code-*` provider wrappers
-- [ ] 2.2 Add `.devcontainer/config/codex-managed-config.bot.toml` (complete
+- [x] 2.2 Add `.devcontainer/config/codex-managed-config.bot.toml` (complete
       bot baseline, `sandbox_mode = "danger-full-access"`,
       `approval_policy = "never"`, otherwise identical to
       `codex-managed-config.toml`) and `bot-autonomy/codex-cli.sh`: apply
       installs it over `/etc/codex/managed_config.toml`; verify checksums the
       installed file against the shipped one; verify by corrupting the
       installed file in a fixture and confirming `verify` fails
-- [ ] 2.3 Add a structural parity test between `codex-managed-config.toml`
+- [x] 2.3 Add a structural parity test between `codex-managed-config.toml`
       and `codex-managed-config.bot.toml` asserting every key matches except
       `sandbox_mode`/`approval_policy`; verify it fails when a fixture edits
       `model` in only one of the two files, and passes on the real pair
-- [ ] 2.4 Add `bot-autonomy/antigravity.sh`, gated by
+- [x] 2.4 Add `bot-autonomy/antigravity.sh`, gated by
       `$HARMON_BOT_AUTONOMY_ANTIGRAVITY` (the rendered `containerEnv`
       marker task 2.7 adds, sourced from the `use_antigravity_cli` Copier
       answer — the module never reads the Copier answer any other way):
@@ -83,7 +83,7 @@
       fixture confirming a prior autonomous state reaches
       disabled-by-option (settings restored, `agy` absent — not a
       symlink) after a re-render flips the marker and both scripts rerun
-- [ ] 2.5 Install `~/.local/bin/agy` as an executable wrapper from the bot
+- [x] 2.5 Install `~/.local/bin/agy` as an executable wrapper from the bot
       post-create only, and only WHEN `$HARMON_BOT_AUTONOMY_ANTIGRAVITY`
       reads `enabled`, AFTER task 2.5b's `ensure-antigravity-cli.sh` run
       in the same post-create (retiring the `agy()` shell function in
@@ -107,7 +107,7 @@
       confirm the wrapper resolves `agy-real` over a deliberately stale
       system binary when both are present, and confirm `agy` is absent
       (not a symlink, not the wrapper) when the marker is not `enabled`
-- [ ] 2.5b Retarget `.devcontainer/config/ensure-antigravity-cli.sh` (and
+- [x] 2.5b Retarget `.devcontainer/config/ensure-antigravity-cli.sh` (and
       its `template/` twin) from `~/.local/bin/agy` to
       `~/.local/bin/agy-real` for every internal reference — the version
       check, the reconciliation `install`, and the download `install` —
@@ -141,7 +141,7 @@
       (e.g. dev) with the marker `enabled`, and that both `agy-real` and
       `agy` are absent — including when either existed from a prior
       `enabled` run — when the marker is not `enabled`
-- [ ] 2.5a Add `containerEnv.PATH` to the bot `devcontainer.json` (and its
+- [x] 2.5a Add `containerEnv.PATH` to the bot `devcontainer.json` (and its
       `template/` twin) prepending `/home/vscode/.local/bin` ahead of
       `/usr/local/bin`, so the wrapper's precedence is container-wide
       rather than dependent on a shell rc `PATH` export; verify with
@@ -150,7 +150,7 @@
       PATH)" agy --version` inside the container, confirming both resolve
       `~/.local/bin/agy`, not the system binary — this is the case a shell
       function or an rc-only `PATH` edit cannot cover
-- [ ] 2.7 Add `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` — rendered
+- [x] 2.7 Add `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` — rendered
       from `{{ use_antigravity_cli }}` to the literal string `enabled` or
       `disabled` — to the bot `devcontainer.json` **and**
       `dev/devcontainer.json` jinja twins (both already
@@ -175,7 +175,7 @@
       `ensure-antigravity-cli.sh` (post-create) and `bot-autonomy.sh
       verify` (post-create and post-start — both lifecycle points) read
       the same value consistently within one container's lifetime
-- [ ] 2.6 Add `bot-autonomy/opencode.sh`: apply force-overwrites
+- [x] 2.6 Add `bot-autonomy/opencode.sh`: apply force-overwrites
       `"permission": {"*": "allow"}` in `~/.config/opencode/opencode.json`
       (create-if-absent, preserve every other existing key, override any
       prior `permission` value), recording the prior `permission` value (or
@@ -205,7 +205,7 @@
 
 ## 3. Fail-closed wiring
 
-- [ ] 3.1 Extract `post-create-common.sh`'s "Agent-Deck conductor setup"
+- [x] 3.1 Extract `post-create-common.sh`'s "Agent-Deck conductor setup"
       block (the comment-delimited section from Telegram-token injection
       through the `agent-deck conductor setup` call, ~lines 285-341) into
       its own script — e.g. `.devcontainer/scripts/post-create-conductor.sh`
@@ -237,7 +237,7 @@
       step order matches the sequence above — including that `apply` runs
       after `post-create-common.sh`'s ownership/Coder-persistence prefix,
       not before it
-- [ ] 3.2 Call `bot-autonomy.sh verify` at the end of bot post-create, and
+- [x] 3.2 Call `bot-autonomy.sh verify` at the end of bot post-create, and
       again in bot `post-start.sh` — **before** its existing call to the
       shared `.devcontainer/scripts/post-start-common.sh`, not after:
       that script is bot/dev-shared and its Agent-Deck conductor-start
@@ -265,7 +265,7 @@
       fixture that registers a conductor, drifts the policy, runs bot
       post-start, and confirms no `agent-deck session start` process is
       ever observed for that container
-- [ ] 3.3 Extend `scripts/devcontainer-assert.sh`'s existing `container`
+- [x] 3.3 Extend `scripts/devcontainer-assert.sh`'s existing `container`
       mode to additionally `docker exec` the running container and run
       `bot-autonomy.sh verify` — its current checks cover only Codex's
       `sandbox_mode`/`approval_policy`, so wiring it into CI unmodified
@@ -273,7 +273,7 @@
       completely unchecked there despite the spec's "every supported
       installed harness" claim; verify with a fixture and a deliberately
       misconfigured file
-- [ ] 3.3b Wire the (now-extended) assertion into
+- [x] 3.3b Wire the (now-extended) assertion into
       `.github/workflows/devcontainer-build.yml` for the bot profile by
       **starting a container and capturing its ID**, not by assuming one
       is already running after the `build` job's `devcontainers/ci`-action
@@ -291,7 +291,7 @@
       `act`/manual dry run) and confirming it fails against a
       deliberately misconfigured image (e.g. Antigravity's settings
       reverted) and passes against the real one
-- [ ] 3.3a Add `scripts/devcontainer-assert.sh` and, if the
+- [x] 3.3a Add `scripts/devcontainer-assert.sh` and, if the
       registry-completeness unit test (task 1.3) lands as a standalone
       script rather than folded into `devcontainer-assert.sh`, that script
       too (e.g. `scripts/test-bot-autonomy.sh`) to `devcontainer-build.yml`'s
@@ -316,7 +316,7 @@
       the workflow that runs it against a built image; verify by
       confirming every added path appears in both files and
       `task test:dogfood-structure` passes
-- [ ] 3.3c Make the CI container-assertion run (task 3.3b) and any
+- [x] 3.3c Make the CI container-assertion run (task 3.3b) and any
       repeated local `devcontainer-smoke.sh` run mount run-specific,
       uniquely-named volumes for `~/.gemini` and `~/.config/opencode`
       (for example, suffixed with the CI run ID or a generated UUID),
@@ -334,10 +334,10 @@
       twice in a row and confirming both runs independently observe the
       same first-run, absent-backup behavior, and that no volume from
       either run survives to affect a later, unrelated run
-- [ ] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
+- [x] 3.4 Update or retire `enable-claude-bypass.sh`, `enable-codex-bypass.sh`,
       and the `agy()` function in `agy-autonomy.sh` per the design's open
       question; verify no remaining caller references a retired script
-- [ ] 3.5 Document in `docs/architecture/ci-cd.md`'s
+- [x] 3.5 Document in `docs/architecture/ci-cd.md`'s
       `devcontainer-build.yml` description (and its `template/` twin) that
       the container-assertion smoke run stays a CI-only, manually-invoked
       check — never wired into the root or template `ci` Taskfile targets
@@ -356,21 +356,21 @@
 
 ## 4. Docs, template parity, and cross-change coordination
 
-- [ ] 4.1 Dedupe the repeated Codex paragraph in
+- [x] 4.1 Dedupe the repeated Codex paragraph in
       `docs/guides/devcontainers.md` (lines ~25-41) and describe the
       bootstrap contract (bootstrap entrypoint, three coverage buckets,
       per-harness boundaries, fail-closed points); verify with
       `task lint:markdown`
-- [ ] 4.2 Update `use_antigravity_cli` help text in `copier.yml` to describe
+- [x] 4.2 Update `use_antigravity_cli` help text in `copier.yml` to describe
       the executable-wrapper mechanism instead of (or alongside) the shell
       function; verify with `task check`
-- [ ] 4.3 Update `docs/architecture/security.md` to document the bot-autonomy
+- [x] 4.3 Update `docs/architecture/security.md` to document the bot-autonomy
       boundary contract (fail-closed points, per-harness mechanisms); verify
       with `task lint:markdown`
-- [ ] 4.4 Apply every change in groups 1-3 to the `template/` twin in the
+- [x] 4.4 Apply every change in groups 1-3 to the `template/` twin in the
       same PR (`template/[% if devcontainer %].devcontainer[% endif %]/...`);
       verify with `task test:dogfood-parity` and `task test:dogfood-structure`
-- [ ] 4.4a Apply 4.1's and 4.3's doc edits to their own template twins too:
+- [x] 4.4a Apply 4.1's and 4.3's doc edits to their own template twins too:
       `template/docs/guides/[% if devcontainer %]devcontainers.md[% endif %].jinja`
       and `template/docs/architecture/security.md.jinja` — both exist
       today and are structure twins, so a root-only doc edit leaves them
@@ -388,7 +388,7 @@
       matching task 1.4's existing pattern — demonstrating the coordination
       is actually enforced rather
       than merely documented
-- [ ] 4.6 Add a standing, unchecked checklist item to
+- [x] 4.6 Add a standing, unchecked checklist item to
       `scripts/sync-devcontainer-image.sh publish`'s PR-body template for
       the sync-pin PR: "bot-autonomy-new-harnesses has merged, covering
       every harness this Dockerfile bump installs (see the
@@ -404,9 +404,9 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run `task check`, `task verify`, and `task security` locally;
+- [x] 5.1 Run `task check`, `task verify`, and `task security` locally;
       verify all green
-- [ ] 5.2 Run `task test:devcontainer:permissions` and (where a Docker
+- [x] 5.2 Run `task test:devcontainer:permissions` and (where a Docker
       daemon, the `devcontainer` CLI, and a primary — non-worktree —
       checkout are all available) `task test:devcontainer:root`; this
       stays a manual step, not wired into `task ci` (see task 3.5's

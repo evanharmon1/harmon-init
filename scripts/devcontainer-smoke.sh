@@ -76,10 +76,27 @@ SESSION_DATA_DIR="$(mktemp -d)"
 LOG_FILE="$(mktemp)"
 CONTAINER_ID=""
 
+# Both bot-autonomy's OpenCode and Antigravity modules gate their reversible
+# backup capture on "no backup exists yet" — correct for a real, long-lived
+# container, where only the very first apply after a fresh volume should
+# capture the pre-managed value. Reusing the SAME persistent named volumes
+# across repeated smoke runs would only exercise that first-run behavior
+# once, ever, silently defeating the absent->apply->restore and
+# option-toggle fixtures the moment they matter most. devcontainer.json's
+# gemini-config/opencode-config mount sources interpolate
+# ${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}, empty (today's fixed
+# name) for every real devcontainer session — only this script's own runs set
+# it, so each one gets fresh, uniquely-named volumes, removed below.
+export HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX="-smoke-$(date +%s)-$$"
+
 cleanup() {
     if [ -n "${CONTAINER_ID}" ]; then
         "$TIMEOUT_BIN" -k 5 20 docker rm -f "${CONTAINER_ID}" >/dev/null 2>&1 || true
     fi
+    local smoke_volume
+    for smoke_volume in $(docker volume ls -q --filter "name=${HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}" 2>/dev/null); do
+        docker volume rm -f "$smoke_volume" >/dev/null 2>&1 || true
+    done
     rm -rf "${USER_DATA_DIR}" "${SESSION_DATA_DIR}" "${LOG_FILE}"
 }
 trap cleanup EXIT

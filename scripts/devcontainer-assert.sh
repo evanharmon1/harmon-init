@@ -110,22 +110,30 @@ assert_unit() {
     # Resolve the repo root from the script's own location BEFORE we cd away,
     # so init-env.sh's "only pull on a clean main" guard short-circuits when we
     # run it from a throwaway, non-repo working directory.
-    local script_dir repo_root init_env ts_connect bash_bin codex_config codex_bot_mode
+    local script_dir repo_root init_env ts_connect bash_bin codex_config
+    local bot_autonomy bot_autonomy_module_dir codex_module claude_module codex_bot_config
     script_dir="$(cd "$(dirname "$0")" && pwd)"
     repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
     init_env="${repo_root}/.devcontainer/scripts/init-env.sh"
     ts_connect="${repo_root}/.devcontainer/scripts/tailscale-connect.sh"
     codex_config="${repo_root}/.devcontainer/config/codex-managed-config.toml"
-    codex_bot_mode="${repo_root}/.devcontainer/scripts/enable-codex-bypass.sh"
+    bot_autonomy="${repo_root}/.devcontainer/scripts/bot-autonomy.sh"
+    bot_autonomy_module_dir="${repo_root}/.devcontainer/config/bot-autonomy"
+    codex_module="${bot_autonomy_module_dir}/codex-cli.sh"
+    claude_module="${bot_autonomy_module_dir}/claude-code.sh"
+    codex_bot_config="${repo_root}/.devcontainer/config/codex-managed-config.bot.toml"
     bash_bin="$(command -v bash)"
 
     [ -f "$init_env" ] || fail "init-env.sh not found at ${init_env}"
     [ -f "$ts_connect" ] || fail "tailscale-connect.sh not found at ${ts_connect}"
     [ -f "$codex_config" ] || fail "Codex managed config not found at ${codex_config}"
-    [ -f "$codex_bot_mode" ] || fail "Codex bot-mode helper not found at ${codex_bot_mode}"
-    if grep -Eq '(^|[^[:alnum:]_])yq([^[:alnum:]_]|$)' "$codex_bot_mode"; then
-        fail "Codex bot-mode helper depends on yq for TOML mutation"
-    fi
+    [ -x "$bot_autonomy" ] || fail "bot-autonomy.sh not found or not executable at ${bot_autonomy}"
+    [ -x "$codex_module" ] || fail "bot-autonomy Codex module not found at ${codex_module}"
+    [ -x "$claude_module" ] || fail "bot-autonomy Claude Code module not found at ${claude_module}"
+    [ -f "$codex_bot_config" ] || fail "Codex bot managed config not found at ${codex_bot_config}"
+    # Registry coverage, structural parity, and per-module fixture behavior
+    # are scripts/test-bot-autonomy.sh's job (wired into `task verify`
+    # unconditionally); this file only asserts the surrounding wiring.
 
     local bot_config dev_config shell_aliases gh_browser
     bot_config="${repo_root}/.devcontainer/devcontainer.json"
@@ -176,18 +184,91 @@ assert_unit() {
     if grep -Eq 'session-start-context|post-edit-format|enforce-conventional-commits' "$codex_config"; then
         fail "system-managed Codex hooks delegate into checkout-controlled tasks"
     fi
+    # Codex and Claude Code bot policy now come from bot-autonomy modules,
+    # installed and verified via bot-autonomy.sh apply/verify — never called
+    # directly from post-create.sh. Fixture-level apply/verify coverage for
+    # both modules (checksum install, drift detection) lives in
+    # scripts/test-bot-autonomy.sh; this asserts the surrounding wiring only.
     codex_fixture="${work_dir}/codex-managed.toml"
     cp "$codex_config" "$codex_fixture"
-    CODEX_MANAGED_CONFIG="$codex_fixture" bash "$codex_bot_mode" >/dev/null
+    BOT_AUTONOMY_CODEX_MANAGED="$codex_fixture" bash "$codex_module" apply >/dev/null
     [ "$(toml_root_scalar sandbox_mode "$codex_fixture")" = "danger-full-access" ] ||
-        fail "bot Codex helper did not remove the nested sandbox"
+        fail "bot-autonomy Codex module did not remove the nested sandbox"
     [ "$(toml_root_scalar approval_policy "$codex_fixture")" = "never" ] ||
-        fail "bot Codex helper did not disable approval prompts"
-    grep -q 'enable-codex-bypass.sh' "${repo_root}/.devcontainer/post-create.sh" ||
-        fail "bot post-create does not enable Codex bot mode"
-    if grep -q 'enable-codex-bypass.sh' "${repo_root}/.devcontainer/dev/post-create.sh"; then
-        fail "human post-create enables bot-only Codex autonomy"
+        fail "bot-autonomy Codex module did not disable approval prompts"
+
+    # The Agent-Deck conductor-setup block was extracted out of
+    # post-create-common.sh into its own script, so bot post-create can run
+    # it AFTER apply (a conductor-spawned `claude` must not run before the
+    # bot's policy is written) without delaying dev's identical step.
+    local conductor_script
+    conductor_script="${repo_root}/.devcontainer/scripts/post-create-conductor.sh"
+    [ -x "$conductor_script" ] || fail "post-create-conductor.sh not found at ${conductor_script}"
+    # Match the actual invocation, not the phrase alone — a nearby comment in
+    # post-create-common.sh legitimately still SAYS "agent-deck conductor
+    # setup" (explaining why link-claude-json.sh must run early) without the
+    # block itself having come back.
+    if grep -q 'agent-deck conductor setup "\$REPO_NAME"' "${repo_root}/.devcontainer/scripts/post-create-common.sh"; then
+        fail "the Agent-Deck conductor-setup block was not extracted out of post-create-common.sh"
     fi
+    grep -q 'agent-deck conductor setup "\$REPO_NAME"' "$conductor_script" ||
+        fail "post-create-conductor.sh does not contain the extracted conductor-setup block"
+
+    # Each profile's step order matches the corrected ordering: shared setup
+    # (with the conductor block already extracted out, checked above), then
+    # ensure-antigravity-cli.sh, then the profile's own autonomy step
+    # (bot-autonomy.sh apply for bot; apply-antigravity-settings.sh for dev),
+    # then the conductor step LAST — never before the autonomy step.
+    assert_step_order() {
+        local file="$1" step_after_shared="$2"
+        local order
+        order="$(grep -Ev '^[[:space:]]*#' "$file" |
+            grep -E 'post-create-common\.sh|ensure-antigravity-cli\.sh|post-create-conductor\.sh|bot-autonomy\.sh apply|apply-antigravity-settings\.sh')"
+        case "$(printf '%s\n' "$order" | sed -n '1p')" in
+        *"post-create-common.sh"*) ;;
+        *) fail "${file} does not run post-create-common.sh first" ;;
+        esac
+        case "$(printf '%s\n' "$order" | sed -n '2p')" in
+        *"ensure-antigravity-cli.sh"*) ;;
+        *) fail "${file} does not run ensure-antigravity-cli.sh second" ;;
+        esac
+        case "$(printf '%s\n' "$order" | sed -n '3p')" in
+        *"$step_after_shared"*) ;;
+        *) fail "${file} does not run ${step_after_shared} third" ;;
+        esac
+        case "$(printf '%s\n' "$order" | tail -1)" in
+        *"post-create-conductor.sh"*) ;;
+        *) fail "${file} does not run post-create-conductor.sh last" ;;
+        esac
+    }
+    assert_step_order "${repo_root}/.devcontainer/post-create.sh" "bot-autonomy.sh apply"
+    assert_step_order "${repo_root}/.devcontainer/dev/post-create.sh" "apply-antigravity-settings.sh"
+    # Strip comments first: dev/post-create.sh's own explanatory comment names
+    # bot-autonomy.sh to say it does NOT call it, which a bare grep would
+    # misread as a real invocation.
+    if grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh" |
+        grep -q 'bot-autonomy.sh'; then
+        fail "human post-create calls bot-autonomy.sh (bot-only)"
+    fi
+    grep -q 'bot-autonomy.sh verify' "${repo_root}/.devcontainer/post-start.sh" ||
+        fail "bot post-start does not call bot-autonomy.sh verify"
+    # verify must run BEFORE post-start-common.sh (whose conductor-start block
+    # must never launch against a drifted policy) and NODE_OPTIONS must be
+    # unset before verify (so a Node-based harness CLI verify step is not
+    # itself broken by an inherited VS Code debug value).
+    local post_start_order
+    post_start_order="$(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-start.sh" |
+        grep -E 'unset NODE_OPTIONS|bot-autonomy\.sh verify|post-start-common\.sh')"
+    [ "$(printf '%s\n' "$post_start_order" | sed -n '1p')" = "unset NODE_OPTIONS" ] ||
+        fail "bot post-start does not unset NODE_OPTIONS before anything else"
+    case "$(printf '%s\n' "$post_start_order" | sed -n '2p')" in
+    *"bot-autonomy.sh verify") ;;
+    *) fail "bot post-start does not call bot-autonomy.sh verify immediately after unsetting NODE_OPTIONS" ;;
+    esac
+    case "$(printf '%s\n' "$post_start_order" | sed -n '3p')" in
+    *"post-start-common.sh") ;;
+    *) fail "bot post-start does not call post-start-common.sh after bot-autonomy.sh verify" ;;
+    esac
 
     # has_var <var> <env-file>  → true if the file sets VAR= on its own line.
     has_var() {
@@ -423,26 +504,57 @@ assert_unit() {
     [ -f "$agy_apply" ] || fail "Antigravity settings helper not found at ${agy_apply}"
     [ -f "$agy_ensure" ] || fail "Antigravity compatibility installer not found at ${agy_ensure}"
 
+    # ensure-antigravity-cli.sh now owns ~/.local/bin/agy-real (never agy
+    # directly) and is gated entirely on the rendered
+    # HARMON_BOT_AUTONOMY_ANTIGRAVITY marker — no unconditional download.
     local agy_roll_home agy_system_binary
     agy_roll_home="${work_dir}/agy-roll-home"
     agy_system_binary="${work_dir}/agy-system-binary"
     mkdir -p "${agy_roll_home}/.local/bin"
     printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.1.11"' >"$agy_system_binary"
-    printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.0.0"' >"${agy_roll_home}/.local/bin/agy"
-    chmod 0755 "$agy_system_binary" "${agy_roll_home}/.local/bin/agy"
+    printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.0.0"' >"${agy_roll_home}/.local/bin/agy-real"
+    chmod 0755 "$agy_system_binary" "${agy_roll_home}/.local/bin/agy-real"
 
+    # Disabled marker (including entirely absent): no download; agy-real and
+    # agy are removed even if a prior enabled run (or a stale image) left them.
+    local agy_disabled_home
+    agy_disabled_home="${work_dir}/agy-disabled-home"
+    mkdir -p "${agy_disabled_home}/.local/bin"
+    : >"${agy_disabled_home}/.local/bin/agy-real"
+    : >"${agy_disabled_home}/.local/bin/agy"
+    HOME="$agy_disabled_home" bash "$agy_ensure" >/dev/null
+    [ ! -e "${agy_disabled_home}/.local/bin/agy-real" ] ||
+        fail "ensure-antigravity-cli.sh left agy-real behind with the marker disabled"
+    [ ! -e "${agy_disabled_home}/.local/bin/agy" ] ||
+        fail "ensure-antigravity-cli.sh left agy behind with the marker disabled"
+
+    # Enabled marker, current shared-image binary already sufficient, no
+    # pre-existing local shadow: no shadow copy is created, and agy stays
+    # absent rather than becoming a dangling symlink.
     local agy_image_home
     agy_image_home="${work_dir}/agy-image-home"
     mkdir -p "$agy_image_home"
-    HOME="$agy_image_home" HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" \
-        bash "$agy_ensure" >/dev/null
-    [ ! -e "${agy_image_home}/.local/bin/agy" ] ||
+    HOME="$agy_image_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled \
+        HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" bash "$agy_ensure" >/dev/null
+    [ ! -e "${agy_image_home}/.local/bin/agy-real" ] ||
         fail "current shared-image Antigravity binary created a persistent shadow copy"
+    [ ! -e "${agy_image_home}/.local/bin/agy" ] && [ ! -L "${agy_image_home}/.local/bin/agy" ] ||
+        fail "agy is present (or a dangling symlink) with no agy-real to back it"
 
-    HOME="$agy_roll_home" HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" \
-        bash "$agy_ensure" >/dev/null
-    [ "$("${agy_roll_home}/.local/bin/agy" --version)" = "1.1.11" ] ||
+    # Enabled marker, a stale local shadow already exists: refreshed to the
+    # pinned version, and agy (re)pointed at it as a plain symlink.
+    HOME="$agy_roll_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled \
+        HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" bash "$agy_ensure" >/dev/null
+    [ "$("${agy_roll_home}/.local/bin/agy-real" --version)" = "1.1.11" ] ||
         fail "stale user-local Antigravity binary still shadows the shared-image pin"
+    [ "$(readlink -f "${agy_roll_home}/.local/bin/agy")" = "$(readlink -f "${agy_roll_home}/.local/bin/agy-real")" ] ||
+        fail "ensure-antigravity-cli.sh did not point agy at agy-real as a plain symlink"
+
+    # Toggling back to disabled fully removes both — not merely skips the
+    # download — reaching absence rather than a dangling link.
+    HOME="$agy_roll_home" bash "$agy_ensure" >/dev/null
+    [ ! -e "${agy_roll_home}/.local/bin/agy-real" ] && [ ! -e "${agy_roll_home}/.local/bin/agy" ] ||
+        fail "toggling the marker off did not fully remove agy-real/agy"
 
     agy_home="${work_dir}/agy-home"
     agy_settings="${agy_home}/.gemini/antigravity-cli/settings.json"
@@ -551,16 +663,30 @@ assert_unit() {
     cmp -s "$agy_settings" "$agy_before" ||
         fail "invalid Antigravity settings were overwritten"
 
-    if grep -q 'apply-antigravity-settings.sh apply' "${repo_root}/.devcontainer/post-create.sh"; then
-        grep -q 'ensure-antigravity-cli.sh' "${repo_root}/.devcontainer/post-create.sh" ||
-            fail "opted-in bot profile cannot bootstrap Antigravity before the shared-image pin advances"
-        grep -q 'AGY_CLI_DISABLE_AUTO_UPDATE.*true' "${repo_root}/.devcontainer/devcontainer.json" ||
-            fail "opted-in bot profile permits the compatibility Antigravity binary to auto-update"
-    elif ! grep -q 'apply-antigravity-settings.sh restore' "${repo_root}/.devcontainer/post-create.sh"; then
-        fail "bot profile has neither the Antigravity apply nor restore lifecycle"
-    elif grep -q 'ensure-antigravity-cli.sh' "${repo_root}/.devcontainer/post-create.sh"; then
-        fail "default-off bot profile downloads Antigravity without explicit opt-in"
+    # Antigravity settings/CLI management is no longer conditionally CALLED
+    # from post-create.sh based on the Copier answer — ensure-antigravity-
+    # cli.sh and bot-autonomy.sh apply (which the Codex/Claude checks above
+    # already require) always run; their own internal
+    # HARMON_BOT_AUTONOMY_ANTIGRAVITY marker check decides what happens.
+    # apply-antigravity-settings.sh itself is called directly only by
+    # dev/post-create.sh (no bot-autonomy module exists for the dev profile)
+    # and, internally, by the bot-autonomy antigravity module — never by bot
+    # post-create.sh.
+    grep -q 'ensure-antigravity-cli.sh' "${repo_root}/.devcontainer/post-create.sh" ||
+        fail "bot post-create does not run ensure-antigravity-cli.sh"
+    if grep -q 'apply-antigravity-settings.sh' "${repo_root}/.devcontainer/post-create.sh"; then
+        fail "bot post-create calls apply-antigravity-settings.sh directly — that belongs to the bot-autonomy antigravity module now"
     fi
+    grep -q '"HARMON_BOT_AUTONOMY_ANTIGRAVITY"' "${repo_root}/.devcontainer/devcontainer.json" ||
+        fail "bot devcontainer.json does not set the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
+    grep -q '"HARMON_BOT_AUTONOMY_ANTIGRAVITY"' "${repo_root}/.devcontainer/dev/devcontainer.json" ||
+        fail "dev devcontainer.json does not set the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
+    grep -q '"AGY_CLI_DISABLE_AUTO_UPDATE": *"true"' "${repo_root}/.devcontainer/devcontainer.json" ||
+        fail "bot profile permits the compatibility Antigravity binary to auto-update"
+    grep -q 'HARMON_BOT_AUTONOMY_ANTIGRAVITY' "${repo_root}/.devcontainer/dev/post-create.sh" ||
+        fail "dev post-create does not branch on the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
+    grep -q 'apply-antigravity-settings.sh restore' "${repo_root}/.devcontainer/dev/post-create.sh" ||
+        fail "dev post-create has no restore path for a disabled Antigravity option"
     # ── Balanced dev-profile policy (antigravity-settings-dev.json) ──
     # The human profile auto-accepts edits and an allowlist of common commands
     # but still gates unlisted ones — never the bot's blanket always-proceed.
@@ -942,6 +1068,19 @@ assert_container() {
         local ts_authkey
         ts_authkey="$(docker exec -u vscode "$container_id" printenv TS_AUTHKEY 2>/dev/null || true)"
         [ -z "$ts_authkey" ] || fail "TS_AUTHKEY is set in the bot container"
+
+        # Every supported installed harness's bot policy, re-checked against
+        # its live effective state — the same verifier post-create and
+        # post-start already run. Reuses the one implementation rather than
+        # duplicating each boundary's check a second time here (Claude Code,
+        # Antigravity, and OpenCode would otherwise go completely unchecked
+        # in CI despite the "every supported installed harness" claim).
+        local bot_autonomy_out bot_autonomy_rc
+        bot_autonomy_rc=0
+        bot_autonomy_out="$(docker exec -u vscode "$container_id" \
+            bash .devcontainer/scripts/bot-autonomy.sh verify 2>&1)" || bot_autonomy_rc=$?
+        [ "$bot_autonomy_rc" -eq 0 ] ||
+            fail "bot-autonomy.sh verify failed in the bot container: ${bot_autonomy_out}"
     else
         [ "$codex_sandbox" = "workspace-write" ] || fail "human Codex sandbox is '${codex_sandbox}'"
         [ "$codex_approval" = "on-request" ] || fail "human Codex approval policy is '${codex_approval}'"

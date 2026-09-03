@@ -231,6 +231,64 @@ application-specific controls. A deployed web application should evaluate them;
 a library or docs repository usually should not.
 [% if devcontainer %]
 
+## Bot devcontainer: fail-closed non-interactive policy
+
+The bot profile's Docker container is its isolation boundary, so every agent
+harness installed in it is meant to run without per-action prompts. That
+declared policy and its *effective* runtime state diverged once in the wild —
+a bot container reported Codex's managed `sandbox_mode` as `workspace-write`
+with approvals required, instead of the intended
+`danger-full-access`/`never` (harmon-init#1137) — because four independent,
+ad hoc scripts implemented it with no shared enumeration and nothing to
+verify the applied value actually matched. `.devcontainer/scripts/
+bot-autonomy.sh apply|verify`, keyed by `agent-registry.json`'s harness
+slugs, replaces that with one dispatch point:
+
+- **`apply`** (bot `post-create.sh`, after the shared setup and the
+  Antigravity compatibility installer) writes every installed, covered
+  harness's bot policy and exits non-zero on any module failure, so
+  `postCreateCommand` fails visibly rather than continuing past a broken
+  write.
+- **`verify`** re-reads each harness's *effective* runtime configuration —
+  never the file `apply` wrote — so a bug in `apply` cannot make its own
+  `verify` agree with it. It runs again at the end of post-create and, on
+  every container start, in bot `post-start.sh` **before** the shared
+  `post-start-common.sh` script's Agent-Deck conductor-start block: a
+  drifted policy blocks the conductor from starting rather than letting an
+  autonomous session run for the rest of its lifetime against a bad
+  configuration.
+- **CI** (`.github/workflows/devcontainer-build.yml`) runs `verify` against
+  the built bot image via `docker exec`, so the same check that gates
+  container creation also gates the PR that changed it.
+- Every registered harness slug resolves to exactly one of a **module**
+  (the harness has an installed executable and a real boundary — Claude
+  Code, Codex CLI, Antigravity, OpenCode today), an **alias** to another
+  slug's module (the six `claude-code-*` provider-rewired variants share
+  `claude-code`'s boundary), or an **`unsupported`** entry naming a reason
+  and the executable to watch for. A slug in none of the three fails a unit
+  test (`task test:bot-autonomy`, unconditionally part of `task verify`); an
+  `unsupported` slug's named executable turning up **installed** fails
+  `verify` exactly like an uncovered slug, regardless of the reason it was
+  unsupported — there is no exemption that survives installation.
+- A harness whose autonomy is gated behind a Copier option (Antigravity,
+  via `use_antigravity_cli`) still gets a real module — never
+  `unsupported` — because the harness is installed in the image regardless
+  of the answer. The option selects the module's *policy* (`autonomous` or
+  `disabled-by-option`, both a verified state), not whether the module
+  exists. Every verbatim, template-twinned script that needs the answer
+  reads it from exactly one place: a rendered
+  `containerEnv.HARMON_BOT_AUTONOMY_<HARNESS>` marker the `devcontainer.json`
+  twins set from the Copier answer — never `copier.yml`/
+  `.copier-answers.yml` introspection, since a verbatim twin ships identical
+  bytes to every generated repo regardless of that repo's answers.
+- Antigravity's and OpenCode's policy files live on named volumes that
+  outlive a container rebuild, so each module records the pre-`apply` value
+  and offers a `restore` mode — reverting this mechanism's own code does
+  not undo a value already written to a persisted volume.
+
+See [../guides/devcontainers.md](../guides/devcontainers.md) for the
+per-harness mechanics.
+
 ## Two identities: the bot vs the operator
 
 - **AI bot** (`[[ author_git_provider_username ]]-bot`) — runs in the primary

@@ -9,11 +9,15 @@ on:
       - ".devcontainer/**"
       - ".github/workflows/devcontainer-build.yml"
       - "scripts/verify-ci-results.sh"
+      - "scripts/devcontainer-assert.sh"
+      - "scripts/devcontainer-smoke.sh"
   pull_request:
     paths:
       - ".devcontainer/**"
       - ".github/workflows/devcontainer-build.yml"
       - "scripts/verify-ci-results.sh"
+      - "scripts/devcontainer-assert.sh"
+      - "scripts/devcontainer-smoke.sh"
   workflow_dispatch:
 
 concurrency:
@@ -128,3 +132,57 @@ jobs:
           EXPECTED_RESULT: success
           BUILD_RESULT: ${{ needs.build.result }}
         run: ./scripts/verify-ci-results.sh "build=${BUILD_RESULT}"
+
+  # Fail-closed proof for issue #1137: starts a real bot container and runs
+  # bot-autonomy.sh verify inside it (via devcontainer-smoke.sh, which shares
+  # this workflow's registry build cache, so this is a cache hit, not a full
+  # rebuild), so every supported installed harness's effective policy is
+  # actually checked, not just its source files. Not a required
+  # branch-protection status check (openspec/changes/bot-autonomy-bootstrap
+  # design.md - Non-Goals): #1137's fail-closed guarantee is satisfied by
+  # apply/verify failing container creation/start directly; this job adds a
+  # second, PR-visible signal on top. Deliberately NOT part of the local
+  # `task ci` mirror — see docs/architecture/ci-cd.md and AGENTS.md's
+  # CI-only-infrastructure carve-out.
+  devcontainer-assert-bot:
+    if: always()
+    needs: [build]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 30
+    env:
+      IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+    steps:
+      # Never check out or run fork-controlled repository code on this path.
+      - name: Verify deliberate skip at the untrusted-fork boundary
+        if: env.IS_FORK == 'true'
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          if [ "$BUILD_RESULT" != "skipped" ]; then
+            echo "Job build result: $BUILD_RESULT (expected skipped for an untrusted fork)"
+            exit 1
+          fi
+          echo "Untrusted fork trust boundary enforced: the bot-autonomy container assertion was deliberately skipped."
+      - if: env.IS_FORK != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: env.IS_FORK != 'true'
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              networkMode = "host"
+      - if: env.IS_FORK != 'true'
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert bot-autonomy fail-closed policy in a running bot container
+        if: env.IS_FORK != 'true'
+        env:
+          CODER: ""
+          GH_TOKEN: ""
+          TS_AUTHKEY: ""
+        run: ./scripts/devcontainer-smoke.sh .devcontainer/devcontainer.json

@@ -14,14 +14,6 @@ what make that true: the bot profile leaves `TS_AUTHKEY` off its allow-list so a
 tailnet key never reaches an agent container, and the dev profile leaves
 `GH_TOKEN` off so a bot credential never reaches a human one.
 
-**Claude permission mode differs by profile.** The **bot** defaults to
-`bypassPermissions` (Claude runs tools without per-action prompts — the container
-is the isolation boundary); the **dev** profile keeps the normal prompt-on-action
-default so a human stays in the loop. The shared managed settings
-(`config/claude-settings.json`) deliberately omit `defaultMode`; the bot opts in
-at create time via `scripts/enable-claude-bypass.sh`. `bypassPermissions` is only
-safe because it is container-scoped — it is never set on the host.
-
 **Codex follows the same split.** Both profiles default to `gpt-5.6-sol` with
 medium reasoning and a 64 KiB project-instruction budget. The **dev** profile
 uses `workspace-write`, `on-request`, and Auto-review: the sandbox defines the
@@ -31,14 +23,62 @@ there is no nested sandbox or interactive prompt inside Docker. Repository
 instructions, hooks, GitHub token scope, mounted volumes, and Docker itself
 remain the bot's boundaries.
 
-**Codex follows the same split.** Both profiles default to `gpt-5.6-sol` with
-medium reasoning and a 64 KiB project-instruction budget. The **dev** profile
-uses `workspace-write`, `on-request`, and Auto-review: the sandbox defines the
-writable boundary, while eligible exits from it are reviewed automatically.
-The **bot** changes the managed config to `danger-full-access` plus `never`, so
-there is no nested sandbox or interactive prompt inside Docker. Repository
-instructions, hooks, GitHub token scope, mounted volumes, and Docker itself
-remain the bot's boundaries.
+## Bot-only agent autonomy: `bot-autonomy.sh`
+
+Every harness installed in the **bot** image runs non-interactively — no
+per-action prompts, no interactive approval — because the container itself is
+the isolation boundary. That policy is applied and re-verified by a single
+entrypoint, `.devcontainer/scripts/bot-autonomy.sh apply|verify`, keyed by
+`agent-registry.json`'s harness slugs, rather than by four independent scripts
+that happened to be called from `post-create.sh` — the shape that let a real
+regression (Codex silently staying at its human-profile sandbox) ship
+unnoticed (harmon-init#1137). Bot `post-create.sh` runs `apply` after the
+shared setup and the Antigravity compatibility installer; bot `post-start.sh`
+runs `verify` again on every start, **before** the shared
+`post-start-common.sh` script's Agent-Deck conductor-start block — a drifted
+policy blocks the conductor from starting rather than letting it run for the
+rest of its lifetime against a bad config. `apply` failing makes
+`postCreateCommand` fail visibly; `verify` failing makes post-start fail; a
+misconfigured bot image also fails the `devcontainer-build.yml` CI job, which
+runs `verify` against the built container.
+
+Every one of `agent-registry.json`'s registered harness slugs resolves to
+exactly one of three buckets, checked by a unit test
+(`task test:bot-autonomy`, part of `task verify` unconditionally — no
+`.devcontainer/**` path filter, since a registry change is the failure mode
+this exists to catch):
+
+- **A module** — `.devcontainer/config/bot-autonomy/<slug>.sh` — for a harness
+  actually installed in the image today: `claude-code`, `codex-cli`,
+  `antigravity`, `opencode`.
+- **An alias** to another slug's module, for a slug that launches the same
+  executable under a different provider configuration: the six
+  `claude-code-*` provider-rewired variants (DeepSeek, GLM, Kimi, MiniMax,
+  Qwen, Qwen-local) all alias to `claude-code`.
+- **An `unsupported` entry**, naming a reason and the executable `verify`
+  checks for on `PATH` (or `null` for a slug with no installable binary at
+  all, like the `claude-code-action` GitHub Action). The reason is
+  documentation only — the instant a named executable turns up installed,
+  `verify` fails naming it, exactly like an uncovered slug, regardless of why
+  it was unsupported.
+
+Per-harness boundaries: **Claude Code** sets `permissions.defaultMode` to
+`bypassPermissions` in the managed settings (this also covers every
+`claude-code-*` alias). **Codex** installs a complete, checksum-verified
+`config/codex-managed-config.bot.toml` over the managed config, kept
+structurally in sync with the shared human/bot baseline
+(`config/codex-managed-config.toml`) by a parity test that fails if the two
+files diverge on any key other than `sandbox_mode`/`approval_policy`.
+**OpenCode** forces `permission.* = "allow"` in
+`~/.config/opencode/opencode.json` on every `apply`, verified against
+OpenCode's own *resolved* config (`opencode debug config`, run from the
+workspace) rather than the global file alone, since a workspace-level
+`opencode.json` can override the global default. **Antigravity** is described
+below — it is the one harness whose autonomy is Copier-gated, and its module
+is still always present; only its policy is conditional. Antigravity's and
+OpenCode's settings live on named volumes that outlive a container rebuild,
+so each records the pre-`apply` value and offers a `restore` mode, the same
+reversibility pattern.
 
 [% if use_antigravity_cli %]
 **Antigravity autonomy is enabled.** Two profiles, two policies:
@@ -48,10 +88,14 @@ remain the bot's boundaries.
   terminal sandbox, configures the devcontainer status line renderer, and trusts
   the current container workspace — the container is the isolation boundary.
   Interactive `agy` honors that policy directly; **headless `agy -p …` ignores
-  settings allow-rules and auto-denies**, so a bot-only shell wrapper
-  (`config/agy-autonomy.sh`, active when `FOREMAN_DEVCONTAINER=bot`) injects
-  `--dangerously-skip-permissions` for agent runs. A programmatic launcher that
-  never sources a login shell must pass that flag itself.
+  settings allow-rules and auto-denies**, so bot `apply` installs a real
+  executable at `~/.local/bin/agy` (`bot-autonomy/antigravity.sh`, replacing an
+  earlier shell-function wrapper that only covered a login shell) that injects
+  `--dangerously-skip-permissions` for agent runs. `devcontainer.json`'s
+  `containerEnv.PATH` puts `~/.local/bin` ahead of the system binary
+  container-wide, so the wrapper's precedence holds for a `docker exec` or any
+  other programmatic launcher too — not only interactive shells. A launcher
+  that resolves `agy` some other way must still pass that flag itself.
 - **Dev (human) profile — balanced.** It auto-accepts edits/artifacts and an
   allowlist of common commands (`task`, `git`, `gh`, linters, test runners, …)
   so routine work is prompt-free, but still asks before anything unlisted and
@@ -63,16 +107,23 @@ API-key environment variable, so even a disposable container needs that one
 human login; the pinned CLI falls back to file-backed credentials when the
 headless container has no D-Bus keyring, and the `~/.gemini` named volume
 persists the login across rebuilds. A checksum-verified compatibility installer
-covers the interval before the shared-image pin advances, then becomes a
-network-free no-op. The settings helper backs up the six policy keys it owns and
-tracks its workspace-trust entry, so turning the Copier option off restores them
-while preserving unrelated settings.
+(`config/ensure-antigravity-cli.sh`) covers the interval before the shared-image
+pin advances, then becomes a network-free no-op; it installs the pinned binary
+at `~/.local/bin/agy-real` (never `agy` itself, which is always either the
+bot's wrapper or a plain symlink to `agy-real`) and is gated on the rendered
+`containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` marker — turning the Copier
+answer off leaves both files absent rather than downloading anything. The
+settings helper backs up the six policy keys it owns and tracks its
+workspace-trust entry, so turning the Copier option off restores them while
+preserving unrelated settings.
 [% else %]
 **Antigravity autonomy is off by default.** The CLI is available in the shared
 image, but this template does not authenticate it or weaken its permission
-policy unless `use_antigravity_cli` is explicitly enabled. If an earlier
-template update enabled it, post-create restores the policy values recorded
-before that opt-in.
+policy unless `use_antigravity_cli` is explicitly enabled — its bot-autonomy
+module still exists (a prompt-enabled Antigravity CLI is the
+verified-correct state at this answer, not an uncovered gap), it just writes
+no autonomy configuration. If an earlier template update enabled it,
+post-create restores the policy values recorded before that opt-in.
 [% endif %]
 
 ## Run it locally
@@ -273,6 +324,12 @@ profile-specific named volumes; Coder maps the same paths into
 `~/.persistent`. Rebuilding the container therefore keeps future custom config,
 provider logins, and sessions. The image disables OpenCode's self-updater so the
 pinned, tested version remains stable until the shared image is rebuilt.
+
+The **bot** profile forces `permission.* = "allow"` in `opencode.json`
+(`bot-autonomy/opencode.sh`, part of the [bot-only agent
+autonomy](#bot-only-agent-autonomy-bot-autonomysh) bootstrap above) so OpenCode
+never prompts; the **dev** profile leaves OpenCode at its own out-of-the-box
+defaults.
 
 ## Persistent agent sessions (Herdr)
 

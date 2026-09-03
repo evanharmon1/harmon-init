@@ -65,10 +65,10 @@
     [% endif %]
     "source=claude-code-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.claude,type=volume",
     "source=codex-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.codex,type=volume",
-    "source=gemini-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.gemini,type=volume",
+    "source=gemini-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.gemini,type=volume",
     "source=agent-deck-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.agent-deck,type=volume",
     "source=herdr-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.config/herdr,type=volume",
-    "source=opencode-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.config/opencode,type=volume",
+    "source=opencode-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.config/opencode,type=volume",
     "source=opencode-data-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.local/share/opencode,type=volume",
     "source=shell-history-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.shell-history,type=volume",
     "source=zoxide-data-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.local/share/zoxide,type=volume"
@@ -81,12 +81,26 @@
   //
   // FOREMAN_DEVCONTAINER: foreman's D2 startup tripwire — it refuses to run
   // anywhere this marker is not "bot" (only the bot profile sets it).
+  //
+  // HARMON_BOT_AUTONOMY_ANTIGRAVITY: rendered from use_antigravity_cli — the
+  // ONLY channel the verbatim, template-twinned ensure-antigravity-cli.sh
+  // and bot-autonomy/antigravity.sh may read to learn that per-repo Copier
+  // answer. See openspec/changes/bot-autonomy-bootstrap/design.md - Decisions.
+  //
+  // PATH: ${containerEnv:PATH} reads the container's own already-established
+  // PATH (image + Features) and prepends ~/.local/bin ahead of
+  // /usr/local/bin, applied by Docker to every process the container runs —
+  // not only shells that source .bashrc/.zshrc — so the Antigravity autonomy
+  // wrapper's precedence over the system agy binary holds for a `docker
+  // exec` or a programmatic launcher too, not just interactive shells.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
 [% if use_antigravity_cli %]
     "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
 [% endif %]
-    "FOREMAN_DEVCONTAINER": "bot"
+    "FOREMAN_DEVCONTAINER": "bot",
+    "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "[[ 'enabled' if use_antigravity_cli else 'disabled' ]]",
+    "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
   },
 [% if include_ansible %]
   "remoteEnv": {

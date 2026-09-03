@@ -283,10 +283,8 @@ if [ -f /usr/local/share/devcontainer-config/claude-providers.sh ]; then
     source /usr/local/share/devcontainer-config/claude-providers.sh
 fi
 
-# ── Antigravity CLI bot autonomy wrapper ────────────────────
-# Bot-only `agy` wrapper that injects --dangerously-skip-permissions for agent
-# runs (the human dev profile is a runtime no-op). The source line is verbatim
-# and shared by every render; the [ -f ] guard skips it when the file is absent.
-if [ -f /usr/local/share/devcontainer-config/agy-autonomy.sh ]; then
-    source /usr/local/share/devcontainer-config/agy-autonomy.sh
-fi
+# Antigravity's bot-only autonomy wrapper is now a real executable at
+# ~/.local/bin/agy (bot-autonomy/antigravity.sh apply), installed on the
+# container-wide PATH via devcontainer.json's containerEnv.PATH — not a
+# login-shell function, so headless/programmatic launches are covered too.
+# See openspec/changes/bot-autonomy-bootstrap.
