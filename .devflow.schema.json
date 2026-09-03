@@ -26,10 +26,10 @@
     "default_strategy": { "type": "string" },
     "rigor_order": { "$ref": "#/$defs/strings" },
     "tier_order": { "$ref": "#/$defs/strings" },
-    "rigor": { "$ref": "#/$defs/tables" },
-    "rounds": { "$ref": "#/$defs/tables" },
-    "breadth": { "$ref": "#/$defs/tables" },
-    "spend": { "$ref": "#/$defs/tables" },
+    "rigor": { "$ref": "#/$defs/rigor_profiles" },
+    "rounds": { "$ref": "#/$defs/round_profiles" },
+    "breadth": { "$ref": "#/$defs/breadth_profiles" },
+    "spend": { "$ref": "#/$defs/spend_profiles" },
     "gates": {
       "type": "object",
       "additionalProperties": false,
@@ -47,13 +47,13 @@
       "additionalProperties": false,
       "required": ["converged", "diverging"],
       "properties": {
-        "converged": { "type": "object" },
-        "diverging": { "type": "object" }
+        "converged": { "$ref": "#/$defs/convergence_expression" },
+        "diverging": { "$ref": "#/$defs/convergence_expression" }
       }
     },
-    "role": { "$ref": "#/$defs/tables" },
-    "stage": { "$ref": "#/$defs/tables" },
-    "strategy": { "$ref": "#/$defs/tables" }
+    "role": { "$ref": "#/$defs/role_profiles" },
+    "stage": { "$ref": "#/$defs/stage_profiles" },
+    "strategy": { "$ref": "#/$defs/strategy_profiles" }
   },
   "$defs": {
     "strings": {
@@ -62,10 +62,165 @@
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 1 }
     },
-    "tables": {
+    "tier": { "type": "string", "enum": ["local", "economy", "standard", "frontier", "apex"] },
+    "rigor_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rounds",
+        "breadth",
+        "orchestrator_tier",
+        "implementer_tier",
+        "challenger_tier",
+        "reviewer_tier",
+        "integrator_tier",
+        "tier_escalation",
+        "description"
+      ],
+      "properties": {
+        "rounds": { "type": "string", "minLength": 1 },
+        "breadth": { "type": "string", "minLength": 1 },
+        "orchestrator_tier": { "$ref": "#/$defs/tier" },
+        "implementer_tier": { "$ref": "#/$defs/tier" },
+        "challenger_tier": { "$ref": "#/$defs/tier" },
+        "reviewer_tier": { "$ref": "#/$defs/tier" },
+        "integrator_tier": { "$ref": "#/$defs/tier" },
+        "tier_escalation": { "type": "boolean" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "rigor_profiles": {
       "type": "object",
       "minProperties": 1,
-      "additionalProperties": { "type": "object" }
+      "additionalProperties": { "$ref": "#/$defs/rigor_profile" }
+    },
+    "round_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "challenge",
+        "review",
+        "integration",
+        "remediation",
+        "min_rounds",
+        "wall_clock_min"
+      ],
+      "properties": {
+        "challenge": { "type": "integer", "minimum": 0 },
+        "review": { "type": "integer", "minimum": 0 },
+        "integration": { "type": "integer", "minimum": 0 },
+        "remediation": { "type": "integer", "minimum": 0 },
+        "min_rounds": { "type": "integer", "minimum": 0 },
+        "wall_clock_min": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "round_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/round_profile" }
+    },
+    "breadth_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_agent_runs", "max_parallel_agents"],
+      "properties": {
+        "max_agent_runs": { "type": "integer", "minimum": 1 },
+        "max_parallel_agents": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "breadth_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/breadth_profile" }
+    },
+    "spend_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "max_usd": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "spend_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/spend_profile" }
+    },
+    "role_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "families", "harnesses"],
+      "properties": {
+        "tier": { "$ref": "#/$defs/tier" },
+        "families": { "$ref": "#/$defs/strings" },
+        "harnesses": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "role_profiles": {
+      "type": "object",
+      "minProperties": 5,
+      "additionalProperties": { "$ref": "#/$defs/role_profile" }
+    },
+    "stage_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "finders": { "$ref": "#/$defs/strings" },
+        "finder_fallbacks": { "$ref": "#/$defs/strings" },
+        "pool": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "stage_profiles": {
+      "type": "object",
+      "minProperties": 4,
+      "additionalProperties": { "$ref": "#/$defs/stage_profile" }
+    },
+    "strategy_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topology", "planning", "delegation", "human_gates", "description"],
+      "properties": {
+        "topology": {
+          "enum": ["single-agent", "lead-and-workers", "independent-proposals", "human-directed"]
+        },
+        "planning": { "enum": ["inline", "explicit", "independent", "collaborative"] },
+        "delegation": { "enum": ["none", "optional", "required"] },
+        "human_gates": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "description": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "coordination": { "const": "parallel-when-independent" },
+        "selection": { "const": "judge" },
+        "synthesis": { "type": "boolean" },
+        "min_agents": { "type": "integer", "minimum": 2 },
+        "distinct_families": { "type": "boolean" }
+      }
+    },
+    "strategy_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/strategy_profile" }
+    },
+    "convergence_expression": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "predicate": {
+          "enum": ["no_gating_findings", "provenance_share", "count_rising", "repeat_after_fix"]
+        },
+        "any": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/convergence_expression" }
+        },
+        "all": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/convergence_expression" }
+        },
+        "increases": { "type": "integer", "minimum": 1 },
+        "min": { "type": "number", "minimum": 0, "maximum": 1 },
+        "exclude_classes": { "$ref": "#/$defs/strings" }
+      }
     }
   }
 }

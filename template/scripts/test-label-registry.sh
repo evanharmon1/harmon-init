@@ -354,7 +354,7 @@ area:skills|0E8A16|Shared agent skills and skills sync; subsystem workflow skill
 area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring"
     check_lockfile template/label-registry.json template/agent-registry.json \
         "$shared_inline
-$root_only_inline" "template layer"
+$template_only_inline" "template layer"
 
     # The manifests are an allowlisted dogfood-parity divergence, but the
     # divergence is now exactly the per-layer area/domain values — everything
