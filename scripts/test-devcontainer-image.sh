@@ -64,7 +64,13 @@ docker run --rm \
 # tell "already fetched, no fetch needed" apart from "silently reached the
 # network just now". This is what actually proves the harness-matrix spec's
 # requirement: a freshly created container needs no network to run `copilot`.
-docker run --rm --network=none "$candidate" copilot --version
+# `--user vscode`: the image's baked-in default is root (this candidate is
+# built from images/devcontainer/Dockerfile directly, with no downstream
+# overlay to switch it), but every real devcontainer profile sets
+# remoteUser: vscode -- and this repo already has precedent for root-vs-vscode
+# npm-install permission gaps (see the Dockerfile's own DISABLE_AUTOUPDATER
+# comment), so root alone would not prove what an actual consumer gets.
+docker run --rm --network=none --user vscode "$candidate" copilot --version
 
 docker build \
     --build-arg "BASE_IMAGE=${candidate}" \
