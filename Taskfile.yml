@@ -84,6 +84,7 @@ tasks:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
       - task: test:agent-registry
+      - task: test:result-schemas
       - task: test:registry-drift
       - task: test:registry-docs
       - task: test:label-registry
@@ -461,6 +462,11 @@ tasks:
     desc: Bind label provisioning, the docs taxonomy table, and the status inventory to the label registry
     cmds:
       - ./scripts/test-label-registry.sh
+
+  test:result-schemas:
+    desc: Schema-check the dev-flow-v2 result/record contracts and receipt smoke fixtures
+    cmds:
+      - ./scripts/test-result-schemas.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

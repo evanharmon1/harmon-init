@@ -22,4 +22,6 @@ rejects legacy-version sed -i '0,/schema_version = 2/s//schema_version = 1/' .de
 rejects unknown-gate sed -i '0,/round_code      = "verify"/s//round_code      = "bad gate"/' .devflow.toml
 rejects retired-tier-table sh -c 'printf "\n[tier.standard]\n" >> .devflow.toml'
 rejects unknown-harness sed -i '0,/codex-cli/s//unknown-harness/' .devflow.toml
+rejects misspelled-tier-escalation sed -i '0,/tier_escalation/s//tier_escaltion/' .devflow.toml
+rejects wrong-stage-finder sed -i '/^\[stage.challenge\]/,/^\[/ s/finders = \["codex-adversarial"\]/finders = ["codex-verification"]/' .devflow.toml
 echo "devflow v2 mutation guards OK"

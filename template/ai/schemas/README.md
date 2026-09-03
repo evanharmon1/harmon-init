@@ -126,14 +126,13 @@ standalone schema refs its own definitions as `#/$defs/finding` /
 `$defs.attackScenario` of *this* composed document (there isn't one) instead
 of that role's own — so the inlined copy rewrites the ref to
 `#/$defs/reviewer/$defs/finding`, or `#/$defs/challenger/$defs/finding` and
-`#/$defs/challenger/$defs/attackScenario`. `scripts/test-result-schemas.sh`
-guards against the two ever drifting apart: it deep-equals each `$defs.<role>`
-against its standalone `result.<role>.schema.json` (undoing that one ref
-rewrite before comparing) and separately confirms `result.schema.json`
-accepts every valid role fixture and rejects every *schema-level* invalid
-one (a small, explicitly named set of invalid fixtures are receipt-only and
-so are correctly accepted by `result.schema.json` alone — see
-`SEMANTIC_ONLY` in that script).
+`#/$defs/challenger/$defs/attackScenario`. The authoritative schema bodies are
+vendored together from one harmon-devkit release. `scripts/test-result-schemas.sh`
+keeps the shipped family JSON-parseable and exercises receipt validation with
+a valid oneshot run plus an invalid transition. Harmon-devkit owns the full
+role-by-role conformance corpus and composed/standalone drift test; harmon-init
+ships this focused consumer smoke gate rather than duplicating that upstream
+corpus.
 
 ### Receipt validation: what a schema file cannot check alone
 

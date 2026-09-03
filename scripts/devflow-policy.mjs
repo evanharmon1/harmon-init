@@ -1186,6 +1186,43 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
  */
 export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrategy } = {}) {
   const { level, profile, order } = resolveRigorLevel(doc, requestedRigor)
+
+  // Validate the whole closed rigor-profile family before selecting values.
+  // Otherwise a misspelled control can silently become an absent/false one,
+  // even when the malformed profile is not this invocation's default.
+  const rigorKeys = new Set([
+    'rounds',
+    'breadth',
+    'orchestrator_tier',
+    'implementer_tier',
+    'challenger_tier',
+    'reviewer_tier',
+    'integrator_tier',
+    'tier_escalation',
+    'description',
+    'convergence'
+  ])
+  for (const [profileName, candidate] of Object.entries(doc.rigor || {})) {
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new PolicyError(`[rigor.${profileName}] must be a table`)
+    }
+    const missing = [...rigorKeys].filter(
+      (key) => key !== 'convergence' && !Object.hasOwn(candidate, key)
+    )
+    const extra = Object.keys(candidate).filter((key) => !rigorKeys.has(key))
+    if (missing.length > 0 || extra.length > 0) {
+      throw new PolicyError(
+        `[rigor.${profileName}] has invalid keys` +
+          `${missing.length > 0 ? `; missing: ${missing.join(', ')}` : ''}` +
+          `${extra.length > 0 ? `; unsupported: ${extra.join(', ')}` : ''}`
+      )
+    }
+    if (typeof candidate.tier_escalation !== 'boolean') {
+      throw new PolicyError(
+        `[rigor.${profileName}].tier_escalation must be a boolean, got ${JSON.stringify(candidate.tier_escalation)}`
+      )
+    }
+  }
   const rounds = resolveRounds(doc, profile, level)
   const breadth = resolveBreadth(doc, profile, level)
   const spend = resolveSpend(doc, profile)
@@ -1214,24 +1251,9 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
   const stages = resolveStages(doc)
   const strategy = resolveStrategy(doc, requestedStrategy)
 
-  // A present-but-wrong-typed tier_escalation (e.g. the string "true", a
-  // plausible TOML-authoring mistake) silently coerced to `false` under
-  // `=== true` — accepting a malformed profile while disabling the very
-  // escalation behavior it appears to request. Shepherd-stage cloud
-  // finding, confirmed; scoped narrowly to a PRESENT wrong-typed value —
-  // an earlier round considered and explicitly deferred the broader
-  // "require every profile to declare it explicitly" fix (a wide,
-  // mechanical ripple to every fixture relying on the absent-defaults-
-  // false convention); rejecting only a present non-boolean carries no
-  // such ripple, since an omitted field is untouched by this check.
-  if (Object.hasOwn(profile, 'tier_escalation') && typeof profile.tier_escalation !== 'boolean') {
-    throw new PolicyError(
-      `[rigor.${level}].tier_escalation must be a boolean, got ${JSON.stringify(profile.tier_escalation)}`
-    )
-  }
   return {
     source: 'operating',
-    rigor: { level, order, tier_escalation: profile.tier_escalation === true },
+    rigor: { level, order, tier_escalation: profile.tier_escalation },
     rounds,
     breadth,
     spend,

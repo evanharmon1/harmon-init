@@ -19,8 +19,14 @@ at an interpretation. The frozen `.devflow-conformance-v1.json` remains a v1
 compatibility artifact. `.devflow-conformance-v2.json` is the corpus for v2
 readers.
 
-The reference reader is `scripts/devflow-policy.mjs`. It parses TOML, resolves
-the selected profile, and cross-validates registry and Taskfile references.
+The reference reader is `scripts/devflow-policy.mjs`. It parses TOML, accepts
+an already-authorized rigor/strategy request, resolves the selected profile,
+and cross-validates registry and Taskfile references. It deliberately does not
+authenticate GitHub actors, read labels, reconcile label conflicts, or arm a
+workflow; those are consumer trust boundaries. A consumer applies the
+precedence below and passes the resulting rigor/strategy request to the reader.
+Role-tier overrides remain consumer inputs applied to the resolved five-role
+profile, not raw label parsing performed by this config reader.
 `scripts/test-devflow-config.sh` checks both dogfood copies and exercises the
 reader. Generated repositories receive the declarative policy and schema; the
 reader is distributed separately at a pinned harmon-devkit release.

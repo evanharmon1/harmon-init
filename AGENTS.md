@@ -295,9 +295,11 @@ Strategy selects a `[strategy.*]` topology. Resolve explicit operator input,
 then trusted issue labels, then `default_rigor` / `default_strategy`; use the
 reader's built-in fallback only when the policy file is absent. Read caps,
 floors, wall-clock limits, breadth, stage actors, gate targets, and tier
-choices from the selected tables in the file. The executable contract is
+choices from the selected tables in the file. The config resolver is
 [`scripts/devflow-policy.mjs`](scripts/devflow-policy.mjs), and the portable
-shape is [`.devflow.schema.json`](.devflow.schema.json).
+shape is [`.devflow.schema.json`](.devflow.schema.json). Consumers authenticate
+and reconcile label inputs before passing an authorized selection to the
+resolver; the config reader does not cross that GitHub trust boundary.
 
 Rigor label conflicts resolve to the **strongest label present**, by
 `.devflow.toml`'s `rigor_order` (weakest to strongest) — a conflict can then
