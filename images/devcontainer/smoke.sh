@@ -31,6 +31,13 @@ for tool in task shfmt hadolint actionlint terraform-docs terraform tflint yq le
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
 
+# Gemini CLI is deliberately absent (Antigravity supersedes it as the
+# Google-family harness) -- assert the negative so a future reintroduction
+# fails loudly here instead of shipping silently unnoticed.
+! command -v gemini >/dev/null 2>&1 || fail "gemini is on PATH but must not be installed"
+jq -e '.tools | has("gemini-cli") | not' "$manifest" >/dev/null ||
+    fail "manifest still has a gemini-cli entry"
+
 run_version() {
     _rv_tool="$1"
     shift
