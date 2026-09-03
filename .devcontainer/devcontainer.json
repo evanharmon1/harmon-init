@@ -52,13 +52,13 @@
   "mounts": [
     "source=claude-code-config-evanharmon1-harmon-init,target=/home/vscode/.claude,type=volume",
     "source=codex-config-evanharmon1-harmon-init,target=/home/vscode/.codex,type=volume",
-    "source=gemini-config-evanharmon1-harmon-init,target=/home/vscode/.gemini,type=volume",
+    "source=gemini-config-evanharmon1-harmon-init${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.gemini,type=volume",
     "source=copilot-config-evanharmon1-harmon-init,target=/home/vscode/.copilot,type=volume",
     "source=pi-config-evanharmon1-harmon-init,target=/home/vscode/.pi,type=volume",
     "source=omp-config-evanharmon1-harmon-init,target=/home/vscode/.omp,type=volume",
     "source=agent-deck-config-evanharmon1-harmon-init,target=/home/vscode/.agent-deck,type=volume",
     "source=herdr-config-evanharmon1-harmon-init,target=/home/vscode/.config/herdr,type=volume",
-    "source=opencode-config-evanharmon1-harmon-init,target=/home/vscode/.config/opencode,type=volume",
+    "source=opencode-config-evanharmon1-harmon-init${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.config/opencode,type=volume",
     "source=opencode-data-evanharmon1-harmon-init,target=/home/vscode/.local/share/opencode,type=volume",
     "source=shell-history-evanharmon1-harmon-init,target=/home/vscode/.shell-history,type=volume",
     "source=zoxide-data-evanharmon1-harmon-init,target=/home/vscode/.local/share/zoxide,type=volume"
@@ -71,10 +71,27 @@
   //
   // FOREMAN_DEVCONTAINER: foreman's D2 startup tripwire — it refuses to run
   // anywhere this marker is not "bot" (only the bot profile sets it).
+  //
+  // HARMON_BOT_AUTONOMY_ANTIGRAVITY: rendered from use_antigravity_cli (this
+  // repository's own .dogfood-answers.yml sets it true, hence "enabled"
+  // here) — the ONLY channel the verbatim, template-twinned
+  // ensure-antigravity-cli.sh and bot-autonomy/antigravity.sh may read to
+  // learn that per-repo Copier answer. See
+  // openspec/changes/bot-autonomy-bootstrap/design.md - Decisions.
+  //
+  // PATH (~/.local/bin ahead of /usr/local/bin, so the Antigravity autonomy
+  // wrapper's precedence over the system agy binary holds for a `docker
+  // exec` or programmatic launcher too, not just interactive shells) is set
+  // in the Dockerfile, not here: containerEnv's ${containerEnv:PATH} cannot
+  // self-expand while Docker is creating the container — it is passed to
+  // `docker run -e` literally, unresolved. A Dockerfile ENV directive is
+  // Docker's own, working self-reference and applies identically to any
+  // docker exec, so it belongs in the image build, not this runtime layer.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
     "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
-    "FOREMAN_DEVCONTAINER": "bot"
+    "FOREMAN_DEVCONTAINER": "bot",
+    "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "enabled"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "postStartCommand": "bash .devcontainer/post-start.sh",

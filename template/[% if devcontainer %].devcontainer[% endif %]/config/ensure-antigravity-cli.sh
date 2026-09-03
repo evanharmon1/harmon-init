@@ -6,11 +6,29 @@ set -euo pipefail
 version="1.1.11"
 build="4956531888881664"
 
+install_dir="$HOME/.local/bin"
+real_bin="${install_dir}/agy-real"
+link_bin="${install_dir}/agy"
+
+# HARMON_BOT_AUTONOMY_ANTIGRAVITY is the rendered containerEnv marker (bot
+# and dev devcontainer.json twins, from the use_antigravity_cli Copier
+# answer) — the only channel this verbatim, template-twinned script may read
+# to learn that per-repo answer. Anything other than "enabled" (including
+# absent, on an image built before this marker existed) means: no download,
+# and remove agy-real/agy if either survives from a prior enabled run or a
+# stale image, so a default-off render reaches plain absence, never a
+# symlink with nothing to point at.
+if [ "${HARMON_BOT_AUTONOMY_ANTIGRAVITY:-}" != "enabled" ]; then
+    rm -f "$real_bin" "$link_bin"
+    exit 0
+fi
+
 # Once the pinned image supplies this exact version, exit without touching the
 # network. A stale image version falls through to the user-local compatibility
 # copy, which takes precedence in the repo-managed shell PATH.
-if [ -x "$HOME/.local/bin/agy" ] &&
-    [ "$("$HOME/.local/bin/agy" --version | head -1)" = "$version" ]; then
+if [ -x "$real_bin" ] &&
+    [ "$("$real_bin" --version | head -1)" = "$version" ]; then
+    ln -sfn "$real_bin" "$link_bin"
     exit 0
 fi
 
@@ -20,8 +38,9 @@ if [ -x "$system_binary" ] && [ "$("$system_binary" --version | head -1)" = "$ve
     # volume. Interactive shells put ~/.local/bin first, so an older executable
     # would shadow the newly pinned and smoke-tested shared-image binary. Do not
     # create a new shadow copy when the image binary is already sufficient.
-    if [ -x "$HOME/.local/bin/agy" ]; then
-        install -m 0755 "$system_binary" "$HOME/.local/bin/agy"
+    if [ -x "$real_bin" ]; then
+        install -m 0755 "$system_binary" "$real_bin"
+        ln -sfn "$real_bin" "$link_bin"
     fi
     exit 0
 fi
@@ -43,7 +62,6 @@ aarch64 | arm64)
     ;;
 esac
 
-install_dir="$HOME/.local/bin"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 tarball="$work_dir/${archive}.tar.gz"
@@ -54,4 +72,5 @@ curl -fsSL --retry 3 "$url" -o "$tarball"
 printf '%s  %s\n' "$sha512" "$tarball" | sha512sum --check -
 tar -xzf "$tarball" -C "$work_dir" antigravity
 install -d -m 0755 "$install_dir"
-install -m 0755 "$work_dir/antigravity" "$install_dir/agy"
+install -m 0755 "$work_dir/antigravity" "$real_bin"
+ln -sfn "$real_bin" "$link_bin"

@@ -111,8 +111,9 @@ but that is the whole of the property. `vscode` has passwordless `sudo` (the
 Microsoft devcontainer base grants it, and the lifecycle scripts rely on it
 non-interactively), and the bot profile runs Claude in `bypassPermissions`, so
 an agent can overwrite the staged hook. `/etc/claude-code/` is no better:
-`enable-claude-bypass.sh` already writes the managed settings there with
-`sudo`. Neither location is protected from an agent that wants to change it.
+the bot-autonomy `claude-code` module already writes the managed settings
+there with `sudo`. Neither location is protected from an agent that wants to
+change it.
 
 **Outage behavior:** pulls need no GHCR credential; if GHCR is unavailable,
 existing local/runner caches keep working and clean builders fail closed

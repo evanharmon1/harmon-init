@@ -4,6 +4,7 @@
   "artifactReviewPolicy": "always-proceed",
   "allowNonWorkspaceAccess": true,
   "enableTerminalSandbox": false,
+  "permissions": {},
   "statusLine": {
     "type": "command",
     "command": "/etc/claude-code/statusline.sh",
