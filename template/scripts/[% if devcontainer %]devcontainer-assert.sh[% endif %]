@@ -243,6 +243,14 @@ assert_unit() {
     }
     assert_step_order "${repo_root}/.devcontainer/post-create.sh" "bot-autonomy.sh apply"
     assert_step_order "${repo_root}/.devcontainer/dev/post-create.sh" "apply-antigravity-settings.sh"
+    # verify SHALL also run at the end of post-create (not only post-start),
+    # so a divergence between what apply wrote and a harness's actual
+    # effective state (e.g. an already-present workspace-level OpenCode
+    # override) fails container creation rather than surfacing only later.
+    case "$(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-create.sh" | grep -E 'bot-autonomy\.sh (apply|verify)' | tail -1)" in
+    *"bot-autonomy.sh verify"*) ;;
+    *) fail "bot post-create does not call bot-autonomy.sh verify after apply" ;;
+    esac
     # Strip comments first: dev/post-create.sh's own explanatory comment names
     # bot-autonomy.sh to say it does NOT call it, which a bare grep would
     # misread as a real invocation.

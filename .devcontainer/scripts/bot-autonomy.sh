@@ -227,6 +227,14 @@ cmd_coverage() {
         if target="$(alias_target_for "$slug" 2>/dev/null)"; then
             hits=$((hits + 1))
             detail="${detail:+${detail},}alias->${target}"
+            # An alias is only real coverage if its target actually resolves
+            # to a module — a misspelled or removed target would otherwise
+            # let both the alias AND its (non-existent) target go unverified
+            # at runtime while this static check reports them covered.
+            if ! module_slug_for "$target" >/dev/null 2>&1; then
+                echo "bot-autonomy: coverage failed — '${slug}' aliases to '${target}', which has no module" >&2
+                failed=1
+            fi
         fi
         if entry="$(unsupported_entry_for "$slug" 2>/dev/null)"; then
             hits=$((hits + 1))

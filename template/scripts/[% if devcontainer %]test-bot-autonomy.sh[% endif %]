@@ -61,6 +61,18 @@ if BOT_AUTONOMY_REGISTRY="$uncovered_registry" BOT_AUTONOMY_CONFIG_DIR="$module_
     fail "coverage did not fail on an uncovered registry slug"
 fi
 
+echo "==> 2b. coverage fails an alias whose target has no module"
+broken_alias_dir="${work_dir}/broken-alias-config"
+mkdir -p "$broken_alias_dir"
+cp "${module_dir}"/*.sh "${module_dir}/unsupported.json" "$broken_alias_dir/"
+jq -n '{"claude-code-broken": "totally-nonexistent-module"}' >"${broken_alias_dir}/aliases.json"
+broken_alias_registry="${work_dir}/registry-broken-alias.json"
+jq -n '{harnesses: [{slug: "claude-code-broken"}]}' >"$broken_alias_registry"
+if BOT_AUTONOMY_REGISTRY="$broken_alias_registry" BOT_AUTONOMY_CONFIG_DIR="$broken_alias_dir" \
+    bash "$bot_autonomy" coverage >/dev/null 2>&1; then
+    fail "coverage did not fail when an alias's target has no module (misspelled or removed)"
+fi
+
 echo "==> 3. coverage fails a doubly-covered slug"
 double_dir="${work_dir}/double-config"
 mkdir -p "$double_dir"
@@ -207,6 +219,24 @@ if HOME="$dangling_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_modu
     fail "verify did not fail on a dangling agy symlink (marker enabled)"
 fi
 
+echo "==> 10b. Antigravity: verify checks every autonomy key, not toolPermission alone"
+drift_home="${work_dir}/agy-drift-home"
+mkdir -p "$drift_home"
+HOME="$drift_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" apply >/dev/null
+for key in artifactReviewPolicy allowNonWorkspaceAccess enableTerminalSandbox; do
+    drift_settings="${drift_home}/.gemini/antigravity-cli/settings.json"
+    drift_backup="$(cat "$drift_settings")"
+    case "$key" in
+    enableTerminalSandbox) jq ".${key} = true" "$drift_settings" >"${drift_settings}.tmp" ;;
+    *) jq ".${key} = \"request-review\"" "$drift_settings" >"${drift_settings}.tmp" ;;
+    esac
+    mv "${drift_settings}.tmp" "$drift_settings"
+    if HOME="$drift_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" verify >/dev/null 2>&1; then
+        fail "antigravity verify did not notice ${key} drifting while toolPermission stayed correct"
+    fi
+    printf '%s' "$drift_backup" >"$drift_settings"
+done
+
 echo "==> 11. Antigravity: disabled state is verified as absence, not defaulted"
 disabled_home="${work_dir}/agy-disabled-home"
 mkdir -p "$disabled_home"
@@ -243,6 +273,16 @@ if command -v opencode >/dev/null 2>&1; then
     if HOME="$oc_home" BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" \
         BOT_AUTONOMY_OPENCODE_WORKDIR="$oc_workdir" bash "$opencode_module" verify >/dev/null 2>&1; then
         fail "opencode verify did not notice a workspace-level permission override"
+    fi
+
+    # A workspace override can ADD a specific-category denial ALONGSIDE the
+    # global wildcard rather than replacing it — OpenCode resolves both keys
+    # present at once ({"*":"allow","bash":"deny"}), so a wildcard-only check
+    # would report allow-all while `bash` still prompts or fails.
+    printf '{"permission":{"bash":"deny"}}\n' >"${oc_workdir}/opencode.json"
+    if HOME="$oc_home" BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" \
+        BOT_AUTONOMY_OPENCODE_WORKDIR="$oc_workdir" bash "$opencode_module" verify >/dev/null 2>&1; then
+        fail "opencode verify did not notice a workspace-level category-specific denial alongside an allow-all wildcard"
     fi
     rm -f "${oc_workdir}/opencode.json"
 else

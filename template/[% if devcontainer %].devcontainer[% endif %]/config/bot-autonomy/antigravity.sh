@@ -102,10 +102,27 @@ verify_settings_autonomous() {
         echo "antigravity: verify failed — ${SETTINGS} not found" >&2
         exit 1
     }
-    local perm
-    perm="$(jq -r '.toolPermission // empty' "$SETTINGS")"
-    [ "$perm" = "always-proceed" ] || {
-        echo "antigravity: verify failed — toolPermission is '${perm:-<unset>}', expected always-proceed" >&2
+    [ -f "$BOT_DEFAULTS" ] || {
+        echo "antigravity: verify failed — bot defaults not found at ${BOT_DEFAULTS}" >&2
+        exit 1
+    }
+    # Check every autonomy-relevant key against the shipped defaults, not
+    # toolPermission alone: artifactReviewPolicy, allowNonWorkspaceAccess,
+    # and enableTerminalSandbox can each independently reintroduce a prompt
+    # or a sandboxed boundary while toolPermission stays always-proceed.
+    # Compared against $BOT_DEFAULTS's own values (not hardcoded a second
+    # time here) so apply and verify can never expect different things.
+    local drifted
+    drifted="$(jq -r --slurpfile defaults "$BOT_DEFAULTS" '
+        ["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox"] as $keys |
+        . as $installed |
+        [$keys[] | select($installed[.] != $defaults[0][.])] | join(", ")
+    ' "$SETTINGS")" || {
+        echo "antigravity: verify failed — could not evaluate ${SETTINGS} against ${BOT_DEFAULTS}" >&2
+        exit 1
+    }
+    [ -z "$drifted" ] || {
+        echo "antigravity: verify failed — drifted from the autonomous defaults on: ${drifted}" >&2
         exit 1
     }
 }

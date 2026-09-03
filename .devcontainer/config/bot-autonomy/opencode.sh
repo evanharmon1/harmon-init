@@ -98,13 +98,25 @@ cmd_verify() {
         exit 1
     }
 
-    local resolved perm
+    local resolved denied
     resolved="$(cd "$WORKDIR" && opencode debug config 2>/dev/null)" || {
         echo "opencode: verify failed — 'opencode debug config' did not run in ${WORKDIR}" >&2
         exit 1
     }
-    perm="$(printf '%s' "$resolved" | jq -r '.permission["*"] // empty')"
-    if [ "$perm" != "allow" ]; then
+    # Check EVERY key in the resolved permission object, not the wildcard
+    # alone: OpenCode layers a workspace-level override alongside the global
+    # "*", not only in place of it — {"*":"allow","bash":"deny"} resolves
+    # with both keys present, and a wildcard-only check would report
+    # allow-all while `bash` still prompts or fails.
+    denied="$(printf '%s' "$resolved" | jq -r '
+        (.permission // {}) as $perm |
+        (if ($perm["*"] // "unset") != "allow" then ["*"] else [] end) +
+        [$perm | to_entries[] | select(.value != "allow") | .key] | unique | join(", ")
+    ')" || {
+        echo "opencode: verify failed — could not evaluate the resolved permission policy" >&2
+        exit 1
+    }
+    if [ -n "$denied" ]; then
         local cause candidate
         cause="$CONFIG"
         for candidate in "${WORKDIR}/opencode.json" "${WORKDIR}/.opencode/opencode.json"; do
@@ -112,7 +124,7 @@ cmd_verify() {
                 cause="$candidate"
             fi
         done
-        echo "opencode: verify failed — effective permission.* is '${perm:-<unset>}', expected 'allow' (check ${cause})" >&2
+        echo "opencode: verify failed — effective permission is not allow-all for: ${denied} (check ${cause})" >&2
         exit 1
     fi
 }

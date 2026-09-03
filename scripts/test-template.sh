@@ -1747,6 +1747,8 @@ else
         err "Codex bot managed config does not disable approval prompts"
     grep -Fq 'bot-autonomy.sh apply' .devcontainer/post-create.sh ||
         err "bot post-create does not call bot-autonomy.sh apply"
+    grep -Fq 'bot-autonomy.sh verify' .devcontainer/post-create.sh ||
+        err "bot post-create does not call bot-autonomy.sh verify"
     grep -Fq 'bot-autonomy.sh verify' .devcontainer/post-start.sh ||
         err "bot post-start does not call bot-autonomy.sh verify"
     if grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh | grep -Fq 'bot-autonomy.sh'; then

@@ -23,10 +23,15 @@ export DEVCONTAINER_GH_AUTH="token"
 #         fresh container's very first agent invocation already reflects it.
 #   (iv)  the conductor step — spawns a `claude` process on first
 #         registration, so it must not run before (iii) has succeeded.
+#   (v)   bot-autonomy.sh verify — at the end of post-create, so a divergence
+#         between what apply wrote and the harness's actual effective state
+#         (e.g. an already-present workspace-level override) fails container
+#         creation instead of surfacing only at the next post-start.
 bash .devcontainer/scripts/post-create-common.sh
 bash /usr/local/share/devcontainer-config/ensure-antigravity-cli.sh
 bash .devcontainer/scripts/bot-autonomy.sh apply
 bash .devcontainer/scripts/post-create-conductor.sh
+bash .devcontainer/scripts/bot-autonomy.sh verify
 
 # Install repo-managed git hooks (source of truth: .devcontainer/hooks/).
 # This replaces the default git-lfs hooks with versions that also handle
