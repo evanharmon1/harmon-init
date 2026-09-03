@@ -25,6 +25,13 @@ rejects unknown-harness sed -i '0,/codex-cli/s//unknown-harness/' .devflow.toml
 rejects misspelled-tier-escalation sed -i '0,/tier_escalation/s//tier_escaltion/' .devflow.toml
 rejects wrong-stage-finder sed -i '/^\[stage.challenge\]/,/^\[/ s/finders = \["codex-adversarial"\]/finders = ["codex-verification"]/' .devflow.toml
 rejects stage-pool-role-mismatch sed -i '/^\[stage.integration\]/a pool = ["codex-cli"]' .devflow.toml
+rejects invalid-strategy-topology sed -i '0,/topology    = "single-agent"/s//topology    = "nonsense"/' .devflow.toml
+rejects invalid-strategy-planning sed -i '0,/planning    = "inline"/s//planning    = "nonsense"/' .devflow.toml
+rejects invalid-strategy-delegation sed -i '0,/delegation  = "none"/s//delegation  = "nonsense"/' .devflow.toml
+rejects unknown-strategy-key sed -i '/^\[strategy.oneshot\]/a surprise = true' .devflow.toml
+rejects constitutional-strategy-gate sed -i '0,/human_gates = \[\]/s//human_gates = ["merge"]/' .devflow.toml
+rejects inverted-role-tier sed -i '/^\[rigor.cursory\]/,/^\[/ s/implementer_tier  = "economy"/implementer_tier  = "apex"/' .devflow.toml
+rejects adaptive-role-tier sed -i '/^\[rigor.standard\]/,/^\[/ s/reviewer_tier     = "standard"/reviewer_tier     = "adaptive"/' .devflow.toml
 
 # Exercise the shipped JS parser directly. Python's tomllib also rejects
 # these mutations in test-devflow-config.sh, but that would let a regression
@@ -33,7 +40,7 @@ rejects stage-pool-role-mismatch sed -i '/^\[stage.integration\]/a pool = ["code
 for malformed in 1e 1__2 1_; do
     cp template/.devflow.toml .devflow.toml
     sed -i "0,/challenge      = 3/s//challenge      = $malformed/" .devflow.toml
-    if node scripts/devflow-policy.mjs resolve --config .devflow.toml >/dev/null 2>&1; then
+    if node scripts/devflow-policy.mjs resolve --policy .devflow.toml >/dev/null 2>&1; then
         echo "FAIL: JS reader accepted malformed number: $malformed" >&2
         exit 1
     fi

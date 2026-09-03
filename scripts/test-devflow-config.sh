@@ -22,6 +22,8 @@ finders = {row["slug"] for row in registry["finders"]}
 
 for rel in (".devflow.toml", "template/.devflow.toml"):
     cfg = tomllib.loads((root / rel).read_text())
+    manifest_rel = "template/label-registry.json" if rel.startswith("template/") else "label-registry.json"
+    manifest = json.loads((root / manifest_rel).read_text())
     if cfg.get("schema_version") != 2:
         fail(f"{rel}: schema_version=2 is required; migrate legacy v1 configuration")
     expected = {"schema_version", "default_rigor", "default_strategy", "rigor_order", "tier_order", "rigor", "rounds", "breadth", "gates", "convergence", "role", "stage", "strategy"}
@@ -30,6 +32,13 @@ for rel in (".devflow.toml", "template/.devflow.toml"):
     if set(cfg["rigor_order"]) != set(cfg["rigor"]): fail(f"{rel}: rigor_order must permute rigor tables")
     if cfg["tier_order"] != tiers: fail(f"{rel}: tier_order must be {tiers}")
     if cfg["default_rigor"] not in cfg["rigor"] or cfg["default_strategy"] not in cfg["strategy"]: fail(f"{rel}: invalid defaults")
+    rigor_family = next((family for family in manifest["families"] if family["family"] == "rigor"), None)
+    if rigor_family is None: fail(f"{manifest_rel}: missing rigor label family")
+    label_rigor = {row["value"]: row["description"] for row in rigor_family["values"]}
+    if list(label_rigor) != cfg["rigor_order"]: fail(f"{manifest_rel}: rigor labels must follow rigor_order")
+    for value, description in label_rigor.items():
+        if description != cfg["rigor"][value]["description"]:
+            fail(f"{manifest_rel}: rigor:{value} description drifted from {rel}")
     for name, profile in cfg["rigor"].items():
         required = {"rounds", "breadth", "orchestrator_tier", "implementer_tier", "challenger_tier", "reviewer_tier", "integrator_tier", "tier_escalation", "description"}
         if set(profile) != required: fail(f"{rel}: rigor.{name} has invalid keys")

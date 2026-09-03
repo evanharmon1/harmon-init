@@ -185,7 +185,11 @@
         },
         "planning": { "enum": ["inline", "explicit", "independent", "collaborative"] },
         "delegation": { "enum": ["none", "optional", "required"] },
-        "human_gates": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "human_gates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/human_gate" },
+          "uniqueItems": true
+        },
         "description": { "type": "string", "minLength": 1, "maxLength": 100 },
         "coordination": { "const": "parallel-when-independent" },
         "selection": { "const": "judge" },
@@ -193,6 +197,20 @@
         "min_agents": { "type": "integer", "minimum": 2 },
         "distinct_families": { "type": "boolean" }
       }
+    },
+    "human_gate": {
+      "enum": [
+        "after-discovery",
+        "after-plan",
+        "before-delegation",
+        "before-selection",
+        "before-synthesis",
+        "before-scope-expansion",
+        "before-budget-escalation",
+        "before-publication",
+        "before-ready-for-review",
+        "each-phase"
+      ]
     },
     "strategy_profiles": {
       "type": "object",

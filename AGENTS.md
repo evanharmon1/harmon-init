@@ -301,6 +301,15 @@ shape is [`.devflow.schema.json`](.devflow.schema.json). Consumers authenticate
 and reconcile label inputs before passing an authorized selection to the
 resolver; the config reader does not cross that GitHub trust boundary.
 
+**Vendored stage-skill compatibility is part of the topology check.** For a
+`schema_version = 2` policy, a gauntlet or shepherd skill is compatible only
+when its config-shape section explicitly supports `[rounds.*]` and
+`[breadth.*]`. A lagging skill that recognizes only `[review.*]` pointers or
+direct per-rigor caps must not reinterpret v2 as either older shape: use this
+file's fallback procedure and the shared reader's resolved values instead.
+Assets this file requires directly, such as the current-head Codex checker,
+remain usable; only the incompatible skill-level policy reader is bypassed.
+
 Rigor label conflicts resolve to the **strongest label present**, by
 `.devflow.toml`'s `rigor_order` (weakest to strongest) — a conflict can then
 only ever buy more depth and budget, and the whole profile of the stronger
@@ -388,7 +397,8 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   green; verify is the definition-of-done gate (includes the render matrix).
 - **`task challenge`** — adversarial second-model review, under the resolved
   **challenge cap**. `/gauntlet` is the procedure **where its supported
-  topology holds — `origin` is the repository the PR will target** — and it
+  topology holds — `origin` is the repository the PR will target — and its
+  config-shape section passes the compatibility check above** — and it
   is **user-invocable only** (`disable-model-invocation: true`): an agent
   enters the stage by reading `.claude/skills/gauntlet/SKILL.md` and
   following it, not by calling a slash command it cannot call. In a fork
@@ -504,8 +514,10 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. The PR stays draft
   for the whole stage; only the readiness gate below may promote it.
-  `/shepherd` is the
-  procedure, and it is **user-invocable only**
+  `/shepherd` is the procedure only when its config-shape section passes the
+  compatibility check above; otherwise the remainder of this bullet is the
+  fallback procedure, including every readiness condition and directly
+  required checker asset. The skill is **user-invocable only**
   (`disable-model-invocation: true`): an agent enters the stage by reading
   `.claude/skills/shepherd/SKILL.md` and following it, not by calling a slash
   command it cannot call. Start by
@@ -774,7 +786,8 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
 
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
 before `task security` and the draft PR — and, where the skill's supported topology holds (`origin`
-is the repository the PR will target), the procedure for running them to
+is the repository the PR will target) and its config-shape section passes the
+compatibility check above, the procedure for running them to
 convergence is the vendored `/gauntlet` skill, entered by reading
 `.claude/skills/gauntlet/SKILL.md`; otherwise the Dev Loop's fallback above
 is the procedure. What follows here is the policy that skill

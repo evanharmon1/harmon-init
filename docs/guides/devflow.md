@@ -163,4 +163,7 @@ A v2 consumer must:
 
 For the full design rationale and lifecycle model, see harmon-devkit's
 `specs/dev-flow-v2.md`. For local operating mechanics, follow `AGENTS.md` and
-the stage skills vendored into the repository.
+the compatible stage skills vendored into the repository. A stage skill whose
+config-shape section does not explicitly support v2 `[rounds.*]` and
+`[breadth.*]` is not a v2 policy reader; `AGENTS.md` routes that case to its
+fallback procedure until a compatible released skill is pinned.

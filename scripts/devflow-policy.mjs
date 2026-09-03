@@ -47,6 +47,40 @@ const PREDICATES = new Set([
 // design | correctness | consistency | hardening | nit` — the same enum
 // ai/schemas/result*.schema.json ships for `finding.class`.
 const FINDING_CLASSES = new Set(['design', 'correctness', 'consistency', 'hardening', 'nit'])
+const STRATEGY_REQUIRED_KEYS = new Set([
+  'topology',
+  'planning',
+  'delegation',
+  'human_gates',
+  'description'
+])
+const STRATEGY_OPTIONAL_KEYS = new Set([
+  'coordination',
+  'selection',
+  'synthesis',
+  'min_agents',
+  'distinct_families'
+])
+const STRATEGY_TOPOLOGIES = new Set([
+  'single-agent',
+  'lead-and-workers',
+  'independent-proposals',
+  'human-directed'
+])
+const STRATEGY_PLANNING = new Set(['inline', 'explicit', 'independent', 'collaborative'])
+const STRATEGY_DELEGATION = new Set(['none', 'optional', 'required'])
+const STRATEGY_HUMAN_GATES = new Set([
+  'after-discovery',
+  'after-plan',
+  'before-delegation',
+  'before-selection',
+  'before-synthesis',
+  'before-scope-expansion',
+  'before-budget-escalation',
+  'before-publication',
+  'before-ready-for-review',
+  'each-phase'
+])
 
 // A cap, floor, or breadth ceiling is read from branch-controlled TOML and
 // used directly as a loop bound (challenge round 3, confirmed): unvalidated
@@ -713,7 +747,7 @@ function resolveRoles(doc, profile, levelName, tierOrder) {
         `role "${role}" has no resolvable tier: [rigor.${levelName}].${profileKey} and [role.${role}].tier are both absent`
       )
     }
-    if (tier !== 'adaptive' && Array.isArray(tierOrder) && !tierOrder.includes(tier)) {
+    if (Array.isArray(tierOrder) && !tierOrder.includes(tier)) {
       throw new PolicyError(
         `role "${role}" tier "${tier}" is not in tier_order (${tierOrder.join(', ')})`
       )
@@ -802,9 +836,90 @@ function resolveStrategy(doc, requestedStrategy) {
   // with a missing default_strategy resolved successfully whenever
   // --strategy was supplied. Shepherd-stage cloud finding, confirmed.
   if (!doc.default_strategy) throw new PolicyError('policy has no default_strategy')
+  const strategies = doc.strategy
+  if (!strategies || typeof strategies !== 'object' || Array.isArray(strategies)) {
+    throw new PolicyError('policy has no [strategy.*] tables')
+  }
+  for (const [profileName, candidate] of Object.entries(strategies)) {
+    const errorPath = `[strategy.${profileName}]`
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new PolicyError(`${errorPath} must be a table`)
+    }
+    const keys = Object.keys(candidate)
+    const missing = [...STRATEGY_REQUIRED_KEYS].filter((key) => !Object.hasOwn(candidate, key))
+    const extra = keys.filter(
+      (key) => !STRATEGY_REQUIRED_KEYS.has(key) && !STRATEGY_OPTIONAL_KEYS.has(key)
+    )
+    if (missing.length > 0 || extra.length > 0) {
+      throw new PolicyError(
+        `${errorPath} has invalid keys` +
+          `${missing.length > 0 ? `; missing: ${missing.join(', ')}` : ''}` +
+          `${extra.length > 0 ? `; unsupported: ${extra.join(', ')}` : ''}`
+      )
+    }
+    if (!STRATEGY_TOPOLOGIES.has(candidate.topology)) {
+      throw new PolicyError(
+        `${errorPath}.topology has unsupported value ${JSON.stringify(candidate.topology)}`
+      )
+    }
+    if (!STRATEGY_PLANNING.has(candidate.planning)) {
+      throw new PolicyError(
+        `${errorPath}.planning has unsupported value ${JSON.stringify(candidate.planning)}`
+      )
+    }
+    if (!STRATEGY_DELEGATION.has(candidate.delegation)) {
+      throw new PolicyError(
+        `${errorPath}.delegation has unsupported value ${JSON.stringify(candidate.delegation)}`
+      )
+    }
+    if (!Array.isArray(candidate.human_gates)) {
+      throw new PolicyError(`${errorPath}.human_gates must be an array`)
+    }
+    const invalidGate = candidate.human_gates.find(
+      (gate) => typeof gate !== 'string' || !STRATEGY_HUMAN_GATES.has(gate)
+    )
+    if (invalidGate !== undefined) {
+      throw new PolicyError(
+        `${errorPath}.human_gates contains unsupported or constitutional gate ${JSON.stringify(invalidGate)}`
+      )
+    }
+    if (new Set(candidate.human_gates).size !== candidate.human_gates.length) {
+      throw new PolicyError(`${errorPath}.human_gates must not contain duplicates`)
+    }
+    if (
+      typeof candidate.description !== 'string' ||
+      candidate.description.trim() === '' ||
+      [...candidate.description].length > 100
+    ) {
+      throw new PolicyError(
+        `${errorPath}.description must be a non-empty string of at most 100 characters`
+      )
+    }
+    if (
+      Object.hasOwn(candidate, 'coordination') &&
+      candidate.coordination !== 'parallel-when-independent'
+    ) {
+      throw new PolicyError(`${errorPath}.coordination must be "parallel-when-independent"`)
+    }
+    if (Object.hasOwn(candidate, 'selection') && candidate.selection !== 'judge') {
+      throw new PolicyError(`${errorPath}.selection must be "judge"`)
+    }
+    for (const booleanKey of ['synthesis', 'distinct_families']) {
+      if (Object.hasOwn(candidate, booleanKey) && typeof candidate[booleanKey] !== 'boolean') {
+        throw new PolicyError(`${errorPath}.${booleanKey} must be a boolean`)
+      }
+    }
+    if (
+      Object.hasOwn(candidate, 'min_agents') &&
+      (!Number.isInteger(candidate.min_agents) || candidate.min_agents < 2)
+    ) {
+      throw new PolicyError(`${errorPath}.min_agents must be an integer >= 2`)
+    }
+  }
+
   const name = requestedStrategy || doc.default_strategy
   if (!name) return null
-  const table = doc.strategy?.[name]
+  const table = strategies[name]
   if (!table) {
     throw new PolicyError(`strategy "${name}" has no [strategy.${name}] table`)
   }
@@ -1214,8 +1329,9 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
     'convergence'
   ])
   for (const [profileName, candidate] of Object.entries(doc.rigor || {})) {
+    const errorPath = `[rigor.${profileName}]`
     if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
-      throw new PolicyError(`[rigor.${profileName}] must be a table`)
+      throw new PolicyError(`${errorPath} must be a table`)
     }
     const missing = [...rigorKeys].filter(
       (key) => key !== 'convergence' && !Object.hasOwn(candidate, key)
@@ -1223,15 +1339,59 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
     const extra = Object.keys(candidate).filter((key) => !rigorKeys.has(key))
     if (missing.length > 0 || extra.length > 0) {
       throw new PolicyError(
-        `[rigor.${profileName}] has invalid keys` +
+        `${errorPath} has invalid keys` +
           `${missing.length > 0 ? `; missing: ${missing.join(', ')}` : ''}` +
           `${extra.length > 0 ? `; unsupported: ${extra.join(', ')}` : ''}`
       )
     }
     if (typeof candidate.tier_escalation !== 'boolean') {
       throw new PolicyError(
-        `[rigor.${profileName}].tier_escalation must be a boolean, got ${JSON.stringify(candidate.tier_escalation)}`
+        `${errorPath}.tier_escalation must be a boolean, got ${JSON.stringify(candidate.tier_escalation)}`
       )
+    }
+    if (
+      typeof candidate.description !== 'string' ||
+      candidate.description.trim() === '' ||
+      [...candidate.description].length > 100
+    ) {
+      throw new PolicyError(
+        `${errorPath}.description must be a non-empty string of at most 100 characters`
+      )
+    }
+    for (const pointer of ['rounds', 'breadth']) {
+      if (
+        typeof candidate[pointer] !== 'string' ||
+        candidate[pointer].length === 0 ||
+        !doc[pointer]?.[candidate[pointer]] ||
+        typeof doc[pointer][candidate[pointer]] !== 'object'
+      ) {
+        throw new PolicyError(
+          `${errorPath}.${pointer} must name an existing [${pointer}.*] table, got ${JSON.stringify(candidate[pointer])}`
+        )
+      }
+    }
+    const profileTierKeys = [
+      'orchestrator_tier',
+      'implementer_tier',
+      'challenger_tier',
+      'reviewer_tier',
+      'integrator_tier'
+    ]
+    for (const key of profileTierKeys) {
+      if (!BUILTIN_TIER_ORDER.includes(candidate[key])) {
+        throw new PolicyError(
+          `${errorPath}.${key} must be a concrete tier in [${BUILTIN_TIER_ORDER.join(', ')}], got ${JSON.stringify(candidate[key])}`
+        )
+      }
+    }
+    const implementerIndex = BUILTIN_TIER_ORDER.indexOf(candidate.implementer_tier)
+    for (const role of ['orchestrator', 'challenger', 'reviewer']) {
+      const roleTier = candidate[`${role}_tier`]
+      if (BUILTIN_TIER_ORDER.indexOf(roleTier) < implementerIndex) {
+        throw new PolicyError(
+          `${errorPath} violates the role-tier floor: ${role}_tier (${roleTier}) must be >= implementer_tier (${candidate.implementer_tier}) in tier_order`
+        )
+      }
     }
   }
   const rounds = resolveRounds(doc, profile, level)

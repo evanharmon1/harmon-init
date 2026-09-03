@@ -255,12 +255,12 @@ layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 layer:infra|1D76DB|Hosts, networking, containers, provisioning — IaC and config rather than app code
-rigor:cursory|D4C5F9|Rigor: one quick adversarial glance, economy implementer, and minimal breadth
-rigor:light|D4C5F9|Rigor: light review, frontier orchestrator/reviewer, economy implementer, light budget
-rigor:standard|D4C5F9|Rigor: standard review, frontier orchestrator/reviewer, standard implementer — the default
-rigor:thorough|D4C5F9|Rigor: thorough review, apex orchestrator/reviewer, standard implementer, thorough budget
-rigor:deep|D4C5F9|Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget
-rigor:forensic|D4C5F9|Rigor: maximum scrutiny for irreversible failure modes, security, or data paths
+rigor:cursory|D4C5F9|Rigor: one quick adversarial glance, economy elsewhere — near-zero-risk changes
+rigor:light|D4C5F9|Rigor: light rounds, frontier orchestrator/challenger, economy implementer
+rigor:standard|D4C5F9|Rigor: standard rounds and breadth, frontier challenger, standard implementer — the default
+rigor:thorough|D4C5F9|Rigor: thorough rounds, apex orchestrator/challenger, frontier reviewer
+rigor:deep|D4C5F9|Rigor: deep rounds, apex orchestrator/challenger, frontier implementer/reviewer
+rigor:forensic|D4C5F9|Rigor: maximum scrutiny at every role — irreversible failure modes, security, data paths
 tier:local|7057FF|Model tier: self-hosted endpoint first; may escalate to economy
 tier:economy|7057FF|Model tier: cheapest qualified hosted model first; escalation allowed
 tier:standard|7057FF|Model tier: reliable general-purpose coding model first

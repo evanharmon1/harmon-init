@@ -382,34 +382,34 @@
       "readers": "agents, when entering the Dev Loop",
       "lifecycle": "durable",
       "lifecycle_note": "set when the default rigor is wrong for the change; survives the work",
-      "trust_note": "provisioned; **read by agents** — selects a review policy, five role tiers, and a budget; arms nothing",
+      "trust_note": "provisioned; **read by agents** — selects a rounds policy, five role tiers, and a breadth envelope; arms nothing",
       "exclusive": false,
       "provision": true,
       "color": "D4C5F9",
       "values": [
         {
           "value": "cursory",
-          "description": "Rigor: one quick adversarial glance, economy implementer, and minimal breadth"
+          "description": "Rigor: one quick adversarial glance, economy elsewhere — near-zero-risk changes"
         },
         {
           "value": "light",
-          "description": "Rigor: light review, frontier orchestrator/reviewer, economy implementer, light budget"
+          "description": "Rigor: light rounds, frontier orchestrator/challenger, economy implementer"
         },
         {
           "value": "standard",
-          "description": "Rigor: standard review, frontier orchestrator/reviewer, standard implementer — the default"
+          "description": "Rigor: standard rounds and breadth, frontier challenger, standard implementer — the default"
         },
         {
           "value": "thorough",
-          "description": "Rigor: thorough review, apex orchestrator/reviewer, standard implementer, thorough budget"
+          "description": "Rigor: thorough rounds, apex orchestrator/challenger, frontier reviewer"
         },
         {
           "value": "deep",
-          "description": "Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget"
+          "description": "Rigor: deep rounds, apex orchestrator/challenger, frontier implementer/reviewer"
         },
         {
           "value": "forensic",
-          "description": "Rigor: maximum scrutiny for irreversible failure modes, security, or data paths"
+          "description": "Rigor: maximum scrutiny at every role — irreversible failure modes, security, data paths"
         }
       ]
     },
