@@ -140,6 +140,7 @@ gh auth status || true
 
 echo "==> Fixing ownership of persistent volume dirs..."
 for dir in /home/vscode/.codex /home/vscode/.claude /home/vscode/.gemini \
+    /home/vscode/.copilot /home/vscode/.pi /home/vscode/.omp \
     /home/vscode/.agent-deck /home/vscode/.shell-history \
     /home/vscode/.config /home/vscode/.config/herdr /home/vscode/.config/opencode \
     /home/vscode/.local /home/vscode/.local/share /home/vscode/.local/share/opencode \
@@ -229,7 +230,7 @@ fi
 # the pinned shared image may predate the herdr binary, and a failed install
 # only degrades resume back to fresh shells — never block the container on it.
 if command -v herdr >/dev/null 2>&1; then
-    for agent in claude codex opencode; do
+    for agent in claude codex opencode pi omp copilot; do
         herdr integration install "$agent" ||
             echo "WARN: herdr integration install $agent failed (non-fatal)" >&2
     done

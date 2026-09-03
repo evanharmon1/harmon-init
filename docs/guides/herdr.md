@@ -246,8 +246,9 @@ checkout with the workspace. What is on you: steps 5 and 8.
 
 The orchestration surface is harness-agnostic. `--kind` accepts every agent
 the installed Herdr can recognize — run `herdr agent` to see the exact list for
-your version; `claude`, `codex`, `agy` (Antigravity), and `opencode`
-are in the 0.8.2 image the devcontainers pin, newer releases add more — and
+your version; `claude`, `codex`, `copilot`, `pi`, `omp`, `agy` (Antigravity),
+and `opencode` are in the 0.8.2 image the devcontainers pin, newer releases
+add more — and
 nothing about the loop above changes except the kind and the native arguments
 after `--`. A Claude Code orchestrator can
 therefore drive Codex, Antigravity, or OpenCode workers — each a separate,
