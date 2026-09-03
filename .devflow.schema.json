@@ -5,25 +5,67 @@
   "description": "Structural contract for schema-version 2 policy files; cross-file references are validated by scripts/test-devflow-config.sh.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "default_rigor", "default_strategy", "rigor_order", "tier_order", "rigor", "rounds", "breadth", "gates", "convergence", "role", "stage", "strategy"],
+  "required": [
+    "schema_version",
+    "default_rigor",
+    "default_strategy",
+    "rigor_order",
+    "tier_order",
+    "rigor",
+    "rounds",
+    "breadth",
+    "gates",
+    "convergence",
+    "role",
+    "stage",
+    "strategy"
+  ],
   "properties": {
-    "schema_version": {"const": 2},
-    "default_rigor": {"type": "string"},
-    "default_strategy": {"type": "string"},
-    "rigor_order": {"$ref": "#/$defs/strings"},
-    "tier_order": {"$ref": "#/$defs/strings"},
-    "rigor": {"$ref": "#/$defs/tables"},
-    "rounds": {"$ref": "#/$defs/tables"},
-    "breadth": {"$ref": "#/$defs/tables"},
-    "spend": {"$ref": "#/$defs/tables"},
-    "gates": {"type": "object", "additionalProperties": false, "required": ["round_code", "round_docs", "secret_scan", "pre_pr", "docs_only_paths"], "properties": {"round_code": {"type": "string"}, "round_docs": {"type": "string"}, "secret_scan": {"type": "string"}, "pre_pr": {"type": "string"}, "docs_only_paths": {"$ref": "#/$defs/strings"}}},
-    "convergence": {"type": "object", "additionalProperties": false, "required": ["converged", "diverging"], "properties": {"converged": {"type": "object"}, "diverging": {"type": "object"}}},
-    "role": {"$ref": "#/$defs/tables"},
-    "stage": {"$ref": "#/$defs/tables"},
-    "strategy": {"$ref": "#/$defs/tables"}
+    "schema_version": { "const": 2 },
+    "default_rigor": { "type": "string" },
+    "default_strategy": { "type": "string" },
+    "rigor_order": { "$ref": "#/$defs/strings" },
+    "tier_order": { "$ref": "#/$defs/strings" },
+    "rigor": { "$ref": "#/$defs/tables" },
+    "rounds": { "$ref": "#/$defs/tables" },
+    "breadth": { "$ref": "#/$defs/tables" },
+    "spend": { "$ref": "#/$defs/tables" },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round_code", "round_docs", "secret_scan", "pre_pr", "docs_only_paths"],
+      "properties": {
+        "round_code": { "type": "string" },
+        "round_docs": { "type": "string" },
+        "secret_scan": { "type": "string" },
+        "pre_pr": { "type": "string" },
+        "docs_only_paths": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "convergence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["converged", "diverging"],
+      "properties": {
+        "converged": { "type": "object" },
+        "diverging": { "type": "object" }
+      }
+    },
+    "role": { "$ref": "#/$defs/tables" },
+    "stage": { "$ref": "#/$defs/tables" },
+    "strategy": { "$ref": "#/$defs/tables" }
   },
   "$defs": {
-    "strings": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "tables": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "object"}}
+    "strings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "tables": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "object" }
+    }
   }
 }

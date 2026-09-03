@@ -122,7 +122,11 @@
           "description": "Retired agent:* labels that unambiguously identify this family. Claim resolution uses these only when the matching claim:<family> label is not provisioned.",
           "type": "array",
           "uniqueItems": true,
-          "items": { "type": "string", "maxLength": 50, "pattern": "^agent:[a-z0-9]+(?:[a-z0-9._-]*[a-z0-9])?$" }
+          "items": {
+            "type": "string",
+            "maxLength": 50,
+            "pattern": "^agent:[a-z0-9]+(?:[a-z0-9._-]*[a-z0-9])?$"
+          }
         }
       }
     },
@@ -172,7 +176,9 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "enum": ["implementer", "challenger", "reviewer", "integrator"] }
+          "items": {
+            "enum": ["implementer", "challenger", "reviewer", "integrator"]
+          }
         },
         "can_restrict_writes": {
           "description": "Whether this harness can deny ambient writes for a dispatched subagent (a tool/credential allowlist, e.g. Claude Code's `allowed-tools` frontmatter). specs/dev-flow-v2.md 'Roles and authority': a harness that cannot deny ambient writes must not dispatch a write-restricted role (challenger, reviewer, integrator) — cross-file validation rejects `roles` containing one of those without this set true.",

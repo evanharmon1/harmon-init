@@ -41,8 +41,16 @@
       "slug": "mai",
       "display_name": "MAI",
       "models": [
-        { "slug": "code-1-flash", "display_name": "Code-1-Flash", "tier": "economy" },
-        { "slug": "thinking-1", "display_name": "Thinking-1", "tier": "standard" }
+        {
+          "slug": "code-1-flash",
+          "display_name": "Code-1-Flash",
+          "tier": "economy"
+        },
+        {
+          "slug": "thinking-1",
+          "display_name": "Thinking-1",
+          "tier": "standard"
+        }
       ]
     },
     {
@@ -51,9 +59,18 @@
       "legacy_claim_labels": ["agent:qwen-code"],
       "models": [
         { "slug": "max", "display_name": "3.7 Max", "tier": "frontier" },
-        { "slug": "coder-plus", "display_name": "3 Coder Plus", "tier": "standard", "default": true },
+        {
+          "slug": "coder-plus",
+          "display_name": "3 Coder Plus",
+          "tier": "standard",
+          "default": true
+        },
         { "slug": "coder", "display_name": "3 Coder", "tier": "economy" },
-        { "slug": "coder-next", "display_name": "3 Coder Next", "tier": "standard" },
+        {
+          "slug": "coder-next",
+          "display_name": "3 Coder Next",
+          "tier": "standard"
+        },
         { "slug": "coder-30b", "display_name": "3 Coder 30B", "tier": "local" }
       ]
     },
@@ -90,14 +107,28 @@
       "legacy_claim_labels": ["agent:gemini-cli"],
       "models": [
         { "slug": "3-1-pro", "display_name": "3.1 Pro", "tier": "frontier" },
-        { "slug": "3-6-flash", "display_name": "3.6 Flash", "tier": "standard" },
-        { "slug": "3-5-flash-lite", "display_name": "3.5 Flash-Lite", "tier": "economy" }
+        {
+          "slug": "3-6-flash",
+          "display_name": "3.6 Flash",
+          "tier": "standard"
+        },
+        {
+          "slug": "3-5-flash-lite",
+          "display_name": "3.5 Flash-Lite",
+          "tier": "economy"
+        }
       ]
     },
     {
       "slug": "mistral",
       "display_name": "Mistral",
-      "models": [{ "slug": "devstral-small-2", "display_name": "Devstral Small 2", "tier": "standard" }]
+      "models": [
+        {
+          "slug": "devstral-small-2",
+          "display_name": "Devstral Small 2",
+          "tier": "standard"
+        }
+      ]
     }
   ],
   "harnesses": [
@@ -444,7 +475,10 @@
       "stages": ["integration"],
       "result_schema": null,
       "invocation": null,
-      "collection": { "type": "shepherd-checker", "protocol": "reserve-trigger-attach-check" },
+      "collection": {
+        "type": "shepherd-checker",
+        "protocol": "reserve-trigger-attach-check"
+      },
       "trusted_actor_id": "199175422",
       "trusted_actor_login": "chatgpt-codex-connector[bot]"
     }
