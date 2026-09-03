@@ -288,6 +288,39 @@ for key in artifactReviewPolicy allowNonWorkspaceAccess enableTerminalSandbox; d
     printf '%s' "$drift_backup" >"$drift_settings"
 done
 
+echo "==> 10c. Antigravity: verify passes on a genuinely correct enabled state; fails when the backend is unrunnable or the workspace-trust entry is missing"
+correct_home="${work_dir}/agy-correct-home"
+mkdir -p "${correct_home}/.local/bin"
+printf '#!/bin/sh\necho REAL "$@"\n' >"${correct_home}/.local/bin/agy-real"
+chmod +x "${correct_home}/.local/bin/agy-real"
+HOME="$correct_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" apply >/dev/null
+HOME="$correct_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" verify >/dev/null ||
+    fail "verify failed against a genuinely correct enabled state (agy-real present, trustedWorkspaces set by the real apply-antigravity-settings.sh)"
+
+# The wrapper's own bytes stay exactly correct (apply is not re-run) but every
+# invocation would now exit 127 — content-matching alone cannot see this.
+# HARMON_ANTIGRAVITY_SYSTEM_BINARY must point off this sandbox's own real
+# /usr/local/bin/agy (the pinned image ships one), or the fallback the
+# module is designed to have would incidentally mask the deleted agy-real.
+rm -f "${correct_home}/.local/bin/agy-real"
+if HOME="$correct_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled \
+    HARMON_ANTIGRAVITY_SYSTEM_BINARY="${work_dir}/no-such-agy" \
+    bash "$agy_module" verify >/dev/null 2>&1; then
+    fail "verify passed with no runnable backend (agy-real deleted, no system fallback present)"
+fi
+printf '#!/bin/sh\necho REAL "$@"\n' >"${correct_home}/.local/bin/agy-real"
+chmod +x "${correct_home}/.local/bin/agy-real"
+
+# Drop the workspace-trust entry the real apply-antigravity-settings.sh
+# wrote, leaving every scalar key correct — a class of drift the four-key
+# check above cannot see on its own.
+correct_settings="${correct_home}/.gemini/antigravity-cli/settings.json"
+jq 'del(.trustedWorkspaces)' "$correct_settings" >"${correct_settings}.tmp"
+mv "${correct_settings}.tmp" "$correct_settings"
+if HOME="$correct_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" verify >/dev/null 2>&1; then
+    fail "verify passed with the current workspace missing from trustedWorkspaces"
+fi
+
 echo "==> 11. Antigravity: disabled state is verified as absence, not defaulted"
 disabled_home="${work_dir}/agy-disabled-home"
 mkdir -p "$disabled_home"

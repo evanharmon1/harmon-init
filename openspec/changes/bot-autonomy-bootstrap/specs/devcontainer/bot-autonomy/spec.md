@@ -545,6 +545,23 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
   to it
 - **THEN** `verify` exits non-zero naming Antigravity
 
+#### Scenario: verify fails when the wrapper's own resolved backend cannot run
+- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`, `verify` runs
+  in the bot profile, the wrapper at `~/.local/bin/agy` matches its
+  expected content exactly, and neither `agy-real` nor the system binary
+  it falls back to is executable
+- **THEN** `verify` exits non-zero naming Antigravity — matching wrapper
+  bytes are not sufficient when every invocation would exit 127
+
+#### Scenario: verify fails when the current workspace is missing from the settings' trust list
+- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`, `verify` runs
+  in the bot profile, every scalar autonomy key matches the shipped
+  defaults, and `~/.gemini/antigravity-cli/settings.json`'s
+  `trustedWorkspaces` does not include the current workspace (the entry
+  `apply-antigravity-settings.sh apply` itself writes)
+- **THEN** `verify` exits non-zero naming Antigravity — a correct
+  `toolPermission` value does not by itself bypass the workspace-trust gate
+
 #### Scenario: verify fails on a dangling symlink regardless of the marker
 - **WHEN** `verify` runs and `~/.local/bin/agy` is a symlink whose target
   (`agy-real`) does not exist, in either profile and regardless of the

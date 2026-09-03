@@ -125,6 +125,24 @@ verify_settings_autonomous() {
         echo "antigravity: verify failed — drifted from the autonomous defaults on: ${drifted}" >&2
         exit 1
     }
+    # The four scalar keys above are not the only gate: apply-antigravity-
+    # settings.sh's own apply mode also adds $PWD to trustedWorkspaces (its
+    # mechanism predates this module — docs/guides/devcontainers.md). If
+    # that entry is lost after apply, interactive/headless agy can still hit
+    # a workspace-trust prompt even though every scalar key reads
+    # always-proceed, so verify checks the same predicate apply-antigravity-
+    # settings.sh uses internally to confirm its own write.
+    local workspace_trusted
+    workspace_trusted="$(jq -r --arg workspace "$PWD" '
+        (.trustedWorkspaces // []) | index($workspace) != null
+    ' "$SETTINGS")" || {
+        echo "antigravity: verify failed — could not evaluate ${SETTINGS} trustedWorkspaces" >&2
+        exit 1
+    }
+    [ "$workspace_trusted" = "true" ] || {
+        echo "antigravity: verify failed — current workspace (${PWD}) is missing from ${SETTINGS}'s trustedWorkspaces" >&2
+        exit 1
+    }
 }
 
 verify_wrapper_enabled() {
@@ -149,6 +167,15 @@ verify_wrapper_enabled() {
         exit 1
     fi
     rm -f "$tmp"
+    # Matching content alone does not mean the wrapper can run: it execs
+    # $AGY_REAL, falling back to $AGY_SYSTEM_BINARY (see write_wrapper's own
+    # `[ -x "$real" ] || real=...` line). If neither resolves to an
+    # executable, the wrapper's bytes are still exactly correct but every
+    # invocation exits 127 — a clean verify over an inert harness.
+    [ -x "$AGY_REAL" ] || [ -x "$AGY_SYSTEM_BINARY" ] || {
+        echo "antigravity: verify failed — neither ${AGY_REAL} nor ${AGY_SYSTEM_BINARY} is executable; the wrapper has no runnable backend" >&2
+        exit 1
+    }
 }
 
 verify_agy_absent() {
