@@ -237,16 +237,50 @@
       "color": "FBCA04",
       "values": [
         {
-          "value": "auth",
-          "description": "Authentication and authorization"
+          "value": "template",
+          "description": "Generating a new repo from the template — the copier copy journey"
         },
         {
-          "value": "billing",
-          "description": "Billing and payments"
+          "value": "standardization",
+          "description": "Keeping existing repos current — copier update, drift audits, migrations, adoption"
+        },
+        {
+          "value": "dev-loop",
+          "description": "The daily developer workflow: gates, hooks, tasks, worktrees, review stages"
+        },
+        {
+          "value": "agent-workflow",
+          "description": "AI-delegated work: foreman dispatch, claims, skills, Claude Actions"
+        },
+        {
+          "value": "project-tracking",
+          "description": "Issues, labels, boards, and the PM strategy"
+        },
+        {
+          "value": "auth",
+          "description": "Toolchain credentials and auth: gh, Claude, Codex, 1Password, tokens"
+        },
+        {
+          "value": "delivery",
+          "description": "Releases and versioning: release-please, tags, release guards, consumer pickup"
+        },
+        {
+          "value": "environment",
+          "description": "The ready-to-code environment: devcontainer, images, codespaces, editor setup"
         },
         {
           "value": "platform",
-          "description": "CI, build, test infra, and tooling in this repo"
+          "retired": true,
+          "writer_note": "nobody — retired at root",
+          "trust_note": "retired — split across dev-loop/delivery/environment; never provisioned here",
+          "lifecycle_note": "choose replacement domains per record, relabel each record, then use guarded `--prune` only after `domain:platform` reaches zero associations"
+        },
+        {
+          "value": "billing",
+          "retired": true,
+          "writer_note": "nobody — retired at root",
+          "trust_note": "retired — a generic starter value this repo never needed",
+          "lifecycle_note": "choose the replacement, then use guarded `--prune` with `--migrate OLD=NEW`"
         }
       ]
     },
@@ -266,48 +300,74 @@
       "color": "0E8A16",
       "values": [
         {
-          "value": "ci",
-          "description": "Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area"
-        },
-        {
-          "value": "docs",
-          "description": "Documentation content and structure; a subsystem's own docs belong to that subsystem's area"
-        },
-        {
-          "value": "deps",
-          "description": "Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area"
-        },
-        {
-          "value": "build",
-          "description": "Shared build system and artifacts; subsystem builds belong to that subsystem's area"
-        },
-        {
-          "value": "tests",
-          "description": "The shared test suite and gates; a subsystem's own tests belong to its area"
-        },
-        {
-          "value": "tasks",
-          "description": "Taskfile targets and scripts/ glue without a more specific area"
-        },
-        {
-          "value": "release",
-          "description": "release-please, tags, release guards"
+          "value": "copier",
+          "description": "The templating engine: copier.yml, answers, validators, jinja, render matrix"
         },
         {
           "value": "devcontainer",
           "description": "Dev containers, images, features"
         },
         {
-          "value": "pm",
-          "description": "Labels, projects, issue tooling, PM docs"
+          "value": "ci",
+          "description": "Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area"
+        },
+        {
+          "value": "tasks",
+          "description": "Taskfile targets and scripts/ glue without a more specific area; security targets are area:security"
+        },
+        {
+          "value": "tests",
+          "description": "The shared test-*.sh suite and gates; a subsystem's own tests belong to its area"
+        },
+        {
+          "value": "deps",
+          "description": "Cross-cutting dependency automation and bumps; subsystem dependencies belong to its area"
         },
         {
           "value": "skills",
           "description": "Shared agent skills and skills sync; subsystem workflow skills belong to that subsystem's area"
         },
         {
+          "value": "foreman",
+          "description": "Foreman config, wrapper tasks, adapters"
+        },
+        {
           "value": "gauntlet",
           "description": "The challenge/review second-model stage: scripts, gates, and skill wiring"
+        },
+        {
+          "value": "worktree",
+          "description": "Worktree lifecycle tooling"
+        },
+        {
+          "value": "release",
+          "description": "release-please, tags, release guards"
+        },
+        {
+          "value": "security",
+          "description": "Scanners, secret handling, hardening"
+        },
+        {
+          "value": "pm",
+          "description": "Labels, projects, issue tooling, PM docs"
+        },
+        {
+          "value": "docs",
+          "description": "Documentation content and structure; a subsystem's own docs belong to that subsystem's area"
+        },
+        {
+          "value": "template",
+          "retired": true,
+          "writer_note": "nobody — renamed",
+          "trust_note": "retired — renamed to `area:copier` (the engine was what it labeled)",
+          "lifecycle_note": "use guarded `--prune` with `--migrate area:template=area:copier`"
+        },
+        {
+          "value": "codex",
+          "retired": true,
+          "writer_note": "nobody — renamed",
+          "trust_note": "retired — renamed to `area:gauntlet`; codex is the current backend, not the stage",
+          "lifecycle_note": "use guarded `--prune` with `--migrate area:codex=area:gauntlet`"
         }
       ]
     },
@@ -328,12 +388,8 @@
       "color": "D4C5F9",
       "values": [
         {
-          "value": "trivial",
-          "description": "Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes"
-        },
-        {
-          "value": "minimal",
-          "description": "Rigor: a quick driveby review, standard orchestrator/reviewer, economy implementer, light budget"
+          "value": "cursory",
+          "description": "Rigor: one quick adversarial glance, economy implementer, and minimal breadth"
         },
         {
           "value": "light",
@@ -350,6 +406,10 @@
         {
           "value": "deep",
           "description": "Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget"
+        },
+        {
+          "value": "forensic",
+          "description": "Rigor: maximum scrutiny for irreversible failure modes, security, or data paths"
         }
       ]
     },

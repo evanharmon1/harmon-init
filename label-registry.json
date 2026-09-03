@@ -388,12 +388,8 @@
       "color": "D4C5F9",
       "values": [
         {
-          "value": "trivial",
-          "description": "Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes"
-        },
-        {
-          "value": "minimal",
-          "description": "Rigor: a quick driveby review, standard orchestrator/reviewer, economy implementer, light budget"
+          "value": "cursory",
+          "description": "Rigor: one quick adversarial glance, economy implementer, and minimal breadth"
         },
         {
           "value": "light",
@@ -410,6 +406,10 @@
         {
           "value": "deep",
           "description": "Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget"
+        },
+        {
+          "value": "forensic",
+          "description": "Rigor: maximum scrutiny for irreversible failure modes, security, or data paths"
         }
       ]
     },

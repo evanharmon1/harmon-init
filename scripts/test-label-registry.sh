@@ -255,12 +255,12 @@ layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 layer:infra|1D76DB|Hosts, networking, containers, provisioning — IaC and config rather than app code
-rigor:trivial|D4C5F9|Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes
-rigor:minimal|D4C5F9|Rigor: a quick driveby review, standard orchestrator/reviewer, economy implementer, light budget
+rigor:cursory|D4C5F9|Rigor: one quick adversarial glance, economy implementer, and minimal breadth
 rigor:light|D4C5F9|Rigor: light review, frontier orchestrator/reviewer, economy implementer, light budget
 rigor:standard|D4C5F9|Rigor: standard review, frontier orchestrator/reviewer, standard implementer — the default
 rigor:thorough|D4C5F9|Rigor: thorough review, apex orchestrator/reviewer, standard implementer, thorough budget
 rigor:deep|D4C5F9|Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget
+rigor:forensic|D4C5F9|Rigor: maximum scrutiny for irreversible failure modes, security, or data paths
 tier:local|7057FF|Model tier: self-hosted endpoint first; may escalate to economy
 tier:economy|7057FF|Model tier: cheapest qualified hosted model first; escalation allowed
 tier:standard|7057FF|Model tier: reliable general-purpose coding model first
@@ -354,7 +354,7 @@ area:skills|0E8A16|Shared agent skills and skills sync; subsystem workflow skill
 area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring"
     check_lockfile template/label-registry.json template/agent-registry.json \
         "$shared_inline
-$template_only_inline" "template layer"
+$root_only_inline" "template layer"
 
     # The manifests are an allowlisted dogfood-parity divergence, but the
     # divergence is now exactly the per-layer area/domain values — everything
