@@ -826,9 +826,13 @@ Recognizing a recreation after the fact:
   trade;
 - anything under `~/` that is not on a named volume reverted to image defaults.
 
-Nothing here is data loss by design: agent state, shell history, and zoxide data
-all sit on named volumes precisely so a recreation is survivable, and
-`~/.claude.json` is symlinked onto one for the same reason (below). What is lost
+Nothing here is data loss by design for what already has a volume: shell
+history and zoxide data sit on named volumes precisely so a recreation is
+survivable, and so does each already-wired harness's state (Claude Code,
+Codex, Antigravity, OpenCode) — `~/.claude.json` is symlinked onto one for the
+same reason (below). Pi, oh-my-pi, and Copilot CLI are newer additions to the
+image with no volume of their own yet, so their session/auth state does
+**not** survive a recreation the way the others' does. What is otherwise lost
 is container-local scratch — and, in `dev/`, the `gh` login, which is on no
 volume by decision rather than by omission (see
 [architecture/security.md](../architecture/security.md)). That makes the login a
