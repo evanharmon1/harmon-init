@@ -45,4 +45,47 @@ for malformed in 1e 1__2 1_; do
         exit 1
     fi
 done
+
+resolve_reader() {
+    node scripts/devflow-policy.mjs resolve \
+        --policy .devflow.toml \
+        --registry agent-registry.json \
+        --taskfile-dir . \
+        "$@" >/dev/null
+}
+
+# Reader-specific semantic controls. These bypass the Python structural gate
+# so each failure proves the shipped JavaScript reader enforces the contract.
+cp template/.devflow.toml .devflow.toml
+sed -i '/^\[rounds.light\]/,/^\[/ s/challenge      = 2/challenge      = "oops"/' .devflow.toml
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted malformed inactive rounds policy" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+sed -i '/^\[rounds.standard\]/,/^\[/ s/wall_clock_min = 120/wall_clock_min = 0/' .devflow.toml
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted zero wall-clock ceiling" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+sed -i '/^\[role.implementer\]/,/^\[/ s/families  = \["claude", "gpt", "gemini"\]/families  = ["claude"]/' .devflow.toml
+if resolve_reader --strategy council 2>/dev/null; then
+    echo "FAIL: JS reader counted council families outside implementer eligibility" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+resolve_reader --rigor cursory --strategy oneshot
+
+if resolve_reader --closure /tmp/not-a-trust-boundary 2>closure.err; then
+    echo "FAIL: JS reader accepted retired in-module --closure delegation" >&2
+    exit 1
+fi
+grep -q 'cannot establish reader trust' closure.err || {
+    echo "FAIL: --closure refusal did not explain the external trust boundary" >&2
+    exit 1
+}
 echo "devflow v2 mutation guards OK"

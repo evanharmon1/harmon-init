@@ -208,13 +208,16 @@ wall_clock_min = 720
 # ── Breadth — horizontal scale: how many agents, how wide ───────────────────
 # max_agent_runs: total dispatches across the run (orchestration +
 # implementation work; review passes are [rounds]'s axis, not counted here).
+# Confidence dispatches are not debited from this implementation envelope,
+# but fail-closed validation still requires its numeric allowance to cover a
+# configured primary finder's one retry; every shipped breadth is therefore >= 2.
 # max_parallel_agents: concurrent ceiling. Strategy compatibility reads both:
 # council needs parallel >= min_agents AND runs >= min_agents + 1; orchestrate
-# needs both >= min_agents. council/orchestrate under cursory (1/1) are
+# needs both >= min_agents. council/orchestrate under cursory (2/1) are
 # documented incompatibilities.
 
 [breadth.cursory]
-max_agent_runs      = 1
+max_agent_runs      = 2
 max_parallel_agents = 1
 
 [breadth.light]

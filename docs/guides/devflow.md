@@ -50,6 +50,9 @@ When a change edits `.devflow.toml`, `agent-registry.json`, or the policy
 reader, every governing value and the reader itself comes from the merge-base
 copies. Branch-controlled policy cannot lower its own review. An explicit
 operator instruction may still override that result and must be disclosed.
+The trusted broker materializes and invokes that merge-base reader directly;
+an option interpreted by the branch reader would run too late, after the
+branch-controlled module and its imports had already loaded.
 
 ## Rigor profiles
 
@@ -92,7 +95,11 @@ The selected `[breadth.*]` envelope bounds total agent runs and parallelism.
 A strategy whose `min_agents` cannot fit is incompatible; consumers report
 the incompatibility rather than substitute another topology or widen the
 envelope. Council's distinct-family requirement is checked against the
-configured implementation pool and the registry.
+configured implementation pool, the implementer role's eligible families and
+tier, and the registry. Confidence passes spend the rounds envelope rather
+than decrementing implementation breadth, but fail-closed validation still
+requires the numeric allowance to cover each configured primary finder's one
+retry so no shipped rigor begins with an impossible finder contract.
 
 Optional `[spend.*]` tables are declarative ceilings. A missing measurement is
 reported as unenforced, never represented as observed compliance. Foreman

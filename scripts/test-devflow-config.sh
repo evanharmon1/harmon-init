@@ -46,7 +46,12 @@ for rel in (".devflow.toml", "template/.devflow.toml"):
         if any(profile[key] not in tiers for key in required if key.endswith("_tier")): fail(f"{rel}: rigor.{name} has unknown tier")
     for name, rounds in cfg["rounds"].items():
         if set(rounds) != {"challenge", "review", "integration", "remediation", "min_rounds", "wall_clock_min"}: fail(f"{rel}: rounds.{name} has invalid keys")
-        if any(not isinstance(v, int) or v < 0 for v in rounds.values()): fail(f"{rel}: rounds.{name} must be non-negative integers")
+        if any(not isinstance(v, int) or v < 0 for key, v in rounds.items() if key != "wall_clock_min"): fail(f"{rel}: rounds.{name} caps/floor must be non-negative integers")
+        if not isinstance(rounds["wall_clock_min"], int) or rounds["wall_clock_min"] < 1: fail(f"{rel}: rounds.{name}.wall_clock_min must be a positive integer")
+        if rounds["min_rounds"] > min(rounds["challenge"], rounds["review"]): fail(f"{rel}: rounds.{name}.min_rounds exceeds a confidence-stage cap")
+    for name, breadth in cfg["breadth"].items():
+        if set(breadth) != {"max_agent_runs", "max_parallel_agents"}: fail(f"{rel}: breadth.{name} has invalid keys")
+        if any(not isinstance(v, int) or v < 1 for v in breadth.values()): fail(f"{rel}: breadth.{name} must use positive integers")
     for key in ("round_code", "round_docs", "secret_scan", "pre_pr"):
         value = cfg["gates"].get(key)
         if not isinstance(value, str) or " " in value or "/" in value or not re.search(rf"^  {re.escape(value)}:", taskfile, re.M): fail(f"{rel}: gates.{key} must be a Taskfile target")

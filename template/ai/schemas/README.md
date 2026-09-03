@@ -1177,31 +1177,19 @@ case above, and a coverage check that every `required` field and every
 `enum` declared anywhere in each schema has at least one invalid fixture
 exercising it.
 
-## Dev flow v2 policy resolution and exit computation
+## External Dev flow v2 policy and exit design reference
 
-Two more scripts consume this schema family — `scripts/devflow-policy.mjs`
-(the shared v2 `.devflow.toml` reader, [#636](https://github.com/evanharmon1/harmon-devkit/issues/636),
-design.md decision 13) and `scripts/dev-flow-exit.mjs` (deterministic
-confidence-stage exit computation, implementing
-`openspec/changes/dev-flow-v2/specs/exit-computation/spec.md` and
-`specs/dev-flow-v2.md` § "Convergence model v0") — with their own conformance
-corpus under `ai/schemas/fixtures/exit/<case>/`, run by
-`scripts/test-dev-flow-exit.sh` (`task test:dev-flow-exit`, wired into
-`task verify`). Both are usable as a CLI or imported as a library (notably,
-`dev-flow-exit.mjs` imports `resolvePolicy`/`crossValidate`/`PolicyError`
-from `devflow-policy.mjs` directly rather than shelling out to it), and both
-have thin Taskfile passthroughs — `task devflow:policy -- resolve|detect
-...` and `task devflow:exit -- ...` — for a human or another tool that
-would rather not spell out `node scripts/devflow-policy.mjs` /
-`scripts/dev-flow-exit.sh` directly. Two caveats for a caller parsing
-`--json` output through either Task target rather than the bare
-script/`.sh` wrapper: `Taskfile.yml`'s repo-wide `output: group` setting
-wraps EVERY task's stdout in `::group::<task>/::endgroup::` marker lines
-(strip them before parsing), and `task` does not reliably propagate a
-command's own exit code (`dev-flow-exit.mjs`'s verdict-carrying `20`/`21`/
-`22` were observed to arrive at the shell as a different `task`-assigned
-code) — read the verdict from the JSON body, not from `task`'s own exit
-status, or call the bare script when the precise exit code matters.
+This section documents the executable reader and exit computer maintained by
+`harmon-devkit`; it is retained as design context for the result contracts in
+this directory. It is **not a list of locally shipped commands**. Generated
+repositories receive the declarative `.devflow.toml`, schema, and result
+contracts, but do not receive `scripts/devflow-policy.mjs`,
+`scripts/dev-flow-exit.mjs`, the exit fixture corpus, or their Taskfile
+targets. Reader distribution is tracked separately in harmon-init#1155 and
+will pin a compatible harmon-devkit release rather than copying an unreleased
+implementation into generated output. Every path, fixture, Task target, and
+CLI example below is therefore relative to an upstream harmon-devkit checkout
+unless a paragraph explicitly says otherwise.
 
 **Shape detection and refusal.** `devflow-policy.mjs` detects `.devflow.toml`'s
 shape from controlling markers only (`schema_version = 2` for v2; `rigor_order`
@@ -1373,21 +1361,13 @@ the data it reads.** A branch that edits `devflow-policy.mjs` or
 `dev-flow-exit.mjs` themselves could otherwise lower their own gate exactly
 as editing `.devflow.toml`/`agent-registry.json` directly would — the
 identical concern AGENTS.md's merge-base rule already names for those two
-files, extended to the code that resolves them. `--closure <dir>`, checked
-before either script does anything else with its arguments, re-execs the
-**trusted** copy at `<dir>/scripts/devflow-policy.mjs` (or
-`dev-flow-exit.mjs`), passing every other argument through unchanged; a
-caller materializes `<dir>` the same way it materializes a merge-base
-`.devflow.toml` (e.g. `git show <merge-base>:scripts/devflow-policy.mjs`).
-`ai/schemas/fixtures/exit/reader-self-modification-boundary/` proves the
-mechanism: it ships a *poisoned* copy of `devflow-policy.mjs` (a mutated
-built-in breadth default) and `scripts/lib/run-exit-fixtures.mjs` invokes it
-with `--closure` pointed at a trusted closure the runner builds **at test
-time** from whatever `devflow-policy.mjs` the repository currently ships —
-never a copy committed under `ai/schemas/fixtures/`, so this fixture can
-never drift from the real reader. The resolved output is asserted to carry
-the *un-tampered* built-in, proving the poisoned code's own mutation was
-never reached.
+files, extended to the code that resolves them. The trusted broker must
+materialize and invoke the merge-base entry point directly, before any branch
+module or static import loads. An in-module `--closure` delegation cannot
+establish that boundary: JavaScript module evaluation has already occurred by
+the time argument handling runs. A branch whose merge base has no reader must
+therefore stop until the reader lands separately, as the v2 config contract
+requires; it may never fall through to the branch reader.
 
 **Challenge-stage passes validate by their own declared role.**
 `result.challenger.schema.json` shipped with lane

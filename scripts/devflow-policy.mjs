@@ -15,10 +15,9 @@
 // or as a library (`import { resolvePolicy, detectShape } from
 // "./devflow-policy.mjs"`), notably by scripts/dev-flow-exit.mjs.
 
-import { readFileSync, existsSync } from 'node:fs'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import path from 'node:path'
 import { parseToml, TomlError } from './lib/toml-lite.mjs'
 
 export class PolicyError extends Error {}
@@ -32,6 +31,7 @@ const ROUND_KEYS = [
   'wall_clock_min'
 ]
 const BREADTH_KEYS = ['max_agent_runs', 'max_parallel_agents']
+const SPEND_KEYS = ['max_tokens', 'max_usd']
 const GATE_KEYS = ['round_code', 'round_docs', 'secret_scan', 'pre_pr']
 const ROLES = ['orchestrator', 'implementer', 'challenger', 'reviewer', 'integrator']
 const CONFIDENCE_STAGES = ['challenge', 'review']
@@ -91,6 +91,30 @@ function requireNonNegativeInt(value, label, errorPath) {
   if (!Number.isInteger(value) || value < 0) {
     throw new PolicyError(
       `${errorPath}: "${label}" must be a non-negative integer, got ${JSON.stringify(value)}`
+    )
+  }
+}
+
+function requirePositiveInt(value, label, errorPath) {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new PolicyError(
+      `${errorPath}: "${label}" must be a positive integer, got ${JSON.stringify(value)}`
+    )
+  }
+}
+
+function requireClosedTable(table, requiredKeys, optionalKeys, errorPath) {
+  if (table === null || typeof table !== 'object' || Array.isArray(table)) {
+    throw new PolicyError(`${errorPath} must be a table`)
+  }
+  const allowed = new Set([...requiredKeys, ...optionalKeys])
+  const missing = requiredKeys.filter((key) => !Object.hasOwn(table, key))
+  const extra = Object.keys(table).filter((key) => !allowed.has(key))
+  if (missing.length > 0 || extra.length > 0) {
+    throw new PolicyError(
+      `${errorPath} has invalid keys` +
+        `${missing.length > 0 ? `; missing: ${missing.join(', ')}` : ''}` +
+        `${extra.length > 0 ? `; unsupported: ${extra.join(', ')}` : ''}`
     )
   }
 }
@@ -346,6 +370,56 @@ function resolveRigorLevel(doc, requestedRigor) {
   return { level, profile, order }
 }
 
+function validateRoundPolicy(policyName, table) {
+  const errorPath = `[rounds.${policyName}]`
+  requireClosedTable(table, ROUND_KEYS, [], errorPath)
+  for (const key of ROUND_KEYS) {
+    if (key === 'wall_clock_min') requirePositiveInt(table[key], key, errorPath)
+    else requireNonNegativeInt(table[key], key, errorPath)
+  }
+  if (table.min_rounds > table.challenge || table.min_rounds > table.review) {
+    throw new PolicyError(
+      `${errorPath}.min_rounds (${table.min_rounds}) must be <= challenge (${table.challenge}) and review (${table.review})`
+    )
+  }
+}
+
+function validateBreadthPolicy(policyName, table) {
+  const errorPath = `[breadth.${policyName}]`
+  requireClosedTable(table, BREADTH_KEYS, [], errorPath)
+  for (const key of BREADTH_KEYS) requirePositiveInt(table[key], key, errorPath)
+}
+
+function validateSpendPolicy(policyName, table) {
+  const errorPath = `[spend.${policyName}]`
+  requireClosedTable(table, [], SPEND_KEYS, errorPath)
+  if (table.max_tokens !== undefined)
+    requirePositiveInt(table.max_tokens, 'max_tokens', errorPath)
+  if (
+    table.max_usd !== undefined &&
+    !(typeof table.max_usd === 'number' && Number.isFinite(table.max_usd) && table.max_usd > 0)
+  ) {
+    throw new PolicyError(
+      `${errorPath}: "max_usd" must be a finite positive number, got ${JSON.stringify(table.max_usd)}`
+    )
+  }
+}
+
+function validatePolicyFamily(family, familyName, validateTable) {
+  if (family === null || typeof family !== 'object' || Array.isArray(family)) {
+    throw new PolicyError(`policy has no [${familyName}.*] tables`)
+  }
+  const entries = Object.entries(family)
+  if (entries.length === 0) throw new PolicyError(`policy has no [${familyName}.*] tables`)
+  for (const [policyName, table] of entries) validateTable(policyName, table)
+}
+
+function validatePolicyFamilies(doc) {
+  validatePolicyFamily(doc.rounds, 'rounds', validateRoundPolicy)
+  validatePolicyFamily(doc.breadth, 'breadth', validateBreadthPolicy)
+  if (doc.spend !== undefined) validatePolicyFamily(doc.spend, 'spend', validateSpendPolicy)
+}
+
 function resolveRounds(doc, profile, levelName) {
   const policyName = profile.rounds
   if (typeof policyName !== 'string') {
@@ -355,6 +429,7 @@ function resolveRounds(doc, profile, levelName) {
   if (!table || typeof table !== 'object') {
     throw new PolicyError(`[rounds.${policyName}] is missing (pointed to by [rigor.${levelName}])`)
   }
+  validateRoundPolicy(policyName, table)
   const rounds = { policy: policyName }
   // remediation/wall_clock_min are required v2 fields here, not optional —
   // BUILTIN_REMEDIATION_FALLBACK/BUILTIN_WALL_CLOCK_MIN_FALLBACK exist for
@@ -378,7 +453,6 @@ function resolveRounds(doc, profile, levelName) {
     if (typeof table[key] !== 'number') {
       throw new PolicyError(`[rounds.${policyName}] is missing numeric "${key}"`)
     }
-    requireNonNegativeInt(table[key], key, `[rounds.${policyName}]`)
     rounds[key] = table[key]
   }
   // specs/config/spec.md: "The forensic rounds policy SHALL require at
@@ -403,12 +477,12 @@ function resolveBreadth(doc, profile, levelName) {
   if (!table || typeof table !== 'object') {
     throw new PolicyError(`[breadth.${policyName}] is missing (pointed to by [rigor.${levelName}])`)
   }
+  validateBreadthPolicy(policyName, table)
   const breadth = { policy: policyName }
   for (const key of BREADTH_KEYS) {
     if (typeof table[key] !== 'number') {
       throw new PolicyError(`[breadth.${policyName}] is missing numeric "${key}"`)
     }
-    requireNonNegativeInt(table[key], key, `[breadth.${policyName}]`)
     breadth[key] = table[key]
   }
   return breadth
@@ -423,22 +497,14 @@ function resolveSpend(doc, profile) {
   if (!table || typeof table !== 'object') {
     throw new PolicyError(`[spend.${policyName}] is missing (named by [rigor.*].spend)`)
   }
+  validateSpendPolicy(policyName, table)
   // A present-but-invalid ceiling must not silently become `null` (read as
   // "absent") or be trusted as-is — shepherd-stage cloud finding (round 2,
   // about pre-existing code), confirmed: `status: "UNENFORCED"` today does
   // not make this a dead value; it is a shared resolved-policy field later
   // dispatchers already consume, so a negative/fractional/non-finite
-  // max_tokens or a string-valued max_usd must be rejected, not disappear.
-  if (table.max_tokens !== undefined)
-    requireNonNegativeInt(table.max_tokens, 'max_tokens', `[spend.${policyName}]`)
-  if (
-    table.max_usd !== undefined &&
-    !(typeof table.max_usd === 'number' && Number.isFinite(table.max_usd) && table.max_usd >= 0)
-  ) {
-    throw new PolicyError(
-      `[spend.${policyName}]: "max_usd" must be a finite non-negative number, got ${JSON.stringify(table.max_usd)}`
-    )
-  }
+  // zero/negative/fractional max_tokens or a non-positive/non-finite/non-number
+  // max_usd must be rejected, not disappear, matching the portable schema.
   return {
     policy: policyName,
     max_tokens: typeof table.max_tokens === 'number' ? table.max_tokens : null,
@@ -1264,12 +1330,13 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
     // families the eligible harnesses collectively span — a council
     // requiring 3 distinct families could resolve successfully against a
     // pool of harnesses all fixed to the SAME family, which can never
-    // actually dispatch 3 distinct-family proposals. Only "fixed"
-    // family_constraint harnesses count toward the guaranteed-distinct set
-    // — a "broker" harness's actual family is chosen at runtime and cannot
-    // be statically proven distinct from another broker's choice, so
-    // counting it here would risk silently accepting an unsatisfiable
-    // pool, the opposite of what this check exists to catch.
+    // actually dispatch 3 distinct-family proposals. Eligibility also
+    // intersects the implementer role's family preferences and resolved
+    // tier: registry-wide implementer capability alone does not make a
+    // family selectable for this run. Only "fixed" family_constraint
+    // harnesses count toward the guaranteed-distinct set — a "broker"
+    // harness's actual family is chosen at runtime and cannot be statically
+    // proven distinct from another broker's choice.
     if (
       resolved.strategy?.name === 'council' &&
       resolved.strategy.distinct_families === true &&
@@ -1285,8 +1352,15 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
       const eligibleFamilies = new Set()
       for (const slug of eligibleSlugs) {
         const harness = harnessBySlug.get(slug)
-        if (harness?.family_constraint?.kind === 'fixed')
-          eligibleFamilies.add(harness.family_constraint.family)
+        if (!harness?.roles?.includes('implementer')) continue
+        if (harness.family_constraint?.kind !== 'fixed') continue
+        const familySlug = harness.family_constraint.family
+        if (!resolved.roles.implementer.families.includes(familySlug)) continue
+        const family = familyBySlug.get(familySlug)
+        if (!family?.models?.some((model) => model.tier === resolved.roles.implementer.tier)) {
+          continue
+        }
+        eligibleFamilies.add(familySlug)
       }
       if (eligibleFamilies.size < requiredFamilies) {
         errors.push(
@@ -1311,6 +1385,11 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
  * separately and decide whether "indeterminate" blocks them.
  */
 export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrategy } = {}) {
+  // A policy is one selectable catalog, not just today's default. Validate
+  // every rounds/breadth/spend table before selecting a rigor so a dormant
+  // malformed profile cannot become a delayed production failure when a
+  // label selects it later.
+  validatePolicyFamilies(doc)
   const { level, profile, order } = resolveRigorLevel(doc, requestedRigor)
 
   // Validate the whole closed rigor-profile family before selecting values.
@@ -1393,6 +1472,13 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
         )
       }
     }
+    // Validate profile-dependent constraints across the whole catalog too:
+    // pointer reachability, forensic's stronger floor, and any convergence
+    // override must not depend on which profile this invocation selected.
+    resolveRounds(doc, candidate, profileName)
+    resolveBreadth(doc, candidate, profileName)
+    resolveSpend(doc, candidate)
+    resolveConvergence(doc, profileName)
   }
   const rounds = resolveRounds(doc, profile, level)
   const breadth = resolveBreadth(doc, profile, level)
@@ -1849,53 +1935,19 @@ function cliResolve(args) {
   return 0
 }
 
-// The self-modification boundary protects the READER itself, not only the
-// TOML/JSON data it reads: a change touching devflow-policy.mjs, .devflow.toml,
-// or agent-registry.json must resolve under the merge-base copy of ALL
-// three, because a branch could otherwise lower its own gate by editing the
-// resolution CODE instead of the config data (the identical concern the
-// merge-base rule already applies to .devflow.toml/agent-registry.json —
-// see AGENTS.md's "Self-modified policy is read from the merge base"). This
-// is the one thing running this SAME (possibly branch-modified) file cannot
-// prove about itself, so `--closure <dir>` re-execs the TRUSTED copy at
-// `<dir>/scripts/devflow-policy.mjs` — materialized outside the worktree by
-// the caller (e.g. `git show <merge-base>:scripts/devflow-policy.mjs`, the
-// same closure that supplies the merge-base .devflow.toml/agent-registry.json)
-// — before this file's own (possibly untrusted) code has done anything else
-// with the arguments. Checked first, ahead of every other line of main().
-function tryDelegateToClosure(argv) {
-  const idx = argv.indexOf('--closure')
-  if (idx === -1) return null
-  const closureDir = argv[idx + 1]
-  if (!closureDir) {
-    console.error('devflow-policy: --closure requires a directory argument')
-    return 1
-  }
-  const trustedScript = path.join(closureDir, 'scripts', 'devflow-policy.mjs')
-  if (!existsSync(trustedScript)) {
-    // A merge base that predates this reader's own existence (this change
-    // may be the one introducing it) has no trusted copy to delegate to at
-    // all — refuse outright rather than falling through to the untrusted
-    // branch copy, which is exactly the gate a missing merge-base reader
-    // would otherwise let a self-modifying branch bypass.
-    console.error(
-      `devflow-policy: --closure directory has no scripts/devflow-policy.mjs (${closureDir}) — the reader must land on the merge base before a self-referential check can run; never falling back to the branch copy`
-    )
-    return 1
-  }
-  const passthrough = [...argv.slice(0, idx), ...argv.slice(idx + 2)]
-  const result = spawnSync(process.execPath, [trustedScript, ...passthrough], { stdio: 'inherit' })
-  if (result.error) {
-    console.error(`devflow-policy: could not exec the --closure reader: ${result.error.message}`)
-    return 1
-  }
-  return result.status === null ? 1 : result.status
-}
-
 function main() {
   const argv = process.argv.slice(2)
-  const delegated = tryDelegateToClosure(argv)
-  if (delegated !== null) return delegated
+  // Trust cannot be bootstrapped inside a branch-controlled module: Node
+  // evaluates this file and its static imports before main() can inspect an
+  // argument. A trusted broker/caller must materialize and invoke the
+  // merge-base reader directly. Refuse the retired in-module spelling so a
+  // stale caller cannot mistake an ignored/delegated flag for that boundary.
+  if (argv.includes('--closure')) {
+    console.error(
+      'devflow-policy: --closure cannot establish reader trust from inside branch-controlled code; invoke the materialized merge-base scripts/devflow-policy.mjs directly'
+    )
+    return 2
+  }
 
   const cmd = argv[0]
   const args = parseArgs(argv.slice(1))

@@ -341,7 +341,10 @@ off-profile choice, and never silently change model family or vendor.
 or the policy reader itself**, resolve every parameter from the merge-base
 copies of all three. A branch may not choose the values or code that govern
 its own review. An explicit human instruction still overrides because it is
-an attributable decision rather than self-modification.
+an attributable decision rather than self-modification. The trusted caller
+must materialize and invoke the merge-base reader directly, before loading any
+branch reader code; passing a closure path into the branch module cannot create
+that boundary because its module and imports have already executed.
 
 **Nothing here arms anything.** A `rigor:*`/`strategy:*` label invokes no
 model and starts no workflow by existing (ADR 0006 D1) — the shipped defaults
