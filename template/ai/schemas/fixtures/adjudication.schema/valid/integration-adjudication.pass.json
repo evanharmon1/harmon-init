@@ -14,9 +14,7 @@
     "initiated_by": "human"
   },
   "payload": {
-    "checks": [
-      { "name": "ci/build", "bucket": "pass", "run_id": "2001", "required": true }
-    ],
+    "checks": [{ "name": "ci/build", "bucket": "pass", "run_id": "2001", "required": true }],
     "codex_cycle": null,
     "integration_round": 1,
     "findings": [
