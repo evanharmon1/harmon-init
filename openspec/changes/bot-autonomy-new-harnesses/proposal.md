@@ -21,20 +21,33 @@ clause does.
   module (new, default-off `use_copilot_cli` answer) following the
   "module always exists, only its policy is conditional" contract
   `bot-autonomy-bootstrap` establishes for Antigravity — `disabled-by-option`
-  (no `COPILOT_ALLOW_ALL`, no wrapper) or `autonomous`
-  (`COPILOT_ALLOW_ALL` present in the bot container's rendered environment
+  (`COPILOT_ALLOW_ALL` rendered to the exact literal `"false"`, always
+  present in `containerEnv` so it overrides any stale same-named value that
+  might otherwise reach the container via `--env-file`; no wrapper) or
+  `autonomous` (`COPILOT_ALLOW_ALL` rendered to the exact literal `"true"`
   plus a `~/.local/bin/copilot` wrapper injecting `--allow-all` for agent
-  invocations, following the Antigravity launcher invariant). `verify` also
-  confirms `~/.copilot/settings.json`'s `permissions.disableBypassPermissionsMode`
-  is not `"disable"` (the one documented kill-switch that would neuter
-  `COPILOT_ALLOW_ALL`/`--allow-all` regardless of this module's own state).
-  harmon-init's own `.dogfood-answers.yml` sets the new answer on.
+  invocations, following the Antigravity launcher invariant — but bot-profile
+  only; unlike Antigravity's marker, neither `COPILOT_ALLOW_ALL` nor its
+  Copier-gate marker is ever rendered into the dev profile). `verify`
+  requires the exact literal `"true"`, not merely a truthy-looking value,
+  and separately confirms `~/.copilot/settings.json`'s
+  `permissions.disableBypassPermissionsMode` is not `"disable"` (the one
+  documented kill-switch that would neuter `COPILOT_ALLOW_ALL`/`--allow-all`
+  regardless of this module's own state). harmon-init's own
+  `.dogfood-answers.yml` sets the new answer on.
 - Add `.devcontainer/config/bot-autonomy/pi.sh`: unconditional (not
   Copier-gated — pi has no account or paid-tier dependency for the Hard Rule
-  to apply to). `apply` sets `defaultProjectTrust: "always"` in
-  `~/.pi/agent/settings.json` in the bot profile (dev leaves it at pi's own
-  `"ask"` default), with the same capture-before-first-overwrite
-  backup/restore shape `apply-antigravity-settings.sh` and the OpenCode
+  to apply to). `apply` records a **workspace-scoped** trusted decision in
+  `~/.pi/agent/trust.json` for the current repository only — never touching
+  the global `defaultProjectTrust` fallback, which would extend automatic
+  trust (and, per pi's own docs, automatic *extension code execution*) to
+  every repository the bot's pi installation is ever pointed at, not only
+  this one (design.md - Decisions; this repository's own Foreman
+  configuration already classifies dispatched work `untrusted-input` on this
+  public repo). Dev leaves both `trust.json` and `defaultProjectTrust`
+  untouched — pi's own defaults in both. The scoped write uses the same
+  capture-before-first-overwrite backup/restore shape `apply-antigravity-settings.sh`
+  and the OpenCode
   module already use for a persisted-volume settings key.
 - Add `.devcontainer/config/bot-autonomy/oh-my-pi.sh`: this proposal's own
   research (design.md - Decisions) found and cites a documented, pinned-release

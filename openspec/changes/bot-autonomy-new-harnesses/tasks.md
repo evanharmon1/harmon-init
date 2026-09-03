@@ -36,35 +36,54 @@
       drift
 - [ ] 1.3 Add `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` (rendered from
       `{{ use_copilot_cli }}` to the literal `enabled`/`disabled`) and
-      `containerEnv.COPILOT_ALLOW_ALL` (rendered to `"true"` only when the
-      answer is on, omitted otherwise) to the **bot** `devcontainer.json`
-      jinja twin only — **not** `dev/devcontainer.json`, unlike the existing
+      `containerEnv.COPILOT_ALLOW_ALL` (rendered to the exact literal
+      `"true"` when the answer is on, the exact literal `"false"` when it
+      is off — **always present, never omitted in either state**) to the
+      **bot** `devcontainer.json` jinja twin only — **not**
+      `dev/devcontainer.json`, unlike the existing
       `HARMON_BOT_AUTONOMY_ANTIGRAVITY` marker `bot-autonomy-bootstrap`
       added to both: nothing in the dev profile reads either new entry, and
       rendering `COPILOT_ALLOW_ALL` into dev too would hand a human's own
       interactive Copilot CLI session in the dev profile full allow-all
-      permissions (design.md - Decisions); set the matching literal values
-      in this repository's own root `.devcontainer/devcontainer.json` only
-      (`enabled`/`"true"`, matching `.dogfood-answers.yml`) and confirm
+      permissions (design.md - Decisions). Always rendering the key (rather
+      than omitting it when disabled) is load-bearing, not stylistic: the
+      bot profile also loads `.devcontainer/devcontainer.env` via
+      `--env-file`, `init-env.sh` does not recognize or evict
+      `COPILOT_ALLOW_ALL` (it is not one of the secrets that script
+      manages), and `containerEnv` only outranks `--env-file` for a key it
+      actually specifies — an omitted key lets a stale out-of-band
+      `COPILOT_ALLOW_ALL=true` in that file survive a disabled render
+      undisturbed; set the matching literal values in this repository's own
+      root `.devcontainer/devcontainer.json` only (`enabled`/`"true"`,
+      matching `.dogfood-answers.yml`) and confirm
       `.devcontainer/dev/devcontainer.json` carries neither; verify by
       rendering a copy with `use_copilot_cli: true` and one at the default,
       confirming the rendered **bot** `devcontainer.json`'s `containerEnv`
-      carries the expected literals in both cases and the rendered **dev**
-      `devcontainer.json` carries neither key in either case
+      carries the expected literal in both cases (never omitted) and the
+      rendered **dev** `devcontainer.json` carries neither key in either
+      case; ALSO verify with a fixture that pre-seeds
+      `COPILOT_ALLOW_ALL=true` in a scratch `devcontainer.env` before
+      building the disabled render, confirming the container's effective
+      value is `"false"`, not the stale `"true"`
 - [ ] 1.4 Add `.devcontainer/config/bot-autonomy/copilot.sh`: `apply` reads
       `$HARMON_BOT_AUTONOMY_COPILOT`; WHEN `enabled`, confirms
-      `$COPILOT_ALLOW_ALL` is present in its own process environment
-      (failing loudly if not — a render inconsistency) and installs
-      `~/.local/bin/copilot`; WHEN not `enabled`, removes
+      `$COPILOT_ALLOW_ALL` is the exact literal `true` in its own process
+      environment (failing loudly if not — a render inconsistency) and
+      installs `~/.local/bin/copilot`; WHEN not `enabled`, removes
       `~/.local/bin/copilot` if present and does not touch
-      `$COPILOT_ALLOW_ALL` (it is not writable by this script either way);
-      `verify` asserts the wrapper's presence/absence matches the marker,
-      that `$COPILOT_ALLOW_ALL` matches, and that
-      `~/.copilot/settings.json`'s `permissions.disableBypassPermissionsMode`
-      is not `"disable"`; verify by running `bot-autonomy.sh apply verify`
-      in a scratch fixture with the marker `enabled` and `disabled`, plus a
-      toggle-off-after-apply fixture confirming a prior autonomous state
-      reaches disabled (wrapper absent) after a re-render flips the marker
+      `$COPILOT_ALLOW_ALL` (it is not writable by this script either way —
+      the render already guarantees it reads `false`); `verify` asserts the
+      wrapper's presence/absence matches the marker, that
+      `$COPILOT_ALLOW_ALL` is the exact literal `true` (enabled) or `false`
+      (disabled) — not merely present/absent, and not any other
+      truthy-looking value — and that `~/.copilot/settings.json`'s
+      `permissions.disableBypassPermissionsMode` is not `"disable"`; verify
+      by running `bot-autonomy.sh apply verify` in a scratch fixture with
+      the marker `enabled` and `disabled`, a fixture that sets
+      `COPILOT_ALLOW_ALL` to a truthy-but-wrong value (`"1"`, `"yes"`) and
+      confirms `verify` fails naming Copilot, and a toggle-off-after-apply
+      fixture confirming a prior autonomous state reaches disabled (wrapper
+      absent, `COPILOT_ALLOW_ALL=false`) after a re-render flips the marker
 - [ ] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
       `--allow-all` on a bare `copilot` invocation and on `copilot -p`/
       `--prompt` unless the invocation already carries full allow-all
@@ -97,17 +116,34 @@
 
 ## 2. pi module
 
-- [ ] 2.1 Add `.devcontainer/config/bot-autonomy/pi.sh`: unconditional (no
-      Copier-answer branch); `apply` sets `defaultProjectTrust: "always"` in
-      `~/.pi/agent/settings.json` in the bot profile, capturing the prior
-      value (or its absence) before the first overwrite, gated on no backup
-      existing yet, matching `apply-antigravity-settings.sh`'s
-      `[ ! -f "$backup_path" ]` guard; `verify` reads the value back; `restore`
-      puts the captured value back and clears the backup; verify with
-      fixtures covering fresh-file creation, overriding an existing
-      `"ask"`/`"never"` value, preserving unrelated keys, and an
-      `apply → apply → restore` sequence confirming restore returns the
-      value from *before the first* apply
+- [ ] 2.1 First, confirm `~/.pi/agent/trust.json`'s actual per-directory
+      write format against the real `pi` binary: in a scratch container or
+      fixture, run `pi` interactively once in a throwaway workspace, use
+      `/trust` to record a trusted decision, and inspect the resulting
+      `trust.json` (key format — canonical path? some other identifier? —
+      and value shape). This is a bounded confirmation, not open-ended
+      research (design.md - Risks): the file's existence and per-directory
+      keying are already established; only its exact JSON shape needs
+      confirming before a script can write it programmatically. Then add
+      `.devcontainer/config/bot-autonomy/pi.sh`: unconditional (no
+      Copier-answer branch); `apply` records a trusted decision in
+      `~/.pi/agent/trust.json` for the **current workspace's canonical
+      directory only**, in the confirmed format — it does NOT write
+      `defaultProjectTrust` in `~/.pi/agent/settings.json` at all, in either
+      profile; capturing whatever decision (or absence of one) the current
+      workspace's `trust.json` entry already holds before the first
+      overwrite, gated on no backup existing yet, matching
+      `apply-antigravity-settings.sh`'s `[ ! -f "$backup_path" ]` guard;
+      `verify` reads the current workspace's entry back and confirms
+      `defaultProjectTrust` is untouched; `restore` puts the captured
+      per-workspace decision (or its absence) back and clears the backup;
+      verify with fixtures covering: a fresh workspace with no existing
+      `trust.json` entry, overriding an existing distrust decision for the
+      same workspace, preserving other workspaces' entries in the same
+      file untouched, an `apply → apply → restore` sequence confirming
+      restore returns *this workspace's* pre-first-apply state, and a
+      fixture confirming `defaultProjectTrust` in `settings.json` is never
+      written by this module in either profile
 - [ ] 2.2 Confirm the dev profile's post-create never calls this module
       (mirroring `bot-autonomy-bootstrap`'s own "dev never calls
       `bot-autonomy.sh`" wiring — this module is only ever dispatched from
@@ -118,11 +154,16 @@
 - [ ] 2.3 Add a fixture proving the effective-behavior claim in design.md's
       pi Decision: a non-interactive `pi -p` run against a fixture
       repository carrying `.pi/settings.json` (or another trust-requiring
-      resource) loads that resource when `defaultProjectTrust: "always"`,
-      and silently ignores it (no error, no prompt) when left at pi's own
-      `"ask"` default — verify this fixture actually distinguishes the two
+      resource) loads that resource when `apply` has recorded a trusted
+      `trust.json` decision for that specific workspace, and silently
+      ignores it (no error, no prompt) in a **different** fixture
+      repository — one `apply` never ran against — left at pi's own
+      `"ask"` default; verify this fixture actually distinguishes the two
       cases (a fixture that cannot tell them apart would not be exercising
-      the requirement this module exists to satisfy)
+      the requirement this module exists to satisfy) AND confirms the
+      second repository's resources stay ignored — proving the trust
+      decision is genuinely scoped, not a global change that happens to
+      have been tested against only one workspace
 
 ## 3. oh-my-pi module
 

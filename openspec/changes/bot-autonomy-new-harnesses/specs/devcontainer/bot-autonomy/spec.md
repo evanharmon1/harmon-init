@@ -21,30 +21,66 @@ rendered into dev's `containerEnv` too, a human's own interactive Copilot CLI
 session in the dev profile would silently run allow-all, contradicting the
 dev profile's prompt-enabled/balanced posture (one of #1137's own,
 already-satisfied acceptance criteria) regardless of the bot-autonomy module
-never running there. `apply` SHALL NOT itself attempt to set
-`COPILOT_ALLOW_ALL` — a container-wide environment variable is fixed by the
-rendered `containerEnv` before any lifecycle script runs, not writable at
-runtime the way a settings file is — so `apply` SHALL instead treat the
-variable's presence in its own process environment as an input to check, not
-a value to produce.
+never running there.
+
+`containerEnv.COPILOT_ALLOW_ALL` SHALL be rendered to the exact literal
+string `"true"` when `use_copilot_cli` is on and the exact literal string
+`"false"` when it is off — present in **both** states, never omitted in
+either. Omitting the key when disabled is insufficient: the bot profile also
+loads `.devcontainer/devcontainer.env` via `--env-file`, a separately
+populated file `init-env.sh` does not manage this variable in at all (it is
+not one of the secrets that script recognizes), so an out-of-band or
+stale `COPILOT_ALLOW_ALL=true` entry there — however it got there — would
+otherwise survive a disabled render undisturbed; `containerEnv` values take
+precedence over `--env-file` values for a key both specify, but only for a
+key `containerEnv` actually specifies, not one it merely leaves out. `apply`
+SHALL NOT itself attempt to set `COPILOT_ALLOW_ALL` — a container-wide
+environment variable is fixed by the rendered `containerEnv` before any
+lifecycle script runs, not writable at runtime the way a settings file is —
+so `apply` SHALL instead treat the variable's exact value in its own process
+environment as an input to check, not a value to produce. `verify` SHALL
+require the exact literal `"true"` for the autonomous state, not any
+truthy-looking value — the documented Copilot contract this proposal's own
+research found checks for that exact string, not general truthiness, so a
+render or override that produces some other non-`"true"` value (`"1"`,
+`"yes"`, empty) would pass a looser check while Copilot itself still does
+not grant allow-all.
 
 #### Scenario: the disabled-by-option state is verified, not merely defaulted
 - **WHEN** `use_copilot_cli` is off (the default) and `bot-autonomy.sh apply`
   runs the `copilot-cli` module in the bot profile
-- **THEN** `COPILOT_ALLOW_ALL` is absent from the container's environment,
-  `~/.local/bin/copilot` does not exist, and `verify` asserts exactly that
-  absence — a prompt-enabled Copilot CLI is the verified-correct state in
-  this configuration, not an uncovered gap
+- **THEN** `COPILOT_ALLOW_ALL` reads the exact literal `"false"` in the
+  container's environment — overriding any stale same-named value that
+  might otherwise reach the container via `--env-file` — `~/.local/bin/copilot`
+  does not exist, and `verify` asserts both: a prompt-enabled Copilot CLI is
+  the verified-correct state in this configuration, not an uncovered gap
 
-#### Scenario: the autonomous state is verified when the option is on
+#### Scenario: the autonomous state requires the exact documented value
 - **WHEN** `use_copilot_cli` is on and `bot-autonomy.sh apply` runs the
   `copilot-cli` module in the bot profile
-- **THEN** `COPILOT_ALLOW_ALL` is present (set to a truthy value) in the
+- **THEN** `COPILOT_ALLOW_ALL` reads the exact literal `"true"` in the
   container's rendered environment, `~/.local/bin/copilot` exists as the
   flag-injecting wrapper, and `verify` asserts both — including confirming
   this repository's own `.dogfood-answers.yml` sets `use_copilot_cli` on, so
   this repository's own bot container runs Copilot CLI autonomously, while a
   freshly generated repo defaults to `disabled-by-option`
+
+#### Scenario: verify fails on a truthy-but-not-exact value
+- **WHEN** `use_copilot_cli` is on, `bot-autonomy.sh verify` runs in the bot
+  profile, and `COPILOT_ALLOW_ALL`'s effective value is present but is not
+  the exact literal `"true"` (for example `"1"`, `"yes"`, or an empty
+  string reached some other way)
+- **THEN** `verify` exits non-zero naming Copilot CLI — a value Copilot's
+  own documented contract does not check for is not the verified-correct
+  autonomous state, even if it looks truthy to a looser check
+
+#### Scenario: a stale out-of-band value cannot survive a disabled render
+- **WHEN** `use_copilot_cli` is off, `.devcontainer/devcontainer.env` (the
+  bot profile's `--env-file`) already contains `COPILOT_ALLOW_ALL=true` from
+  some prior, out-of-band cause, and the bot container is created or rebuilt
+- **THEN** the container's effective `COPILOT_ALLOW_ALL` reads `"false"` —
+  the rendered `containerEnv` entry, which Docker applies with precedence
+  over `--env-file` — not the stale env-file value
 
 #### Scenario: the dev profile never receives COPILOT_ALLOW_ALL, regardless of the answer
 - **WHEN** a repo is generated (or updated) with `use_copilot_cli` at any
@@ -56,9 +92,9 @@ a value to produce.
 
 #### Scenario: apply fails loudly on a marker/environment inconsistency
 - **WHEN** `HARMON_BOT_AUTONOMY_COPILOT` reads `enabled` but
-  `COPILOT_ALLOW_ALL` is absent from `apply`'s own process environment (a
-  render defect — the jinja twin failed to carry the marker's value into
-  the actual environment variable)
+  `COPILOT_ALLOW_ALL` is not the exact literal `"true"` in `apply`'s own
+  process environment (a render defect — the jinja twin failed to carry the
+  marker's value into the actual environment variable correctly)
 - **THEN** `apply` exits non-zero naming the inconsistency rather than
   installing the wrapper against an environment that will not actually
   grant it allow-all permissions
@@ -144,46 +180,80 @@ hardcoding one specific installation path.
 - **THEN** the `copilot-cli` module's `apply` removes `~/.local/bin/copilot`
   on its next run, and `verify` asserts its absence
 
-### Requirement: pi's non-interactive boundary is project trust, not tool approval
+### Requirement: pi's non-interactive boundary is a scoped trust decision, not a global one
 Pi SHALL NOT be Copier-gated — it has no account or paid-tier dependency for
-the Hard Rule to apply to. The bot profile SHALL set `defaultProjectTrust` to
-`"always"` in `~/.pi/agent/settings.json` unconditionally; the dev profile
-SHALL leave it at pi's own `"ask"` default. `apply` SHALL capture the prior
-`defaultProjectTrust` value (or its absence) before its first overwrite,
-gated on no backup existing yet, matching the pattern
-`apply-antigravity-settings.sh` and the OpenCode module already use for a
-persisted-volume settings key; `restore` SHALL put that prior value back and
-clear the backup.
+the Hard Rule to apply to. The bot profile SHALL NOT change
+`defaultProjectTrust` — it SHALL remain at pi's own safe default (`"ask"`,
+which non-interactive modes treat as "ignore protected resources," never as
+"trust them"). Instead, `apply` SHALL record a **trusted** decision scoped to
+the current workspace only, in `~/.pi/agent/trust.json` (the same
+per-canonical-directory decision store pi's own interactive `/trust` command
+writes), so THIS repository's own `.pi/` resources load in headless bot
+sessions without granting blanket trust to every other repository the same
+`~/.pi` volume's pi installation might ever be pointed at. A global
+`defaultProjectTrust: "always"` was considered and rejected: this
+repository's own Foreman configuration already classifies every dispatched
+unit as `untrusted-input` on this public repo (AGENTS.md's Foreman section),
+and pi's own docs state that trusting a project allows it to "install
+missing project packages, and execute project extensions" — code, not mere
+configuration. A blanket global trust decision would make the bot
+automatically execute any `.pi/extensions` content in *any* repository it
+happens to open (a sibling clone, a dependency being inspected, anything
+Foreman or the model itself navigates to), not only this one; a scoped,
+per-workspace decision extends trust to exactly the repository this
+container was built for and no further. `apply` SHALL capture whatever
+trust decision (if any) already exists for the current workspace before
+first recording the trusted one, gated on no backup existing yet, matching
+the pattern `apply-antigravity-settings.sh` and the OpenCode module already
+use for a persisted-volume settings key; `restore` SHALL put that prior
+decision (or its absence) back and clear the backup. The exact write format
+of `trust.json`'s per-directory entries is confirmed against the real
+`pi` binary at implementation time (tasks.md), not guessed at here; what
+this requirement fixes is scope, not the file format.
 
-#### Scenario: apply sets always-trust on a fresh volume
-- **WHEN** the `pi` module's `apply` runs in the bot profile and
-  `~/.pi/agent/settings.json` does not yet exist or has no
-  `defaultProjectTrust` key
-- **THEN** the file has `defaultProjectTrust: "always"` afterward, and every
-  other existing key is preserved
+#### Scenario: apply trusts only the current workspace, not the global default
+- **WHEN** the `pi` module's `apply` runs in the bot profile
+- **THEN** `~/.pi/agent/trust.json` records a trusted decision for the
+  current workspace's canonical directory, and
+  `~/.pi/agent/settings.json`'s `defaultProjectTrust` is left exactly as it
+  was before `apply` ran (unset, or whatever value the file already had) —
+  `apply` never writes that key
 
-#### Scenario: non-interactive pi sessions load project resources instead of silently skipping them
+#### Scenario: non-interactive pi sessions load this repository's own project resources
 - **WHEN** the bot profile runs `pi -p "<prompt>"` (or `--mode json`/
-  `--mode rpc`) against a repository whose `.pi/` directory carries
-  project-local settings, extensions, skills, prompts, or themes, and no
-  saved trust decision applies
+  `--mode rpc`) in the same workspace `apply` ran against, and that
+  repository's `.pi/` directory carries project-local settings, extensions,
+  skills, prompts, or themes
 - **THEN** those resources are loaded — pi's non-interactive modes never
-  show a trust prompt regardless of this setting, so `defaultProjectTrust:
-  "always"` is what keeps the bot's headless sessions from silently
-  operating against an untrusted, resource-skipping fallback rather than
-  what avoids an approval prompt that would not appear either way
+  show a trust prompt regardless of any trust setting, so the scoped
+  `trust.json` decision is what keeps the bot's headless sessions in *this*
+  repository from silently operating against a resource-skipping fallback,
+  without extending that trust anywhere else
 
-#### Scenario: the dev profile keeps pi's own default
+#### Scenario: an unrelated repository the bot later opens is not automatically trusted
+- **WHEN** the bot profile runs `pi` against a **different** repository —
+  one `apply` never ran against, and with no saved `trust.json` decision of
+  its own — and that repository also carries `.pi/` resources requiring
+  trust
+- **THEN** pi's own default (`"ask"`, ignoring those resources in
+  non-interactive mode) applies, exactly as it would with this module
+  absent entirely — the scoped decision does not generalize into a blanket
+  one
+
+#### Scenario: the dev profile records no trust decision at all
 - **WHEN** a dev profile container is created or rebuilt
-- **THEN** `~/.pi/agent/settings.json`'s `defaultProjectTrust` is unset or
-  `"ask"` — pi's own out-of-the-box behavior, not forced by this module
+- **THEN** neither `~/.pi/agent/trust.json` nor `~/.pi/agent/settings.json`'s
+  `defaultProjectTrust` is touched by this module — pi's own out-of-the-box
+  behavior in both files, not forced by this module in either profile
 
 #### Scenario: restore returns the value captured before the first apply
 - **WHEN** an operator runs the `pi` module's restore step after `apply`
   has run one or more times
-- **THEN** `defaultProjectTrust` returns to the value (or absence) captured
-  before the *first* `apply` in that sequence, the backup file is removed,
-  and every key `apply` did not manage is untouched
+- **THEN** the current workspace's `trust.json` entry returns to whatever
+  decision (or absence of one) was captured before the *first* `apply` in
+  that sequence, the backup file is removed, `defaultProjectTrust` is
+  untouched throughout (this module never wrote it), and every other key
+  `apply` did not manage is unchanged
 
 ### Requirement: oh-my-pi's non-interactive boundary is confirmed before it is enforced
 Oh-my-pi SHALL NOT be Copier-gated. The primary path is: the bot profile

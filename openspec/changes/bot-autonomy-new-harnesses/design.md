@@ -216,6 +216,43 @@ Alternative considered: have `apply` write `COPILOT_ALLOW_ALL` into a
 profile-scoped `.bashrc` `export` — rejected outright as the exact mechanism class this
 capability was created to retire.
 
+**`COPILOT_ALLOW_ALL` is rendered to the exact literal `"true"`/`"false"` in
+both states, never omitted — and `verify` checks for the exact literal, not
+general truthiness.** An earlier draft of this design omitted the key
+entirely in the disabled state, reasoning that an absent `containerEnv` key
+is simply absent from the container. That reasoning missed a real second
+input: the bot profile also loads `.devcontainer/devcontainer.env` via
+`--env-file` (`runArgs: ["--env-file", ".devcontainer/devcontainer.env"]`),
+and `init-env.sh` — the script that populates and evicts entries in that
+file — only recognizes a fixed, enumerated set of secret variable names
+(`GH_TOKEN`, `FOREMAN_AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+`AGENT_DECK_TELEGRAM_KEY`, the alt-provider keys, `TS_AUTHKEY`,
+`ANTHROPIC_API_KEY`); its own comment states plainly that "vars the script
+does NOT recognize are left untouched, so a value an opted-out repo
+populates out-of-band… survives rebuilds." `COPILOT_ALLOW_ALL` is not a
+secret and was never going to be added to that list — it is a derived,
+render-time boolean, not a runtime-injected credential — so nothing evicts
+a stray `COPILOT_ALLOW_ALL=true` entry in `devcontainer.env` however it got
+there (a leftover from local testing, a copy-paste, an earlier draft of
+this very module). Docker's `--env` (from `containerEnv`) outranks
+`--env-file` for a key **both specify** — the same precedence this
+repository's own `dev/devcontainer.json` already relies on to blank
+`GITHUB_TOKEN`/`GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` rather than
+merely omitting them — but that precedence does nothing for a key
+`containerEnv` never mentions at all. Rendering the disabled state as the
+literal `"false"`, always present, closes this the same way the dev-profile
+token-blanking already does, rather than depending on nothing ever having
+written to the env-file out of band. On the read side, this proposal's own
+research found `COPILOT_ALLOW_ALL`'s documented contract is "set to `true`"
+— a specific string comparison, not a general boolean parse — so `verify`
+checking for that exact literal (rather than any truthy-looking value)
+keeps the check aligned with what Copilot itself actually honors, the same
+"verify re-reads effective runtime state independently" discipline this
+whole capability is built on. Alternative considered: leave the disabled
+state as key-omission and rely on nothing else ever populating the env-file
+— rejected once the env-file's actual eviction scope (a fixed secret list,
+not "everything") was checked rather than assumed.
+
 **The wrapper is deliberate defense-in-depth and Copier-gated-module
 contract consistency, not a documented headless-specific gap the way
 Antigravity's is.** GitHub's own docs state that `--allow-all-tools`,
@@ -269,8 +306,8 @@ categories would have been the wrong kind of consistency: matching the
 prior module's *mechanism* instead of its *reasoning*.
 
 **`disableBypassPermissionsMode` is `verify`-only; `apply` never writes
-it.** Unlike `permission` in OpenCode's `opencode.json` or
-`defaultProjectTrust` in pi's settings, this key is not a policy value this
+it.** Unlike `permission` in OpenCode's `opencode.json` or the scoped
+`trust.json` entry pi's own module owns, this key is not a policy value this
 module owns — GitHub's own docs frame it as an administrator/organization
 kill-switch (its enterprise-managed-settings form wraps the value in an
 `overridable` object; the plain per-user `~/.copilot/settings.json` form is
@@ -315,29 +352,68 @@ its own plan and free-tier limits. This matches Claude Code/Codex/OpenCode's
 own unconditional treatment in `bot-autonomy-bootstrap`: those three are not
 Copier-gated either, for the same reason.
 
-**pi: write `defaultProjectTrust: "always"` explicitly, and state the
-requirement in terms of resource loading, not prompt avoidance.** An
-earlier framing (matching the originating brief's own wording, "the only
-prompt is project trust") would suggest this setting exists to suppress an
-approval prompt in the bot profile. Pi's own docs contradict that framing
-directly: "Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do
-not show a trust prompt" at all, regardless of `defaultProjectTrust` —
-there is no prompt for this setting to avoid in the bot's actual (headless)
-use. What the setting *does* control in non-interactive mode is starkly
-different per value: `"ask"` and `"never"` both "ignore" protected project
-resources (`.pi/settings.json`, extensions, skills, prompt templates,
-themes, system-prompt files) with no saved trust decision, while only
-`"always"` loads them. A bot container left at pi's own `"ask"` default
-would therefore run every headless pi session with **zero prompts and zero
+**pi: state the requirement in terms of resource loading, not prompt
+avoidance — and, having established that, scope the fix to this
+workspace, not the global default.** An earlier framing (matching the
+originating brief's own wording, "the only prompt is project trust") would
+suggest this setting exists to suppress an approval prompt in the bot
+profile. Pi's own docs contradict that framing directly: "Non-interactive
+modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt" at
+all, regardless of `defaultProjectTrust` — there is no prompt for this
+setting to avoid in the bot's actual (headless) use. What the setting
+*does* control in non-interactive mode is starkly different per value:
+`"ask"` and `"never"` both "ignore" protected project resources
+(`.pi/settings.json`, extensions, skills, prompt templates, themes,
+system-prompt files) with no saved trust decision, while only `"always"`
+loads them. A bot container left at pi's own `"ask"` default would
+therefore run every headless pi session with **zero prompts and zero
 errors**, silently starting from a stripped-down configuration that ignores
 this repository's own `.pi/` customizations — a real effective-policy
 divergence of exactly the shape this whole capability exists to catch, just
 one that manifests as silently degraded capability rather than a blocking
-prompt. Stating the requirement this way is not merely a rewording: it is
-the actual, evidenced reason `defaultProjectTrust: "always"` matters here,
-and it is what a `verify` scenario should actually be checking for (that
-project resources load), not merely that no prompt appeared (which was
-never going to happen either way).
+prompt.
+
+A first draft of the fix set `defaultProjectTrust: "always"` **globally** —
+correctly targeting resource-loading, but at the wrong scope. Pi's own
+docs state plainly what trusting a project actually grants: "install
+missing project packages, and execute project extensions" — code
+execution, not configuration. `defaultProjectTrust` is the **fallback**
+pi consults only when no more specific, per-directory decision applies
+("Saved decisions are stored by canonical directory in
+`~/.pi/agent/trust.json`, and the closest saved decision on the current or
+parent path applies before the global default"), so setting the fallback
+itself to `"always"` would extend automatic trust — automatic *code
+execution* — to every repository the bot's `~/.pi` installation is ever
+pointed at, not only this one. That is a materially different and
+materially broader grant than what any of the other four bot-autonomy
+modules make: Claude Code's `bypassPermissions`, Codex's
+`danger-full-access`, Antigravity's `always-proceed`, and OpenCode's
+`permission: allow` all remove a *prompt in front of the model's own,
+already-requested tool calls* — they do not make the harness
+automatically execute repository-shipped extension code before the model
+starts reasoning at all. And this repository is a concrete instance of
+exactly that exposure: its own Foreman configuration already classifies
+every dispatched unit `untrusted-input` on this public repo (AGENTS.md),
+precisely because automated agents here can end up working with content
+this repository does not control. Global `defaultProjectTrust: "always"`
+would have the bot auto-execute `.pi/extensions` from *any* repository it
+opens — a sibling clone under investigation, a dependency being read, a
+Foreman-dispatched cross-repo task — not only the one this container was
+built for.
+
+The corrected fix keeps the resource-loading target and narrows the scope:
+`apply` records a trusted decision in `~/.pi/agent/trust.json` for the
+**current workspace's own canonical directory only**, leaving
+`defaultProjectTrust` at pi's own safe default. This is what a `verify`
+scenario should actually check (that *this repository's* project resources
+load) without generalizing that into "every repository this pi
+installation ever touches is trusted" — the corrected, narrower claim the
+requirement above states. Alternative considered: keep the global default
+but document the risk as accepted — rejected, because the risk is not
+inherent to what this module needs to accomplish (this repository's own
+resources loading); it was purely an artifact of using the wrong one of
+pi's two trust-scoping mechanisms, and the narrower mechanism (a scoped
+`trust.json` entry) already exists and does exactly what is needed instead.
 
 **oh-my-pi: ship the module against this proposal's own researched finding,
 with the brief's fail-closed fallback retained as a stated contingency
@@ -390,27 +466,39 @@ in this capability already behaves (none of the four existing modules
 relies on a harness's own out-of-the-box default even where one happens to
 already match the bot policy).
 
-**Verify reads a plain settings file for Claude Code, Codex, Copilot, and
-pi; it invokes the harness's own resolved-config command for OpenCode and
-oh-my-pi — a deliberate split, not an inconsistency.** Claude Code's
+**Verify's mechanism splits three ways across the six modules, by what each
+harness's own config layering actually does — not an inconsistency, a
+deliberate match to each shape.** Claude Code's
 `/etc/claude-code/managed-settings.json` and Codex's
 `/etc/codex/managed_config.toml` are both `/etc`-scoped by design, with no
-per-repository override layer to miss. Copilot's `~/.copilot/settings.json`
-and pi's `~/.pi/agent/settings.json` are both documented as global-only
-settings with no project-level config file of their own that this proposal's
-research found (pi's docs state `defaultProjectTrust` is "Global setting
-only"; Copilot's config-directory reference lists no repository-tracked
-settings file alongside the global one). OpenCode and oh-my-pi are the two
-modules where a project-level config file genuinely exists and genuinely
-overrides the global default (`opencode.json`/`.opencode/opencode.json`
-project-over-global layering; oh-my-pi's own documented
-`<cwd>/.omp/config.yml` precedence) — for those two, and only those two, a
-plain global-file read would recreate exactly the effective-state gap this
-whole capability exists to close, so `verify` has to ask the harness itself
-what it would actually do, from the directory being verified. This mirrors
-`bot-autonomy-bootstrap`'s own reasoning for why OpenCode's `verify` differs
-from Claude Code's and Codex's, applied a second time now that a fifth and
-sixth module exist with the same two shapes.
+per-repository override layer to miss — a plain global-file read is
+complete. Copilot's `~/.copilot/settings.json` is the same shape: documented
+as global-only, with no repository-tracked settings file this proposal's
+research found alongside it. OpenCode and oh-my-pi are the two modules where
+a project-level config file genuinely exists and genuinely overrides the
+global default (`opencode.json`/`.opencode/opencode.json` project-over-global
+layering; oh-my-pi's own documented `<cwd>/.omp/config.yml` precedence) —
+for those two, a plain global-file read would recreate exactly the
+effective-state gap this whole capability exists to close, so `verify` asks
+the harness's own resolved-config command instead, from the directory being
+verified; this mirrors `bot-autonomy-bootstrap`'s own reasoning for why
+OpenCode's `verify` differs from Claude Code's and Codex's, applied a second
+time now that a fifth module (oh-my-pi) exists with the same shape.
+
+pi is a **third** shape, neither of the other two: `defaultProjectTrust` is
+genuinely global with no project-level override (pi's docs state it is a
+"Global setting only") — but this proposal does not manage that key at all
+(see the corrected pi Decision above), so there is no global-vs-project
+divergence for `verify` to worry about missing in the first place. What
+`verify` instead reads is `~/.pi/agent/trust.json`'s entry for the specific
+workspace being verified — a **path-keyed** file read, not a single global
+value and not a live resolved-config command (pi's docs describe no
+`pi config get`-style single-key inspection command for the resolved trust
+state the way `opencode debug config` or `omp config get` provide). This is
+still "read the same live path a human would inspect," the same discipline
+every module in this capability follows; it simply reads a per-directory
+key rather than a single global one, because that is the shape pi's own
+trust model actually has.
 
 **Registry-table reconciliation is a removal, not a fresh addition, and it
 happens in this change's implementation, not `bot-autonomy-bootstrap`'s.**
@@ -486,17 +574,27 @@ more than one bucket).
   installed `copilot --help` output at the pinned version, the same
   "verify at implementation time" discipline `harness-matrix`'s own design
   already applies to its own researched claims.
-- [Risk] pi's `~/.pi/agent/trust.json` could carry a stale, saved
-  per-directory distrust decision that overrides `defaultProjectTrust:
-  "always"` for a specific path → [Mitigation] the bot profile's own
-  `~/.pi` volume is separate from the dev profile's (confirmed by reading
-  both `devcontainer.json` twins' `mounts` — distinct volume names per
-  profile), and the bot post-create flow never runs pi interactively (the
-  only way `/trust` could record a contrary decision), so this volume
-  should never accumulate one on its own; treated as a disclosed, low-
-  probability residual rather than a case `verify` specifically audits for,
-  consistent with this repository's stance that these are probabilistic
-  controls, not zero-finding guarantees.
+- [Risk] `~/.pi/agent/trust.json`'s exact per-directory write format is not
+  confirmed by this proposal's research (only that it exists, is keyed by
+  canonical directory, and is written by pi's own interactive `/trust`
+  command) → [Mitigation] the spec states the required *outcome* (this
+  workspace's resources load; a different, untouched workspace's do not),
+  not a guessed file format; implementation confirms the actual JSON shape
+  against the real `pi` binary (run `/trust` once interactively in a
+  scratch container, inspect the resulting file, then have `apply` produce
+  the same shape programmatically) before writing the module, the same
+  "verify at implementation time" discipline applied to Copilot's wrapper
+  passthrough list and oh-my-pi's config mechanism elsewhere in this
+  design.
+- [Risk] A canonical-directory path (however pi derives it — real path,
+  container-relative path, or something else) could differ between the
+  path `apply` writes a decision for and the path pi resolves at session
+  start, silently missing the scoped trust entirely → [Mitigation] the
+  same implementation-time confirmation task above verifies this
+  end-to-end: `apply` writes for the workspace path, then an actual
+  non-interactive `pi -p` run from that same workspace is checked to
+  confirm project resources load, rather than trusting that the written
+  path and the resolved path are the same string by construction.
 - [Risk] This change's own doc edits (`devcontainers.md`, `security.md`)
   land after `bot-autonomy-bootstrap`'s implementation, which itself
   restructures `devcontainers.md` (dedupes a currently-duplicated Codex
@@ -517,11 +615,15 @@ more than one bucket).
 - A single implementation PR (not this planning change) adds the three
   modules, updates the registry `unsupported` table, adds the Copier
   answer and its rendered marker, and extends the doc/test surfaces. It
-  cannot start before `bot-autonomy-bootstrap`'s implementation (PR #1150)
-  merges — its modules dispatch through `bot-autonomy.sh`, which does not
-  exist until then — and it touches both the root `.devcontainer/` and its
-  `template/` twin in the same PR, per AGENTS.md dogfood parity;
-  `task test:dogfood-parity` and `test:dogfood-structure` gate it.
+  must *merge* after `bot-autonomy-bootstrap`'s implementation (PR #1150) —
+  its modules dispatch through `bot-autonomy.sh`, which does not exist on
+  `main` until then — but development may proceed on a branch stacked on
+  PR #1150 (or otherwise informed by its design) in parallel, rebasing and
+  reconciling against whatever `bot-autonomy-bootstrap` actually ships
+  before this change's own PR is finalized (tasks.md task 0.1). It touches
+  both the root `.devcontainer/` and its `template/` twin in the same PR,
+  per AGENTS.md dogfood parity; `task test:dogfood-parity` and
+  `test:dogfood-structure` gate it.
 - It must itself merge before the rolling `sync-pin` PR that bumps
   `.devcontainer/Dockerfile` (root + `template`) to the image digest
   `harness-matrix`/#1149 published. This is the same "modules-before-pin"
@@ -543,7 +645,7 @@ more than one bucket).
   value (only the wrapper file, which is not user data), so there is
   nothing to restore before a revert — removing the wrapper on rollback is
   sufficient and requires no ordering care.
-- pi's and oh-my-pi's persisted-volume policy writes (`~/.pi/agent/settings.json`,
+- pi's and oh-my-pi's persisted-volume policy writes (`~/.pi/agent/trust.json`,
   `~/.omp/agent/config.yml`) are **not** self-resetting on revert, exactly
   like Antigravity's and OpenCode's. Rollback for either is: run that
   module's `restore` **before** reverting the implementation PR — while the
