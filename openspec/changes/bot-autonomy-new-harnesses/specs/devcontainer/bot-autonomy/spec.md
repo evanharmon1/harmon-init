@@ -180,31 +180,38 @@ hardcoding one specific installation path.
 - **THEN** the `copilot-cli` module's `apply` removes `~/.local/bin/copilot`
   on its next run, and `verify` asserts its absence
 
-### Requirement: pi's project-trust decision is escalated, not resolved — the bot profile grants none
-**Status: unresolved, escalated to Evan.** Two designs for this requirement
-were adjudicated and rejected during this proposal's own challenge-review
-process (design.md - Decisions has the full record): a global
-`defaultProjectTrust: "always"` (rejected — grants automatic trust, and per
-pi's own docs, automatic *extension code execution*, to every repository the
-bot's pi installation is ever pointed at, not only this one) and a
-workspace-scoped `~/.pi/agent/trust.json` entry (rejected — pi resolves
-trust by **canonical directory path**, not by content or commit: it survives
-an untrusted branch checked out into that same path, and pi's own
-"closest saved decision on the current **or parent** path" rule means a
-trusted path's own trust extends to anything cloned or nested underneath
-it). Neither is safe as a default; pi's own trust primitive has no
-content-authentication mechanism (no commit pinning, no hash verification)
-for a bot-autonomy module to build a safer version on top of. Until a human
-decides how to resolve that gap, the bot profile SHALL NOT elevate pi's
-trust posture at all: neither `defaultProjectTrust` nor `~/.pi/agent/trust.json`
-SHALL be written by this module, in either profile — the bot profile's pi
-behavior is identical to the dev profile's, pi's own safe out-of-the-box
-default. This is a deliberate, safe fallback, not an oversight: this
-proposal accepts that the bot's non-interactive pi sessions will silently
-ignore this repository's own `.pi/` project resources (a capability gap)
-rather than ship a mechanism this proposal's own review process found two
-ways to make unsafe (a security gap). See design.md - Open Questions for
-the options a human decision could choose between. `verify` SHALL, however,
+### Requirement: pi's non-interactive boundary is no elevated trust — decided by the maintainer
+**Status: resolved — maintainer decision 2026-09-03, option (a).** Two
+designs for this requirement were adjudicated and rejected during this
+proposal's own challenge-review process (design.md - Decisions has the
+full record): a global `defaultProjectTrust: "always"` (rejected — grants
+automatic trust, and per pi's own docs, automatic *extension code
+execution*, to every repository the bot's pi installation is ever pointed
+at, not only this one) and a workspace-scoped `~/.pi/agent/trust.json`
+entry (rejected — pi resolves trust by **canonical directory path**, not
+by content or commit: it survives an untrusted branch checked out into
+that same path, and pi's own "closest saved decision on the current **or
+parent** path" rule means a trusted path's own trust extends to anything
+cloned or nested underneath it). Neither is safe as a default; pi's own
+trust primitive has no content-authentication mechanism (no commit
+pinning, no hash verification) for a bot-autonomy module to build a safer
+version on top of. The maintainer decided the bot profile SHALL NOT
+elevate pi's trust posture at all: neither `defaultProjectTrust` nor
+`~/.pi/agent/trust.json` SHALL be written by this module, in either
+profile — the bot profile's pi behavior is identical to the dev profile's,
+pi's own safe out-of-the-box default. This is a deliberate, decided
+fallback, not an oversight: #1137's acceptance criteria require every
+supported harness to reach a **no-prompt** state, which this option
+already satisfies for pi (pi's non-interactive modes never prompt for
+trust regardless of this setting — see the pi Decision in design.md); the
+maintainer accepted that the bot's non-interactive pi sessions will
+silently ignore this repository's own `.pi/` project resources (a
+capability gap) rather than ship a mechanism this proposal's own review
+process found two ways to make unsafe (a security gap). The rejected
+workspace-scoped design remains available as a possible **future, explicit
+opt-in** — not the default — if the maintainer later decides the risk it
+carries is acceptable for a specific, bounded use; see design.md - Open
+Questions and Decisions for the full record. `verify` SHALL, however,
 fail closed if it ever finds `defaultProjectTrust` set to `"always"` in the
 bot profile regardless of cause — this module never sets it, but a stale
 volume, a manual edit, or a future regression could, and detecting that
@@ -217,14 +224,14 @@ re-attempt at either rejected design.
   `~/.pi/agent/trust.json` — both are left exactly as `pi`'s own install
   and any pre-existing state leave them
 
-#### Scenario: non-interactive pi sessions silently skip project resources, by design, pending resolution
+#### Scenario: non-interactive pi sessions silently skip project resources, by design
 - **WHEN** the bot profile runs `pi -p "<prompt>"` (or `--mode json`/
   `--mode rpc`) against a repository whose `.pi/` directory carries
   project-local settings, extensions, skills, prompts, or themes, and no
   saved trust decision applies
 - **THEN** those resources are silently ignored (no prompt, no error,
-  pi's own non-interactive default) — the accepted, safe, current state of
-  this unresolved requirement, not a defect this proposal's other
+  pi's own non-interactive default) — the maintainer-decided, accepted
+  state of this requirement, not a defect this proposal's other
   requirements are expected to compensate for
 
 #### Scenario: verify fails closed on a dangerous global trust value, whatever its cause
@@ -239,8 +246,8 @@ re-attempt at either rejected design.
 - **WHEN** a bot or dev profile container is created or rebuilt
 - **THEN** neither `~/.pi/agent/trust.json` nor `~/.pi/agent/settings.json`'s
   `defaultProjectTrust` is touched by this module in either profile — pi's
-  own out-of-the-box behavior everywhere, with no per-profile distinction
-  for this module to make until the open question is resolved
+  own out-of-the-box behavior everywhere; the maintainer's decision applies
+  uniformly, with no per-profile distinction for this module to make
 
 #### Scenario: this module has nothing to back up or restore
 - **WHEN** an operator looks for a `pi` module `restore` step

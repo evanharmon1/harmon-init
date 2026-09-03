@@ -116,11 +116,11 @@
 
 ## 2. pi module
 
-- [ ] 2.1 Add `.devcontainer/config/bot-autonomy/pi.sh` as the **safe
-      fallback** the spec currently states (design.md - Open Questions has
-      the unresolved decision — do not reopen it inside this task; a human
-      decision changes this task, not an implementer's judgment call).
-      `apply` writes nothing: it does not touch
+- [ ] 2.1 Add `.devcontainer/config/bot-autonomy/pi.sh` as the **no-elevated-trust
+      requirement the maintainer decided** (design.md - Decisions,
+      "Resolved 2026-09-03" — option (a); do not reopen that decision
+      inside this task, e.g. by implementing the rejected workspace-scoped
+      `trust.json` design instead). `apply` writes nothing: it does not touch
       `~/.pi/agent/settings.json`'s `defaultProjectTrust`, and does not
       write `~/.pi/agent/trust.json`, in either profile. `verify` reads
       `~/.pi/agent/settings.json` and fails, naming pi, if
@@ -278,13 +278,12 @@
       #1137's own acceptance criteria name Codex, Claude Code, Antigravity,
       Copilot CLI, and OpenCode explicitly; pi and oh-my-pi are this
       change's own broader scope (registry-completeness coverage), not
-      named in the issue, so pi's escalated/unresolved trust question does
-      not block either of #1137's acceptance criteria from closing. Repeat
-      against a rebuild at `use_copilot_cli`'s default (off) and confirm
-      Copilot prompts as expected — the by-design, verified-correct outcome
-      at the default, not a regression. Separately, exercise pi manually
-      and confirm it behaves as design.md's Open Questions describes:
-      zero approval prompts (true regardless of the escalated question,
-      since pi's non-interactive modes never prompt for trust either way),
-      and this repository's own `.pi/` resources (if any exist) silently
-      not loading — the accepted, current state, not a bug to chase
+      named in the issue. Repeat against a rebuild at `use_copilot_cli`'s
+      default (off) and confirm Copilot prompts as expected — the
+      by-design, verified-correct outcome at the default, not a
+      regression. Separately, exercise pi manually and confirm it behaves
+      as the maintainer's decision (design.md - Decisions, "Resolved
+      2026-09-03") states: zero approval prompts (pi's non-interactive
+      modes never prompt for trust regardless of this setting), and this
+      repository's own `.pi/` resources (if any exist) silently not
+      loading — the decided, current state, not a bug to chase

@@ -37,26 +37,30 @@ clause does.
   `.dogfood-answers.yml` sets the new answer on.
 - Add `.devcontainer/config/bot-autonomy/pi.sh`: unconditional (not
   Copier-gated — pi has no account or paid-tier dependency for the Hard Rule
-  to apply to). **pi's project-trust posture is escalated, not resolved
-  (design.md - Open Questions).** This proposal's own challenge-review
-  process rejected two successive designs as unsafe defaults: a global
-  `defaultProjectTrust: "always"` (extends automatic trust — and, per pi's
-  own docs, automatic *extension code execution* — to every repository the
-  bot's pi installation is ever pointed at, not only this one) and a
-  workspace-scoped `~/.pi/agent/trust.json` entry (pi resolves trust by
-  directory path, not content or commit, so a scoped decision still
-  survives an untrusted branch checked out into that same path and still
-  extends to anything cloned underneath it). Pi's own trust primitive has
-  no content-authentication mechanism a bot-autonomy module could build a
-  safer version on top of. `apply` therefore writes neither key, in either
-  profile — the bot profile's pi behavior matches dev's exactly, accepting
-  that headless pi sessions silently skip this repository's own `.pi/`
+  to apply to). **pi's project-trust posture: no elevated trust, decided by
+  the maintainer 2026-09-03 (design.md - Decisions).** This proposal's own
+  challenge-review process rejected two successive designs as unsafe
+  defaults: a global `defaultProjectTrust: "always"` (extends automatic
+  trust — and, per pi's own docs, automatic *extension code execution* — to
+  every repository the bot's pi installation is ever pointed at, not only
+  this one) and a workspace-scoped `~/.pi/agent/trust.json` entry (pi
+  resolves trust by directory path, not content or commit, so a scoped
+  decision still survives an untrusted branch checked out into that same
+  path and still extends to anything cloned underneath it). Pi's own trust
+  primitive has no content-authentication mechanism a bot-autonomy module
+  could build a safer version on top of. Presented with these two rejected
+  designs plus the option of a stronger content-authentication mechanism,
+  the maintainer decided: `apply` writes neither key, in either profile —
+  the bot profile's pi behavior matches dev's exactly, accepting that
+  headless pi sessions silently skip this repository's own `.pi/`
   customizations (a capability gap) rather than shipping a mechanism this
-  review found two ways to make unsafe (a security gap). `verify` still
-  fails closed if `defaultProjectTrust` is ever found `"always"` regardless
-  of cause. See design.md - Open Questions for what a human decision
-  between the rejected designs, a stronger mechanism, or accepting this
-  fallback permanently would actually be choosing between.
+  review found two ways to make unsafe (a security gap) — because #1137's
+  own acceptance criteria require every harness to reach a **no-prompt**
+  state, which this option already satisfies for pi (its non-interactive
+  modes never prompt for trust regardless of this setting). The
+  workspace-scoped design is recorded as a possible future, explicit
+  opt-in, not the default. `verify` still fails closed if
+  `defaultProjectTrust` is ever found `"always"` regardless of cause.
 - Add `.devcontainer/config/bot-autonomy/oh-my-pi.sh`: this proposal's own
   research (design.md - Decisions) found and cites a documented, pinned-release
   auto-approve mechanism (`tools.approvalMode: yolo` in

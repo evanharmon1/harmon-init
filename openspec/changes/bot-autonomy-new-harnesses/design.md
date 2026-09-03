@@ -447,8 +447,47 @@ matching dev exactly, with `verify` failing closed if `defaultProjectTrust`
 is ever found `"always"` regardless of cause. This accepts a capability gap
 (the bot's headless pi sessions silently ignore this repository's own
 `.pi/` customizations) in exchange for not shipping a security gap this
-proposal's own review found twice. See Open Questions for what a human
-decision is actually choosing between.
+proposal's own review found twice.
+
+**Resolved 2026-09-03 — maintainer decision: option (a), accept the
+no-elevated-trust fallback as the shipped requirement.** This proposal
+presented four options once both designs above were rejected:
+
+(a) **Accept the fallback as final** — the bot's headless pi sessions never
+load this repository's own `.pi/` project resources. Simplest, safest,
+costs whatever capability those resources would have added.
+(b) **Accept the workspace-scoped `trust.json` risk explicitly** —
+reinstate the rejected scoped design, with the branch-checkout and
+nested-clone exposure it carries treated as an acknowledged, bounded risk
+(for example, if this repository's own operational practice can be trusted
+to never check an untrusted branch out into the same workspace path a
+bot's `apply` already trusted, and never clone another repository
+underneath it) — a judgment call about this repository's actual workflow
+discipline this proposal was not positioned to make unilaterally.
+(c) **Build a stronger mechanism** — content-hash or commit-pinned trust
+verification before loading `.pi/` resources, or a container/mount
+boundary that makes path-reuse-with-different-content structurally
+impossible. Real engineering, out of this proposal's scope to design
+inline; would need its own proposal if chosen.
+(d) **Something else** — a scope or mechanism this proposal did not
+consider.
+
+The maintainer chose **(a)** — the safe fallback already in the spec
+becomes the decided requirement, not merely a placeholder pending further
+input. The stated reasoning: #1137's acceptance criteria require every
+supported harness to reach a **no-prompt** state, and option (a) already
+satisfies that for pi — pi's non-interactive modes never show a trust
+prompt regardless of this setting (see the resource-loading Decision
+above), so the *only* thing option (a) costs relative to the rejected
+designs is the capability of loading this repository's own `.pi/` project
+resources in headless sessions, not compliance with #1137. Option (b)
+remains on record as a **possible future, explicit opt-in**, not a
+default: if the maintainer later judges its risk acceptable for a
+specific, bounded scenario, it can be proposed as a deliberate,
+separately-reviewed addition rather than reopened as the default here.
+This decision closes the escalation from the design's own review
+process — it does not reopen either rejected design's technical analysis,
+which stands as written above.
 
 **oh-my-pi: ship the module against this proposal's own researched finding,
 with the brief's fail-closed fallback retained as a stated contingency
@@ -601,15 +640,16 @@ more than one bucket).
   "verify at implementation time" discipline `harness-matrix`'s own design
   already applies to its own researched claims.
 - [Risk] pi's non-interactive sessions will silently ignore this
-  repository's own `.pi/` project resources indefinitely, for as long as
-  the escalated trust question above stays unresolved → [Mitigation] this
-  is the accepted, disclosed consequence of the safer of two rejected
-  designs, not an oversight (see the pi Decision above and Open Questions
-  below) — a capability gap this proposal chose deliberately over the
-  security gap either rejected design would have shipped. It is reversible
-  the moment a human resolves the open question: nothing about the
-  no-op-by-default module blocks a follow-up change from implementing
-  whichever resolution is chosen.
+  repository's own `.pi/` project resources for as long as the maintainer's
+  2026-09-03 decision (option (a)) stands → [Mitigation] this is the
+  accepted, disclosed, *decided* consequence, not an oversight (see the
+  pi "Resolved 2026-09-03" Decision above) — a capability gap the
+  maintainer chose deliberately over the security gap either rejected
+  design would have shipped, specifically because #1137 requires no
+  prompts, not project-resource loading. It remains reversible: nothing
+  about the no-op-by-default module blocks a future, separately-proposed
+  change from implementing option (b) or a stronger mechanism if the
+  maintainer later decides differently.
 - [Risk] A future contributor could "fix" the capability gap above by
   quietly reintroducing one of the two rejected designs, having forgotten
   or not read why they were rejected → [Mitigation] the spec's own
@@ -665,8 +705,8 @@ more than one bucket).
   either signal was noticed.
 - No data migration for Copilot or pi: neither module writes a persisted
   policy value (Copilot's `apply` only installs a wrapper file, not user
-  data; pi's `apply` is currently a no-op pending the escalated trust
-  decision above), so there is nothing to restore before a revert for
+  data; pi's `apply` is a no-op per the maintainer's decided requirement
+  above), so there is nothing to restore before a revert for
   either — removing Copilot's wrapper on rollback is sufficient and
   requires no ordering care.
 - oh-my-pi's persisted-volume policy write (`~/.omp/agent/config.yml`) is
@@ -685,41 +725,15 @@ more than one bucket).
 
 ## Open Questions
 
-- **[Escalated — not a deferrable unknown, a decision this proposal stops
-  short of making.]** How should pi's bot-profile project trust actually be
-  resolved? This proposal's own review process rejected two designs in
-  succession (global `defaultProjectTrust: "always"`, then a workspace-scoped
-  `~/.pi/agent/trust.json` entry — both in the pi Decision above) as unsafe,
-  and lands on a safe fallback that grants no elevated trust at all,
-  accepting a capability gap instead. That fallback is what the spec
-  currently states — it is not itself blocked on this question, and this
-  proposal's other five requirements (Copilot, oh-my-pi, and the registry
-  reconciliation) do not depend on how it is answered. But it does leave a
-  real gap unresolved, and answering it would change the spec, so it is
-  named here rather than silently deferred. The options, as best this
-  proposal can characterize them:
-  1. **Accept the fallback as final** — the bot's headless pi sessions never
-     load this repository's own `.pi/` project resources. Simplest, safest,
-     costs whatever capability those resources would have added.
-  2. **Accept the workspace-scoped `trust.json` risk explicitly** — reinstate
-     the second rejected design, with the branch-checkout and nested-clone
-     exposure it carries treated as an acknowledged, bounded risk (for
-     example, if this repository's own operational practice can be trusted
-     to never check an untrusted branch out into the same workspace path a
-     bot's `apply` already trusted, and never clone another repository
-     underneath it). This is a judgment call about this repository's actual
-     workflow discipline that this proposal is not positioned to make
-     unilaterally.
-  3. **Build a stronger mechanism** — content-hash or commit-pinned trust
-     verification before loading `.pi/` resources, or a container/mount
-     boundary that makes path-reuse-with-different-content structurally
-     impossible. Real engineering, out of this proposal's scope to design
-     inline; would need its own proposal if chosen.
-  4. **Something else** — a scope or mechanism this proposal did not
-     consider.
-  Whichever is chosen, it is a follow-up to this change (or an amendment to
-  it before implementation), not something the implementer should decide
-  alone by picking whichever of the rejected designs looks least bad.
+- ~~How should pi's bot-profile project trust actually be resolved?~~
+  **Resolved 2026-09-03** — see the "Resolved 2026-09-03" Decision above,
+  in the pi section: the maintainer chose option (a), accepting the
+  no-elevated-trust fallback as the shipped requirement, with option (b)
+  (the workspace-scoped `trust.json` design) recorded as a possible future
+  explicit opt-in rather than the default. The four options this proposal
+  originally characterized are preserved in that Decision's own text for
+  the record; they are not repeated here now that the choice among them is
+  made.
 - The exact filesystem path npm's global install places the `copilot` and
   `pi` binaries at in this image (`/usr/bin` is the likely location for a
   NodeSource-apt-installed Node's default global prefix, but this proposal
