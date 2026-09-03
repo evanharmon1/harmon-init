@@ -164,7 +164,7 @@ done
 # platform whose persistence is wired by symlink instead of mount.
 if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
     echo "==> Coder detected — setting up persistent volume symlinks..."
-    for dir in .claude .codex .gemini .agent-deck .shell-history; do
+    for dir in .claude .codex .gemini .copilot .pi .omp .agent-deck .shell-history; do
         mkdir -p "/home/vscode/.persistent/$dir"
         if [ -d "$HOME/$dir" ] && [ ! -L "$HOME/$dir" ]; then
             cp -a "$HOME/$dir/." "/home/vscode/.persistent/$dir/" 2>/dev/null || true
