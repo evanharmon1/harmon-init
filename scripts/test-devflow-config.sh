@@ -44,7 +44,7 @@ for rel in (".devflow.toml", "template/.devflow.toml"):
     if not cfg["gates"].get("docs_only_paths"): fail(f"{rel}: docs_only_paths must be non-empty")
     if set(cfg["role"]) != roles: fail(f"{rel}: role tables must match registry roles")
     for role, value in cfg["role"].items():
-        if value["tier"] not in tiers or not set(value["families"]) <= families or not set(value["harnesses"]) <= harnesses: fail(f"{rel}: role.{role} has unresolved preferences")
+        if value["tier"] not in tiers or not set(value["families"]) <= families or not set(value.get("harnesses", [])) <= harnesses: fail(f"{rel}: role.{role} has unresolved preferences")
     if set(cfg["stage"]) != stages: fail(f"{rel}: stage tables are incomplete")
     for name, value in cfg["stage"].items():
         for key, entries in value.items():

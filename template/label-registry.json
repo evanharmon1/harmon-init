@@ -398,7 +398,7 @@
     {
       "family": "tier-role",
       "prefix": null,
-      "purpose": "Role-scoped tier override: pins one of orchestrator/implementer/reviewer to a tier, refining (never replacing) the rigor's own profile for that role alone.",
+      "purpose": "Role-scoped tier override: pins one role to a tier, refining (never replacing) the rigor profile for that role alone.",
       "axis": "strategy",
       "source": "inline",
       "writers": ["human"],
@@ -470,6 +470,46 @@
         {
           "value": "tier:reviewer:apex",
           "description": "Tier override: pin the reviewer to apex — mythos-class leading edge"
+        },
+        {
+          "value": "tier:challenger:local",
+          "description": "Tier override: pin the challenger to local — self-hosted endpoint first"
+        },
+        {
+          "value": "tier:challenger:economy",
+          "description": "Tier override: pin the challenger to economy — cheapest qualified hosted model"
+        },
+        {
+          "value": "tier:challenger:standard",
+          "description": "Tier override: pin the challenger to standard — reliable general-purpose coding model"
+        },
+        {
+          "value": "tier:challenger:frontier",
+          "description": "Tier override: pin the challenger to frontier — opus-class heavyweight, no warm-up"
+        },
+        {
+          "value": "tier:challenger:apex",
+          "description": "Tier override: pin the challenger to apex — mythos-class leading edge"
+        },
+        {
+          "value": "tier:integrator:local",
+          "description": "Tier override: pin the integrator to local — self-hosted endpoint first"
+        },
+        {
+          "value": "tier:integrator:economy",
+          "description": "Tier override: pin the integrator to economy — cheapest qualified hosted model"
+        },
+        {
+          "value": "tier:integrator:standard",
+          "description": "Tier override: pin the integrator to standard — reliable general-purpose coding model"
+        },
+        {
+          "value": "tier:integrator:frontier",
+          "description": "Tier override: pin the integrator to frontier — opus-class heavyweight, no warm-up"
+        },
+        {
+          "value": "tier:integrator:apex",
+          "description": "Tier override: pin the integrator to apex — mythos-class leading edge"
         }
       ]
     },
@@ -489,12 +529,24 @@
       "provision": false,
       "retired": true,
       "values": [
-        { "value": "oneshot" },
-        { "value": "plan" },
-        { "value": "plan-approved" },
-        { "value": "orchestrate" },
-        { "value": "council" },
-        { "value": "human-led" }
+        {
+          "value": "oneshot"
+        },
+        {
+          "value": "plan"
+        },
+        {
+          "value": "plan-approved"
+        },
+        {
+          "value": "orchestrate"
+        },
+        {
+          "value": "council"
+        },
+        {
+          "value": "human-led"
+        }
       ]
     },
     {

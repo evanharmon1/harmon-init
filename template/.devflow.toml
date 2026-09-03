@@ -300,11 +300,6 @@ diverging = { any = [
 [role.orchestrator]
 tier      = "apex"     # the session driving the run
 families  = ["claude", "gpt"]              # (preference) moot when a human
-harnesses = ["claude-code", "codex-cli"]   # (preference) opened the session —
-                                           # the orchestrator IS that harness —
-                                           # but binding when an automation
-                                           # (Foreman, a scheduler) chooses
-                                           # which harness to open
 [role.implementer]
 tier      = "standard"
 families  = ["claude", "gpt", "gemini"]    # (preference)
@@ -313,7 +308,7 @@ harnesses = ["claude-code", "codex-cli", "antigravity"]  # (preference)
 tier      = "frontier" # adversarial design attack — judgment-heavy
 families  = ["gpt", "claude", "gemini"]    # (preference) leads off-family
                                            # from the implementer by default
-harnesses = ["codex-cli", "claude-code", "antigravity"]  # (preference) — for
+harnesses = ["codex-cli", "claude-code"]  # (preference) — for
                                            # challenger/reviewer this bites
                                            # only where the stage's finders[]
                                            # do not already pin a harness:
@@ -322,12 +317,12 @@ harnesses = ["codex-cli", "claude-code", "antigravity"]  # (preference) — for
 [role.reviewer]
 tier      = "standard" # verification checkpoint — more mechanical
 families  = ["gpt", "claude", "gemini"]    # (preference)
-harnesses = ["codex-cli", "claude-code", "antigravity"]  # (preference) — same
+harnesses = ["codex-cli", "claude-code"]  # (preference) — same
                                            # finder-pinning caveat as challenger
 [role.integrator]
 tier      = "economy"  # follows the checker protocol; no judgment required
 families  = ["claude", "gpt"]              # (preference)
-harnesses = ["claude-code", "codex-cli"]   # (preference) — live every run:
+harnesses = ["claude-code"]   # (preference) — live every run:
                                            # the integrator is the dispatched
                                            # polling agent driving the cycle,
                                            # NOT the codex-cloud finder whose

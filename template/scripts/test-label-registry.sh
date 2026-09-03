@@ -282,6 +282,16 @@ tier:reviewer:economy|7057FF|Tier override: pin the reviewer to economy — chea
 tier:reviewer:standard|7057FF|Tier override: pin the reviewer to standard — reliable general-purpose coding model
 tier:reviewer:frontier|7057FF|Tier override: pin the reviewer to frontier — opus-class heavyweight, no warm-up
 tier:reviewer:apex|7057FF|Tier override: pin the reviewer to apex — mythos-class leading edge
+tier:challenger:local|7057FF|Tier override: pin the challenger to local — self-hosted endpoint first
+tier:challenger:economy|7057FF|Tier override: pin the challenger to economy — cheapest qualified hosted model
+tier:challenger:standard|7057FF|Tier override: pin the challenger to standard — reliable general-purpose coding model
+tier:challenger:frontier|7057FF|Tier override: pin the challenger to frontier — opus-class heavyweight, no warm-up
+tier:challenger:apex|7057FF|Tier override: pin the challenger to apex — mythos-class leading edge
+tier:integrator:local|7057FF|Tier override: pin the integrator to local — self-hosted endpoint first
+tier:integrator:economy|7057FF|Tier override: pin the integrator to economy — cheapest qualified hosted model
+tier:integrator:standard|7057FF|Tier override: pin the integrator to standard — reliable general-purpose coding model
+tier:integrator:frontier|7057FF|Tier override: pin the integrator to frontier — opus-class heavyweight, no warm-up
+tier:integrator:apex|7057FF|Tier override: pin the integrator to apex — mythos-class leading edge
 strategy:oneshot|BF3989|Strategy: single agent, no separate plan phase
 strategy:plan|BF3989|Strategy: agent plans then implements; no human plan gate
 strategy:plan-approved|BF3989|Strategy: plan requires human approval before implementation
