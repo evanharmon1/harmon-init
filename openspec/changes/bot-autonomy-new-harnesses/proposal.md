@@ -61,9 +61,13 @@ clause does.
   documenting Copilot's account requirement and free-tier/private-repo terms
   next to the question (AGENTS.md's Hard Rule) — the exact caveat language
   `harness-matrix`'s proposal already pre-drafted for this purpose. Add the
-  matching `HARMON_BOT_AUTONOMY_COPILOT` `containerEnv` marker to both
-  `devcontainer.json` jinja twins, rendered from that answer exactly as
-  `HARMON_BOT_AUTONOMY_ANTIGRAVITY` already is.
+  matching `HARMON_BOT_AUTONOMY_COPILOT` `containerEnv` marker, rendered
+  from that answer the same way `HARMON_BOT_AUTONOMY_ANTIGRAVITY` already
+  is — but into the **bot** `devcontainer.json` jinja twin only, not dev's:
+  unlike Antigravity, nothing in the dev profile ever reads this marker or
+  `COPILOT_ALLOW_ALL` itself, and rendering the latter into dev too would
+  silently hand a human's own interactive Copilot CLI session in the dev
+  profile full allow-all permissions (design.md - Decisions).
 - Add unit fixtures for all three modules to whichever test surface
   `bot-autonomy-bootstrap`'s implementation lands (its own tasks name
   `scripts/test-bot-autonomy.sh` as the likely location): absent → apply →
@@ -81,10 +85,14 @@ clause does.
   and `copier.yml`'s help text with each new harness's boundary, alongside
   whatever bot-autonomy-bootstrap's own implementation leaves in place
   there. Both root and `template/` twins.
-- State the sequencing explicitly: this change's implementation cannot start
-  before `bot-autonomy-bootstrap`'s implementation (PR #1150) merges — these
-  modules dispatch through `bot-autonomy.sh`, which does not exist until
-  then — and must itself merge before the rolling `sync-pin` PR that bumps
+- State the sequencing explicitly: this change's implementation PR must
+  *merge* after `bot-autonomy-bootstrap`'s (PR #1150) — these modules
+  dispatch through `bot-autonomy.sh`, which does not exist on `main` until
+  then. Development itself need not wait: it may proceed as a branch
+  stacked on PR #1150 (or otherwise informed by its design) in parallel,
+  rebasing onto `main` and reconciling against whatever `bot-autonomy-bootstrap`
+  actually ships once it lands, before this change's own PR is finalized.
+  It must also itself merge before the rolling `sync-pin` PR that bumps
   `.devcontainer/Dockerfile` (root + `template`) to the image
   `harness-matrix`/#1149 published. Landing it completes the Copilot clause
   of #1137's first `[CI]` acceptance criterion and satisfies the
@@ -160,8 +168,9 @@ clause does.
   defines inside `bot-autonomy.sh` (removes the `copilot-cli`/`pi`/`oh-my-pi`
   placeholder entries); `copier.yml` (new `use_copilot_cli` question);
   `.dogfood-answers.yml` (records the new answer on); `.devcontainer/devcontainer.json`
-  and `dev/devcontainer.json` (new `HARMON_BOT_AUTONOMY_COPILOT` `containerEnv`
-  marker). `.github/workflows/devcontainer-build.yml`'s existing
+  only, not its dev twin (new `HARMON_BOT_AUTONOMY_COPILOT`/`COPILOT_ALLOW_ALL`
+  `containerEnv` entries — bot-only, see design.md - Decisions).
+  `.github/workflows/devcontainer-build.yml`'s existing
   container-assertion step gains coverage for free — it already invokes
   `bot-autonomy.sh verify` per `bot-autonomy-bootstrap`, which now checks
   three more harnesses with no new CI step.
@@ -176,4 +185,7 @@ clause does.
   #1150) merging first. Must itself merge before the rolling `sync-pin` PR
   that bumps `.devcontainer/Dockerfile` (root + `template`) to the image
   digest `harness-matrix`/#1149 published — see design.md - Migration Plan
-  for the enforced (not merely advisory) mechanism behind that ordering.
+  for what actually backs that ordering: a named, human-reviewer-facing
+  checklist item and a non-required CI signal (neither is a branch-protection
+  merge block), plus a true, code-level fail-closed backstop that holds
+  regardless of whether either is noticed.

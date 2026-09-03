@@ -1,15 +1,24 @@
 ## 0. Preconditions
 
-- [ ] 0.1 Confirm `bot-autonomy-bootstrap`'s implementation (PR #1150) has
-      merged to `main` — `.devcontainer/scripts/bot-autonomy.sh` and
-      `.devcontainer/config/bot-autonomy/{claude-code,codex-cli,antigravity,opencode}.sh`
-      exist, `agent-registry.json`'s `unsupported` table (wherever
+- [ ] 0.1 Before this change's own implementation PR is finalized and
+      merged, confirm `bot-autonomy-bootstrap`'s implementation (PR #1150)
+      has actually merged to `main` first — `.devcontainer/scripts/bot-autonomy.sh`
+      and `.devcontainer/config/bot-autonomy/{claude-code,codex-cli,antigravity,opencode}.sh`
+      exist on `main`, `agent-registry.json`'s `unsupported` table (wherever
       `bot-autonomy.sh` defines it) already carries `copilot-cli`, `pi`, and
       `oh-my-pi` entries reasoned "pending `bot-autonomy-new-harnesses`";
       verify by reading that table directly rather than assuming its exact
-      shape from this proposal's Context. Do not start section 1 until this
-      is confirmed — every task below dispatches through infrastructure that
-      does not exist before then.
+      shape from this proposal's Context. This is a **merge-order**
+      requirement, not a development-order one: work on sections 1-6 may
+      proceed on a branch stacked on PR #1150 (or otherwise informed by its
+      design) in parallel with that PR's own review, since every task below
+      dispatches through infrastructure PR #1150 defines and this change
+      cannot run against real infrastructure until it exists — but rebase
+      onto `main` and reconcile against whatever `bot-autonomy-bootstrap`
+      actually ships (module names, table shape, script locations may
+      differ from this proposal's Context) before finalizing this change's
+      own PR, and do not merge this change's PR until PR #1150's merge is
+      confirmed on `main`.
 
 ## 1. GitHub Copilot CLI module
 
@@ -26,15 +35,22 @@
       shape; verify with `task audit:dogfood` showing no new unexplained
       drift
 - [ ] 1.3 Add `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` (rendered from
-      `{{ use_copilot_cli }}` to the literal `enabled`/`disabled`) to the
-      bot and dev `devcontainer.json` jinja twins, alongside the existing
+      `{{ use_copilot_cli }}` to the literal `enabled`/`disabled`) and
+      `containerEnv.COPILOT_ALLOW_ALL` (rendered to `"true"` only when the
+      answer is on, omitted otherwise) to the **bot** `devcontainer.json`
+      jinja twin only — **not** `dev/devcontainer.json`, unlike the existing
       `HARMON_BOT_AUTONOMY_ANTIGRAVITY` marker `bot-autonomy-bootstrap`
-      added; set the matching literal value in this repository's own root
-      `.devcontainer/devcontainer.json` and `.devcontainer/dev/devcontainer.json`
-      to `enabled` (matching `.dogfood-answers.yml`); verify by rendering a
-      copy with `use_copilot_cli: true` and one at the default, confirming
-      each rendered `devcontainer.json`'s `containerEnv` carries the
-      expected literal
+      added to both: nothing in the dev profile reads either new entry, and
+      rendering `COPILOT_ALLOW_ALL` into dev too would hand a human's own
+      interactive Copilot CLI session in the dev profile full allow-all
+      permissions (design.md - Decisions); set the matching literal values
+      in this repository's own root `.devcontainer/devcontainer.json` only
+      (`enabled`/`"true"`, matching `.dogfood-answers.yml`) and confirm
+      `.devcontainer/dev/devcontainer.json` carries neither; verify by
+      rendering a copy with `use_copilot_cli: true` and one at the default,
+      confirming the rendered **bot** `devcontainer.json`'s `containerEnv`
+      carries the expected literals in both cases and the rendered **dev**
+      `devcontainer.json` carries neither key in either case
 - [ ] 1.4 Add `.devcontainer/config/bot-autonomy/copilot.sh`: `apply` reads
       `$HARMON_BOT_AUTONOMY_COPILOT`; WHEN `enabled`, confirms
       `$COPILOT_ALLOW_ALL` is present in its own process environment
@@ -51,9 +67,15 @@
       reaches disabled (wrapper absent) after a re-render flips the marker
 - [ ] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
       `--allow-all` on a bare `copilot` invocation and on `copilot -p`/
-      `--prompt` unless the invocation already carries `--allow-all`,
-      `--yolo`, `--allow-all-tools`, `--allow-all-paths`, or
-      `--allow-all-urls`; passes `login`, `version`, `--version`, `help`,
+      `--prompt` unless the invocation already carries full allow-all
+      coverage explicitly — `--allow-all`, `--yolo`, or all three of
+      `--allow-all-tools`/`--allow-all-paths`/`--allow-all-urls` together —
+      appending `--allow-all` even when only *some* of the three narrower
+      flags are present (a partial flag is not full coverage, and skipping
+      injection there would leave that invocation restricted for whichever
+      dimension its own flags did not name — the exact sanitized-environment,
+      `env -i`-with-no-`COPILOT_ALLOW_ALL`-fallback case this wrapper exists
+      to cover); passes `login`, `version`, `--version`, `help`,
       `-h`, `--help`, `update`, `completion`, `init`, `plugin`, `plugins`,
       `mcp`, `skill`, and `app` through unmodified; resolves and execs the
       real, shared-image-installed `copilot` binary by finding the next
@@ -62,7 +84,8 @@
       NodeSource-apt Node, per design.md - Open Questions — against the
       real built image rather than assuming it) — never a hardcoded path;
       verify with a fixture invoking the wrapper directly (not via a
-      sourced shell) asserting the flag lands on a bare invocation and on
+      sourced shell) asserting the flag lands on a bare invocation, on a
+      partial-flag invocation (e.g. `--allow-all-tools` alone), and on
       `-p`, is absent on every passthrough case, and that it resolves the
       real binary correctly
 - [ ] 1.6 Confirm the wrapper's `PATH` precedence needs no new

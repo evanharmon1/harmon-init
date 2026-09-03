@@ -7,14 +7,26 @@ Copier-gated-harness contract `bot-autonomy-bootstrap` establishes for
 Antigravity: the `copilot-cli` module SHALL always exist and always cover
 the harness; only its effective policy is conditional. The module's `apply`
 SHALL read the rendered `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` marker
-(`enabled`/`disabled`, sourced from `{{ use_copilot_cli }}` by the bot and
-dev `devcontainer.json` jinja twins, exactly as `HARMON_BOT_AUTONOMY_ANTIGRAVITY`
-already is for Antigravity) and SHALL NOT derive the Copier answer any other
-way. `apply` SHALL NOT itself attempt to set `COPILOT_ALLOW_ALL` — a
-container-wide environment variable is fixed by the rendered `containerEnv`
-before any lifecycle script runs, not writable at runtime the way a settings
-file is — so `apply` SHALL instead treat the variable's presence in its own
-process environment as an input to check, not a value to produce.
+(`enabled`/`disabled`, sourced from `{{ use_copilot_cli }}`) and SHALL NOT
+derive the Copier answer any other way. Unlike `HARMON_BOT_AUTONOMY_ANTIGRAVITY`,
+which the bot **and** dev `devcontainer.json` jinja twins both render (a
+shared script, `ensure-antigravity-cli.sh`, runs in both profiles and needs
+the marker in either), `HARMON_BOT_AUTONOMY_COPILOT` and `COPILOT_ALLOW_ALL`
+SHALL be rendered into the **bot** `devcontainer.json` jinja twin only.
+Nothing in the dev profile ever reads either one — the `copilot-cli` module
+never runs there, and there is no Copilot equivalent of
+`ensure-antigravity-cli.sh` — and `COPILOT_ALLOW_ALL` is a plain environment
+variable Copilot CLI honors directly, in whichever profile sets it: were it
+rendered into dev's `containerEnv` too, a human's own interactive Copilot CLI
+session in the dev profile would silently run allow-all, contradicting the
+dev profile's prompt-enabled/balanced posture (one of #1137's own,
+already-satisfied acceptance criteria) regardless of the bot-autonomy module
+never running there. `apply` SHALL NOT itself attempt to set
+`COPILOT_ALLOW_ALL` — a container-wide environment variable is fixed by the
+rendered `containerEnv` before any lifecycle script runs, not writable at
+runtime the way a settings file is — so `apply` SHALL instead treat the
+variable's presence in its own process environment as an input to check, not
+a value to produce.
 
 #### Scenario: the disabled-by-option state is verified, not merely defaulted
 - **WHEN** `use_copilot_cli` is off (the default) and `bot-autonomy.sh apply`
@@ -34,10 +46,18 @@ process environment as an input to check, not a value to produce.
   this repository's own bot container runs Copilot CLI autonomously, while a
   freshly generated repo defaults to `disabled-by-option`
 
+#### Scenario: the dev profile never receives COPILOT_ALLOW_ALL, regardless of the answer
+- **WHEN** a repo is generated (or updated) with `use_copilot_cli` at any
+  value and the dev `devcontainer.json` twin is inspected
+- **THEN** its `containerEnv` carries neither `HARMON_BOT_AUTONOMY_COPILOT`
+  nor `COPILOT_ALLOW_ALL` — a human's own interactive Copilot CLI session in
+  the dev profile is never allow-all, independent of the bot-autonomy
+  module never running there either
+
 #### Scenario: apply fails loudly on a marker/environment inconsistency
 - **WHEN** `HARMON_BOT_AUTONOMY_COPILOT` reads `enabled` but
   `COPILOT_ALLOW_ALL` is absent from `apply`'s own process environment (a
-  render defect — the jinja twins failed to carry the marker's value into
+  render defect — the jinja twin failed to carry the marker's value into
   the actual environment variable)
 - **THEN** `apply` exits non-zero naming the inconsistency rather than
   installing the wrapper against an environment that will not actually
@@ -60,8 +80,18 @@ SHALL NOT exist. The wrapper SHALL add `--allow-all` (equivalent to
 `--allow-all-tools --allow-all-paths --allow-all-urls`) to every invocation
 that performs an agent task — including a bare `copilot` (the interactive
 UI) and `copilot -p`/`--prompt` (headless/programmatic mode) — unless the
-invocation already carries `--allow-all`, `--yolo`, or one of the three
-narrower `--allow-all-*` flags explicitly. It SHALL pass a fixed set of
+invocation already carries full allow-all coverage explicitly: `--allow-all`,
+`--yolo`, or all three of `--allow-all-tools`, `--allow-all-paths`, and
+`--allow-all-urls` together. An invocation carrying only some of the three
+narrower flags (for example `--allow-all-tools` alone) is **not** full
+coverage and SHALL still receive `--allow-all` — appending it alongside an
+already-present narrower flag is redundant for the dimension that flag
+already covers, but is what actually grants the dimensions it does not;
+skipping injection there would leave that invocation restricted for
+whichever of tools/paths/URLs its own flags did not name, silently
+defeating the full-autonomy guarantee this wrapper exists to provide,
+specifically in the sanitized-environment case (an `env -i` launcher with no
+`COPILOT_ALLOW_ALL` fallback) the wrapper is meant to cover. It SHALL pass a fixed set of
 administrative/informational subcommands through unmodified, without
 appending the flag: `login`, `version`/`--version`, `help`/`-h`/`--help`,
 `update`, `completion`, `init`, `plugin`/`plugins`, `mcp`, `skill`, and
@@ -72,15 +102,24 @@ hardcoding one specific installation path.
 
 #### Scenario: the wrapper injects the flag on an agent-task invocation
 - **WHEN** the marker reads `enabled` and the wrapper is invoked as a bare
-  `copilot`, or as `copilot -p "<prompt>"`, without an explicit
-  `--allow-all`-family flag
+  `copilot`, or as `copilot -p "<prompt>"`, without any `--allow-all`-family
+  flag at all
 - **THEN** it execs the real `copilot` binary with `--allow-all` appended
 
-#### Scenario: the wrapper does not duplicate an explicit flag
+#### Scenario: the wrapper does not duplicate already-complete coverage
 - **WHEN** the marker reads `enabled` and a caller invokes `copilot` already
-  passing `--allow-all`, `--yolo`, or any of `--allow-all-tools`/
-  `--allow-all-paths`/`--allow-all-urls`
+  passing `--allow-all`, `--yolo`, or all three of `--allow-all-tools`,
+  `--allow-all-paths`, and `--allow-all-urls` together
 - **THEN** the wrapper does not append `--allow-all` a second time
+
+#### Scenario: a partial allow-all flag still gets the full flag appended
+- **WHEN** the marker reads `enabled` and a caller invokes
+  `copilot --allow-all-tools -p "<prompt>"` — one of the three narrower
+  flags, but not all three — for example inside a sanitized environment
+  (`env -i`) where `COPILOT_ALLOW_ALL` is not present as a fallback
+- **THEN** the wrapper still appends `--allow-all`, so the invocation ends
+  up with full tools/paths/URLs coverage rather than remaining restricted
+  for the two dimensions its own explicit flag did not name
 
 #### Scenario: administrative subcommands are not modified
 - **WHEN** the marker reads `enabled` and the wrapper is invoked with

@@ -182,14 +182,38 @@ exactly the login-shell-scoped anti-pattern this entire capability exists
 to eliminate (`agy-autonomy.sh`'s shell function is the canonical example
 `bot-autonomy-bootstrap`'s own Why section cites). So `HARMON_BOT_AUTONOMY_COPILOT`
 and `COPILOT_ALLOW_ALL` are both rendered directly by the jinja
-`devcontainer.json` twins from `{{ use_copilot_cli }}` — the first as the
-uniform marker every Copier-gated module reads, the second as Copilot's own
-actual mechanism — and `apply`'s job in the enabled branch is to confirm the
-environment variable is really there (failing loudly if it is not, rather
-than installing a wrapper whose backing configuration is missing) and
-install the wrapper, not to produce the variable itself. Alternative
-considered: have `apply` write `COPILOT_ALLOW_ALL` into a profile-scoped
-`.bashrc` `export` — rejected outright as the exact mechanism class this
+`devcontainer.json` twin — the first as the uniform marker every
+Copier-gated module reads, the second as Copilot's own actual mechanism —
+and `apply`'s job in the enabled branch is to confirm the environment
+variable is really there (failing loudly if it is not, rather than
+installing a wrapper whose backing configuration is missing) and install
+the wrapper, not to produce the variable itself.
+
+**Both are rendered into the *bot* `devcontainer.json` twin only — unlike
+`HARMON_BOT_AUTONOMY_ANTIGRAVITY`, which both twins carry.** Antigravity's
+marker needs to reach both profiles because `ensure-antigravity-cli.sh`, a
+shared script, runs from both bot and dev post-create and reads it either
+way (see that Decision below). Copilot has no equivalent shared consumer:
+the `copilot-cli` module is dispatched only from the bot's own
+`bot-autonomy.sh apply`/`verify` calls, never from dev's, so nothing in the
+dev profile has any reason to read `HARMON_BOT_AUTONOMY_COPILOT` at all.
+`COPILOT_ALLOW_ALL` is the sharper reason this matters: it is a plain
+environment variable Copilot CLI honors directly, in whichever profile sets
+it, with no per-profile distinction of its own the way Antigravity's
+settings file has a separate bot/dev JSON payload. Rendering it into the dev
+twin as well — even though the dev post-create never runs the module that
+"owns" it — would still hand every interactive `copilot` invocation in a
+human's own dev container full allow-all permissions, contradicting the dev
+profile's prompt-enabled/balanced posture (`bot-autonomy-bootstrap`'s own
+Human dev profile requirement, and one of #1137's acceptance criteria
+already checked off: "The human devcontainer retains its existing
+prompt-enabled or balanced permission policies") regardless of whether the
+bot-autonomy module itself ever touches that container. Restricting both to
+the bot twin closes that gap structurally, rather than depending on the dev
+profile happening to never invoke the module that would otherwise be the
+only thing standing between a human's shell and allow-all Copilot.
+Alternative considered: have `apply` write `COPILOT_ALLOW_ALL` into a
+profile-scoped `.bashrc` `export` — rejected outright as the exact mechanism class this
 capability was created to retire.
 
 **The wrapper is deliberate defense-in-depth and Copier-gated-module
@@ -501,13 +525,18 @@ more than one bucket).
 - It must itself merge before the rolling `sync-pin` PR that bumps
   `.devcontainer/Dockerfile` (root + `template`) to the image digest
   `harness-matrix`/#1149 published. This is the same "modules-before-pin"
-  invariant `bot-autonomy-bootstrap`'s own design.md already establishes
-  for `copilot-cli`/`pi`, generalized to `oh-my-pi` — enforced the same way:
-  `bot-autonomy-bootstrap`'s task 4.6 checklist item on the sync-pin PR's
-  own body ("`bot-autonomy-new-harnesses` has merged, covering every
-  harness this bump installs"), corroborated by the container-assertion
-  job's red/green result, and backstopped independently by
-  `bot-autonomy.sh verify` failing closed at post-create/post-start on any
+  invariant `bot-autonomy-bootstrap`'s own design.md already establishes for
+  `copilot-cli`/`pi`, generalized to `oh-my-pi` — backed the same way, and
+  by precisely the same two-plus-one mechanism, no stronger and no weaker:
+  neither `bot-autonomy-bootstrap`'s task 4.6 checklist item on the sync-pin
+  PR's own body ("`bot-autonomy-new-harnesses` has merged, covering every
+  harness this bump installs") nor the container-assertion job's red/green
+  result is a branch-protection merge block — a reviewer can still click
+  merge past an unchecked item or a non-required red job, exactly as with
+  any other checklist or optional check on this or any GitHub repository.
+  What makes the ordering more than a hopeful convention is the third,
+  independent piece: `bot-autonomy.sh verify` failing closed at
+  post-create/post-start on any
   real bot container built from a bad-ordering pin regardless of whether
   either signal was noticed.
 - No data migration for Copilot: this module writes no persisted policy
