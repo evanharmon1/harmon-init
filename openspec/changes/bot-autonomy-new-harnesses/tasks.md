@@ -4,11 +4,12 @@
       merged, confirm `bot-autonomy-bootstrap`'s implementation (PR #1150)
       has actually merged to `main` first — `.devcontainer/scripts/bot-autonomy.sh`
       and `.devcontainer/config/bot-autonomy/{claude-code,codex-cli,antigravity,opencode}.sh`
-      exist on `main`, `agent-registry.json`'s `unsupported` table (wherever
-      `bot-autonomy.sh` defines it) already carries `copilot-cli`, `pi`, and
-      `oh-my-pi` entries reasoned "pending `bot-autonomy-new-harnesses`";
-      verify by reading that table directly rather than assuming its exact
-      shape from this proposal's Context. This is a **merge-order**
+      exist on `main`, and `.devcontainer/config/bot-autonomy/unsupported.json`
+      (and its `template/` twin — a standalone file `bot-autonomy.sh`
+      reads, not a table inside `agent-registry.json`) already carries
+      `copilot-cli`, `pi`, and `oh-my-pi` entries reasoned "pending
+      `bot-autonomy-new-harnesses`"; verify by reading that file directly
+      rather than assuming its exact shape from this proposal's Context. This is a **merge-order**
       requirement, not a development-order one: work on sections 1-6 may
       proceed on a branch stacked on PR #1150 (or otherwise informed by its
       design) in parallel with that PR's own review, since every task below
@@ -65,7 +66,9 @@
       `COPILOT_ALLOW_ALL=true` in a scratch `devcontainer.env` before
       building the disabled render, confirming the container's effective
       value is `"false"`, not the stale `"true"`
-- [ ] 1.4 Add `.devcontainer/config/bot-autonomy/copilot.sh`: `apply` reads
+- [ ] 1.4 Add `.devcontainer/config/bot-autonomy/copilot-cli.sh` (named
+      after the `copilot-cli` registry slug, not the shortened `copilot` —
+      `bot-autonomy.sh` dispatches `${CONFIG_DIR}/<slug>.sh`): `apply` reads
       `$HARMON_BOT_AUTONOMY_COPILOT`; WHEN `enabled`, confirms
       `$COPILOT_ALLOW_ALL` is the exact literal `true` in its own process
       environment (failing loudly if not — a render inconsistency) and
@@ -122,10 +125,11 @@
       partial-flag invocation (e.g. `--allow-all-tools` alone), and on
       `-p`, is absent on every passthrough case, and that it resolves the
       real binary correctly
-- [ ] 1.6 Confirm the wrapper's `PATH` precedence needs no new
-      `containerEnv.PATH` entry — `bot-autonomy-bootstrap`'s existing
-      `/home/vscode/.local/bin` prepend (its task 2.5a) already covers it;
-      verify with `docker exec <container> copilot --version` (no
+- [ ] 1.6 Confirm the wrapper's `PATH` precedence needs no new prepend of
+      its own — `bot-autonomy-bootstrap`'s existing
+      `ENV PATH="/home/vscode/.local/bin:${PATH}"` directive in
+      `.devcontainer/Dockerfile` (and its `template/` twin) already covers
+      it; verify with `docker exec <container> copilot --version` (no
       login/interactive shell) resolving `~/.local/bin/copilot`, not the
       system binary
 

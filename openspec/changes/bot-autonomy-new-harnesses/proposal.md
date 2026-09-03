@@ -16,7 +16,9 @@ clause does.
 
 ## What Changes
 
-- Add `.devcontainer/config/bot-autonomy/copilot.sh`, dispatched by
+- Add `.devcontainer/config/bot-autonomy/copilot-cli.sh` (named after the
+  `copilot-cli` registry slug — `bot-autonomy.sh` dispatches
+  `${CONFIG_DIR}/<slug>.sh`, never a shortened form), dispatched by
   `bot-autonomy-bootstrap`'s `bot-autonomy.sh` entrypoint: a Copier-gated
   module (new, default-off `use_copilot_cli` answer) following the
   "module always exists, only its policy is conditional" contract
@@ -188,9 +190,11 @@ clause does.
 
 ## Impact
 
-- New: `.devcontainer/config/bot-autonomy/{copilot,pi,oh-my-pi}.sh` (or, for
-  `oh-my-pi` only, an updated `unsupported` table entry instead of a module —
-  see the oh-my-pi contingency above); unit fixtures extending
+- New: `.devcontainer/config/bot-autonomy/{copilot-cli,pi,oh-my-pi}.sh` —
+  named after the registry slug each module covers, matching how
+  `bot-autonomy.sh` dispatches (`${CONFIG_DIR}/<slug>.sh`) — or, for
+  `oh-my-pi` only, an updated `unsupported.json` entry instead of a module
+  (see the oh-my-pi contingency above); unit fixtures extending
   `bot-autonomy-bootstrap`'s test surface for all three harnesses.
 - Changed: the `unsupported` table `bot-autonomy-bootstrap`'s implementation
   defines inside `bot-autonomy.sh` (removes the `copilot-cli`/`pi`/`oh-my-pi`

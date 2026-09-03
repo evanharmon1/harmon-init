@@ -26,9 +26,16 @@ See proposal.md - Why for the motivating gap. Current state, precisely:
   already carries `copilot-cli` and `pi` (pre-existing) and `oh-my-pi` (added
   by `harness-matrix`, `family_constraint: {kind: broker}`,
   `model_resolution.owner: harness-runtime`, matching `pi`'s shape).
-  `.devcontainer/Dockerfile` (the root pin) has **not** been bumped yet — no
-  `sync-pin` PR is open as of this writing — so none of the three binaries is
-  present in this repository's own bot container today.
+  `.devcontainer/Dockerfile` (the root pin) has **not** been bumped yet, so
+  none of the three binaries is present in this repository's own bot
+  container today — but the rolling `sync-pin` PR that will bump it is
+  already open: [#1152](https://github.com/evanharmon1/harmon-init/pull/1152),
+  `fix(devcontainer): update shared image to 3069d85f`, carrying
+  `bot-autonomy-bootstrap`'s own task 4.6 checklist item ("bot-autonomy-new-harnesses
+  has merged, covering every harness this Dockerfile bump installs") in
+  its body, unchecked — confirmed by reading its live state, not assumed.
+  This is the sequencing constraint the rest of this document states: this
+  change's implementation must merge before #1152 does.
 - `copier.yml` has no Copilot-related question today (confirmed by grep):
   only `use_antigravity_cli` exists in the devcontainer-options cluster
   (`devcontainer`, `use_statusline_pr_lookup`, `devcontainer_coder_folder_uri`,
@@ -176,11 +183,18 @@ toggle would tangle unnecessarily.
 
 **The `copilot-cli` module never writes `COPILOT_ALLOW_ALL` itself; the
 render does, and `apply`/`verify` only observe it.** This mirrors the
-`containerEnv.PATH` reasoning `bot-autonomy-bootstrap` already applied to
-Antigravity's wrapper precedence: a container-wide environment variable
-that every process sees — including a `docker exec` with no login shell —
-has to be injected by Docker itself, from `containerEnv` in the rendered
-`devcontainer.json`, before any lifecycle script runs. A post-create script
+same class of reasoning `bot-autonomy-bootstrap` already applied to
+Antigravity's `PATH` precedence (see the Copilot `PATH`-precedence
+Decision below for that mechanism's own, since-corrected detail): a
+container-wide value that every process sees — including a `docker exec`
+with no login shell — has to be injected by Docker itself, from
+container-level configuration, before any lifecycle script runs.
+`COPILOT_ALLOW_ALL` reaches every process the ordinary way, via
+`containerEnv` in the rendered `devcontainer.json` — a plain literal value
+has no self-reference for that layer's `${containerEnv:PATH}`-style
+expansion limitation to break, unlike the `PATH` *prepend* case (which
+needed the Dockerfile `ENV` mechanism instead, precisely because it does
+have that self-reference). A post-create script
 cannot durably set an environment variable for *other, later* processes in
 the same container; it could only export one into its own shell, which is
 exactly the login-shell-scoped anti-pattern this entire capability exists
@@ -337,13 +351,26 @@ finding against an earlier draft of this Decision, which stated the check
 unconditionally). Alternative considered: have `apply` set it to
 `"allow-auto-only"` or remove the key — rejected for exactly this reason.
 
-**The Copilot wrapper's `PATH` precedence needs no new `containerEnv.PATH`
-entry — it reuses `bot-autonomy-bootstrap`'s existing prepend.** That
-change's task 2.5a already adds `/home/vscode/.local/bin` ahead of the
-system binaries' directory in the bot `devcontainer.json`'s
-`containerEnv.PATH`, specifically so a wrapper placed at `~/.local/bin/<name>`
-resolves ahead of any same-named binary anywhere later in `PATH`, regardless
-of that binary's actual install location. Since a `PATH` prepend orders by
+**The Copilot wrapper's `PATH` precedence needs no new prepend of its
+own — it reuses `bot-autonomy-bootstrap`'s existing one.** That change's
+implementation adds `/home/vscode/.local/bin` ahead of the system
+binaries' directory via an `ENV PATH="/home/vscode/.local/bin:${PATH}"`
+directive in `.devcontainer/Dockerfile` (and its `template/` twin) — **not**
+`devcontainer.json`'s `containerEnv.PATH`, which `bot-autonomy-bootstrap`'s
+own planning-time task 2.5a described (written before that change was
+implemented) and which this document originally cited on the strength of
+that plan. The shipped implementation moved it to the Dockerfile
+specifically because
+`containerEnv`'s `${containerEnv:PATH}` cannot self-expand while Docker is
+creating the container: the reference is passed to `docker run -e`
+literally, unresolved, which breaks the container's own shell. A
+Dockerfile `ENV` directive is Docker's own, working self-reference and
+applies identically to any process the container ever runs, including a
+`docker exec` with no login shell — the same guarantee the design intended,
+reached through the mechanism that actually works. Either way, a wrapper
+placed at `~/.local/bin/<name>` resolves ahead of any same-named binary
+anywhere later in `PATH`, regardless of that binary's actual install
+location. Since a `PATH` prepend orders by
 position, not by a name-to-name mapping, this precedence is generic: it
 already applies to `~/.local/bin/copilot` the moment that file exists,
 whether Copilot CLI's own npm-installed binary lands at `/usr/bin/copilot`

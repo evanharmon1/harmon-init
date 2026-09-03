@@ -169,9 +169,10 @@ hardcoding one specific installation path.
   sources a login shell execs `copilot -p "…"` by resolving it off `PATH`
 - **THEN** the resolved `~/.local/bin/copilot` wrapper adds `--allow-all` —
   the wrapper's precedence over the shared image's `copilot` binary is
-  established at the container level, reusing the `containerEnv.PATH`
-  prepend `bot-autonomy-bootstrap` already adds ahead of the system
-  binaries' directory for Antigravity's own wrapper; this module does not
+  established at the container level, reusing the `PATH` prepend
+  `bot-autonomy-bootstrap` already ships (an `ENV PATH=…` directive in
+  `.devcontainer/Dockerfile` and its `template/` twin, ahead of the system
+  binaries' directory) for Antigravity's own wrapper; this module does not
   need a second `PATH` entry
 
 #### Scenario: toggling the option off removes the wrapper entirely
