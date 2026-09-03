@@ -207,14 +207,40 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 ## Runners
 
 Jobs use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`, so the
-`CI_RUNS_ON` repository variable can move CI to different runners without a
-commit.
+`CI_RUNS_ON` variable dynamically controls runner placement without requiring a
+commit or template re-render.
 
-`task setup:github` creates this variable when it is missing and preserves every
-existing value on non-public repositories; it never infers ownership from a JSON
-shape. An intentional replacement requires `scripts/setup-github.sh` with
-`--replace-ci-runs-on`. Public repositories are the safety exception and are
-always canonicalized to `"ubuntu-latest"`.
+### Variable hierarchy and precedence
+
+Runner selection resolves hierarchically via GitHub Actions variables:
+
+1. **Repository variable (`vars.CI_RUNS_ON`)**: An individual repository can set
+   `CI_RUNS_ON` (via `task setup:github` or `gh variable set CI_RUNS_ON --repo`).
+   In GitHub Actions, repository variables shadow organization variables of the
+   same name. This allows a repository to override the organization default (for
+   example, to opt into specialized hardware or pin a specific repository to
+   `"ubuntu-latest"`).
+2. **Organization variable (`vars.CI_RUNS_ON`)**: Organizations across the platform
+   (`ponderousdev`, `harmonops`, `sommerlawn`) define an organization-level
+   `CI_RUNS_ON` variable scoped via `selected` visibility to audited private
+   repositories (such as `["self-hosted","linux","x64","ponderousdev"]` or
+   `["self-hosted","linux","x64","harmonops","contraption"]`). All audited member
+   repositories inherit this fleet routing unless explicitly overridden at the
+   repository level.
+3. **Workflow fallback (`"ubuntu-latest"`)**: If neither a repository variable nor
+   an organization variable is defined or accessible, the workflow expression
+   cleanly falls back to `"ubuntu-latest"` (or the template's render-time default
+   `ci_runs_on_default`).
+
+### Reconciliation and lifecycle
+
+`task setup:github` creates the repository-level variable when it is missing and
+preserves every existing value on non-public repositories; it never infers
+ownership from a JSON shape. An intentional replacement requires
+`scripts/setup-github.sh` with `--replace-ci-runs-on`. Public repositories are
+the safety exception and are always canonicalized to `"ubuntu-latest"`.
+
+### Security boundaries
 
 That convenience is also the risk: it is a runtime change with no diff and no
 review. **Do not point a public repository at a persistent self-hosted runner.**
