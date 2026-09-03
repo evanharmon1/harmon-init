@@ -167,10 +167,16 @@ if [ "${CODER:-}" = "true" ] && [ -d "/home/vscode/.persistent" ]; then
     for dir in .claude .codex .gemini .copilot .pi .omp .agent-deck .shell-history; do
         mkdir -p "/home/vscode/.persistent/$dir"
         if [ -d "$HOME/$dir" ] && [ ! -L "$HOME/$dir" ]; then
-            cp -a "$HOME/$dir/." "/home/vscode/.persistent/$dir/" 2>/dev/null || true
-            rm -rf "${HOME:?}/$dir"
+            if cp -a "$HOME/$dir/." "/home/vscode/.persistent/$dir/"; then
+                rm -rf "${HOME:?}/$dir"
+                ln -sfn "/home/vscode/.persistent/$dir" "$HOME/$dir"
+            else
+                echo "WARN: $dir migration to ~/.persistent failed;" \
+                    "leaving $HOME/$dir on the container-local filesystem" >&2
+            fi
+        else
+            ln -sfn "/home/vscode/.persistent/$dir" "$HOME/$dir"
         fi
-        ln -sfn "/home/vscode/.persistent/$dir" "$HOME/$dir"
     done
     mkdir -p "/home/vscode/.persistent/zoxide" "$HOME/.local/share"
     if [ -d "$HOME/.local/share/zoxide" ] && [ ! -L "$HOME/.local/share/zoxide" ]; then

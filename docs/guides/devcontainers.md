@@ -6,7 +6,7 @@ which secrets and capabilities they allow.
 
 | Profile | Path | For | GitHub auth | Tailscale |
 |---|---|---|---|---|
-| **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, OpenCode) | the bot's PAT via `GH_TOKEN` | no |
+| **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, OpenCode, Antigravity, Copilot CLI, pi, oh-my-pi) | the bot's PAT via `GH_TOKEN` | no |
 | **Dev** | `.devcontainer/dev/devcontainer.json` | humans | the operator's own `gh auth login` | yes (`TS_AUTHKEY`, `--device=/dev/net/tun`) |
 
 Each profile authenticates as the identity it commits as, and the omissions are
