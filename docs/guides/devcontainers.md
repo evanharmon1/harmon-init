@@ -311,12 +311,13 @@ tabs, panes, cwds, layout — as fresh shells. Whether an agent *conversation*
 resumes inside its restored pane is a separate mechanism:
 `resume_agents_on_restore` only works for agents whose Herdr integration has
 recorded a native session reference. post-create installs the Claude Code,
-Codex, and OpenCode integrations automatically (`herdr integration install`,
-idempotent). The conversations themselves persist regardless, in the
-`~/.claude`, `~/.codex`, and `~/.local/share/opencode` volumes (`~/.gemini`
-holds Antigravity's own OAuth/session state, not a CLI conversation, so it's
-not one of these), so a pane that restores as a plain shell can still resume
-its agent by hand (e.g. `claude --resume`).
+Codex, OpenCode, Copilot CLI, pi, and oh-my-pi integrations automatically
+(`herdr integration install`, idempotent). The conversations themselves
+persist regardless, in the `~/.claude`, `~/.codex`, `~/.local/share/opencode`,
+`~/.copilot`, `~/.pi`, and `~/.omp` volumes (`~/.gemini` holds Antigravity's
+own OAuth/session state, not a CLI conversation, so it's not one of these),
+so a pane that restores as a plain shell can still resume its agent by hand
+(e.g. `claude --resume`).
 
 The default session's server socket deliberately does **not** live in that
 volume. The image sets `HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a
