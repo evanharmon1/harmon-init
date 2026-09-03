@@ -110,11 +110,17 @@ verify_settings_autonomous() {
     # toolPermission alone: artifactReviewPolicy, allowNonWorkspaceAccess,
     # and enableTerminalSandbox can each independently reintroduce a prompt
     # or a sandboxed boundary while toolPermission stays always-proceed.
-    # Compared against $BOT_DEFAULTS's own values (not hardcoded a second
-    # time here) so apply and verify can never expect different things.
+    # permissions is a per-tool allow/deny map apply-antigravity-settings.sh
+    # otherwise preserves untouched (the bot defaults previously had no
+    # opinion on it, so its merge left an explicit deny in place even with
+    # toolPermission correct) — $BOT_DEFAULTS now pins it to {} so apply
+    # clears any inherited override and verify has a concrete value to
+    # check, the same as every other key here. Compared against
+    # $BOT_DEFAULTS's own values (not hardcoded a second time here) so
+    # apply and verify can never expect different things.
     local drifted
     drifted="$(jq -r --slurpfile defaults "$BOT_DEFAULTS" '
-        ["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox"] as $keys |
+        ["toolPermission","artifactReviewPolicy","allowNonWorkspaceAccess","enableTerminalSandbox","permissions"] as $keys |
         . as $installed |
         [$keys[] | select($installed[.] != $defaults[0][.])] | join(", ")
     ' "$SETTINGS")" || {
@@ -199,8 +205,16 @@ case "${1:-}" in
 apply) cmd_apply ;;
 verify) cmd_verify ;;
 executable) echo "agy" ;;
+# bot-autonomy.sh's dispatch gate normally skips a module when its
+# declared executable is absent from PATH. That is wrong here: agy's
+# presence is exactly what apply/verify manage (ensure-antigravity-cli.sh
+# removes it when the option is disabled), so gating dispatch on it would
+# skip the disabled branch's settings restore precisely when disabling —
+# the opposite of the intent. This module always runs; its own marker
+# check decides what to do.
+always_dispatch) echo "true" ;;
 *)
-    echo "Usage: $0 <apply|verify|executable>" >&2
+    echo "Usage: $0 <apply|verify|executable|always_dispatch>" >&2
     exit 2
     ;;
 esac

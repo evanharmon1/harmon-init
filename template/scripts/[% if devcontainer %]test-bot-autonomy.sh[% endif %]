@@ -270,15 +270,19 @@ if HOME="$dangling_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_modu
     fail "verify did not fail on a dangling agy symlink (marker enabled)"
 fi
 
-echo "==> 10b. Antigravity: verify checks every autonomy key, not toolPermission alone"
+echo "==> 10b. Antigravity: verify checks every autonomy key (including permissions), not toolPermission alone"
 drift_home="${work_dir}/agy-drift-home"
 mkdir -p "$drift_home"
 HOME="$drift_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" apply >/dev/null
-for key in artifactReviewPolicy allowNonWorkspaceAccess enableTerminalSandbox; do
+for key in artifactReviewPolicy allowNonWorkspaceAccess enableTerminalSandbox permissions; do
     drift_settings="${drift_home}/.gemini/antigravity-cli/settings.json"
     drift_backup="$(cat "$drift_settings")"
     case "$key" in
     enableTerminalSandbox) jq ".${key} = true" "$drift_settings" >"${drift_settings}.tmp" ;;
+    # An explicit per-tool deny that apply-antigravity-settings.sh's own
+    # merge would otherwise leave in place untouched (the bot defaults had
+    # no opinion on this key before), silently defeating toolPermission.
+    permissions) jq ".${key} = {\"bash\": \"deny\"}" "$drift_settings" >"${drift_settings}.tmp" ;;
     *) jq ".${key} = \"request-review\"" "$drift_settings" >"${drift_settings}.tmp" ;;
     esac
     mv "${drift_settings}.tmp" "$drift_settings"
@@ -411,5 +415,35 @@ printf '\n# corrupted\n' >>"$codex_fixture"
 if BOT_AUTONOMY_CODEX_MANAGED="$codex_fixture" bash "$codex_module" verify >/dev/null 2>&1; then
     fail "codex-cli verify did not fail on a checksum mismatch"
 fi
+
+echo "==> 15. bot-autonomy.sh dispatches Antigravity's disabled-branch restore even when agy is nowhere on PATH"
+no_agy_home="${work_dir}/agy-no-executable-home"
+mkdir -p "${no_agy_home}/.local/bin"
+# Simulate "was previously enabled": a real apply with agy-real present
+# persists always-proceed settings, matching a container that had autonomy
+# on before the option was toggled off.
+printf '#!/bin/sh\necho REAL "$@"\n' >"${no_agy_home}/.local/bin/agy-real"
+chmod +x "${no_agy_home}/.local/bin/agy-real"
+HOME="$no_agy_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" apply >/dev/null
+grep -q '"toolPermission": *"always-proceed"' "${no_agy_home}/.gemini/antigravity-cli/settings.json" ||
+    fail "fixture setup: expected always-proceed after the enabled apply"
+
+# Now simulate disabling the option on a compatibility image with no system
+# agy: remove agy-real (as ensure-antigravity-cli.sh would) and dispatch
+# through the TOP-LEVEL bot-autonomy.sh — not antigravity.sh directly — on
+# SAFE_PATH, which by construction cannot resolve agy anywhere (this
+# sandbox's own /usr/local/bin/agy must not leak in and mask the bug).
+rm -f "${no_agy_home}/.local/bin/agy-real" "${no_agy_home}/.local/bin/agy"
+HOME="$no_agy_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled PATH="$SAFE_PATH" \
+    BOT_AUTONOMY_REGISTRY="$registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    bash "$bot_autonomy" apply >/dev/null ||
+    fail "bot-autonomy.sh apply failed with agy absent from PATH (disabled option)"
+if grep -q '"toolPermission"' "${no_agy_home}/.gemini/antigravity-cli/settings.json"; then
+    fail "Antigravity settings still carry a managed toolPermission after disabling with agy absent from PATH — the disabled branch's restore did not run"
+fi
+HOME="$no_agy_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled PATH="$SAFE_PATH" \
+    BOT_AUTONOMY_REGISTRY="$registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    bash "$bot_autonomy" verify >/dev/null ||
+    fail "bot-autonomy.sh verify failed against the correctly-restored disabled state with agy absent from PATH"
 
 echo "All bot-autonomy unit tests passed."

@@ -121,6 +121,20 @@ module_executable() {
     bash "${CONFIG_DIR}/$1.sh" executable
 }
 
+# module_always_dispatch <module-slug>  — true when apply/verify must run
+# regardless of whether the module's declared executable is currently on
+# PATH. Antigravity's own agy presence is exactly what apply/verify manage
+# (ensure-antigravity-cli.sh removes it when the Copier option is disabled)
+# — gating dispatch on "agy is on PATH" skips the disabled branch's
+# settings restore precisely when the option is being disabled, the
+# opposite of the intent. A module opts in via an `always_dispatch`
+# subcommand printing exactly "true"; a module that does not implement the
+# subcommand (everything except antigravity today) exits nonzero here and
+# keeps the ordinary executable-presence gate.
+module_always_dispatch() {
+    [ "$(bash "${CONFIG_DIR}/$1.sh" always_dispatch 2>/dev/null)" = "true" ]
+}
+
 # resolve_module_for <slug>  — prints the module slug that governs <slug>,
 # whether <slug> IS a module directly or ALIASES to one, and succeeds iff
 # either holds. Dispatch resolves every covered slug through this one path
@@ -168,7 +182,7 @@ cmd_apply() {
         esac
         modules_seen="$modules_seen $module_slug"
         exe="$(module_executable "$module_slug")"
-        if ! command -v "$exe" >/dev/null 2>&1; then
+        if ! command -v "$exe" >/dev/null 2>&1 && ! module_always_dispatch "$module_slug"; then
             echo "==> bot-autonomy: ${module_slug} executable '${exe}' not present; skipping apply"
             continue
         fi
@@ -195,7 +209,9 @@ cmd_verify() {
             esac
             modules_seen="$modules_seen $module_slug"
             exe="$(module_executable "$module_slug")"
-            command -v "$exe" >/dev/null 2>&1 || continue
+            if ! command -v "$exe" >/dev/null 2>&1 && ! module_always_dispatch "$module_slug"; then
+                continue
+            fi
             if ! bash "${CONFIG_DIR}/${module_slug}.sh" verify; then
                 echo "bot-autonomy: verify failed for ${module_slug} (registry slug '${slug}')" >&2
                 failed=1

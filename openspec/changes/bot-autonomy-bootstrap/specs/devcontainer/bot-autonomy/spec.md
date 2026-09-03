@@ -15,13 +15,20 @@ keyed by `agent-registry.json` harness slugs. Each module SHALL declare the
 executable it governs, an idempotent `apply`, and a `verify` that reads the
 harness's effective runtime configuration. A slug aliased to another slug's
 module (see the registry-coverage requirement below) is governed by that
-module and dispatches no separate one.
+module and dispatches no separate one. A module MAY additionally declare
+itself `always_dispatch`, in which case dispatch SHALL NOT skip it merely
+because its declared executable is absent from the image — reserved for a
+module whose own executable's presence is itself something apply/verify
+manage (Antigravity's `agy`, removed by `ensure-antigravity-cli.sh` when
+its option is disabled), where gating dispatch on that presence would skip
+the module precisely when its cleanup path needs to run.
 
 #### Scenario: apply dispatches every installed harness to its module
 - **WHEN** `bot-autonomy.sh apply` runs in the bot devcontainer
 - **THEN** it invokes the `apply` step of the module for every registry
-  harness slug whose executable is present in the image — resolving an
-  aliased slug to its target module — and none other
+  harness slug whose executable is present in the image, or whose module
+  declares `always_dispatch` — resolving an aliased slug to its target
+  module — and none other
 
 #### Scenario: verify reads effective runtime state, not the source file
 - **WHEN** `bot-autonomy.sh verify` runs after `apply`
@@ -31,9 +38,16 @@ module and dispatches no separate one.
 
 #### Scenario: a registry harness without an installed executable is skipped
 - **WHEN** `bot-autonomy.sh apply` or `verify` runs and a registry harness
-  slug's executable is not present in the image
+  slug's executable is not present in the image, and its module does not
+  declare `always_dispatch`
 - **THEN** that harness's module (or, for an aliased slug, its target
   module) is skipped without failing the run
+
+#### Scenario: an always_dispatch module runs regardless of its executable's presence
+- **WHEN** `bot-autonomy.sh apply` or `verify` runs and a registry harness
+  slug's module declares `always_dispatch`
+- **THEN** that module's `apply` or `verify` step runs whether or not its
+  declared executable is currently present in the image
 
 ### Requirement: Every registry harness slug resolves to one of three coverage buckets
 Every `agent-registry.json` harness slug SHALL be covered by exactly one of:
