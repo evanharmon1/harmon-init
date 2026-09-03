@@ -212,11 +212,19 @@ workspace-scoped design remains available as a possible **future, explicit
 opt-in** — not the default — if the maintainer later decides the risk it
 carries is acceptable for a specific, bounded use; see design.md - Open
 Questions and Decisions for the full record. `verify` SHALL, however,
-fail closed if it ever finds `defaultProjectTrust` set to `"always"` in the
-bot profile regardless of cause — this module never sets it, but a stale
-volume, a manual edit, or a future regression could, and detecting that
-dangerous state is a strengthening of this fallback's safety story, not a
-re-attempt at either rejected design.
+fail closed on **either** of pi's two trust-granting surfaces, regardless
+of cause — this module writes to neither, but a stale volume, a manual
+edit, an interactive `/trust` run inside the bot container, or a future
+regression could populate either one: (1) `defaultProjectTrust` set to
+`"always"` in `~/.pi/agent/settings.json`, and (2) an applicable saved
+decision in `~/.pi/agent/trust.json` — a trusted entry for the current
+workspace's own canonical directory, or, per pi's own "closest decision on
+the current or parent path" rule, for any parent of it. Checking only the
+global fallback would leave the exact path-keyed exposure the rejected
+workspace-scoped design carried (design.md - Decisions) reachable by any of
+those same causes, just through the other file — detecting both is a
+strengthening of this fallback's safety story, not a re-attempt at either
+rejected design.
 
 #### Scenario: the bot profile applies no elevated trust
 - **WHEN** the `pi` module's `apply` runs in the bot profile
@@ -241,6 +249,18 @@ re-attempt at either rejected design.
   produced it
 - **THEN** `verify` exits non-zero naming pi, rather than silently passing
   over a state this proposal's own review identified as unsafe
+
+#### Scenario: verify fails closed on a pre-existing saved trust decision, whatever its cause
+- **WHEN** `bot-autonomy.sh verify` runs in the bot profile and
+  `~/.pi/agent/trust.json` carries an applicable trusted decision for the
+  current workspace — its own canonical directory, or, per pi's
+  closest-decision-on-current-or-parent-path rule, any parent of it —
+  regardless of whether an interactive `/trust` run, a stale volume, or a
+  manual edit produced it
+- **THEN** `verify` exits non-zero naming pi — a global `defaultProjectTrust`
+  check alone would miss exactly the path-keyed exposure the rejected
+  workspace-scoped design carried; `verify` closes both surfaces, not only
+  the one this module itself never writes to first
 
 #### Scenario: the dev profile is identical to the bot profile for this module
 - **WHEN** a bot or dev profile container is created or rebuilt

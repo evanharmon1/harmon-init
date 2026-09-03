@@ -73,17 +73,25 @@
       `~/.local/bin/copilot` if present and does not touch
       `$COPILOT_ALLOW_ALL` (it is not writable by this script either way —
       the render already guarantees it reads `false`); `verify` asserts the
-      wrapper's presence/absence matches the marker, that
+      wrapper's presence/absence matches the marker and that
       `$COPILOT_ALLOW_ALL` is the exact literal `true` (enabled) or `false`
-      (disabled) — not merely present/absent, and not any other
-      truthy-looking value — and that `~/.copilot/settings.json`'s
-      `permissions.disableBypassPermissionsMode` is not `"disable"`; verify
-      by running `bot-autonomy.sh apply verify` in a scratch fixture with
-      the marker `enabled` and `disabled`, a fixture that sets
-      `COPILOT_ALLOW_ALL` to a truthy-but-wrong value (`"1"`, `"yes"`) and
-      confirms `verify` fails naming Copilot, and a toggle-off-after-apply
-      fixture confirming a prior autonomous state reaches disabled (wrapper
-      absent, `COPILOT_ALLOW_ALL=false`) after a re-render flips the marker
+      (disabled) in both states — not merely present/absent, and not any
+      other truthy-looking value. **Only when the marker reads `enabled`**,
+      `verify` additionally checks that `~/.copilot/settings.json`'s
+      `permissions.disableBypassPermissionsMode` is not `"disable"` — this
+      check does NOT run in the disabled state, where a locked-out bypass
+      mode is irrelevant (prompt-enabled is already the intended outcome
+      there) and would otherwise fail a default-off consumer whose own org
+      separately locks bypass mode via MDM, unconnected to this repo's
+      Copier answer. Verify by running `bot-autonomy.sh apply verify` in a
+      scratch fixture with the marker `enabled` and `disabled`, a fixture
+      that sets `COPILOT_ALLOW_ALL` to a truthy-but-wrong value (`"1"`,
+      `"yes"`) and confirms `verify` fails naming Copilot, a fixture with
+      the marker `disabled` AND `disableBypassPermissionsMode: "disable"`
+      confirming `verify` still **passes** (the kill-switch is irrelevant
+      here), and a toggle-off-after-apply fixture confirming a prior
+      autonomous state reaches disabled (wrapper absent,
+      `COPILOT_ALLOW_ALL=false`) after a re-render flips the marker
 - [ ] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
       `--allow-all` on a bare `copilot` invocation and on `copilot -p`/
       `--prompt` unless the invocation already carries full allow-all
@@ -116,26 +124,46 @@
 
 ## 2. pi module
 
-- [ ] 2.1 Add `.devcontainer/config/bot-autonomy/pi.sh` as the **no-elevated-trust
-      requirement the maintainer decided** (design.md - Decisions,
-      "Resolved 2026-09-03" — option (a); do not reopen that decision
-      inside this task, e.g. by implementing the rejected workspace-scoped
-      `trust.json` design instead). `apply` writes nothing: it does not touch
-      `~/.pi/agent/settings.json`'s `defaultProjectTrust`, and does not
-      write `~/.pi/agent/trust.json`, in either profile. `verify` reads
-      `~/.pi/agent/settings.json` and fails, naming pi, if
-      `defaultProjectTrust` is found to be `"always"` — regardless of
-      whether this module, a stale volume, or a manual edit produced it.
-      There is no `restore` (nothing is ever backed up, because nothing is
-      ever overwritten). Verify with fixtures covering: `apply` on a fresh
+- [ ] 2.1 First, confirm `~/.pi/agent/trust.json`'s actual read format
+      against the real `pi` binary: in a scratch container or fixture, run
+      `pi` interactively once in a throwaway workspace, use `/trust` to
+      record a decision, and inspect the resulting file (key format —
+      canonical path? something else? — and how to tell whether a given
+      workspace path matches an entry for itself or a parent). This is a
+      bounded confirmation for a **read-only** check, not the rejected
+      write mechanism reopened: task 2.1 below never writes this file, it
+      only needs to detect whether something else already has. Then add
+      `.devcontainer/config/bot-autonomy/pi.sh` as the
+      **no-elevated-trust requirement the maintainer decided** (design.md -
+      Decisions, "Resolved 2026-09-03" — option (a); do not reopen that
+      decision inside this task, e.g. by implementing the rejected
+      workspace-scoped `trust.json` *write* instead). `apply` writes
+      nothing: it does not touch `~/.pi/agent/settings.json`'s
+      `defaultProjectTrust`, and does not write `~/.pi/agent/trust.json`,
+      in either profile. `verify` fails, naming pi, if **either** of pi's
+      two trust-granting surfaces is found active: `defaultProjectTrust`
+      set to `"always"` in `~/.pi/agent/settings.json`, or an applicable
+      saved decision (for the current workspace or, per pi's
+      closest-decision-on-current-or-parent-path rule, any parent of it)
+      in `~/.pi/agent/trust.json`, using the confirmed read format —
+      regardless of whether this module, a stale volume, an interactive
+      `/trust` run, or a manual edit produced either one. There is no
+      `restore` (nothing is ever backed up, because nothing is ever
+      overwritten). Verify with fixtures covering: `apply` on a fresh
       volume leaves `~/.pi` exactly as `pi`'s own install left it (no new
       keys, no new files beyond what pi itself creates); `verify` passes
-      when `defaultProjectTrust` is absent or `"ask"`/`"never"`; `verify`
-      fails naming pi when a fixture pre-seeds `defaultProjectTrust: "always"`
-      (proving the fail-closed check works regardless of how that value
-      got there — do not special-case "this module didn't write it" in the
-      fixture); and a fixture confirming bot and dev profiles behave
-      identically for this module (no per-profile branch exists to test)
+      when neither surface is active; `verify` fails naming pi when a
+      fixture pre-seeds `defaultProjectTrust: "always"` (proving the
+      fail-closed check works regardless of how that value got there — do
+      not special-case "this module didn't write it" in the fixture);
+      `verify` **also** fails naming pi when a fixture pre-seeds a
+      `trust.json` decision for the current workspace's own directory, and
+      separately when it pre-seeds one for a *parent* directory of the
+      current workspace (proving the parent-path rule is actually checked,
+      not only an exact-path match); `verify` passes when `trust.json`
+      carries a decision for an unrelated, non-parent workspace only; and a
+      fixture confirming bot and dev profiles behave identically for this
+      module (no per-profile branch exists to test)
 - [ ] 2.2 Confirm the dev profile's post-create never calls this module
       (mirroring `bot-autonomy-bootstrap`'s own "dev never calls
       `bot-autonomy.sh`" wiring — this module is only ever dispatched from

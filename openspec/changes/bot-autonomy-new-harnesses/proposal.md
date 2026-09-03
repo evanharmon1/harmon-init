@@ -59,8 +59,10 @@ clause does.
   state, which this option already satisfies for pi (its non-interactive
   modes never prompt for trust regardless of this setting). The
   workspace-scoped design is recorded as a possible future, explicit
-  opt-in, not the default. `verify` still fails closed if
-  `defaultProjectTrust` is ever found `"always"` regardless of cause.
+  opt-in, not the default. `verify` still fails closed on either of pi's
+  two trust-granting surfaces regardless of cause: `defaultProjectTrust`
+  found `"always"`, or an applicable saved decision already present in
+  `~/.pi/agent/trust.json` for the current workspace or a parent of it.
 - Add `.devcontainer/config/bot-autonomy/oh-my-pi.sh`: this proposal's own
   research (design.md - Decisions) found and cites a documented, pinned-release
   auto-approve mechanism (`tools.approvalMode: yolo` in

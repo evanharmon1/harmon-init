@@ -443,8 +443,14 @@ design, adjudicated by nobody but this same session, would not actually be
 more trustworthy than the first two, only less scrutinized. The requirement
 therefore falls back to the one state this proposal's own research can
 actually stand behind: no elevated trust in the bot profile at all,
-matching dev exactly, with `verify` failing closed if `defaultProjectTrust`
-is ever found `"always"` regardless of cause. This accepts a capability gap
+matching dev exactly, with `verify` failing closed on **either** of pi's
+trust-granting surfaces — `defaultProjectTrust` set to `"always"`, or an
+applicable saved decision already present in `~/.pi/agent/trust.json` —
+regardless of cause (a `task review` round 1 finding sharpened this from
+checking only the global fallback: a pre-existing path-keyed decision,
+however it got there, would otherwise carry the exact exposure the
+rejected workspace-scoped design had, just reached through the file this
+module never writes rather than the one it does). This accepts a capability gap
 (the bot's headless pi sessions silently ignore this repository's own
 `.pi/` customizations) in exchange for not shipping a security gap this
 proposal's own review found twice.
