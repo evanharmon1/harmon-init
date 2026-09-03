@@ -148,7 +148,14 @@ jobs:
     if: always()
     needs: [build]
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
-    timeout-minutes: 30
+    # On a cache miss this job rebuilds independently of `build` (a separate
+    # runner, so it cannot reuse that job's local result) and can take as
+    # long as `build`'s own 45-minute budget; devcontainer-smoke.sh's `up`
+    # command carries its own internal 30-minute timeout, so the job timeout
+    # must clear build's ceiling by more than that, not just match it, or
+    # this job gets killed before its own script's timeout ever has a
+    # chance to fire and report the real cause.
+    timeout-minutes: 60
     env:
       IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     steps:

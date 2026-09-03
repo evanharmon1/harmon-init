@@ -212,6 +212,28 @@ cmd_verify() {
             failed=1
         fi
     done <<<"$slugs"
+
+    # Defense in depth, the reverse direction: every module FILE on disk —
+    # not only the ones THIS registry pass happened to reach — is checked
+    # directly. A branch that removes or renames a slug from
+    # agent-registry.json while the pinned image still installs that
+    # module's executable would otherwise leave it completely unmanaged:
+    # the forward, registry-driven loop above never even sees a slug that
+    # no longer exists, so it cannot report the divergence on its own.
+    local module_file m_slug m_exe
+    for module_file in "${CONFIG_DIR}"/*.sh; do
+        [ -f "$module_file" ] || continue
+        m_slug="$(basename "$module_file" .sh)"
+        case " $modules_seen " in
+        *" $m_slug "*) continue ;;
+        esac
+        m_exe="$(module_executable "$m_slug")"
+        if command -v "$m_exe" >/dev/null 2>&1; then
+            echo "bot-autonomy: verify failed — '${m_slug}' executable '${m_exe}' is installed but no current agent-registry.json slug (direct or aliased) resolves to its module" >&2
+            failed=1
+        fi
+    done
+
     if [ "$failed" -ne 0 ]; then
         echo "bot-autonomy: verify failed — see above" >&2
         return 1
@@ -242,7 +264,7 @@ cmd_coverage() {
         return 1
     fi
 
-    local slug hits detail failed=0 target entry slugs
+    local slug hits detail failed=0 target entry slugs modules_reachable=""
     slugs="$(registry_slugs)" || return 1
     while IFS= read -r slug; do
         hits=0
@@ -250,6 +272,7 @@ cmd_coverage() {
         if module_slug_for "$slug" >/dev/null 2>&1; then
             hits=$((hits + 1))
             detail="module"
+            modules_reachable="$modules_reachable $slug"
         fi
         if target="$(alias_target_for "$slug" 2>/dev/null)"; then
             hits=$((hits + 1))
@@ -258,7 +281,9 @@ cmd_coverage() {
             # to a module — a misspelled or removed target would otherwise
             # let both the alias AND its (non-existent) target go unverified
             # at runtime while this static check reports them covered.
-            if ! module_slug_for "$target" >/dev/null 2>&1; then
+            if module_slug_for "$target" >/dev/null 2>&1; then
+                modules_reachable="$modules_reachable $target"
+            else
                 echo "bot-autonomy: coverage failed — '${slug}' aliases to '${target}', which has no module" >&2
                 failed=1
             fi
@@ -281,6 +306,23 @@ cmd_coverage() {
             ;;
         esac
     done <<<"$slugs"
+
+    # Defense in depth, the reverse direction (same reasoning as verify's own
+    # check): every module FILE on disk must be reachable from the CURRENT
+    # registry, not just orphaned in place. Catches a registry edit that
+    # drops the last slug (or alias) pointing at a module at review time,
+    # before any container ever runs verify against it.
+    local module_file m_slug
+    for module_file in "${CONFIG_DIR}"/*.sh; do
+        [ -f "$module_file" ] || continue
+        m_slug="$(basename "$module_file" .sh)"
+        case " $modules_reachable " in
+        *" $m_slug "*) continue ;;
+        esac
+        echo "bot-autonomy: coverage failed — module '${m_slug}' has no registry slug (direct or aliased) resolving to it" >&2
+        failed=1
+    done
+
     [ "$failed" -eq 0 ]
 }
 

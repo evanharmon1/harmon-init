@@ -35,6 +35,26 @@ codex_bot="${repo_root}/.devcontainer/config/codex-managed-config.bot.toml"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
+# verify/coverage now also check the REVERSE direction: every module file's
+# executable, if installed, must be reachable from the current registry
+# (task added in challenge round 3). A test environment that already has
+# the real claude/codex/agy/opencode binaries on PATH (this repo's own bot
+# devcontainer, for instance) would otherwise trip that check the moment a
+# narrow, single-slug fixture registry is used below — an environment
+# accident, not something under test. Directory-level exclusion cannot fix
+# this: on a merged-/usr system /bin and /usr/bin are the same directory,
+# so excluding it to hide claude/codex/opencode would also hide jq. Instead
+# build ONE curated bin directory, symlinking only the tools bot-autonomy.sh
+# and its modules actually shell out to, and use that as SAFE_PATH —
+# claude/codex/agy/opencode are never among them, by construction.
+safe_bin="${work_dir}/safe-bin"
+mkdir -p "$safe_bin"
+for tool in bash jq sha256sum git mktemp mv chmod install mkdir basename dirname cmp rm; do
+    tool_path="$(command -v "$tool" 2>/dev/null || true)"
+    [ -n "$tool_path" ] && ln -sf "$tool_path" "${safe_bin}/${tool}"
+done
+SAFE_PATH="$safe_bin"
+
 echo "==> 1. coverage passes against the real registry and tables"
 BOT_AUTONOMY_REGISTRY="$registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
     bash "$bot_autonomy" coverage >/dev/null ||
@@ -63,7 +83,7 @@ chmod +x "${orphan_bin}/claude"
 orphan_managed="${work_dir}/orphan-claude-managed.json"
 echo '{}' >"$orphan_managed"
 BOT_AUTONOMY_REGISTRY="$orphan_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
-    BOT_AUTONOMY_CLAUDE_MANAGED="$orphan_managed" PATH="${orphan_bin}:${PATH}" \
+    BOT_AUTONOMY_CLAUDE_MANAGED="$orphan_managed" PATH="${orphan_bin}:${SAFE_PATH}" \
     bash "$bot_autonomy" apply >/dev/null
 jq -e '.permissions.defaultMode == "bypassPermissions"' "$orphan_managed" >/dev/null ||
     fail "apply did not dispatch the claude-code module via an alias whose target slug is absent from the registry"
@@ -139,7 +159,7 @@ assert_unsupported_fails() {
     chmod +x "${fake_bin_dir}/${fake_exe}"
     local out rc=0
     out="$(BOT_AUTONOMY_REGISTRY="$registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
-        PATH="${fake_bin_dir}:${PATH}" bash "$bot_autonomy" verify 2>&1)" || rc=$?
+        PATH="${fake_bin_dir}:${SAFE_PATH}" bash "$bot_autonomy" verify 2>&1)" || rc=$?
     [ "$rc" -ne 0 ] || fail "verify did not fail with a fake '${fake_exe}' installed for unsupported slug '${slug}'"
     case "$out" in
     *"$slug"*) ;;
@@ -164,15 +184,31 @@ chmod +x "${cline_slug_bin_dir}/cline"
 only_cline_registry="${work_dir}/registry-only-cline.json"
 jq -n '{harnesses: [{slug: "cline"}]}' >"$only_cline_registry"
 BOT_AUTONOMY_REGISTRY="$only_cline_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
-    PATH="${cline_slug_bin_dir}:${PATH}" bash "$bot_autonomy" verify >/dev/null 2>&1 ||
+    PATH="${cline_slug_bin_dir}:${SAFE_PATH}" bash "$bot_autonomy" verify >/dev/null 2>&1 ||
     fail "verify failed on a binary named 'cline' — the unsupported entry's executable is 'clite', not the slug"
 
 echo "==> 6. claude-code-action (executable: null) is never checked for installation"
 null_registry="${work_dir}/registry-null.json"
 jq -n '{harnesses: [{slug: "claude-code-action"}]}' >"$null_registry"
 BOT_AUTONOMY_REGISTRY="$null_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
-    bash "$bot_autonomy" verify >/dev/null 2>&1 ||
+    PATH="$SAFE_PATH" bash "$bot_autonomy" verify >/dev/null 2>&1 ||
     fail "verify unexpectedly failed for the executable:null claude-code-action entry"
+
+echo "==> 6b. verify and coverage fail when a module's slug is removed from the registry entirely (not aliased, just gone) while its executable stays installed"
+gone_registry="${work_dir}/registry-claude-gone.json"
+jq -n '{harnesses: [{slug: "codex-cli"}]}' >"$gone_registry"
+gone_bin="${work_dir}/gone-bin"
+mkdir -p "$gone_bin"
+printf '#!/bin/sh\nexit 0\n' >"${gone_bin}/claude"
+chmod +x "${gone_bin}/claude"
+if BOT_AUTONOMY_REGISTRY="$gone_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    PATH="${gone_bin}:${SAFE_PATH}" bash "$bot_autonomy" verify >/dev/null 2>&1; then
+    fail "verify did not notice claude-code's executable installed with no registry slug (direct or aliased) reaching it"
+fi
+if BOT_AUTONOMY_REGISTRY="$gone_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    bash "$bot_autonomy" coverage >/dev/null 2>&1; then
+    fail "coverage did not notice the claude-code module has no registry slug (direct or aliased) reaching it"
+fi
 
 echo "==> 7. Codex structural parity: bot config matches the shared baseline on every key but sandbox_mode/approval_policy"
 [ -f "$codex_baseline" ] || fail "Codex shared baseline not found at ${codex_baseline}"
