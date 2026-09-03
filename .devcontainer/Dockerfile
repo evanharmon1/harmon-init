@@ -8,4 +8,14 @@ USER root
 COPY .devcontainer/config/ /usr/local/share/devcontainer-config/
 RUN /usr/local/sbin/install-harmon-repo-config
 
+# Prepend ~/.local/bin onto PATH for every process the container ever runs —
+# baked into the image, not devcontainer.json's containerEnv: that layer's
+# ${containerEnv:PATH} cannot self-expand while Docker is creating the
+# container (it is passed to `docker run -e` literally, unresolved, which
+# breaks the container's own shell). A Dockerfile ENV directive is Docker's
+# own, working self-reference and applies identically to any docker exec,
+# not only an interactive login shell — the antigravity bot-autonomy
+# wrapper's precedence over the system agy binary depends on this.
+ENV PATH="/home/vscode/.local/bin:${PATH}"
+
 USER vscode

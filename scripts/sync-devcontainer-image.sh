@@ -353,6 +353,12 @@ Automated update of the immutable Harmon devcontainer toolchain image.
 
 \`task test:devcontainer:permissions\` and \`task verify\` passed before push.
 
+## Reviewer checklist
+
+- [ ] bot-autonomy-new-harnesses has merged, covering every harness this
+      Dockerfile bump installs (see the container-assertion job's result on
+      this PR)
+
 ## Merging
 
 Merging stays manual. A newer publication rewrites this one rolling branch and PR.

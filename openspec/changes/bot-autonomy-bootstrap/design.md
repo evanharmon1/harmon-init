@@ -320,13 +320,23 @@ depends on a `.bashrc`/`.zshrc` `PATH` export the way `ensure-
 antigravity-cli.sh`'s own compatibility-copy ordering historically has,
 that ordering is invisible to exactly the same non-interactive population
 the wrapper exists to cover — a `docker exec` without a login shell sees
-the *unedited* container `PATH`, not a shell's rc-modified one. The bot
-`devcontainer.json`'s `containerEnv.PATH` is what Docker applies
-universally, to every process the container runs regardless of shell, so
-prepending `/home/vscode/.local/bin` there (rather than relying on rc-file
-`PATH` exports) is what actually closes the gap for every launch path, not
-only interactive ones. Alternative considered: keep the shell function and
-add the wrapper alongside it — rejected as redundant once the wrapper
+the *unedited* container `PATH`, not a shell's rc-modified one. **Corrected
+during implementation:** this design originally specified
+`devcontainer.json`'s `containerEnv.PATH`, self-referencing the container's
+own existing `PATH`, as the mechanism — that does not work. A `containerEnv`
+entry that reads `${containerEnv:PATH}` while defining `PATH` itself cannot
+resolve at container-creation time: the devcontainers CLI passes it to
+`docker run -e` literally, unresolved, which left the container without a
+usable `PATH` at all (empirically confirmed: `bash` itself became
+unresolvable). The bot `Dockerfile`'s own `ENV PATH=` directive is what
+actually applies the prepend universally, to every process the container
+runs regardless of shell — Docker resolves a Dockerfile `ENV`'s own
+self-reference correctly, at image build time, which is the property this
+design actually needs. Every scenario and requirement in
+`specs/devcontainer/bot-autonomy/spec.md` describing this mechanism has been
+updated to name the Dockerfile, not `containerEnv`. Alternative considered:
+keep the shell function and add the wrapper alongside it — rejected as
+redundant once the wrapper
 exists on the container-wide `PATH`; the function covered a strict subset
 of what the wrapper covers.
 

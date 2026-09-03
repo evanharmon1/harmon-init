@@ -46,7 +46,23 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   consumes no PR checks, and is not part of branch protection. Generated
   repositories opt into the same workflow explicitly via `snyk_scan_schedule`
   (`weekly` or `daily`). See [security.md](security.md) for quota guidance.
-- `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on `.devcontainer/**` changes.
+- `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR on
+  `.devcontainer/**` changes. Its `devcontainer-assert-bot` job then starts a
+  real bot container (`scripts/devcontainer-smoke.sh`, sharing the build job's
+  registry cache) and runs `bot-autonomy.sh verify` inside it via `docker
+  exec`, so the fail-closed, non-interactive policy every installed harness is
+  supposed to run under (see [security.md](security.md)) is checked against
+  the built image, not just its source files. This container-assertion step
+  is a **CI-only** check, deliberately absent from the local `task ci` mirror:
+  `scripts/devcontainer-smoke.sh` has no graceful skip (it falls back to `npx
+  @devcontainers/cli` rather than a no-op when the CLI is absent, fails hard
+  without a reachable Docker daemon, and refuses outright from a linked git
+  worktree — a real gap for this repository's own `task worktree:new`-based
+  workflow). `task test:devcontainer:root` remains the separate, manually
+  invoked local equivalent. It is not a required branch-protection status
+  check: #1137's fail-closed guarantee is satisfied by `apply`/`verify`
+  failing container creation or start directly, independent of any CI signal;
+  this job adds a second, PR-visible one on top.
 - `publish-harmon-devcontainer.yml` — **root-only**: validates and publishes the
   shared amd64/arm64 toolchain image, then maintains its reviewed pin PR.
 - `claim-release.yml` — on `issues closed`, on `pull_request closed` **unmerged**,

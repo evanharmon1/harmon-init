@@ -15,13 +15,20 @@ keyed by `agent-registry.json` harness slugs. Each module SHALL declare the
 executable it governs, an idempotent `apply`, and a `verify` that reads the
 harness's effective runtime configuration. A slug aliased to another slug's
 module (see the registry-coverage requirement below) is governed by that
-module and dispatches no separate one.
+module and dispatches no separate one. A module MAY additionally declare
+itself `always_dispatch`, in which case dispatch SHALL NOT skip it merely
+because its declared executable is absent from the image — reserved for a
+module whose own executable's presence is itself something apply/verify
+manage (Antigravity's `agy`, removed by `ensure-antigravity-cli.sh` when
+its option is disabled), where gating dispatch on that presence would skip
+the module precisely when its cleanup path needs to run.
 
 #### Scenario: apply dispatches every installed harness to its module
 - **WHEN** `bot-autonomy.sh apply` runs in the bot devcontainer
 - **THEN** it invokes the `apply` step of the module for every registry
-  harness slug whose executable is present in the image — resolving an
-  aliased slug to its target module — and none other
+  harness slug whose executable is present in the image, or whose module
+  declares `always_dispatch` — resolving an aliased slug to its target
+  module — and none other
 
 #### Scenario: verify reads effective runtime state, not the source file
 - **WHEN** `bot-autonomy.sh verify` runs after `apply`
@@ -31,9 +38,16 @@ module and dispatches no separate one.
 
 #### Scenario: a registry harness without an installed executable is skipped
 - **WHEN** `bot-autonomy.sh apply` or `verify` runs and a registry harness
-  slug's executable is not present in the image
+  slug's executable is not present in the image, and its module does not
+  declare `always_dispatch`
 - **THEN** that harness's module (or, for an aliased slug, its target
   module) is skipped without failing the run
+
+#### Scenario: an always_dispatch module runs regardless of its executable's presence
+- **WHEN** `bot-autonomy.sh apply` or `verify` runs and a registry harness
+  slug's module declares `always_dispatch`
+- **THEN** that module's `apply` or `verify` step runs whether or not its
+  declared executable is currently present in the image
 
 ### Requirement: Every registry harness slug resolves to one of three coverage buckets
 Every `agent-registry.json` harness slug SHALL be covered by exactly one of:
@@ -422,13 +436,17 @@ version check reads `agy-real --version` directly — not through the
 wrapper or the symlink — so its idempotency never depends on either being
 correct. The wrapper's precedence over the system `agy` binary — when the
 wrapper is installed at all — SHALL be established at the **container
-level**: `containerEnv.PATH` in the bot `devcontainer.json` prepends
-`/home/vscode/.local/bin` ahead of `/usr/local/bin`, not by a shell rc
-file's `PATH` export, since a shell function or an rc-dependent `PATH`
-prepend is invisible to exactly the population this wrapper exists to
-cover: a process that never sources an interactive login shell (a `docker
-exec` without a login/interactive shell, a Foreman-dispatched process, a
-cron job).
+level**: the bot `Dockerfile` prepends `/home/vscode/.local/bin` ahead of
+`/usr/local/bin` onto `PATH` via a Docker `ENV` directive, not by a shell rc
+file's `PATH` export and not by `devcontainer.json`'s `containerEnv` (a
+`containerEnv.PATH` entry that self-references `${containerEnv:PATH}` does
+not resolve at container-creation time — the devcontainers CLI passes it to
+`docker run -e` literally, unresolved, which breaks the container's own
+shell; a Docker `ENV` directive is Docker's own, working self-reference and
+applies identically to any `docker exec`). This still closes the same gap a
+shell function or an rc-dependent `PATH` prepend would leave open: a process
+that never sources an interactive login shell (a `docker exec` without a
+login/interactive shell, a Foreman-dispatched process, a cron job).
 
 #### Scenario: the marker is rendered per repo, never derived by a verbatim script
 - **WHEN** a repo is generated (or updated) with `use_antigravity_cli` at
@@ -487,20 +505,19 @@ cron job).
   as a failure, not the correct disabled state
 
 #### Scenario: the wrapper precedes the system binary on the container-wide PATH
-- **WHEN** the bot `devcontainer.json` is inspected
-- **THEN** its `containerEnv.PATH` prepends `/home/vscode/.local/bin` ahead
-  of `/usr/local/bin` (where the system `agy` binary is installed), so the
-  ordering applies to every process the container runs — not only shells
-  that source `.bashrc`/`.zshrc` — regardless of which of the three states
-  `agy` is currently in
+- **WHEN** the bot `Dockerfile` is inspected
+- **THEN** it prepends `/home/vscode/.local/bin` ahead of `/usr/local/bin`
+  (where the system `agy` binary is installed) onto `PATH` via an `ENV`
+  directive, so the ordering applies to every process the container runs —
+  not only shells that source `.bashrc`/`.zshrc` — regardless of which of
+  the three states `agy` is currently in
 
 #### Scenario: a process with no shell rc still resolves the wrapper when enabled
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled` and
   `agy --version` is resolved by a process that has not sourced any shell
   rc file — a `docker exec` invocation that does not start a
   login/interactive shell, or an equivalent `env -i
-  PATH=$CONTAINER_PATH agy --version` using the container's own
-  `containerEnv.PATH` value
+  PATH=$CONTAINER_PATH agy --version` using the container's own PATH value
 - **THEN** the resolved `agy` is `~/.local/bin/agy` (the wrapper), not the
   system binary at `/usr/local/bin/agy`
 
@@ -541,6 +558,23 @@ cron job).
   does not inject the flag, or — when `agy-real` exists — does not resolve
   to it
 - **THEN** `verify` exits non-zero naming Antigravity
+
+#### Scenario: verify fails when the wrapper's own resolved backend cannot run
+- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`, `verify` runs
+  in the bot profile, the wrapper at `~/.local/bin/agy` matches its
+  expected content exactly, and neither `agy-real` nor the system binary
+  it falls back to is executable
+- **THEN** `verify` exits non-zero naming Antigravity — matching wrapper
+  bytes are not sufficient when every invocation would exit 127
+
+#### Scenario: verify fails when the current workspace is missing from the settings' trust list
+- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`, `verify` runs
+  in the bot profile, every scalar autonomy key matches the shipped
+  defaults, and `~/.gemini/antigravity-cli/settings.json`'s
+  `trustedWorkspaces` does not include the current workspace (the entry
+  `apply-antigravity-settings.sh apply` itself writes)
+- **THEN** `verify` exits non-zero naming Antigravity — a correct
+  `toolPermission` value does not by itself bypass the workspace-trust gate
 
 #### Scenario: verify fails on a dangling symlink regardless of the marker
 - **WHEN** `verify` runs and `~/.local/bin/agy` is a symlink whose target

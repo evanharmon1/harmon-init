@@ -1,0 +1,30 @@
+{
+  "claude-code-action": {
+    "executable": null,
+    "reason": "runs as a GitHub Actions workflow; no devcontainer-installable binary"
+  },
+  "qwen-code": {
+    "executable": "qwen",
+    "reason": "not installed in the shared devcontainer image"
+  },
+  "goose": {
+    "executable": "goose",
+    "reason": "not installed in the shared devcontainer image"
+  },
+  "cline": {
+    "executable": "clite",
+    "reason": "not installed in the shared devcontainer image (published @cline/cli package's binary name)"
+  },
+  "copilot-cli": {
+    "executable": "copilot",
+    "reason": "installed by harness-matrix (#1149); bot-autonomy-new-harnesses adds its module"
+  },
+  "pi": {
+    "executable": "pi",
+    "reason": "installed by harness-matrix (#1149); bot-autonomy-new-harnesses adds its module"
+  },
+  "oh-my-pi": {
+    "executable": "omp",
+    "reason": "installed by harness-matrix (#1149) as the omp binary; bot-autonomy-new-harnesses adds its module"
+  }
+}

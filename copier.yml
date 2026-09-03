@@ -371,9 +371,11 @@ use_antigravity_cli:
     profile runs fully autonomous: it trusts its workspace, always proceeds with
     tools/artifacts, allows non-workspace access, disables Antigravity's inner
     terminal sandbox because the container is the isolation boundary, configures
-    the statusLine renderer, and a bot-only wrapper injects
-    --dangerously-skip-permissions for headless `agy -p` runs (which ignore the
-    settings file). The human dev profile gets a BALANCED policy instead:
+    the statusLine renderer, and a bot-only executable wrapper at
+    ~/.local/bin/agy (ahead of the system binary on the container-wide PATH)
+    injects --dangerously-skip-permissions for headless `agy -p` runs (which
+    ignore the settings file) — covering a programmatic launcher, not just an
+    interactive login shell. The human dev profile gets a BALANCED policy instead:
     auto-accept edits and an allowlist of common commands, but still prompt for
     anything unlisted, keeping the workspace and sandbox boundaries.
   default: no
