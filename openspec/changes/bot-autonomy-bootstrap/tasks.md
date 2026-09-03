@@ -141,10 +141,17 @@
       (e.g. dev) with the marker `enabled`, and that both `agy-real` and
       `agy` are absent — including when either existed from a prior
       `enabled` run — when the marker is not `enabled`
-- [x] 2.5a Add `containerEnv.PATH` to the bot `devcontainer.json` (and its
-      `template/` twin) prepending `/home/vscode/.local/bin` ahead of
-      `/usr/local/bin`, so the wrapper's precedence is container-wide
-      rather than dependent on a shell rc `PATH` export; verify with
+- [x] 2.5a Prepend `/home/vscode/.local/bin` ahead of `/usr/local/bin` onto
+      `PATH`, container-wide, so the wrapper's precedence does not depend
+      on a shell rc `PATH` export — **implemented via the bot `Dockerfile`'s
+      own `ENV PATH=` directive (and its `template/` twin), not
+      `devcontainer.json`'s `containerEnv`**: a `containerEnv.PATH` entry
+      that self-references `${containerEnv:PATH}` does not resolve at
+      container-creation time (the devcontainers CLI passes it to
+      `docker run -e` literally, unresolved, breaking the container's own
+      shell — confirmed empirically during implementation), while a
+      Dockerfile `ENV` directive is Docker's own working self-reference,
+      resolved at image build time; verify with
       `docker exec <container> agy --version` (no login/interactive
       shell) and with `env -i PATH="$(docker exec <container> printenv
       PATH)" agy --version` inside the container, confirming both resolve

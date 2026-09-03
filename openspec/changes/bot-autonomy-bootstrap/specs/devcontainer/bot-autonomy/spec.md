@@ -422,13 +422,17 @@ version check reads `agy-real --version` directly — not through the
 wrapper or the symlink — so its idempotency never depends on either being
 correct. The wrapper's precedence over the system `agy` binary — when the
 wrapper is installed at all — SHALL be established at the **container
-level**: `containerEnv.PATH` in the bot `devcontainer.json` prepends
-`/home/vscode/.local/bin` ahead of `/usr/local/bin`, not by a shell rc
-file's `PATH` export, since a shell function or an rc-dependent `PATH`
-prepend is invisible to exactly the population this wrapper exists to
-cover: a process that never sources an interactive login shell (a `docker
-exec` without a login/interactive shell, a Foreman-dispatched process, a
-cron job).
+level**: the bot `Dockerfile` prepends `/home/vscode/.local/bin` ahead of
+`/usr/local/bin` onto `PATH` via a Docker `ENV` directive, not by a shell rc
+file's `PATH` export and not by `devcontainer.json`'s `containerEnv` (a
+`containerEnv.PATH` entry that self-references `${containerEnv:PATH}` does
+not resolve at container-creation time — the devcontainers CLI passes it to
+`docker run -e` literally, unresolved, which breaks the container's own
+shell; a Docker `ENV` directive is Docker's own, working self-reference and
+applies identically to any `docker exec`). This still closes the same gap a
+shell function or an rc-dependent `PATH` prepend would leave open: a process
+that never sources an interactive login shell (a `docker exec` without a
+login/interactive shell, a Foreman-dispatched process, a cron job).
 
 #### Scenario: the marker is rendered per repo, never derived by a verbatim script
 - **WHEN** a repo is generated (or updated) with `use_antigravity_cli` at
@@ -487,20 +491,19 @@ cron job).
   as a failure, not the correct disabled state
 
 #### Scenario: the wrapper precedes the system binary on the container-wide PATH
-- **WHEN** the bot `devcontainer.json` is inspected
-- **THEN** its `containerEnv.PATH` prepends `/home/vscode/.local/bin` ahead
-  of `/usr/local/bin` (where the system `agy` binary is installed), so the
-  ordering applies to every process the container runs — not only shells
-  that source `.bashrc`/`.zshrc` — regardless of which of the three states
-  `agy` is currently in
+- **WHEN** the bot `Dockerfile` is inspected
+- **THEN** it prepends `/home/vscode/.local/bin` ahead of `/usr/local/bin`
+  (where the system `agy` binary is installed) onto `PATH` via an `ENV`
+  directive, so the ordering applies to every process the container runs —
+  not only shells that source `.bashrc`/`.zshrc` — regardless of which of
+  the three states `agy` is currently in
 
 #### Scenario: a process with no shell rc still resolves the wrapper when enabled
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled` and
   `agy --version` is resolved by a process that has not sourced any shell
   rc file — a `docker exec` invocation that does not start a
   login/interactive shell, or an equivalent `env -i
-  PATH=$CONTAINER_PATH agy --version` using the container's own
-  `containerEnv.PATH` value
+  PATH=$CONTAINER_PATH agy --version` using the container's own PATH value
 - **THEN** the resolved `agy` is `~/.local/bin/agy` (the wrapper), not the
   system binary at `/usr/local/bin/agy`
 

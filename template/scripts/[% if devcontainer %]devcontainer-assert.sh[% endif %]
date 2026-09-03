@@ -278,6 +278,61 @@ assert_unit() {
     *) fail "bot post-start does not call post-start-common.sh after bot-autonomy.sh verify" ;;
     esac
 
+    # Behavioral proof of that ordering, not just textual: run the REAL,
+    # unmodified post-start.sh in an isolated scratch tree (its own
+    # .devcontainer/scripts/post-start-common.sh shadowed by a sentinel-only
+    # stand-in, so no real side effect — sudo chown, git config writes, the
+    # Agent-Deck conductor-start block — ever fires). `set -euo pipefail`
+    # is what actually enforces the ordering at runtime; grepping line order
+    # alone cannot prove a verify failure really aborts the script before
+    # post-start-common.sh's conductor-start block would ever run.
+    local ps_work ps_sentinel ps_registry ps_module_dir
+    ps_work="${work_dir}/post-start-behavioral"
+    mkdir -p "${ps_work}/.devcontainer/scripts" "${ps_work}/.devcontainer/config/bot-autonomy"
+    cp "${repo_root}/.devcontainer/post-start.sh" "${ps_work}/.devcontainer/post-start.sh"
+    cp "${repo_root}/.devcontainer/scripts/bot-autonomy.sh" "${ps_work}/.devcontainer/scripts/bot-autonomy.sh"
+    cp "${repo_root}/.devcontainer/config/bot-autonomy/unsupported.json" "${ps_work}/.devcontainer/config/bot-autonomy/"
+    echo '{}' >"${ps_work}/.devcontainer/config/bot-autonomy/aliases.json"
+    cat >"${ps_work}/.devcontainer/scripts/post-start-common.sh" <<'SENTINEL_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "SENTINEL: post-start-common.sh reached" >>"${SENTINEL_LOG:?SENTINEL_LOG not set}"
+SENTINEL_SCRIPT
+    chmod +x "${ps_work}/.devcontainer/post-start.sh" "${ps_work}/.devcontainer/scripts/bot-autonomy.sh" \
+        "${ps_work}/.devcontainer/scripts/post-start-common.sh"
+    # A registry resolving cleanly via the unsupported bucket alone (no real
+    # harness executable required) so verify's SUCCESS path is exercised
+    # without depending on claude/codex/agy/opencode being installed here.
+    ps_registry="${ps_work}/registry.json"
+    printf '{"harnesses": [{"slug": "qwen-code"}]}' >"$ps_registry"
+    ps_module_dir="${ps_work}/.devcontainer/config/bot-autonomy"
+
+    ps_sentinel="${ps_work}/sentinel-drifted.log"
+    rm -f "$ps_sentinel"
+    if (cd "$ps_work" && BOT_AUTONOMY_REGISTRY=/nonexistent-registry.json \
+        SENTINEL_LOG="$ps_sentinel" bash .devcontainer/post-start.sh) >/dev/null 2>&1; then
+        fail "post-start.sh exited 0 despite bot-autonomy.sh verify failing (drifted-policy fixture)"
+    fi
+    [ ! -f "$ps_sentinel" ] ||
+        fail "post-start-common.sh's conductor-start block ran despite a drifted policy — bot-autonomy.sh verify did not abort post-start.sh first"
+
+    ps_sentinel="${ps_work}/sentinel-clean.log"
+    rm -f "$ps_sentinel"
+    (cd "$ps_work" && BOT_AUTONOMY_REGISTRY="$ps_registry" BOT_AUTONOMY_CONFIG_DIR="$ps_module_dir" \
+        SENTINEL_LOG="$ps_sentinel" bash .devcontainer/post-start.sh) >/dev/null 2>&1 ||
+        fail "post-start.sh failed against a correctly-configured (verify-clean) fixture"
+    [ -f "$ps_sentinel" ] ||
+        fail "post-start-common.sh never ran even though bot-autonomy.sh verify passed"
+
+    ps_sentinel="${ps_work}/sentinel-node-options.log"
+    rm -f "$ps_sentinel"
+    (cd "$ps_work" && NODE_OPTIONS="--require /nonexistent/bootloader.js" \
+        BOT_AUTONOMY_REGISTRY="$ps_registry" BOT_AUTONOMY_CONFIG_DIR="$ps_module_dir" \
+        SENTINEL_LOG="$ps_sentinel" bash .devcontainer/post-start.sh) >/dev/null 2>&1 ||
+        fail "post-start.sh failed with an inherited NODE_OPTIONS value that would break a Node-based harness CLI, against an otherwise correctly-configured fixture"
+    [ -f "$ps_sentinel" ] ||
+        fail "post-start-common.sh never ran when only NODE_OPTIONS (correctly unset before verify) was hostile"
+
     # has_var <var> <env-file>  → true if the file sets VAR= on its own line.
     has_var() {
         grep -q "^${1}=" "$2"
