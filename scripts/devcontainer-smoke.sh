@@ -117,6 +117,17 @@ if [ -z "${CONTAINER_ID}" ]; then
     exit 1
 fi
 
+# `docker exec` has no workspace-folder-aware default cwd (no Dockerfile
+# WORKDIR sets one), so devcontainer-assert.sh's container-mode assertions
+# need the actual path `up` resolved — never guessed or re-derived from
+# ${WORKSPACE_ROOT}'s basename, which is exactly the kind of implicit
+# assumption that silently diverges from what the CLI decided.
+REMOTE_WORKSPACE_FOLDER="$(jq -r 'select(.outcome=="success") | .remoteWorkspaceFolder // empty' "${LOG_FILE}" | tail -n 1)"
+if [ -z "${REMOTE_WORKSPACE_FOLDER}" ]; then
+    echo "devcontainer smoke test failed: no remoteWorkspaceFolder found in CLI output." >&2
+    exit 1
+fi
+
 # Derive the profile from the config's parent-dir basename: the dev profile
 # lives in .devcontainer/dev/, everything else is the bot profile.
 if [ "$(basename "$(dirname "${CONFIG_PATH}")")" = "dev" ]; then
@@ -126,6 +137,6 @@ else
 fi
 
 echo "==> Asserting ${PROFILE} permission invariants in the running container..."
-bash "$(dirname "$0")/devcontainer-assert.sh" container "${CONFIG_PATH}" "${CONTAINER_ID}" "${PROFILE}"
+bash "$(dirname "$0")/devcontainer-assert.sh" container "${CONFIG_PATH}" "${CONTAINER_ID}" "${PROFILE}" "${REMOTE_WORKSPACE_FOLDER}"
 
 echo "==> Smoke test passed for ${CONFIG_PATH}."

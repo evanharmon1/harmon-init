@@ -333,6 +333,24 @@ SENTINEL_SCRIPT
     [ -f "$ps_sentinel" ] ||
         fail "post-start-common.sh never ran when only NODE_OPTIONS (correctly unset before verify) was hostile"
 
+    # `docker exec` has no workspace-folder-aware default cwd — the
+    # Dockerfile sets no WORKDIR, so a bare exec lands wherever the base
+    # image defaults to, not the mounted workspace folder — so this
+    # script's own container-mode exec of bot-autonomy.sh verify (a
+    # relative path) must pin its working directory explicitly. Guard
+    # against that regressing silently: the exec line and the one after it
+    # must together carry either `-w` on `docker exec` or an absolute path
+    # to the script.
+    local exec_pair
+    exec_pair="$(grep -A1 -F 'bot_autonomy_out="$(docker exec' "${repo_root}/scripts/devcontainer-assert.sh")"
+    [ -n "$exec_pair" ] ||
+        fail "devcontainer-assert.sh no longer execs bot-autonomy.sh verify the expected way in container mode"
+    case "$exec_pair" in
+    *' -w '*) ;;
+    *'bash /'*) ;;
+    *) fail "devcontainer-assert.sh's container-mode bot-autonomy.sh verify exec pins no working directory (-w on docker exec) and uses no absolute script path — a relative path resolves against the container's default cwd, not the workspace folder" ;;
+    esac
+
     # has_var <var> <env-file>  → true if the file sets VAR= on its own line.
     has_var() {
         grep -q "^${1}=" "$2"
@@ -1051,10 +1069,11 @@ assert_config_invariants() {
 }
 
 # ── container mode ────────────────────────────────────────────────────
-# assert_container <config> <container-id> <profile>
+# assert_container <config> <container-id> <profile> <workspace-folder>
 assert_container() {
-    local config="$1" container_id="$2" profile="$3"
+    local config="$1" container_id="$2" profile="$3" workspace_folder="$4"
     [ -n "$container_id" ] || fail "container mode requires a container id"
+    [ -n "$workspace_folder" ] || fail "container mode requires a workspace folder"
 
     local git_name git_email codex_sandbox codex_approval codex_model codex_effort
     git_name="$(docker exec -u vscode "$container_id" git config --global user.name)" ||
@@ -1138,9 +1157,14 @@ assert_container() {
         # duplicating each boundary's check a second time here (Claude Code,
         # Antigravity, and OpenCode would otherwise go completely unchecked
         # in CI despite the "every supported installed harness" claim).
+        # `-w` pins the exec's cwd to the workspace folder: the Dockerfile
+        # sets no WORKDIR, so `docker exec` with no `-w` defaults to `/` (or
+        # whatever the base image sets), not the mounted workspace — a
+        # relative script path resolves against that default, not against
+        # where postCreate/postStart actually run.
         local bot_autonomy_out bot_autonomy_rc
         bot_autonomy_rc=0
-        bot_autonomy_out="$(docker exec -u vscode "$container_id" \
+        bot_autonomy_out="$(docker exec -u vscode -w "$workspace_folder" "$container_id" \
             bash .devcontainer/scripts/bot-autonomy.sh verify 2>&1)" || bot_autonomy_rc=$?
         [ "$bot_autonomy_rc" -eq 0 ] ||
             fail "bot-autonomy.sh verify failed in the bot container: ${bot_autonomy_out}"
@@ -1180,11 +1204,11 @@ unit)
     ;;
 container)
     shift
-    if [ "$#" -ne 3 ]; then
-        echo "Usage: $0 container <config> <container-id> <profile>" >&2
+    if [ "$#" -ne 4 ]; then
+        echo "Usage: $0 container <config> <container-id> <profile> <workspace-folder>" >&2
         exit 1
     fi
-    assert_container "$1" "$2" "$3"
+    assert_container "$1" "$2" "$3" "$4"
     ;;
 *)
     echo "Usage: $0 <unit|container> [args...]" >&2
