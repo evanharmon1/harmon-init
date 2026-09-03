@@ -1084,6 +1084,12 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
     }
 
     for (const [stage, s] of Object.entries(resolved.stages)) {
+      const stageRole = {
+        implement: 'implementer',
+        challenge: 'challenger',
+        review: 'reviewer',
+        integration: 'integrator'
+      }[stage]
       const allFinders = [...s.finders, ...s.finder_fallbacks]
       for (const slug of allFinders) {
         const finder = finderBySlug.get(slug)
@@ -1124,8 +1130,13 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
           )
         }
         for (const slug of s.pool) {
-          if (!harnessSlugs.has(slug)) {
+          const harness = harnessBySlug.get(slug)
+          if (!harness) {
             errors.push(`[stage.${stage}].pool references unknown harness "${slug}"`)
+          } else if (stageRole && !harness.roles?.includes(stageRole)) {
+            errors.push(
+              `[stage.${stage}].pool includes "${slug}", whose registry entry permits only role(s) ${harness.roles?.join(', ') || 'none'}; this stage requires role "${stageRole}"`
+            )
           }
         }
       }

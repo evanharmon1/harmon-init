@@ -516,7 +516,7 @@ the taxonomy table below is generated from) and the starter set is created by
   rather than leaving it implicit
 - **Rigor** — the primary depth/effort/budget axis: which `[rigor.*]` profile
   in [`.devflow.toml`](../.devflow.toml) an agent works the issue under — a
-  review policy, three role tiers, and a budget together
+  review policy, five role tiers, and a budget together
   ([docs/guides/devflow.md](guides/devflow.md); AGENTS.md, "Rigor and
   strategy are resolved, not stated here"). An agent reads it and never
   self-applies one. It is advisory rather than an authenticated gate: nothing
@@ -534,13 +534,15 @@ the taxonomy table below is generated from) and the starter set is created by
   more-or-less continuum, topologies have no rank between them, so a
   conflict is a resolution error rather than a silent pick.
 - **Tier** — which model-routing stratum works a specific **role** —
-  orchestrator, implementer, or reviewer — advisory, human-written, and inert
+  orchestrator, implementer, reviewer, challenger, or integrator — advisory,
+  human-written, and inert
   until a consumer resolves it under its own trust model. An unqualified
   `tier:<value>` refines the **implementer** role only; a scoped
   `tier:orchestrator:<value>` / `tier:implementer:<value>` /
-  `tier:reviewer:<value>` targets exactly the role it names. Absent any
-  override, all three roles come from the resolved rigor level. All 15
-  scoped values (3 roles × 5 concrete tiers) are **provisioned** like every
+  `tier:reviewer:<value>` / `tier:challenger:<value>` /
+  `tier:integrator:<value>` targets exactly the role it names. Absent any
+  override, all five roles come from the resolved rigor level. All 25
+  scoped values (5 roles × 5 concrete tiers) are **provisioned** like every
   other tier value, not created on demand.
 
 The prose above describes what each family *means*; the actual values — names,
@@ -772,9 +774,9 @@ deliberately leaves it alone.
 | `area:{copier,devcontainer,ci,tasks,tests,deps,skills,foreman,gauntlet,worktree,release,security,pm,docs}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
 | `area:template` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:copier` (the engine was what it labeled) | use guarded `--prune` with `--migrate area:template=area:copier` |
 | `area:codex` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:gauntlet`; codex is the current backend, not the stage | use guarded `--prune` with `--migrate area:codex=area:gauntlet` |
-| `rigor:{cursory,light,standard,thorough,deep,forensic}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a review policy, three role tiers, and a budget; arms nothing | set when the default rigor is wrong for the change; survives the work |
-| `tier:{local,economy,standard,frontier,apex,adaptive}` | humans, at triage or planning — never an agent on itself | humans and agents — resolved to a model via `.devflow.toml` `[tier]` (ADR 0006) | provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing | set when the default tier would be wrong; strongest-wins resolution per ADR 0006 |
-| `tier:orchestrator:local`, `tier:orchestrator:economy`, `tier:orchestrator:standard`, `tier:orchestrator:frontier`, `tier:orchestrator:apex`, `tier:implementer:local`, `tier:implementer:economy`, `tier:implementer:standard`, `tier:implementer:frontier`, `tier:implementer:apex`, `tier:reviewer:local`, `tier:reviewer:economy`, `tier:reviewer:standard`, `tier:reviewer:frontier`, `tier:reviewer:apex`, `tier:challenger:local`, `tier:challenger:economy`, `tier:challenger:standard`, `tier:challenger:frontier`, `tier:challenger:apex`, `tier:integrator:local`, `tier:integrator:economy`, `tier:integrator:standard`, `tier:integrator:frontier`, `tier:integrator:apex` | humans, at triage or planning — never an agent on itself | humans and agents — resolved via `.devflow.toml` `[tier]`; targets exactly the role it names (ADR 0006/0007), unlike the unqualified `tier:<value>` which targets the implementer only | provisioned; **advisory** — resolved to a concrete value via `.devflow.toml`; arms nothing | set when one role's tier should differ from the rigor's own profile; strongest-wins per role |
+| `rigor:{cursory,light,standard,thorough,deep,forensic}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a review policy, five role tiers, and a budget; arms nothing | set when the default rigor is wrong for the change; survives the work |
+| `tier:{local,economy,standard,frontier,apex,adaptive}` | humans, at triage or planning — never an agent on itself | humans and agents — overrides the implementer tier; models are classified in `agent-registry.json` (ADR 0006/0007) | provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing | set when the default tier would be wrong; strongest-wins resolution per ADR 0006 |
+| `tier:orchestrator:local`, `tier:orchestrator:economy`, `tier:orchestrator:standard`, `tier:orchestrator:frontier`, `tier:orchestrator:apex`, `tier:implementer:local`, `tier:implementer:economy`, `tier:implementer:standard`, `tier:implementer:frontier`, `tier:implementer:apex`, `tier:reviewer:local`, `tier:reviewer:economy`, `tier:reviewer:standard`, `tier:reviewer:frontier`, `tier:reviewer:apex`, `tier:challenger:local`, `tier:challenger:economy`, `tier:challenger:standard`, `tier:challenger:frontier`, `tier:challenger:apex`, `tier:integrator:local`, `tier:integrator:economy`, `tier:integrator:standard`, `tier:integrator:frontier`, `tier:integrator:apex` | humans, at triage or planning — never an agent on itself | humans and agents — targets exactly the role it names; models are classified in `agent-registry.json` (ADR 0006/0007), unlike the unqualified `tier:<value>` which targets the implementer only | provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing | set when one role's tier should differ from the rigor's own profile; strongest-wins per role |
 | `method:{oneshot,plan,plan-approved,orchestrate,council,human-led}` (**retired**) | nobody — renamed to strategy:* | humans — retired, see `strategy:*` | retired — execution topology renamed to the `strategy` family; never provisioned | migrate each with guarded `--prune` and repeatable `--migrate method:<v>=strategy:<v>` |
 | `strategy:{oneshot,plan,plan-approved,orchestrate,council,human-led}` | humans, at triage or planning — never an agent on itself | agents, when entering the Dev Loop — Foreman does not consume it yet (out of scope here) | provisioned; **read by agents** — selects an execution topology, arms nothing | set when the default strategy is wrong for the change; survives the work |
 | `suggest:<family>` | humans or agents, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |

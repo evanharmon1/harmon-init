@@ -120,34 +120,30 @@ function tokenize(text) {
       continue;
     }
     if (ch === "+" || ch === "-" || /[0-9]/.test(ch)) {
-      let j = i;
-      if (text[j] === "+" || text[j] === "-") j++;
-      let sawDigit = false;
-      while (j < n && /[0-9_]/.test(text[j])) {
-        j++;
-        sawDigit = true;
+      // TOML permits underscores only between digits and requires every
+      // decimal/exponent component to be complete. Parsing a valid prefix
+      // with Number.parse* would silently turn typos such as `1e`, `1__2`,
+      // and `1_` into different policy limits, so match the complete token
+      // and require a real TOML value boundary after it.
+      const rest = text.slice(i);
+      const match = rest.match(
+        /^[+-]?(?:0|[1-9](?:_?[0-9])*)(?:\.[0-9](?:_?[0-9])*)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?/
+      );
+      if (!match) throw new TomlError(`line ${startLine}: malformed number`);
+      const literal = match[0];
+      const next = rest[literal.length];
+      if (next !== undefined && !/[\s,\]}#]/.test(next)) {
+        throw new TomlError(`line ${startLine}: malformed number`);
       }
-      let isFloat = false;
-      if (text[j] === "." && /[0-9]/.test(text[j + 1] || "")) {
-        isFloat = true;
-        j++;
-        while (j < n && /[0-9_]/.test(text[j])) j++;
-      }
-      if (text[j] === "e" || text[j] === "E") {
-        isFloat = true;
-        j++;
-        if (text[j] === "+" || text[j] === "-") j++;
-        while (j < n && /[0-9_]/.test(text[j])) j++;
-      }
-      if (!sawDigit) throw new TomlError(`line ${startLine}: malformed number`);
-      const raw = text.slice(i, j).replace(/_/g, "");
+      const raw = literal.replace(/_/g, "");
+      const isFloat = /[.eE]/.test(literal);
       tokens.push({
         type: "number",
-        value: isFloat ? Number.parseFloat(raw) : Number.parseInt(raw, 10),
+        value: Number(raw),
         isFloat,
         line: startLine,
       });
-      i = j;
+      i += literal.length;
       continue;
     }
     if (isBareKeyChar(ch)) {
