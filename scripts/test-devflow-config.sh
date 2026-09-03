@@ -58,3 +58,22 @@ if (root / ".devflow.toml").read_bytes() != (root / "template/.devflow.toml").re
 if json.loads((root / ".devflow.schema.json").read_text())["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
 print("devflow config v2 OK")
 PY
+
+for policy in .devflow.toml template/.devflow.toml; do
+    registry="agent-registry.json"
+    if [[ "$policy" == template/* ]]; then
+        registry="template/agent-registry.json"
+    fi
+    node scripts/devflow-policy.mjs resolve \
+        --policy "$policy" \
+        --registry "$registry" \
+        --taskfile-dir . \
+        --json >/dev/null
+done
+
+python3 scripts/test-devflow-conformance.py \
+    --fixture .devflow-conformance-v2.json \
+    --config .devflow.toml
+python3 scripts/test-devflow-conformance.py \
+    --fixture template/.devflow-conformance-v2.json \
+    --config template/.devflow.toml

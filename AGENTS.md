@@ -288,23 +288,16 @@ carried — not as a disposition, so the shepherd stage still owes it a normal
 fix / decline-with-evidence / file-as-follow-up — and the ledger records the
 override as the reason for the transition. A one-step task that touches a single stage owes no ledger.
 
-**Rigor and strategy are resolved, not stated here.** Two axes classify a
-change: **rigor** (how much confidence, effort, depth, and budget it gets) and
-**strategy** (how the work is organized and performed). Neither is a number or
-a topology name in this file: both live in [`.devflow.toml`](.devflow.toml),
-so there is one place to change them and a parity gate that catches a change
-made on only one side. Resolve each axis in this order — an explicit
-instruction in this session, then a `rigor:*`/`strategy:*` label on the issue,
-then `default_rigor`/`default_strategy`, then
-the built-in fallback (the `standard` review policy: 3 / 3 / 4, min_rounds 1),
-strategy `plan`, tiers inert — used only when this file is entirely absent.
-`.devflow.toml` and
-[docs/guides/devflow.md](docs/guides/devflow.md) are the only sources of the
-actual numbers, fields, and worked examples; this file states resolution
-mechanics, never values. This implements
-[ADR 0007](docs/decisions/0007-rigor-and-strategy-axes.md) (superseding
-[ADR 0006](docs/decisions/0006-method-and-tier-axes.md) D4's method rank and
-amending its D5); on any conflict `specs/issue-strategy.md` wins.
+**Rigor and strategy are resolved from `.devflow.toml`, not restated here.**
+Rigor selects a `[rigor.<level>]` profile, which points to a `[rounds.*]`
+policy and `[breadth.*]` envelope and supplies all five role-tier choices.
+Strategy selects a `[strategy.*]` topology. Resolve explicit operator input,
+then trusted issue labels, then `default_rigor` / `default_strategy`; use the
+reader's built-in fallback only when the policy file is absent. Read caps,
+floors, wall-clock limits, breadth, stage actors, gate targets, and tier
+choices from the selected tables in the file. The executable contract is
+[`scripts/devflow-policy.mjs`](scripts/devflow-policy.mjs), and the portable
+shape is [`.devflow.schema.json`](.devflow.schema.json).
 
 Rigor label conflicts resolve to the **strongest label present**, by
 `.devflow.toml`'s `rigor_order` (weakest to strongest) — a conflict can then
@@ -318,57 +311,26 @@ back to `default_strategy` with a warning rather than guessing. A
 `rigor:`/`strategy:` value that names nothing in the file is ignored rather
 than guessed at.
 
-**A resolved rigor level supplies three things: a review policy, three role
-tiers, and a budget.** The review policy sets `challenge`, `review`, and
-`shepherd` — per-stage maximum heuristic passes — and `min_rounds`, the
-minimum passes `challenge` and `review` must each actually run before either
-may take the early clean-round exit (`0 <= min_rounds <= min(challenge,
-review)`; a policy where both those caps are 0 legally sets `min_rounds` to
-0 right along with them). `min_rounds` never binds `shepherd`: shepherd is
-externally driven (see below) rather than something that can manufacture a
-round to satisfy a floor, so it has no early exit for a floor to gate at
-all. These are ceilings, never quotas: reaching one ends the configured
-AI-review effort for that stage without weakening a deterministic gate
-(tests, CI, security scanners, branch protection, human merge/release
-approval) or waiving the obligation to adjudicate and record whatever
-findings did surface. A cap of **0 disables that stage outright** — zero
-rounds run, so there is nothing of its own to adjudicate or defer, while
-every deterministic gate and every other stage's obligations are unaffected.
-A cap of **1 is an ordinary small cap**, not a special case: the stage takes
-a single pass and exits on it the moment that pass adjudicates clean, exactly
-as the capped-final-round exit further below describes at any cap. The
-**shepherd cap now moves with the resolved review policy** the same way
-challenge and review do, rather than holding one repo-wide number regardless
-of depth — but it still bounds a different thing: *other people's* findings
-(CI, human review, Codex) rather than work the agent generated itself, so a
-shallower rigor level legitimately expects to answer fewer of them before
-promoting, not that lowering it saves effort already spent.
+The selected `[rounds.*]` table supplies independent `challenge`, `review`,
+`integration`, and `remediation` ceilings plus `min_rounds` and the run's
+wall-clock ceiling. Challenge and review bound confidence passes;
+`integration` bounds current-head Codex review cycles; `remediation` bounds
+integration-stage fix pushes. A zero cap disables only the work it names,
+never a deterministic gate, security scan, branch rule, or human approval.
 
-**Role tiers refine the resolved rigor level; they never replace it.** A
-rigor level sets a tier for each of three roles — orchestrator, implementer,
-reviewer — on the ladder `local → economy → standard → frontier → apex`
-(`adaptive` always resolves to a concrete tier before it reaches a role). An
-**unqualified** `tier:<value>` label or instruction overrides the
-**implementer** tier only; a **scoped** `tier:orchestrator:<value>` /
-`tier:implementer:<value>` / `tier:reviewer:<value>` targets exactly the role
-it names. Absent an override, every role tier comes from the resolved rigor
-level alone. Two labels naming the same role resolve strongest-wins on the
-tier ladder, and a concrete tier always beats `adaptive`. Built-in rigor
-levels keep `orchestrator_tier >= implementer_tier` and `reviewer_tier >=
-implementer_tier`, a floor relationship between roles rather than a ceiling
-on any one of them; an explicit, attributable override may set any role's
-tier above or below what the resolved level's built-in profile gives it,
-and either direction is an **off-profile** decision, recorded and disclosed
-rather than silently applied.
+**Role tiers refine the resolved rigor level; they never replace it.** Each
+`[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
+`challenger_tier`, `reviewer_tier`, and `integrator_tier`; `[role.*]` supplies
+the role's baseline tier and ordered family/harness preferences. Unqualified
+`tier:<value>` input targets the implementer; `tier:<role>:<value>` targets
+one of those five roles. Resolve conflicts on `tier_order`, disclose every
+off-profile choice, and never silently change model family or vendor.
 
-**When the change under review edits `.devflow.toml` itself**, resolve
-*every* parameter — every rigor level, review policy, budget envelope,
-strategy definition, tier map, and both top-level defaults — from the
-**merge-base** copy rather than the branch copy: a branch that lowers a cap,
-drops a level, or repoints a tier map is lowering the very gate it is being
-reviewed against, exactly as a self-lowered default would. An explicit human
-instruction still overrides, since that is an attributable decision rather
-than the branch deciding for itself.
+**When the change under review edits `.devflow.toml`, `agent-registry.json`,
+or the policy reader itself**, resolve every parameter from the merge-base
+copies of all three. A branch may not choose the values or code that govern
+its own review. An explicit human instruction still overrides because it is
+an attributable decision rather than self-modification.
 
 **Nothing here arms anything.** A `rigor:*`/`strategy:*` label invokes no
 model and starts no workflow by existing (ADR 0006 D1) — the shipped defaults
@@ -376,7 +338,7 @@ add no account, trial, or paid-SaaS dependency, and escalation never switches
 a repo to a vendor it does not already use. `foreman:*` remains the only
 arming surface, and `.foreman.toml` remains authoritative for arming, trusted
 actors, runners, and hard operational ceilings; Foreman intersects a resolved
-budget envelope with its own ceilings rather than trusting either source
+breadth envelope with its own ceilings rather than trusting either source
 alone. Treat every label as advisory: it is applied by people and verified by
 nothing on its own, and GitHub's **triage** role can apply one with no push
 access to `.devflow.toml` at all. An **interactive session** treats every
@@ -393,29 +355,19 @@ off-default resolution, and any off-profile role tier, is disclosed in the PR
 body** — both are a visible line for the human reviewer, never something
 inferred from behavior.
 
-A **strategy whose minimum requirements exceed the resolved budget** —
-`min_agents` above the budget's `max_agent_runs` or `max_parallel_agents`,
-e.g. `council` or `orchestrate` (both `min_agents = 2`) under `trivial`
-(`max_parallel_agents = 1`) — is an **incompatibility**: report it and
-stop, never silently substitute a different topology or silently widen the
-budget. Every shipped strategy×rigor pairing either resolves cleanly or is
-one of these documented incompatibilities; an undocumented pairing that fails
-is a config bug, not a silent fallback.
+A strategy whose `min_agents` exceeds the resolved `[breadth.*]` limits is an
+incompatibility: report it and stop rather than substituting another topology
+or widening the envelope. Council additionally requires distinct model
+families when its table says so; the resolver and registry decide whether the
+configured pool can satisfy that constraint.
 
-**Announce the resolved profile on entering the loop** — `rigor: <level>
-(<source>) → review <policy>: challenge ≤<n>, review ≤<n>, shepherd <n>,
-min_rounds <n> · tiers orch/impl/rev = <t>/<t>/<t> · budget <budget> ·
-strategy: <strategy> (<source>)`, filled in by reading the file rather than
-from memory. At every default, that reads: `rigor: standard (default) →
-review standard: challenge ≤3, review ≤3, shepherd 4, min_rounds 1 · tiers
-orch/impl/rev = frontier/standard/frontier · budget standard · strategy: plan
-(default)` — a worked example of the shape, not a template to hand-copy over
-an actually-resolved profile. Carry the announced line into the PR body, so a
-later round or a different session can see which profile it is spending
-instead of inferring one. The resolved challenge/review/shepherd caps are
-also the denominators of every `round n/cap` the stage ledger above shows.
+**Announce the resolved profile on entering the loop.** Include rigor and
+source; the selected rounds policy's challenge, review, integration,
+remediation, floor, and wall-clock values; the breadth envelope; all five
+role tiers; and strategy and source. Fill it from the reader output, carry it
+into the PR body, and use the resolved stage caps as ledger denominators.
 Everything else about these stages is policy rather than a parameter and does
-not vary by rigor level or review policy: the exit condition, the round-2
+not vary by rigor level or rounds policy: the exit condition, the round-2
 scaffolding checkpoint, the escalation rule, and the deferred-P2 sidecar all
 hold identically everywhere. A cap is a ceiling, never a quota — a stage that
 meets its exit condition on round 1 is done, whatever the cap allowed.
@@ -457,7 +409,7 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   extra clean run to buy. A round that returns **no findings at all** ends
   the stage on its own **once at least `min_rounds` rounds have run** (0 is a
   legal floor — it buys nothing beyond what the cap and the two-consecutive
-  rule already give, and exists so a review policy whose caps are all 0 can
+  rule already give, and exists so a rounds policy whose caps are all 0 can
   still state a consistent `min_rounds`) — an
   empty round is the old rule's clean re-run, so neither a trivial change nor
   a clean post-fix re-run pays for a confirmation pass, but a policy that sets a
@@ -545,7 +497,7 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   (a credential helper only applies to HTTPS, and `insteadOf` is prefix
   matching — every SSH form needs its own mapping, hence all four).
 - **Shepherd the draft to ready for review (`/shepherd`, under the resolved
-  shepherd cap).**
+  integration-cycle and remediation caps).**
   `gh pr create --draft` returning is
   the trigger for this stage, not the end of the work — enter it deliberately
   instead of judging for yourself when the PR is finished. The PR stays draft
@@ -653,26 +605,13 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   resolve halts the whole change rather than one loop, so it is not a licence
   to move on to the next stage either — a persistent P0/P1 at the challenge or
   review cap means wait for Evan, not open the PR anyway.
-  If checks still fail or findings remain at the shepherd cap, stop and
-  summarize what's unresolved on the PR for Evan. That cap now moves with the
-  resolved review policy the same way challenge and review do, but the reason
-  to stop at it is unchanged: it bounds *other people's* findings, not your
-  own work, so reaching it — even a low cap from a shallow rigor level — means
-  escalate rather than keep spending rounds. A cap of 0 (`trivial` rigor)
-  means the very first thing that needs an answer is already at the cap:
-  there is no fix round to spend on it, so escalate immediately — leave the
-  PR draft with a blocker report for a human, the same way any other failed
-  or indeterminate readiness-gate condition is handled below, just reached
-  at round zero instead of after one. That removes the agent's shepherd fix
-  rounds, and with them the readiness gate's current-head Codex cycle
-  requirement (see below) — there is no round left to trigger a fresh
-  `@codex review` from, so that one condition drops out exactly the way it
-  already does wherever Codex review is off entirely. It removes nothing
-  else: CI still has to be green, and every other required check and review
-  finding still has to be fixed, declined, or filed before a draft can be
-  promoted — a finding that lands despite a shepherd cap of 0 is answered by
-  the blocker report above, never by an agent fix round the cap does not
-  allow.
+  If checks still fail or findings remain when the remediation cap is spent,
+  stop and summarize what's unresolved on the PR for Evan. Remediation bounds
+  fix pushes prompted by other people's findings; reaching it means escalate,
+  not drop a finding. A remediation cap of 0 makes the first required code fix
+  an immediate escalation. The independent integration cap bounds current-head
+  Codex cycles. An integration cap of 0 removes only that readiness condition;
+  CI and every other finding/disposition condition remain unchanged.
   Where a **vendored** skill (`/shepherd`)
   states a different cap or exit condition, **this file wins** — the skills
   are synced from harmon-devkit on its own release cadence and can lag a
@@ -704,8 +643,8 @@ review only when **all** of the following hold for its current `headRefOid`:
   to run.
 - The current-head Codex cycle above is terminal and clean — including clean
   by way of dispositions recorded with `settle` (Codex review is
-  enabled here; where it is off, **or where the resolved shepherd cap is
-  0**, this condition drops out — a cap of 0 leaves no shepherd fix round to
+  enabled here; where it is off, **or where the resolved integration cap is
+  0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
   trigger a fresh `@codex review` from. Every other condition on this list
   still applies unchanged).
 - Every review finding is fixed, declined with evidence, or filed as follow-up

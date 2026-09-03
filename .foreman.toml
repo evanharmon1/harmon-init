@@ -52,8 +52,9 @@ sandboxed = false
 # entries (docker, ports, untrusted-input) run additionally where the
 # capability is present. Whatever does not run in-unit is CI's job.
 [verify]
-# Derived from .devflow.toml [gates].pre_pr ("security").
-default = ["task", "security"]
+# Keep the deterministic definition-of-done gate and security scan together
+# until Foreman can consume a marker-backed [gates].pre_pr prerequisite.
+default = ["bash", "-c", "task verify && task security"]
 
 [budgets]
 dispatch_usd = 20.0

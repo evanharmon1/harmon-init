@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute the portable .devflow.toml v1 conformance corpus.
+"""Execute the portable .devflow.toml conformance corpus.
 
 The JSON corpus intentionally contains only data: basis selection, labels,
 operator overrides, and partial normalized-result expectations. Consumers in
@@ -110,6 +110,81 @@ def diagnostics_match(actual, expected, case: str, kind: str) -> list[str]:
     return failures
 
 
+def run_v2(repo: Path, fixture: dict, config: Path) -> int:
+    """Run the v2 corpus against the shared JavaScript policy reader."""
+    source = config.read_text()
+    failures: list[str] = []
+    for case in fixture.get("cases", []):
+        name = case.get("name") if isinstance(case, dict) else None
+        if not isinstance(name, str) or not name:
+            failures.append("every fixture case needs a non-empty name")
+            continue
+        expected = case.get("expect")
+        if not isinstance(expected, dict):
+            failures.append(f"{name}: expect must be an object")
+            continue
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                policy = Path(tmp) / "policy.toml"
+                policy.write_text(
+                    replace(source, case.get("config_replacements", []), name, "config_replacements")
+                )
+                result = subprocess.run(
+                    [
+                        "node",
+                        str(repo / "scripts" / "devflow-policy.mjs"),
+                        "resolve",
+                        "--policy",
+                        str(policy),
+                        "--registry",
+                        str(repo / "agent-registry.json"),
+                        "--taskfile-dir",
+                        str(repo),
+                        "--json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+        except (OSError, ValueError) as exc:
+            failures.append(f"{name}: harness failure: {exc}")
+            continue
+
+        errors: list[dict[str, str]] = []
+        normalized: dict = {"config_schema_version": 2}
+        if result.returncode == 0:
+            try:
+                resolved = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                failures.append(f"{name}: invalid reader JSON: {exc}")
+                continue
+            normalized["selections"] = {
+                "rigor": {"value": resolved["rigor"]["level"], "source": "default"},
+                "strategy": {"value": resolved["strategy"]["name"], "source": "default"},
+            }
+        elif "schema_version" in result.stderr and (
+            "legacy" in result.stderr
+            or "v1" in result.stderr
+            or "migrate to schema_version" in result.stderr
+        ):
+            errors.append({"code": "migration_required", "subject": "schema_version"})
+        else:
+            failures.append(f"{name}: unclassified reader failure: {result.stderr.strip()}")
+
+        if result.returncode != expected.get("exit"):
+            failures.append(f"{name}: expected exit {expected.get('exit')!r}, got {result.returncode}")
+        failures.extend(f"{name}: {item}" for item in matches(normalized, expected.get("result", {})))
+        failures.extend(
+            diagnostics_match(errors, expected.get("error_diagnostics", []), name, "error")
+        )
+
+    if failures:
+        for item in failures:
+            fail(item)
+        return 1
+    print(f"devflow conformance v2 OK: {len(fixture['cases'])} cases")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=Path.cwd())
@@ -117,7 +192,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path)
     args = parser.parse_args()
     repo = args.repo.resolve()
-    fixture_path = args.fixture or repo / ".devflow-conformance-v1.json"
+    fixture_path = args.fixture or repo / ".devflow-conformance-v2.json"
     resolver = repo / "scripts" / "devflow-resolve.py"
     config = args.config or repo / ".devflow.toml"
     if not config.is_absolute():
@@ -135,6 +210,14 @@ def main() -> int:
         fail("fixture kind must be 'harmon-init.devflow.conformance'")
         return 1
     schema_version = fixture.get("schema_version")
+    if schema_version == 2:
+        if fixture.get("result_schema_version") != 2:
+            fail("fixture result_schema_version must be 2")
+            return 1
+        if not isinstance(fixture.get("cases"), list) or not fixture["cases"]:
+            fail("fixture cases must be a non-empty array")
+            return 1
+        return run_v2(repo, fixture, config)
     if (
         not isinstance(schema_version, int)
         or isinstance(schema_version, bool)
