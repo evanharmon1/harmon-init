@@ -57,6 +57,21 @@ docker run --rm \
     "$candidate" \
     /usr/local/sbin/smoke.sh
 
+# The build gave `copilot` network access throughout (its platform-binary
+# optionalDependency resolves during `npm install`, then the Dockerfile's own
+# `copilot --version` re-checks it in that same layer), and smoke.sh above
+# ALSO runs with the container's normal network access -- so neither step can
+# tell "already fetched, no fetch needed" apart from "silently reached the
+# network just now". This is what actually proves the harness-matrix spec's
+# requirement: a freshly created container needs no network to run `copilot`.
+# `--user vscode`: the image's baked-in default is root (this candidate is
+# built from images/devcontainer/Dockerfile directly, with no downstream
+# overlay to switch it), but every real devcontainer profile sets
+# remoteUser: vscode -- and this repo already has precedent for root-vs-vscode
+# npm-install permission gaps (see the Dockerfile's own DISABLE_AUTOUPDATER
+# comment), so root alone would not prove what an actual consumer gets.
+docker run --rm --network=none --user vscode "$candidate" copilot --version
+
 docker build \
     --build-arg "BASE_IMAGE=${candidate}" \
     --file images/devcontainer/test-overlay.Dockerfile \

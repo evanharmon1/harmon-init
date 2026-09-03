@@ -17,10 +17,14 @@
   },
   "copilot-cli": {
     "executable": "copilot",
-    "reason": "registered but not yet installed; harness-matrix installs it, bot-autonomy-new-harnesses adds its module"
+    "reason": "installed by harness-matrix (#1149); bot-autonomy-new-harnesses adds its module"
   },
   "pi": {
     "executable": "pi",
-    "reason": "registered but not yet installed; harness-matrix installs it, bot-autonomy-new-harnesses adds its module"
+    "reason": "installed by harness-matrix (#1149); bot-autonomy-new-harnesses adds its module"
+  },
+  "oh-my-pi": {
+    "executable": "omp",
+    "reason": "installed by harness-matrix (#1149) as the omp binary; bot-autonomy-new-harnesses adds its module"
   }
 }

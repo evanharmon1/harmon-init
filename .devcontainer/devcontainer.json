@@ -1,5 +1,6 @@
 {
-  // Primary profile for AI agents (Claude Code, Codex, Gemini, OpenCode).
+  // Primary profile for AI agents (Claude Code, Codex, OpenCode, Antigravity,
+  // Copilot CLI, pi, oh-my-pi).
   // Secrets (GH_TOKEN) come from the --env-file, not containerEnv.
   // Tailscale is not installed in this profile — see dev/ for the human profile.
   "name": "BOT - devcontainer-harmon-init",
@@ -52,6 +53,9 @@
     "source=claude-code-config-evanharmon1-harmon-init,target=/home/vscode/.claude,type=volume",
     "source=codex-config-evanharmon1-harmon-init,target=/home/vscode/.codex,type=volume",
     "source=gemini-config-evanharmon1-harmon-init${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.gemini,type=volume",
+    "source=copilot-config-evanharmon1-harmon-init,target=/home/vscode/.copilot,type=volume",
+    "source=pi-config-evanharmon1-harmon-init,target=/home/vscode/.pi,type=volume",
+    "source=omp-config-evanharmon1-harmon-init,target=/home/vscode/.omp,type=volume",
     "source=agent-deck-config-evanharmon1-harmon-init,target=/home/vscode/.agent-deck,type=volume",
     "source=herdr-config-evanharmon1-harmon-init,target=/home/vscode/.config/herdr,type=volume",
     "source=opencode-config-evanharmon1-harmon-init${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.config/opencode,type=volume",

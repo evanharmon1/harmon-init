@@ -40,7 +40,8 @@ adl() { agent-deck launch . -c claude -w "feat/$1" -b -m "${*:2}"; }
 
 # ── pnpm ────────────────────────────────────────────────────
 alias p='pnpm'
-alias pi='pnpm install'
+# No `pi` alias: it would shadow the pi coding-agent CLI in every interactive
+# shell. Use `pnpm i` (pnpm's own short flag) or `p i` instead.
 alias pif='pnpm install --frozen-lockfile'
 alias pa='pnpm add'
 alias pad='pnpm add --save-dev'
