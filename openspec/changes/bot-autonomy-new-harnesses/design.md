@@ -2,12 +2,17 @@
 
 See proposal.md - Why for the motivating gap. Current state, precisely:
 
-- `bot-autonomy-bootstrap` (proposed in #1148) is **not yet implemented** in
-  this repository: PR #1150 (`feat(devcontainer): fail-closed bot autonomy
-  bootstrap for every installed harness`) is open, not merged, and this
-  worktree's `main` has no `.devcontainer/scripts/bot-autonomy.sh` or
-  `.devcontainer/config/bot-autonomy/` tree yet. This change's own modules
-  cannot be implemented before that PR merges — see Decisions below.
+- `bot-autonomy-bootstrap` (proposed in #1148) **is now implemented**:
+  PR #1150 (`feat(devcontainer): fail-closed bot autonomy bootstrap for
+  every installed harness`) merged to `main` as `c720eab`, and this
+  worktree's `main` now has `.devcontainer/scripts/bot-autonomy.sh` and the
+  `.devcontainer/config/bot-autonomy/` tree — this branch has merged that
+  `main` in. This proposal's own drafting began before that merge (see the
+  Migration Plan's "development may proceed on a branch stacked on PR
+  #1150" note, now moot since the prerequisite has landed); the actual
+  shipped shape (`unsupported.json`, `aliases.json`, per-slug module files)
+  matches what this proposal's Context assumed while it was still open —
+  confirmed by inspection after the merge, not merely asserted.
 - `harness-matrix` (also proposed in #1148) **is** implemented and merged
   (#1149, `feat(image): add Copilot CLI, pi, oh-my-pi; remove Gemini CLI;
   bump herdr to 0.8.2`). `images/devcontainer/Dockerfile` installs `copilot`
@@ -361,8 +366,12 @@ own unconditional treatment in `bot-autonomy-bootstrap`: those three are not
 Copier-gated either, for the same reason.
 
 **pi: state the requirement in terms of resource loading, not prompt
-avoidance — and, having established that, scope the fix to this
-workspace, not the global default.** An earlier framing (matching the
+avoidance — the history of two rejected scoping attempts, ending in the
+maintainer's no-elevated-trust decision below.** (This heading names where
+the analysis below arrives, not a scope this change actually implements —
+neither a global nor a workspace-scoped trust grant ships; see the
+"Resolved 2026-09-03" Decision for the final, shipped requirement.) An
+earlier framing (matching the
 originating brief's own wording, "the only prompt is project trust") would
 suggest this setting exists to suppress an approval prompt in the bot
 profile. Pi's own docs contradict that framing directly: "Non-interactive

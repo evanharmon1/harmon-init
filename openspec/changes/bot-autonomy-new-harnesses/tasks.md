@@ -87,9 +87,16 @@
       scratch fixture with the marker `enabled` and `disabled`, a fixture
       that sets `COPILOT_ALLOW_ALL` to a truthy-but-wrong value (`"1"`,
       `"yes"`) and confirms `verify` fails naming Copilot, a fixture with
-      the marker `disabled` AND `disableBypassPermissionsMode: "disable"`
-      confirming `verify` still **passes** (the kill-switch is irrelevant
-      here), and a toggle-off-after-apply fixture confirming a prior
+      the marker `enabled` AND `disableBypassPermissionsMode: "disable"`
+      confirming `verify` still **fails** naming Copilot (the positive
+      case — proving the check actually runs when it matters, not just
+      that it's skipped when it doesn't: a fixture set containing only the
+      disabled-state pass case would let an implementation that never
+      checks this key at all, in either state, satisfy every listed
+      fixture), a complementary fixture with the marker `disabled` AND
+      `disableBypassPermissionsMode: "disable"` confirming `verify` still
+      **passes** (the kill-switch is irrelevant here), and a
+      toggle-off-after-apply fixture confirming a prior
       autonomous state reaches disabled (wrapper absent,
       `COPILOT_ALLOW_ALL=false`) after a re-render flips the marker
 - [ ] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
@@ -157,12 +164,21 @@
       fail-closed check works regardless of how that value got there — do
       not special-case "this module didn't write it" in the fixture);
       `verify` **also** fails naming pi when a fixture pre-seeds a
-      `trust.json` decision for the current workspace's own directory, and
-      separately when it pre-seeds one for a *parent* directory of the
-      current workspace (proving the parent-path rule is actually checked,
-      not only an exact-path match); `verify` passes when `trust.json`
-      carries a decision for an unrelated, non-parent workspace only; and a
-      fixture confirming bot and dev profiles behave identically for this
+      **trusted** `trust.json` decision for the current workspace's own
+      directory, and separately when it pre-seeds one for a *parent*
+      directory of the current workspace (proving the parent-path rule is
+      actually checked, not only an exact-path match); `verify` **passes**
+      when a fixture pre-seeds pi's own **explicit distrust** decision
+      (whatever pi's confirmed format uses for "not trusted") for the
+      current workspace's own directory or a parent — the positive case
+      proving `verify` distinguishes a *trusted* saved decision from any
+      other saved decision, not merely "an entry exists at all" (a naive
+      implementation that fails closed on *any* `trust.json` entry for an
+      applicable path, trusted or not, would otherwise satisfy every other
+      fixture in this list while incorrectly failing a genuinely safe
+      state); `verify` passes when `trust.json` carries a (trusted or
+      untrusted) decision for an unrelated, non-parent workspace only; and
+      a fixture confirming bot and dev profiles behave identically for this
       module (no per-profile branch exists to test)
 - [ ] 2.2 Confirm the dev profile's post-create never calls this module
       (mirroring `bot-autonomy-bootstrap`'s own "dev never calls

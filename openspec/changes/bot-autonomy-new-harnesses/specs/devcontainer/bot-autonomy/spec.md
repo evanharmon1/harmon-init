@@ -291,9 +291,11 @@ config-resolution surface run from the working directory being verified —
 rather than the global file alone, for the same reason OpenCode's `verify`
 already reads OpenCode's own resolved view instead of its global file alone.
 `apply` SHALL capture the prior `tools.approvalMode` value (or its absence)
-before its first overwrite, gated on no backup existing yet, matching pi's
-and OpenCode's shape; `restore` SHALL put that prior value back and clear
-the backup.
+before its first overwrite, gated on no backup existing yet, matching
+OpenCode's backup/restore shape (the only other module in this capability
+that persists and reverts a managed value the way this one does — pi's
+module writes nothing and has no backup/restore at all); `restore` SHALL
+put that prior value back and clear the backup.
 
 The contingency: IF implementation-time confirmation against the actually
 built shared image contradicts this proposal's own research (oh-my-pi's
