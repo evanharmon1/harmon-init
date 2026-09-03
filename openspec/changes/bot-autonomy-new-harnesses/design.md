@@ -401,19 +401,54 @@ opens — a sibling clone under investigation, a dependency being read, a
 Foreman-dispatched cross-repo task — not only the one this container was
 built for.
 
-The corrected fix keeps the resource-loading target and narrows the scope:
-`apply` records a trusted decision in `~/.pi/agent/trust.json` for the
-**current workspace's own canonical directory only**, leaving
-`defaultProjectTrust` at pi's own safe default. This is what a `verify`
-scenario should actually check (that *this repository's* project resources
-load) without generalizing that into "every repository this pi
-installation ever touches is trusted" — the corrected, narrower claim the
-requirement above states. Alternative considered: keep the global default
-but document the risk as accepted — rejected, because the risk is not
-inherent to what this module needs to accomplish (this repository's own
-resources loading); it was purely an artifact of using the wrong one of
-pi's two trust-scoping mechanisms, and the narrower mechanism (a scoped
-`trust.json` entry) already exists and does exactly what is needed instead.
+**A second draft narrowed the scope to a workspace-keyed `~/.pi/agent/trust.json`
+entry — also rejected, on a third pass of the same review.** The reasoning
+looked sound: `apply` would record a trusted decision for the current
+workspace's own canonical directory only, leaving `defaultProjectTrust` at
+pi's safe default, so "every repository this pi installation ever touches
+is trusted" would narrow to "the one repository this container was built
+for." That narrowing is real, but it does not close the gap it was meant
+to: pi's trust decisions are keyed by **directory path**, not by content or
+commit, and by pi's own documented rule the closest saved decision on the
+current directory **or any parent** applies. A path-keyed decision
+therefore does not stay bound to the content that was present in that
+directory when the decision was recorded — it silently re-applies to
+whatever occupies that same path *later*, including an untrusted branch
+checked out into the same workspace (a PR review, an `gh pr checkout` in
+place rather than a fresh worktree — a real pattern, not a hypothetical
+one, in a repository whose own Dev Loop routes most other work through
+worktrees but does not forbid this) — and, independently of any branch
+question, it extends to **anything cloned or checked out underneath** that
+trusted path, because a nested directory's "closest decision" is its
+trusted parent's. Neither failure mode requires an adversarial branch to be
+checked out into the exact workspace `apply` ran against by name; the
+second one fires for any subdirectory clone regardless of how that
+workspace's own top-level content behaves. This is not a smaller version of
+the first draft's mistake — it is the **same class of mistake**, wrong
+axis: the first granted trust too broadly across *repositories*, this one
+grants it too durably across *time and nested paths* within one.
+
+**Both designs are rejected as unsafe defaults; this proposal escalates
+rather than shipping a third, unverified attempt.** Pi's own trust
+primitive gives a bot-autonomy module exactly two tools — a global
+fallback and a path-keyed persisted decision — and neither can express
+"trust the content this repository's own maintainer committed, regardless
+of what else ever occupies this same directory path." Building a safer
+mechanism (content hashing, commit pinning, or an isolation boundary that
+makes path-reuse impossible) is real engineering this proposal is not
+chartered to design on the spot inside a challenge-round fix, and doing so
+under the pressure of "the cap is almost reached" is exactly the reflexive-fixing
+failure mode this whole review process exists to damp — a third patched
+design, adjudicated by nobody but this same session, would not actually be
+more trustworthy than the first two, only less scrutinized. The requirement
+therefore falls back to the one state this proposal's own research can
+actually stand behind: no elevated trust in the bot profile at all,
+matching dev exactly, with `verify` failing closed if `defaultProjectTrust`
+is ever found `"always"` regardless of cause. This accepts a capability gap
+(the bot's headless pi sessions silently ignore this repository's own
+`.pi/` customizations) in exchange for not shipping a security gap this
+proposal's own review found twice. See Open Questions for what a human
+decision is actually choosing between.
 
 **oh-my-pi: ship the module against this proposal's own researched finding,
 with the brief's fail-closed fallback retained as a stated contingency
@@ -466,39 +501,30 @@ in this capability already behaves (none of the four existing modules
 relies on a harness's own out-of-the-box default even where one happens to
 already match the bot policy).
 
-**Verify's mechanism splits three ways across the six modules, by what each
-harness's own config layering actually does — not an inconsistency, a
-deliberate match to each shape.** Claude Code's
-`/etc/claude-code/managed-settings.json` and Codex's
+**Verify's mechanism splits two ways across the five modules this change
+actually ships policy for, by what each harness's own config layering
+actually does — not an inconsistency, a deliberate match to each shape.**
+Claude Code's `/etc/claude-code/managed-settings.json` and Codex's
 `/etc/codex/managed_config.toml` are both `/etc`-scoped by design, with no
 per-repository override layer to miss — a plain global-file read is
 complete. Copilot's `~/.copilot/settings.json` is the same shape: documented
 as global-only, with no repository-tracked settings file this proposal's
-research found alongside it. OpenCode and oh-my-pi are the two modules where
-a project-level config file genuinely exists and genuinely overrides the
-global default (`opencode.json`/`.opencode/opencode.json` project-over-global
-layering; oh-my-pi's own documented `<cwd>/.omp/config.yml` precedence) —
-for those two, a plain global-file read would recreate exactly the
-effective-state gap this whole capability exists to close, so `verify` asks
-the harness's own resolved-config command instead, from the directory being
-verified; this mirrors `bot-autonomy-bootstrap`'s own reasoning for why
-OpenCode's `verify` differs from Claude Code's and Codex's, applied a second
-time now that a fifth module (oh-my-pi) exists with the same shape.
-
-pi is a **third** shape, neither of the other two: `defaultProjectTrust` is
-genuinely global with no project-level override (pi's docs state it is a
-"Global setting only") — but this proposal does not manage that key at all
-(see the corrected pi Decision above), so there is no global-vs-project
-divergence for `verify` to worry about missing in the first place. What
-`verify` instead reads is `~/.pi/agent/trust.json`'s entry for the specific
-workspace being verified — a **path-keyed** file read, not a single global
-value and not a live resolved-config command (pi's docs describe no
-`pi config get`-style single-key inspection command for the resolved trust
-state the way `opencode debug config` or `omp config get` provide). This is
-still "read the same live path a human would inspect," the same discipline
-every module in this capability follows; it simply reads a per-directory
-key rather than a single global one, because that is the shape pi's own
-trust model actually has.
+research found alongside it. pi's `verify` (see the pi Decision above) is
+now this same shape too, by construction rather than by design intent: it
+checks a single global key (`defaultProjectTrust`) for one specific
+dangerous value, in the one file pi's docs confirm is "Global setting
+only" — no project-level override exists to miss, because this module does
+not attempt the project-scoped grant that would have needed one. OpenCode
+and oh-my-pi are the two modules where a project-level config file
+genuinely exists and genuinely overrides the global default
+(`opencode.json`/`.opencode/opencode.json` project-over-global layering;
+oh-my-pi's own documented `<cwd>/.omp/config.yml` precedence) — for those
+two, a plain global-file read would recreate exactly the effective-state
+gap this whole capability exists to close, so `verify` asks the harness's
+own resolved-config command instead, from the directory being verified;
+this mirrors `bot-autonomy-bootstrap`'s own reasoning for why OpenCode's
+`verify` differs from Claude Code's and Codex's, applied a second time now
+that a fifth module (oh-my-pi) exists with the same shape.
 
 **Registry-table reconciliation is a removal, not a fresh addition, and it
 happens in this change's implementation, not `bot-autonomy-bootstrap`'s.**
@@ -574,27 +600,23 @@ more than one bucket).
   installed `copilot --help` output at the pinned version, the same
   "verify at implementation time" discipline `harness-matrix`'s own design
   already applies to its own researched claims.
-- [Risk] `~/.pi/agent/trust.json`'s exact per-directory write format is not
-  confirmed by this proposal's research (only that it exists, is keyed by
-  canonical directory, and is written by pi's own interactive `/trust`
-  command) → [Mitigation] the spec states the required *outcome* (this
-  workspace's resources load; a different, untouched workspace's do not),
-  not a guessed file format; implementation confirms the actual JSON shape
-  against the real `pi` binary (run `/trust` once interactively in a
-  scratch container, inspect the resulting file, then have `apply` produce
-  the same shape programmatically) before writing the module, the same
-  "verify at implementation time" discipline applied to Copilot's wrapper
-  passthrough list and oh-my-pi's config mechanism elsewhere in this
-  design.
-- [Risk] A canonical-directory path (however pi derives it — real path,
-  container-relative path, or something else) could differ between the
-  path `apply` writes a decision for and the path pi resolves at session
-  start, silently missing the scoped trust entirely → [Mitigation] the
-  same implementation-time confirmation task above verifies this
-  end-to-end: `apply` writes for the workspace path, then an actual
-  non-interactive `pi -p` run from that same workspace is checked to
-  confirm project resources load, rather than trusting that the written
-  path and the resolved path are the same string by construction.
+- [Risk] pi's non-interactive sessions will silently ignore this
+  repository's own `.pi/` project resources indefinitely, for as long as
+  the escalated trust question above stays unresolved → [Mitigation] this
+  is the accepted, disclosed consequence of the safer of two rejected
+  designs, not an oversight (see the pi Decision above and Open Questions
+  below) — a capability gap this proposal chose deliberately over the
+  security gap either rejected design would have shipped. It is reversible
+  the moment a human resolves the open question: nothing about the
+  no-op-by-default module blocks a follow-up change from implementing
+  whichever resolution is chosen.
+- [Risk] A future contributor could "fix" the capability gap above by
+  quietly reintroducing one of the two rejected designs, having forgotten
+  or not read why they were rejected → [Mitigation] the spec's own
+  requirement text states both rejected designs and the specific
+  mechanism of each one's failure inline, not only in this design
+  document — a reader implementing against the spec alone, without this
+  file, still sees the warning.
 - [Risk] This change's own doc edits (`devcontainers.md`, `security.md`)
   land after `bot-autonomy-bootstrap`'s implementation, which itself
   restructures `devcontainers.md` (dedupes a currently-duplicated Codex
@@ -641,27 +663,63 @@ more than one bucket).
   post-create/post-start on any
   real bot container built from a bad-ordering pin regardless of whether
   either signal was noticed.
-- No data migration for Copilot: this module writes no persisted policy
-  value (only the wrapper file, which is not user data), so there is
-  nothing to restore before a revert — removing the wrapper on rollback is
-  sufficient and requires no ordering care.
-- pi's and oh-my-pi's persisted-volume policy writes (`~/.pi/agent/trust.json`,
-  `~/.omp/agent/config.yml`) are **not** self-resetting on revert, exactly
-  like Antigravity's and OpenCode's. Rollback for either is: run that
-  module's `restore` **before** reverting the implementation PR — while the
-  code implementing `restore` still exists to run — then revert. Reversing
-  that order fails for the same reason `bot-autonomy-bootstrap`'s own
-  Migration Plan already states: a reverted checkout no longer contains the
-  module's restore logic to invoke against an already-`apply`'d persisted
-  volume.
+- No data migration for Copilot or pi: neither module writes a persisted
+  policy value (Copilot's `apply` only installs a wrapper file, not user
+  data; pi's `apply` is currently a no-op pending the escalated trust
+  decision above), so there is nothing to restore before a revert for
+  either — removing Copilot's wrapper on rollback is sufficient and
+  requires no ordering care.
+- oh-my-pi's persisted-volume policy write (`~/.omp/agent/config.yml`) is
+  **not** self-resetting on revert, exactly like Antigravity's and
+  OpenCode's. Rollback is: run that module's `restore` **before** reverting
+  the implementation PR — while the code implementing `restore` still
+  exists to run — then revert. Reversing that order fails for the same
+  reason `bot-autonomy-bootstrap`'s own Migration Plan already states: a
+  reverted checkout no longer contains the module's restore logic to
+  invoke against an already-`apply`'d persisted volume.
 - Rollback for this change's implementation as a whole, in order: first run
-  `restore` for pi and oh-my-pi (and, if the Copilot module's wrapper is
-  considered part of the rollback surface, remove `~/.local/bin/copilot`,
-  though this carries no persisted value to lose) against every bot
-  container that had already run `apply`, then revert the PR.
+  `restore` for oh-my-pi against every bot container that had already run
+  `apply` (and, if the Copilot module's wrapper is considered part of the
+  rollback surface, remove `~/.local/bin/copilot`, though this carries no
+  persisted value to lose), then revert the PR.
 
 ## Open Questions
 
+- **[Escalated — not a deferrable unknown, a decision this proposal stops
+  short of making.]** How should pi's bot-profile project trust actually be
+  resolved? This proposal's own review process rejected two designs in
+  succession (global `defaultProjectTrust: "always"`, then a workspace-scoped
+  `~/.pi/agent/trust.json` entry — both in the pi Decision above) as unsafe,
+  and lands on a safe fallback that grants no elevated trust at all,
+  accepting a capability gap instead. That fallback is what the spec
+  currently states — it is not itself blocked on this question, and this
+  proposal's other five requirements (Copilot, oh-my-pi, and the registry
+  reconciliation) do not depend on how it is answered. But it does leave a
+  real gap unresolved, and answering it would change the spec, so it is
+  named here rather than silently deferred. The options, as best this
+  proposal can characterize them:
+  1. **Accept the fallback as final** — the bot's headless pi sessions never
+     load this repository's own `.pi/` project resources. Simplest, safest,
+     costs whatever capability those resources would have added.
+  2. **Accept the workspace-scoped `trust.json` risk explicitly** — reinstate
+     the second rejected design, with the branch-checkout and nested-clone
+     exposure it carries treated as an acknowledged, bounded risk (for
+     example, if this repository's own operational practice can be trusted
+     to never check an untrusted branch out into the same workspace path a
+     bot's `apply` already trusted, and never clone another repository
+     underneath it). This is a judgment call about this repository's actual
+     workflow discipline that this proposal is not positioned to make
+     unilaterally.
+  3. **Build a stronger mechanism** — content-hash or commit-pinned trust
+     verification before loading `.pi/` resources, or a container/mount
+     boundary that makes path-reuse-with-different-content structurally
+     impossible. Real engineering, out of this proposal's scope to design
+     inline; would need its own proposal if chosen.
+  4. **Something else** — a scope or mechanism this proposal did not
+     consider.
+  Whichever is chosen, it is a follow-up to this change (or an amendment to
+  it before implementation), not something the implementer should decide
+  alone by picking whichever of the rejected designs looks least bad.
 - The exact filesystem path npm's global install places the `copilot` and
   `pi` binaries at in this image (`/usr/bin` is the likely location for a
   NodeSource-apt-installed Node's default global prefix, but this proposal

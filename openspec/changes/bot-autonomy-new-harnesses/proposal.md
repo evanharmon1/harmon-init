@@ -37,24 +37,32 @@ clause does.
   `.dogfood-answers.yml` sets the new answer on.
 - Add `.devcontainer/config/bot-autonomy/pi.sh`: unconditional (not
   Copier-gated — pi has no account or paid-tier dependency for the Hard Rule
-  to apply to). `apply` records a **workspace-scoped** trusted decision in
-  `~/.pi/agent/trust.json` for the current repository only — never touching
-  the global `defaultProjectTrust` fallback, which would extend automatic
-  trust (and, per pi's own docs, automatic *extension code execution*) to
-  every repository the bot's pi installation is ever pointed at, not only
-  this one (design.md - Decisions; this repository's own Foreman
-  configuration already classifies dispatched work `untrusted-input` on this
-  public repo). Dev leaves both `trust.json` and `defaultProjectTrust`
-  untouched — pi's own defaults in both. The scoped write uses the same
-  capture-before-first-overwrite backup/restore shape `apply-antigravity-settings.sh`
-  and the OpenCode
-  module already use for a persisted-volume settings key.
+  to apply to). **pi's project-trust posture is escalated, not resolved
+  (design.md - Open Questions).** This proposal's own challenge-review
+  process rejected two successive designs as unsafe defaults: a global
+  `defaultProjectTrust: "always"` (extends automatic trust — and, per pi's
+  own docs, automatic *extension code execution* — to every repository the
+  bot's pi installation is ever pointed at, not only this one) and a
+  workspace-scoped `~/.pi/agent/trust.json` entry (pi resolves trust by
+  directory path, not content or commit, so a scoped decision still
+  survives an untrusted branch checked out into that same path and still
+  extends to anything cloned underneath it). Pi's own trust primitive has
+  no content-authentication mechanism a bot-autonomy module could build a
+  safer version on top of. `apply` therefore writes neither key, in either
+  profile — the bot profile's pi behavior matches dev's exactly, accepting
+  that headless pi sessions silently skip this repository's own `.pi/`
+  customizations (a capability gap) rather than shipping a mechanism this
+  review found two ways to make unsafe (a security gap). `verify` still
+  fails closed if `defaultProjectTrust` is ever found `"always"` regardless
+  of cause. See design.md - Open Questions for what a human decision
+  between the rejected designs, a stronger mechanism, or accepting this
+  fallback permanently would actually be choosing between.
 - Add `.devcontainer/config/bot-autonomy/oh-my-pi.sh`: this proposal's own
   research (design.md - Decisions) found and cites a documented, pinned-release
   auto-approve mechanism (`tools.approvalMode: yolo` in
   `~/.omp/agent/config.yml`) the originating brief did not know about; the
   module is specified against that finding, with backup/restore matching
-  OpenCode's and pi's shape, and `verify` reading the **fully resolved**
+  OpenCode's shape, and `verify` reading the **fully resolved**
   effective value (global config layered with any project-level
   `.omp/config.yml` override) rather than the global file alone — the same
   reason OpenCode's `verify` already reads OpenCode's own resolved view.
@@ -84,11 +92,12 @@ clause does.
 - Add unit fixtures for all three modules to whichever test surface
   `bot-autonomy-bootstrap`'s implementation lands (its own tasks name
   `scripts/test-bot-autonomy.sh` as the likely location): absent → apply →
-  verify → restore for pi and oh-my-pi; disabled/enabled and a toggle
-  fixture for Copilot; an installed-but-still-`unsupported` fixture for the
-  oh-my-pi contingency, matching the existing pattern
-  `bot-autonomy-bootstrap`'s own tasks 1.4/4.5 already establish for
-  `copilot`/`qwen`/`goose`/`clite`.
+  verify → restore for oh-my-pi; a fixture proving pi's `apply` writes
+  nothing and `verify` fails closed on a pre-existing `defaultProjectTrust:
+  "always"`; disabled/enabled and a toggle fixture for Copilot; an
+  installed-but-still-`unsupported` fixture for the oh-my-pi contingency,
+  matching the existing pattern `bot-autonomy-bootstrap`'s own tasks 1.4/4.5
+  already establish for `copilot`/`qwen`/`goose`/`clite`.
 - Extend the existing `devcontainer-assert-bot` CI job's container
   assertions with the new modules — no new CI step, since that job already
   invokes `bot-autonomy.sh verify` inside the running container per

@@ -180,80 +180,75 @@ hardcoding one specific installation path.
 - **THEN** the `copilot-cli` module's `apply` removes `~/.local/bin/copilot`
   on its next run, and `verify` asserts its absence
 
-### Requirement: pi's non-interactive boundary is a scoped trust decision, not a global one
-Pi SHALL NOT be Copier-gated — it has no account or paid-tier dependency for
-the Hard Rule to apply to. The bot profile SHALL NOT change
-`defaultProjectTrust` — it SHALL remain at pi's own safe default (`"ask"`,
-which non-interactive modes treat as "ignore protected resources," never as
-"trust them"). Instead, `apply` SHALL record a **trusted** decision scoped to
-the current workspace only, in `~/.pi/agent/trust.json` (the same
-per-canonical-directory decision store pi's own interactive `/trust` command
-writes), so THIS repository's own `.pi/` resources load in headless bot
-sessions without granting blanket trust to every other repository the same
-`~/.pi` volume's pi installation might ever be pointed at. A global
-`defaultProjectTrust: "always"` was considered and rejected: this
-repository's own Foreman configuration already classifies every dispatched
-unit as `untrusted-input` on this public repo (AGENTS.md's Foreman section),
-and pi's own docs state that trusting a project allows it to "install
-missing project packages, and execute project extensions" — code, not mere
-configuration. A blanket global trust decision would make the bot
-automatically execute any `.pi/extensions` content in *any* repository it
-happens to open (a sibling clone, a dependency being inspected, anything
-Foreman or the model itself navigates to), not only this one; a scoped,
-per-workspace decision extends trust to exactly the repository this
-container was built for and no further. `apply` SHALL capture whatever
-trust decision (if any) already exists for the current workspace before
-first recording the trusted one, gated on no backup existing yet, matching
-the pattern `apply-antigravity-settings.sh` and the OpenCode module already
-use for a persisted-volume settings key; `restore` SHALL put that prior
-decision (or its absence) back and clear the backup. The exact write format
-of `trust.json`'s per-directory entries is confirmed against the real
-`pi` binary at implementation time (tasks.md), not guessed at here; what
-this requirement fixes is scope, not the file format.
+### Requirement: pi's project-trust decision is escalated, not resolved — the bot profile grants none
+**Status: unresolved, escalated to Evan.** Two designs for this requirement
+were adjudicated and rejected during this proposal's own challenge-review
+process (design.md - Decisions has the full record): a global
+`defaultProjectTrust: "always"` (rejected — grants automatic trust, and per
+pi's own docs, automatic *extension code execution*, to every repository the
+bot's pi installation is ever pointed at, not only this one) and a
+workspace-scoped `~/.pi/agent/trust.json` entry (rejected — pi resolves
+trust by **canonical directory path**, not by content or commit: it survives
+an untrusted branch checked out into that same path, and pi's own
+"closest saved decision on the current **or parent** path" rule means a
+trusted path's own trust extends to anything cloned or nested underneath
+it). Neither is safe as a default; pi's own trust primitive has no
+content-authentication mechanism (no commit pinning, no hash verification)
+for a bot-autonomy module to build a safer version on top of. Until a human
+decides how to resolve that gap, the bot profile SHALL NOT elevate pi's
+trust posture at all: neither `defaultProjectTrust` nor `~/.pi/agent/trust.json`
+SHALL be written by this module, in either profile — the bot profile's pi
+behavior is identical to the dev profile's, pi's own safe out-of-the-box
+default. This is a deliberate, safe fallback, not an oversight: this
+proposal accepts that the bot's non-interactive pi sessions will silently
+ignore this repository's own `.pi/` project resources (a capability gap)
+rather than ship a mechanism this proposal's own review process found two
+ways to make unsafe (a security gap). See design.md - Open Questions for
+the options a human decision could choose between. `verify` SHALL, however,
+fail closed if it ever finds `defaultProjectTrust` set to `"always"` in the
+bot profile regardless of cause — this module never sets it, but a stale
+volume, a manual edit, or a future regression could, and detecting that
+dangerous state is a strengthening of this fallback's safety story, not a
+re-attempt at either rejected design.
 
-#### Scenario: apply trusts only the current workspace, not the global default
+#### Scenario: the bot profile applies no elevated trust
 - **WHEN** the `pi` module's `apply` runs in the bot profile
-- **THEN** `~/.pi/agent/trust.json` records a trusted decision for the
-  current workspace's canonical directory, and
-  `~/.pi/agent/settings.json`'s `defaultProjectTrust` is left exactly as it
-  was before `apply` ran (unset, or whatever value the file already had) —
-  `apply` never writes that key
+- **THEN** it writes nothing to `~/.pi/agent/settings.json` or
+  `~/.pi/agent/trust.json` — both are left exactly as `pi`'s own install
+  and any pre-existing state leave them
 
-#### Scenario: non-interactive pi sessions load this repository's own project resources
+#### Scenario: non-interactive pi sessions silently skip project resources, by design, pending resolution
 - **WHEN** the bot profile runs `pi -p "<prompt>"` (or `--mode json`/
-  `--mode rpc`) in the same workspace `apply` ran against, and that
-  repository's `.pi/` directory carries project-local settings, extensions,
-  skills, prompts, or themes
-- **THEN** those resources are loaded — pi's non-interactive modes never
-  show a trust prompt regardless of any trust setting, so the scoped
-  `trust.json` decision is what keeps the bot's headless sessions in *this*
-  repository from silently operating against a resource-skipping fallback,
-  without extending that trust anywhere else
+  `--mode rpc`) against a repository whose `.pi/` directory carries
+  project-local settings, extensions, skills, prompts, or themes, and no
+  saved trust decision applies
+- **THEN** those resources are silently ignored (no prompt, no error,
+  pi's own non-interactive default) — the accepted, safe, current state of
+  this unresolved requirement, not a defect this proposal's other
+  requirements are expected to compensate for
 
-#### Scenario: an unrelated repository the bot later opens is not automatically trusted
-- **WHEN** the bot profile runs `pi` against a **different** repository —
-  one `apply` never ran against, and with no saved `trust.json` decision of
-  its own — and that repository also carries `.pi/` resources requiring
-  trust
-- **THEN** pi's own default (`"ask"`, ignoring those resources in
-  non-interactive mode) applies, exactly as it would with this module
-  absent entirely — the scoped decision does not generalize into a blanket
-  one
+#### Scenario: verify fails closed on a dangerous global trust value, whatever its cause
+- **WHEN** `bot-autonomy.sh verify` runs in the bot profile and
+  `~/.pi/agent/settings.json`'s `defaultProjectTrust` reads `"always"` —
+  regardless of whether this module, a stale volume, or a manual edit
+  produced it
+- **THEN** `verify` exits non-zero naming pi, rather than silently passing
+  over a state this proposal's own review identified as unsafe
 
-#### Scenario: the dev profile records no trust decision at all
-- **WHEN** a dev profile container is created or rebuilt
+#### Scenario: the dev profile is identical to the bot profile for this module
+- **WHEN** a bot or dev profile container is created or rebuilt
 - **THEN** neither `~/.pi/agent/trust.json` nor `~/.pi/agent/settings.json`'s
-  `defaultProjectTrust` is touched by this module — pi's own out-of-the-box
-  behavior in both files, not forced by this module in either profile
+  `defaultProjectTrust` is touched by this module in either profile — pi's
+  own out-of-the-box behavior everywhere, with no per-profile distinction
+  for this module to make until the open question is resolved
 
-#### Scenario: restore returns the value captured before the first apply
-- **WHEN** an operator runs the `pi` module's restore step after `apply`
-  has run one or more times
-- **THEN** the current workspace's `trust.json` entry returns to whatever
-  decision (or absence of one) was captured before the *first* `apply` in
-  that sequence, the backup file is removed, `defaultProjectTrust` is
-  untouched throughout (this module never wrote it), and every other key
-  `apply` did not manage is unchanged
+#### Scenario: this module has nothing to back up or restore
+- **WHEN** an operator looks for a `pi` module `restore` step
+- **THEN** there is none — a module that writes nothing has nothing to
+  capture before a first overwrite and nothing to put back; this differs
+  from the reversibility pattern every other persisted-volume module in
+  this capability follows only because this module's apply is currently a
+  no-op by design, not because the reversibility requirement was waived
 
 ### Requirement: oh-my-pi's non-interactive boundary is confirmed before it is enforced
 Oh-my-pi SHALL NOT be Copier-gated. The primary path is: the bot profile

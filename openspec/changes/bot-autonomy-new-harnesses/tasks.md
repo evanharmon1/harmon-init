@@ -116,54 +116,45 @@
 
 ## 2. pi module
 
-- [ ] 2.1 First, confirm `~/.pi/agent/trust.json`'s actual per-directory
-      write format against the real `pi` binary: in a scratch container or
-      fixture, run `pi` interactively once in a throwaway workspace, use
-      `/trust` to record a trusted decision, and inspect the resulting
-      `trust.json` (key format — canonical path? some other identifier? —
-      and value shape). This is a bounded confirmation, not open-ended
-      research (design.md - Risks): the file's existence and per-directory
-      keying are already established; only its exact JSON shape needs
-      confirming before a script can write it programmatically. Then add
-      `.devcontainer/config/bot-autonomy/pi.sh`: unconditional (no
-      Copier-answer branch); `apply` records a trusted decision in
-      `~/.pi/agent/trust.json` for the **current workspace's canonical
-      directory only**, in the confirmed format — it does NOT write
-      `defaultProjectTrust` in `~/.pi/agent/settings.json` at all, in either
-      profile; capturing whatever decision (or absence of one) the current
-      workspace's `trust.json` entry already holds before the first
-      overwrite, gated on no backup existing yet, matching
-      `apply-antigravity-settings.sh`'s `[ ! -f "$backup_path" ]` guard;
-      `verify` reads the current workspace's entry back and confirms
-      `defaultProjectTrust` is untouched; `restore` puts the captured
-      per-workspace decision (or its absence) back and clears the backup;
-      verify with fixtures covering: a fresh workspace with no existing
-      `trust.json` entry, overriding an existing distrust decision for the
-      same workspace, preserving other workspaces' entries in the same
-      file untouched, an `apply → apply → restore` sequence confirming
-      restore returns *this workspace's* pre-first-apply state, and a
-      fixture confirming `defaultProjectTrust` in `settings.json` is never
-      written by this module in either profile
+- [ ] 2.1 Add `.devcontainer/config/bot-autonomy/pi.sh` as the **safe
+      fallback** the spec currently states (design.md - Open Questions has
+      the unresolved decision — do not reopen it inside this task; a human
+      decision changes this task, not an implementer's judgment call).
+      `apply` writes nothing: it does not touch
+      `~/.pi/agent/settings.json`'s `defaultProjectTrust`, and does not
+      write `~/.pi/agent/trust.json`, in either profile. `verify` reads
+      `~/.pi/agent/settings.json` and fails, naming pi, if
+      `defaultProjectTrust` is found to be `"always"` — regardless of
+      whether this module, a stale volume, or a manual edit produced it.
+      There is no `restore` (nothing is ever backed up, because nothing is
+      ever overwritten). Verify with fixtures covering: `apply` on a fresh
+      volume leaves `~/.pi` exactly as `pi`'s own install left it (no new
+      keys, no new files beyond what pi itself creates); `verify` passes
+      when `defaultProjectTrust` is absent or `"ask"`/`"never"`; `verify`
+      fails naming pi when a fixture pre-seeds `defaultProjectTrust: "always"`
+      (proving the fail-closed check works regardless of how that value
+      got there — do not special-case "this module didn't write it" in the
+      fixture); and a fixture confirming bot and dev profiles behave
+      identically for this module (no per-profile branch exists to test)
 - [ ] 2.2 Confirm the dev profile's post-create never calls this module
       (mirroring `bot-autonomy-bootstrap`'s own "dev never calls
       `bot-autonomy.sh`" wiring — this module is only ever dispatched from
       the bot's own `apply`/`verify` calls, so no separate dev-exclusion
-      logic is needed inside the module itself); verify by grepping
+      logic is needed inside the module itself, even though its current
+      behavior happens to be identical either way); verify by grepping
       `.devcontainer/dev/post-create.sh` for any reference to this module
       or `bot-autonomy.sh` and confirming none exists
-- [ ] 2.3 Add a fixture proving the effective-behavior claim in design.md's
-      pi Decision: a non-interactive `pi -p` run against a fixture
-      repository carrying `.pi/settings.json` (or another trust-requiring
-      resource) loads that resource when `apply` has recorded a trusted
-      `trust.json` decision for that specific workspace, and silently
-      ignores it (no error, no prompt) in a **different** fixture
-      repository — one `apply` never ran against — left at pi's own
-      `"ask"` default; verify this fixture actually distinguishes the two
-      cases (a fixture that cannot tell them apart would not be exercising
-      the requirement this module exists to satisfy) AND confirms the
-      second repository's resources stay ignored — proving the trust
-      decision is genuinely scoped, not a global change that happens to
-      have been tested against only one workspace
+- [ ] 2.3 Add a fixture proving the capability-gap claim in design.md's pi
+      Decision, so it is a tested, documented fact rather than an assertion:
+      a non-interactive `pi -p` run against a fixture repository carrying
+      `.pi/settings.json` (or another trust-requiring resource), with this
+      module's `apply` having run (writing nothing, per task 2.1), silently
+      ignores that resource — no error, no prompt, pi's own non-interactive
+      default. This is not a task to "make pass" by adding logic; it exists
+      to keep the accepted gap visible and tested rather than something a
+      later change could silently regress further (e.g. a future edit that
+      makes it error instead of silently ignore, which would be a
+      *different*, newly-introduced problem this fixture would catch)
 
 ## 3. oh-my-pi module
 
@@ -184,8 +175,9 @@
       `.devcontainer/config/bot-autonomy/oh-my-pi.sh`: unconditional; `apply`
       sets `tools: { approvalMode: yolo }` in `~/.omp/agent/config.yml`,
       capturing the prior value (or its absence) before the first
-      overwrite, gated on no backup existing yet, matching pi's and
-      OpenCode's shape; `verify` reads the **fully resolved** value via
+      overwrite, gated on no backup existing yet, matching OpenCode's
+      `apply-antigravity-settings.sh`-derived shape; `verify` reads the
+      **fully resolved** value via
       `omp config get tools.approvalMode --json` run from the workspace
       being verified (not the global file alone), failing and naming the
       project-level `.omp/config.yml` when that is the cause of a
@@ -249,10 +241,15 @@
       and `template/docs/architecture/security.md.jinja`); verify with
       `task test:dogfood-structure` and `task lint:markdown`
 - [ ] 5.4 Apply every change in groups 1-4 to the `template/` twin in the
-      same PR (`template/[% if devcontainer %].devcontainer[% endif %]/...`,
-      `template/copier.yml` question, `template/agent-registry.json` stays
-      read-only); verify with `task test:dogfood-parity` and
-      `task test:dogfood-structure`
+      same PR (`template/[% if devcontainer %].devcontainer[% endif %]/...`;
+      `template/agent-registry.json` stays read-only). The new
+      `use_copilot_cli` question is added to root `copier.yml` **only** —
+      `copier.yml` has no `template/` twin at all (it is the file that
+      configures Copier itself; `template/` is what Copier *emits* into a
+      generated repo, per AGENTS.md's two-layer architecture), so there is
+      no second copy of this question to add; verify with
+      `task test:dogfood-parity` and `task test:dogfood-structure`, and
+      confirm no `template/copier.yml` file was created
 - [ ] 5.5 Confirm the existing `devcontainer-assert-bot` CI job (wired by
       `bot-autonomy-bootstrap`'s task 3.3b) needs no new step — it already
       runs `bot-autonomy.sh verify` inside the built bot container, which
@@ -273,12 +270,21 @@
       carve-out (its task 3.5), not wired into `task ci`; verify both pass
 - [ ] 6.3 Rebuild a freshly generated bot devcontainer with
       `use_copilot_cli: true` and manually exercise one representative task
-      through each of Copilot CLI, pi, and oh-my-pi (or confirm oh-my-pi's
-      documented `unsupported` state if task 3.3 applied); verify zero
-      approval prompts for Copilot and pi, completing the Copilot clause of
-      #1137's first `[CI]` acceptance criterion and contributing to its
-      `[HUMAN]` criterion alongside the four harnesses
-      `bot-autonomy-bootstrap` already covers. Repeat against a rebuild at
-      `use_copilot_cli`'s default (off) and confirm Copilot prompts as
-      expected — the by-design, verified-correct outcome at the default,
-      not a regression
+      through Copilot CLI (or oh-my-pi's documented `unsupported` state if
+      task 3.3 applied); verify zero approval prompts for Copilot,
+      completing the Copilot clause of #1137's first `[CI]` acceptance
+      criterion and contributing to its `[HUMAN]` criterion alongside the
+      four harnesses `bot-autonomy-bootstrap` already covers — note that
+      #1137's own acceptance criteria name Codex, Claude Code, Antigravity,
+      Copilot CLI, and OpenCode explicitly; pi and oh-my-pi are this
+      change's own broader scope (registry-completeness coverage), not
+      named in the issue, so pi's escalated/unresolved trust question does
+      not block either of #1137's acceptance criteria from closing. Repeat
+      against a rebuild at `use_copilot_cli`'s default (off) and confirm
+      Copilot prompts as expected — the by-design, verified-correct outcome
+      at the default, not a regression. Separately, exercise pi manually
+      and confirm it behaves as design.md's Open Questions describes:
+      zero approval prompts (true regardless of the escalated question,
+      since pi's non-interactive modes never prompt for trust either way),
+      and this repository's own `.pi/` resources (if any exist) silently
+      not loading — the accepted, current state, not a bug to chase
