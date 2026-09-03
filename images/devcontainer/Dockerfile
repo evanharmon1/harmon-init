@@ -36,8 +36,16 @@ ARG AOE_VERSION=1.15.1
 ARG CLAUDE_CODE_VERSION=2.1.250
 # renovate: datasource=npm depName=@openai/codex
 ARG CODEX_VERSION=0.150.1
-# renovate: datasource=npm depName=@google/gemini-cli
-ARG GEMINI_CLI_VERSION=0.57.0
+# renovate: datasource=npm depName=@github/copilot
+ARG COPILOT_VERSION=1.0.82
+# renovate: datasource=npm depName=@earendil-works/pi-coding-agent
+ARG PI_VERSION=0.84.4
+# renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
+ARG OH_MY_PI_VERSION=18.1.2
+# oh-my-pi release-archive SHA-256 values. The version pin is Renovate-managed;
+# update these reviewed, architecture-specific digests with each release.
+ARG OH_MY_PI_SHA256_AMD64=c6a306347a57c872bf38587e81132db50490228867e3e179a363a4cf874da1a0
+ARG OH_MY_PI_SHA256_ARM64=2865c21a73ae8b893fd5553bf302afc5be8a0bcafa015af99732349d518830da
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.25
 # Pinned from Google's per-platform release manifests. Keep the version, build,
@@ -50,7 +58,7 @@ ARG AGENT_DECK_VERSION=1.15.0
 ARG SESH_VERSION=2.28.0
 # renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
 # Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
-ARG HERDR_VERSION=0.8.0
+ARG HERDR_VERSION=0.8.2
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
 # renovate: datasource=pypi depName=semgrep
@@ -429,14 +437,46 @@ RUN export UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
     && rm -rf /root/.cache/uv
 
 # Keep frequently updated agent CLIs in the final expensive-tool layer.
+# GitHub Copilot CLI's npm package ships no platform binary itself: it
+# declares per-platform packages (@github/copilot-linux-{x64,arm64}) as
+# optionalDependencies, which npm resolves and downloads during `npm install`
+# itself -- not via a postinstall script and not deferred to first run. The
+# trailing `copilot --version` proves that resolution actually landed a
+# runnable binary in this same layer, so a freshly created container never
+# needs network access on its first invocation.
 # hadolint ignore=DL3016
 RUN npm install -g \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-        "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
+        "@github/copilot@${COPILOT_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
         "dmux@${DMUX_VERSION}" \
+    && npm cache clean --force \
+    && copilot --version
+
+# pi installs in its own layer, isolated from the combined install above.
+# --ignore-scripts is pure hardening for pi itself (its published package
+# ships no install/postinstall lifecycle hook); keeping it separate avoids
+# any interaction with Copilot's own npm-managed platform-binary resolution
+# in the combined layer.
+RUN npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" --ignore-scripts \
     && npm cache clean --force
+
+# oh-my-pi ships prebuilt binaries with no npm package (its npm distribution
+# is bun-only). Verify the downloaded binary against a per-architecture
+# digest reviewed and pinned above -- not a SHA256SUMS.txt fetched from the
+# same release at build time -- matching TFLint's pattern elsewhere in this
+# file: the trust anchor is the reviewer, not the mutable release itself.
+RUN case "${TARGETARCH}" in \
+        "amd64") export OMP_ARCH="x64" OMP_SHA256="${OH_MY_PI_SHA256_AMD64}" ;; \
+        "arm64") export OMP_ARCH="arm64" OMP_SHA256="${OH_MY_PI_SHA256_ARM64}" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/can1357/oh-my-pi/releases/download/v${OH_MY_PI_VERSION}/omp-linux-${OMP_ARCH}" \
+        -o "/tmp/omp-linux-${OMP_ARCH}" \
+    && echo "${OMP_SHA256}  /tmp/omp-linux-${OMP_ARCH}" | sha256sum --check - \
+    && install -m 0755 "/tmp/omp-linux-${OMP_ARCH}" /usr/local/bin/omp \
+    && rm -f "/tmp/omp-linux-${OMP_ARCH}"
 
 # Claude Code is installed globally as root above, but containers run as
 # `vscode`, so its in-place auto-updater can never write to
@@ -457,6 +497,13 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=true
 # no D-Bus keyring is available. ~/.gemini is a named volume in both profiles,
 # so the pinned 1.1.11 build keeps an interactive login across rebuilds.
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
+# Copilot CLI is pinned by COPILOT_VERSION above (Renovate-managed); its own
+# auto-update would silently replace the reviewed image version. Auto-update
+# defaults to disabled in CI environments already, but this holds regardless
+# of how a build or run environment identifies itself.
+ENV COPILOT_AUTO_UPDATE=false
+# pi is pinned by PI_VERSION above, for the same reason.
+ENV PI_SKIP_VERSION_CHECK=1
 
 # ---------- image/overlay contract ----------
 COPY generate-manifest.sh smoke.sh /usr/local/sbin/
@@ -479,7 +526,9 @@ RUN chmod 0755 \
         "aoe=${AOE_VERSION}" \
         "claude-code=${CLAUDE_CODE_VERSION}" \
         "codex=${CODEX_VERSION}" \
-        "gemini-cli=${GEMINI_CLI_VERSION}" \
+        "copilot=${COPILOT_VERSION}" \
+        "pi=${PI_VERSION}" \
+        "omp=${OH_MY_PI_VERSION}" \
         "opencode=${OPENCODE_VERSION}" \
         "antigravity-cli=${ANTIGRAVITY_CLI_VERSION}" \
         "agent-deck=${AGENT_DECK_VERSION}" \

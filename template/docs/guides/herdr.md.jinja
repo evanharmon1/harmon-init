@@ -202,10 +202,11 @@ belongs in a separate user, container, or VM, not a sibling pane.
    the old report. Then
    `agent prompt … --wait --until working --timeout 30000`. If it returns
    with the worker still `idle`, delivery may have silently missed — Herdr
-   0.8.0 (the devcontainer pin) can report `agent start` ready before the
-   pane's first-run prompts have settled (fixed in 0.8.2), and a harness
-   mid-render swallows input the same way — but before re-sending, check
-   the pane and the report path: a fast worker can finish and return to
+   before 0.8.2 could report `agent start` ready before the pane's first-run
+   prompts have settled (fixed in 0.8.2, which the devcontainer image now
+   pins), and a harness mid-render swallows input the same way — but before
+   re-sending, check the pane and the report path: a fast worker can finish
+   and return to
    `idle` inside the window, and re-sending a brief that performs side
    effects (GitHub writes, deploys) is at-least-once delivery. Re-send only
    when the pane shows the prompt never landed; make briefs idempotent where
@@ -246,8 +247,8 @@ checkout with the workspace. What is on you: steps 5 and 8.
 
 The orchestration surface is harness-agnostic. `--kind` accepts every agent
 the installed Herdr can recognize — run `herdr agent` to see the exact list for
-your version; `claude`, `codex`, `gemini`, `agy` (Antigravity), and `opencode`
-are in the 0.8.0 image the devcontainers pin, newer releases add more — and
+your version; `claude`, `codex`, `agy` (Antigravity), and `opencode`
+are in the 0.8.2 image the devcontainers pin, newer releases add more — and
 nothing about the loop above changes except the kind and the native arguments
 after `--`. A Claude Code orchestrator can
 therefore drive Codex, Antigravity, or OpenCode workers — each a separate,

@@ -1,5 +1,5 @@
 {
-  // Primary profile for AI agents (Claude Code, Codex, Gemini, OpenCode).
+  // Primary profile for AI agents (Claude Code, Codex, OpenCode).
   // Secrets (GH_TOKEN) come from the --env-file, not containerEnv.
   // Tailscale is not installed in this profile — see dev/ for the human profile.
   "name": "BOT - devcontainer-harmon-init",

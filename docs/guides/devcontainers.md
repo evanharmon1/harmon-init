@@ -6,7 +6,7 @@ which secrets and capabilities they allow.
 
 | Profile | Path | For | GitHub auth | Tailscale |
 |---|---|---|---|---|
-| **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, Gemini, OpenCode) | the bot's PAT via `GH_TOKEN` | no |
+| **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, OpenCode) | the bot's PAT via `GH_TOKEN` | no |
 | **Dev** | `.devcontainer/dev/devcontainer.json` | humans | the operator's own `gh auth login` | yes (`TS_AUTHKEY`, `--device=/dev/net/tun`) |
 
 Each profile authenticates as the identity it commits as, and the omissions are
@@ -312,10 +312,11 @@ resumes inside its restored pane is a separate mechanism:
 `resume_agents_on_restore` only works for agents whose Herdr integration has
 recorded a native session reference. post-create installs the Claude Code,
 Codex, and OpenCode integrations automatically (`herdr integration install`,
-idempotent) — Gemini has no resume integration in v0.8. The
-conversations themselves persist regardless, in the `~/.claude`, `~/.codex`,
-`~/.gemini`, and `~/.local/share/opencode` volumes, so a pane that restores as a
-plain shell can still resume its agent by hand (e.g. `claude --resume`).
+idempotent). The conversations themselves persist regardless, in the
+`~/.claude`, `~/.codex`, and `~/.local/share/opencode` volumes (`~/.gemini`
+holds Antigravity's own OAuth/session state, not a CLI conversation, so it's
+not one of these), so a pane that restores as a plain shell can still resume
+its agent by hand (e.g. `claude --resume`).
 
 The default session's server socket deliberately does **not** live in that
 volume. The image sets `HERDR_SOCKET_PATH=/tmp/herdr.sock` container-wide, so a
@@ -646,12 +647,12 @@ server and agents run in the container. Detach with `ctrl+b q` and reattach
 with the same `herdr --remote coder.<workspace>.devcontainer` command.
 
 `herdr --remote` prefers a remote binary matching the local client version.
-The image pins `HERDR_VERSION` (0.8.0 today), while a laptop may run a newer
-version (0.8.2). On a mismatch, an interactive run prompts to install a
-matching binary into `~/.local/bin` on the remote. That directory is first on
-the container `PATH` but is **not** a persisted volume, so the prompt recurs
-after every container rebuild until the image's `HERDR_VERSION` catches up;
-Renovate tracks that pin.
+The image pins `HERDR_VERSION` (0.8.2 today), while a laptop may already have
+a newer patch release installed. On a mismatch, an interactive run prompts to
+install a matching binary into `~/.local/bin` on the remote. That directory is
+first on the container `PATH` but is **not** a persisted volume, so the prompt
+recurs after every container rebuild until the image's `HERDR_VERSION` catches
+up; Renovate tracks that pin.
 
 #### Rebuild before attaching to a changed image
 
