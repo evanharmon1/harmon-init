@@ -305,23 +305,31 @@ shape here without re-deriving it from Copilot's own documented command
 categories would have been the wrong kind of consistency: matching the
 prior module's *mechanism* instead of its *reasoning*.
 
-**`disableBypassPermissionsMode` is `verify`-only; `apply` never writes
-it.** Unlike `permission` in OpenCode's `opencode.json` or the scoped
-`trust.json` entry pi's own module owns, this key is not a policy value this
-module owns — GitHub's own docs frame it as an administrator/organization
+**`disableBypassPermissionsMode` is `verify`-only, checked only in the
+autonomous state; `apply` never writes it.** Unlike `permission` in
+OpenCode's `opencode.json`, this key is not a policy value this module
+owns — GitHub's own docs frame it as an administrator/organization
 kill-switch (its enterprise-managed-settings form wraps the value in an
 `overridable` object; the plain per-user `~/.copilot/settings.json` form is
-the same key at user scope). If it reads `"disable"`, that is very likely a
-deliberate policy decision made above this module's authority (an org MDM
-policy, or a human's own explicit choice) — forcibly clearing it would mean
-this module silently overriding a security control someone else set on
-purpose, which is a materially different act than resetting a value this
-module itself manages. `verify` failing and naming the conflict is the
-correct fail-closed behavior instead: it surfaces the contradiction between
-"this repository wants Copilot autonomous" and "this environment's Copilot
-is policy-locked out of bypass mode" to a human, rather than either
+the same key at user scope). If it reads `"disable"` **while
+`use_copilot_cli` is on**, that is very likely a deliberate policy decision
+made above this module's authority (an org MDM policy, or a human's own
+explicit choice) — forcibly clearing it would mean this module silently
+overriding a security control someone else set on purpose, which is a
+materially different act than resetting a value this module itself
+manages. `verify` failing and naming the conflict is the correct
+fail-closed behavior instead: it surfaces the contradiction between "this
+repository wants Copilot autonomous" and "this environment's Copilot is
+policy-locked out of bypass mode" to a human, rather than either
 papering over it or silently accepting a non-autonomous Copilot as if
-nothing were wrong. Alternative considered: have `apply` set it to
+nothing were wrong. This check does **not** run when `use_copilot_cli` is
+off: a locked-out bypass mode is irrelevant to the disabled-by-option
+state, where prompt-enabled is already the intended and verified-correct
+outcome — checking it unconditionally would fail a default-off consumer
+whose own organization separately disables bypass mode via MDM, for a
+reason unconnected to this repo's Copier answer (a `task review` round 1
+finding against an earlier draft of this Decision, which stated the check
+unconditionally). Alternative considered: have `apply` set it to
 `"allow-auto-only"` or remove the key — rejected for exactly this reason.
 
 **The Copilot wrapper's `PATH` precedence needs no new `containerEnv.PATH`
@@ -554,12 +562,16 @@ Claude Code's `/etc/claude-code/managed-settings.json` and Codex's
 per-repository override layer to miss — a plain global-file read is
 complete. Copilot's `~/.copilot/settings.json` is the same shape: documented
 as global-only, with no repository-tracked settings file this proposal's
-research found alongside it. pi's `verify` (see the pi Decision above) is
-now this same shape too, by construction rather than by design intent: it
-checks a single global key (`defaultProjectTrust`) for one specific
-dangerous value, in the one file pi's docs confirm is "Global setting
-only" — no project-level override exists to miss, because this module does
-not attempt the project-scoped grant that would have needed one. OpenCode
+research found alongside it. pi's `verify` (see the pi Decision above)
+reads two plain files rather than one, but is the same *kind* of check —
+no live resolved-config command, because this module does not attempt the
+project-scoped grant that would have made one necessary: it checks
+`defaultProjectTrust` for one specific dangerous value in the file pi's
+docs confirm is "Global setting only," **and** `~/.pi/agent/trust.json`
+for an applicable saved decision (current workspace or a parent of it) —
+both are files this module itself never writes, so it is detecting
+external state on both surfaces, not resolving a config layer of its own.
+OpenCode
 and oh-my-pi are the two modules where a project-level config file
 genuinely exists and genuinely overrides the global default
 (`opencode.json`/`.opencode/opencode.json` project-over-global layering;

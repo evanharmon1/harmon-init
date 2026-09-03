@@ -204,9 +204,14 @@ clause does.
   three more harnesses with no new CI step.
 - Docs: `docs/guides/devcontainers.md`, `docs/architecture/security.md`,
   `copier.yml` help text.
-- Template twins: every file above outside `openspec/` has a `template/`
-  twin per AGENTS.md's dogfood-parity table; the implementation PR changes
-  both layers in the same commit set.
+- Template twins: most files above have a `template/` twin per AGENTS.md's
+  dogfood-parity table, and the implementation PR changes both layers in
+  the same commit set — but not all: `copier.yml` and `.dogfood-answers.yml`
+  are root-only by construction (the former configures Copier itself
+  rather than being emitted content; the latter records this repo's own
+  answers and has no per-repo equivalent to twin against), matching
+  AGENTS.md's own qualifier ("most root files have a template/ counterpart"),
+  not a universal claim.
 - Read-only: `agent-registry.json` (both `copilot-cli`/`pi`, pre-existing,
   and `oh-my-pi`, added by `harness-matrix`, are consulted but not modified).
 - Cross-change: depends on `bot-autonomy-bootstrap`'s implementation (PR
