@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "kind": "harmon-init.devflow.conformance",
+  "description": "V2 policy corpus. Consumers must reject v1 input with a migration hint.",
+  "result_schema_version": 2,
+  "cases": [
+    {"name": "defaults", "basis": "branch", "expect": {"exit": 0, "result": {"config_schema_version": 2, "selections": {"rigor": {"value": "standard", "source": "default"}, "strategy": {"value": "plan", "source": "default"}}}}},
+    {"name": "legacy-version-is-refused", "basis": "branch", "config_replacements": [["schema_version = 2", "schema_version = 1"]], "expect": {"exit": 1, "error_diagnostics": [{"code": "migration_required", "subject": "schema_version"}]}}
+  ]
+}

@@ -60,7 +60,9 @@ sandboxed = false
 # demand when CI is red and you want to iterate the full mirror locally.
 [% endif %]
 [verify]
-default = ["bash", "-c", "task verify && task security"]
+# Derived from .devflow.toml [gates].pre_pr ("security"). Foreman composes
+# the bare target as argv rather than carrying a second shell command.
+default = ["task", "security"]
 
 [budgets]
 dispatch_usd = 20.0
