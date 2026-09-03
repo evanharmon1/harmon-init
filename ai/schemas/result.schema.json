@@ -189,7 +189,15 @@
     "challenger": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["stage", "round", "reviewed_head", "finder", "findings", "counts", "attack_scenarios"],
+      "required": [
+        "stage",
+        "round",
+        "reviewed_head",
+        "finder",
+        "findings",
+        "counts",
+        "attack_scenarios"
+      ],
       "properties": {
         "stage": {
           "description": "Always challenge — the challenger role never produces a review-stage pass (that is the reviewer role's contract, result.reviewer.schema.json). A single legal value is expressed as const, not a one-member enum, matching this family's convention for fields with exactly one valid value (e.g. the envelope's `schema: const 2`).",
