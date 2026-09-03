@@ -91,11 +91,14 @@ reversibility pattern.
   settings allow-rules and auto-denies**, so bot `apply` installs a real
   executable at `~/.local/bin/agy` (`bot-autonomy/antigravity.sh`, replacing an
   earlier shell-function wrapper that only covered a login shell) that injects
-  `--dangerously-skip-permissions` for agent runs. `devcontainer.json`'s
-  `containerEnv.PATH` puts `~/.local/bin` ahead of the system binary
-  container-wide, so the wrapper's precedence holds for a `docker exec` or any
-  other programmatic launcher too — not only interactive shells. A launcher
-  that resolves `agy` some other way must still pass that flag itself.
+  `--dangerously-skip-permissions` for agent runs. The `Dockerfile`'s
+  `ENV PATH` puts `~/.local/bin` ahead of the system binary container-wide,
+  so the wrapper's precedence holds for a `docker exec` or any other
+  programmatic launcher too — not only interactive shells (a
+  `devcontainer.json` `containerEnv.PATH` self-reference cannot work here:
+  Docker passes `${containerEnv:PATH}` through unresolved when creating the
+  container). A launcher that resolves `agy` some other way must still pass
+  that flag itself.
 - **Dev (human) profile — balanced.** It auto-accepts edits/artifacts and an
   allowlist of common commands (`task`, `git`, `gh`, linters, test runners, …)
   so routine work is prompt-free, but still asks before anything unlisted and

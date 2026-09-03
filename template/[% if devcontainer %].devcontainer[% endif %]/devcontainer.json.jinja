@@ -87,20 +87,22 @@
   // and bot-autonomy/antigravity.sh may read to learn that per-repo Copier
   // answer. See openspec/changes/bot-autonomy-bootstrap/design.md - Decisions.
   //
-  // PATH: ${containerEnv:PATH} reads the container's own already-established
-  // PATH (image + Features) and prepends ~/.local/bin ahead of
-  // /usr/local/bin, applied by Docker to every process the container runs —
-  // not only shells that source .bashrc/.zshrc — so the Antigravity autonomy
+  // PATH (~/.local/bin ahead of /usr/local/bin, so the Antigravity autonomy
   // wrapper's precedence over the system agy binary holds for a `docker
-  // exec` or a programmatic launcher too, not just interactive shells.
+  // exec` or a programmatic launcher too, not just interactive shells) is
+  // set in the Dockerfile, not here: containerEnv's ${containerEnv:PATH}
+  // cannot self-expand while Docker is creating the container — it is
+  // passed to `docker run -e` literally, unresolved. A Dockerfile ENV
+  // directive is Docker's own, working self-reference and applies
+  // identically to any docker exec, so it belongs in the image build, not
+  // this runtime layer.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
 [% if use_antigravity_cli %]
     "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
 [% endif %]
     "FOREMAN_DEVCONTAINER": "bot",
-    "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "[[ 'enabled' if use_antigravity_cli else 'disabled' ]]",
-    "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
+    "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "[[ 'enabled' if use_antigravity_cli else 'disabled' ]]"
   },
 [% if include_ansible %]
   "remoteEnv": {

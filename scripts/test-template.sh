@@ -1826,8 +1826,18 @@ if [ -d .devcontainer ]; then
         err "bot devcontainer.json does not set the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
     grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY"' .devcontainer/dev/devcontainer.json ||
         err "dev devcontainer.json does not set the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
-    grep -Fq '${containerEnv:PATH}' .devcontainer/devcontainer.json ||
-        err "bot devcontainer.json does not prepend onto the container-wide PATH via containerEnv"
+    # PATH is set in the Dockerfile (a working Docker ENV self-reference),
+    # never via devcontainer.json's containerEnv: ${containerEnv:PATH} cannot
+    # self-expand while Docker is creating the container — it is passed to
+    # `docker run -e` literally, unresolved, which breaks the container.
+    grep -Fq 'ENV PATH="/home/vscode/.local/bin:${PATH}"' .devcontainer/Dockerfile ||
+        err "Dockerfile does not prepend ~/.local/bin onto PATH"
+    # Match the JSON key specifically, not any mention of the string — the
+    # file's own explanatory comment (kept for future editors) legitimately
+    # names ${containerEnv:PATH} to say why it is NOT used here.
+    if grep -Eq '^\s*"PATH"\s*:' .devcontainer/devcontainer.json; then
+        err "bot devcontainer.json sets a PATH key in containerEnv — \${containerEnv:PATH} does not resolve at container-creation time"
+    fi
     grep -Fq 'HARMON_BOT_AUTONOMY_ANTIGRAVITY' .devcontainer/dev/post-create.sh ||
         err "dev post-create does not branch on the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker"
     grep -Fq 'apply-antigravity-settings.sh restore' .devcontainer/dev/post-create.sh ||

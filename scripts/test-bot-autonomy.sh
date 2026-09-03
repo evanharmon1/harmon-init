@@ -53,6 +53,21 @@ for sub in apply verify coverage; do
     fi
 done
 
+echo "==> 1c. an alias dispatches its target module even if the target's own slug is absent from the registry"
+orphan_registry="${work_dir}/registry-orphan-target.json"
+jq -n '{harnesses: [{slug: "claude-code-qwen"}]}' >"$orphan_registry"
+orphan_bin="${work_dir}/orphan-bin"
+mkdir -p "$orphan_bin"
+printf '#!/bin/sh\nexit 0\n' >"${orphan_bin}/claude"
+chmod +x "${orphan_bin}/claude"
+orphan_managed="${work_dir}/orphan-claude-managed.json"
+echo '{}' >"$orphan_managed"
+BOT_AUTONOMY_REGISTRY="$orphan_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    BOT_AUTONOMY_CLAUDE_MANAGED="$orphan_managed" PATH="${orphan_bin}:${PATH}" \
+    bash "$bot_autonomy" apply >/dev/null
+jq -e '.permissions.defaultMode == "bypassPermissions"' "$orphan_managed" >/dev/null ||
+    fail "apply did not dispatch the claude-code module via an alias whose target slug is absent from the registry"
+
 echo "==> 2. coverage fails an uncovered slug"
 uncovered_registry="${work_dir}/registry-uncovered.json"
 jq -n '{harnesses: [{slug: "totally-new-harness"}]}' >"$uncovered_registry"

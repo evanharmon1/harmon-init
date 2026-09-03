@@ -285,6 +285,6 @@ fi
 
 # Antigravity's bot-only autonomy wrapper is now a real executable at
 # ~/.local/bin/agy (bot-autonomy/antigravity.sh apply), installed on the
-# container-wide PATH via devcontainer.json's containerEnv.PATH — not a
-# login-shell function, so headless/programmatic launches are covered too.
+# container-wide PATH via the Dockerfile's ENV PATH — not a login-shell
+# function, so headless/programmatic launches are covered too.
 # See openspec/changes/bot-autonomy-bootstrap.

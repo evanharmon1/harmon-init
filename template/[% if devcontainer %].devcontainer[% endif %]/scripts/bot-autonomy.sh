@@ -121,6 +121,25 @@ module_executable() {
     bash "${CONFIG_DIR}/$1.sh" executable
 }
 
+# resolve_module_for <slug>  — prints the module slug that governs <slug>,
+# whether <slug> IS a module directly or ALIASES to one, and succeeds iff
+# either holds. Dispatch resolves every covered slug through this one path
+# so an aliased slug is governed by its target module even if the target's
+# OWN slug is ever removed from the registry — apply/verify must not depend
+# on the target still being independently iterated to get invoked.
+resolve_module_for() {
+    local slug="$1" target
+    if module_slug_for "$slug" >/dev/null 2>&1; then
+        printf '%s' "$slug"
+        return 0
+    fi
+    if target="$(alias_target_for "$slug" 2>/dev/null)"; then
+        printf '%s' "$target"
+        return 0
+    fi
+    return 1
+}
+
 registry_slugs() {
     local registry
     registry="$(resolve_registry)" || {
@@ -131,7 +150,7 @@ registry_slugs() {
 }
 
 cmd_apply() {
-    local slug module_slug exe failed=0 slugs
+    local slug module_slug exe failed=0 slugs modules_seen=""
     # A `while read < <(registry_slugs)` here would silently swallow a
     # registry_slugs failure: the exit status of a while loop whose body
     # never runs (immediate EOF from an empty/failed process substitution)
@@ -140,7 +159,14 @@ cmd_apply() {
     # via a plain command substitution, so its exit code is checkable.
     slugs="$(registry_slugs)" || return 1
     while IFS= read -r slug; do
-        module_slug="$(module_slug_for "$slug" 2>/dev/null)" || continue
+        module_slug="$(resolve_module_for "$slug" 2>/dev/null)" || continue
+        # Dedup: an aliased slug and its target can both appear in the same
+        # registry pass (or two aliases can share a target) — apply that
+        # module's policy exactly once per run.
+        case " $modules_seen " in
+        *" $module_slug "*) continue ;;
+        esac
+        modules_seen="$modules_seen $module_slug"
         exe="$(module_executable "$module_slug")"
         if ! command -v "$exe" >/dev/null 2>&1; then
             echo "==> bot-autonomy: ${module_slug} executable '${exe}' not present; skipping apply"
@@ -160,19 +186,20 @@ cmd_apply() {
 }
 
 cmd_verify() {
-    local slug module_slug exe entry unsupported_exe unsupported_reason failed=0 slugs
+    local slug module_slug exe entry unsupported_exe unsupported_reason failed=0 slugs modules_seen=""
     slugs="$(registry_slugs)" || return 1
     while IFS= read -r slug; do
-        if module_slug="$(module_slug_for "$slug" 2>/dev/null)"; then
+        if module_slug="$(resolve_module_for "$slug" 2>/dev/null)"; then
+            case " $modules_seen " in
+            *" $module_slug "*) continue ;;
+            esac
+            modules_seen="$modules_seen $module_slug"
             exe="$(module_executable "$module_slug")"
             command -v "$exe" >/dev/null 2>&1 || continue
             if ! bash "${CONFIG_DIR}/${module_slug}.sh" verify; then
                 echo "bot-autonomy: verify failed for ${module_slug} (registry slug '${slug}')" >&2
                 failed=1
             fi
-        elif alias_target_for "$slug" >/dev/null 2>&1; then
-            : # governed by its target module, verified above when that
-            # module's own slug is reached — nothing separate to check.
         elif entry="$(unsupported_entry_for "$slug" 2>/dev/null)"; then
             unsupported_exe="${entry%%$'\t'*}"
             unsupported_reason="${entry#*$'\t'}"
