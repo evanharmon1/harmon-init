@@ -79,6 +79,12 @@ jobs:
             --env "EXPECTED_REVISION=${SOURCE_SHA}" \
             --env EXPECTED_ARCHITECTURE=arm64 \
             "$image" /usr/local/sbin/smoke.sh
+          # Same proof as the native candidate's own check (test-devcontainer-image.sh):
+          # copilot's platform-binary optionalDependency resolves per-architecture, so
+          # only testing amd64 would miss an arm64-specific regression; --user vscode
+          # matches every real devcontainer profile's actual remoteUser.
+          docker run --rm --platform linux/arm64 --network=none --user vscode \
+            "$image" copilot --version
 
   candidate-verify:
     if: always() && github.event_name == 'pull_request'

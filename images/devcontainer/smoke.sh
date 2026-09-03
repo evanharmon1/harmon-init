@@ -26,10 +26,17 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
 fi
 
 for tool in task shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
-    claude codex gemini opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
+    claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
+
+# Gemini CLI is deliberately absent (Antigravity supersedes it as the
+# Google-family harness) -- assert the negative so a future reintroduction
+# fails loudly here instead of shipping silently unnoticed.
+! command -v gemini >/dev/null 2>&1 || fail "gemini is on PATH but must not be installed"
+jq -e '.tools | has("gemini-cli") | not' "$manifest" >/dev/null ||
+    fail "manifest still has a gemini-cli entry"
 
 run_version() {
     _rv_tool="$1"
@@ -58,7 +65,9 @@ run_version semgrep semgrep --help
 run_version copier copier --version
 run_version claude claude --version
 run_version codex codex --version
-run_version gemini gemini --version
+run_version copilot copilot --version
+run_version pi pi --version
+run_version omp omp --version
 run_version opencode opencode --version
 run_version agy agy --version
 run_version agent-deck agent-deck --version
@@ -98,6 +107,10 @@ done
     fail "OPENCODE_DISABLE_AUTOUPDATE is not set to true in the image environment"
 [ "${AGY_CLI_DISABLE_AUTO_UPDATE:-}" = "true" ] ||
     fail "AGY_CLI_DISABLE_AUTO_UPDATE is not set to true in the image environment"
+[ "${COPILOT_AUTO_UPDATE:-}" = "false" ] ||
+    fail "COPILOT_AUTO_UPDATE is not set to false in the image environment"
+[ "${PI_SKIP_VERSION_CHECK:-}" = "1" ] ||
+    fail "PI_SKIP_VERSION_CHECK is not set to 1 in the image environment"
 
 task_version="$(task --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [ "$task_version" = "$(jq -r '.tools.task' "$manifest")" ] ||
@@ -111,5 +124,14 @@ tflint_version="$(tflint --version | awk 'NR == 1 { print $3 }')"
 agy_version="$(agy --version | head -1)"
 [ "$agy_version" = "$(jq -r '.tools["antigravity-cli"]' "$manifest")" ] ||
     fail "Antigravity CLI $agy_version does not match the manifest"
+copilot_version="$(copilot --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+[ "$copilot_version" = "$(jq -r '.tools.copilot' "$manifest")" ] ||
+    fail "Copilot CLI $copilot_version does not match the manifest"
+pi_version="$(pi --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+[ "$pi_version" = "$(jq -r '.tools.pi' "$manifest")" ] ||
+    fail "pi $pi_version does not match the manifest"
+omp_version="$(omp --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+[ "$omp_version" = "$(jq -r '.tools.omp' "$manifest")" ] ||
+    fail "oh-my-pi $omp_version does not match the manifest"
 
 echo "harmon-devcontainer smoke: passed"

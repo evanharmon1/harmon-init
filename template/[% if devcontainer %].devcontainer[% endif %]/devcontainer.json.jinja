@@ -1,5 +1,6 @@
 {
-  // Primary profile for AI agents (Claude Code, Codex, Gemini, OpenCode).
+  // Primary profile for AI agents (Claude Code, Codex, OpenCode, Antigravity,
+  // Copilot CLI, pi, oh-my-pi).
   // Secrets (GH_TOKEN) come from the --env-file, not containerEnv.
   // Tailscale is not installed in this profile — see dev/ for the human profile.
   "name": "BOT - devcontainer-[[ project_slug ]]",
@@ -66,6 +67,9 @@
     "source=claude-code-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.claude,type=volume",
     "source=codex-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.codex,type=volume",
     "source=gemini-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.gemini,type=volume",
+    "source=copilot-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.copilot,type=volume",
+    "source=pi-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.pi,type=volume",
+    "source=omp-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.omp,type=volume",
     "source=agent-deck-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.agent-deck,type=volume",
     "source=herdr-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.config/herdr,type=volume",
     "source=opencode-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.config/opencode,type=volume",
