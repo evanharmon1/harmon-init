@@ -57,6 +57,15 @@ docker run --rm \
     "$candidate" \
     /usr/local/sbin/smoke.sh
 
+# The build gave `copilot` network access throughout (its platform-binary
+# optionalDependency resolves during `npm install`, then the Dockerfile's own
+# `copilot --version` re-checks it in that same layer), and smoke.sh above
+# ALSO runs with the container's normal network access -- so neither step can
+# tell "already fetched, no fetch needed" apart from "silently reached the
+# network just now". This is what actually proves the harness-matrix spec's
+# requirement: a freshly created container needs no network to run `copilot`.
+docker run --rm --network=none "$candidate" copilot --version
+
 docker build \
     --build-arg "BASE_IMAGE=${candidate}" \
     --file images/devcontainer/test-overlay.Dockerfile \
