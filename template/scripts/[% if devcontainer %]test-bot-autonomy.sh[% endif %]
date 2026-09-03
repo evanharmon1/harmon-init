@@ -333,6 +333,36 @@ HOME="$disabled_home" bash "$agy_module" verify >/dev/null ||
     fail "verify failed against the correct disabled-by-option state"
 [ ! -e "${disabled_home}/.local/bin/agy" ] || fail "apply created ~/.local/bin/agy while disabled-by-option"
 
+echo "==> 11b. Antigravity: apply's disabled-branch restore fails loudly (not silently) into a missing or invalid settings.json, leaving the backup in place"
+restore_fail_home="${work_dir}/agy-restore-fail-home"
+mkdir -p "${restore_fail_home}/.local/bin"
+printf '#!/bin/sh\necho REAL "$@"\n' >"${restore_fail_home}/.local/bin/agy-real"
+chmod +x "${restore_fail_home}/.local/bin/agy-real"
+HOME="$restore_fail_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled bash "$agy_module" apply >/dev/null
+restore_fail_settings="${restore_fail_home}/.gemini/antigravity-cli/settings.json"
+restore_fail_backup="${restore_fail_settings}.harmon-init-autonomy-backup"
+[ -f "$restore_fail_backup" ] ||
+    fail "fixture setup: expected a backup after the enabled apply"
+
+# Missing target: the disabled branch's `apply-antigravity-settings.sh
+# restore` call must abort apply (set -e propagates its exit code) rather
+# than reporting success while discarding evidence of the unfinished
+# restore.
+rm -f "$restore_fail_settings"
+if HOME="$restore_fail_home" bash "$agy_module" apply >/dev/null 2>&1; then
+    fail "antigravity apply (disabled branch) reported success while restoring into a missing settings.json"
+fi
+[ -f "$restore_fail_backup" ] ||
+    fail "antigravity apply's disabled-branch restore discarded its backup after failing against a missing settings.json"
+
+# Invalid (non-object) target.
+printf 'not valid json' >"$restore_fail_settings"
+if HOME="$restore_fail_home" bash "$agy_module" apply >/dev/null 2>&1; then
+    fail "antigravity apply (disabled branch) reported success while restoring into an invalid settings.json"
+fi
+[ -f "$restore_fail_backup" ] ||
+    fail "antigravity apply's disabled-branch restore discarded its backup after failing against an invalid settings.json"
+
 echo "==> 12. OpenCode: fresh apply, override, preserve unrelated keys, workspace override, absent-key restore"
 opencode_module="${module_dir}/opencode.sh"
 oc_home="${work_dir}/oc-home"
@@ -391,6 +421,26 @@ BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" bash "$opencode_m
 BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" bash "$opencode_module" restore >/dev/null
 jq -e 'has("permission") | not' "${oc_home}/.config/opencode/opencode.json" >/dev/null ||
     fail "opencode restore set a default permission value instead of removing an absent key"
+
+# Restore fails loudly (not silently) when the target config is missing —
+# and leaves the backup in place rather than discarding it.
+BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" bash "$opencode_module" apply >/dev/null
+rm -f "${oc_home}/.config/opencode/opencode.json"
+if BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" bash "$opencode_module" restore >/dev/null 2>&1; then
+    fail "opencode restore reported success against a missing target config"
+fi
+[ -f "${oc_home}/.config/opencode/opencode.json.harmon-init-autonomy-backup" ] ||
+    fail "opencode restore discarded its backup after failing against a missing target config"
+
+# Restore fails loudly against an invalid (non-object) target config too,
+# also leaving the backup in place.
+printf 'not valid json\n' >"${oc_home}/.config/opencode/opencode.json"
+if BOT_AUTONOMY_OPENCODE_CONFIG_DIR="${oc_home}/.config/opencode" bash "$opencode_module" restore >/dev/null 2>&1; then
+    fail "opencode restore reported success against an invalid target config"
+fi
+[ -f "${oc_home}/.config/opencode/opencode.json.harmon-init-autonomy-backup" ] ||
+    fail "opencode restore discarded its backup after failing against an invalid target config"
+rm -f "${oc_home}/.config/opencode/opencode.json.harmon-init-autonomy-backup" "${oc_home}/.config/opencode/opencode.json"
 
 echo "==> 13. Claude Code module: apply/verify round-trip and failure on drift"
 claude_module="${module_dir}/claude-code.sh"

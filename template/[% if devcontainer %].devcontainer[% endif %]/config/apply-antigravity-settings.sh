@@ -147,8 +147,8 @@ apply)
 restore)
     [ -f "$backup_path" ] || exit 0
     if [ ! -f "$settings_path" ] || ! valid_object "$settings_path"; then
-        echo "Cannot restore Antigravity policy into missing or invalid ${settings_path}." >&2
-        exit 0
+        echo "Cannot restore Antigravity policy into missing or invalid ${settings_path}; leaving ${backup_path} in place." >&2
+        exit 1
     fi
     if ! jq -e --argjson keys "$managed_keys" '
         type == "object" and (.schemaVersion == 6 or .schemaVersion == 5 or .schemaVersion == 4 or .schemaVersion == 3) and

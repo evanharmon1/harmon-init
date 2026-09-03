@@ -69,8 +69,8 @@ cmd_apply() {
 cmd_restore() {
     [ -f "$BACKUP" ] || return 0
     if [ ! -f "$CONFIG" ] || ! valid_object "$CONFIG"; then
-        echo "opencode: cannot restore into missing or invalid ${CONFIG}" >&2
-        return 0
+        echo "opencode: restore failed — ${CONFIG} is missing or not a valid JSON object; leaving ${BACKUP} in place" >&2
+        return 1
     fi
     local config_tmp
     config_tmp="$(mktemp "${CONFIG_DIR}/opencode.json.tmp.XXXXXX")"
