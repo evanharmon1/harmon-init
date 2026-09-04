@@ -35,8 +35,14 @@
       one-line comment matching `use_antigravity_cli`'s existing comment
       shape; verify with `task audit:dogfood` showing no new unexplained
       drift
-- [ ] 1.3 Add `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` (rendered from
-      `{{ use_copilot_cli }}` to the literal `enabled`/`disabled`) and
+- [ ] 1.3 Add `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` (rendered
+      `"[[ 'enabled' if use_copilot_cli else 'disabled' ]]"` — this
+      template's own Jinja delimiters per `copier.yml`'s `_envops` block
+      (`[[ … ]]` expressions, `[% … %]` blocks, never `{{ }}`/`{% %}`,
+      which would collide with a generated workflow file's own GitHub
+      Actions `${{ }}` syntax), matching exactly how
+      `HARMON_BOT_AUTONOMY_ANTIGRAVITY` already renders from
+      `use_antigravity_cli` in both `devcontainer.json` twins) and
       `containerEnv.COPILOT_ALLOW_ALL` (rendered to the exact literal
       `"true"` when the answer is on, the exact literal `"false"` when it
       is off — **always present, never omitted in either state**) to the
@@ -86,8 +92,10 @@
       mode is irrelevant (prompt-enabled is already the intended outcome
       there) and would otherwise fail a default-off consumer whose own org
       separately locks bypass mode via MDM, unconnected to this repo's
-      Copier answer. Verify by running `bot-autonomy.sh apply verify` in a
-      scratch fixture with the marker `enabled` and `disabled`, a fixture
+      Copier answer. Verify by running `bot-autonomy.sh apply` then
+      `bot-autonomy.sh verify` (two separate invocations — the script
+      dispatches on `$1` alone; there is no combined `apply verify` form)
+      in a scratch fixture with the marker `enabled` and `disabled`, a fixture
       that sets `COPILOT_ALLOW_ALL` to a truthy-but-wrong value (`"1"`,
       `"yes"`) and confirms `verify` fails naming Copilot, a fixture with
       the marker `enabled` AND `disableBypassPermissionsMode: "disable"`
@@ -299,13 +307,46 @@
       `task test:dogfood-parity` and `task test:dogfood-structure`, and
       confirm no `template/copier.yml` file was created
 - [ ] 5.5 Confirm the existing `devcontainer-assert-bot` CI job (wired by
-      `bot-autonomy-bootstrap`'s task 3.3b) needs no new step — it already
-      runs `bot-autonomy.sh verify` inside the built bot container, which
-      now covers three more harnesses by construction; verify by running
-      that job (or its local equivalent, `task test:devcontainer:root`)
-      against a build that includes `copilot`/`pi`/`omp` and confirming it
-      fails against a deliberately misconfigured one of the three new
-      modules, the same way it already does for the original four
+      `bot-autonomy-bootstrap`'s task 3.3b) needs no new step of its own —
+      it already runs `bot-autonomy.sh verify` inside the built bot
+      container, which covers three more harnesses by construction once
+      the binaries are present. **This job cannot actually exercise
+      `copilot`/`pi`/`omp` from this change's own implementation PR**: it
+      builds `.devcontainer/Dockerfile` exactly as pinned
+      (`scripts/devcontainer-assert.sh` enforces the `FROM` line matches
+      the checked-in immutable reference — there is no scratch-image or
+      alternate-pin mechanism in this repo's tooling to build against a
+      newer, unpinned digest instead), and that pin is still the
+      pre-`harness-matrix` image until the sync-pin PR (#1152) lands. This
+      change's own verification is therefore unit fixtures only (tasks
+      1.4, 2.1, 3.2/3.3); the container assertion actually covering the
+      three new modules runs for the first time once #1152's pin bump
+      lands — see task 5.6 and 6.3 below
+- [ ] 5.6 Add the smoke-isolation volume suffix
+      (`${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}`) to the
+      `omp-config` mount in both `devcontainer.json` twins (root bot + dev)
+      and both `template/` twins — confirmed missing by inspection: the
+      `gemini-config` and `opencode-config` mounts already carry it
+      (`bot-autonomy-bootstrap`'s own task 3.3c requirement, applied when
+      those two modules' backup-gated-on-no-backup-existing-yet fixtures
+      needed run-isolated volumes), but `omp-config` does not, and the
+      same reasoning applies identically to oh-my-pi's own backup/restore
+      fixture (task 3.2's `apply → apply → restore` sequence) — without
+      isolation, a CI run reusing the persistent volume would only
+      exercise the true first-run/absent-backup state once, ever, exactly
+      the gap task 3.3c closed for gemini/opencode. Also confirm
+      `copilot-config` and `pi-config`: **no fix needed for either** —
+      Copilot's module has no backup/restore at all (design.md - Decisions;
+      it only installs/removes a wrapper file), and pi's module writes
+      nothing (design.md - Decisions, the maintainer's "Resolved
+      2026-09-03" no-elevated-trust decision), so neither has a
+      first-run-sensitive fixture the isolation gap could actually affect —
+      state this explicitly rather than adding an unneeded suffix to mounts
+      whose modules have nothing stateful to isolate; verify with
+      `task test:dogfood-parity` (root vs. template) and by re-running the
+      CI container-assertion job (once #1152 lands and it can exercise
+      `omp` at all) twice in a row, confirming both runs independently
+      observe oh-my-pi's first-run, absent-backup behavior
 
 ## 6. Verification
 
@@ -316,22 +357,32 @@
       checkout are all available) `task test:devcontainer:root`; this stays
       a manual step per `bot-autonomy-bootstrap`'s own documented `ci`
       carve-out (its task 3.5), not wired into `task ci`; verify both pass
-- [ ] 6.3 Rebuild a freshly generated bot devcontainer with
-      `use_copilot_cli: true` and manually exercise one representative task
-      through Copilot CLI (or oh-my-pi's documented `unsupported` state if
-      task 3.3 applied); verify zero approval prompts for Copilot,
-      completing the Copilot clause of #1137's first `[CI]` acceptance
-      criterion and contributing to its `[HUMAN]` criterion alongside the
-      four harnesses `bot-autonomy-bootstrap` already covers — note that
-      #1137's own acceptance criteria name Codex, Claude Code, Antigravity,
-      Copilot CLI, and OpenCode explicitly; pi and oh-my-pi are this
-      change's own broader scope (registry-completeness coverage), not
-      named in the issue. Repeat against a rebuild at `use_copilot_cli`'s
-      default (off) and confirm Copilot prompts as expected — the
-      by-design, verified-correct outcome at the default, not a
-      regression. Separately, exercise pi manually and confirm it behaves
-      as the maintainer's decision (design.md - Decisions, "Resolved
-      2026-09-03") states: zero approval prompts (pi's non-interactive
-      modes never prompt for trust regardless of this setting), and this
-      repository's own `.pi/` resources (if any exist) silently not
-      loading — the decided, current state, not a bug to chase
+- [ ] 6.3 **This change's own implementation PR cannot rebuild a "freshly
+      generated bot devcontainer" that actually has `copilot`/`pi`/`omp`
+      installed** — same reason as task 5.5: the pin those binaries need is
+      `.devcontainer/Dockerfile`'s, and it is not bumped until the
+      sync-pin PR (#1152) merges, which this change's own implementation
+      merges *before* (design.md - Migration Plan). The end-to-end,
+      zero-prompts exercise therefore cannot be this change's own
+      acceptance step; it belongs on #1152's, since that PR is what first
+      makes a bot container with these three binaries buildable at all.
+      Add it to #1152's PR body as an explicit checklist item, alongside
+      the existing "bot-autonomy-new-harnesses has merged" one — something
+      in the shape of: "rebuild a freshly generated bot devcontainer with
+      `use_copilot_cli: true` and exercise one representative task through
+      each of Copilot CLI, pi, and oh-my-pi (or oh-my-pi's documented
+      `unsupported` state if this change's task 3.3 contingency applied);
+      confirm zero approval prompts for Copilot and pi, completing the
+      Copilot clause of #1137's first `[CI]` acceptance criterion and
+      contributing to its `[HUMAN]` criterion; repeat at `use_copilot_cli`'s
+      default (off) and confirm Copilot prompts as expected — the by-design
+      outcome, not a regression." Note for whoever adds it: #1137's own
+      acceptance criteria name Codex, Claude Code, Antigravity, Copilot
+      CLI, and OpenCode explicitly — pi and oh-my-pi are this change's own
+      broader registry-completeness scope, not named in the issue, so their
+      exercise on #1152 is this change's own verification interest, not
+      something #1137 itself is waiting on. This change's own task 6
+      therefore stops at 6.1/6.2 (unit-level `task verify`/`task security`
+      and the permissions/root smoke tests) — there is nothing further
+      this implementation PR can itself verify end-to-end before #1152
+      lands

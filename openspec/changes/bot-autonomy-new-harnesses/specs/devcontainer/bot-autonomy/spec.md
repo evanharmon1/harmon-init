@@ -7,8 +7,14 @@ Copier-gated-harness contract `bot-autonomy-bootstrap` establishes for
 Antigravity: the `copilot-cli` module SHALL always exist and always cover
 the harness; only its effective policy is conditional. The module's `apply`
 SHALL read the rendered `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` marker
-(`enabled`/`disabled`, sourced from `{{ use_copilot_cli }}`) and SHALL NOT
-derive the Copier answer any other way. Unlike `HARMON_BOT_AUTONOMY_ANTIGRAVITY`,
+(`enabled`/`disabled`, rendered as
+`[[ 'enabled' if use_copilot_cli else 'disabled' ]]` — this template's own
+Jinja delimiters, per `copier.yml`'s `_envops` block: `[[ … ]]` for
+expressions, `[% … %]` for blocks, never the standard `{{ }}`/`{% %}` pair,
+reserved so a generated `.github/workflows/*.yml` file's own
+`${{ github.… }}` expressions never collide with Copier's own templating —
+exactly the pattern `HARMON_BOT_AUTONOMY_ANTIGRAVITY` already uses for
+`use_antigravity_cli`) and SHALL NOT derive the Copier answer any other way. Unlike `HARMON_BOT_AUTONOMY_ANTIGRAVITY`,
 which the bot **and** dev `devcontainer.json` jinja twins both render (a
 shared script, `ensure-antigravity-cli.sh`, runs in both profiles and needs
 the marker in either), `HARMON_BOT_AUTONOMY_COPILOT` and `COPILOT_ALLOW_ALL`

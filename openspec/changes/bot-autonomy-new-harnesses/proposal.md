@@ -110,7 +110,11 @@ clause does.
   assertions with the new modules — no new CI step, since that job already
   invokes `bot-autonomy.sh verify` inside the running container per
   `bot-autonomy-bootstrap`, and `verify` now covers three more harnesses by
-  construction.
+  construction. That coverage becomes real only once the sync-pin PR
+  (#1152) also lands — the job builds the checked-in pin exactly as
+  committed, and this change's own implementation PR merges before that
+  pin is bumped (design.md - Migration Plan); this change's own
+  verification is unit fixtures (tasks.md group 1-3), not this CI job.
 - Extend `docs/guides/devcontainers.md`, `docs/architecture/security.md`,
   and `copier.yml`'s help text with each new harness's boundary, alongside
   whatever bot-autonomy-bootstrap's own implementation leaves in place
@@ -205,7 +209,9 @@ clause does.
   `.github/workflows/devcontainer-build.yml`'s existing
   container-assertion step gains coverage for free — it already invokes
   `bot-autonomy.sh verify` per `bot-autonomy-bootstrap`, which now checks
-  three more harnesses with no new CI step.
+  three more harnesses with no new CI step — but not until the sync-pin PR
+  (#1152) also lands and the job's built image actually contains the three
+  binaries (tasks.md task 5.5).
 - Docs: `docs/guides/devcontainers.md`, `docs/architecture/security.md`,
   `copier.yml` help text.
 - Template twins: most files above have a `template/` twin per AGENTS.md's
