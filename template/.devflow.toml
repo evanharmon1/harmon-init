@@ -135,9 +135,9 @@ integrator_tier   = "standard"
 tier_escalation   = true
 description       = "Rigor: maximum scrutiny at every role — irreversible failure modes, security, data paths"
 
-# Per-rigor convergence overrides may only TIGHTEN the [convergence] catalog:
-# [rigor.forensic.convergence]
-# diverge_after = 1
+# A [rigor.<level>.convergence] table may replace `converged`, `diverging`,
+# or both with a full composed expression, but only when the replacement is
+# provably tighter than the matching [convergence] catalog value.
 
 # ── Rounds — vertical appetite: review rounds, fix cycles, wall clock ───────
 # challenge/review: max heuristic passes per confidence stage; 0 disables the

@@ -80,6 +80,67 @@ fi
 cp template/.devflow.toml .devflow.toml
 resolve_reader --rigor cursory --strategy oneshot
 
+resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy=.devflow.toml \
+    --registry=agent-registry.json \
+    --taskfile-dir=. \
+    --rigor=forensic \
+    --strategy=oneshot \
+    --json)"
+if [ "$(printf '%s' "$resolved" | jq -r '.rigor.level')" != "forensic" ]; then
+    echo "FAIL: JS reader did not honor --key=value options" >&2
+    exit 1
+fi
+if resolve_reader --rigro forensic 2>unknown-option.err; then
+    echo "FAIL: JS reader accepted an unknown option" >&2
+    exit 1
+fi
+grep -q 'unsupported option' unknown-option.err || {
+    echo "FAIL: unknown option did not produce an explicit diagnostic" >&2
+    exit 1
+}
+
+cp template/.devflow.toml .devflow.toml
+sed -i '/^\[role\.implementer\]/,/^\[/ s/harnesses = \[/harnesses = "not-an-array" #/' .devflow.toml
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted a non-array role harness preference" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+sed -i '/^\[role\.implementer\]/a harneses = ["codex-cli"]' .devflow.toml
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted an unknown role preference key" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+sed -i '/^\[strategy\.orchestrate\]/,/^\[/ s/delegation   = "required"/delegation   = "none"/' .devflow.toml
+if resolve_reader --strategy orchestrate 2>/dev/null; then
+    echo "FAIL: JS reader accepted lead-and-workers with delegation=none" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+sed -i 's/^\[strategy\.council\]/[strategy.panel]/' .devflow.toml
+sed -i '/^\[role\.implementer\]/,/^\[/ s/families  = \["claude", "gpt", "gemini"\]/families  = ["claude"]/' .devflow.toml
+if resolve_reader --strategy panel 2>/dev/null; then
+    echo "FAIL: JS reader let a renamed independent-proposals strategy bypass distinct-family validation" >&2
+    exit 1
+fi
+
+cp template/.devflow.toml .devflow.toml
+cat >>.devflow.toml <<'EOF'
+
+[rigor.standard.convergence]
+converged = { all = [
+  { predicate = "no_gating_findings" },
+  { predicate = "repeat_after_fix" },
+] }
+EOF
+resolve_reader
+
+cp template/.devflow.toml .devflow.toml
 if resolve_reader --closure /tmp/not-a-trust-boundary 2>closure.err; then
     echo "FAIL: JS reader accepted retired in-module --closure delegation" >&2
     exit 1

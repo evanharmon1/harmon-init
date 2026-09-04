@@ -86,7 +86,8 @@
         "reviewer_tier": { "$ref": "#/$defs/tier" },
         "integrator_tier": { "$ref": "#/$defs/tier" },
         "tier_escalation": { "type": "boolean" },
-        "description": { "type": "string", "minLength": 1, "maxLength": 100 }
+        "description": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "convergence": { "$ref": "#/$defs/convergence_override" }
       }
     },
     "rigor_profiles": {
@@ -179,6 +180,61 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["topology", "planning", "delegation", "human_gates", "description"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": { "topology": { "const": "lead-and-workers" } }
+          },
+          "then": {
+            "required": ["coordination", "min_agents"],
+            "properties": { "delegation": { "const": "required" } },
+            "not": {
+              "anyOf": [
+                { "required": ["selection"] },
+                { "required": ["synthesis"] },
+                { "required": ["distinct_families"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": { "topology": { "const": "independent-proposals" } }
+          },
+          "then": {
+            "required": ["selection", "synthesis", "min_agents"],
+            "properties": { "delegation": { "const": "required" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": {
+              "topology": { "enum": ["single-agent", "human-directed"] }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["coordination"] },
+                { "required": ["selection"] },
+                { "required": ["synthesis"] },
+                { "required": ["min_agents"] },
+                { "required": ["distinct_families"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["topology"],
+            "properties": { "topology": { "const": "single-agent" } }
+          },
+          "then": { "properties": { "delegation": { "enum": ["none", "optional"] } } }
+        }
+      ],
       "properties": {
         "topology": {
           "enum": ["single-agent", "lead-and-workers", "independent-proposals", "human-directed"]
@@ -238,6 +294,15 @@
         "increases": { "type": "integer", "minimum": 1 },
         "min": { "type": "number", "minimum": 0, "maximum": 1 },
         "exclude_classes": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "convergence_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "converged": { "$ref": "#/$defs/convergence_expression" },
+        "diverging": { "$ref": "#/$defs/convergence_expression" }
       }
     }
   }

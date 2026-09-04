@@ -776,15 +776,27 @@ function checkTightenOnly(base, over, stageName, errorPath) {
 
 function resolveConvergence(doc, levelName) {
   const base = doc.convergence
-  if (!base || typeof base !== 'object' || !base.converged || !base.diverging) {
+  if (!base || typeof base !== 'object' || Array.isArray(base)) {
     throw new PolicyError('policy has no [convergence] table with converged/diverging')
   }
+  requireClosedTable(base, ['converged', 'diverging'], [], '[convergence]')
   const baseConverged = validatePredicateExpr(base.converged, '[convergence].converged')
   const baseDiverging = validatePredicateExpr(base.diverging, '[convergence].diverging')
 
   const overrideTable = doc.rigor?.[levelName]?.convergence
   if (!overrideTable) {
     return { converged: baseConverged, diverging: baseDiverging, overridden: false }
+  }
+  requireClosedTable(
+    overrideTable,
+    [],
+    ['converged', 'diverging'],
+    `[rigor.${levelName}.convergence]`
+  )
+  if (!Object.hasOwn(overrideTable, 'converged') && !Object.hasOwn(overrideTable, 'diverging')) {
+    throw new PolicyError(
+      `[rigor.${levelName}.convergence] must override at least one of converged/diverging`
+    )
   }
   const overConverged = overrideTable.converged
     ? validatePredicateExpr(overrideTable.converged, `[rigor.${levelName}.convergence].converged`)
@@ -802,10 +814,44 @@ function resolveConvergence(doc, levelName) {
 }
 
 function resolveRoles(doc, profile, levelName, tierOrder) {
+  if (!doc.role || typeof doc.role !== 'object' || Array.isArray(doc.role)) {
+    throw new PolicyError('policy has no [role.*] tables')
+  }
+  const missingRoles = ROLES.filter((role) => !Object.hasOwn(doc.role, role))
+  const extraRoles = Object.keys(doc.role).filter((role) => !ROLES.includes(role))
+  if (missingRoles.length > 0 || extraRoles.length > 0) {
+    throw new PolicyError(
+      '[role.*] tables must match the five-role catalog exactly' +
+        `${missingRoles.length > 0 ? `; missing: ${missingRoles.join(', ')}` : ''}` +
+        `${extraRoles.length > 0 ? `; unsupported: ${extraRoles.join(', ')}` : ''}`
+    )
+  }
+
   const result = {}
   for (const role of ROLES) {
     const profileKey = `${role}_tier`
-    const roleTable = doc.role?.[role] || {}
+    const roleTable = doc.role[role]
+    const errorPath = `[role.${role}]`
+    requireClosedTable(roleTable, ['tier', 'families'], ['harnesses'], errorPath)
+    if (!tierOrder.includes(roleTable.tier)) {
+      throw new PolicyError(
+        `${errorPath}.tier must be a concrete tier in [${tierOrder.join(', ')}], got ${JSON.stringify(roleTable.tier)}`
+      )
+    }
+    for (const key of ['families', 'harnesses']) {
+      if (key === 'harnesses' && !Object.hasOwn(roleTable, key)) continue
+      const values = roleTable[key]
+      if (
+        !Array.isArray(values) ||
+        values.length === 0 ||
+        values.some((value) => typeof value !== 'string' || value.length === 0)
+      ) {
+        throw new PolicyError(`${errorPath}.${key} must be a non-empty array of strings`)
+      }
+      if (new Set(values).size !== values.length) {
+        throw new PolicyError(`${errorPath}.${key} must not contain duplicates`)
+      }
+    }
     const fromProfile = profile[profileKey]
     const tier = fromProfile !== undefined ? fromProfile : roleTable.tier
     if (typeof tier !== 'string') {
@@ -821,8 +867,8 @@ function resolveRoles(doc, profile, levelName, tierOrder) {
     result[role] = {
       tier,
       source: fromProfile !== undefined ? 'rigor-profile' : 'role-baseline',
-      families: Array.isArray(roleTable.families) ? roleTable.families : [],
-      harnesses: Array.isArray(roleTable.harnesses) ? roleTable.harnesses : []
+      families: roleTable.families,
+      harnesses: roleTable.harnesses || []
     }
   }
   return result
@@ -938,6 +984,22 @@ function resolveStrategy(doc, requestedStrategy) {
         `${errorPath}.delegation has unsupported value ${JSON.stringify(candidate.delegation)}`
       )
     }
+    const multiAgent =
+      candidate.topology === 'lead-and-workers' ||
+      candidate.topology === 'independent-proposals'
+    if (multiAgent && candidate.delegation !== 'required') {
+      throw new PolicyError(
+        `${errorPath}.topology ${JSON.stringify(candidate.topology)} requires delegation = "required"`
+      )
+    }
+    if (candidate.topology === 'single-agent' && candidate.delegation === 'required') {
+      throw new PolicyError(`${errorPath}.topology "single-agent" forbids delegation = "required"`)
+    }
+    if (candidate.delegation === 'none' && candidate.topology !== 'single-agent') {
+      throw new PolicyError(
+        `${errorPath}.delegation = "none" is valid only with topology = "single-agent"`
+      )
+    }
     if (!Array.isArray(candidate.human_gates)) {
       throw new PolicyError(`${errorPath}.human_gates must be an array`)
     }
@@ -980,6 +1042,34 @@ function resolveStrategy(doc, requestedStrategy) {
       (!Number.isInteger(candidate.min_agents) || candidate.min_agents < 2)
     ) {
       throw new PolicyError(`${errorPath}.min_agents must be an integer >= 2`)
+    }
+    const topologyFields = {
+      coordination: new Set(['lead-and-workers', 'independent-proposals']),
+      selection: new Set(['independent-proposals']),
+      synthesis: new Set(['independent-proposals']),
+      min_agents: new Set(['lead-and-workers', 'independent-proposals']),
+      distinct_families: new Set(['independent-proposals'])
+    }
+    for (const [key, topologies] of Object.entries(topologyFields)) {
+      if (Object.hasOwn(candidate, key) && !topologies.has(candidate.topology)) {
+        throw new PolicyError(
+          `${errorPath}.${key} is not valid for topology ${JSON.stringify(candidate.topology)}`
+        )
+      }
+    }
+    const topologyRequired =
+      candidate.topology === 'lead-and-workers'
+        ? ['coordination', 'min_agents']
+        : candidate.topology === 'independent-proposals'
+          ? ['selection', 'synthesis', 'min_agents']
+          : []
+    const missingTopologyFields = topologyRequired.filter(
+      (key) => !Object.hasOwn(candidate, key)
+    )
+    if (missingTopologyFields.length > 0) {
+      throw new PolicyError(
+        `${errorPath}.topology ${JSON.stringify(candidate.topology)} requires: ${missingTopologyFields.join(', ')}`
+      )
     }
   }
 
@@ -1118,9 +1208,11 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
   // min_agents and are unaffected.
   if (
     resolved.strategy &&
-    (resolved.strategy.name === 'orchestrate' || resolved.strategy.name === 'council')
+    (resolved.strategy.topology === 'lead-and-workers' ||
+      resolved.strategy.topology === 'independent-proposals')
   ) {
-    const { name, min_agents: minAgents, synthesis, coordination } = resolved.strategy
+    const { name, topology, min_agents: minAgents, synthesis, coordination } = resolved.strategy
+    const isCouncil = topology === 'independent-proposals'
     // `coordination`/`synthesis` decide which anchor-rule constraints apply
     // — a malformed value must be REJECTED, never silently read as the
     // absent/default case. Shepherd-stage cloud finding (round 3),
@@ -1135,9 +1227,9 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         `[strategy.${name}].coordination must be "parallel-when-independent" or absent, got ${JSON.stringify(coordination)}`
       )
     }
-    if (name === 'council' && synthesis !== undefined && typeof synthesis !== 'boolean') {
+    if (isCouncil && synthesis !== undefined && typeof synthesis !== 'boolean') {
       errors.push(
-        `[strategy.council].synthesis must be a boolean, got ${JSON.stringify(synthesis)}`
+        `[strategy.${name}].synthesis must be a boolean, got ${JSON.stringify(synthesis)}`
       )
     }
     if (!Number.isInteger(minAgents) || minAgents < 1) {
@@ -1146,7 +1238,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
       )
     } else {
       const isParallel = coordination === 'parallel-when-independent'
-      const requiredRuns = name === 'council' && synthesis === true ? minAgents + 1 : minAgents
+      const requiredRuns = isCouncil && synthesis === true ? minAgents + 1 : minAgents
       const {
         max_parallel_agents: maxParallel,
         max_agent_runs: maxRuns,
@@ -1158,7 +1250,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
       if (unmet.length > 0) {
         errors.push(
           `strategy "${name}" (min_agents=${minAgents}, coordination=${coordination ?? 'sequential'}` +
-            `${name === 'council' ? `, synthesis=${synthesis === true}` : ''}) is incompatible with ` +
+            `${isCouncil ? `, synthesis=${synthesis === true}` : ''}) is incompatible with ` +
             `[breadth.${breadthPolicy}] (max_parallel_agents=${maxParallel}, max_agent_runs=${maxRuns}): needs ${unmet.join(' and ')}`
         )
       }
@@ -1338,7 +1430,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
     // harness's actual family is chosen at runtime and cannot be statically
     // proven distinct from another broker's choice.
     if (
-      resolved.strategy?.name === 'council' &&
+      resolved.strategy?.topology === 'independent-proposals' &&
       resolved.strategy.distinct_families === true &&
       Number.isInteger(resolved.strategy.min_agents)
     ) {
@@ -1364,7 +1456,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
       }
       if (eligibleFamilies.size < requiredFamilies) {
         errors.push(
-          `[strategy.council].distinct_families requires ${requiredFamilies} distinct eligible families in the implement-stage pool, ` +
+          `[strategy.${resolved.strategy.name}].distinct_families requires ${requiredFamilies} distinct eligible families in the implement-stage pool, ` +
             `but only ${eligibleFamilies.size} (${[...eligibleFamilies].join(', ') || 'none'}) are available from fixed-family harnesses`
         )
       }
@@ -1722,22 +1814,59 @@ function readTaskTargets(explicitFile, taskfileDir) {
   return null
 }
 
-function parseArgs(argv) {
+const DETECT_OPTIONS = new Set(['policy', 'json'])
+const RESOLVE_OPTIONS = new Set([
+  'policy',
+  'merge-base-policy',
+  'registry',
+  'merge-base-registry',
+  'task-targets',
+  'taskfile-dir',
+  'rigor',
+  'strategy',
+  'json'
+])
+const BOOLEAN_OPTIONS = new Set(['json'])
+
+function parseArgs(argv, allowedOptions) {
   const args = { _: [] }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a.startsWith('--')) {
-      const key = a.slice(2)
+      const raw = a.slice(2)
+      const equalsAt = raw.indexOf('=')
+      const key = equalsAt === -1 ? raw : raw.slice(0, equalsAt)
+      const inlineValue = equalsAt === -1 ? undefined : raw.slice(equalsAt + 1)
+      if (!key || !allowedOptions.has(key)) {
+        throw new PolicyError(`unsupported option ${JSON.stringify(a)}`)
+      }
+      if (Object.hasOwn(args, key)) {
+        throw new PolicyError(`option --${key} may be supplied only once`)
+      }
+      if (BOOLEAN_OPTIONS.has(key)) {
+        if (inlineValue !== undefined) {
+          throw new PolicyError(`boolean option --${key} does not take a value`)
+        }
+        args[key] = true
+        continue
+      }
+      if (inlineValue !== undefined) {
+        if (inlineValue === '') throw new PolicyError(`option --${key} requires a value`)
+        args[key] = inlineValue
+        continue
+      }
       const next = argv[i + 1]
       if (next === undefined || next.startsWith('--')) {
-        args[key] = true
-      } else {
-        args[key] = next
-        i++
+        throw new PolicyError(`option --${key} requires a value`)
       }
+      args[key] = next
+      i++
     } else {
       args._.push(a)
     }
+  }
+  if (args._.length > 0) {
+    throw new PolicyError(`unexpected positional argument ${JSON.stringify(args._[0])}`)
   }
   return args
 }
@@ -1942,7 +2071,7 @@ function main() {
   // argument. A trusted broker/caller must materialize and invoke the
   // merge-base reader directly. Refuse the retired in-module spelling so a
   // stale caller cannot mistake an ignored/delegated flag for that boundary.
-  if (argv.includes('--closure')) {
+  if (argv.some((arg) => arg === '--closure' || arg.startsWith('--closure='))) {
     console.error(
       'devflow-policy: --closure cannot establish reader trust from inside branch-controlled code; invoke the materialized merge-base scripts/devflow-policy.mjs directly'
     )
@@ -1950,7 +2079,20 @@ function main() {
   }
 
   const cmd = argv[0]
-  const args = parseArgs(argv.slice(1))
+  if (cmd !== 'detect' && cmd !== 'resolve') {
+    console.error('usage: devflow-policy.mjs <detect|resolve> --policy <file> [options]')
+    return 2
+  }
+  let args
+  try {
+    args = parseArgs(argv.slice(1), cmd === 'detect' ? DETECT_OPTIONS : RESOLVE_OPTIONS)
+  } catch (err) {
+    if (err instanceof PolicyError) {
+      console.error(`devflow-policy: ${err.message}`)
+      return 2
+    }
+    throw err
+  }
   if (cmd === 'detect') return cliDetect(args)
   if (cmd === 'resolve') return cliResolve(args)
   console.error('usage: devflow-policy.mjs <detect|resolve> --policy <file> [options]')

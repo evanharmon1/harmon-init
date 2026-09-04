@@ -41,7 +41,8 @@ for rel in (".devflow.toml", "template/.devflow.toml"):
             fail(f"{manifest_rel}: rigor:{value} description drifted from {rel}")
     for name, profile in cfg["rigor"].items():
         required = {"rounds", "breadth", "orchestrator_tier", "implementer_tier", "challenger_tier", "reviewer_tier", "integrator_tier", "tier_escalation", "description"}
-        if set(profile) != required: fail(f"{rel}: rigor.{name} has invalid keys")
+        optional = {"convergence"}
+        if not required <= set(profile) or set(profile) - required - optional: fail(f"{rel}: rigor.{name} has invalid keys")
         if profile["rounds"] not in cfg["rounds"] or profile["breadth"] not in cfg["breadth"]: fail(f"{rel}: rigor.{name} references missing policy")
         if any(profile[key] not in tiers for key in required if key.endswith("_tier")): fail(f"{rel}: rigor.{name} has unknown tier")
     for name, rounds in cfg["rounds"].items():
@@ -69,7 +70,9 @@ for rel in (".devflow.toml", "template/.devflow.toml"):
     if set(conv) != {"converged", "diverging"}: fail(f"{rel}: convergence requires composed converged/diverging predicates")
 
 if (root / ".devflow.toml").read_bytes() != (root / "template/.devflow.toml").read_bytes(): fail(".devflow.toml dogfood twin drift")
-if json.loads((root / ".devflow.schema.json").read_text())["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
+schema = json.loads((root / ".devflow.schema.json").read_text())
+if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
+if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$ref") != "#/$defs/convergence_override": fail("v2 schema lacks per-rigor convergence overrides")
 print("devflow config v2 OK")
 PY
 

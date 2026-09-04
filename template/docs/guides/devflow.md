@@ -85,8 +85,9 @@ does not weaken tests, security, CI, branch protection, or human approval.
 
 `[convergence]` is data, not prose. The composed `converged` predicate and
 `diverging` predicate are evaluated from schema-bound round evidence. A rigor
-profile may provide a flat `[rigor.<level>.convergence]` override only where
-the override tightens the catalog value. The permitted predicate names and
+profile may provide a `[rigor.<level>.convergence]` table that replaces one or
+both outcomes with a full composed expression, but only where the replacement
+tightens the matching catalog value. The permitted predicate names and
 parameter keys are closed by the schema and reader.
 
 ## Breadth and spend
