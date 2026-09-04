@@ -6,6 +6,11 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cp -R . "$tmp/repo"
 cd "$tmp/repo"
+cp .devflow.toml "$tmp/pristine.devflow.toml"
+
+reset_policy() {
+    cp "$tmp/pristine.devflow.toml" .devflow.toml
+}
 
 rejects() {
     name="$1"
@@ -15,14 +20,14 @@ rejects() {
         echo "FAIL: accepted mutation: $name" >&2
         exit 1
     fi
-    cp template/.devflow.toml .devflow.toml
+    reset_policy
 }
 
 rejects legacy-version sed -i '0,/schema_version = 2/s//schema_version = 1/' .devflow.toml
 rejects unknown-gate sed -i '0,/round_code      = "verify"/s//round_code      = "bad gate"/' .devflow.toml
 rejects retired-tier-table sh -c 'printf "\n[tier.standard]\n" >> .devflow.toml'
 rejects unknown-harness sed -i '0,/codex-cli/s//unknown-harness/' .devflow.toml
-rejects misspelled-tier-escalation sed -i '0,/tier_escalation/s//tier_escaltion/' .devflow.toml
+rejects misspelled-tier-escalation sed -i '0,/^tier_escalation/s//tier_escaltion/' .devflow.toml
 rejects wrong-stage-finder sed -i '/^\[stage.challenge\]/,/^\[/ s/finders = \["codex-adversarial"\]/finders = ["codex-verification"]/' .devflow.toml
 rejects stage-pool-role-mismatch sed -i '/^\[stage.integration\]/a pool = ["codex-cli"]' .devflow.toml
 rejects invalid-strategy-topology sed -i '0,/topology    = "single-agent"/s//topology    = "nonsense"/' .devflow.toml
@@ -38,7 +43,7 @@ rejects adaptive-role-tier sed -i '/^\[rigor.standard\]/,/^\[/ s/reviewer_tier  
 # in toml-lite.mjs hide behind the reference parser instead of proving both
 # readers enforce the same numeric grammar.
 for malformed in 1e 1__2 1_; do
-    cp template/.devflow.toml .devflow.toml
+    reset_policy
     sed -i "0,/challenge      = 3/s//challenge      = $malformed/" .devflow.toml
     if node scripts/devflow-policy.mjs resolve --policy .devflow.toml >/dev/null 2>&1; then
         echo "FAIL: JS reader accepted malformed number: $malformed" >&2
@@ -54,30 +59,49 @@ resolve_reader() {
         "$@" >/dev/null
 }
 
+rejects_reader() {
+    name="$1"
+    shift
+    reset_policy
+    "$@"
+    if resolve_reader 2>/dev/null; then
+        echo "FAIL: JS reader accepted catalog mutation: $name" >&2
+        exit 1
+    fi
+}
+
+# The executable reader must enforce the same closed catalog as the schema,
+# including dormant entries that this particular resolution does not select.
+rejects_reader unknown-top-level-key sed -i '/^schema_version = 2$/a surprise = true' .devflow.toml
+rejects_reader extra-stage-table sh -c 'printf "\n[stage.deploy]\n" >> .devflow.toml'
+rejects_reader unknown-stage-key sed -i '/^\[stage.challenge\]/a surprise = []' .devflow.toml
+rejects_reader missing-dormant-rigor sed -i '/^\[rigor.light\]/,/^\[rigor.standard\]/ { /^\[rigor.standard\]/!d; }' .devflow.toml
+rejects_reader unknown-rigor-order-entry sed -i '0,/"light"/s//"ghost"/' .devflow.toml
+
 # Reader-specific semantic controls. These bypass the Python structural gate
 # so each failure proves the shipped JavaScript reader enforces the contract.
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i '/^\[rounds.light\]/,/^\[/ s/challenge      = 2/challenge      = "oops"/' .devflow.toml
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted malformed inactive rounds policy" >&2
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i '/^\[rounds.standard\]/,/^\[/ s/wall_clock_min = 120/wall_clock_min = 0/' .devflow.toml
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted zero wall-clock ceiling" >&2
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i '/^\[role.implementer\]/,/^\[/ s/families  = \["claude", "gpt", "gemini"\]/families  = ["claude"]/' .devflow.toml
 if resolve_reader --strategy council 2>/dev/null; then
     echo "FAIL: JS reader counted council families outside implementer eligibility" >&2
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 resolve_reader --rigor cursory --strategy oneshot
 
 resolved="$(node scripts/devflow-policy.mjs resolve \
@@ -100,28 +124,28 @@ grep -q 'unsupported option' unknown-option.err || {
     exit 1
 }
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i '/^\[role\.implementer\]/,/^\[/ s/harnesses = \[/harnesses = "not-an-array" #/' .devflow.toml
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted a non-array role harness preference" >&2
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i '/^\[role\.implementer\]/a harneses = ["codex-cli"]' .devflow.toml
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted an unknown role preference key" >&2
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i '/^\[strategy\.orchestrate\]/,/^\[/ s/delegation   = "required"/delegation   = "none"/' .devflow.toml
 if resolve_reader --strategy orchestrate 2>/dev/null; then
     echo "FAIL: JS reader accepted lead-and-workers with delegation=none" >&2
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 sed -i 's/^\[strategy\.council\]/[strategy.panel]/' .devflow.toml
 sed -i '/^\[role\.implementer\]/,/^\[/ s/families  = \["claude", "gpt", "gemini"\]/families  = ["claude"]/' .devflow.toml
 if resolve_reader --strategy panel 2>/dev/null; then
@@ -129,7 +153,7 @@ if resolve_reader --strategy panel 2>/dev/null; then
     exit 1
 fi
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 cat >>.devflow.toml <<'EOF'
 
 [rigor.standard.convergence]
@@ -140,7 +164,7 @@ converged = { all = [
 EOF
 resolve_reader
 
-cp template/.devflow.toml .devflow.toml
+reset_policy
 if resolve_reader --closure /tmp/not-a-trust-boundary 2>closure.err; then
     echo "FAIL: JS reader accepted retired in-module --closure delegation" >&2
     exit 1

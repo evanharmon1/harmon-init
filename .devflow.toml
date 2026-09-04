@@ -144,6 +144,10 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # stage (exit `capped`, reason `disabled`). min_rounds is the floor per
 # confidence stage below which the single-empty-round exit cannot fire;
 # effective floor is min(min_rounds, cap).
+# Generated projects set challenge/review and min_rounds to 0 when
+# use_codex_review is off, and integration to 0 when use_codex_cloud_review
+# is off. Their matching [stage.*].finders arrays render empty below, so an
+# opt-out never leaves an enabled stage with no installed reviewer task.
 # integration: bounds CODEX RE-REVIEW CYCLES ONLY. Human and CI findings are
 # always answered — uncapped. 0 waives only the Codex cycle (the readiness
 # gate's Codex condition drops out; every other condition stays). A fix after

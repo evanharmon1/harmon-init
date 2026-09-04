@@ -3,7 +3,7 @@
 set -euo pipefail
 
 python3 - <<'PY'
-import json, pathlib, re, sys, tomllib
+import json, pathlib, re, subprocess, sys, tempfile, tomllib
 
 root = pathlib.Path.cwd()
 roles = {"orchestrator", "implementer", "challenger", "reviewer", "integrator"}
@@ -20,9 +20,36 @@ families = {row["slug"] for row in registry["families"]}
 harnesses = {row["slug"] for row in registry["harnesses"]}
 finders = {row["slug"] for row in registry["finders"]}
 
-for rel in (".devflow.toml", "template/.devflow.toml"):
-    cfg = tomllib.loads((root / rel).read_text())
-    manifest_rel = "template/label-registry.json" if rel.startswith("template/") else "label-registry.json"
+template_path = root / "template/.devflow.toml.jinja"
+if not template_path.is_file(): fail("template/.devflow.toml.jinja is missing")
+if (root / "template/.devflow.toml").exists(): fail("unrendered template/.devflow.toml shadows the Jinja policy")
+
+def render_template_policy(*, local_review, cloud_review):
+    values = {
+        "use_codex_review": local_review,
+        "use_codex_cloud_review": cloud_review,
+    }
+    text = template_path.read_text()
+    expression = re.compile(r"\[\[\s*(\d+)\s+if\s+(use_codex_(?:cloud_)?review)\s+else\s+0\s*\]\]")
+    text = expression.sub(lambda match: match.group(1) if values[match.group(2)] else "0", text)
+    for variable, enabled in values.items():
+        block = re.compile(rf"\[% if {re.escape(variable)} %\]\n(.*?)\[% endif %\]\n?", re.S)
+        text = block.sub(lambda match: match.group(1) if enabled else "", text)
+    if "[[" in text or "[%" in text:
+        fail("template/.devflow.toml.jinja uses an untested Jinja expression")
+    return text
+
+policy_text = {
+    "root .devflow.toml": (root / ".devflow.toml").read_text(),
+    "template local=off cloud=off": render_template_policy(local_review=False, cloud_review=False),
+    "template local=on cloud=off": render_template_policy(local_review=True, cloud_review=False),
+    "template local=on cloud=on": render_template_policy(local_review=True, cloud_review=True),
+}
+parsed = {}
+for rel, text in policy_text.items():
+    cfg = tomllib.loads(text)
+    parsed[rel] = cfg
+    manifest_rel = "template/label-registry.json" if rel.startswith("template ") else "label-registry.json"
     manifest = json.loads((root / manifest_rel).read_text())
     if cfg.get("schema_version") != 2:
         fail(f"{rel}: schema_version=2 is required; migrate legacy v1 configuration")
@@ -69,28 +96,58 @@ for rel in (".devflow.toml", "template/.devflow.toml"):
     conv = cfg["convergence"]
     if set(conv) != {"converged", "diverging"}: fail(f"{rel}: convergence requires composed converged/diverging predicates")
 
-if (root / ".devflow.toml").read_bytes() != (root / "template/.devflow.toml").read_bytes(): fail(".devflow.toml dogfood twin drift")
+canonical = parsed["root .devflow.toml"]
+if policy_text["template local=on cloud=on"] != policy_text["root .devflow.toml"]:
+    fail("root .devflow.toml must byte-match the fully opted-in template render")
+for label, local_review, cloud_review in (
+    ("template local=off cloud=off", False, False),
+    ("template local=on cloud=off", True, False),
+    ("template local=on cloud=on", True, True),
+):
+    cfg = parsed[label]
+    for name, rounds in cfg["rounds"].items():
+        expected = canonical["rounds"][name]
+        for key in ("challenge", "review", "min_rounds"):
+            want = expected[key] if local_review else 0
+            if rounds[key] != want: fail(f"{label}: rounds.{name}.{key} must be {want}")
+        want_integration = expected["integration"] if cloud_review else 0
+        if rounds["integration"] != want_integration:
+            fail(f"{label}: rounds.{name}.integration must be {want_integration}")
+    for stage in ("challenge", "review"):
+        want = canonical["stage"][stage].get("finders", []) if local_review else []
+        if cfg["stage"][stage].get("finders", []) != want:
+            fail(f"{label}: stage.{stage}.finders does not honor use_codex_review")
+    want = canonical["stage"]["integration"].get("finders", []) if cloud_review else []
+    if cfg["stage"]["integration"].get("finders", []) != want:
+        fail(f"{label}: stage.integration.finders does not honor use_codex_cloud_review")
+
+with tempfile.TemporaryDirectory() as tmp:
+    for label, text in policy_text.items():
+        path = pathlib.Path(tmp) / f"{len(list(pathlib.Path(tmp).iterdir()))}.toml"
+        path.write_text(text)
+        run = subprocess.run(
+            ["node", "scripts/devflow-policy.mjs", "resolve", "--policy", str(path),
+             "--registry", "template/agent-registry.json", "--taskfile-dir", ".", "--json"],
+            text=True, capture_output=True,
+        )
+        if run.returncode != 0:
+            fail(f"{label}: executable reader rejected rendered policy: {run.stderr.strip()}")
+
 schema = json.loads((root / ".devflow.schema.json").read_text())
 if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
 if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$ref") != "#/$defs/convergence_override": fail("v2 schema lacks per-rigor convergence overrides")
 print("devflow config v2 OK")
 PY
 
-for policy in .devflow.toml template/.devflow.toml; do
-    registry="agent-registry.json"
-    if [[ "$policy" == template/* ]]; then
-        registry="template/agent-registry.json"
-    fi
-    node scripts/devflow-policy.mjs resolve \
-        --policy "$policy" \
-        --registry "$registry" \
-        --taskfile-dir . \
-        --json >/dev/null
-done
+node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --registry agent-registry.json \
+    --taskfile-dir . \
+    --json >/dev/null
 
 python3 scripts/test-devflow-conformance.py \
     --fixture .devflow-conformance-v2.json \
     --config .devflow.toml
 python3 scripts/test-devflow-conformance.py \
     --fixture template/.devflow-conformance-v2.json \
-    --config template/.devflow.toml
+    --config .devflow.toml

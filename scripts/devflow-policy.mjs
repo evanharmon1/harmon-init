@@ -32,6 +32,22 @@ const ROUND_KEYS = [
 ]
 const BREADTH_KEYS = ['max_agent_runs', 'max_parallel_agents']
 const SPEND_KEYS = ['max_tokens', 'max_usd']
+const TOP_LEVEL_REQUIRED_KEYS = [
+  'schema_version',
+  'default_rigor',
+  'default_strategy',
+  'rigor_order',
+  'tier_order',
+  'rigor',
+  'rounds',
+  'breadth',
+  'gates',
+  'convergence',
+  'role',
+  'stage',
+  'strategy'
+]
+const TOP_LEVEL_OPTIONAL_KEYS = ['spend']
 const GATE_KEYS = ['round_code', 'round_docs', 'secret_scan', 'pre_pr']
 const ROLES = ['orchestrator', 'implementer', 'challenger', 'reviewer', 'integrator']
 const CONFIDENCE_STAGES = ['challenge', 'review']
@@ -344,6 +360,19 @@ function resolveRigorLevel(doc, requestedRigor) {
   ) {
     throw new PolicyError("policy's rigor_order must contain unique non-empty rigor level names")
   }
+  if (doc.rigor === null || typeof doc.rigor !== 'object' || Array.isArray(doc.rigor)) {
+    throw new PolicyError('policy has no [rigor.*] tables')
+  }
+  const rigorNames = Object.keys(doc.rigor)
+  if (
+    rigorNames.length !== order.length ||
+    order.some((level) => !Object.hasOwn(doc.rigor, level))
+  ) {
+    throw new PolicyError(
+      `policy's rigor_order must be an exact permutation of [rigor.*] tables; ` +
+        `order=[${order.join(', ')}], tables=[${rigorNames.join(', ')}]`
+    )
+  }
   // default_rigor is a REQUIRED top-level v2 field (specs/dev-flow-v2.md
   // "Top level: schema_version = 2, default_rigor, default_strategy, and
   // two rankings"), not merely a fallback consulted only when no override
@@ -460,7 +489,12 @@ function resolveRounds(doc, profile, levelName) {
   // stage" — review round 3, confirmed: forensic accepted min_rounds 0 or
   // 1 like any other level, letting its first empty round exit through the
   // shortcut the ladder's strongest level is specifically meant to forbid.
-  if (levelName === 'forensic' && rounds.min_rounds < 2) {
+  if (
+    levelName === 'forensic' &&
+    rounds.challenge > 0 &&
+    rounds.review > 0 &&
+    rounds.min_rounds < 2
+  ) {
     throw new PolicyError(
       `[rounds.${policyName}]: forensic rigor requires min_rounds >= 2 (got ${rounds.min_rounds})`
     )
@@ -891,9 +925,11 @@ function resolveStageArray(value, label, fallback) {
 }
 
 function resolveStages(doc) {
+  requireClosedTable(doc.stage, STAGES, [], '[stage]')
   const result = {}
   for (const stage of STAGES) {
     const table = doc.stage?.[stage]
+    requireClosedTable(table, [], ['finders', 'finder_fallbacks', 'pool'], `[stage.${stage}]`)
     const finders = resolveStageArray(table?.finders, `[stage.${stage}].finders`, [])
     // Each entry in `finders` is its own all-of primary slot (dev-flow-exit.mjs
     // keys logical-round assembly by slot name) — a duplicate slug collapses
@@ -1477,6 +1513,10 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
  * separately and decide whether "indeterminate" blocks them.
  */
 export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrategy } = {}) {
+  requireClosedTable(doc, TOP_LEVEL_REQUIRED_KEYS, TOP_LEVEL_OPTIONAL_KEYS, 'policy')
+  if (doc.schema_version !== 2) {
+    throw new PolicyError(`policy schema_version must be 2, got ${JSON.stringify(doc.schema_version)}`)
+  }
   // A policy is one selectable catalog, not just today's default. Validate
   // every rounds/breadth/spend table before selecting a rigor so a dormant
   // malformed profile cannot become a delayed production failure when a

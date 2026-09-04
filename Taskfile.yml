@@ -484,7 +484,7 @@ tasks:
       - ./scripts/test-output.sh
 
   test:devflow-config:
-    desc: Validate the rigor/strategy execution-policy config in .devflow.toml (both copies) + the reference resolver
+    desc: Validate root and rendered-template v2 execution policies + the reference resolver
     cmds:
       - ./scripts/test-devflow-config.sh
       - ./scripts/test-devflow-config-mutations.sh

@@ -208,7 +208,12 @@ print("\n".join(sorted((tomllib.load(open(sys.argv[1], "rb")).get("rigor") or {}
         fail "$manifest rigor values [$(echo "$got" | tr '\n' ' ')] != $devflow levels [$(echo "$want" | tr '\n' ' ')] — the label must select an existing round-cap table"
 }
 check_rigor label-registry.json .devflow.toml
-[ "$template_mode" = 1 ] && check_rigor template/label-registry.json template/.devflow.toml
+# The source template is now Jinja-rendered so Codex opt-outs can zero their
+# stage caps/finders. Its rigor catalog is deliberately invariant and the
+# fully opted-in render equals this root dogfood policy structurally, so the
+# template label vocabulary is checked against the root catalog here; every
+# rendered profile checks its own concrete .devflow.toml above.
+[ "$template_mode" = 1 ] && check_rigor template/label-registry.json .devflow.toml
 
 # The four foreman protocol labels ship four different colors upstream
 # (ponderousdev/foreman); the per-value color overrides exist to reproduce

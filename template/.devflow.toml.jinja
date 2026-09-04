@@ -144,6 +144,10 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # stage (exit `capped`, reason `disabled`). min_rounds is the floor per
 # confidence stage below which the single-empty-round exit cannot fire;
 # effective floor is min(min_rounds, cap).
+# Generated projects set challenge/review and min_rounds to 0 when
+# use_codex_review is off, and integration to 0 when use_codex_cloud_review
+# is off. Their matching [stage.*].finders arrays render empty below, so an
+# opt-out never leaves an enabled stage with no installed reviewer task.
 # integration: bounds CODEX RE-REVIEW CYCLES ONLY. Human and CI findings are
 # always answered — uncapped. 0 waives only the Codex cycle (the readiness
 # gate's Codex condition drops out; every other condition stays). A fix after
@@ -158,51 +162,51 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # that want zero AI review at a level; no shipped level uses one.
 
 [rounds.cursory]
-challenge      = 1
-review         = 1
-integration    = 1
+challenge      = [[ 1 if use_codex_review else 0 ]]
+review         = [[ 1 if use_codex_review else 0 ]]
+integration    = [[ 1 if use_codex_cloud_review else 0 ]]
 remediation    = 2
-min_rounds     = 1
+min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 30
 
 [rounds.light]
-challenge      = 2
-review         = 2
-integration    = 3
+challenge      = [[ 2 if use_codex_review else 0 ]]
+review         = [[ 2 if use_codex_review else 0 ]]
+integration    = [[ 3 if use_codex_cloud_review else 0 ]]
 remediation    = 3
-min_rounds     = 1
+min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 60
 
 [rounds.standard]
-challenge      = 3
-review         = 3
-integration    = 4
+challenge      = [[ 3 if use_codex_review else 0 ]]
+review         = [[ 3 if use_codex_review else 0 ]]
+integration    = [[ 4 if use_codex_cloud_review else 0 ]]
 remediation    = 4
-min_rounds     = 1
+min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 120
 
 [rounds.thorough]
-challenge      = 4
-review         = 4
-integration    = 5
+challenge      = [[ 4 if use_codex_review else 0 ]]
+review         = [[ 4 if use_codex_review else 0 ]]
+integration    = [[ 5 if use_codex_cloud_review else 0 ]]
 remediation    = 5
-min_rounds     = 1
+min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 240
 
 [rounds.deep]
-challenge      = 5
-review         = 5
-integration    = 6
+challenge      = [[ 5 if use_codex_review else 0 ]]
+review         = [[ 5 if use_codex_review else 0 ]]
+integration    = [[ 6 if use_codex_cloud_review else 0 ]]
 remediation    = 6
-min_rounds     = 1
+min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 480
 
 [rounds.forensic]
-challenge      = 6
-review         = 6
-integration    = 8
+challenge      = [[ 6 if use_codex_review else 0 ]]
+review         = [[ 6 if use_codex_review else 0 ]]
+integration    = [[ 8 if use_codex_cloud_review else 0 ]]
 remediation    = 8
-min_rounds     = 2   # forensic: a single empty round never ends a stage
+min_rounds     = [[ 2 if use_codex_review else 0 ]]   # forensic: a single empty round never ends a stage
 wall_clock_min = 720
 
 # ── Breadth — horizontal scale: how many agents, how wide ───────────────────
@@ -361,15 +365,21 @@ harnesses = ["claude-code"]   # (preference) — live every run:
                                                   # registered harnesses
 
 [stage.challenge]
+[% if use_codex_review %]
 finders = ["codex-adversarial"]
+[% endif %]
 # finder_fallbacks = []
 
 [stage.review]
+[% if use_codex_review %]
 finders = ["codex-verification"]
+[% endif %]
 # finder_fallbacks = []
 
 [stage.integration]
+[% if use_codex_cloud_review %]
 finders = ["codex-cloud"]
+[% endif %]
 # finder_fallbacks = []
 
 # ── Strategies — how the work is organized ──────────────────────────────────
