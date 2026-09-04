@@ -172,6 +172,25 @@ const BUILTIN_BREADTH_DEFAULT = Object.freeze({
   max_agent_runs: 8,
   max_parallel_agents: 3
 })
+// The no-policy fallback is the stable, deliberately small vocabulary promised
+// by AGENTS.md: standard rigor plus plan strategy. Keep these values independent
+// of the branch policy so deleting or weakening .devflow.toml cannot rewrite the
+// fallback that a trusted copy of this reader applies.
+const BUILTIN_ABSENT_ROUNDS = Object.freeze({
+  policy: 'builtin:standard',
+  challenge: 3,
+  review: 3,
+  integration: 4,
+  remediation: 4,
+  min_rounds: 1,
+  wall_clock_min: 120,
+  shared_budget: false
+})
+const BUILTIN_ABSENT_BREADTH = Object.freeze({
+  policy: 'builtin:standard',
+  max_agent_runs: 6,
+  max_parallel_agents: 3
+})
 // tier_order is a spec-pinned constant (specs/dev-flow-v2.md § Configuration:
 // "tier_order is local → economy → standard → frontier → apex and is the
 // only definition of one-rung escalation"), not a per-repo choice — using it
@@ -228,11 +247,56 @@ function builtinRolesDefault() {
 // same topology vocabulary, so the decoder preserves it when present. This is
 // the fallback only when the merge-base genuinely has no strategy catalog.
 const BUILTIN_STRATEGY_DEFAULT = Object.freeze({
-  name: 'builtin-default',
+  name: 'plan',
   topology: 'single-agent',
-  planning: 'inline',
-  delegation: 'none'
+  planning: 'explicit',
+  delegation: 'optional',
+  human_gates: [],
+  description: 'Built-in plan strategy'
 })
+
+/** Resolve the documented fallback used only when .devflow.toml is absent. */
+export function resolveAbsentPolicy({ rigor: requestedRigor, strategy: requestedStrategy } = {}) {
+  if (requestedRigor !== undefined && requestedRigor !== 'standard') {
+    throw new PolicyError(
+      `requested rigor ${JSON.stringify(requestedRigor)} is unavailable without .devflow.toml; the built-in fallback supports only "standard"`
+    )
+  }
+  if (requestedStrategy !== undefined && requestedStrategy !== 'plan') {
+    throw new PolicyError(
+      `requested strategy ${JSON.stringify(requestedStrategy)} is unavailable without .devflow.toml; the built-in fallback supports only "plan"`
+    )
+  }
+
+  const roles = builtinRolesDefault()
+  roles.orchestrator.tier = 'frontier'
+  roles.implementer.tier = 'standard'
+  roles.challenger.tier = 'frontier'
+  roles.reviewer.tier = 'standard'
+  roles.integrator.tier = 'economy'
+
+  return {
+    source: 'built-in-fallback',
+    rigor: { level: 'standard', order: ['standard'], tier_escalation: false },
+    rounds: { ...BUILTIN_ABSENT_ROUNDS },
+    breadth: { ...BUILTIN_ABSENT_BREADTH },
+    spend: { policy: null, max_tokens: null, max_usd: null, status: 'UNENFORCED' },
+    gates: { ...BUILTIN_GATE_DEFAULTS, source: 'builtin-default' },
+    convergence: {
+      converged: { ...BUILTIN_CONVERGENCE_DEFAULT.converged },
+      diverging: { ...BUILTIN_CONVERGENCE_DEFAULT.diverging },
+      overridden: false
+    },
+    tier_order: [...BUILTIN_TIER_ORDER],
+    roles,
+    stages: builtinStagesDefault(),
+    strategy: { ...BUILTIN_STRATEGY_DEFAULT },
+    // Empty role/stage preferences are intentional when no policy exists;
+    // crossValidate uses this marker to distinguish them from a malformed v2
+    // policy that silently omitted all executable actors.
+    decodedFrom: 'absent'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shape detection
@@ -1906,6 +1970,21 @@ export function decodeHistoricalPolicy(
  *     rule also applies).
  */
 export function resolvePolicy(doc, opts = {}) {
+  if (doc === null || doc === undefined) {
+    if (!opts.mergeBaseDoc) return resolveAbsentPolicy(opts)
+
+    const mbDetection = detectShape(opts.mergeBaseDoc)
+    if (mbDetection.shape === 'v2') {
+      return { ...resolveV2(opts.mergeBaseDoc, opts), source: 'merge-base' }
+    }
+    if (mbDetection.shape === 'legacy' || mbDetection.shape === 'v1') {
+      return decodeHistoricalPolicy(opts.mergeBaseDoc, mbDetection, opts)
+    }
+    throw new PolicyError(
+      `merge-base .devflow.toml is ${shapeRefusalMessage(mbDetection, { forOperating: false })} and cannot be decoded`
+    )
+  }
+
   requireOperatingV2(doc)
 
   if (!opts.mergeBaseDoc) {
@@ -2086,8 +2165,12 @@ function cliResolve(args) {
   try {
     doc = loadTomlFile(args.policy)
   } catch (err) {
-    console.error(`devflow-policy: could not read/parse --policy: ${err.message}`)
-    return 2
+    if (err?.code === 'ENOENT') {
+      doc = null
+    } else {
+      console.error(`devflow-policy: could not read/parse --policy: ${err.message}`)
+      return 2
+    }
   }
 
   let mergeBaseDoc = null
@@ -2160,7 +2243,7 @@ function cliResolve(args) {
   // fixtures exist to prove safe. A caller that wants this to gate CI can
   // check branch_cross_validation.errors itself.
   let branchCrossValidation = null
-  if (mergeBaseDoc && args.registry) {
+  if (mergeBaseDoc && doc && args.registry) {
     let branchRegistryDoc
     try {
       branchRegistryDoc = JSON.parse(readFileSync(args.registry, 'utf8'))

@@ -31,7 +31,14 @@ CASE_KEYS = {
     "unattended",
 }
 EXPECT_KEYS = {"error_diagnostics", "exit", "result", "warning_diagnostics"}
-V2_CASE_KEYS = {"basis", "config_replacements", "expect", "name"}
+V2_CASE_KEYS = {
+    "basis",
+    "config_replacements",
+    "expect",
+    "merge_base_replacements",
+    "name",
+    "overrides",
+}
 
 
 def fail(message: str) -> None:
@@ -126,8 +133,27 @@ def run_v2(repo: Path, fixture: dict, config: Path) -> int:
                 f"{name}: v2 reader does not support case input(s): {', '.join(unsupported)}"
             )
             continue
-        if case.get("basis") != "branch":
-            failures.append(f"{name}: v2 reader currently supports only basis='branch'")
+        basis = case.get("basis")
+        if basis not in {"absent", "branch", "merge-base"}:
+            failures.append(f"{name}: basis must be absent, branch, or merge-base")
+            continue
+        overrides = case.get("overrides", [])
+        if not isinstance(overrides, list) or not all(isinstance(value, str) for value in overrides):
+            failures.append(f"{name}: overrides must be an array of strings")
+            continue
+        selections: dict[str, str] = {}
+        try:
+            for override in overrides:
+                axis, value = override.split("=", 1)
+                if axis not in {"rigor", "strategy"} or not value:
+                    raise ValueError(
+                        f"{name}: v2 overrides support only non-empty rigor=<value> or strategy=<value>"
+                    )
+                if axis in selections:
+                    raise ValueError(f"{name}: duplicate {axis} override")
+                selections[axis] = value
+        except ValueError as exc:
+            failures.append(str(exc))
             continue
         expected = case.get("expect")
         if not isinstance(expected, dict):
@@ -147,26 +173,46 @@ def run_v2(repo: Path, fixture: dict, config: Path) -> int:
             continue
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                policy = Path(tmp) / "policy.toml"
-                policy.write_text(
+                tmp_path = Path(tmp)
+                policy = tmp_path / "policy.toml"
+                branch_text = (
                     replace(source, case.get("config_replacements", []), name, "config_replacements")
                 )
-                result = subprocess.run(
-                    [
-                        "node",
-                        str(repo / "scripts" / "devflow-policy.mjs"),
-                        "resolve",
-                        "--policy",
-                        str(policy),
-                        "--registry",
-                        str(repo / "agent-registry.json"),
-                        "--taskfile-dir",
-                        str(repo),
-                        "--json",
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
+                if basis != "absent":
+                    policy.write_text(branch_text)
+                command = [
+                    "node",
+                    str(repo / "scripts" / "devflow-policy.mjs"),
+                    "resolve",
+                    "--policy",
+                    str(policy),
+                    "--registry",
+                    str(repo / "agent-registry.json"),
+                    "--taskfile-dir",
+                    str(repo),
+                    "--json",
+                ]
+                if basis == "merge-base":
+                    merge_base = tmp_path / "merge-base.toml"
+                    merge_base.write_text(
+                        replace(
+                            source,
+                            case.get("merge_base_replacements", []),
+                            name,
+                            "merge_base_replacements",
+                        )
+                    )
+                    command.extend(
+                        [
+                            "--merge-base-policy",
+                            str(merge_base),
+                            "--merge-base-registry",
+                            str(repo / "agent-registry.json"),
+                        ]
+                    )
+                for axis, value in selections.items():
+                    command.extend([f"--{axis}", value])
+                result = subprocess.run(command, capture_output=True, text=True)
         except (OSError, ValueError) as exc:
             failures.append(f"{name}: harness failure: {exc}")
             continue
@@ -179,9 +225,20 @@ def run_v2(repo: Path, fixture: dict, config: Path) -> int:
             except json.JSONDecodeError as exc:
                 failures.append(f"{name}: invalid reader JSON: {exc}")
                 continue
+            normalized["config_source"] = resolved["source"]
             normalized["selections"] = {
-                "rigor": {"value": resolved["rigor"]["level"], "source": "default"},
-                "strategy": {"value": resolved["strategy"]["name"], "source": "default"},
+                "rigor": {
+                    "value": resolved["rigor"]["level"],
+                    "source": "explicit" if "rigor" in selections else (
+                        "builtin" if basis == "absent" else "default"
+                    ),
+                },
+                "strategy": {
+                    "value": resolved["strategy"]["name"],
+                    "source": "explicit" if "strategy" in selections else (
+                        "builtin" if basis == "absent" else "default"
+                    ),
+                },
             }
         elif "schema_version" in result.stderr and (
             "legacy" in result.stderr

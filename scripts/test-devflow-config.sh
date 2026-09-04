@@ -136,6 +136,11 @@ with tempfile.TemporaryDirectory() as tmp:
 schema = json.loads((root / ".devflow.schema.json").read_text())
 if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
 if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$ref") != "#/$defs/convergence_override": fail("v2 schema lacks per-rigor convergence overrides")
+for key in ("finders", "finder_fallbacks", "pool"):
+    if schema["$defs"]["stage_profile"]["properties"][key].get("$ref") != "#/$defs/strings_allow_empty":
+        fail(f"v2 schema must permit an explicit empty stage.{key} list")
+if "minItems" in schema["$defs"]["strings_allow_empty"]:
+    fail("v2 schema's empty stage-list definition must not require minItems")
 print("devflow config v2 OK")
 PY
 

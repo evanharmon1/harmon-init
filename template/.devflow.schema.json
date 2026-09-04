@@ -62,6 +62,11 @@
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 1 }
     },
+    "strings_allow_empty": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "tier": { "type": "string", "enum": ["local", "economy", "standard", "frontier", "apex"] },
     "rigor_profile": {
       "type": "object",
@@ -166,9 +171,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "finders": { "$ref": "#/$defs/strings" },
-        "finder_fallbacks": { "$ref": "#/$defs/strings" },
-        "pool": { "$ref": "#/$defs/strings" }
+        "finders": { "$ref": "#/$defs/strings_allow_empty" },
+        "finder_fallbacks": { "$ref": "#/$defs/strings_allow_empty" },
+        "pool": { "$ref": "#/$defs/strings_allow_empty" }
       }
     },
     "stage_profiles": {
