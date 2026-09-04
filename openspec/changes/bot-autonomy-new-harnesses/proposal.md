@@ -200,9 +200,12 @@ clause does.
   `oh-my-pi` only, an updated `unsupported.json` entry instead of a module
   (see the oh-my-pi contingency above); unit fixtures extending
   `bot-autonomy-bootstrap`'s test surface for all three harnesses.
-- Changed: the `unsupported` table `bot-autonomy-bootstrap`'s implementation
-  defines inside `bot-autonomy.sh` (removes the `copilot-cli`/`pi`/`oh-my-pi`
-  placeholder entries); `copier.yml` (new `use_copilot_cli` question);
+- Changed: `.devcontainer/config/bot-autonomy/unsupported.json` (and its
+  `template/` twin) — the standalone file `bot-autonomy.sh` reads for its
+  unsupported-bucket table, not something defined inside the script itself
+  — `bot-autonomy-bootstrap`'s implementation populates it with
+  `copilot-cli`/`pi`/`oh-my-pi` placeholder entries; this change removes
+  them; `copier.yml` (new `use_copilot_cli` question);
   `.dogfood-answers.yml` (records the new answer on); `.devcontainer/devcontainer.json`
   only, not its dev twin (new `HARMON_BOT_AUTONOMY_COPILOT`/`COPILOT_ALLOW_ALL`
   `containerEnv` entries — bot-only, see design.md - Decisions).

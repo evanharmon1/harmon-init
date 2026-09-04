@@ -142,6 +142,19 @@ appending the flag: `login`, `version`/`--version`, `help`/`-h`/`--help`,
 next `copilot` on `PATH` after excluding its own directory), rather than
 hardcoding one specific installation path.
 
+`verify` SHALL check the enabled-state wrapper the same way
+`bot-autonomy-bootstrap`'s own Antigravity module already checks its
+wrapper — presence and executability are necessary but not sufficient:
+`verify` SHALL also compare the installed file's content against the
+module's own known-correct wrapper content (byte-for-byte, generated from
+the same source the `apply` step itself installs from, so `apply` and
+`verify` can never independently drift from each other) and SHALL confirm
+the wrapper's resolved delegate (the real `copilot` binary it execs) is
+itself executable — matching content proves the wrapper's own bytes are
+correct, but a wrapper whose delegate cannot be resolved or executed is
+still an inert harness that would pass a presence-only check while every
+invocation actually fails.
+
 #### Scenario: the wrapper injects the flag on an agent-task invocation
 - **WHEN** the marker reads `enabled` and the wrapper is invoked as a bare
   `copilot`, or as `copilot -p "<prompt>"`, without any `--allow-all`-family
@@ -186,6 +199,17 @@ hardcoding one specific installation path.
   installed) and a later render/rebuild carries the marker as `disabled`
 - **THEN** the `copilot-cli` module's `apply` removes `~/.local/bin/copilot`
   on its next run, and `verify` asserts its absence
+
+#### Scenario: verify fails on a wrapper with the wrong content or no runnable delegate
+- **WHEN** the marker reads `enabled` and `bot-autonomy.sh verify` runs, and
+  either `~/.local/bin/copilot`'s content does not byte-for-byte match the
+  module's own known-correct wrapper content, or neither the wrapper's
+  resolved delegate nor a documented fallback system binary is executable
+- **THEN** `verify` exits non-zero naming Copilot CLI in each case — a
+  wrapper file merely existing and being marked executable is not
+  sufficient; matching content and a runnable delegate are both required,
+  mirroring exactly how the Antigravity module's `verify` already checks
+  its own wrapper
 
 ### Requirement: pi's non-interactive boundary is no elevated trust — decided by the maintainer
 **Status: resolved — maintainer decision 2026-09-03, option (a).** Two

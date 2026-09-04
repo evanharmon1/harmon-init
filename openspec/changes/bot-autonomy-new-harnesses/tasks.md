@@ -28,9 +28,27 @@
       `use_antigravity_cli`'s `Enable DEVCONTAINER before …` pattern), with
       help text documenting Copilot's account requirement and free-tier/
       private-repo terms next to the question, adapting the caveat language
-      `harness-matrix`'s proposal.md already drafted for this purpose;
-      verify with `task check` and a rendered-template diff showing the new
-      question appears in `copier copy --defaults` output
+      `harness-matrix`'s proposal.md already drafted for this purpose. Add
+      `--data use_copilot_cli=true` to `scripts/test-template.sh`'s `full`
+      profile `data_args` (the same list `--data use_antigravity_cli=true`
+      already lives in — maximizing conditional coverage is that profile's
+      stated purpose); add committed assertions in that script's own
+      Antigravity section's pattern (its `# ── 9e1.` block:
+      `if [ "$profile" = "full" ]` gated checks against the exact rendered
+      string) asserting the **bot** `devcontainer.json`'s `containerEnv`
+      carries the exact literals `"HARMON_BOT_AUTONOMY_COPILOT": "enabled"`
+      and `"COPILOT_ALLOW_ALL": "true"`, and — unlike Antigravity's marker,
+      which both twins carry — asserting the **dev** `devcontainer.json`
+      carries **neither key at all** (`! grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT"'`
+      and `! grep -Fq '"COPILOT_ALLOW_ALL"'`, the same negative-assertion
+      shape that section's own `PATH`-key check already uses), matching
+      the bot-only rendering this requirement's own spec text commits to;
+      verify with `task check`, a rendered-template diff showing the new
+      question appears in `copier copy --defaults` output, and
+      `task test:template:full` passing with these new assertions in place
+      (confirm they actually fail against a deliberately-reverted render
+      before committing them, so the assertions are proven to test
+      something)
 - [ ] 1.2 Add `use_copilot_cli: true` to `.dogfood-answers.yml` with a
       one-line comment matching `use_antigravity_cli`'s existing comment
       shape; verify with `task audit:dogfood` showing no new unexplained
@@ -81,11 +99,24 @@
       installs `~/.local/bin/copilot`; WHEN not `enabled`, removes
       `~/.local/bin/copilot` if present and does not touch
       `$COPILOT_ALLOW_ALL` (it is not writable by this script either way —
-      the render already guarantees it reads `false`); `verify` asserts the
-      wrapper's presence/absence matches the marker and that
-      `$COPILOT_ALLOW_ALL` is the exact literal `true` (enabled) or `false`
-      (disabled) in both states — not merely present/absent, and not any
-      other truthy-looking value. **Only when the marker reads `enabled`**,
+      the render already guarantees it reads `false`); factor the wrapper's
+      content into a shared `write_wrapper` helper both `apply` (install)
+      and `verify` (byte-compare) call, mirroring `antigravity.sh`'s own
+      `write_wrapper`/`cmp -s` pattern exactly, so the two can never
+      independently drift; `verify` asserts, in the enabled state: the
+      wrapper exists, is a regular file (not a symlink), is executable,
+      its content matches `write_wrapper`'s output byte-for-byte (not
+      merely "a file exists at that path" — a corrupted or hand-edited
+      wrapper must fail), and its resolved delegate (the real `copilot`
+      binary, or the documented system-binary fallback) is itself
+      executable (matching Antigravity's own `[ -x "$AGY_REAL" ] ||
+      [ -x "$AGY_SYSTEM_BINARY" ]` check — correct wrapper bytes with no
+      runnable backend is a clean verify over an inert harness); in the
+      disabled state, `verify` asserts absence. Separately, `verify`
+      asserts `$COPILOT_ALLOW_ALL` is the exact literal `true` (enabled) or
+      `false` (disabled) in both states — not merely present/absent, and
+      not any other truthy-looking value. **Only when the marker reads
+      `enabled`**,
       `verify` additionally checks that `~/.copilot/settings.json`'s
       `permissions.disableBypassPermissionsMode` is not `"disable"` — this
       check does NOT run in the disabled state, where a locked-out bypass
@@ -106,10 +137,17 @@
       checks this key at all, in either state, satisfy every listed
       fixture), a complementary fixture with the marker `disabled` AND
       `disableBypassPermissionsMode: "disable"` confirming `verify` still
-      **passes** (the kill-switch is irrelevant here), and a
+      **passes** (the kill-switch is irrelevant here), a
       toggle-off-after-apply fixture confirming a prior
       autonomous state reaches disabled (wrapper absent,
-      `COPILOT_ALLOW_ALL=false`) after a re-render flips the marker
+      `COPILOT_ALLOW_ALL=false`) after a re-render flips the marker, a
+      fixture that corrupts the installed wrapper's content (a single
+      byte changed) after a correct `apply` and confirms `verify` fails
+      naming Copilot rather than passing on presence/executability alone,
+      and a fixture that makes the resolved delegate non-executable (or
+      absent, with no working system-binary fallback either) and confirms
+      `verify` fails naming Copilot even though the wrapper's own content
+      and permissions are untouched
 - [ ] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
       `--allow-all` on a bare `copilot` invocation and on `copilot -p`/
       `--prompt` unless the invocation already carries full allow-all
@@ -295,7 +333,13 @@
 - [ ] 5.3 Apply 5.1's and 5.2's doc edits to their own `template/` twins
       (`template/docs/guides/[% if devcontainer %]devcontainers.md[% endif %].jinja`
       and `template/docs/architecture/security.md.jinja`); verify with
-      `task test:dogfood-structure` and `task lint:markdown`
+      `task test:dogfood-structure` and `task lint:markdown` — plus
+      `task audit:dogfood` (AGENTS.md's own recommended check "whenever a
+      change spans both layers"), reading its actual diff output rather
+      than only its exit status: `test:dogfood-structure` proves only that
+      every rendered heading/task exists in the root copy, not that the
+      *prose* added to each stayed in step, and a jinja twin's own report
+      is the one surface built to catch that
 - [ ] 5.4 Apply every change in groups 1-4 to the `template/` twin in the
       same PR (`template/[% if devcontainer %].devcontainer[% endif %]/...`;
       `template/agent-registry.json` stays read-only). The new
@@ -324,29 +368,41 @@
       lands — see task 5.6 and 6.3 below
 - [ ] 5.6 Add the smoke-isolation volume suffix
       (`${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}`) to the
-      `omp-config` mount in both `devcontainer.json` twins (root bot + dev)
-      and both `template/` twins — confirmed missing by inspection: the
-      `gemini-config` and `opencode-config` mounts already carry it
-      (`bot-autonomy-bootstrap`'s own task 3.3c requirement, applied when
-      those two modules' backup-gated-on-no-backup-existing-yet fixtures
-      needed run-isolated volumes), but `omp-config` does not, and the
-      same reasoning applies identically to oh-my-pi's own backup/restore
-      fixture (task 3.2's `apply → apply → restore` sequence) — without
-      isolation, a CI run reusing the persistent volume would only
-      exercise the true first-run/absent-backup state once, ever, exactly
-      the gap task 3.3c closed for gemini/opencode. Also confirm
-      `copilot-config` and `pi-config`: **no fix needed for either** —
-      Copilot's module has no backup/restore at all (design.md - Decisions;
-      it only installs/removes a wrapper file), and pi's module writes
-      nothing (design.md - Decisions, the maintainer's "Resolved
-      2026-09-03" no-elevated-trust decision), so neither has a
-      first-run-sensitive fixture the isolation gap could actually affect —
-      state this explicitly rather than adding an unneeded suffix to mounts
-      whose modules have nothing stateful to isolate; verify with
+      `omp-config`, `copilot-config`, and `pi-config` mounts in both
+      `devcontainer.json` twins (root bot + dev) and both `template/`
+      twins — confirmed missing by inspection: `gemini-config` and
+      `opencode-config` already carry it (`bot-autonomy-bootstrap`'s own
+      task 3.3c requirement).
+
+      **Correcting this task's own earlier reasoning (it previously
+      exempted `copilot-config`/`pi-config`):** the isolation requirement
+      is not only about `apply`'s backup-gated-on-no-backup-existing-yet
+      writes (the reasoning `scripts/devcontainer-smoke.sh`'s own comment
+      states, and the one this task originally applied) — it is about
+      **any state `verify` reads that a fixture might have seeded**,
+      whether or not that module has a backup/restore mechanism of its
+      own. Confirmed by re-reading this change's own fixture list: task
+      1.4's Copilot fixtures write `disableBypassPermissionsMode: "disable"`
+      into `~/.copilot/settings.json` to exercise the kill-switch-fails
+      case, and task 2.1's pi fixtures write a trusted decision into
+      `~/.pi/agent/trust.json` and `defaultProjectTrust: "always"` into
+      `~/.pi/agent/settings.json` to exercise the fail-closed cases — none
+      of that is "backup" state (neither module has a backup/restore
+      mechanism), but all of it is state `verify` reads, persisted in the
+      same named volume a real container (or a later CI run reusing an
+      unisolated volume) would also read. Without isolation, a fixture
+      that seeds a bad value to prove `verify` fails would leave that
+      value behind for the *next* run to read as if it were real,
+      corrupting an otherwise-clean run's result — the identical failure
+      shape task 3.3c closed for gemini/opencode's backup state, just
+      triggered by a *verify-only* read instead of an *apply* write. Both
+      mounts need the same fix oh-my-pi's does, for this broader reason,
+      not the narrower one first considered; verify with
       `task test:dogfood-parity` (root vs. template) and by re-running the
-      CI container-assertion job (once #1152 lands and it can exercise
-      `omp` at all) twice in a row, confirming both runs independently
-      observe oh-my-pi's first-run, absent-backup behavior
+      CI container-assertion job (once #1152 lands and it can exercise all
+      three) twice in a row with an interleaved fail-closed fixture in
+      between, confirming the second run is not contaminated by state the
+      first run's fixture seeded
 
 ## 6. Verification
 
@@ -364,25 +420,49 @@
       sync-pin PR (#1152) merges, which this change's own implementation
       merges *before* (design.md - Migration Plan). The end-to-end,
       zero-prompts exercise therefore cannot be this change's own
-      acceptance step; it belongs on #1152's, since that PR is what first
-      makes a bot container with these three binaries buildable at all.
-      Add it to #1152's PR body as an explicit checklist item, alongside
-      the existing "bot-autonomy-new-harnesses has merged" one — something
+      acceptance step; it belongs on the sync-pin PR's, since that PR is
+      what first makes a bot container with these three binaries buildable
+      at all.
+
+      **The checklist item belongs in `scripts/sync-devcontainer-image.sh`'s
+      `write_body()`, not hand-added to #1152's current body text.** That
+      function is what generates every rolling sync-pin PR's body — it
+      already carries the "bot-autonomy-new-harnesses has merged" item
+      `bot-autonomy-bootstrap`'s own task 4.6 added there (confirmed by
+      reading the function directly, not the live PR alone) — and "a newer
+      publication rewrites this one rolling branch and PR" (the function's
+      own closing line) means any edit made only to #1152's *current* body
+      is silently discarded the next time the automation regenerates it.
+      Add a second checklist item to `write_body()`'s heredoc, in the
+      "Reviewer checklist" section, alongside the existing one — something
       in the shape of: "rebuild a freshly generated bot devcontainer with
-      `use_copilot_cli: true` and exercise one representative task through
-      each of Copilot CLI, pi, and oh-my-pi (or oh-my-pi's documented
-      `unsupported` state if this change's task 3.3 contingency applied);
-      confirm zero approval prompts for Copilot and pi, completing the
-      Copilot clause of #1137's first `[CI]` acceptance criterion and
-      contributing to its `[HUMAN]` criterion; repeat at `use_copilot_cli`'s
-      default (off) and confirm Copilot prompts as expected — the by-design
-      outcome, not a regression." Note for whoever adds it: #1137's own
+      `use_copilot_cli: true` and exercise one representative **tool-using**
+      task (a file read/write or a shell command — not a question with no
+      tool call, which would never consult the approval-mode setting at
+      all) through each of Copilot CLI, pi, and oh-my-pi (or oh-my-pi's
+      documented `unsupported` state if this change's task 3.3 contingency
+      applied); confirm **zero approval prompts for all three** — Copilot,
+      pi, *and* oh-my-pi, completing the Copilot clause of #1137's first
+      `[CI]` acceptance criterion and contributing to its `[HUMAN]`
+      criterion; repeat at `use_copilot_cli`'s default (off) and confirm
+      Copilot prompts as expected — the by-design outcome, not a
+      regression." Extend `scripts/test-devcontainer-image-automation.sh`
+      (the script's own automation test — currently asserts the rolling
+      PR gets created/updated and verification ran, but has no assertion
+      on the generated body's actual *text*) with a case that captures
+      `write_body()`'s output and asserts both checklist items' literal
+      text are present, so a future edit to `write_body()` cannot silently
+      drop either one. Note for whoever implements this: #1137's own
       acceptance criteria name Codex, Claude Code, Antigravity, Copilot
       CLI, and OpenCode explicitly — pi and oh-my-pi are this change's own
-      broader registry-completeness scope, not named in the issue, so their
-      exercise on #1152 is this change's own verification interest, not
-      something #1137 itself is waiting on. This change's own task 6
-      therefore stops at 6.1/6.2 (unit-level `task verify`/`task security`
-      and the permissions/root smoke tests) — there is nothing further
-      this implementation PR can itself verify end-to-end before #1152
-      lands
+      broader registry-completeness scope, not named in the issue, so
+      confirming zero prompts for them on the sync-pin PR is this change's
+      own verification interest, not something #1137 itself is waiting on.
+      This change's own task 6 therefore stops at 6.1/6.2 (unit-level
+      `task verify`/`task security` and the permissions/root smoke tests)
+      — there is nothing further this implementation PR can itself verify
+      end-to-end before #1152 lands; verify with
+      `task test:devcontainer:image:automation` green, confirming it fails
+      when either checklist item's text is removed from `write_body()`,
+      and confirming the next real regeneration of #1152 (or its
+      successor) carries both items
