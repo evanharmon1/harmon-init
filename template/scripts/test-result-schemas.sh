@@ -31,6 +31,7 @@ rejects() {
 for schema in "$schema_dir"/*.schema.json; do
     jq empty "$schema"
 done
+node scripts/test-result-schema-composition.mjs
 
 accepts implementer "$fixtures/result.implementer.schema/valid/completed.json" \
     --run-id run-0397-omator --initiated-by human --receipt

@@ -344,7 +344,12 @@ its own review. An explicit human instruction still overrides because it is
 an attributable decision rather than self-modification. The trusted caller
 must materialize and invoke the merge-base reader directly, before loading any
 branch reader code; passing a closure path into the branch module cannot create
-that boundary because its module and imports have already executed.
+that boundary because its module and imports have already executed. During the
+first adoption, when the merge base predates the reader, the trusted caller
+must instead use an operator-pinned reader supplied outside the candidate
+branch and feed it only materialized merge-base policy/registry inputs; if no
+such external pin exists, resolution is indeterminate and stops. A branch copy
+is never a bootstrap trust source.
 
 **Nothing here arms anything.** A `rigor:*`/`strategy:*` label invokes no
 model and starts no workflow by existing (ADR 0006 D1) — the shipped defaults

@@ -239,4 +239,110 @@ grep -q 'cannot establish reader trust' closure.err || {
     echo "FAIL: --closure refusal did not explain the external trust boundary" >&2
     exit 1
 }
+
+# A requested selection belongs to the governing merge-base catalog. The
+# candidate v2 catalog is still validated in full, but through its own defaults
+# so a renamed v1-only rigor/strategy cannot be rejected by branch vocabulary
+# before the trusted policy is decoded. Directly compatible v1 budget,
+# strategy, and three-role tier values must survive that decode.
+historical_policy="$tmp/historical-v1.toml"
+cat >"$historical_policy" <<'TOML'
+schema_version = 1
+default_rigor = "standard"
+default_strategy = "plan"
+rigor_order = ["trivial", "standard"]
+
+[rigor.trivial]
+review = "driveby"
+orchestrator_tier = "local"
+implementer_tier = "local"
+reviewer_tier = "economy"
+budget = "bounded"
+
+[rigor.standard]
+review = "standard"
+orchestrator_tier = "frontier"
+implementer_tier = "standard"
+reviewer_tier = "frontier"
+budget = "bounded"
+
+[review.driveby]
+challenge = 1
+review = 1
+shepherd = 1
+min_rounds = 1
+
+[review.standard]
+challenge = 3
+review = 3
+shepherd = 4
+min_rounds = 1
+
+[budget.bounded]
+max_agent_runs = 7
+max_parallel_agents = 2
+wall_clock_min = 77
+allow_tier_escalation = true
+
+[strategy.plan]
+topology = "single-agent"
+planning = "explicit"
+delegation = "optional"
+human_gates = []
+description = "Historical plan"
+
+[strategy.legacy-council]
+topology = "independent-proposals"
+planning = "independent"
+delegation = "required"
+selection = "judge"
+synthesis = true
+min_agents = 2
+human_gates = []
+description = "Historical council"
+TOML
+historical_resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --merge-base-policy "$historical_policy" \
+    --merge-base-registry agent-registry.json \
+    --taskfile-dir . \
+    --rigor trivial \
+    --strategy legacy-council \
+    --json)"
+printf '%s' "$historical_resolved" | jq -e '
+    .source == "merge-base-historical-decode:v1" and
+    .rigor.level == "trivial" and
+    .rigor.tier_escalation == true and
+    .rounds.wall_clock_min == 77 and
+    .breadth == {policy:"v1:bounded", max_agent_runs:7, max_parallel_agents:2} and
+    .roles.orchestrator.tier == "local" and
+    .roles.implementer.tier == "local" and
+    .roles.reviewer.tier == "economy" and
+    .roles.challenger.tier == "economy" and
+    .strategy.name == "legacy-council" and
+    .strategy.topology == "independent-proposals"
+' >/dev/null || {
+    echo "FAIL: JS reader did not preserve compatible merge-base v1 values" >&2
+    exit 1
+}
+
+# Family, harness, and model tier must intersect in one executable tuple.
+# Gemini can run through Antigravity and Claude has an apex model, but
+# Antigravity cannot execute Claude; independent existence checks would accept
+# this impossible role configuration.
+reset_policy
+replace_in_table role.implementer \
+    'families  = ["claude", "gpt", "gemini"]' \
+    'families  = ["gemini", "claude"]'
+replace_in_table role.implementer \
+    'harnesses = ["claude-code", "codex-cli", "antigravity"]' \
+    'harnesses = ["antigravity"]'
+replace_in_table rigor.standard 'orchestrator_tier = "frontier"' 'orchestrator_tier = "apex"'
+replace_in_table rigor.standard 'implementer_tier  = "standard"' 'implementer_tier  = "apex"'
+replace_in_table rigor.standard 'challenger_tier   = "frontier"' 'challenger_tier   = "apex"'
+replace_in_table rigor.standard 'reviewer_tier     = "standard"' 'reviewer_tier     = "apex"'
+if resolve_reader --strategy oneshot 2>/dev/null; then
+    echo "FAIL: JS reader accepted a role with no executable family/harness/tier tuple" >&2
+    exit 1
+fi
 echo "devflow v2 mutation guards OK"

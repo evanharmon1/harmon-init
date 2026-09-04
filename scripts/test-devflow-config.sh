@@ -151,3 +151,19 @@ python3 scripts/test-devflow-conformance.py \
 python3 scripts/test-devflow-conformance.py \
     --fixture template/.devflow-conformance-v2.json \
     --config .devflow.toml
+
+unsupported_v2_case="$(mktemp)"
+unsupported_v2_output="$(mktemp)"
+trap 'rm -f "$unsupported_v2_case" "$unsupported_v2_output"' EXIT
+jq '.cases[0].labels = ["rigor:standard"]' \
+    .devflow-conformance-v2.json >"$unsupported_v2_case"
+if python3 scripts/test-devflow-conformance.py \
+    --fixture "$unsupported_v2_case" \
+    --config .devflow.toml >"$unsupported_v2_output" 2>&1; then
+    echo "FAIL: v2 conformance runner silently accepted an unsupported label input" >&2
+    exit 1
+fi
+grep -q 'v2 reader does not support case input(s): labels' "$unsupported_v2_output" || {
+    echo "FAIL: v2 conformance runner did not diagnose its unsupported input" >&2
+    exit 1
+}

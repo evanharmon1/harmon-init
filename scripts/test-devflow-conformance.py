@@ -31,6 +31,7 @@ CASE_KEYS = {
     "unattended",
 }
 EXPECT_KEYS = {"error_diagnostics", "exit", "result", "warning_diagnostics"}
+V2_CASE_KEYS = {"basis", "config_replacements", "expect", "name"}
 
 
 def fail(message: str) -> None:
@@ -119,9 +120,30 @@ def run_v2(repo: Path, fixture: dict, config: Path) -> int:
         if not isinstance(name, str) or not name:
             failures.append("every fixture case needs a non-empty name")
             continue
+        unsupported = sorted(set(case) - V2_CASE_KEYS)
+        if unsupported:
+            failures.append(
+                f"{name}: v2 reader does not support case input(s): {', '.join(unsupported)}"
+            )
+            continue
+        if case.get("basis") != "branch":
+            failures.append(f"{name}: v2 reader currently supports only basis='branch'")
+            continue
         expected = case.get("expect")
         if not isinstance(expected, dict):
             failures.append(f"{name}: expect must be an object")
+            continue
+        unknown_expect_keys = sorted(set(expected) - EXPECT_KEYS)
+        if unknown_expect_keys:
+            failures.append(f"{name}: unknown expect key(s): {', '.join(unknown_expect_keys)}")
+            continue
+        expected_exit = expected.get("exit")
+        if (
+            not isinstance(expected_exit, int)
+            or isinstance(expected_exit, bool)
+            or expected_exit not in (0, 1)
+        ):
+            failures.append(f"{name}: expect.exit must be the integer 0 or 1")
             continue
         try:
             with tempfile.TemporaryDirectory() as tmp:

@@ -144,7 +144,10 @@ function requireClosedTable(table, requiredKeys, optionalKeys, errorPath) {
 // from the branch's v2 copy. Where the older shape has no equivalent
 // concept at all (breadth, convergence predicates, roles, stages), the
 // built-in default below is the only admissible source — decodeHistoricalPolicy()
-// never reads those fields from `doc` (the branch copy) to fill the gap.
+// never reads the BRANCH copy to fill the gap. A historical merge-base may,
+// however, already carry directly compatible values under its older names
+// (`budget`, three role tiers, and `strategy`); those are decoded from that
+// trusted document before a built-in is considered.
 // These are this module's own documented choice, not a value copied from
 // any spec text except where cited — see "## Deferred findings" in the
 // shipping PR.
@@ -155,16 +158,15 @@ const BUILTIN_GATE_DEFAULTS = {
   pre_pr: 'security',
   docs_only_paths: ['**/*.md', 'docs/**']
 }
-// Legacy/v1 shapes have no [rounds].remediation or .wall_clock_min at all
+// Legacy/v1 shapes have no [rounds].remediation at all
 // (remediation is a v2-only finer split of what legacy calls "shepherd";
-// wall_clock_min is new in v2 outright). Built-in fallbacks, documented for
-// the same reason as the gate defaults above.
+// v1 stores wall_clock_min under its selected [budget.*] rather than
+// [rounds.*]). Built-in fallbacks cover only truly absent historical values.
 const BUILTIN_REMEDIATION_FALLBACK = (integrationCap) => integrationCap
 const BUILTIN_WALL_CLOCK_MIN_FALLBACK = 240
-// No legacy/v1 equivalent of [breadth.*] exists at all (breadth is a v2-only
-// axis separating horizontal scale from vertical round appetite —
-// design.md decision 2). Matches this module's own SHARED test fixture
-// "standard" breadth, chosen as a conservative, unremarkable default.
+// A legacy shape has no [breadth.*]. Schema v1 calls the same horizontal
+// ceilings [budget.*], so decodeHistoricalPolicy maps them when present.
+// This fallback covers older documents that predate those compatible fields.
 const BUILTIN_BREADTH_DEFAULT = Object.freeze({
   policy: 'builtin-default',
   max_agent_runs: 8,
@@ -191,16 +193,13 @@ const BUILTIN_CONVERGENCE_DEFAULT = Object.freeze({
   },
   overridden: false
 })
-// specs/dev-flow-v2.md § Configuration's own "shipped baselines" for the
-// five roles' tiers ("orchestrator apex, implementer standard, challenger
-// frontier, reviewer standard, and integrator economy") — legacy/v1 tier
-// concepts ([tier.*] family maps, default_tier) are not structurally
-// equivalent to v2's per-role [role.<slug>] baseline, so this is the
-// built-in default rather than a decoded value. families/harnesses are
-// empty: "finders" and "roles" are both named in the addenda as having no
-// legacy/v1 equivalent, and no registry-independent default family exists —
-// cross-validation against a registry (when supplied) reports the resulting
-// unresolvable family honestly rather than inventing one.
+// specs/dev-flow-v2.md § Configuration's own "shipped baselines" for roles
+// that an older document cannot name. Schema v1 does name orchestrator,
+// implementer, and reviewer tiers on each rigor profile; the historical
+// decoder preserves those values and uses these defaults only for the two new
+// roles (challenger inherits v1's reviewer tier because that role was split
+// from reviewer; integrator has no historical counterpart). families and
+// harnesses remain empty because the older policy carries neither catalog.
 const BUILTIN_ROLE_TIER_DEFAULTS = Object.freeze({
   orchestrator: 'apex',
   implementer: 'standard',
@@ -225,9 +224,9 @@ function builtinRolesDefault() {
   }
   return result
 }
-// No legacy/v1 equivalent of [strategy.*] exists. The simplest, safest
-// topology (a single accountable lead, no delegation) is the built-in
-// default.
+// The oldest legacy shape may have no [strategy.*]. Schema v1 does, with the
+// same topology vocabulary, so the decoder preserves it when present. This is
+// the fallback only when the merge-base genuinely has no strategy catalog.
 const BUILTIN_STRATEGY_DEFAULT = Object.freeze({
   name: 'builtin-default',
   topology: 'single-agent',
@@ -422,8 +421,7 @@ function validateBreadthPolicy(policyName, table) {
 function validateSpendPolicy(policyName, table) {
   const errorPath = `[spend.${policyName}]`
   requireClosedTable(table, [], SPEND_KEYS, errorPath)
-  if (table.max_tokens !== undefined)
-    requirePositiveInt(table.max_tokens, 'max_tokens', errorPath)
+  if (table.max_tokens !== undefined) requirePositiveInt(table.max_tokens, 'max_tokens', errorPath)
   if (
     table.max_usd !== undefined &&
     !(typeof table.max_usd === 'number' && Number.isFinite(table.max_usd) && table.max_usd > 0)
@@ -1021,8 +1019,7 @@ function resolveStrategy(doc, requestedStrategy) {
       )
     }
     const multiAgent =
-      candidate.topology === 'lead-and-workers' ||
-      candidate.topology === 'independent-proposals'
+      candidate.topology === 'lead-and-workers' || candidate.topology === 'independent-proposals'
     if (multiAgent && candidate.delegation !== 'required') {
       throw new PolicyError(
         `${errorPath}.topology ${JSON.stringify(candidate.topology)} requires delegation = "required"`
@@ -1099,9 +1096,7 @@ function resolveStrategy(doc, requestedStrategy) {
         : candidate.topology === 'independent-proposals'
           ? ['selection', 'synthesis', 'min_agents']
           : []
-    const missingTopologyFields = topologyRequired.filter(
-      (key) => !Object.hasOwn(candidate, key)
-    )
+    const missingTopologyFields = topologyRequired.filter((key) => !Object.hasOwn(candidate, key))
     if (missingTopologyFields.length > 0) {
       throw new PolicyError(
         `${errorPath}.topology ${JSON.stringify(candidate.topology)} requires: ${missingTopologyFields.join(', ')}`
@@ -1335,59 +1330,41 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
           )
         }
       }
-      // Family compatibility is an ORDERED PREFERENCE, not a per-entry
-      // requirement (openspec/changes/dev-flow-v2/specs/registry/spec.md
-      // "Harnesses advertise executable role support": "select a family
-      // first and then the first compatible, available harness within
-      // that family; an incompatible harness SHALL be skipped without
-      // changing families") — post-merge cloud review, confirmed: the
-      // prior per-harness loop hard-errored on the FIRST harness whose
-      // fixed family_constraint excluded the role's families, even when a
-      // LATER harness in the same list was compatible (e.g. families =
-      // ["gpt"], harnesses = ["claude-code", "codex-cli"] refused outright
-      // instead of falling through to codex-cli). "broker" family_constraint
-      // means the harness resolves its family at runtime (no fixed family
-      // to check against, so always counts as compatible here); only
-      // "fixed" constrains which of the role's own families can satisfy
-      // it. Only error when NONE of the role's known harnesses can serve
-      // the resolved family — unknown-harness-reference and
-      // role-permission stay per-entry absolute errors above, since
-      // neither is the family-preference-skip this spec text covers.
-      if (knownHarnesses.length > 0) {
-        const anyFamilyCompatible = knownHarnesses.some(
-          ({ harness }) =>
-            harness.family_constraint?.kind !== 'fixed' ||
-            r.families.includes(harness.family_constraint.family)
+      // Family preference, harness compatibility, and model tier describe
+      // ONE executable choice. Checking them as three independent existential
+      // claims admits impossible combinations (for example, Gemini satisfies
+      // an Antigravity harness while a different Claude family supplies the
+      // requested apex model). Preserve ordered-preference semantics — an
+      // incompatible early harness may be skipped — but require at least one
+      // family/harness/model-tier tuple that can actually run the role.
+      const knownFamilies = r.families
+        .map((slug) => ({ slug, family: familyBySlug.get(slug) }))
+        .filter(({ family }) => family)
+      const tierAware = knownFamilies.some(({ family }) => Array.isArray(family.models))
+      const tierEligibleFamilies = knownFamilies.filter(({ family }) => {
+        if (r.tier === 'adaptive' || !tierAware) return true
+        return Array.isArray(family.models) && family.models.some((model) => model.tier === r.tier)
+      })
+      if (r.tier !== 'adaptive' && knownFamilies.length > 0 && tierEligibleFamilies.length === 0) {
+        errors.push(
+          `[role.${role}] tier "${r.tier}" is not achievable by any model in its declared families (${r.families.join(', ')})`
         )
-        if (!anyFamilyCompatible) {
-          const fixedFamilies = knownHarnesses
-            .filter(({ harness }) => harness.family_constraint?.kind === 'fixed')
-            .map(({ harness }) => harness.family_constraint.family)
-          errors.push(
-            `[role.${role}].harnesses (${knownHarnesses.map(({ slug }) => slug).join(', ')}) has no entry compatible with ` +
-              `[role.${role}].families (${r.families.join(', ') || 'none'}) — checked fixed families: ${fixedFamilies.join(', ') || 'none'}`
-          )
-        }
       }
-      // A family's own `models[].tier` list is additive, like `finder.stages`
-      // above: a registry that doesn't populate it (or doesn't populate it
-      // for any family this role declares) carries no tier-achievability
-      // evidence either way and is unrestricted, not an error. Only once at
-      // least one declared family DOES carry model-tier data does an
-      // unachievable tier become checkable — and, having that data, refused.
-      if (r.tier !== 'adaptive' && r.families.length > 0) {
-        const tierAwareFamilies = r.families.filter((famSlug) =>
-          Array.isArray(familyBySlug.get(famSlug)?.models)
+      if (knownHarnesses.length > 0 && knownFamilies.length > 0) {
+        const hasExecutableTuple = tierEligibleFamilies.some(({ slug: familySlug }) =>
+          knownHarnesses.some(({ harness }) => {
+            const roleAllowed = !Array.isArray(harness.roles) || harness.roles.includes(role)
+            const familyAllowed =
+              harness.family_constraint?.kind !== 'fixed' ||
+              harness.family_constraint.family === familySlug
+            return roleAllowed && familyAllowed
+          })
         )
-        if (tierAwareFamilies.length > 0) {
-          const achievable = tierAwareFamilies.some((famSlug) =>
-            familyBySlug.get(famSlug).models.some((m) => m.tier === r.tier)
+        if (!hasExecutableTuple) {
+          errors.push(
+            `[role.${role}] has no executable family/harness/tier tuple for tier "${r.tier}": ` +
+              `families (${r.families.join(', ') || 'none'}), harnesses (${knownHarnesses.map(({ slug }) => slug).join(', ') || 'none'})`
           )
-          if (!achievable) {
-            errors.push(
-              `[role.${role}] tier "${r.tier}" is not achievable by any model in its declared families (${r.families.join(', ')})`
-            )
-          }
         }
       }
     }
@@ -1515,7 +1492,9 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
 export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrategy } = {}) {
   requireClosedTable(doc, TOP_LEVEL_REQUIRED_KEYS, TOP_LEVEL_OPTIONAL_KEYS, 'policy')
   if (doc.schema_version !== 2) {
-    throw new PolicyError(`policy schema_version must be 2, got ${JSON.stringify(doc.schema_version)}`)
+    throw new PolicyError(
+      `policy schema_version must be 2, got ${JSON.stringify(doc.schema_version)}`
+    )
   }
   // A policy is one selectable catalog, not just today's default. Validate
   // every rounds/breadth/spend table before selecting a rigor so a dormant
@@ -1727,48 +1706,185 @@ function decodeV1Rounds(doc, levelName) {
   }
 }
 
+function decodeHistoricalBudget(doc, levelName, { required = false } = {}) {
+  const profile = doc.rigor?.[levelName]
+  const policyName = profile?.budget
+  if (typeof policyName !== 'string') {
+    if (required) {
+      throw new PolicyError(`merge-base v1 [rigor.${levelName}] has no "budget" pointer`)
+    }
+    return {
+      breadth: { ...BUILTIN_BREADTH_DEFAULT },
+      wallClockMin: BUILTIN_WALL_CLOCK_MIN_FALLBACK,
+      tierEscalation: false,
+      spend: { policy: null, max_tokens: null, max_usd: null, status: 'UNENFORCED' }
+    }
+  }
+  const table = doc.budget?.[policyName]
+  if (!table || typeof table !== 'object' || Array.isArray(table)) {
+    throw new PolicyError(
+      `merge-base v1 [budget.${policyName}] is missing (pointed to by [rigor.${levelName}])`
+    )
+  }
+
+  const errorPath = `[budget.${policyName}]`
+  requireClosedTable(
+    table,
+    ['max_agent_runs', 'max_parallel_agents', 'wall_clock_min', 'allow_tier_escalation'],
+    ['max_tokens', 'max_usd'],
+    errorPath
+  )
+  for (const key of ['max_agent_runs', 'max_parallel_agents', 'wall_clock_min']) {
+    requirePositiveInt(table[key], key, errorPath)
+  }
+  if (typeof table.allow_tier_escalation !== 'boolean') {
+    throw new PolicyError(
+      `${errorPath}.allow_tier_escalation must be a boolean, got ${JSON.stringify(table.allow_tier_escalation)}`
+    )
+  }
+  if (table.max_tokens !== undefined) requirePositiveInt(table.max_tokens, 'max_tokens', errorPath)
+  if (
+    table.max_usd !== undefined &&
+    !(typeof table.max_usd === 'number' && Number.isFinite(table.max_usd) && table.max_usd > 0)
+  ) {
+    throw new PolicyError(
+      `${errorPath}.max_usd must be a finite positive number, got ${JSON.stringify(table.max_usd)}`
+    )
+  }
+
+  return {
+    breadth: {
+      policy: `v1:${policyName}`,
+      max_agent_runs: table.max_agent_runs,
+      max_parallel_agents: table.max_parallel_agents
+    },
+    wallClockMin: table.wall_clock_min,
+    tierEscalation: table.allow_tier_escalation,
+    spend: {
+      policy: policyName,
+      max_tokens: typeof table.max_tokens === 'number' ? table.max_tokens : null,
+      max_usd: typeof table.max_usd === 'number' ? table.max_usd : null,
+      status: 'UNENFORCED'
+    }
+  }
+}
+
+function decodeHistoricalTierOrder(doc) {
+  const order = doc.tier && typeof doc.tier === 'object' ? Object.keys(doc.tier) : []
+  if (order.length === 0) return [...BUILTIN_TIER_ORDER]
+  if (
+    order.length !== BUILTIN_TIER_ORDER.length ||
+    order.some((value, index) => value !== BUILTIN_TIER_ORDER[index])
+  ) {
+    throw new PolicyError(
+      `merge-base v1 [tier.*] tables must preserve [${BUILTIN_TIER_ORDER.join(', ')}], got [${order.join(', ')}]`
+    )
+  }
+  return order
+}
+
+function decodeHistoricalRoles(doc, levelName, tierOrder, { required = false } = {}) {
+  const profile = doc.rigor?.[levelName] ?? {}
+  const result = builtinRolesDefault()
+  const historicalKeys = {
+    orchestrator: 'orchestrator_tier',
+    implementer: 'implementer_tier',
+    reviewer: 'reviewer_tier'
+  }
+  for (const [role, key] of Object.entries(historicalKeys)) {
+    if (profile[key] === undefined) {
+      if (required) {
+        throw new PolicyError(`merge-base v1 [rigor.${levelName}] has no "${key}" value`)
+      }
+      continue
+    }
+    if (!tierOrder.includes(profile[key])) {
+      throw new PolicyError(
+        `merge-base v1 [rigor.${levelName}].${key} must be in [${tierOrder.join(', ')}], got ${JSON.stringify(profile[key])}`
+      )
+    }
+    result[role] = { ...result[role], tier: profile[key], source: `merge-base-v1:${key}` }
+  }
+  if (profile.reviewer_tier !== undefined) {
+    result.challenger = {
+      ...result.challenger,
+      tier: profile.reviewer_tier,
+      source: 'merge-base-v1:reviewer_tier'
+    }
+  }
+  return result
+}
+
+function decodeHistoricalStrategy(doc, requestedStrategy, { required = false } = {}) {
+  if (doc.strategy && typeof doc.strategy === 'object') {
+    return resolveStrategy(doc, requestedStrategy)
+  }
+  if (requestedStrategy) {
+    throw new PolicyError(
+      `strategy ${JSON.stringify(requestedStrategy)} was requested but the merge-base policy has no [strategy.*] catalog`
+    )
+  }
+  if (required) throw new PolicyError('merge-base v1 policy has no [strategy.*] catalog')
+  return { ...BUILTIN_STRATEGY_DEFAULT }
+}
+
 /**
  * Decode a merge-base `.devflow.toml` that is NOT v2 (legacy or v1) into a
  * COMPLETE v2-shaped resolution. Per the lane addenda, the decoder's scope
  * is an invariant, not a field list: every field is populated from either
- * the older shape's own semantics (rounds, the rigor level name) or a fixed
- * built-in default (breadth, convergence, gates, roles, stages, strategy,
- * tier_order) — this function never reads a field it cannot decode from
- * `doc` and falls back to reading the BRANCH copy instead; it uses the
- * BUILTIN_* constants above unconditionally. Only reachable via the
+ * the older shape's own compatible semantics (rounds, rigor, budget,
+ * strategy, and the three roles it named) or a fixed built-in default for a
+ * concept it genuinely lacked (convergence, stages, and new roles). This
+ * function never falls back to the BRANCH copy. Only reachable via the
  * merge-base path in resolvePolicy(); never call this for an operating
  * policy (see requireOperatingV2 above).
  */
-export function decodeHistoricalPolicy(doc, detection, { rigor: requestedRigor } = {}) {
+export function decodeHistoricalPolicy(
+  doc,
+  detection,
+  { rigor: requestedRigor, strategy: requestedStrategy } = {}
+) {
   if (detection.shape !== 'legacy' && detection.shape !== 'v1') {
     throw new PolicyError(
       `cannot decode a "${detection.shape}"-shaped merge-base policy (only legacy and v1 are decodable)`
     )
   }
-  const level = requestedRigor || doc.default_rigor
-  if (!level)
-    throw new PolicyError('no rigor level given and merge-base policy has no default_rigor')
+  let level
+  let order = null
+  if (detection.shape === 'v1') {
+    const historicalRigor = resolveRigorLevel(doc, requestedRigor)
+    level = historicalRigor.level
+    order = historicalRigor.order
+  } else {
+    level = requestedRigor || doc.default_rigor
+    if (!level)
+      throw new PolicyError('no rigor level given and merge-base policy has no default_rigor')
+  }
 
   const rounds =
     detection.shape === 'legacy' ? decodeLegacyRounds(doc, level) : decodeV1Rounds(doc, level)
+  const isV1 = detection.shape === 'v1'
+  const budget = decodeHistoricalBudget(doc, level, { required: isV1 })
+  rounds.wall_clock_min = budget.wallClockMin
   const gates = resolveGates(doc, { allowMissing: true, fallback: BUILTIN_GATE_DEFAULTS })
+  const tierOrder = decodeHistoricalTierOrder(doc)
 
   return {
     source: `merge-base-historical-decode:${detection.shape}`,
-    rigor: { level, order: null, tier_escalation: false },
+    rigor: { level, order, tier_escalation: budget.tierEscalation },
     rounds,
-    breadth: { ...BUILTIN_BREADTH_DEFAULT },
-    spend: { policy: null, max_tokens: null, max_usd: null, status: 'UNENFORCED' },
+    breadth: budget.breadth,
+    spend: budget.spend,
     gates,
     convergence: {
       converged: { ...BUILTIN_CONVERGENCE_DEFAULT.converged },
       diverging: { ...BUILTIN_CONVERGENCE_DEFAULT.diverging },
       overridden: false
     },
-    tier_order: [...BUILTIN_TIER_ORDER],
-    roles: builtinRolesDefault(),
+    tier_order: tierOrder,
+    roles: decodeHistoricalRoles(doc, level, tierOrder, { required: isV1 }),
     stages: builtinStagesDefault(),
-    strategy: { ...BUILTIN_STRATEGY_DEFAULT },
+    strategy: decodeHistoricalStrategy(doc, requestedStrategy, { required: isV1 }),
     decodedFrom: detection.shape
   }
 }
@@ -1809,7 +1925,14 @@ export function resolvePolicy(doc, opts = {}) {
   // EVERY merge-base branch, not only the v2 one — a legacy/v1 merge-base
   // (the more common migration shape, since that is what this whole
   // decoder exists for) skipped it entirely.
-  resolveV2(doc, opts)
+  // Requested selections govern the merge-base policy, not the branch
+  // catalog. During a vocabulary migration an explicit/base-only selection
+  // can be perfectly valid in the trusted policy while intentionally absent
+  // from the candidate v2 catalog. Validate the branch's own defaults and
+  // complete catalog independently; applying requestedRigor/requestedStrategy
+  // here would let branch vocabulary reject a valid merge-base selection
+  // before the trusted document is decoded.
+  resolveV2(doc, {})
 
   const mbDetection = detectShape(opts.mergeBaseDoc)
   if (mbDetection.shape === 'v2') {
@@ -1979,11 +2102,7 @@ function cliResolve(args) {
 
   let resolved
   try {
-    resolved = resolvePolicy(doc, {
-      rigor: args.rigor,
-      strategy: args.strategy,
-      mergeBaseDoc
-    })
+    resolved = resolvePolicy(doc, { rigor: args.rigor, strategy: args.strategy, mergeBaseDoc })
   } catch (err) {
     if (err instanceof PolicyError || err instanceof TomlError) {
       console.error(`devflow-policy: ${err.message}`)
@@ -2049,7 +2168,7 @@ function cliResolve(args) {
       console.error(`devflow-policy: could not read/parse --registry: ${err.message}`)
       return 2
     }
-    const branchResolved = resolveV2(doc, { rigor: args.rigor, strategy: args.strategy })
+    const branchResolved = resolveV2(doc, {})
     const branchErrors = crossValidate(branchResolved, branchRegistryDoc, taskTargets)
     branchCrossValidation = {
       errors: branchErrors.filter((e) => !e.startsWith('indeterminate:')),
