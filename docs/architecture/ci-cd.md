@@ -240,6 +240,12 @@ ownership from a JSON shape. An intentional replacement requires
 `scripts/setup-github.sh` with `--replace-ci-runs-on`. Public repositories are
 the safety exception and are always canonicalized to `"ubuntu-latest"`.
 
+For `harmon-init` itself (as a public root repository), `task setup:github`
+explicitly sets `CI_RUNS_ON="ubuntu-latest"` at the repository variable layer.
+Its workflow actions dynamically evaluate `${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`,
+so runner selection is driven through the variable while retaining the hardcoded
+fallback safety net.
+
 ### Security boundaries
 
 That convenience is also the risk: it is a runtime change with no diff and no

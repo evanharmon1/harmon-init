@@ -143,7 +143,9 @@ Runner selection resolves hierarchically via GitHub Actions variables:
 existing value on non-public repositories; it never infers ownership from a JSON
 shape. An intentional replacement requires `scripts/setup-github.sh` with
 `--replace-ci-runs-on`. Public repositories are the safety exception and are
-always canonicalized to `"ubuntu-latest"`.
+always canonicalized to `"ubuntu-latest"` directly at the repository variable layer,
+ensuring public projects explicitly declare GitHub-hosted execution while retaining
+the workflow fallback.
 
 ### Security boundaries
 
