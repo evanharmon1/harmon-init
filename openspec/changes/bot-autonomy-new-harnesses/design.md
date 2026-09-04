@@ -237,7 +237,12 @@ capability was created to retire.
 
 **`COPILOT_ALLOW_ALL` is rendered to the exact literal `"true"`/`"false"` in
 both states, never omitted — and `verify` checks for the exact literal, not
-general truthiness.** An earlier draft of this design omitted the key
+general truthiness.** This deviates from `bot-autonomy-bootstrap`'s own
+general Copier-gated-harness contract, where the disabled state normally
+means the allow-all variable is *absent* — this proposal's spec delta
+formally amends that base requirement via a `## MODIFIED Requirements`
+block stating the exception and this reasoning, rather than silently
+diverging from an established pattern (see spec.md). An earlier draft of this design omitted the key
 entirely in the disabled state, reasoning that an absent `containerEnv` key
 is simply absent from the container. That reasoning missed a real second
 input: the bot profile also loads `.devcontainer/devcontainer.env` via
@@ -488,13 +493,19 @@ more trustworthy than the first two, only less scrutinized. The requirement
 therefore falls back to the one state this proposal's own research can
 actually stand behind: no elevated trust in the bot profile at all,
 matching dev exactly, with `verify` failing closed on **either** of pi's
-trust-granting surfaces — `defaultProjectTrust` set to `"always"`, or an
-applicable saved decision already present in `~/.pi/agent/trust.json` —
-regardless of cause (a `task review` round 1 finding sharpened this from
-checking only the global fallback: a pre-existing path-keyed decision,
-however it got there, would otherwise carry the exact exposure the
-rejected workspace-scoped design had, just reached through the file this
-module never writes rather than the one it does). This accepts a capability gap
+trust-granting surfaces — `defaultProjectTrust` set to `"always"`, or
+**any** trusted saved decision anywhere in `~/.pi/agent/trust.json`, not
+only one applicable to the current workspace — regardless of cause (a
+`task review` round 1 finding sharpened this from checking only the
+global fallback: a pre-existing path-keyed decision, however it got
+there, would otherwise carry the exact exposure the rejected
+workspace-scoped design had, just reached through the file this module
+never writes rather than the one it does; a later round sharpened it
+further still, from "applicable to the current workspace" to "anywhere in
+the file" — `~/.pi` is one persistent volume across the bot container's
+lifetime, so a decision inapplicable at verify-time can still become
+applicable the moment pi is later invoked against a matching path).
+This accepts a capability gap
 (the bot's headless pi sessions silently ignore this repository's own
 `.pi/` customizations) in exchange for not shipping a security gap this
 proposal's own review found twice.
@@ -604,8 +615,8 @@ no live resolved-config command, because this module does not attempt the
 project-scoped grant that would have made one necessary: it checks
 `defaultProjectTrust` for one specific dangerous value in the file pi's
 docs confirm is "Global setting only," **and** `~/.pi/agent/trust.json`
-for an applicable saved decision (current workspace or a parent of it) —
-both are files this module itself never writes, so it is detecting
+for any trusted saved decision anywhere in the file, applicable to the
+current workspace or not — both are files this module itself never writes, so it is detecting
 external state on both surfaces, not resolving a config layer of its own.
 OpenCode
 and oh-my-pi are the two modules where a project-level config file
@@ -651,10 +662,14 @@ more than one bucket).
   change does not reopen — see Non-Goals), meaning **every** consumer's bot
   container would fail closed the moment its pin picks up the image,
   indefinitely, not just harmon-init's own → [Mitigation] this is a real,
-  named consequence this design does not paper over: it would mean a human
-  decision is needed (Copier-gate oh-my-pi's own installation in a
-  `harness-matrix` follow-up, or accept oh-my-pi as dev-profile-only without
-  this capability's guarantee) — out of scope for this change to decide
+  named consequence this design does not paper over, and it is stated as a
+  **blocking condition on the pin, not merely a disclosed risk**: the
+  sync-pin PR (#1152, or any successor bumping the pin while `omp` is
+  installed) MUST NOT merge while oh-my-pi remains `unsupported` and `omp`
+  remains unconditionally installed (see Migration Plan). Resolving it
+  needs a human decision — Copier-gate or remove oh-my-pi's own
+  installation in a `harness-matrix` follow-up, or ship a real oh-my-pi
+  module in a later change — out of scope for this change to decide
   unilaterally, and explicitly called out here rather than silently
   resolved by weakening the fail-closed contract to route around it. Given
   the strength of the cited, pinned-tag-verified evidence in Context, this
@@ -757,6 +772,25 @@ more than one bucket).
   post-create/post-start on any
   real bot container built from a bad-ordering pin regardless of whether
   either signal was noticed.
+- **If task 3.3's contingency applies** (oh-my-pi's spike finds the
+  documented mechanism does not hold, so it ships as an `unsupported`
+  registry entry rather than a module), the ordering constraint above
+  gains a second, independent condition that binds the sync-pin PR itself,
+  not just this change's own PR: **the sync-pin PR (#1152, or any
+  successor that bumps the pin while installing `omp`) MUST NOT merge
+  while `omp` is both installed by the image and `unsupported` in the
+  registry.** Unlike the "modules-before-pin" ordering above, this
+  condition is not resolved by this change's own PR merging — it persists
+  until one of: (a) a `harness-matrix` follow-up Copier-gates or removes
+  `omp`'s unconditional installation, or (b) a real oh-my-pi module ships
+  in a later change (a fresh attempt at this change's own task 3.2). The
+  same fail-closed backstop applies here as above (`bot-autonomy.sh
+  verify` failing closed on every real bot container built from the pin),
+  but with no capability gap on the other side of it the way pi's decision
+  has one — a bot container built from this pin, under the contingency,
+  simply cannot pass `verify` at all until (a) or (b) resolves. See Risks
+  above and tasks.md task 6.3 for where this is stated as the sync-pin
+  PR's own checklist condition.
 - No data migration for Copilot or pi: neither module writes a persisted
   policy value (Copilot's `apply` only installs a wrapper file, not user
   data; pi's `apply` is a no-op per the maintainer's decided requirement

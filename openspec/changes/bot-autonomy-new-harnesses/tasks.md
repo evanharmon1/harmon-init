@@ -199,12 +199,27 @@
       `defaultProjectTrust`, and does not write `~/.pi/agent/trust.json`,
       in either profile. `verify` fails, naming pi, if **either** of pi's
       two trust-granting surfaces is found active: `defaultProjectTrust`
-      set to `"always"` in `~/.pi/agent/settings.json`, or an applicable
-      saved decision (for the current workspace or, per pi's
-      closest-decision-on-current-or-parent-path rule, any parent of it)
-      in `~/.pi/agent/trust.json`, using the confirmed read format —
-      regardless of whether this module, a stale volume, an interactive
-      `/trust` run, or a manual edit produced either one. There is no
+      set to `"always"` in `~/.pi/agent/settings.json`, or **any** trusted
+      saved decision anywhere in `~/.pi/agent/trust.json`, using the
+      confirmed read format — not only a decision applicable to the current
+      workspace (its own canonical directory or, per pi's
+      closest-decision-on-current-or-parent-path rule, a parent of it).
+      Scoping the check to path-applicability-at-verify-time would leave a
+      real gap: `~/.pi` is one persistent volume across the bot
+      container's entire lifetime, and nothing about this capability
+      guarantees pi is only ever invoked against the one workspace path
+      that happened to be current when `verify` last ran (a
+      Foreman-dispatched task, a worktree checkout, or a `gh pr checkout`
+      could all point pi at a different path later in the same container).
+      A trusted decision that is not applicable *now* is still live on
+      disk and becomes applicable — silently granting extension-code
+      execution — the instant pi is later invoked against a matching path,
+      with no guarantee a fresh `verify` runs first; checking only
+      applicable decisions therefore only proves "no elevated trust for
+      today's workspace," not the "no elevated trust" guarantee the
+      maintainer's decision actually states — regardless of whether this
+      module, a stale volume, an interactive `/trust` run, or a manual
+      edit produced either surface. There is no
       `restore` (nothing is ever backed up, because nothing is ever
       overwritten). Verify with fixtures covering: `apply` on a fresh
       volume leaves `~/.pi` exactly as `pi`'s own install left it (no new
@@ -215,21 +230,24 @@
       not special-case "this module didn't write it" in the fixture);
       `verify` **also** fails naming pi when a fixture pre-seeds a
       **trusted** `trust.json` decision for the current workspace's own
-      directory, and separately when it pre-seeds one for a *parent*
-      directory of the current workspace (proving the parent-path rule is
-      actually checked, not only an exact-path match); `verify` **passes**
-      when a fixture pre-seeds pi's own **explicit distrust** decision
-      (whatever pi's confirmed format uses for "not trusted") for the
-      current workspace's own directory or a parent — the positive case
-      proving `verify` distinguishes a *trusted* saved decision from any
-      other saved decision, not merely "an entry exists at all" (a naive
-      implementation that fails closed on *any* `trust.json` entry for an
-      applicable path, trusted or not, would otherwise satisfy every other
-      fixture in this list while incorrectly failing a genuinely safe
-      state); `verify` passes when `trust.json` carries a (trusted or
-      untrusted) decision for an unrelated, non-parent workspace only; and
-      a fixture confirming bot and dev profiles behave identically for this
-      module (no per-profile branch exists to test)
+      directory, separately when it pre-seeds one for a *parent* directory
+      of the current workspace (proving the parent-path rule is actually
+      checked, not only an exact-path match), and separately again when it
+      pre-seeds one for an **unrelated, non-parent** workspace entirely
+      (proving the check is not scoped to path-applicability at all — a
+      trusted decision anywhere in the file fails `verify`, whether or not
+      it applies to the workspace `verify` is currently running against);
+      `verify` **passes** when a fixture pre-seeds pi's own **explicit
+      distrust** decision (whatever pi's confirmed format uses for "not
+      trusted") for the current workspace's own directory, a parent, or an
+      unrelated workspace — the positive case proving `verify` distinguishes
+      a *trusted* saved decision from any other saved decision, not merely
+      "an entry exists at all" (a naive implementation that fails closed on
+      *any* `trust.json` entry regardless of its trust value would
+      otherwise satisfy every fail-closed fixture in this list while
+      incorrectly failing this genuinely safe, explicitly-distrusted
+      state); and a fixture confirming bot and dev profiles behave
+      identically for this module (no per-profile branch exists to test)
 - [ ] 2.2 Confirm the dev profile's post-create never calls this module
       (mirroring `bot-autonomy-bootstrap`'s own "dev never calls
       `bot-autonomy.sh`" wiring — this module is only ever dispatched from
@@ -238,17 +256,40 @@
       behavior happens to be identical either way); verify by grepping
       `.devcontainer/dev/post-create.sh` for any reference to this module
       or `bot-autonomy.sh` and confirming none exists
-- [ ] 2.3 Add a fixture proving the capability-gap claim in design.md's pi
-      Decision, so it is a tested, documented fact rather than an assertion:
-      a non-interactive `pi -p` run against a fixture repository carrying
-      `.pi/settings.json` (or another trust-requiring resource), with this
-      module's `apply` having run (writing nothing, per task 2.1), silently
-      ignores that resource — no error, no prompt, pi's own non-interactive
-      default. This is not a task to "make pass" by adding logic; it exists
-      to keep the accepted gap visible and tested rather than something a
-      later change could silently regress further (e.g. a future edit that
-      makes it error instead of silently ignore, which would be a
-      *different*, newly-introduced problem this fixture would catch)
+- [ ] 2.3 **The real, capability-gap-proving fixture cannot run from this
+      change's own implementation PR** — same reason as tasks 5.5/6.3: a
+      non-interactive `pi -p` invocation needs the actual `pi` binary,
+      which is not present in `.devcontainer/Dockerfile`'s pinned image
+      until the sync-pin PR (#1152) lands, and
+      `scripts/devcontainer-assert.sh` enforces the `FROM` line matches
+      that pin exactly (no scratch/alternate-pin mechanism exists to build
+      against a newer digest instead). Move the real assertion to
+      `write_body()`'s "Reviewer checklist" (task 6.3): add a pi
+      capability-gap item there, in the shape of "confirm pi's accepted
+      capability gap: `pi -p` against a fixture repository carrying
+      `.pi/settings.json` (or another trust-requiring resource) silently
+      ignores that resource — no error, no prompt — the maintainer-decided
+      outcome of pi's 'no elevated trust' requirement (spec.md's pi
+      requirement), proven against the real binary now that it exists in
+      the built image." This change's own implementation PR instead adds
+      only what a fake, stub `pi` executable on `PATH` can prove: that
+      this module's own `apply` (writing nothing, per task 2.1) and the
+      `bot-autonomy.sh apply pi` / `verify pi` dispatch introduce no flag,
+      config write, or other side effect of their own that could interfere
+      with or mask pi's native non-interactive handling — confirming this
+      module stays a true no-op, not that pi itself behaves as documented
+      (that claim is design.md's own citation of pi's docs, and the
+      real-binary fixture above is what confirms it empirically, deferred
+      to #1152 for the same reason task 2.1's own first paragraph already
+      defers its trust.json format confirmation to a scratch container).
+      This is not a task to "make pass" by adding logic; the
+      stub-executable fixture exists to catch a regression in this
+      module's own no-op contract, and the deferred real-binary fixture
+      exists to keep the accepted capability gap visible and tested once
+      it can be, rather than something a later change could silently
+      regress further (e.g. a future edit that makes pi error instead of
+      silently ignore, which would be a *different*, newly-introduced
+      problem the deferred fixture would catch)
 
 ## 3. oh-my-pi module
 
@@ -419,12 +460,13 @@
       `.devcontainer/Dockerfile`'s, and it is not bumped until the
       sync-pin PR (#1152) merges, which this change's own implementation
       merges *before* (design.md - Migration Plan). The end-to-end,
-      zero-prompts exercise therefore cannot be this change's own
+      zero-prompts exercise — and, for pi, the capability-gap confirmation
+      task 2.3 defers here too — therefore cannot be this change's own
       acceptance step; it belongs on the sync-pin PR's, since that PR is
       what first makes a bot container with these three binaries buildable
       at all.
 
-      **The checklist item belongs in `scripts/sync-devcontainer-image.sh`'s
+      **The checklist items belong in `scripts/sync-devcontainer-image.sh`'s
       `write_body()`, not hand-added to #1152's current body text.** That
       function is what generates every rolling sync-pin PR's body — it
       already carries the "bot-autonomy-new-harnesses has merged" item
@@ -433,36 +475,73 @@
       publication rewrites this one rolling branch and PR" (the function's
       own closing line) means any edit made only to #1152's *current* body
       is silently discarded the next time the automation regenerates it.
-      Add a second checklist item to `write_body()`'s heredoc, in the
-      "Reviewer checklist" section, alongside the existing one — something
-      in the shape of: "rebuild a freshly generated bot devcontainer with
-      `use_copilot_cli: true` and exercise one representative **tool-using**
-      task (a file read/write or a shell command — not a question with no
-      tool call, which would never consult the approval-mode setting at
-      all) through each of Copilot CLI, pi, and oh-my-pi (or oh-my-pi's
-      documented `unsupported` state if this change's task 3.3 contingency
-      applied); confirm **zero approval prompts for all three** — Copilot,
-      pi, *and* oh-my-pi, completing the Copilot clause of #1137's first
-      `[CI]` acceptance criterion and contributing to its `[HUMAN]`
-      criterion; repeat at `use_copilot_cli`'s default (off) and confirm
-      Copilot prompts as expected — the by-design outcome, not a
-      regression." Extend `scripts/test-devcontainer-image-automation.sh`
+      Add two more checklist items to `write_body()`'s heredoc, in the
+      "Reviewer checklist" section, alongside the existing one.
+
+      **The first is the zero-prompts (or blocking) item, whose exact
+      wording depends on which of this change's own task 3.2/3.3 applied —
+      add exactly one of the two, never both.** If task 3.2 applied
+      (oh-my-pi shipped a real module), word it in the shape of: "rebuild a
+      freshly generated bot devcontainer with `use_copilot_cli: true` and
+      exercise one representative **tool-using** task (a file read/write
+      or a shell command — not a question with no tool call, which would
+      never consult the approval-mode setting at all) through each of
+      Copilot CLI, pi, and oh-my-pi; confirm **zero approval prompts for
+      all three** — Copilot, pi, *and* oh-my-pi, completing the Copilot
+      clause of #1137's first `[CI]` acceptance criterion and contributing
+      to its `[HUMAN]` criterion; repeat at `use_copilot_cli`'s default
+      (off) and confirm Copilot prompts as expected — the by-design
+      outcome, not a regression." If task 3.3's contingency applied
+      instead (oh-my-pi remains an `unsupported` registry entry), this
+      item is a **blocking** condition, not a confirmation step — there is
+      no module to confirm zero prompts against — worded in the shape of:
+      "**BLOCKING — do not approve this PR**: `bot-autonomy-new-harnesses`'s
+      own oh-my-pi spike (its task 3.1) found the documented
+      `tools.approvalMode: yolo` mechanism does not hold against the real
+      `omp` binary, so oh-my-pi is an `unsupported` registry entry, not a
+      module. This image still installs `omp` unconditionally
+      (`harness-matrix`'s own decision, unchanged). Merging this PR as-is
+      means `bot-autonomy.sh verify` fails closed, naming oh-my-pi, on
+      **every** bot container that picks up this pin, indefinitely. Do not
+      merge until one of: (a) a `harness-matrix` follow-up Copier-gates or
+      removes `omp`'s unconditional install, or (b) a real oh-my-pi module
+      ships in a follow-up change (a fresh attempt at this change's own
+      task 3.2). Rebuild and exercise Copilot and pi's own checklist items
+      regardless; oh-my-pi has no zero-prompt exercise to run under this
+      contingency." This mirrors design.md's own Risk/Mitigation and
+      Migration Plan for exactly this scenario, which state the same
+      blocking condition as this change's own required outcome, not
+      merely a disclosed possibility.
+
+      **The second is pi's own capability-gap item, unconditional** —
+      task 2.3's own deferred assertion, worded in the shape of: "confirm
+      pi's accepted capability gap: `pi -p` against a fixture repository
+      carrying `.pi/settings.json` (or another trust-requiring resource)
+      silently ignores that resource — no error, no prompt — the
+      maintainer-decided outcome of pi's 'no elevated trust' requirement
+      (`bot-autonomy-new-harnesses`'s spec.md pi requirement), now provable
+      against the real binary."
+
+      Extend `scripts/test-devcontainer-image-automation.sh`
       (the script's own automation test — currently asserts the rolling
       PR gets created/updated and verification ran, but has no assertion
       on the generated body's actual *text*) with a case that captures
-      `write_body()`'s output and asserts both checklist items' literal
-      text are present, so a future edit to `write_body()` cannot silently
-      drop either one. Note for whoever implements this: #1137's own
-      acceptance criteria name Codex, Claude Code, Antigravity, Copilot
-      CLI, and OpenCode explicitly — pi and oh-my-pi are this change's own
-      broader registry-completeness scope, not named in the issue, so
-      confirming zero prompts for them on the sync-pin PR is this change's
-      own verification interest, not something #1137 itself is waiting on.
-      This change's own task 6 therefore stops at 6.1/6.2 (unit-level
-      `task verify`/`task security` and the permissions/root smoke tests)
-      — there is nothing further this implementation PR can itself verify
-      end-to-end before #1152 lands; verify with
-      `task test:devcontainer:image:automation` green, confirming it fails
-      when either checklist item's text is removed from `write_body()`,
-      and confirming the next real regeneration of #1152 (or its
-      successor) carries both items
+      `write_body()`'s output and asserts every checklist item's literal
+      text is present — the pre-existing task 4.6 item, whichever one of
+      the two zero-prompts-or-blocking items actually applies, and the pi
+      capability-gap item — so a future edit to `write_body()` cannot
+      silently drop any of them. Note for whoever implements this: #1137's
+      own acceptance criteria name Codex, Claude Code, Antigravity,
+      Copilot CLI, and OpenCode explicitly — pi and oh-my-pi are this
+      change's own broader registry-completeness scope, not named in the
+      issue, so confirming their behavior on the sync-pin PR (or blocking
+      it under oh-my-pi's contingency) is this change's own verification
+      interest, not something #1137 itself is waiting on. This change's
+      own task 6 therefore stops at 6.1/6.2 (unit-level `task verify`/
+      `task security` and the permissions/root smoke tests) and task 2.3's
+      own stub-executable fixture — there is nothing further this
+      implementation PR can itself verify end-to-end before #1152 lands;
+      verify with `task test:devcontainer:image:automation` green,
+      confirming it fails when any checklist item's text is removed from
+      `write_body()`, and confirming the next real regeneration of #1152
+      (or its successor) carries every one of them

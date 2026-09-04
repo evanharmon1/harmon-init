@@ -247,15 +247,24 @@ fail closed on **either** of pi's two trust-granting surfaces, regardless
 of cause — this module writes to neither, but a stale volume, a manual
 edit, an interactive `/trust` run inside the bot container, or a future
 regression could populate either one: (1) `defaultProjectTrust` set to
-`"always"` in `~/.pi/agent/settings.json`, and (2) an applicable saved
-decision in `~/.pi/agent/trust.json` — a trusted entry for the current
-workspace's own canonical directory, or, per pi's own "closest decision on
-the current or parent path" rule, for any parent of it. Checking only the
-global fallback would leave the exact path-keyed exposure the rejected
-workspace-scoped design carried (design.md - Decisions) reachable by any of
-those same causes, just through the other file — detecting both is a
-strengthening of this fallback's safety story, not a re-attempt at either
-rejected design.
+`"always"` in `~/.pi/agent/settings.json`, and (2) **any** trusted saved
+decision anywhere in `~/.pi/agent/trust.json` — not only one applicable to
+the current workspace (its own canonical directory, or, per pi's own
+"closest decision on the current or parent path" rule, a parent of it).
+Checking only the global fallback would leave the exact path-keyed exposure
+the rejected workspace-scoped design carried (design.md - Decisions)
+reachable by any of those same causes, just through the other file —
+detecting both is a strengthening of this fallback's safety story, not a
+re-attempt at either rejected design. Checking only *applicable* decisions
+in that second file would leave a narrower version of the same gap: the
+`~/.pi` volume persists for the bot container's entire lifetime, and a
+trusted decision that does not apply to the workspace `verify` happens to
+be checking right now is still live on disk and becomes applicable the
+moment pi is later invoked against a matching path within the same
+container — with no guarantee a fresh `verify` runs first to catch it.
+Failing closed on any trusted entry, applicable or not, is what actually
+enforces "no elevated trust" for the whole volume, not merely for whichever
+workspace happened to be current at verify-time.
 
 #### Scenario: the bot profile applies no elevated trust
 - **WHEN** the `pi` module's `apply` runs in the bot profile
@@ -283,8 +292,8 @@ rejected design.
 
 #### Scenario: verify fails closed on a pre-existing saved trust decision, whatever its cause
 - **WHEN** `bot-autonomy.sh verify` runs in the bot profile and
-  `~/.pi/agent/trust.json` carries an applicable trusted decision for the
-  current workspace — its own canonical directory, or, per pi's
+  `~/.pi/agent/trust.json` carries a trusted decision for the current
+  workspace — its own canonical directory, or, per pi's
   closest-decision-on-current-or-parent-path rule, any parent of it —
   regardless of whether an interactive `/trust` run, a stale volume, or a
   manual edit produced it
@@ -292,6 +301,20 @@ rejected design.
   check alone would miss exactly the path-keyed exposure the rejected
   workspace-scoped design carried; `verify` closes both surfaces, not only
   the one this module itself never writes to first
+
+#### Scenario: verify fails closed on a trusted decision even when it is not applicable to the current workspace
+- **WHEN** `bot-autonomy.sh verify` runs in the bot profile and
+  `~/.pi/agent/trust.json` carries a trusted decision for a workspace path
+  that is neither the current workspace nor a parent of it — a decision
+  pi's own closest-decision rule would not apply to *this* invocation
+- **THEN** `verify` still exits non-zero naming pi — the `~/.pi` volume
+  persists for the bot container's entire lifetime, and a decision
+  inapplicable to today's workspace is still live on disk and becomes
+  applicable the instant pi is later invoked against a matching path,
+  with no guarantee a fresh `verify` runs first to catch it; scoping the
+  check to path-applicability-at-verify-time would only guarantee "no
+  elevated trust for today's workspace," not the "no elevated trust"
+  guarantee the maintainer's decision actually states
 
 #### Scenario: the dev profile is identical to the bot profile for this module
 - **WHEN** a bot or dev profile container is created or rebuilt
@@ -400,3 +423,97 @@ entry's reason.
   `unsupported` entry whose reason is no longer "pending
   `bot-autonomy-new-harnesses`" — the follow-on this reason names has
   landed
+
+## MODIFIED Requirements
+
+### Requirement: A Copier-gated harness's module always exists; only its effective policy is conditional
+When a harness's autonomy policy is gated behind a Copier option (per
+AGENTS.md's Hard Rule on paid or trial-only SaaS dependencies — see the
+Antigravity requirement below for a concrete example already covered by
+this change, keyed to the existing `use_antigravity_cli` answer, and
+`harness-matrix`'s Copilot CLI requirement for the same pattern applied to
+a future module), the harness SHALL still resolve to a real module — never to the `unsupported`
+bucket and never to no module at all — because the harness IS installed in
+the image regardless of the Copier answer, and an installed, registered
+harness with no module fails `verify` by the coverage requirement above.
+What the Copier option gates is the module's **effective policy**, not its
+existence: the module SHALL support exactly two policy states —
+`autonomous` (the option is on: `apply` writes the harness's non-interactive
+configuration, e.g. an allow-all environment variable and, if the harness
+needs one for headless launches, a wrapper) and `disabled-by-option` (the
+option is off, the default: `apply` ensures the harness is granted no
+autonomous permission — normally by leaving its allow-all variable
+**absent** and installing no wrapper, leaving the harness in its own
+out-of-the-box, prompt-enabled posture rather than forcing any policy on
+it. A module MAY instead render its allow-all variable to an explicit,
+always-present disabled-state literal rather than omitting it, when that
+module's own requirement documents a specific reason omission is unsafe
+for that variable — GitHub Copilot CLI's `COPILOT_ALLOW_ALL` is the one
+instance this repository currently ships, because the bot profile's
+`--env-file` layer does not manage or evict that variable, so an absent
+`containerEnv` key would let a stale, out-of-band `true` value already
+present in that file survive a disabled render undisturbed (see the
+Copilot CLI requirement above for the full mechanism). Either shape SHALL
+leave the harness with zero autonomous permission in this state; only the
+mechanism differs, and a module choosing the literal-value variant SHALL
+state its own reason inline in its own requirement rather than deviating
+silently). `verify` SHALL assert whichever state the
+Copier answer selects, not unconditionally assert `autonomous` — a
+`disabled-by-option` harness that still prompts is the **correct**,
+verified state, not a failure to cover up. This is what makes "every
+installed executable has a module" and "no generated output depends on
+paid SaaS by default" simultaneously true instead of contradictory: the
+coverage requirement is satisfied by the module's existence, and the
+Hard Rule is satisfied by what that module's `apply` is allowed to write
+by default. Because every bot-autonomy module is a **verbatim** template
+twin (identical bytes in every generated repo), it cannot read a Copier
+answer directly; it SHALL read a rendered `containerEnv` marker instead —
+`HARMON_BOT_AUTONOMY_<HARNESS>` set from that harness's Copier answer by
+the **rendered** `devcontainer.json` twins (see the Antigravity
+requirement below for the concrete `HARMON_BOT_AUTONOMY_ANTIGRAVITY`
+mechanism, which every future Copier-gated harness module follows).
+
+#### Scenario: a Copier-gated harness resolves to a module, never to unsupported
+- **WHEN** the bot-autonomy module directory is inspected for a harness
+  whose autonomy policy is gated behind a Copier option (Antigravity, keyed
+  to `use_antigravity_cli`, is the concrete example within this very
+  change — see its own requirement below; Copilot CLI is the same pattern
+  applied to a future module, added by the `bot-autonomy-new-harnesses`
+  follow-on once `harness-matrix` installs the binary)
+- **THEN** that harness has its own module file — it does not appear in
+  the `unsupported` set, and `verify` does not skip it merely because the
+  option happens to be off
+
+#### Scenario: the disabled-by-option state is verified, not merely defaulted
+- **WHEN** the Copier option is off (the default) and `bot-autonomy.sh
+  apply` runs the harness's module
+- **THEN** `apply` ensures the harness grants no autonomous permission in
+  this configuration — normally an unset allow-all variable and no
+  autonomy wrapper installed, or, for a module whose own requirement
+  documents the literal-value variant, its allow-all variable rendered to
+  that module's own disabled-state literal instead — and `verify` asserts
+  exactly that state; a prompt-enabled harness is the verified-correct
+  outcome here, not an uncovered gap
+
+#### Scenario: a module MAY render an explicit disabled-state literal instead of omitting its variable
+- **WHEN** a Copier-gated module's own requirement documents that omitting
+  its allow-all variable would leave a channel for stale, out-of-band state
+  to survive a disabled render — GitHub Copilot CLI's `COPILOT_ALLOW_ALL`,
+  which the bot profile's `--env-file` layer does not manage and therefore
+  does not evict, is the one such module in this repository
+- **THEN** that module's `apply` and `verify` treat an explicit,
+  always-rendered disabled-state literal as this requirement's own
+  `disabled-by-option` state, rather than the variable's absence — the
+  general default in this requirement remains omission, and this is a
+  documented, per-module exception to it, not a second default
+
+#### Scenario: the autonomous state is verified when the option is on
+- **WHEN** the Copier option is on and `bot-autonomy.sh apply` runs the
+  harness's module
+- **THEN** `apply` sets the harness's allow-all environment variable (and
+  installs a wrapper if the harness needs one for headless launches, the
+  same reasoning as Antigravity's), and `verify` asserts that state —
+  including confirming this repository's own `.dogfood-answers.yml` sets
+  the Copilot option on, so this repository's own bot container runs
+  Copilot autonomously, while a freshly generated repo defaults to
+  `disabled-by-option`
