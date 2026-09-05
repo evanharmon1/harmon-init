@@ -420,7 +420,8 @@ autonomy wrapper — present only in the bot profile when
 delegates to `~/.local/bin/agy-real` when present, else the system binary
 at `/usr/local/bin/agy`; **(b)** a plain symlink to `agy-real`, present
 only when `agy-real` itself exists; **(c)** absent. It SHALL NOT be a
-dangling symlink (a symlink whose target does not exist).
+dangling symlink (a symlink whose target does not exist) — except the
+one documented, tracked exception below (#1171).
 `HARMON_BOT_AUTONOMY_ANTIGRAVITY` SHALL be set by the **rendered**
 `devcontainer.json` (bot) and `dev/devcontainer.json` — both
 `[% if devcontainer %]`-conditional jinja twins — from
@@ -454,10 +455,12 @@ with the no-dangling-symlink invariant above. Reconciling it safely
 (never deleting a valid wrapper before its replacement is guaranteed —
 a naive unconditional removal was tried and reverted for exactly that
 reason) is tracked as #1171; until it lands, this is the one documented
-exception to that invariant. The bot profile self-heals regardless of
-whether a stale `agy` survives here, because the `antigravity` module's
-`apply` runs immediately after and unconditionally overwrites `agy`
-with the wrapper, but the dev profile has no such follow-on step. WHEN
+exception to that invariant. The bot profile self-heals for any
+ordinary file or dangling symlink surviving here, because the
+`antigravity` module's `apply` runs immediately after and overwrites
+`agy` with the wrapper (barring the one shape `mv -f` cannot replace —
+a symlink to an existing directory — which this capability's own state
+model never produces); the dev profile has no such follow-on step. WHEN
 the marker reads anything other than `enabled`
 (`disabled`, or absent on an image built before this marker existed), it
 SHALL ensure **neither** `agy-real` nor `agy` exists, removing either if a
@@ -473,8 +476,11 @@ absent — state (c) — and re-touching it would be redundant, not
 corrective) and SHALL restore `~/.gemini/antigravity-cli/settings.json`
 to its pre-managed state (via `apply-antigravity-settings.sh restore`).
 `verify` SHALL assert whichever of the three states the marker's value
-implies is correct, and SHALL fail on a dangling symlink regardless of the
-marker's value — no valid state is ever a symlink with a missing target.
+implies is correct, and, **in the bot profile, where it runs**, SHALL
+fail on a dangling symlink regardless of the marker's value — no valid
+state is ever a symlink with a missing target there. The dev profile
+has no equivalent check, which is exactly why the documented exception
+above is not self-correcting there today.
 
 WHEN the wrapper is installed (state a), it SHALL prepend
 `--dangerously-skip-permissions` to every **agent/headless execution**
@@ -514,8 +520,9 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
 #### Scenario: ensure-antigravity-cli.sh installs agy-real and the symlink when enabled, in either profile
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`,
   `ensure-antigravity-cli.sh` runs — in the bot profile or the dev profile
-  — and either a local `agy-real` copy already exists or the current
-  on-`PATH` system binary does not already satisfy the pinned version
+  — and either a local `agy-real` copy already exists **and is
+  executable** or the current on-`PATH` system binary does not already
+  satisfy the pinned version
 - **THEN** it downloads/reconciles the pinned binary at
   `~/.local/bin/agy-real` and (re)points `~/.local/bin/agy` at it as a
   plain symlink
@@ -523,8 +530,9 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
 #### Scenario: ensure-antigravity-cli.sh leaves agy absent when the current system binary already satisfies the pin
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`,
   `ensure-antigravity-cli.sh` runs, the on-`PATH` system binary at
-  `/usr/local/bin/agy` already matches the pinned version, no local
-  `agy-real` copy exists yet, and `agy` is not already present either
+  `/usr/local/bin/agy` already matches the pinned version, no
+  **executable** local `agy-real` copy exists (absent, or present but
+  not executable), and `agy` is not already present either
 - **THEN** it creates neither `agy-real` nor `agy` — avoiding an
   unnecessary shadow copy of a binary the image already ships — and `agy`
   resolves directly to the sufficient system binary via `PATH`, which is
@@ -532,8 +540,8 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
 
 #### Scenario: a pre-existing agy is not reconciled by the system-binary-sufficient exit (documented exception, tracked by #1171)
 - **WHEN** the on-`PATH` system binary at `/usr/local/bin/agy` already
-  matches the pinned version, no local `agy-real` copy exists, and `agy`
-  already exists — most plausibly a dangling symlink left behind after
+  matches the pinned version, no executable local `agy-real` copy
+  exists, and `agy` already exists — most plausibly a dangling symlink left behind after
   `agy-real` was removed some other way, but this branch does not
   distinguish that from a wrapper or any other file already at that path
 - **THEN** `ensure-antigravity-cli.sh` exits without creating `agy-real`
