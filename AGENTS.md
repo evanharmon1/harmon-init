@@ -267,9 +267,9 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   publish with `gh pr create --draft`, then fetch `headRefOid,isDraft` and
   require both the SHA you pushed and `isDraft == true`. Only a passing readiness
   gate promotes; `gh pr ready` runs exactly once out of it — never as a judgement
-  that the change looks done — and you then confirm `isDraft == false` on that
-  same head before reporting. Human approval is deliberately *not* a
-  precondition: ready-for-review requests that review, never permission to merge.
+  that the change looks done — then confirm `isDraft == false` on that same head
+  before reporting. Human approval is deliberately *not* a precondition:
+  ready-for-review requests that review, never permission to merge.
 - **Never merge, never cut a release, never rewrite pushed history.** Merging
   and releasing are Evan's decisions, and nothing already pushed is amended,
   rebased, or force-pushed, at any stage.
@@ -311,18 +311,19 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
 
 `/orchestrator` owns the judgements and delegates the work: it decides every
 finding's **disposition**, may override a computed stage exit **upward only**
-(more rounds, never fewer, and never a promotion the gate refused), owns the
-per-thread replies and the PR body, evaluates the readiness gate, performs the
-single promotion, and escalates to Evan on a cap, a blocker, or a scope question.
-It delegates implementation to `/implement`, the confidence rounds to `/review`,
-and integration polling to `/integrate`; each returns a typed result validated
-by `ai/schemas/result.envelope.schema.json` and its per-role
-`result.{implementer,challenger,reviewer,integrator}.schema.json`, and nothing
-more; a delegate never merges, never promotes, never widens its own scope, and
-never adjudicates its own findings. A delegate's result is **immutable**
-([ADR 0009](docs/decisions/0009-dev-flow-v2-orchestrator-and-results.md) D2): the
-adjudication is a separate record keyed by finding id and every consumer reads
-the adjudicated view — editing it in place destroys the calibration signal.
+(more rounds, never fewer; never a promotion the gate refused), owns the
+per-thread replies and the PR body, evaluates the readiness gate, promotes, and
+escalates to Evan on a cap, blocker, or scope question. It delegates
+implementation to `/implement`, the confidence rounds to `/review`, and
+integration polling to `/integrate` — session procedures returning no envelope.
+Where a run dispatches the schema-bound **role agents** instead, each returns a
+typed result validated by `ai/schemas/result.envelope.schema.json` and its
+per-role `result.{implementer,challenger,reviewer,integrator}.schema.json` and
+nothing more; that result is **immutable** ([ADR
+0009](docs/decisions/0009-dev-flow-v2-orchestrator-and-results.md) D2), its
+adjudication a separate record keyed by finding id that every consumer reads.
+Either kind never merges, never promotes, never widens its scope, nor
+adjudicates its own findings.
 
 **The current-head Codex contract** is policy and outlives whatever polls it. A
 result is terminal for the head you captured only when it is a clean review or
@@ -334,9 +335,7 @@ adjudicated before the cycle is clean. Earlier activity never counts for a newer
 head, and a 👀 is pending, not success. Immediately before accepting a result or
 promoting, re-check the **cycle** as well as `headRefOid`: a same-head finding
 can land after a clean one. § "Second-Model Review" carries the trigger cadence
-and both procedures; do not hand-roll the polling — the vendored
-`.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the required
-implementation (`reserve` before the trigger, then `attach`, `check`, `settle`).
+and both procedures.
 
 ### Readiness gate
 
@@ -638,9 +637,12 @@ window, re-triggering once after an incomplete first attempt. If both attempts
 are incomplete, stop and escalate without reporting green. That is why
 [docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them to
 this file rather than restating either. **Where the pinned checker is
-vendored** — it is, in this repo — the Dev Loop's rule above governs: it is the
-required implementation, `reserve` precedes the trigger comment, and `settle`
-records the disposition of a badged finding stated outside an inline thread.
+vendored** — it is, in this repo — never hand-roll the polling:
+`.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the required
+implementation (`reserve` the cycle against the captured head *before* posting
+the trigger, then `attach` its comment ID, then `check`), and its `settle`
+subcommand records the disposition of a badged finding stated outside an inline
+thread.
 **Where it is not vendored**, the same contract is satisfied by hand: post the
 trigger, record its comment ID and request time yourself, and poll all four
 surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
