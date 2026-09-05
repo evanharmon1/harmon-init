@@ -644,21 +644,6 @@ SENTINEL_SCRIPT
     [ ! -e "${agy_image_home}/.local/bin/agy" ] && [ ! -L "${agy_image_home}/.local/bin/agy" ] ||
         fail "agy is present (or a dangling symlink) with no agy-real to back it"
 
-    # Same system-binary-sufficient condition, but agy already exists as a
-    # dangling symlink (out-of-band interference: agy-real removed without
-    # also removing agy) — this exit removes it too, reaching state (c)
-    # unconditionally rather than only when agy already happened to be absent.
-    local agy_stale_home
-    agy_stale_home="${work_dir}/agy-stale-home"
-    mkdir -p "${agy_stale_home}/.local/bin"
-    ln -sfn "${agy_stale_home}/.local/bin/agy-real" "${agy_stale_home}/.local/bin/agy"
-    HOME="$agy_stale_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled \
-        HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_system_binary" bash "$agy_ensure" >/dev/null
-    [ ! -e "${agy_stale_home}/.local/bin/agy-real" ] ||
-        fail "current shared-image Antigravity binary created a persistent shadow copy (stale-agy case)"
-    [ ! -e "${agy_stale_home}/.local/bin/agy" ] && [ ! -L "${agy_stale_home}/.local/bin/agy" ] ||
-        fail "a stale dangling agy symlink survived the system-binary-sufficient exit"
-
     # Enabled marker, a stale local shadow already exists: refreshed to the
     # pinned version, and agy (re)pointed at it as a plain symlink.
     HOME="$agy_roll_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled \

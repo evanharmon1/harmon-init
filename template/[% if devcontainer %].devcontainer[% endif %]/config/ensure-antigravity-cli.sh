@@ -41,13 +41,6 @@ if [ -x "$system_binary" ] && [ "$("$system_binary" --version | head -1)" = "$ve
     if [ -x "$real_bin" ]; then
         install -m 0755 "$system_binary" "$real_bin"
         ln -sfn "$real_bin" "$link_bin"
-    else
-        # No compatibility copy to reconcile agy against, so agy must reach
-        # state (c) here, not whatever it happened to be already: a stale
-        # dangling symlink or other leftover would otherwise survive this
-        # branch untouched, contradicting the exactly-one-of-three-states
-        # and no-dangling-symlink invariants this script exists to uphold.
-        rm -f "$real_bin" "$link_bin"
     fi
     exit 0
 fi
