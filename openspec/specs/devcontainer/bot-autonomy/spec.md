@@ -1,10 +1,11 @@
 # devcontainer/bot-autonomy Specification
 
 ## Purpose
-Defines the bot-only, fail-closed contract that keeps every agent harness
-installed in the bot devcontainer image running non-interactively, keyed by
-the agent registry, so a declared no-prompt policy can never silently diverge
-from the effective runtime policy the way Codex's did in issue #1137.
+Defines the bot-only, fail-closed contract that keeps every supported,
+enabled agent harness installed in the bot devcontainer image running
+non-interactively, keyed by the agent registry, so a declared no-prompt
+policy can never silently diverge from the effective runtime policy the way
+Codex's did in issue #1137.
 
 ## Requirements
 
@@ -330,14 +331,14 @@ policy.
   built image and fails the workflow if any supported installed harness is
   prompt-enabled or sandboxed below its declared bot policy
 
-#### Scenario: the CI assertion covers every module, not only Codex
+#### Scenario: the CI assertion covers every module, not a fixed subset
 - **WHEN** `devcontainer-assert.sh container` runs against the bot profile
-- **THEN** its coverage is not limited to Codex's `sandbox_mode`/
-  `approval_policy` (the only boundary it checks today) — it additionally
-  proves Claude Code, Antigravity, and OpenCode's effective policies, by
-  invoking `bot-autonomy.sh verify` inside the running container (via
-  `docker exec`) rather than by duplicating each boundary's check a second
-  time in the assertion script
+- **THEN** it re-checks Codex's `sandbox_mode`/`approval_policy` directly,
+  and proves every other installed harness's effective policy — Claude
+  Code, Antigravity, OpenCode, Copilot CLI, pi, and oh-my-pi — by invoking
+  `bot-autonomy.sh verify` inside the running container (via `docker exec`)
+  rather than by duplicating each boundary's check a second time in the
+  assertion script
 
 #### Scenario: the CI assertion runs from a clean, isolated volume state every time
 - **WHEN** `devcontainer-build.yml`'s container-assertion job (or a
@@ -416,10 +417,11 @@ passing against the stale copy.
 `~/.local/bin/agy` SHALL be exactly one of: **(a)** the flag-injecting
 autonomy wrapper — present only in the bot profile when
 `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled` — that
-delegates to `~/.local/bin/agy-real` when present, else the system binary
-at `/usr/local/bin/agy`; **(b)** a plain symlink to `agy-real`, present
+delegates to `~/.local/bin/agy-real` when present and executable, else
+the system binary at `/usr/local/bin/agy`; **(b)** a plain symlink to `agy-real`, present
 only when `agy-real` itself exists; **(c)** absent. It SHALL NOT be a
-dangling symlink (a symlink whose target does not exist).
+dangling symlink (a symlink whose target does not exist) — except the
+one documented, tracked exception below (#1171).
 `HARMON_BOT_AUTONOMY_ANTIGRAVITY` SHALL be set by the **rendered**
 `devcontainer.json` (bot) and `dev/devcontainer.json` — both
 `[% if devcontainer %]`-conditional jinja twins — from
@@ -439,9 +441,28 @@ per-repo Copier answer at all.
 
 `ensure-antigravity-cli.sh` SHALL own `agy-real` and states (b)/(c): in
 **either** profile, WHEN the marker reads `enabled`, it downloads and
-verifies the pinned binary at `agy-real` (as it does today) and (re)points
-a plain `agy → agy-real` symlink on every invocation, including its
-early-return paths; WHEN the marker reads anything other than `enabled`
+verifies the pinned binary at `agy-real` and (re)points a plain
+`agy → agy-real` symlink — including on its early-return path where a
+local, executable `agy-real` copy already exists at the pinned version — except one
+path it leaves alone: WHEN the current on-`PATH` system binary at
+`/usr/local/bin/agy` already matches the pinned version and no
+executable local `agy-real` copy exists (absent, or present but not
+executable), it creates neither and leaves `agy` exactly as found. On a
+fresh volume that reaches state (c), the intended end state; but this
+branch's own check is scoped to `agy-real`'s executability, not `agy`'s,
+so a pre-existing `agy` — a dangling symlink, most
+plausibly — survives here untouched rather than reconciled, in tension
+with the no-dangling-symlink invariant above. Reconciling it safely
+(never deleting a valid wrapper before its replacement is guaranteed —
+a naive unconditional removal was tried and reverted for exactly that
+reason) is tracked as #1171; until it lands, this is the one documented
+exception to that invariant. The bot profile self-heals for any
+ordinary file or dangling symlink surviving here, because the
+`antigravity` module's `apply` runs immediately after and overwrites
+`agy` with the wrapper (barring the one shape `mv -f` cannot replace —
+a symlink to an existing directory — which this capability's own state
+model never produces); the dev profile has no such follow-on step. WHEN
+the marker reads anything other than `enabled`
 (`disabled`, or absent on an image built before this marker existed), it
 SHALL ensure **neither** `agy-real` nor `agy` exists, removing either if a
 prior run (before a Copier-answer toggle) or a stale image left them
@@ -456,18 +477,21 @@ absent — state (c) — and re-touching it would be redundant, not
 corrective) and SHALL restore `~/.gemini/antigravity-cli/settings.json`
 to its pre-managed state (via `apply-antigravity-settings.sh restore`).
 `verify` SHALL assert whichever of the three states the marker's value
-implies is correct, and SHALL fail on a dangling symlink regardless of the
-marker's value — no valid state is ever a symlink with a missing target.
+implies is correct, and, **in the bot profile, where it runs**, SHALL
+fail on a dangling symlink regardless of the marker's value — no valid
+state is ever a symlink with a missing target there. The dev profile
+has no equivalent check, which is exactly why the documented exception
+above is not self-correcting there today.
 
-WHEN the wrapper is installed (state a), it SHALL add
+WHEN the wrapper is installed (state a), it SHALL prepend
 `--dangerously-skip-permissions` to every **agent/headless execution**
 launch that does not already carry it, and pass a fixed set of
-subcommands and flags through unmodified without appending the flag: a
+subcommands and flags through unmodified without prepending the flag: a
 bare `agy` (interactive, already covered by the settings-file policy),
 `agent`/`agents`, `changelog`, `help`/`-h`/`--help`, `install`, `models`,
 `plugin`/`plugins`, `update`, and `--version` — matching the passthrough
 list already proven correct in `agy-autonomy.sh`, the shell-function
-mechanism this wrapper replaces. Appending the flag to any of these is
+mechanism this wrapper replaces. Prepending the flag to any of these is
 either rejected by `agy` or meaningless. `ensure-antigravity-cli.sh`'s own
 version check reads `agy-real --version` directly — not through the
 wrapper or the symlink — so its idempotency never depends on either being
@@ -495,11 +519,49 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
   `antigravity` module) reads the answer any other way
 
 #### Scenario: ensure-antigravity-cli.sh installs agy-real and the symlink when enabled, in either profile
-- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled` and
+- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`,
   `ensure-antigravity-cli.sh` runs — in the bot profile or the dev profile
+  — and either a local `agy-real` copy already exists **and is
+  executable** or the current on-`PATH` system binary does not already
+  satisfy the pinned version
 - **THEN** it downloads/reconciles the pinned binary at
   `~/.local/bin/agy-real` and (re)points `~/.local/bin/agy` at it as a
   plain symlink
+
+#### Scenario: ensure-antigravity-cli.sh leaves agy absent when the current system binary already satisfies the pin
+- **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`,
+  `ensure-antigravity-cli.sh` runs, the on-`PATH` system binary at
+  `/usr/local/bin/agy` already matches the pinned version, no
+  **executable** local `agy-real` copy exists (absent, or present but
+  not executable), and `agy` is not already present either
+- **THEN** it creates neither `agy-real` nor `agy` — avoiding an
+  unnecessary shadow copy of a binary the image already ships — and `agy`
+  resolves directly to the sufficient system binary via `PATH`, which is
+  state (c) and not a dangling symlink
+
+#### Scenario: a pre-existing agy is not reconciled by the system-binary-sufficient exit (documented exception, tracked by #1171)
+- **WHEN** the on-`PATH` system binary at `/usr/local/bin/agy` already
+  matches the pinned version, no executable local `agy-real` copy
+  exists, and `agy` already exists — most plausibly a dangling symlink left behind after
+  `agy-real` was removed some other way, but this branch does not
+  distinguish that from a wrapper or any other file already at that path
+- **THEN** `ensure-antigravity-cli.sh` exits without creating `agy-real`
+  or otherwise touching `agy` — this branch's own precondition checks
+  only whether an executable `agy-real` copy exists, not `agy`'s state.
+  In the bot profile this
+  self-heals: the `antigravity` module's `apply` runs immediately after
+  and overwrites `agy` with the wrapper for whatever ordinary file or
+  dangling symlink it finds there (the one shape `install_wrapper`'s
+  `mv -f` cannot replace — a symlink to an existing directory, which it
+  would move the wrapper into instead — is not a shape this capability's
+  own state model ever produces). The dev profile has no such follow-on
+  step, so a stale
+  `agy` there survives until a full disable/re-enable cycle or a manual
+  cleanup clears it. #1171 tracks closing this gap — removing only a
+  dangling `agy` here, never a valid wrapper, since an earlier
+  unconditional-removal attempt on this branch was reverted after it was
+  found capable of deleting a still-valid wrapper before its replacement
+  was guaranteed
 
 #### Scenario: ensure-antigravity-cli.sh leaves agy absent when disabled, in either profile
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` is not `enabled` and
@@ -508,12 +570,15 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
   `agy` if either exists from a prior run (before a Copier-answer toggle)
   or a stale image
 
-#### Scenario: bot apply promotes the symlink to the wrapper when enabled
+#### Scenario: bot apply installs the wrapper when enabled, whatever ensure-antigravity-cli.sh left
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled` and the
   `antigravity` module's `apply` runs in the bot profile, after
-  `ensure-antigravity-cli.sh` has already left the plain symlink
-- **THEN** `apply` overwrites `~/.local/bin/agy` with the flag-injecting
-  wrapper script
+  `ensure-antigravity-cli.sh` has already left the plain symlink, `agy`
+  absent, or — in the system-binary-sufficient early return's documented
+  #1171 exception — a pre-existing leftover untouched
+- **THEN** `apply` creates or overwrites `~/.local/bin/agy` with the
+  flag-injecting wrapper script either way, since installing the wrapper
+  does not depend on any particular prior state there
 
 #### Scenario: bot apply does not touch agy when disabled — it is already absent
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` is not `enabled` and the
@@ -586,8 +651,8 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
   `changelog`, `help`, `-h`, `--help`, `install`, `models`, `plugin`,
   `plugins`, `update`, or `--version`
 - **THEN** it execs the resolved real `agy` binary (`agy-real` when
-  present, else the system binary) unchanged, without appending
-  `--dangerously-skip-permissions`
+  present and executable, else the system binary) unchanged, without
+  prepending `--dangerously-skip-permissions`
 
 #### Scenario: verify fails if the enabled state's boundary is missing, inert, or misdirected
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`, `verify` runs
@@ -613,12 +678,14 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
 - **THEN** `verify` exits non-zero naming Antigravity — a correct
   `toolPermission` value does not by itself bypass the workspace-trust gate
 
-#### Scenario: verify fails on a dangling symlink regardless of the marker
-- **WHEN** `verify` runs and `~/.local/bin/agy` is a symlink whose target
-  (`agy-real`) does not exist, in either profile and regardless of the
+#### Scenario: verify fails on a dangling symlink regardless of the marker, in the bot profile where it runs
+- **WHEN** `verify` runs in the bot profile and `~/.local/bin/agy` is a
+  symlink whose target (`agy-real`) does not exist, regardless of the
   marker's value
 - **THEN** `verify` exits non-zero naming Antigravity — none of the three
-  valid states is a dangling link
+  valid states is a dangling link. `bot-autonomy.sh verify` never runs in
+  the dev profile, so no equivalent check catches one there — the #1171
+  gap this spec documents elsewhere
 
 ### Requirement: OpenCode non-interactive boundary forces the managed permission key
 The bot profile SHALL force `permission.*` to `"allow"` in
@@ -745,10 +812,18 @@ this capability's existence rather than by a separate runtime check.
 - **WHEN** `.devcontainer/dev/post-create.sh` runs
 - **THEN** it does not invoke `bot-autonomy.sh apply` or `verify`, and
   never installs the flag-injecting autonomy wrapper (state a) at
-  `~/.local/bin/agy` — only `ensure-antigravity-cli.sh`'s plain
+  `~/.local/bin/agy`. Ordinarily only `ensure-antigravity-cli.sh`'s plain
   `agy → agy-real` symlink (state b, when `HARMON_BOT_AUTONOMY_ANTIGRAVITY`
-  reads `enabled`) or absence (state c, otherwise) is permitted in the dev
-  profile
+  reads `enabled` and a local copy is needed) or absence (state c, when
+  disabled, or when enabled and the on-`PATH` system binary already
+  satisfies the pin) is reached in the dev profile — except the one
+  documented exception tracked by #1171 (the "a pre-existing agy is not
+  reconciled by the system-binary-sufficient exit" scenario below): a
+  pre-existing regular file, wrapper, or dangling symlink already at
+  `~/.local/bin/agy` when that exact early return applies survives
+  exactly as found, and since dev post-create has no `apply` step to
+  overwrite it the way the bot profile does, that leftover state can
+  persist here — neither the plain symlink nor absence
 
 #### Scenario: dev profile policies remain prompt-enabled or balanced
 - **WHEN** a dev profile container is created or rebuilt
@@ -765,25 +840,27 @@ with zero approval prompts. For a Copier-gated harness whose option is at
 its default (disabled), the *absence* of a prompt-free run is the
 correct, by-design outcome — not a gap this requirement expects closed.
 
-#### Scenario: representative operations complete without a prompt when Antigravity is enabled (manual verification)
+#### Scenario: representative operations complete without a prompt when every Copier-gated harness is enabled (manual verification)
 - **WHEN** an operator rebuilds a freshly generated bot devcontainer with
-  `use_antigravity_cli: true` and, for each of Claude Code, Codex,
-  Antigravity, and OpenCode, authenticates the harness and runs one
-  representative filesystem write and one representative GitHub API
-  read/write
+  `use_antigravity_cli: true` and `use_copilot_cli: true` and, for each of
+  Claude Code, Codex, Antigravity, OpenCode, Copilot CLI, pi, and oh-my-pi,
+  authenticates the harness and runs one representative filesystem write
+  and one representative GitHub API read/write
 - **THEN** every operation completes without an approval prompt from any
-  of the four harnesses
+  of the seven harnesses
 
-#### Scenario: Antigravity stays prompt-enabled by design at the default answer (manual verification)
+#### Scenario: each Copier-gated harness stays prompt-enabled by design at its default answer (manual verification)
 - **WHEN** an operator rebuilds a freshly generated bot devcontainer with
-  `use_antigravity_cli` left at its default (disabled) and, for each of
-  Claude Code, Codex, Antigravity, and OpenCode, authenticates the harness
-  and runs the same representative operations
-- **THEN** Claude Code, Codex, and OpenCode complete without an approval
-  prompt, and Antigravity prompts as it would out of the box — a
-  prompt-enabled Antigravity CLI at the default answer is the
-  verified-correct outcome (per the disabled-by-option requirement above),
-  not a failure of this requirement
+  `use_antigravity_cli` and `use_copilot_cli` left at their defaults
+  (disabled) and, for each of Claude Code, Codex, Antigravity, OpenCode,
+  Copilot CLI, pi, and oh-my-pi, authenticates the harness and runs the
+  same representative operations
+- **THEN** Claude Code, Codex, OpenCode, pi, and oh-my-pi complete without
+  an approval prompt, and Antigravity and Copilot CLI each prompt as they
+  would out of the box — a prompt-enabled Antigravity CLI and Copilot CLI
+  at their default answers is the verified-correct outcome (per the
+  disabled-by-option requirements above), not a failure of this
+  requirement
 
 ### Requirement: GitHub Copilot CLI's autonomy policy is Copier-gated, following the established Copier-gated-harness contract
 The bot profile SHALL gate GitHub Copilot CLI's non-interactive policy behind
@@ -911,7 +988,7 @@ invocation already carries full allow-all coverage explicitly: `--allow-all`,
 `--yolo`, or all three of `--allow-all-tools`, `--allow-all-paths`, and
 `--allow-all-urls` together. An invocation carrying only some of the three
 narrower flags (for example `--allow-all-tools` alone) is **not** full
-coverage and SHALL still receive `--allow-all` — appending it alongside an
+coverage and SHALL still receive `--allow-all` — prepending it alongside an
 already-present narrower flag is redundant for the dimension that flag
 already covers, but is what actually grants the dimensions it does not;
 skipping injection there would leave that invocation restricted for
@@ -920,7 +997,7 @@ defeating the full-autonomy guarantee this wrapper exists to provide,
 specifically in the sanitized-environment case (an `env -i` launcher with no
 `COPILOT_ALLOW_ALL` fallback) the wrapper is meant to cover. It SHALL pass a fixed set of
 administrative/informational subcommands through unmodified, without
-appending the flag: `login`, `version`/`--version`, `help`/`-h`/`--help`,
+prepending the flag: `login`, `version`/`--version`, `help`/`-h`/`--help`,
 `update`, `completion`, `init`, `plugin`/`plugins`, `mcp`, `skill`, and
 `app`. The wrapper SHALL resolve and exec the real, shared-image-installed
 `copilot` binary without re-invoking itself (for example, by resolving the
@@ -944,20 +1021,20 @@ invocation actually fails.
 - **WHEN** the marker reads `enabled` and the wrapper is invoked as a bare
   `copilot`, or as `copilot -p "<prompt>"`, without any `--allow-all`-family
   flag at all
-- **THEN** it execs the real `copilot` binary with `--allow-all` appended
+- **THEN** it execs the real `copilot` binary with `--allow-all` prepended
 
 #### Scenario: the wrapper does not duplicate already-complete coverage
 - **WHEN** the marker reads `enabled` and a caller invokes `copilot` already
   passing `--allow-all`, `--yolo`, or all three of `--allow-all-tools`,
   `--allow-all-paths`, and `--allow-all-urls` together
-- **THEN** the wrapper does not append `--allow-all` a second time
+- **THEN** the wrapper does not prepend `--allow-all` a second time
 
-#### Scenario: a partial allow-all flag still gets the full flag appended
+#### Scenario: a partial allow-all flag still gets the full flag prepended
 - **WHEN** the marker reads `enabled` and a caller invokes
   `copilot --allow-all-tools -p "<prompt>"` — one of the three narrower
   flags, but not all three — for example inside a sanitized environment
   (`env -i`) where `COPILOT_ALLOW_ALL` is not present as a fallback
-- **THEN** the wrapper still appends `--allow-all`, so the invocation ends
+- **THEN** the wrapper still prepends `--allow-all`, so the invocation ends
   up with full tools/paths/URLs coverage rather than remaining restricted
   for the two dimensions its own explicit flag did not name
 
@@ -965,7 +1042,7 @@ invocation actually fails.
 - **WHEN** the marker reads `enabled` and the wrapper is invoked with
   `login`, `version`, `--version`, `help`, `-h`, `--help`, `update`,
   `completion`, `init`, `plugin`, `plugins`, `mcp`, `skill`, or `app`
-- **THEN** it execs the real `copilot` binary unchanged, without appending
+- **THEN** it execs the real `copilot` binary unchanged, without prepending
   `--allow-all`
 
 #### Scenario: a headless invocation off PATH still receives the flag

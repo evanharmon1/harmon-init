@@ -137,9 +137,15 @@ human login; the pinned CLI falls back to file-backed credentials when the
 headless container has no D-Bus keyring, and the `~/.gemini` named volume
 persists the login across rebuilds. A checksum-verified compatibility installer
 (`config/ensure-antigravity-cli.sh`) covers the interval before the shared-image
-pin advances, then becomes a network-free no-op; it installs the pinned binary
-at `~/.local/bin/agy-real` (never `agy` itself, which is always either the
-bot's wrapper or a plain symlink to `agy-real`) and is gated on the rendered
+pin advances, installing the pinned binary at `~/.local/bin/agy-real` and
+pointing `agy` at it as a plain symlink; once the image ships the pinned
+version directly, it becomes a network-free no-op: on a fresh volume it
+leaves both files absent, so `agy` resolves straight to the system
+binary; a volume where something already occupies `agy` (a stale
+symlink, most plausibly, left by an out-of-band change) is left exactly
+as found instead — closing that gap is tracked by #1171. Either way, the
+bot's `apply` still installs its flag-injecting wrapper over whatever
+this installer leaves. It is gated on the rendered
 `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` marker — the Copier answer
 turned off leaves both files absent rather than downloading anything. The
 settings helper backs up the six policy keys it owns and tracks its
