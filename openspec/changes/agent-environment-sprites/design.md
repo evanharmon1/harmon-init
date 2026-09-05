@@ -205,43 +205,54 @@ restore is asynchronous and terminates active sessions; a lane that
 proceeded while one was in flight would have its own clone or container
 erased. The helper therefore polls the platform until the restore reports
 complete and refuses to continue on a timeout. Before the restore it claims
-the sprite: a lease (owner, lane, issue, expiry) written to the sprite's
-labels and read back — any other owner in the readback is a lost race —
-plus a local lock so two `lane:new` invocations on one orchestrator never
-race each other at all. The platform offers no compare-and-swap on labels,
-so the readback is the best available check; that is why one pool is
-driven from one orchestrator at a time (documented as a limit, not a
-mechanism), and why an expired lease is reclaimed only by
-`sprite:audit --reclaim` after confirmation rather than silently by the
-next lane. Reclaim is not a second procedure: it is `lane:rm` invoked by
-the audit owner on an expired lease, with the same lane lock, the same
+the sprite: a lease (owner, lane, pool sprite name, issue, expiry) written
+to the sprite's labels under the orchestrator-side lane lock. Labels only
+record the lease; the lock arbitrates, which is why one pool is driven
+from one orchestrator at a time (an explicit precondition of the lane-lock
+requirement, with a shared pool as the named follow-up), and why an
+expired lease is reclaimed only by `sprite:audit --reclaim` after
+confirmation rather than silently by the next lane. Reclaim is not a
+second procedure: it is `lane:rm` invoked by the audit owner on an expired
+lease, with the same lane lock held for the same span, the same
 cleanliness gate, and the same `--force`. The lease is renewed by every
 authenticated activity and by `lane:extend`, and never expires before the
 lane's TTL, so a long-lived valid lane is never mistaken for an abandoned
 one.
 
-**One lane lock per sprite, instead of an ordered closing-mark
-procedure.** Two review rounds hardened the order "closing mark, then
-activity check, then restore", and the next round attacked its seams (a
-command past its own check but not yet visible; a reclaim restoring an
-unclean checkout). Ordering prose accretes a new seam per round, so the
-design replaces it with one invariant and delegates the mechanism: every
-operation that starts a lane command performs its check and the
-registration of its session as one step under a per-sprite lock, and
-every operation that ends a lane takes the same lock, sets a persistent
-closing state, and evaluates activity and cleanliness under it. Nothing
-can start between an ending operation's evaluation and its restore, and
-nothing can be half-started when the lock is taken. The restore may run
-after the lock is released only because the closing state persists and
-refuses new commands. The lock's implementation (a lock file or label with
-owner and expiry, arbitrated on the sprite) is the helper's choice; the
-review's interleavings are carried into the offline test as named cases
-driven deterministically.
+**One orchestrator-side `flock` per sprite, and nothing else.** Two review
+rounds hardened the order "closing mark, then activity check, then
+restore"; the next replaced it with a lock plus a persistent closing state
+plus a session registration made before the session existed; the round
+after that found a seam in each of those three. Every extra piece of state
+is a new thing to leave half-written, so the design keeps exactly one
+primitive. The lane lock is an advisory `flock` on a per-sprite lock file
+in the orchestrator's lane state directory, keyed by the pool sprite's
+platform name — sound because one orchestrator drives a pool at a time,
+now stated as the requirement's precondition rather than an aside. Labels
+record the lease and never arbitrate. There is no closing state: an ending
+operation holds the lock from its first check until the golden restore has
+completed and the lease is released, so a refused retirement releases the
+lock with nothing changed and the lane is usable at once, and anything
+that would start a command while the lock is held refuses immediately
+with `retiring <lane>` rather than blocking behind a multi-minute restore.
+There is no provisional registration: startup holds the lock only long
+enough to create the platform session and record its identifier, so a
+crash mid-startup leaves at worst a real session, which the activity check
+already reads from the platform. `lane:extend` takes the same lock and
+writes TTL and lease together. The review's interleavings are carried into
+the offline test as named cases driven deterministically against a stubbed
+`flock`.
 
 **Egress: allowlist first, credentials second.** The default is
 unrestricted; a lane sets the DNS allowlist before any secret exists in the
 sprite, so a prompt-injected agent cannot post the bot PAT anywhere the
-policy does not name. The list is repository-owned and reviewed; the sprite
+policy does not name. The one phase that needs package hosts — installing
+`openssh-server` into the inner container — brackets the install with two
+policy writes that add and then remove `archive.ubuntu.com` and
+`security.ubuntu.com` (the shared image's `ubuntu.sources` URIs), with
+`apt-get update` restricted to the Ubuntu sources so the image's
+third-party lists are never fetched; baking `openssh-server` into the
+shared image removes the phase entirely and is the named follow-up. The list is repository-owned and reviewed; the sprite
 cannot widen it. Private IPs are blocked by the platform. The list must
 include the Codex CLI's ChatGPT backend and the Convex local-backend
 download host; the research note marks both hostnames as needing
@@ -259,7 +270,9 @@ identifies a local `claude` identifies a remote one; where it does not
 Herdr guide already prescribes. For a human taking a lane over with the
 full Herdr UI, a Herdr server runs inside the inner container and the
 operator attaches with `herdr --remote` through an SSH alias whose
-`ProxyCommand` is `sprite proxy -s <lane> -W <inner-address>:22` — the
+`ProxyCommand` is `sprite proxy -s <pool-sprite> -W <inner-address>:22`,
+generated from the leased pool sprite's platform name (the lane name is
+only the helper's key) — the
 proxy's `-W [host]:port` form reaches a host inside the sprite's network,
 and the inner container's bridge address is such a host — to an SSH server
 the helper installs **inside the inner container** after `devcontainer up`.
@@ -312,9 +325,12 @@ period before stopping it the same way — so a lane's active compute is
 bounded by TTL plus grace — but never destroys anything: stopping a
 command preserves the checkout, the container, and the volumes, and the
 Herdr guide's rule that sweeping is the operator's step still holds.
-Reclaiming an expired lease is retirement under the same lane lock and
-the same cleanliness gate, because an expired lease is bookkeeping, not
-evidence that the work inside is finished or that it was pushed. The pool ceiling
+Reclaiming an expired lease is retirement under the same lane lock, held
+for the same span, and the same cleanliness gate — which enumerates every
+checkout under `/workspaces`, not only the primary, because related-repo
+bootstrap is disabled in lanes but an agent can still clone — because an
+expired lease is bookkeeping, not evidence that the work inside is
+finished or that it was pushed. The pool ceiling
 mirrors the plan's concurrency limit so `pool:init` cannot walk the account
 into "concurrent sprites exceeded" errors mid-dispatch.
 
@@ -379,8 +395,9 @@ over the API.
 - [A checkpoint restore is destructive and terminates sessions] → The
   helper restores only at lane start and lane retirement (reclaim being
   retirement), waits for the restore to complete before any later step,
-  evaluates activity and cleanliness under the lane lock so no command can
-  start or be half-started around the restore, never restores a leased
+  holds the lane lock from its first check through the completed restore
+  so no command can start around the restore and nothing is recorded
+  before a session exists, never restores a leased
   sprite it does not own, and refuses retirement over a non-clean checkout
   (modified, staged, or untracked files, or a branch with commits not on
   its upstream, no upstream, or a missing remote counterpart — porcelain

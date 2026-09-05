@@ -26,7 +26,10 @@ allows and drives from Herdr the same way a local pane worker does.
   Codex stages inside a lane (`task challenge`/`task review`, the
   `@codex review` trigger) follow the repository's own `use_codex_review`
   and `use_codex_cloud_review` answers; the unconditional promise is
-  verify → security → draft PR → shepherd CI.
+  verify → security → draft PR → shepherd CI, for changes outside
+  `.github/workflows/**` (the bot PAT is denied the Workflows permission;
+  a workflow-touching change is bundled out of the lane and pushed by the
+  operator).
 - Ship a **sprite lane** recipe, `scripts/sprite-lane.sh` behind a
   `taskfiles/sprites.yml` include (`task sprite:*`), that creates, attaches,
   steers, harvests, and retires one lane per sprite **from inside Herdr**,

@@ -63,11 +63,22 @@ profile's own lifecycle. The bot profile's `post-create.sh` and
 `bot-autonomy.sh apply` runs at creation and `bot-autonomy.sh verify` runs at
 creation and on every start; a non-zero exit from either SHALL fail lane
 creation (or the lane's restart) visibly rather than leaving an agent running
-against an unverified policy. The lane SHALL NOT build or maintain a second
-toolchain in the sprite's own filesystem: the sprite carries only what the
-outer host needs (Docker, the devcontainers CLI, and the lane helper); the
-SSH server the takeover path needs runs inside the inner container, never on
-the outer host.
+against an unverified policy. Pool initialisation and every lane SHALL run
+the bot profile with the Agent Deck conductor lifecycle disabled: the helper
+sets a rendered marker, `HARMON_LANE_NO_CONDUCTOR=1`, in the environment of
+every `devcontainer up` and every lane command, and `post-create-conductor.sh`
+and the conductor-start and Telegram-bridge blocks of `post-start-common.sh`
+SHALL skip themselves when it is set (a lane also never carries
+`AGENT_DECK_TELEGRAM_KEY`, so no registration can be created inside one).
+The golden checkpoint SHALL contain no conductor registration (the
+`~/.agent-deck` volume it bakes in holds no conductor entry, and
+`agent-deck conductor status <repo>` reports none), so post-start in a lane
+never starts a background agent from the volume, and any agent process in
+a lane SHALL start only through the supervised `lane:exec` path. The lane
+SHALL NOT build or maintain a second toolchain in the sprite's own
+filesystem: the sprite carries only what the outer host needs (Docker, the
+devcontainers CLI, and the lane helper); the SSH server the takeover path
+needs runs inside the inner container, never on the outer host.
 
 #### Scenario: lane creation brings up the bot profile from the pinned image
 - **WHEN** `task sprite:lane:new -- <lane> --issue <n>` runs against a pool
@@ -83,6 +94,17 @@ the outer host.
 - **THEN** the lane task exits non-zero naming the harness `verify` named,
   starts no agent in the lane, and leaves the sprite in a state the
   operator can inspect (`sprite console`) rather than destroying it
+
+#### Scenario: post-start in a lane starts no background agent
+- **WHEN** the inner container of a lane (or of a pool sprite during
+  initialisation) runs `post-start.sh`
+- **THEN** `HARMON_LANE_NO_CONDUCTOR=1` is set in its environment, the
+  conductor-start and Telegram-bridge blocks are skipped, no
+  `agent-deck session start` or `bridge.py` process appears, the golden
+  checkpoint's `~/.agent-deck` volume holds no conductor registration
+  (asserted by the real-run check and by the offline test's inspection of
+  the environment handed to `devcontainer up`), and the only agent
+  processes in the lane are children of a supervised `lane:exec`
 
 #### Scenario: the lane helper installs no agent toolchain on the outer host
 - **WHEN** the golden checkpoint of a pool sprite is inspected and its
@@ -117,27 +139,25 @@ moved image pin, a changed helper or supervisor, or a bumped CLI pin,
 alone or together — SHALL be re-initialised before use, never patched in
 place.
 
-Lane creation SHALL **claim** a pool sprite before touching it: a claim is a
-lease recorded on the sprite (owner, lane name, issue, expiry) that the
-helper writes and then reads back, treating any other owner in the readback
-as a lost race and retrying with a different sprite; concurrent `lane:new`
-invocations on one orchestrator SHALL additionally serialise the claim
-through a local lock so two of them never select the same sprite. A leased
-sprite SHALL NOT be restored, retired, or reclaimed by anyone but its owner
-or, once the lease has expired, the audit owner. A lease SHALL be
+Lane creation SHALL **claim** a pool sprite before touching it, under the
+per-sprite lane lock of the lane-lock requirement below: a claim is a lease
+recorded on the sprite's labels (owner, lane name, pool sprite name, issue,
+expiry) — labels **record** the lease and never arbitrate it; the lock does
+— and concurrent `lane:new` invocations on one orchestrator therefore never
+select the same sprite. A leased sprite SHALL NOT be restored, retired, or
+reclaimed by anyone but its owner or, once the lease has expired, the audit
+owner. A lease SHALL be
 **renewed** by the configured lease window on every authenticated lane
 activity (`lane:exec`, `lane:attach`, `lane:harvest`) and by
 `task sprite:lane:extend`, and its expiry SHALL never be earlier than the
 lane's TTL, so a lane that is alive and within its TTL is never reported
 reclaimable. **Reclaim is retirement:** `task sprite:audit --reclaim` is
 `task sprite:lane:rm` invoked by the audit owner on an expired lease,
-after the confirmation prompt — the same lane lock, the same closing state,
+after the confirmation prompt — the same lane lock held for the same span,
 the same activity evaluation, the same cleanliness gate (porcelain and
 upstream), and the same `--force` required to discard work; it is written
 once and reclaim references it, never a second procedure. An expired lease
-is a bookkeeping fact, never a licence to terminate work or discard it. One
-pool SHALL be driven from one orchestrator at a time; sharing a pool across
-orchestrators is out of scope and documented as unsupported.
+is a bookkeeping fact, never a licence to terminate work or discard it.
 
 Every lane SHALL begin by restoring its claimed sprite's golden checkpoint
 **and waiting for that restore to complete** — the platform restores
@@ -184,19 +204,20 @@ has its own setup erased by a restore still in flight.
 
 #### Scenario: reclaim refuses while a lane command is still running
 - **WHEN** `task sprite:audit --reclaim` targets a sprite whose lease has
-  expired but which still has a lane command registered under the lane
-  lock
-- **THEN** it refuses, names the registered command, restores nothing, and
-  leaves the lease in place — exactly as `lane:rm` would
+  expired but which still has a lane session recorded (or, failing the
+  record, a live session on the platform)
+- **THEN** it refuses, names the session, releases the lock with nothing
+  changed, and leaves the lease in place — exactly as `lane:rm` would
 
 #### Scenario: reclaim on an idle but unclean checkout refuses without --force
 - **WHEN** `task sprite:audit --reclaim` targets a sprite whose lease has
-  expired, with no command registered, but whose checkout is not clean
-  (modified, staged, or untracked files, or commits not on its upstream)
-- **THEN** it refuses naming what is uncommitted or unpushed, restores
-  nothing, and proceeds only when `--force` is given — the same cleanliness
-  gate and the same `--force` as retirement, and the offline test records
-  no restore call without it
+  expired, with no session recorded or live, but whose checkout is not
+  clean (modified, staged, or untracked files, or commits not on its
+  upstream, in any checkout under `/workspaces`)
+- **THEN** it refuses naming what is uncommitted or unpushed, releases the
+  lock with nothing changed, and proceeds only when `--force` is given —
+  the same cleanliness gate and the same `--force` as retirement, and the
+  offline test records no restore call without it
 
 #### Scenario: a long-lived valid lane is never reported reclaimable
 - **WHEN** a lane runs for longer than the lease window with authenticated
@@ -242,55 +263,71 @@ has its own setup erased by a restore still in flight.
   stamp predates that change, and the offline test drives this case with
   the stubbed CLI's canned label output and records no restore call
 
-### Requirement: One lane lock per sprite serialises every start and every end
-For each sprite there SHALL be exactly one **lane lock**, held on the
-sprite itself (an advisory lock the platform can arbitrate — a lock file or
-label carrying owner and expiry), and the following SHALL hold for every
-interleaving of lane operations: every operation that starts a lane command
-(`lane:exec`, `lane:attach`, `lane:harvest`) performs its decision — the
-closing-state check, the TTL check — **and** the registration of the
-session it is about to start as one step under that lock, before the
-command runs; every operation that ends a lane (`lane:rm`, and
-`audit --reclaim`, which is `lane:rm`) takes the same lock, sets the
-persistent **closing** state, and evaluates activity (any registered
-command or session) and the cleanliness gate under that same lock. No
-command can therefore start between an ending operation's evaluation and
-its restore, and no command can be half-started — past its own check but
-not yet registered — when the lock is taken, because check and
-registration are atomic under the lock. The restore itself MAY run after
-the lock is released only because the closing state persists and refuses
-every new command until the lane is retired or the state is cleared by a
-successful `lane:new`. The lock mechanism is the helper's to choose; the
-invariant is what the offline test asserts, by driving each interleaving
-below deterministically with one side holding the lock and the other
-blocked or refused.
+### Requirement: One orchestrator-side lane lock per sprite serialises every start and every end
+**Precondition:** one pool is driven from exactly one orchestrator at a
+time; sharing a pool across orchestrators is unsupported and is the named
+follow-up. Under that precondition, for each pool sprite there SHALL be
+exactly one **lane lock**: an orchestrator-side advisory `flock` on a
+per-sprite lock file keyed by the pool sprite's platform name, held in the
+orchestrator's lane state directory. Labels on the sprite record the lease;
+they never arbitrate anything. There is no other lock, no persistent
+"closing" state, and no registration of a session before the session
+exists. The following SHALL hold for every interleaving:
 
-#### Scenario: a command past its check but not yet registered cannot be overtaken by retirement
-- **WHEN** a `lane:exec` has passed its closing-state check and a
-  `lane:rm` starts before the command's session would otherwise be visible
-- **THEN** either the `lane:exec` holds the lock, its registration lands,
-  and the `lane:rm` — taking the lock afterwards — sees the registered
-  command and refuses; or the `lane:rm` holds the lock first, sets the
-  closing state, and the `lane:exec` — re-checking under the lock — is
-  refused naming the closing lane; in neither interleaving does a restore
-  run over a live command, and the offline test drives both orderings
+- Every lane-ending operation (`lane:rm`, and `audit --reclaim`, which is
+  `lane:rm`) holds the lock from its first check until the golden restore
+  has reported complete and the lease is released. A refused retirement
+  releases the lock with nothing changed, and the lane is usable again at
+  once. While an ending operation holds the lock, `lane:exec`,
+  `lane:attach`, `lane:harvest`, and `lane:extend` do not block: they
+  refuse immediately with `retiring <lane>` and exit non-zero.
+- Command startup (`lane:exec`, `lane:attach`, `lane:harvest`) holds the
+  lock only from its checks (TTL, lease ownership) through creating the
+  platform session and recording that session's identifier in the lane's
+  state, then releases it before the command's body runs. Nothing is
+  recorded before the session exists, so a crash mid-startup leaves at
+  worst a real platform session, which an ending operation's activity check
+  sees on the platform.
+- `lane:extend` takes the same lock, validates lease ownership, and updates
+  the TTL and the lease expiry together in one write.
 
-#### Scenario: retirement and exec race for the lock and only one proceeds
-- **WHEN** `lane:rm` and `lane:exec` contend for the lane lock at the same
-  instant
-- **THEN** exactly one acquires it; the other blocks until release (or is
-  refused if the closing state was set meanwhile), the stubbed lock
-  records a single holder at any time, and the recorded sequence never
-  shows a session registration between an ending operation's evaluation
-  and its restore
+The invariant is what the offline test asserts, by driving each
+interleaving below deterministically with one side holding the stubbed
+lock and the other refused.
 
-#### Scenario: the closing state outlives the lock
-- **WHEN** `lane:rm` has released the lane lock after setting the closing
-  state and its restore is still in flight
-- **THEN** a `lane:exec`, `lane:attach`, or `lane:harvest` that takes the
-  lock in that window is refused naming the closing lane, and only a
-  successful `lane:new` on that sprite (after the restore reports complete)
-  clears the state
+#### Scenario: exec and retirement contend for the lock and only one proceeds
+- **WHEN** `lane:rm` and `lane:exec` contend for the lane lock of one
+  sprite at the same instant
+- **THEN** exactly one acquires it; if `lane:exec` wins, its session is
+  created and recorded under the lock and the `lane:rm` that follows sees
+  it and refuses; if `lane:rm` wins, the `lane:exec` is refused with
+  `retiring <lane>` and no session is created; the stubbed lock records a
+  single holder at any time and no restore ever runs with a session
+  recorded or live
+
+#### Scenario: a refused retirement leaves the lane usable at once
+- **WHEN** `lane:rm` takes the lock and refuses (a recorded or live session,
+  or a non-clean checkout without `--force`)
+- **THEN** it releases the lock having changed nothing — no lease change,
+  no state file, no container stop — and a `lane:exec` issued immediately
+  afterwards acquires the lock and runs
+
+#### Scenario: extend during reclaim refuses
+- **WHEN** `audit --reclaim` holds the lane lock on an expired-lease sprite
+  and `lane:extend` is issued for that lane
+- **THEN** `lane:extend` refuses with `retiring <lane>` and changes neither
+  the TTL nor the lease; after the reclaim completes, the lease no longer
+  belongs to that lane and `lane:extend` refuses on ownership
+
+#### Scenario: a crash mid-startup leaves no phantom registration
+- **WHEN** a `lane:exec` crashes after taking the lock and before recording
+  a session (or after creating the platform session but before recording
+  it)
+- **THEN** the lock is released by the crash, the lane's state records no
+  session that does not exist on the platform, and a subsequent `lane:rm`
+  decides from the platform's own session list — refusing if the crashed
+  startup left a live session, proceeding if it did not — with the offline
+  test driving both crash points
 
 ### Requirement: A lane is one branch cloned from GitHub, never the operator's tree
 A lane SHALL check the repository out by cloning from GitHub over HTTPS
@@ -430,10 +467,20 @@ package hosts those redirect to); the package registries the repository's
 `task verify` pulls from (npm, PyPI, the uv/Python index, Homebrew where the
 repository uses it); the Anthropic API host; the OpenAI and ChatGPT backend
 hosts the Codex CLI uses; and, where the repository uses Convex's anonymous
-local mode, the host its local backend binary downloads from. The sprite
-SHALL NOT be able to widen the policy from inside (the platform exposes it
-read-only there). Any host a lane genuinely needs beyond the list is added to
-the list in this repository, reviewed, not opened ad hoc from inside a lane.
+local mode, the host its local backend binary downloads from. The SSH
+provisioning step installs `openssh-server` into the inner container with
+`apt`, so for exactly that step the policy SHALL additionally name the base
+image's Ubuntu package hosts — `archive.ubuntu.com` and
+`security.ubuntu.com`, the URIs in the shared image's `ubuntu.sources`
+(the image is amd64 Ubuntu 24.04) — added by the helper before provisioning
+and removed as soon as it completes (the policy reloads live, which is the
+phase mechanism), with `apt-get update` restricted to the Ubuntu sources so
+the image's third-party package lists are never fetched. Baking
+`openssh-server` into the shared image so those two hosts can be dropped is
+a named follow-up. The sprite SHALL NOT be able to widen the policy from
+inside (the platform exposes it read-only there). Any host a lane genuinely
+needs beyond the list is added to the list in this repository, reviewed,
+not opened ad hoc from inside a lane.
 
 #### Scenario: a lane can reach what the dev loop needs and nothing else
 - **WHEN** a lane runs `task verify`, `task security`, `gh pr create
@@ -441,6 +488,16 @@ the list in this repository, reviewed, not opened ad hoc from inside a lane.
   `use_codex_review` is on — `task challenge` and `task review`
 - **THEN** each succeeds, and a probe to a host outside the allowlist from
   inside the lane fails to resolve
+
+#### Scenario: SSH provisioning succeeds under the policy
+- **WHEN** a lane's SSH provisioning step runs after the DNS allowlist is in
+  force
+- **THEN** the helper adds `archive.ubuntu.com` and `security.ubuntu.com`
+  to the policy, `apt-get update` restricted to the Ubuntu sources and
+  `apt-get install openssh-server` succeed inside the inner container, the
+  helper removes the two hosts again, and a probe to either host from the
+  lane afterwards fails to resolve; the offline test records the two
+  policy writes bracketing the install
 
 #### Scenario: the policy is set before credentials and is read-only inside
 - **WHEN** a lane is created and the policy file under `/.sprite/policy/`
@@ -452,10 +509,18 @@ the list in this repository, reviewed, not opened ad hoc from inside a lane.
 ### Requirement: The full dev loop runs inside the lane
 A lane SHALL be able to run every stage the Dev Loop expects of an
 implementer up to and including the shepherd stage from inside the inner
-container. Unconditionally — for every render with the option on — that is
-`task verify`, `task security`, the round commits and pushes,
-`gh pr create --draft`, and the shepherd's `gh pr checks` and per-thread
-replies. Where the repository also rendered `use_codex_review` on, it
+container, for changes that touch nothing under `.github/workflows/**` —
+the bot PAT a lane carries is deliberately denied the Workflows permission,
+so GitHub rejects a push that adds or edits a workflow file. Unconditionally
+— for every render with the option on — that is `task verify`,
+`task security`, the round commits and pushes, `gh pr create --draft`, and
+the shepherd's `gh pr checks` and per-thread replies. A change that does
+touch `.github/workflows/**` SHALL be handed off: the lane commits locally
+and never pushes, `task sprite:lane:harvest -- <lane> --bundle` exports the
+lane branch as a git bundle to the orchestrator, and the operator applies
+it in a local checkout and pushes with their own credential; the helper
+SHALL detect a workflow-touching commit on the lane branch and name that
+handoff instead of attempting the push. Where the repository also rendered `use_codex_review` on, it
 includes `task challenge` and `task review` (the Codex CLI in the bot
 profile's `danger-full-access`/`never` posture, with the reviewer runs
 backgrounded per the gauntlet skill); where it additionally rendered
@@ -482,6 +547,15 @@ need nothing from the lane beyond the PR existing.
   lane on the copied Codex login, and the shepherd's `@codex review`
   trigger posts from inside the lane and is answered on the PR head
   exactly as from the local bot container
+
+#### Scenario: a workflow-touching change is handed off, never pushed from the lane
+- **WHEN** an agent in a lane commits a change that adds or edits a file
+  under `.github/workflows/**`
+- **THEN** the lane's push step refuses before contacting GitHub, names the
+  operator handoff, `task sprite:lane:harvest -- <lane> --bundle` produces a
+  git bundle of the branch on the orchestrator, and the operator's own
+  push from a local checkout is what creates the remote branch — the bot
+  PAT is never used for it
 
 #### Scenario: Docker-gated checks are not attempted in the lane
 - **WHEN** `task ci` is invoked inside a lane
@@ -529,8 +603,11 @@ dies, the worker keeps running and the operator reattaches with
 `task sprite:lane:attach -- <lane>` (the platform's session attach) or, for
 a full Herdr UI inside the lane, with `herdr --remote` over an SSH server
 that runs **inside the inner container**, reached through the platform's
-port proxy to the container's address (`sprite proxy -s <lane> -W
-<inner-address>:22`) — the helper installs that server into the container
+port proxy to the container's address (`sprite proxy -s <pool-sprite> -W
+<inner-address>:22`, where `<pool-sprite>` is the platform name of the
+leased pool sprite recorded in the lease; the lane name is only the
+helper-facing key and never appears in a platform-facing call) — the helper
+installs that server into the container
 after `devcontainer up`, configures it for public-key authentication only
 (no passwords, bound to the container's address, host key generated in
 the container), generates a per-lane keypair on the orchestrator whose
@@ -539,21 +616,28 @@ records the container's host key in the operator's SSH alias so the
 connection is pinned rather than trusted on first use, refreshes the
 address on every reconcile, and removes the keypair and alias at
 retirement; the outer sprite runs no SSH server and the private key never
-enters the sprite. Retirement
-(`task sprite:lane:rm -- <lane>`) SHALL run under the lane lock of the
-lane-lock requirement above: take the lock, set the persistent closing
-state, evaluate activity (refusing while any command or session is
-registered) and the cleanliness gate under that lock — refusing while the
-checkout is not clean, where clean means **both** that `git status
---porcelain --untracked-files=all` is empty (no modified, staged, or
-untracked files) **and** that the branch is fully on its remote: it has an
-upstream, that upstream exists on the remote, and `git rev-list --count
-@{upstream}..HEAD` is zero, porcelain alone cannot see an ahead-but-clean
-branch — unless `--force` is given; it then stops the inner container,
-removes injected credentials, restores the golden checkpoint and waits for
-it, releases the lease, and returns the sprite to the pool (or destroys it
-with `--destroy`). `task sprite:audit --reclaim` is this same operation
-invoked by the audit owner on an expired lease, after confirmation.
+enters the sprite. Lanes SHALL run with related-repository bootstrap
+disabled: the helper sets `HARMON_LANE_SKIP_RELATED_REPOS=1` in the
+environment of every `devcontainer up`, and `bootstrap-related-repos.sh`
+and `fetch-related-repos.sh` SHALL skip themselves when it is set, so the
+primary checkout is the only repository a lane clones. Retirement
+(`task sprite:lane:rm -- <lane>`) SHALL hold the lane lock of the lane-lock
+requirement above from its first check until the golden restore has
+reported complete and the lease is released: under the lock it evaluates
+activity (refusing while a session is recorded or live on the platform)
+and the cleanliness gate — enumerating **every** git checkout under
+`/workspaces` before any restore and refusing while any of them is not
+clean, where clean means **both** that `git status --porcelain
+--untracked-files=all` is empty (no modified, staged, or untracked files)
+**and** that the branch is fully on its remote: it has an upstream, that
+upstream exists on the remote, and `git rev-list --count @{upstream}..HEAD`
+is zero, porcelain alone cannot see an ahead-but-clean branch — unless
+`--force` is given; it then stops the inner container, removes injected
+credentials, restores the golden checkpoint and waits for it, releases the
+lease, and only then releases the lock and returns the sprite to the pool
+(or destroys it with `--destroy`). `task sprite:audit --reclaim` is this
+same operation invoked by the audit owner on an expired lease, after
+confirmation.
 
 #### Scenario: a lane pane shows the remote agent's state
 - **WHEN** the orchestrator runs `herdr pane run <id> "task sprite:lane:exec
@@ -608,8 +692,9 @@ invoked by the audit owner on an expired lease, after confirmation.
 
 #### Scenario: the operator takes a lane over with a full Herdr UI
 - **WHEN** the operator runs `herdr --remote <lane-ssh-alias>` where the
-  alias's `ProxyCommand` is `sprite proxy -s <lane> -W <inner-address>:22`
-  to the SSH server inside the inner container
+  alias's `ProxyCommand` is `sprite proxy -s <pool-sprite> -W
+  <inner-address>:22`, generated from the leased pool sprite's platform
+  name, to the SSH server inside the inner container
 - **THEN** a Herdr thin client attaches to a Herdr server running inside the
   inner container, and detaching leaves the agents running
 
@@ -638,13 +723,21 @@ invoked by the audit owner on an expired lease, after confirmation.
   never taken as clean
 
 #### Scenario: retirement refuses while a lane command is active
-- **WHEN** `task sprite:lane:rm -- <lane>` runs while a lane command or
-  session is registered under the lane lock
-- **THEN** it takes the lock, sets the closing state (a `lane:exec` taking
-  the lock afterwards is refused), sees the registered command, refuses the
-  retirement naming it, restores nothing, and the offline test records the
-  lock acquisition, the closing state, and the activity evaluation before
-  any cleanliness check, stop, or restore call
+- **WHEN** `task sprite:lane:rm -- <lane>` runs while a lane session is
+  recorded, or live on the platform
+- **THEN** it takes the lock, sees the session, refuses the retirement
+  naming it, releases the lock with nothing changed, and the offline test
+  records the lock acquisition and the activity evaluation before any
+  cleanliness check, stop, or restore call
+
+#### Scenario: a dirty sibling checkout blocks retirement
+- **WHEN** `task sprite:lane:rm -- <lane>` runs while the primary checkout
+  is clean but a second git checkout under `/workspaces` (one a previous
+  step or an agent created) has uncommitted, untracked, or unpushed work
+- **THEN** the gate's enumeration finds it, the retirement refuses naming
+  that checkout and what is dirty in it, restores nothing, and proceeds
+  only with `--force`; the offline test drives it with a stubbed second
+  checkout
 
 ### Requirement: The sprite stays active exactly while lane work runs, and a lane cannot bill unnoticed
 For every lane, the following SHALL hold regardless of whether the
@@ -752,16 +845,19 @@ reported complete before policy, policy before credentials, the clone
 before `devcontainer up`, credentials in the `devcontainer up` environment
 before agents; refusal of absent or ahead branches, stale golden
 checkpoints (including a helper-only change to the stamp), pool overflow,
-contended or expired leases, and retirement or reclaim over a registered
-command or a non-clean checkout (including a clean tree ahead of its
-upstream, and an idle-but-unclean reclaim without `--force`) — each
-recording no restore call; the three lane-lock interleavings (a command
-past its check but unregistered versus a starting retirement; retirement
-and exec contending for the lock; the closing state outliving the lock),
-each driven deterministically with one side holding the stubbed lock and
-the other blocked or refused; lease renewal on every authenticated
-activity and `lane:extend`, with expiry never earlier than the TTL; SSH
-re-provisioning on a container identity change; the incomplete-restore
+contended or expired leases, and retirement or reclaim over a recorded or
+live session or a non-clean checkout (including a clean tree ahead of its
+upstream, a dirty sibling checkout under `/workspaces`, and an
+idle-but-unclean reclaim without `--force`) — each recording no restore
+call; the lane-lock interleavings (exec and retirement contending, with
+exactly one holder; a refused retirement leaving the lane usable at once;
+extend during reclaim refusing; a crash at each mid-startup point leaving
+no phantom session record), each driven deterministically with one side
+holding the stubbed `flock` and the other refused; lease renewal on every
+authenticated activity and `lane:extend`, with expiry never earlier than
+the TTL; the two policy writes bracketing SSH provisioning; the
+workflow-touching push refusal and bundle handoff; SSH re-provisioning on
+a container identity change; the incomplete-restore
 case recording exactly one restore call and nothing after it; that no
 hold, heartbeat, or command bound is owned by an orchestrator-side
 process; that the environment handed to `sprite exec` and
@@ -792,9 +888,10 @@ stubs.
   branch, a local branch ahead of the remote, a stale golden checkpoint
   (image pin, helper hash, and CLI pin each changed alone), a full pool, a
   contended lease, an expired lease, a retirement or reclaim over a
-  registered command, a reclaim over an idle-but-unclean checkout without
-  `--force`, a retirement over a non-clean checkout, and a retirement over
-  a clean tree ahead of its upstream
+  recorded or live session, a reclaim over an idle-but-unclean checkout
+  without `--force`, a retirement over a non-clean checkout, a retirement
+  over a dirty sibling checkout, and a retirement over a clean tree ahead
+  of its upstream
 - **THEN** each case exits non-zero with the documented message and the
   stubs record no create, restore, or destroy call for it
 
