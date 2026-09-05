@@ -53,6 +53,7 @@
           "enum": ["P0", "P1", "P2", "P3"]
         },
         "disposition": {
+          "description": "Terminal response to the finding, except defer may carry only an adjudicated P2 from challenge/review into integration. P0/P1 remain local-loop gating, and integration findings always require a terminal disposition. These stage/priority conditions are enforced by the semantic validator.",
           "enum": ["fix", "restructure", "delete", "decline", "defer", "file"]
         },
         "reason": {

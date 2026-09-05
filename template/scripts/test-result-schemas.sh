@@ -7,8 +7,10 @@ fixtures="$schema_dir/fixtures"
 oneshot="$fixtures/run.schema/valid/oneshot.json"
 tmp="$(mktemp)"
 tmp2="$(mktemp)"
+tmp3="$(mktemp)"
+tmp4="$(mktemp)"
 known_ids="$(mktemp)"
-trap 'rm -f "$tmp" "$tmp2" "$known_ids"' EXIT
+trap 'rm -f "$tmp" "$tmp2" "$tmp3" "$tmp4" "$known_ids"' EXIT
 printf '[]\n' >"$known_ids"
 
 accepts() {
@@ -64,6 +66,17 @@ rejects adjudication-duplicate-id adjudication \
 rejects adjudication-active-run-mismatch adjudication "$adjudication" \
     --pass "$adjudication_pass" --known-adjudicated "$known_ids" \
     --run-id run-that-does-not-match --initiated-by human --receipt
+jq '
+    .adjudications = [.adjudications[1]]
+    | .adjudications[0].disposition = "defer"
+' "$fixtures/adjudication.schema/invalid/duplicate-finding-id.json" >"$tmp"
+accepts adjudication "$tmp"
+jq '
+    .adjudications = [.adjudications[0]]
+    | .adjudications[0].disposition = "defer"
+    | del(.adjudications[0].reference)
+' "$fixtures/adjudication.schema/invalid/duplicate-finding-id.json" >"$tmp"
+rejects adjudication-p1-defer adjudication "$tmp"
 
 accepts run "$oneshot" --no-adjudications --receipt
 jq '.stage_transitions[2].stage = "security"' "$oneshot" >"$tmp"
@@ -124,5 +137,9 @@ jq '
 accepts run "$tmp2" --adjudication "$adjudication" --receipt
 jq '.evidence_comments = []' "$tmp2" >"$tmp"
 rejects run-missing-adjudication-evidence run "$tmp" --adjudication "$adjudication" --receipt
+jq '.adjudications[0].finding_id = "integration-r1-human-2"' "$adjudication" >"$tmp3"
+cp "$adjudication" "$tmp4"
+rejects run-duplicate-adjudication-round run "$tmp2" \
+    --adjudication "$tmp3" --adjudication "$tmp4" --receipt
 
 echo "result schema contract tests OK"

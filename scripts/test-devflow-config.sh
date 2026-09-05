@@ -140,6 +140,8 @@ if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$r
 if schema["$defs"]["rigor_profile"]["properties"].get("spend", {}).get("type") != "string": fail("v2 schema lacks per-rigor spend pointers")
 stage_schema = schema["$defs"]["stage_profiles"]
 if stage_schema.get("additionalProperties") is not False or set(stage_schema.get("required", [])) != stages or set(stage_schema.get("properties", {})) != stages: fail("v2 schema must close the exact four-stage catalog")
+role_schema = schema["$defs"]["role_profiles"]
+if role_schema.get("additionalProperties") is not False or set(role_schema.get("required", [])) != roles or set(role_schema.get("properties", {})) != roles: fail("v2 schema must close the exact five-role catalog")
 if {row.get("$ref") for row in schema["$defs"]["convergence_expression"].get("oneOf", [])} != {"#/$defs/convergence_all", "#/$defs/convergence_any"}: fail("v2 schema must make convergence roots an exclusive all/any union")
 if len(schema["$defs"]["convergence_item"].get("oneOf", [])) != 6: fail("v2 schema must make convergence items an exclusive predicate/all/any union")
 for key in ("finders", "finder_fallbacks", "pool"):

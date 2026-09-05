@@ -244,6 +244,19 @@ if resolve_reader 2>/dev/null; then
 fi
 
 reset_policy
+replace_in_table role.reviewer \
+    'harnesses = ["codex-cli", "claude-code"]  # (preference) — same' \
+    '# harness preference intentionally omitted; every compatible harness is eligible'
+replace_in_table stage.review \
+    '[stage.review]' \
+    $'[stage.review]\npool = ["codex-cli"]'
+resolve_reader
+
+reset_policy
+replace_in_table strategy.human-led 'delegation  = "optional"' 'delegation  = "none"'
+resolve_reader --strategy human-led
+
+reset_policy
 replace_in_table role.implementer '[role.implementer]' $'[role.implementer]\nharneses = ["codex-cli"]'
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted an unknown role preference key" >&2
@@ -312,6 +325,13 @@ grep -q 'cannot establish reader trust' closure.err || {
     echo "FAIL: --closure refusal did not explain the external trust boundary" >&2
     exit 1
 }
+
+task_targets="$tmp/task-targets.json"
+task --list --json >"$task_targets"
+node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --registry agent-registry.json \
+    --task-targets "$task_targets" >/dev/null
 
 # A requested selection belongs to the governing merge-base catalog. The
 # candidate v2 catalog is still validated in full, but through its own defaults

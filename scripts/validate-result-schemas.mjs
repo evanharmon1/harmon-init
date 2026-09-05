@@ -1118,6 +1118,11 @@ function checkAdjudicationEntries(document, errors) {
       }
       continue
     }
+    if (entry.disposition === 'defer' && entry.adjudicated_priority !== 'P2') {
+      errors.push(
+        `$adjudication.adjudications[finding_id=${entry.finding_id}].disposition: defer is allowed only for adjudicated P2 findings (P0/P1 findings keep the local loop gating)`
+      )
+    }
     if (entry.reviewer_priority === null) {
       errors.push(
         `$adjudication.adjudications[finding_id=${entry.finding_id}].reviewer_priority: must not be null outside stage integration`
@@ -1930,7 +1935,18 @@ function checkAdjudicationRunIdMatchesRun(document, adjudications, errors) {
 // with zero or one document, no cross-document collision is possible.
 function checkAdjudicationsUnionUnique(adjudications, errors) {
   const seenAt = new Map()
+  const seenRoundAt = new Map()
   for (const { file, data } of adjudications) {
+    if (typeof data.stage === 'string' && Number.isInteger(data.round)) {
+      const roundKey = JSON.stringify([data.stage, data.round])
+      if (seenRoundAt.has(roundKey)) {
+        errors.push(
+          `$run: stage ${data.stage}, round ${data.round} is represented by more than one supplied --adjudication document (${seenRoundAt.get(roundKey)}, ${file})`
+        )
+      } else {
+        seenRoundAt.set(roundKey, file)
+      }
+    }
     for (const entry of data.adjudications ?? []) {
       if (typeof entry.finding_id !== 'string') continue
       if (seenAt.has(entry.finding_id)) {

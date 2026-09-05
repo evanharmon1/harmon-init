@@ -165,8 +165,15 @@
     },
     "role_profiles": {
       "type": "object",
-      "minProperties": 5,
-      "additionalProperties": { "$ref": "#/$defs/role_profile" }
+      "additionalProperties": false,
+      "required": ["orchestrator", "implementer", "challenger", "reviewer", "integrator"],
+      "properties": {
+        "orchestrator": { "$ref": "#/$defs/role_profile" },
+        "implementer": { "$ref": "#/$defs/role_profile" },
+        "challenger": { "$ref": "#/$defs/role_profile" },
+        "reviewer": { "$ref": "#/$defs/role_profile" },
+        "integrator": { "$ref": "#/$defs/role_profile" }
+      }
     },
     "stage_profile": {
       "type": "object",

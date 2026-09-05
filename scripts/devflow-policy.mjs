@@ -1119,9 +1119,13 @@ function resolveStrategy(doc, requestedStrategy) {
     if (candidate.topology === 'single-agent' && candidate.delegation === 'required') {
       throw new PolicyError(`${errorPath}.topology "single-agent" forbids delegation = "required"`)
     }
-    if (candidate.delegation === 'none' && candidate.topology !== 'single-agent') {
+    if (
+      candidate.delegation === 'none' &&
+      candidate.topology !== 'single-agent' &&
+      candidate.topology !== 'human-directed'
+    ) {
       throw new PolicyError(
-        `${errorPath}.delegation = "none" is valid only with topology = "single-agent"`
+        `${errorPath}.delegation = "none" is valid only with topology = "single-agent" or "human-directed"`
       )
     }
     if (!Array.isArray(candidate.human_gates)) {
@@ -1529,7 +1533,13 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         const roleConfig = resolved.roles[stageRole]
         const hasExecutablePoolTuple = s.pool.some((slug) => {
           const harness = harnessBySlug.get(slug)
-          if (!harness || !roleConfig?.harnesses.includes(slug)) return false
+          const preferredHarnesses = roleConfig?.harnesses ?? []
+          if (
+            !harness ||
+            (preferredHarnesses.length > 0 && !preferredHarnesses.includes(slug))
+          ) {
+            return false
+          }
           if (Array.isArray(harness.roles) && !harness.roles.includes(stageRole)) return false
           return roleConfig.families.some((familySlug) => {
             const family = familyBySlug.get(familySlug)
@@ -2103,8 +2113,18 @@ export function resolvePolicy(doc, opts = {}) {
 // gate-slug checking is indeterminate rather than silently cwd-scoped.
 function readTaskTargets(explicitFile, taskfileDir) {
   if (explicitFile) {
-    const list = JSON.parse(readFileSync(explicitFile, 'utf8'))
-    return new Set(list)
+    const parsed = JSON.parse(readFileSync(explicitFile, 'utf8'))
+    const entries = Array.isArray(parsed) ? parsed : parsed?.tasks
+    if (!Array.isArray(entries)) {
+      throw new PolicyError(
+        '--task-targets must contain either an array of target names or a task --list --json object with a tasks array'
+      )
+    }
+    const names = entries.map((entry) => (typeof entry === 'string' ? entry : entry?.name))
+    if (names.some((name) => typeof name !== 'string' || name.length === 0)) {
+      throw new PolicyError('--task-targets contains an entry without a non-empty target name')
+    }
+    return new Set(names)
   }
   if (taskfileDir) {
     try {
