@@ -379,12 +379,17 @@ connection is pinned rather than trusted on first use, refreshes the
 address on every reconcile, and removes the keypair and alias at
 retirement; the outer sprite runs no SSH server and the private key never
 enters the sprite. Retirement
-(`task sprite:lane:rm -- <lane>`) SHALL stop the inner container, remove
-injected credentials, restore the golden checkpoint, release the lease, and
-return the sprite to the pool (or destroy it with `--destroy`), and SHALL
-refuse while the lane's checkout is not clean — unpushed commits, modified
-or staged files, or untracked files (`git status --porcelain
---untracked-files=all` non-empty) — unless `--force` is given.
+(`task sprite:lane:rm -- <lane>`) SHALL first mark the lane closing so no
+new lane command can start, then prove no lane session or command is
+active on the sprite (refusing while any is), and only then check the
+checkout — refusing while it is not clean: unpushed commits, modified or
+staged files, or untracked files (`git status --porcelain
+--untracked-files=all` non-empty) — unless `--force` is given; it then
+stops the inner container, removes injected credentials, restores the
+golden checkpoint and waits for it, releases the lease, and returns the
+sprite to the pool (or destroys it with `--destroy`). The closing mark,
+the activity proof, and the cleanliness check are ordered so that no
+command can start or keep writing between the check and the restore.
 
 #### Scenario: a lane pane shows the remote agent's state
 - **WHEN** the orchestrator runs `herdr pane run <id> "task sprite:lane:exec
@@ -439,6 +444,14 @@ or staged files, or untracked files (`git status --porcelain
 - **THEN** it refuses, names what is unpushed or uncommitted, and does
   nothing unless `--force` is given
 
+#### Scenario: retirement refuses while a lane command is active
+- **WHEN** `task sprite:lane:rm -- <lane>` runs while a lane command or
+  session is still active on the sprite
+- **THEN** it marks the lane closing (a concurrent `lane:exec` is refused
+  from that point), refuses the retirement naming the active session,
+  restores nothing, and the offline test records the closing mark and the
+  activity check before any cleanliness check, stop, or restore call
+
 ### Requirement: The sprite stays active exactly while lane work runs, and a lane cannot bill unnoticed
 For every lane, the following SHALL hold regardless of whether the
 orchestrator's pane or any laptop-side process is alive: while any lane
@@ -450,9 +463,12 @@ lifetime (the platform counts a running exec session as activity, and any
 Tasks-API hold the helper registers is owned by an in-sprite supervisor that
 exits with the command), never a heartbeat on the orchestrator's machine.
 No lane command SHALL run unbounded: every command launched through the
-lane runs under a per-command duration bound enforced inside the sprite
-(default 2 hours, settable per command), after which it is stopped with
-its output file intact. A lane SHALL carry a TTL (default 12 hours, set
+lane runs in its own process group (or cgroup) owned by the in-sprite
+supervisor, under a per-command duration bound enforced inside the sprite
+(default 2 hours, settable per command), after which the command and
+every process it spawned — a backgrounded reviewer run included — are
+stopped with the output file intact, and any hold is released only once
+no descendant remains. A lane SHALL carry a TTL (default 12 hours, set
 per lane); at expiry the helper SHALL stop registering holds and SHALL
 refuse to start new lane commands until the operator extends the TTL
 (`task sprite:lane:extend`); a command already running at expiry gets a
@@ -494,10 +510,12 @@ refuse to exceed it.
 #### Scenario: a hung command cannot bill past its bound
 - **WHEN** a lane command hangs (a stalled network operation, an agent that
   never returns)
-- **THEN** the in-sprite bound stops it at the per-command limit, the
-  sprite is free to sleep afterwards, the command's output file records
-  the stop, and the offline test shows the bound is applied inside the
-  sprite rather than by an orchestrator-side timer
+- **THEN** the in-sprite bound stops it and every descendant it spawned
+  (including a backgrounded reviewer run) at the per-command limit, the
+  hold is released only after no descendant remains, the sprite is free to
+  sleep afterwards, the command's output file records the stop, and the
+  offline test shows the bound and the process-group ownership are applied
+  inside the sprite rather than by an orchestrator-side timer
 
 #### Scenario: audit lists every lane with its age
 - **WHEN** `task sprite:audit` runs

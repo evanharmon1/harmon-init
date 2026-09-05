@@ -7,7 +7,8 @@ bandwidth, not by the RAM of the laptop or the shared Coder box?
 **Answer in three sentences:** run each interactive lane in a **Fly.io
 Sprite** that hosts the repository's own bot devcontainer nested inside it,
 driven from Herdr exactly as a local pane worker is, with a small
-pre-initialised pool so a lane starts in seconds; keep **Coder workspaces**
+pre-initialised pool so a lane never re-pulls the image; keep **Coder
+workspaces**
 as the fallback that works today. For **Foreman**, use the same nested
 sprite lane as the isolated runner, because the alternative its spec
 assumes — booting the image directly on Fly Machines — hits Fly's 8 GB
@@ -193,8 +194,11 @@ entering the sprite ([integration doc](https://docs.sprites.dev/integrations/cla
 Not what this note needs (see Claude Code below), but it shows the
 credential-outside pattern Fly expects.
 
-**Scores.** Isolation ✅ (microVM; sizing ?). Cold start ✅ (1–2 s cold, sub-
-second warm; the nested container's first pull is amortised by the pool).
+**Scores.** Isolation ✅ (microVM; sizing ?). Cold start ? (the VM wakes in
+1–2 s cold and under a second warm, but the rubric asks for time to a
+*usable lane* — restore, clone, `devcontainer up`, post-create — which is
+unmeasured until the feasibility spike; the pool exists to amortise the
+image pull, not to make that path instant).
 Cost ✅. Image reuse ◐ (nested via Docker, unofficial; not as the sprite
 itself — alternative: Fly Machines after slimming under 8 GB). Secrets ◐
 (same allow-list as today; org token stays outside; Connectors do not
@@ -444,7 +448,7 @@ Bot-autonomy ✅. Foreman ❌ (no supervisor-facing exec/lifecycle API beyond
 | Dimension | Sprites (nested) | Fly Machines | Claude Code cloud | Codex cloud | Coder (per lane) | Codespaces |
 |---|---|---|---|---|---|---|
 | Isolation and sizing | ✅ microVM · sizing ? | ✅ microVM, explicit | ✅ VM 4/16 | ✅ container | ◐ shared host | ✅ VM, 2–32 cores |
-| Cold start | ✅ 1–2 s (pool) | ✅ <1 s | ✅ | ✅ | ◐ minutes | ◐ minutes |
+| Cold start (to a usable lane) | ? VM wake 1–2 s; restore + clone + `devcontainer up` + post-create unmeasured | ✅ <1 s to boot; post-create unmeasured | ✅ | ✅ | ◐ minutes | ◐ minutes |
 | Cost per active agent-hour | ✅ ~$0.20, idle free | ◐ ~$0.23, stop to save | ✅ included | ✅ included | ✅ $0 marginal | ◐ $0.36–0.72 |
 | Runs the bot image as-is | ◐ nested via Docker | ❌ 8 GB rootfs | ❌ setup script | ❌ setup script | ✅ | ✅ |
 | post-create / bot-autonomy runs | ? nested, unverified until the first lane | ✅ (if it boots) | ❌ | ❌ | ✅ | ✅ |
@@ -591,9 +595,10 @@ apply/verify gate runs there exactly as it does locally and on Coder. A
 small operator-owned pool of sprites is initialised once (image pulled,
 golden checkpoint taken before any credential exists) and every lane
 claims a sprite with a lease, restores that checkpoint and waits for it,
-sets the egress allowlist, runs `devcontainer up` with the bot allow-list's
-secrets in its environment so `init-env.sh` composes the env-file before
-the container exists, clones its pushed branch from GitHub, and is driven
+sets the egress allowlist, clones its pushed branch from GitHub onto the
+sprite's workspace folder, runs `devcontainer up` on it with the bot
+allow-list's secrets in its environment so `init-env.sh` composes the
+env-file before the container exists, and is driven
 from the orchestrator's Herdr as a pane whose process is `sprite exec
 --tty` into the container — brief, per-attempt sentinel, file report,
 harvest, retire, as the Herdr guide already prescribes; takeover with the
