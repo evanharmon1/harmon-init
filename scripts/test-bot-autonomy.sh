@@ -903,7 +903,7 @@ mkdir -p "$omp_workdir"
 BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
 [ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
     fail "oh-my-pi apply did not seed tools.approvalMode=yolo on a fresh volume"
-jq -e '.present == [] and .tools_present == false' "$omp_backup" >/dev/null ||
+jq -e '.present == [] and .tools_prior == "absent"' "$omp_backup" >/dev/null ||
     fail "oh-my-pi apply did not record the pre-apply ABSENCE of tools.approvalMode"
 
 # Restore removes a key that was absent before the first apply, and does not
@@ -928,6 +928,38 @@ BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/nul
 [ "$(yq -r '.theme' "$omp_config")" = "dark" ] && [ "$(yq -r '.tools.other' "$omp_config")" = "1" ] ||
     fail "oh-my-pi restore did not leave unrelated keys untouched"
 [ ! -f "$omp_backup" ] || fail "oh-my-pi restore left its backup file behind"
+
+# An explicit `tools:` with no value is a DIFFERENT prior shape from
+# `tools: {...}` — apply turns both into a mapping, so a boolean has()
+# backup would silently upgrade the null to an empty mapping on restore
+# (review round 1).
+printf 'theme: dark\ntools:\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+[ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
+    fail "oh-my-pi apply did not seed yolo underneath an explicitly-null tools key"
+jq -e '.tools_prior == "null"' "$omp_backup" >/dev/null ||
+    fail "oh-my-pi apply did not record that tools was explicitly null before the first apply"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+[ "$(yq -r 'has("tools")' "$omp_config")" = "true" ] ||
+    fail "oh-my-pi restore deleted a tools key that was present (as null) before apply"
+[ "$(yq -r '.tools | type' "$omp_config")" = "!!null" ] ||
+    fail "oh-my-pi restore left tools as $(yq -r '.tools | type' "$omp_config"), not the null it found"
+[ "$(yq -r '.theme' "$omp_config")" = "dark" ] ||
+    fail "oh-my-pi restore did not preserve unrelated keys around a null tools"
+rm -f "$omp_backup" "$omp_config"
+
+# A SCALAR tools value cannot hold a policy: yq's assignment into it is a
+# silent no-op that still exits 0, so apply must refuse rather than report
+# success having written nothing.
+printf 'theme: dark\ntools: 3\n' >"$omp_config"
+if BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null 2>&1; then
+    fail "oh-my-pi apply reported success against a scalar tools value it cannot write a policy underneath"
+fi
+[ "$(yq -r '.tools' "$omp_config")" = "3" ] ||
+    fail "oh-my-pi apply modified a scalar tools value instead of refusing"
+[ ! -f "$omp_backup" ] ||
+    fail "oh-my-pi apply wrote a backup for a config it refused to modify"
+rm -f "$omp_config"
 
 # A config file in a shape this module must not rewrite blindly.
 printf -- '- not\n- a mapping\n' >"$omp_config"

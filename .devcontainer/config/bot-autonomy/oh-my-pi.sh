@@ -64,12 +64,39 @@ cmd_apply() {
         exit 1
     fi
 
+    # `tools` must be a mapping, absent, or explicitly null for this module to
+    # own a key underneath it. yq's assignment into a SCALAR .tools is a silent
+    # no-op that still exits 0, so without this guard apply would report
+    # success having written no policy at all (verify would fail later, in the
+    # container, over a value apply claimed to have set).
+    local tools_kind
+    if [ "$(yq -r 'has("tools")' "$CONFIG")" = "true" ]; then
+        tools_kind="$(yq -r '.tools | type' "$CONFIG")"
+    else
+        tools_kind=absent
+    fi
+    case "$tools_kind" in
+    absent | '!!null' | '!!map') ;;
+    *)
+        echo "oh-my-pi: ${CONFIG} has a 'tools' key of type ${tools_kind}, not a mapping; leaving it unchanged rather than writing a policy underneath it" >&2
+        exit 1
+        ;;
+    esac
+
     # Gated on no backup existing yet, so apply -> apply -> restore returns
     # the value from before the FIRST apply, not from before the last one.
     if [ ! -f "$BACKUP" ]; then
-        local prior tools_present present values backup_tmp
+        local prior tools_prior present values backup_tmp
         prior="$(yq -r '.tools.approvalMode // ""' "$CONFIG")"
-        tools_present="$(yq -r 'has("tools")' "$CONFIG")"
+        # Three states, not a boolean: `tools:` written with no value is a
+        # DIFFERENT prior shape from `tools: {…}`, and apply turns both into a
+        # mapping. A has()/boolean backup cannot tell restore which one to put
+        # back, so it would silently upgrade a null to an empty mapping.
+        case "$tools_kind" in
+        absent) tools_prior=absent ;;
+        '!!null') tools_prior=null ;;
+        *) tools_prior=map ;;
+        esac
         if [ -n "$prior" ]; then
             present='["tools.approvalMode"]'
             values="$(jq -n --arg v "$prior" '{"tools.approvalMode": $v}')"
@@ -81,8 +108,8 @@ cmd_apply() {
         jq -n \
             --argjson present "$present" \
             --argjson values "$values" \
-            --argjson tools_present "${tools_present:-false}" \
-            '{present: $present, values: $values, tools_present: $tools_present}' >"$backup_tmp"
+            --arg tools_prior "$tools_prior" \
+            '{present: $present, values: $values, tools_prior: $tools_prior}' >"$backup_tmp"
         chmod 0600 "$backup_tmp"
         mv -f "$backup_tmp" "$BACKUP"
     fi
@@ -104,12 +131,12 @@ cmd_restore() {
         echo "oh-my-pi: restore failed — ${CONFIG} is missing or not a valid YAML mapping; leaving ${BACKUP} in place" >&2
         return 1
     fi
-    local prior tools_present
+    local prior tools_prior
     prior="$(jq -r '.values["tools.approvalMode"] // ""' "$BACKUP")" || {
         echo "oh-my-pi: restore failed — could not read ${BACKUP}; leaving it in place" >&2
         return 1
     }
-    tools_present="$(jq -r '.tools_present // false' "$BACKUP")"
+    tools_prior="$(jq -r '.tools_prior // "map"' "$BACKUP")"
     if [ -n "$prior" ]; then
         # strenv, never string interpolation: the captured value comes off
         # disk, and splicing it into the expression would let a hand-edited
@@ -117,10 +144,14 @@ cmd_restore() {
         BOT_AUTONOMY_OMP_PRIOR="$prior" yq -i '.tools.approvalMode = strenv(BOT_AUTONOMY_OMP_PRIOR)' "$CONFIG"
     else
         yq -i 'del(.tools.approvalMode)' "$CONFIG"
-        # apply may have created the `tools` mapping itself; do not leave an
-        # empty one behind that was never in the operator's file.
-        if [ "$tools_present" != "true" ] && [ "$(yq -r '(.tools // {}) | length' "$CONFIG")" = "0" ]; then
-            yq -i 'del(.tools)' "$CONFIG"
+        # apply may have created the `tools` node itself, or turned an
+        # explicit null into a mapping. Put back the shape that was there,
+        # but only while nothing else has since been added underneath it.
+        if [ "$(yq -r '(.tools // {}) | length' "$CONFIG")" = "0" ]; then
+            case "$tools_prior" in
+            absent) yq -i 'del(.tools)' "$CONFIG" ;;
+            null) yq -i '.tools = null' "$CONFIG" ;;
+            esac
         fi
     fi
     rm -f "$BACKUP"
