@@ -103,8 +103,14 @@ volumes exist on the sprite's disk, tear the containers down, remove the
 checkout (its env-file with it), and only then take a named **golden**
 checkpoint. The golden checkpoint is defined by its content: it SHALL
 contain no credential and no repository checkout, whether the repository
-is public or private. A pool sprite whose golden checkpoint predates the
-current image pin SHALL be re-initialised before use, never patched in
+is public or private. Every golden checkpoint SHALL be recorded with a
+**golden stamp** covering everything the checkpoint bakes in that the
+repository can change: the image pin from `.devcontainer/Dockerfile`, a
+hash of `scripts/sprite-lane.sh` and of the in-sprite supervisor it
+installs, and the pinned devcontainers CLI version. A pool sprite whose
+recorded stamp differs from the stamp computed from the current tree — a
+moved image pin, a changed helper or supervisor, or a bumped CLI pin,
+alone or together — SHALL be re-initialised before use, never patched in
 place.
 
 Lane creation SHALL **claim** a pool sprite before touching it: a claim is a
@@ -116,9 +122,11 @@ through a local lock so two of them never select the same sprite. A leased
 sprite SHALL NOT be restored, retired, or reclaimed by anyone but its owner;
 an expired lease SHALL be reclaimable only by `task sprite:audit --reclaim`
 after the operator confirms, never implicitly by a later `lane:new`, and
-reclaim SHALL first prove the sprite has no active lane session or running
-command (the platform's session list and status), refusing while any
-exists — an expired lease is a bookkeeping fact, never a licence to
+reclaim SHALL follow the same protocol as retirement: first mark the lane
+closing so a concurrent `lane:exec` is refused from that point, then prove
+the sprite has no active lane session or running command (the platform's
+session list and status), refusing while any exists, and only then
+restore — an expired lease is a bookkeeping fact, never a licence to
 terminate work. One pool SHALL be driven from one orchestrator at a time;
 sharing a pool across orchestrators is out of scope and documented as
 unsupported.
@@ -173,6 +181,15 @@ has its own setup erased by a restore still in flight.
 - **THEN** it refuses, names the session, restores nothing, and leaves the
   lease in place
 
+#### Scenario: reclaim serialises against a lane command
+- **WHEN** `task sprite:audit --reclaim` and `task sprite:lane:exec` race on
+  the same expired-lease sprite
+- **THEN** the reclaim writes the closing mark before its activity check,
+  a `lane:exec` that starts after the mark is refused naming the closing
+  lane, a `lane:exec` that started before the mark makes the activity check
+  fail and the reclaim refuse, and the offline test records the closing
+  mark before the activity check and no restore call in either ordering
+
 #### Scenario: the golden checkpoint holds no credential and no checkout
 - **WHEN** the golden checkpoint is restored and the inner container is
   started without the lane's credential step
@@ -191,10 +208,21 @@ has its own setup erased by a restore still in flight.
   env-file write, or git config write carrying the token
 
 #### Scenario: a stale golden checkpoint is refused
-- **WHEN** the image pin in `.devcontainer/Dockerfile` differs from the pin
-  recorded with a pool sprite's golden checkpoint
-- **THEN** `task sprite:lane:new` refuses that sprite with a message naming
-  `task sprite:pool:init` as the remedy
+- **WHEN** any component of the golden stamp computed from the current
+  tree — the image pin in `.devcontainer/Dockerfile`, the hash of
+  `scripts/sprite-lane.sh` or its in-sprite supervisor, or the pinned
+  devcontainers CLI version — differs from the stamp recorded with a pool
+  sprite's golden checkpoint
+- **THEN** `task sprite:lane:new` refuses that sprite, names the component
+  that changed, and names `task sprite:pool:init` as the remedy
+
+#### Scenario: a helper-only change stales the golden checkpoint
+- **WHEN** `scripts/sprite-lane.sh` (or the supervisor it installs) changes
+  on the current tree while the image pin and the devcontainers CLI pin are
+  unchanged
+- **THEN** `task sprite:lane:new` refuses every pool sprite whose recorded
+  stamp predates that change, and the offline test drives this case with
+  the stubbed CLI's canned label output and records no restore call
 
 ### Requirement: A lane is one branch cloned from GitHub, never the operator's tree
 A lane SHALL check the repository out by cloning from GitHub over HTTPS
@@ -234,24 +262,30 @@ on the same branch for review; it is not the lane's source.
   `/workspaces/<repo>` before the `devcontainer up` call, and `devcontainer
   up` is invoked with that folder as its workspace
 
-### Requirement: Credentials are the bot profile's allow-list, delivered through the devcontainer's own lifecycle, and never the Sprites token
+### Requirement: Credentials are an explicit lane allow-list, delivered through the devcontainer's own lifecycle, and never the Sprites token
 A lane SHALL receive credentials only through the inner container's existing
-env-file allow-list: the lane helper runs `devcontainer up` inside the sprite
-with the allow-listed variables present in that command's environment, so the
-bot profile's own `initializeCommand` (`init-env.sh`) captures them from the
-host environment exactly as it does on Coder, the env-file exists before the
-container is created, and `post-create.sh` finds `gh` authenticated when it
-runs. The variables are `GH_TOKEN` (the bot's scoped fine-grained PAT —
-write to selected repositories, no workflow or administration permission,
-so it can push branches and open draft PRs but cannot merge `main` or edit
-workflows), `CLAUDE_CODE_OAUTH_TOKEN`, and, only when the repository opted
-in, the alternative-provider API keys; the Codex CLI login
+env-file mechanism: the lane helper runs `devcontainer up` inside the sprite
+with the lane's allow-listed variables present in that command's
+environment, so the bot profile's own `initializeCommand` (`init-env.sh`)
+captures them from the host environment exactly as it does on Coder, the
+env-file exists before the container is created, and `post-create.sh` finds
+`gh` authenticated when it runs. The lane's allow-list is **explicit and
+narrower than the bot profile's own**: the helper passes exactly `GH_TOKEN`
+(the bot's scoped fine-grained PAT — write to selected repositories, no
+workflow or administration permission, so it can push branches and open
+draft PRs but cannot merge `main` or edit workflows) and
+`CLAUDE_CODE_OAUTH_TOKEN`, plus the alternative-provider API keys only when
+the repository opted in — it SHALL NOT forward the bot profile's
+`initializeCommand` list wholesale. The Codex CLI login
 (`~/.codex/auth.json`) is copied into the inner container's Codex state after
 the container is up and before any agent starts. A lane SHALL NOT receive:
-any 1Password credential or the `op` CLI, an operator `gh` login,
-`TS_AUTHKEY`, `ANTHROPIC_API_KEY` (stripped by `init-env.sh` as today), or
-the **Sprites API token** — the token is org-scoped and would let one lane
-exec into every sibling lane, so it exists only on the orchestrator's side.
+`FOREMAN_AGENT_GH_TOKEN` and `AGENT_DECK_TELEGRAM_KEY` (both on the bot
+profile's allow-list, neither needed by a lane), any alternative-provider
+key the repository did not opt into, any 1Password credential or the `op`
+CLI, an operator `gh` login, `TS_AUTHKEY`, `ANTHROPIC_API_KEY` (stripped by
+`init-env.sh` as today), or the **Sprites API token** — the token is
+org-scoped and would let one lane exec into every sibling lane, so it
+exists only on the orchestrator's side.
 The lane's step order SHALL be: claim, restore-and-wait, egress policy,
 clone onto the outer host (PAT through the credential helper only),
 `devcontainer up` with the credentials in its environment (which populates
@@ -264,15 +298,23 @@ and any process environment) before the golden checkpoint is restored.
 - **WHEN** a lane is created and `gh auth status` and `env` are read inside
   the inner container
 - **THEN** `gh` is authenticated as the bot account through `GH_TOKEN`,
-  `CLAUDE_CODE_OAUTH_TOKEN` is set, and `SPRITES_TOKEN`, `SPRITE_TOKEN`,
-  `TS_AUTHKEY`, `ANTHROPIC_API_KEY`, and every `OP_*` variable are unset
-  in the container and absent from the sprite's own environment and files
+  `CLAUDE_CODE_OAUTH_TOKEN` is set, and `FOREMAN_AGENT_GH_TOKEN`,
+  `AGENT_DECK_TELEGRAM_KEY`, every alternative-provider key the repository
+  did not opt into, `SPRITES_TOKEN`, `SPRITE_TOKEN`, `TS_AUTHKEY`,
+  `ANTHROPIC_API_KEY`, and every `OP_*` variable are unset in the container
+  and absent from the sprite's own environment and files
 
-#### Scenario: the Sprites token never enters a sprite
+#### Scenario: the Sprites token never enters a sprite, and the allow-list is exact
 - **WHEN** the lane helper is audited (unit test against the stubbed CLI)
+  with `FOREMAN_AGENT_GH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`, an un-opted
+  provider key, and the Sprites token all present in the orchestrator's
+  environment
 - **THEN** no code path passes the orchestrator's Sprites token, its token
   file, or its keyring into `sprite exec --env`, `sprite exec --file`, the
-  env-file, or any file written inside the sprite
+  env-file, or any file written inside the sprite, and the environment the
+  helper hands to `sprite exec` and `devcontainer up` contains exactly
+  `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and the opted-in provider keys —
+  `FOREMAN_AGENT_GH_TOKEN` and `AGENT_DECK_TELEGRAM_KEY` never appear
 
 #### Scenario: post-create finds gh authenticated
 - **WHEN** `devcontainer up` runs for a lane and `post-create.sh` reaches its
@@ -396,9 +438,12 @@ enters the sprite. Retirement
 (`task sprite:lane:rm -- <lane>`) SHALL first mark the lane closing so no
 new lane command can start, then prove no lane session or command is
 active on the sprite (refusing while any is), and only then check the
-checkout — refusing while it is not clean: unpushed commits, modified or
-staged files, or untracked files (`git status --porcelain
---untracked-files=all` non-empty) — unless `--force` is given; it then
+checkout — refusing while it is not clean, where clean means **both** that
+`git status --porcelain --untracked-files=all` is empty (no modified,
+staged, or untracked files) **and** that the branch is fully on its
+remote: it has an upstream, that upstream exists on the remote, and
+`git rev-list --count @{upstream}..HEAD` is zero — porcelain alone cannot
+see an ahead-but-clean branch — unless `--force` is given; it then
 stops the inner container, removes injected credentials, restores the
 golden checkpoint and waits for it, releases the lease, and returns the
 sprite to the pool (or destroys it with `--destroy`). The closing mark,
@@ -467,6 +512,15 @@ command can start or keep writing between the check and the restore.
   unpushed commits, or modified, staged, or untracked files
 - **THEN** it refuses, names what is unpushed or uncommitted, and does
   nothing unless `--force` is given
+
+#### Scenario: retirement refuses a clean tree that is ahead of its upstream
+- **WHEN** `task sprite:lane:rm -- <lane>` runs while the lane's checkout has
+  an empty porcelain status but its branch has commits not on its upstream
+  (`git rev-list --count @{upstream}..HEAD` non-zero), has no upstream
+  configured, or its upstream no longer exists on the remote
+- **THEN** it refuses, names the commits or the missing upstream, and does
+  nothing unless `--force` is given — an empty porcelain status alone is
+  never taken as clean
 
 #### Scenario: retirement refuses while a lane command is active
 - **WHEN** `task sprite:lane:rm -- <lane>` runs while a lane command or
@@ -581,13 +635,18 @@ asserts the ordering and refusal rules above: claim before restore, restore
 reported complete before policy, policy before credentials, the clone
 before `devcontainer up`, credentials in the `devcontainer up` environment
 before agents; refusal of absent or ahead branches, stale golden
-checkpoints, pool overflow, contended or expired leases, reclaim over an
-active session, and retirement over a non-clean checkout — each recording
+checkpoints (including a helper-only change to the stamp), pool overflow,
+contended or expired leases, reclaim over an active session, reclaim
+serialised against a lane command, and retirement over a non-clean
+checkout (including a clean tree ahead of its upstream) — each recording
 no restore call; the incomplete-restore case recording exactly one restore
 call and nothing after it; that no hold, heartbeat, or command bound is
-owned by an orchestrator-side process; and that neither the Sprites token
-nor the bot PAT appears in any file the helper writes (the PAT reaches git
-only through the credential helper's environment). The
+owned by an orchestrator-side process; that the environment handed to
+`sprite exec` and `devcontainer up` is exactly the lane allow-list and
+never carries `FOREMAN_AGENT_GH_TOKEN` or `AGENT_DECK_TELEGRAM_KEY`; and
+that neither the Sprites token nor the bot PAT appears in any file the
+helper writes (the PAT reaches git only through the credential helper's
+environment). The
 scenarios only the platform can settle — credentials absent from the
 sprite's filesystem after retirement, the golden checkpoint holding none,
 the restore actually removing a previous lane's state, the policy being
@@ -606,9 +665,11 @@ stubs.
 
 #### Scenario: the offline test enforces every pre-restore refusal
 - **WHEN** `task test:sprite-lane` drives the helper through an absent
-  branch, a local branch ahead of the remote, a stale golden checkpoint, a
-  full pool, a contended lease, an expired lease, a reclaim over an active
-  session, and a retirement over a non-clean checkout
+  branch, a local branch ahead of the remote, a stale golden checkpoint
+  (image pin, helper hash, and CLI pin each changed alone), a full pool, a
+  contended lease, an expired lease, a reclaim over an active session, a
+  reclaim racing a lane command, a retirement over a non-clean checkout,
+  and a retirement over a clean tree ahead of its upstream
 - **THEN** each case exits non-zero with the documented message and the
   stubs record no create, restore, or destroy call for it
 

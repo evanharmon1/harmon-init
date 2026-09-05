@@ -48,8 +48,8 @@ allows and drives from Herdr the same way a local pane worker does.
   and waits for the restore to complete before anything else, so two lanes
   never fight over one sprite and a lane never inherits a previous lane's
   files or tokens.
-- Define the **credential contract**: a lane receives exactly the bot
-  devcontainer's allow-listed secrets (`GH_TOKEN` = the bot's scoped
+- Define the **credential contract**: a lane receives an explicit
+  allow-list narrower than the bot profile's own (`GH_TOKEN` = the bot's scoped
   fine-grained PAT, `CLAUDE_CODE_OAUTH_TOKEN`, the Codex CLI login, optional
   provider keys), delivered the way Coder delivers them — present in the
   environment of the `devcontainer up` the lane runs, so the profile's own

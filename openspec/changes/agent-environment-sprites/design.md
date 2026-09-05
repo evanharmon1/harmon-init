@@ -141,8 +141,11 @@ cannot seed a new sprite, the pool is the only way to amortise the pull:
 each pool sprite is bootstrapped once, checkpointed clean, and every lane
 starts from that checkpoint. The pool is small (the ceiling mirrors the
 plan's concurrency), owned by the operator, and re-initialised — not
-patched — when the image pin moves, so a lane's toolchain is always the
-pinned one. If Fly ships fork-from-sprite, the pool collapses to one golden
+patched — whenever its golden stamp (the image pin, the hash of the lane
+helper and its in-sprite supervisor, and the pinned devcontainers CLI
+version) no longer matches the current tree, so a lane's toolchain and
+outer-host tooling are always the ones the repository ships; an image pin
+alone would miss a helper or supervisor change the checkpoint baked in. If Fly ships fork-from-sprite, the pool collapses to one golden
 sprite; nothing else in this design changes.
 
 **Golden checkpoint before credentials, restore before every lane.** A
@@ -154,12 +157,17 @@ a hope, and it is cheap (metadata shuffle, per Fly's engineering post).
 
 **Credentials: the bot profile's own allow-list, delivered through the
 devcontainer's own lifecycle, plus one new exclusion.** The inner container
-is the same bot profile, so it gets the same env-file the local bot
-container gets, populated the way Coder populates it: the allow-listed
-variables are present in the environment of the `devcontainer up` the lane
-helper runs inside the sprite, and the profile's own `initializeCommand`
-(`init-env.sh`) captures them from that host environment into the env-file
-before the container is created. That is the only order that works with
+is the same bot profile, so it gets its env-file the way Coder populates
+it: the lane's allow-listed variables are present in the environment of
+the `devcontainer up` the lane helper runs inside the sprite, and the
+profile's own `initializeCommand` (`init-env.sh`) captures them from that
+host environment into the env-file before the container is created. The
+lane's list is explicit and narrower than the profile's own
+`initializeCommand` list, which also carries `FOREMAN_AGENT_GH_TOKEN` and
+`AGENT_DECK_TELEGRAM_KEY`; the helper passes exactly `GH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN`, and the opted-in provider keys rather than
+forwarding whatever the orchestrator's environment or the profile allows,
+so a lane never inherits a credential it has no use for. That is the only order that works with
 the profile unchanged — `initializeCommand`, the `--env-file` in `runArgs`,
 and `postCreateCommand` (which runs `gh auth setup-git` and the sibling
 clones) all execute inside `devcontainer up`, so a credential injected
@@ -205,7 +213,9 @@ so the readback is the best available check; that is why one pool is
 driven from one orchestrator at a time (documented as a limit, not a
 mechanism), and why an expired lease is reclaimed only by
 `sprite:audit --reclaim` after confirmation rather than silently by the
-next lane.
+next lane — and by the same closing-mark-then-activity-proof protocol
+retirement uses, so a reclaim can no longer race a `lane:exec` between its
+check and its restore.
 
 **Egress: allowlist first, credentials second.** The default is
 unrestricted; a lane sets the DNS allowlist before any secret exists in the
@@ -344,7 +354,9 @@ over the API.
   helper restores only at lane start and lane retirement, waits for the
   restore to complete before any later step, never restores a leased
   sprite it does not own, and refuses retirement over a non-clean checkout
-  (unpushed commits, or modified, staged, or untracked files).
+  (modified, staged, or untracked files, or a branch with commits not on
+  its upstream, no upstream, or a missing remote counterpart — porcelain
+  status alone cannot see an ahead-but-clean branch).
 - [Whether a detached exec session still counts as activity once the
   client disconnects, and whether the Tasks API is reachable from inside
   the sprite without the org token] → Both are settled by the feasibility
