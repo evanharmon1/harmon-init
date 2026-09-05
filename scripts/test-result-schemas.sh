@@ -36,6 +36,24 @@ for schema in "$schema_dir"/*.schema.json; do
 done
 node scripts/test-result-schema-composition.mjs
 
+expected_inventory="$({
+    find "$fixtures" -type f -name '*.json' |
+        sed "s#^${fixtures}/##" |
+        LC_ALL=C sort |
+        sed 's#^#- `#; s#$#`#'
+})"
+documented_inventory="$({
+    sed -n \
+        '/<!-- BEGIN GENERATED FIXTURE INVENTORY -->/,/<!-- END GENERATED FIXTURE INVENTORY -->/p' \
+        "$schema_dir/README.md" |
+        sed '1d;$d'
+})"
+if [ "$documented_inventory" != "$expected_inventory" ]; then
+    echo "FAIL: ai/schemas/README.md generated fixture inventory is stale" >&2
+    diff -u <(printf '%s\n' "$documented_inventory") <(printf '%s\n' "$expected_inventory") >&2 || true
+    exit 1
+fi
+
 accepts implementer "$fixtures/result.implementer.schema/valid/completed.json" \
     --run-id run-0397-omator --initiated-by human --receipt
 rejects implementer-empty-summary implementer \
@@ -79,6 +97,8 @@ jq '
 rejects adjudication-p1-defer adjudication "$tmp"
 
 accepts run "$oneshot" --no-adjudications --receipt
+accepts run "$fixtures/run.schema/valid/challenge-to-security-when-review-disabled.json" \
+    --no-adjudications --receipt
 jq '.stage_transitions[2].stage = "security"' "$oneshot" >"$tmp"
 rejects run-invalid-transition run "$tmp" --no-adjudications --receipt
 jq '

@@ -1055,10 +1055,17 @@ function resolveStages(doc) {
         `[stage.${stage}].finder_fallbacks includes "${finders[0]}", which is also this stage's only primary finder — a finder can never validly substitute for its own slot`
       )
     }
+    const pool = resolveStageArray(table?.pool, `[stage.${stage}].pool`, null)
+    const duplicatePoolHarness = pool?.find((harness, index) => pool.indexOf(harness) !== index)
+    if (duplicatePoolHarness !== undefined) {
+      throw new PolicyError(
+        `[stage.${stage}].pool contains duplicate harness "${duplicatePoolHarness}"`
+      )
+    }
     result[stage] = {
       finders,
       finder_fallbacks: finderFallbacks,
-      pool: resolveStageArray(table?.pool, `[stage.${stage}].pool`, null)
+      pool
     }
   }
   return result
@@ -1072,10 +1079,17 @@ function resolveStrategy(doc, requestedStrategy) {
   // || doc.default_strategy` short-circuits on ANY override, so a policy
   // with a missing default_strategy resolved successfully whenever
   // --strategy was supplied. Shepherd-stage cloud finding, confirmed.
-  if (!doc.default_strategy) throw new PolicyError('policy has no default_strategy')
+  if (typeof doc.default_strategy !== 'string' || doc.default_strategy.trim() === '') {
+    throw new PolicyError('policy default_strategy must be a non-empty string')
+  }
   const strategies = doc.strategy
   if (!strategies || typeof strategies !== 'object' || Array.isArray(strategies)) {
     throw new PolicyError('policy has no [strategy.*] tables')
+  }
+  if (!Object.hasOwn(strategies, doc.default_strategy)) {
+    throw new PolicyError(
+      `default_strategy ${JSON.stringify(doc.default_strategy)} has no matching [strategy.${doc.default_strategy}] table`
+    )
   }
   for (const [profileName, candidate] of Object.entries(strategies)) {
     const errorPath = `[strategy.${profileName}]`
@@ -1201,10 +1215,10 @@ function resolveStrategy(doc, requestedStrategy) {
 
   const name = requestedStrategy || doc.default_strategy
   if (!name) return null
-  const table = strategies[name]
-  if (!table) {
+  if (!Object.hasOwn(strategies, name)) {
     throw new PolicyError(`strategy "${name}" has no [strategy.${name}] table`)
   }
+  const table = strategies[name]
   // `name` spread AFTER `table` (never before): the selected TOML section
   // key is the authoritative name. A `table` carrying its own `name` field
   // (e.g. `[strategy.council] name = "solo"`) must not be able to overwrite
@@ -1445,9 +1459,18 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
           `[role.${role}] tier "${r.tier}" is not achievable by any model in its declared families (${r.families.join(', ')})`
         )
       }
-      if (knownHarnesses.length > 0 && knownFamilies.length > 0) {
+      // An omitted harness preference means unrestricted, not unchecked.
+      // Build the candidate set from every registered harness and then apply
+      // the same role/family/tier predicate used for an explicit preference.
+      // The orchestrator is intentionally exempt: it is the session driving
+      // the run and is not a registry-dispatched result-producing role.
+      const candidateHarnesses =
+        r.harnesses.length > 0
+          ? knownHarnesses
+          : [...harnessBySlug.entries()].map(([slug, harness]) => ({ slug, harness }))
+      if (role !== 'orchestrator' && knownFamilies.length > 0) {
         const hasExecutableTuple = tierEligibleFamilies.some(({ slug: familySlug }) =>
-          knownHarnesses.some(({ harness }) => {
+          candidateHarnesses.some(({ harness }) => {
             const roleAllowed = !Array.isArray(harness.roles) || harness.roles.includes(role)
             const familyAllowed =
               harness.family_constraint?.kind !== 'fixed' ||
@@ -1458,7 +1481,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         if (!hasExecutableTuple) {
           errors.push(
             `[role.${role}] has no executable family/harness/tier tuple for tier "${r.tier}": ` +
-              `families (${r.families.join(', ') || 'none'}), harnesses (${knownHarnesses.map(({ slug }) => slug).join(', ') || 'none'})`
+              `families (${r.families.join(', ') || 'none'}), harnesses (${candidateHarnesses.map(({ slug }) => slug).join(', ') || 'none'})`
           )
         }
       }

@@ -1468,10 +1468,11 @@ function checkSettlementReferenceType(document, errors) {
 // run instead ends its last real transition's `exit` and sets
 // `outcome: "escalated"` (already enforced below, unrelated to this
 // table). This is an exact transcription, not a derived "any forward
-// index" approximation: challenge, for instance, can reach review or loop
-// back to implement, but — unlike a plain monotonic-index rule would
-// allow — can never jump straight to security or integration, because the
-// diagram draws no such edge.
+// index" approximation. A converged challenge can reach review, loop back
+// to implement, or proceed to security when review is disabled; whether the
+// security edge is valid for a particular run depends on resolved policy and
+// is enforced by the policy-aware exit consumer rather than this document-
+// local validator.
 const ALLOWED_EDGES = {
   kickoff: new Set(['claim']),
   claim: new Set(['explore', 'plan', 'implement']),
@@ -1479,7 +1480,7 @@ const ALLOWED_EDGES = {
   plan: new Set(['implement']),
   implement: new Set(['verify', 'integration']),
   verify: new Set(['challenge', 'review', 'security']),
-  challenge: new Set(['implement', 'review']),
+  challenge: new Set(['implement', 'review', 'security']),
   review: new Set(['implement', 'security']),
   security: new Set(['integration', 'implement']),
   integration: new Set(['implement'])

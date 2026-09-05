@@ -141,6 +141,12 @@ rejects_reader unknown-stage-key replace_in_table stage.challenge '[stage.challe
 rejects_reader duplicate-fallback-finder replace_in_table stage.challenge \
     '# finder_fallbacks = []' \
     'finder_fallbacks = ["codex-verification", "codex-verification"]'
+rejects_reader duplicate-stage-pool-harness replace_in_table stage.review \
+    '[stage.review]' \
+    $'[stage.review]\npool = ["codex-cli", "codex-cli"]'
+rejects_reader non-string-default-strategy replace_once \
+    'default_strategy = "plan"' \
+    'default_strategy = 1'
 rejects_reader missing-dormant-rigor delete_table rigor.light
 rejects_reader unknown-rigor-order-entry replace_once \
     'rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]' \
@@ -163,6 +169,13 @@ fi
 
 # Reader-specific semantic controls. These bypass the Python structural gate
 # so each failure proves the shipped JavaScript reader enforces the contract.
+reset_policy
+replace_once 'default_strategy = "plan"' 'default_strategy = "ghost"'
+if resolve_reader --strategy plan 2>/dev/null; then
+    echo "FAIL: JS reader accepted a default_strategy outside the configured strategy family" >&2
+    exit 1
+fi
+
 reset_policy
 replace_in_table rounds.light 'challenge      = 2' 'challenge      = "oops"'
 if resolve_reader 2>/dev/null; then
@@ -196,6 +209,21 @@ replace_in_table role.reviewer \
     'harnesses = ["codex-cli"]'
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted a stage pool with no executable role-routing intersection" >&2
+    exit 1
+fi
+
+# Omitting a role harness preference widens selection to every compatible
+# registered harness. It must not skip executable-tuple validation: no
+# reviewer-capable harness in this registry can execute the MAI family.
+reset_policy
+replace_in_table role.reviewer \
+    'families  = ["gpt", "claude", "gemini"]    # (preference)' \
+    'families  = ["mai"]'
+replace_in_table role.reviewer \
+    'harnesses = ["codex-cli", "claude-code"]  # (preference) — same' \
+    '# harness preference intentionally omitted; every compatible harness is eligible'
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader skipped executable-tuple validation for an unrestricted role" >&2
     exit 1
 fi
 

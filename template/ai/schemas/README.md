@@ -1,8 +1,9 @@
 # Dev flow v2 result schemas
 
 The JSON Schema family every [dev-flow-v2](../../specs/dev-flow-v2.md) agent
-result must satisfy, plus the conformance fixture corpus Foreman's Python
-tests against at a pinned tag ([foreman#182](https://github.com/ponderousdev/foreman/issues/182)).
+result must satisfy, plus the focused consumer fixtures exercised by
+`task test:result-schemas`. The generated fixture inventory below is the exact
+suite shipped here; harmon-devkit owns the broader cross-consumer corpus.
 Filenames and field names are a contract on merge — [#635](https://github.com/evanharmon1/harmon-devkit/issues/635)–[#639](https://github.com/evanharmon1/harmon-devkit/issues/639)
 reference them.
 
@@ -453,10 +454,9 @@ instance being validated:
   sequence numbers themselves — sorted, within each `(destination, stage,
   round)` grouping — are exactly `1..N`, neither starting elsewhere nor
   skipping one. A stage's per-round issue comment and its PR rollup comment
-  are different groupings and each starts its own split count at 1 —
-  `ai/schemas/fixtures/run.schema/valid/further-along.json` carries exactly
-  that pair (an issue round-1 comment and a PR stage comment, both
-  `sequence: 1`) as the affirmative case.
+  are different groupings and each starts its own split count at 1. The broader
+  harmon-devkit conformance corpus carries the affirmative split-comment case;
+  only paths in the generated inventory below ship in this focused suite.
 - **`run.schema.json`'s `stage_transitions[]` array-wide coherence**
   (`checkStageTransitionsOrder`) — the first entry is `kickoff`, and every
   later entry is reached from the one right before it by an edge
@@ -465,12 +465,12 @@ instance being validated:
   (§ Lifecycles, the `stateDiagram-v2`), with every `--> escalate` edge
   excluded (`escalate` is not itself a stage_transitions value — see
   below) — not a derived "any forward stage, or a loop back to implement"
-  approximation. That distinction matters: `challenge` can reach `review`
-  or loop back to `implement`, but — unlike a plain "forward index"
-  rule would allow — can never jump straight to `security` or
-  `integration`, because the diagram draws no such edge; `verify`, by
-  contrast, is structurally listed as reaching any of `challenge`,
-  `review`, or `security` directly. One edge in the table needs history,
+  approximation. That distinction matters: `challenge` can reach `review`,
+  loop back to `implement`, or proceed to `security` when review is disabled;
+  it cannot jump straight to `integration`. Whether the security edge is
+  valid for a particular run depends on resolved policy and belongs to the
+  policy-aware exit consumer, just like `verify` skipping disabled confidence
+  stages. One edge in the table needs history,
   not just the immediate predecessor: `implement → integration` is the
   diagram's REMEDIATION RETURN ("remediation fix verified and pushed"),
   which presupposes a prior trip to `integration` to remediate FROM — so
@@ -1077,72 +1077,25 @@ decisions):
 
 ## Fixture layout
 
-```text
-ai/schemas/fixtures/
-  result.envelope.schema/{valid,invalid}/*.json
-  result.implementer.schema/{valid,invalid}/*.json
-  result.challenger.schema/{valid,invalid}/*.json
-  result.reviewer.schema/{valid,invalid}/*.json
-  result.integrator.schema/{valid,invalid}/*.json
-  adjudication.schema/{valid,invalid}/*.json
-  run.schema/{valid,invalid}/*.json
-```
+`scripts/test-result-schemas.sh` generates the same sorted list from the
+filesystem and fails if this block drifts. That keeps documentation and the
+focused shipped suite in one mechanically checked contract.
 
-Each directory name is the schema's own basename (`result.envelope.schema`,
-not `result.envelope`) so it reads as "fixtures for
-`result.envelope.schema.json`" without a lossy rename. Every `invalid/*.json`
-fixture has a sibling `invalid/*.reason` — a one-line plain-text file naming
-a substring the validator's rejection message must contain, so a test proves
-the fixture is rejected **for the documented reason**, not merely rejected.
-Several fixtures additionally need a same-named sidecar because the
-invariant they exercise needs context no single document carries (see
-"Receipt validation" above): `result.reviewer.schema/invalid/duplicate-id-across-passes.json`
-ships a `.known-ids.json` sidecar (a JSON array, passed as the validator's
-`--known-ids`); the four `adjudication.schema/invalid/pass-cross-check-*.json`
-fixtures share one `.pass.json` sidecar (a reviewer envelope, passed as
-`--pass`); `adjudication.schema/invalid/known-adjudicated-collision.json`
-ships a `.known-adjudicated.json` sidecar; `run.schema/invalid/settlement-of-*-finding.json`
-and `run.schema/valid/settlement-of-deferred.json` share one
-`.adjudication.json` sidecar (an adjudication document, passed as
-`--adjudication`); `adjudication.schema/valid/two-finder-union-adjudication.json`
-(itself schema-valid and receipt-valid on its own, and so lives in the
-generic corpus as an ordinary valid fixture) is additionally exercised
-against two `.pass.json` sidecars together (accepted — a genuine two-finder
-round) and against only one of them (rejected, in the named cases);
-`adjudication.schema/valid/integration-adjudication.json` (stage
-`integration`, also an ordinary valid fixture on its own) is likewise
-exercised against its own `.pass.json` sidecar — an INTEGRATOR envelope,
-not a reviewer one, since that is what `--pass` validates against for this
-stage; and the run-mismatch case (`result.envelope.schema/invalid/run-mismatch.json`) is
-exercised with a hardcoded `--run-id`/`--initiated-by` pair in
-`scripts/test-result-schemas.sh` rather than a sidecar, since those are two
-plain strings, not a document. All sidecars, and every fixture whose
-invalid-ness depends entirely on a flag the generic loop never passes, are
-excluded from both the valid and invalid per-directory loops
-(`is_context_only_fixture` in `scripts/test-result-schemas.sh`) and
-exercised only by name.
-
-`ai/schemas/fixtures/result.reviewer.schema/valid/omator-397-*.json` and
-`ai/schemas/fixtures/adjudication.schema/valid/omator-397-*-adjudication.json`
-reconstruct the [ponderousdev/omator#397](https://github.com/ponderousdev/omator/pull/397)
-trajectory the spec's Problem/Why section and Convergence model cite: 4
-challenge rounds (17, 14, 10, 9 findings) + 3 review rounds (9, 4, 4 findings),
-67 findings total, matching the PR's own count. `provenance` is populated
-richly from the ledger's "about rN fix" annotations (challenge round 2 has
-9 of its 14 findings at `round:1`, the spec's own cited statistic); every
-`fingerprint` in the reconstruction is `new`, because the ledger's "about rN
-fix" annotations map to *provenance* (which round's fix a finding is about)
-and *disposition* (what happened to it), never to a `repeat-of`/`supersedes`
-relationship to an earlier, still-open finding — the omator#397 story is
-fixes introducing fresh defects, not the same defect surviving unfixed, and
-a reconstruction is not the place to invent a relationship the source
-material doesn't contain. `result.reviewer.schema/valid/synthetic-repeat-*.json`
-is a small, clearly-synthetic two-round trajectory instead, built to exercise
-`repeat-of`/`supersedes` and the `repeat_after_fix` convergence predicate's
-precondition (a repeat whose original disposition changed code), since the
-real trajectory has no genuine instance of it. Heads across every trajectory
-fixture are synthesized 40-hex values with no relationship to any real
-commit; `finder` is `codex-cli` throughout, matching the ledger.
+<!-- BEGIN GENERATED FIXTURE INVENTORY -->
+- `adjudication.schema/invalid/duplicate-finding-id.json`
+- `adjudication.schema/valid/integration-adjudication.json`
+- `adjudication.schema/valid/integration-adjudication.pass.json`
+- `result.challenger.schema/invalid/completed-with-empty-attack-scenarios.json`
+- `result.challenger.schema/valid/empty-findings.json`
+- `result.implementer.schema/invalid/empty-summary-when-completed.json`
+- `result.implementer.schema/valid/completed.json`
+- `result.integrator.schema/invalid/bad-verdict-enum.json`
+- `result.integrator.schema/valid/verdict-clean.json`
+- `result.reviewer.schema/invalid/counts-mismatch-tally.json`
+- `result.reviewer.schema/valid/empty-findings.json`
+- `run.schema/valid/challenge-to-security-when-review-disabled.json`
+- `run.schema/valid/oneshot.json`
+<!-- END GENERATED FIXTURE INVENTORY -->
 
 ## Running the validator
 
@@ -1173,12 +1126,10 @@ were left unsupplied instead of silently running a narrower check. Exit 0
 and a one-line summary when valid; exit 1 and every violation (one per
 line) otherwise; exit 2 for a usage error (bad `kind`, missing file,
 `--run-id`/`--initiated-by` given alone, or a `--receipt`-required flag
-missing). `scripts/test-result-schemas.sh`
-(wired into `task test:result-schemas`, run from `task verify`) runs the
-whole fixture corpus through this validator, every run-context regression
-case above, and a coverage check that every `required` field and every
-`enum` declared anywhere in each schema has at least one invalid fixture
-exercising it.
+missing). `scripts/test-result-schemas.sh` (wired into
+`task test:result-schemas`, run from `task verify`) exercises every file in
+the generated inventory plus its named in-memory receipt mutations, and
+rejects any README/inventory drift.
 
 ## External Dev flow v2 policy and exit design reference
 
