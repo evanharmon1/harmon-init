@@ -42,6 +42,19 @@ valid_document() {
     yq -e '. == null or (type == "!!map")' "$1" >/dev/null 2>&1
 }
 
+# tools_node_kind <file>  — "absent", or yq's type tag for the `tools` node.
+# apply and restore MUST agree on this exactly: both write underneath
+# `.tools`, and yq's assignment into a SCALAR node is a silent no-op that
+# still exits 0, so a shape neither can own has to be refused rather than
+# written through. One helper, so the two can never drift apart.
+tools_node_kind() {
+    if [ "$(yq -r 'has("tools")' "$1")" = "true" ]; then
+        yq -r '.tools | type' "$1"
+    else
+        printf 'absent'
+    fi
+}
+
 need_yq() {
     command -v yq >/dev/null 2>&1 || {
         echo "oh-my-pi: yq not found" >&2
@@ -65,16 +78,11 @@ cmd_apply() {
     fi
 
     # `tools` must be a mapping, absent, or explicitly null for this module to
-    # own a key underneath it. yq's assignment into a SCALAR .tools is a silent
-    # no-op that still exits 0, so without this guard apply would report
-    # success having written no policy at all (verify would fail later, in the
+    # own a key underneath it — without this guard apply would report success
+    # having written no policy at all (verify would fail later, in the
     # container, over a value apply claimed to have set).
     local tools_kind
-    if [ "$(yq -r 'has("tools")' "$CONFIG")" = "true" ]; then
-        tools_kind="$(yq -r '.tools | type' "$CONFIG")"
-    else
-        tools_kind=absent
-    fi
+    tools_kind="$(tools_node_kind "$CONFIG")"
     case "$tools_kind" in
     absent | '!!null' | '!!map') ;;
     *)
@@ -139,6 +147,20 @@ cmd_restore() {
         echo "oh-my-pi: restore failed — ${CONFIG} is missing or not a valid YAML mapping; leaving ${BACKUP} in place" >&2
         return 1
     fi
+    # Guard the CURRENT shape before writing, exactly as apply does. The file
+    # can have changed since apply ran — a hand edit, another tool — and a
+    # scalar `tools` would swallow the restore silently, leaving the operator
+    # with neither their prior value nor the backup that held it.
+    local tools_kind
+    tools_kind="$(tools_node_kind "$CONFIG")"
+    case "$tools_kind" in
+    absent | '!!null' | '!!map') ;;
+    *)
+        echo "oh-my-pi: restore failed — ${CONFIG} now has a 'tools' key of type ${tools_kind}, not a mapping; leaving it and ${BACKUP} untouched" >&2
+        return 1
+        ;;
+    esac
+
     local approval_present prior_json tools_prior
     approval_present="$(jq -r '(.present // []) | any(. == "tools.approvalMode")' "$BACKUP")" || {
         echo "oh-my-pi: restore failed — could not read ${BACKUP}; leaving it in place" >&2

@@ -36,6 +36,13 @@ set -euo pipefail
 # together, so the environment variable alone does not reach the full
 # autonomy this module's enabled state promises.
 #
+# Residual, stated rather than papered over: this module is dispatched only
+# when `copilot` resolves on PATH, like every other module here, so an
+# in-container `verify` cannot see the case where the marker is `enabled` and
+# no copilot binary exists at all — it is skipped, not failed. The CI
+# container assertion in scripts/devcontainer-assert.sh covers that case
+# instead, bounded to the one image pin for which it is legitimate.
+#
 # See openspec/changes/bot-autonomy-new-harnesses/design.md - Decisions.
 
 COPILOT_LINK="${BOT_AUTONOMY_COPILOT_LINK:-$HOME/.local/bin/copilot}"
@@ -318,20 +325,8 @@ case "${1:-}" in
 apply) cmd_apply ;;
 verify) cmd_verify ;;
 executable) echo "copilot" ;;
-# bot-autonomy.sh's dispatch gate normally skips a module whose declared
-# executable is absent from PATH. That would silently pass over the one state
-# this module exists to catch: the marker says this repository wants Copilot
-# autonomous, and there is no copilot for the wrapper to front — apply
-# installs nothing, verify never runs, and a container with no Copilot
-# autonomy at all reports clean. Opt into unconditional dispatch while the
-# marker is `enabled` so verify runs and fails closed on a missing binary or
-# wrapper. Deliberately silent when the marker is `disabled`/unset: there the
-# ordinary executable gate is correct, and a default-off consumer whose image
-# happens to lack copilot must not be dragged into a policy check that has
-# nothing to assert.
-always_dispatch) marker_enabled && echo "true" ;;
 *)
-    echo "Usage: $0 <apply|verify|executable|always_dispatch>" >&2
+    echo "Usage: $0 <apply|verify|executable>" >&2
     exit 2
     ;;
 esac

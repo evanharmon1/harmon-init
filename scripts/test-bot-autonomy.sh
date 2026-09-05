@@ -791,14 +791,18 @@ HOME="$cp_stale_home" BOT_AUTONOMY_COPILOT_LINK="$cp_stale_link" \
 [ ! -e "$cp_stale_link" ] ||
     fail "copilot-cli apply left a previous release's own wrapper in place when disabled"
 
-echo "==> 17c. Copilot CLI: an enabled marker with NO copilot binary fails closed, not silently"
-# bot-autonomy.sh's dispatch gate skips a module whose executable is absent
-# from PATH. For an ENABLED Copilot that hides the exact state this module
-# exists to catch — the repo asked for autonomy and there is no copilot to
-# front, so apply installs nothing and verify never runs. The module opts into
-# always_dispatch while the marker is enabled; these two fixtures pin both
-# halves of that, through the TOP-LEVEL entrypoint on a PATH that by
-# construction resolves no copilot at all (Codex cloud review, shepherd r1).
+echo "==> 17c. Copilot CLI stays on the ordinary executable gate, in BOTH marker states"
+# Shepherd round 2 deleted round 1's always_dispatch opt-in. It made the root
+# bot profile unbootable on the checked-in pre-harness-matrix pin: the marker
+# is enabled, post-create runs `bot-autonomy.sh verify`, the hook dispatched
+# this module, and verify failed "no runnable delegate" — aborting every
+# container creation until #1152 lands. So the module is dispatched only when
+# `copilot` actually resolves on PATH, exactly like every other module here.
+#
+# The residual that leaves — an enabled marker with no binary anywhere is
+# SKIPPED in-container, not failed — is covered by the digest-bounded
+# assertion in scripts/devcontainer-assert.sh instead, which is the layer that
+# can tell "this pin ships no copilot" from "the packaging regressed".
 cp_gate_registry="${work_dir}/registry-copilot-only.json"
 jq -n '{harnesses: [{slug: "copilot-cli"}]}' >"$cp_gate_registry"
 cp_gate_run() {
@@ -811,27 +815,28 @@ cp_gate_run() {
         HARMON_BOT_AUTONOMY_COPILOT="$1" COPILOT_ALLOW_ALL="$2" PATH="$SAFE_PATH" \
         bash "$bot_autonomy" "$3" 2>&1)
 }
-[ "$(HARMON_BOT_AUTONOMY_COPILOT=enabled bash "$copilot_module" always_dispatch)" = "true" ] ||
-    fail "copilot-cli does not opt into always_dispatch while its marker is enabled"
-for quiet_marker in disabled ""; do
-    [ -z "$(HARMON_BOT_AUTONOMY_COPILOT="$quiet_marker" bash "$copilot_module" always_dispatch)" ] ||
-        fail "copilot-cli opted into always_dispatch with the marker '${quiet_marker:-<unset>}' — it must stay on the ordinary executable gate there"
+# The module must NOT implement always_dispatch at all — re-adding it is what
+# broke the pre-matrix bot container, so make its absence the assertion.
+for any_marker in enabled disabled ""; do
+    if HARMON_BOT_AUTONOMY_COPILOT="$any_marker" bash "$copilot_module" always_dispatch >/dev/null 2>&1; then
+        fail "copilot-cli accepts an always_dispatch subcommand (marker '${any_marker:-<unset>}') — that opt-in made the pre-harness-matrix bot container unbootable and must stay deleted"
+    fi
 done
 
+# Enabled marker, no copilot anywhere: bot-autonomy.sh SKIPS the module, so
+# both apply and verify succeed and nothing is installed. This is the
+# pre-#1152 state of this repository's own bot profile; it must stay bootable.
 cp_gate_on="${work_dir}/copilot-gate-enabled-home"
 mkdir -p "${cp_gate_on}/.local/bin"
 cp_gate_run enabled true apply "$cp_gate_on" >/dev/null ||
-    fail "bot-autonomy.sh apply failed for an enabled Copilot with no binary installed"
-cp_gate_out="$(cp_gate_run enabled true verify "$cp_gate_on")" && cp_gate_rc=0 || cp_gate_rc=$?
-[ "${cp_gate_rc:-0}" -ne 0 ] ||
-    fail "bot-autonomy.sh verify PASSED with the Copilot marker enabled and no copilot binary anywhere — the module was skipped instead of failing closed"
-case "$cp_gate_out" in
-*copilot*) ;;
-*) fail "bot-autonomy.sh verify's failure for an enabled Copilot with no binary did not name copilot: ${cp_gate_out}" ;;
-esac
+    fail "bot-autonomy.sh apply failed for an enabled Copilot with no binary installed — the pre-#1152 bot container must still boot"
+cp_gate_run enabled true verify "$cp_gate_on" >/dev/null ||
+    fail "bot-autonomy.sh verify failed for an enabled Copilot with no binary installed — the module must be skipped, not dispatched, when its executable is absent"
+[ ! -e "${cp_gate_on}/.local/bin/copilot" ] ||
+    fail "a wrapper was installed for an enabled Copilot whose binary is absent — the module should not have been dispatched at all"
 
 # The complementary half: a default-off consumer whose image happens to carry
-# no copilot must NOT be dragged into a policy check with nothing to assert.
+# no copilot behaves identically.
 cp_gate_off="${work_dir}/copilot-gate-disabled-home"
 mkdir -p "${cp_gate_off}/.local/bin"
 cp_gate_run disabled false apply "$cp_gate_off" >/dev/null ||
@@ -839,7 +844,24 @@ cp_gate_run disabled false apply "$cp_gate_off" >/dev/null ||
 cp_gate_run disabled false verify "$cp_gate_off" >/dev/null ||
     fail "bot-autonomy.sh verify failed for a DISABLED Copilot with no binary — the ordinary executable gate is correct there"
 [ ! -e "${cp_gate_off}/.local/bin/copilot" ] ||
-    fail "the disabled branch installed a wrapper while dispatched with no copilot binary"
+    fail "the disabled branch installed a wrapper while no copilot binary was present"
+
+# With the binary present the module IS dispatched and the enabled state is
+# fully checked — proving the skip above is the executable gate, not a hole.
+cp_gate_bin="${work_dir}/copilot-gate-bin"
+cp_gate_live="${work_dir}/copilot-gate-live-home"
+mkdir -p "$cp_gate_bin" "${cp_gate_live}/.local/bin"
+printf '#!/bin/sh\necho REAL "$@"\n' >"${cp_gate_bin}/copilot"
+chmod +x "${cp_gate_bin}/copilot"
+(cd "$work_dir" && env HOME="$cp_gate_live" \
+    BOT_AUTONOMY_REGISTRY="$cp_gate_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    BOT_AUTONOMY_COPILOT_LINK="${cp_gate_live}/.local/bin/copilot" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_gate_live}/.copilot/settings.json" \
+    HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL=true \
+    PATH="${cp_gate_bin}:${SAFE_PATH}" bash "$bot_autonomy" apply >/dev/null) ||
+    fail "bot-autonomy.sh apply failed for an enabled Copilot WITH its binary present"
+[ -f "${cp_gate_live}/.local/bin/copilot" ] ||
+    fail "bot-autonomy.sh did not dispatch the copilot module when its executable was on PATH"
 
 echo "==> 18. pi: apply writes nothing; verify fails closed on BOTH trust-granting surfaces"
 pi_module="${module_dir}/pi.sh"
@@ -1032,6 +1054,24 @@ fi
 [ ! -f "$omp_backup" ] ||
     fail "oh-my-pi apply wrote a backup for a config it refused to modify"
 rm -f "$omp_config"
+
+# restore must guard the CURRENT shape exactly as apply does: the file can
+# change between apply and restore, and a scalar `tools` would swallow the
+# write silently, leaving the operator with neither their prior value nor the
+# backup that held it (Codex cloud review, shepherd r2).
+printf 'theme: dark\ntools:\n  approvalMode: always-ask\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+[ -f "$omp_backup" ] || fail "fixture setup: expected a backup after apply"
+printf 'theme: dark\ntools: 3\n' >"$omp_config"
+omp_before="$(cat "$omp_config")"
+if BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null 2>&1; then
+    fail "oh-my-pi restore reported success against a scalar tools node it cannot write underneath"
+fi
+[ -f "$omp_backup" ] ||
+    fail "oh-my-pi restore discarded its backup after refusing a scalar tools node — the prior value would be lost outright"
+[ "$(cat "$omp_config")" = "$omp_before" ] ||
+    fail "oh-my-pi restore modified a config whose tools node it had just refused"
+rm -f "$omp_backup" "$omp_config"
 
 # A config file in a shape this module must not rewrite blindly.
 printf -- '- not\n- a mapping\n' >"$omp_config"
