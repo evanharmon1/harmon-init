@@ -208,7 +208,12 @@ print("\n".join(sorted((tomllib.load(open(sys.argv[1], "rb")).get("rigor") or {}
         fail "$manifest rigor values [$(echo "$got" | tr '\n' ' ')] != $devflow levels [$(echo "$want" | tr '\n' ' ')] — the label must select an existing round-cap table"
 }
 check_rigor label-registry.json .devflow.toml
-[ "$template_mode" = 1 ] && check_rigor template/label-registry.json template/.devflow.toml
+# The source template is now Jinja-rendered so Codex opt-outs can zero their
+# stage caps/finders. Its rigor catalog is deliberately invariant and the
+# fully opted-in render equals this root dogfood policy structurally, so the
+# template label vocabulary is checked against the root catalog here; every
+# rendered profile checks its own concrete .devflow.toml above.
+[ "$template_mode" = 1 ] && check_rigor template/label-registry.json .devflow.toml
 
 # The four foreman protocol labels ship four different colors upstream
 # (ponderousdev/foreman); the per-value color overrides exist to reproduce
@@ -255,12 +260,12 @@ layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 layer:infra|1D76DB|Hosts, networking, containers, provisioning — IaC and config rather than app code
-rigor:trivial|D4C5F9|Rigor: no AI review, economy tiers throughout, smallest budget — near-zero-risk changes
-rigor:minimal|D4C5F9|Rigor: a quick driveby review, standard orchestrator/reviewer, economy implementer, light budget
-rigor:light|D4C5F9|Rigor: light review, frontier orchestrator/reviewer, economy implementer, light budget
-rigor:standard|D4C5F9|Rigor: standard review, frontier orchestrator/reviewer, standard implementer — the default
-rigor:thorough|D4C5F9|Rigor: thorough review, apex orchestrator/reviewer, standard implementer, thorough budget
-rigor:deep|D4C5F9|Rigor: deep review, apex orchestrator/reviewer, frontier implementer, deep budget
+rigor:cursory|D4C5F9|Rigor: one quick adversarial glance, economy elsewhere — near-zero-risk changes
+rigor:light|D4C5F9|Rigor: light rounds, frontier orchestrator/challenger, economy implementer
+rigor:standard|D4C5F9|Rigor: standard rounds and breadth, frontier challenger, standard implementer — the default
+rigor:thorough|D4C5F9|Rigor: thorough rounds, apex orchestrator/challenger, frontier reviewer
+rigor:deep|D4C5F9|Rigor: deep rounds, apex orchestrator/challenger, frontier implementer/reviewer
+rigor:forensic|D4C5F9|Rigor: maximum scrutiny at every role — irreversible failure modes, security, data paths
 tier:local|7057FF|Model tier: self-hosted endpoint first; may escalate to economy
 tier:economy|7057FF|Model tier: cheapest qualified hosted model first; escalation allowed
 tier:standard|7057FF|Model tier: reliable general-purpose coding model first
@@ -282,6 +287,16 @@ tier:reviewer:economy|7057FF|Tier override: pin the reviewer to economy — chea
 tier:reviewer:standard|7057FF|Tier override: pin the reviewer to standard — reliable general-purpose coding model
 tier:reviewer:frontier|7057FF|Tier override: pin the reviewer to frontier — opus-class heavyweight, no warm-up
 tier:reviewer:apex|7057FF|Tier override: pin the reviewer to apex — mythos-class leading edge
+tier:challenger:local|7057FF|Tier override: pin the challenger to local — self-hosted endpoint first
+tier:challenger:economy|7057FF|Tier override: pin the challenger to economy — cheapest qualified hosted model
+tier:challenger:standard|7057FF|Tier override: pin the challenger to standard — reliable general-purpose coding model
+tier:challenger:frontier|7057FF|Tier override: pin the challenger to frontier — opus-class heavyweight, no warm-up
+tier:challenger:apex|7057FF|Tier override: pin the challenger to apex — mythos-class leading edge
+tier:integrator:local|7057FF|Tier override: pin the integrator to local — self-hosted endpoint first
+tier:integrator:economy|7057FF|Tier override: pin the integrator to economy — cheapest qualified hosted model
+tier:integrator:standard|7057FF|Tier override: pin the integrator to standard — reliable general-purpose coding model
+tier:integrator:frontier|7057FF|Tier override: pin the integrator to frontier — opus-class heavyweight, no warm-up
+tier:integrator:apex|7057FF|Tier override: pin the integrator to apex — mythos-class leading edge
 strategy:oneshot|BF3989|Strategy: single agent, no separate plan phase
 strategy:plan|BF3989|Strategy: agent plans then implements; no human plan gate
 strategy:plan-approved|BF3989|Strategy: plan requires human approval before implementation

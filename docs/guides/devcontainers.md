@@ -50,7 +50,7 @@ this exists to catch):
 
 - **A module** — `.devcontainer/config/bot-autonomy/<slug>.sh` — for a harness
   actually installed in the image today: `claude-code`, `codex-cli`,
-  `antigravity`, `opencode`.
+  `antigravity`, `opencode`, `copilot-cli`, `pi`, `oh-my-pi`.
 - **An alias** to another slug's module, for a slug that launches the same
   executable under a different provider configuration: the six
   `claude-code-*` provider-rewired variants (DeepSeek, GLM, Kimi, MiniMax,
@@ -60,9 +60,7 @@ this exists to catch):
   all, like the `claude-code-action` GitHub Action). The reason is
   documentation only — the instant a named executable turns up installed,
   `verify` fails naming it, exactly like an uncovered slug, regardless of why
-  it was unsupported. `copilot-cli`, `pi`, and `oh-my-pi` (whose binary is
-  `omp`) are all installed by `harness-matrix`; a follow-on change adds their
-  modules.
+  it was unsupported.
 
 Per-harness boundaries: **Claude Code** sets `permissions.defaultMode` to
 `bypassPermissions` in the managed settings (this also covers every
@@ -77,10 +75,35 @@ by a parity test that fails if the two files diverge on any key other than
 `apply`, verified against OpenCode's own *resolved* config (`opencode debug
 config`, run from the workspace) rather than the global file alone, since a
 workspace-level `opencode.json` can override the global default. **Antigravity**
-is described below — it is the one harness whose autonomy is Copier-gated,
-and its module is still always present; only its policy is conditional.
-Antigravity's and OpenCode's settings live on named volumes that outlive a
-container rebuild, so each records the pre-`apply` value and offers a
+and **Copilot CLI** are described below — they are the two harnesses whose
+autonomy is Copier-gated, and their modules are still always present; only
+their policy is conditional. **Copilot CLI** is
+Copier-gated like Antigravity and described below. **pi** is the one module
+whose `apply` deliberately writes *nothing*: pi's only prompt-avoidance knob
+is project trust, and pi's own docs state that its non-interactive modes
+(`-p`, `--mode json`, `--mode rpc`) never show a trust prompt at all — so the
+bot already reaches the no-prompt state with pi exactly as it ships. What
+trust would additionally buy is loading a repository's own `.pi/` resources,
+which per pi's docs also means installing project packages and *executing
+project extensions*; pi keys those decisions by canonical directory path with
+no content or commit authentication, so both a global `defaultProjectTrust:
+"always"` and a workspace-scoped `~/.pi/agent/trust.json` entry were reviewed
+and rejected as unsafe defaults (the first trusts every repository this
+installation is ever pointed at; the second survives an untrusted branch
+checked out into the same path and extends to anything nested underneath it).
+The bot therefore matches the dev profile exactly, accepting that headless pi
+sessions silently skip project `.pi/` resources — and `verify` still fails
+closed on *either* surface, whatever wrote it, including a trusted decision
+that does not apply to the current workspace (the `~/.pi` volume outlives the
+check, so an inapplicable decision becomes applicable the moment pi is pointed
+at a matching path). **oh-my-pi** sets `tools.approvalMode: yolo` in
+`~/.omp/agent/config.yml`, written explicitly rather than left to oh-my-pi's
+own schema default, and verified against its *resolved* value (`omp config
+get tools.approvalMode --json`, run from the workspace) because a
+project-level `<cwd>/.omp/config.yml` overrides the global file the same way
+OpenCode's workspace config does.
+Antigravity's, OpenCode's and oh-my-pi's settings live on named volumes
+that outlive a container rebuild, so each records the pre-`apply` value and offers a
 `restore` mode, the same reversibility pattern.
 
 **Antigravity autonomy is enabled** (this repo sets `use_antigravity_cli`). Two
@@ -122,6 +145,45 @@ turned off leaves both files absent rather than downloading anything. The
 settings helper backs up the six policy keys it owns and tracks its
 workspace-trust entry, so turning the Copier option off restores them while
 preserving unrelated settings.
+
+**Copilot CLI autonomy is enabled** (this repo sets `use_copilot_cli`). Bot profile only:
+
+- **Bot profile — full autonomy.** The rendered `containerEnv` sets
+  `COPILOT_ALLOW_ALL="true"`, and bot `apply` installs a real executable at
+  `~/.local/bin/copilot` (`bot-autonomy/copilot-cli.sh`) that injects
+  `--allow-all` for agent runs — bare interactive `copilot` and headless
+  `copilot -p …` alike, both of which GitHub's own command reference groups as
+  agent task invocation. The wrapper is load-bearing, not merely redundant:
+  `COPILOT_ALLOW_ALL` is documented as the equivalent of `--allow-all-tools`
+  *alone*, so file-path verification and URL access stay gated without it;
+  `--allow-all` is the documented equivalent of
+  `--allow-all-tools --allow-all-paths --allow-all-urls` together. An
+  invocation already carrying `--allow-all`, `--yolo`, or all three narrower
+  flags is passed through untouched; one carrying only *some* of the three
+  still gets `--allow-all`, since a partial flag leaves the dimensions it did
+  not name restricted. The administrative subcommands (`login`, `version`,
+  `help`, `update`, `completion`, `init`, `plugin`, `plugins`, `mcp`, `skill`,
+  `app`, and the `--version`/`-h`/`--help` forms) pass through unflagged. The
+  `Dockerfile`'s `ENV PATH` prepend — the same one Antigravity's wrapper uses,
+  no second entry needed — is what makes the wrapper win for a `docker exec`
+  or any other programmatic launcher, not just interactive shells.
+- **Dev (human) profile — untouched.** Neither `COPILOT_ALLOW_ALL` nor the
+  `HARMON_BOT_AUTONOMY_COPILOT` marker is rendered into the dev
+  `devcontainer.json` at all, in either state. `COPILOT_ALLOW_ALL` is a plain
+  environment variable Copilot honors in whichever profile sets it, so
+  rendering it there would silently hand a human's own interactive session
+  full allow-all permissions even though the bot-autonomy module never runs in
+  that profile.
+
+Sign in once with `copilot login` (or an existing `GH_TOKEN`); the
+`~/.copilot` named volume persists it across rebuilds. `verify` additionally
+fails — naming Copilot — if `~/.copilot/settings.json` sets
+`permissions.disableBypassPermissionsMode` to `"disable"`: that is the one
+documented mechanism that neuters `COPILOT_ALLOW_ALL` and every
+`--allow-all`-family flag regardless of what `apply` wrote, and it is an
+administrator/organization control this module surfaces rather than
+overrides. That check runs **only** while the option is on — a locked-out
+bypass mode is irrelevant when Copilot autonomy is off.
 
 ## Run it locally
 
