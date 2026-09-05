@@ -250,9 +250,9 @@ slugs, replaces that with one dispatch point:
   `verify` exactly like an uncovered slug, regardless of the reason it was
   unsupported — there is no exemption that survives installation.
 - A harness whose autonomy is gated behind a Copier option (Antigravity,
-  via `use_antigravity_cli`; Copilot CLI, via `use_copilot_cli`; a future Copilot CLI module the same way) still
-  gets a real module — never `unsupported` — because the harness is
-  installed in the image regardless of the answer. The option selects the
+  via `use_antigravity_cli`; Copilot CLI, via `use_copilot_cli`) still gets a
+  real module — never `unsupported` — because the harness is installed in
+  the image regardless of the answer. The option selects the
   module's *policy* (`autonomous` or `disabled-by-option`, both a verified
   state), not whether the module exists. Every verbatim, template-twinned
   script that needs the answer reads it from exactly one place: a rendered

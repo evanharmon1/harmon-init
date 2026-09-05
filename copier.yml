@@ -385,8 +385,8 @@ use_antigravity_cli:
 use_copilot_cli:
   type: bool
   help: >-
-    COPILOT CLI: Configure GitHub's account-backed Copilot CLI for prompt-free
-    operation in the BOT devcontainer? Defaults off. Requires a GitHub account
+    COPILOT CLI (security-sensitive): Configure GitHub's account-backed Copilot
+    CLI for prompt-free operation in the BOT devcontainer? Defaults off. Requires a GitHub account
     and a Copilot plan: a free tier exists (limited monthly completions/chat
     requests; historically also free for verified students/teachers via GitHub
     Education and for maintainers of popular open-source projects), with paid
