@@ -48,6 +48,12 @@ COPILOT_LINK_DIR="$(dirname "$COPILOT_LINK")"
 # HARMON_ANTIGRAVITY_SYSTEM_BINARY.
 COPILOT_SYSTEM_BINARY="${HARMON_COPILOT_SYSTEM_BINARY:-/usr/bin/copilot}"
 COPILOT_SETTINGS="${BOT_AUTONOMY_COPILOT_SETTINGS:-$HOME/.copilot/settings.json}"
+# Ownership marker, carried verbatim inside every wrapper this module writes.
+# NEVER reword it: it is how a LATER release recognises an EARLIER release's
+# wrapper as its own. A byte-compare against write_wrapper's current output
+# cannot do that job — the moment the wrapper's content changes, every
+# already-installed wrapper would read as foreign and get stranded.
+WRAPPER_MARKER="# harmon-init-bot-autonomy-wrapper: copilot-cli"
 
 marker_enabled() {
     [ "${HARMON_BOT_AUTONOMY_COPILOT:-}" = "enabled" ]
@@ -81,6 +87,7 @@ write_wrapper() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+${WRAPPER_MARKER}
 # bot-autonomy: GitHub Copilot CLI autonomy wrapper. Installed by
 # .devcontainer/config/bot-autonomy/copilot-cli.sh apply (bot profile only,
 # HARMON_BOT_AUTONOMY_COPILOT=enabled). COPILOT_ALLOW_ALL grants tools only;
@@ -139,7 +146,9 @@ esac
 # table of value-taking options: every other option's value is a model
 # name, a directory, or a URL, none of which is plausibly the literal
 # string "--allow-all". --prompt=<value> needs no handling; that is a
-# single token which never equals a bare flag.
+# single token which never equals a bare flag. The scan also stops at a
+# bare "--": everything after the end-of-options separator is an operand,
+# so a literal --allow-all there is definitively not an active flag.
 allow_tools=0
 allow_paths=0
 allow_urls=0
@@ -150,6 +159,7 @@ for arg in "\$@"; do
         continue
     fi
     case "\$arg" in
+    --) break ;;
     -p | --prompt) skip_next=1 ;;
     --allow-all | --yolo) exec "\$real" "\$@" ;;
     --allow-all-tools) allow_tools=1 ;;
@@ -163,6 +173,27 @@ fi
 
 exec "\$real" --allow-all "\$@"
 WRAPPER
+}
+
+# module_owns_link — true when the file at $COPILOT_LINK is a wrapper THIS
+# module wrote, of any release, identified by the stable marker above.
+module_owns_link() {
+    [ -f "$COPILOT_LINK" ] && [ ! -L "$COPILOT_LINK" ] &&
+        grep -Fqx "$WRAPPER_MARKER" "$COPILOT_LINK"
+}
+
+# This module claims exactly one path and both of its states need it: enabled
+# installs the wrapper there, disabled requires it absent (verify asserts
+# each). A file there this module did not write is therefore already a broken
+# state under either answer — but destroying it is not this module's call to
+# make, any more than clearing an administrator's
+# disableBypassPermissionsMode is. Refuse and name the conflict instead, so a
+# human resolves it rather than losing a launcher silently.
+assert_link_ours_or_absent() {
+    { [ -e "$COPILOT_LINK" ] || [ -L "$COPILOT_LINK" ]; } || return 0
+    module_owns_link && return 0
+    echo "copilot-cli: apply failed — ${COPILOT_LINK} exists but this module did not write it (no '${WRAPPER_MARKER}' line); refusing to overwrite or delete a launcher it does not own. Remove or relocate that file, then re-run." >&2
+    exit 1
 }
 
 install_wrapper() {
@@ -184,10 +215,12 @@ cmd_apply() {
             echo "copilot-cli: apply failed — HARMON_BOT_AUTONOMY_COPILOT is 'enabled' but COPILOT_ALLOW_ALL is '${COPILOT_ALLOW_ALL:-<unset>}', not the exact literal 'true' (the rendered devcontainer.json containerEnv did not reach this process)" >&2
             exit 1
         }
+        assert_link_ours_or_absent
         install_wrapper
         echo "==> copilot-cli: autonomous policy applied (wrapper installed)"
     else
         if [ -e "$COPILOT_LINK" ] || [ -L "$COPILOT_LINK" ]; then
+            assert_link_ours_or_absent
             rm -f "$COPILOT_LINK"
             echo "==> copilot-cli: disabled-by-option (autonomy wrapper removed)"
         else

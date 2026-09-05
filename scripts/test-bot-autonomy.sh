@@ -49,7 +49,7 @@ trap 'rm -rf "$work_dir"' EXIT
 # claude/codex/agy/opencode are never among them, by construction.
 safe_bin="${work_dir}/safe-bin"
 mkdir -p "$safe_bin"
-for tool in bash cat jq yq sha256sum git mktemp mv chmod install mkdir basename dirname cmp rm; do
+for tool in bash cat grep jq yq sha256sum git mktemp mv chmod install mkdir basename dirname cmp rm; do
     tool_path="$(command -v "$tool" 2>/dev/null || true)"
     [ -n "$tool_path" ] && ln -sf "$tool_path" "${safe_bin}/${tool}"
 done
@@ -710,6 +710,13 @@ for prompt_flag in -p --prompt; do
     *) fail "copilot wrapper treated the ${prompt_flag} VALUE '--yolo' as an active flag and skipped injection: ${out}" ;;
     esac
 done
+# Everything after a bare "--" is an operand, not an active flag (challenge
+# round 2).
+out="$(cp_run -- --allow-all)"
+case "$out" in
+"REAL --allow-all -- --allow-all") ;;
+*) fail "copilot wrapper treated an operand after the end-of-options separator as an active flag: ${out}" ;;
+esac
 # A REAL flag after the prompt value is still detected (the skip is exactly
 # one token, not "everything after -p").
 out="$(cp_run -p "some prompt" --allow-all)"
@@ -738,6 +745,51 @@ case "$out" in
 "FALLBACK --allow-all -p x") ;;
 *) fail "copilot wrapper did not fall back to the documented system binary with no other copilot on PATH: ${out}" ;;
 esac
+
+echo "==> 17b. Copilot CLI: apply never destroys or clobbers a launcher it does not own"
+# challenge round 2. This module claims ~/.local/bin/copilot in BOTH states —
+# enabled installs the wrapper there, disabled requires it absent — so a
+# foreign file at that path is already a broken state under either answer.
+# Deleting it is still not this module's call: refuse and name the conflict.
+cp_foreign_home="${work_dir}/copilot-foreign-home"
+mkdir -p "${cp_foreign_home}/.local/bin"
+cp_foreign_link="${cp_foreign_home}/.local/bin/copilot"
+printf '#!/bin/sh\necho A CONSUMERS OWN LAUNCHER "$@"\n' >"$cp_foreign_link"
+chmod +x "$cp_foreign_link"
+cp_foreign_content="$(cat "$cp_foreign_link")"
+for state in "disabled false" "enabled true"; do
+    set -- $state
+    if HOME="$cp_foreign_home" BOT_AUTONOMY_COPILOT_LINK="$cp_foreign_link" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="${cp_foreign_home}/.copilot/settings.json" \
+        HARMON_BOT_AUTONOMY_COPILOT="$1" COPILOT_ALLOW_ALL="$2" \
+        PATH="${cp_real_bin}:${SAFE_PATH}" \
+        bash "$copilot_module" apply >/dev/null 2>&1; then
+        fail "copilot-cli apply (marker ${1}) touched a launcher this module did not write instead of refusing"
+    fi
+    [ "$(cat "$cp_foreign_link")" = "$cp_foreign_content" ] ||
+        fail "copilot-cli apply (marker ${1}) modified or deleted a launcher this module did not write"
+done
+
+# Ownership is keyed on the STABLE marker line, not a byte-compare against
+# the current write_wrapper output: a wrapper an EARLIER release installed
+# must still be recognised as ours, or a content change would strand it.
+cp_stale_home="${work_dir}/copilot-stale-home"
+mkdir -p "${cp_stale_home}/.local/bin"
+cp_stale_link="${cp_stale_home}/.local/bin/copilot"
+HOME="$cp_stale_home" BOT_AUTONOMY_COPILOT_LINK="$cp_stale_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_stale_home}/.copilot/settings.json" \
+    HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL=true \
+    PATH="${cp_real_bin}:${SAFE_PATH}" bash "$copilot_module" apply >/dev/null
+printf '\n# a line only an older release of this wrapper carried\n' >>"$cp_stale_link"
+grep -Fqx '# harmon-init-bot-autonomy-wrapper: copilot-cli' "$cp_stale_link" ||
+    fail "fixture setup: the installed wrapper carries no ownership marker"
+HOME="$cp_stale_home" BOT_AUTONOMY_COPILOT_LINK="$cp_stale_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_stale_home}/.copilot/settings.json" \
+    HARMON_BOT_AUTONOMY_COPILOT=disabled COPILOT_ALLOW_ALL=false \
+    PATH="${cp_real_bin}:${SAFE_PATH}" bash "$copilot_module" apply >/dev/null ||
+    fail "copilot-cli apply refused to remove a wrapper an earlier release installed (marker present, content drifted)"
+[ ! -e "$cp_stale_link" ] ||
+    fail "copilot-cli apply left a previous release's own wrapper in place when disabled"
 
 echo "==> 18. pi: apply writes nothing; verify fails closed on BOTH trust-granting surfaces"
 pi_module="${module_dir}/pi.sh"
