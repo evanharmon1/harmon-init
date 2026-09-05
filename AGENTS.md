@@ -276,10 +276,11 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   rebased, or force-pushed, at any stage.
 - **Never bypass a gate** — not the git hooks, not a stop-gate BLOCK, not a
   failed *or indeterminate* readiness condition. Fix the cause, or escalate.
-- **Every push is secret-scanned first** — automatic via the `pre-push` hook
-  (`task install:hooks`), otherwise run `task security:secrets` yourself.
-  `task security` is the pre-publication gate before the draft PR; `task ci`
-  stays on demand.
+- **Every push passes its round gate, then a secret scan** — `.devflow.toml`'s
+  `[gates]` names them (`verify` for a code push, `check` for a docs-only one,
+  `security:secrets` always, `security` before the draft PR); the `pre-push`
+  hook (`task install:hooks`) runs what it can, otherwise run them yourself.
+  `task ci` stays on demand.
 - **One conventional commit per adjudicated round, pushed** to the branch's own
   writable remote (`git push -u <remote> <branch>` on the first push). Per
   *round*, not per finding: five fixes are one commit, a round with nothing to
