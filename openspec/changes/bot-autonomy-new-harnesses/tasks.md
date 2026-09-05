@@ -1,6 +1,6 @@
 ## 0. Preconditions
 
-- [ ] 0.1 Before this change's own implementation PR is finalized and
+- [x] 0.1 Before this change's own implementation PR is finalized and
       merged, confirm `bot-autonomy-bootstrap`'s implementation (PR #1150)
       has actually merged to `main` first — `.devcontainer/scripts/bot-autonomy.sh`
       and `.devcontainer/config/bot-autonomy/{claude-code,codex-cli,antigravity,opencode}.sh`
@@ -23,7 +23,7 @@
 
 ## 1. GitHub Copilot CLI module
 
-- [ ] 1.1 Add `use_copilot_cli` to `copier.yml` (default `no`,
+- [x] 1.1 Add `use_copilot_cli` to `copier.yml` (default `no`,
       `when: "[[ devcontainer ]]"`, validator mirroring
       `use_antigravity_cli`'s `Enable DEVCONTAINER before …` pattern), with
       help text documenting Copilot's account requirement and free-tier/
@@ -49,11 +49,11 @@
       (confirm they actually fail against a deliberately-reverted render
       before committing them, so the assertions are proven to test
       something)
-- [ ] 1.2 Add `use_copilot_cli: true` to `.dogfood-answers.yml` with a
+- [x] 1.2 Add `use_copilot_cli: true` to `.dogfood-answers.yml` with a
       one-line comment matching `use_antigravity_cli`'s existing comment
       shape; verify with `task audit:dogfood` showing no new unexplained
       drift
-- [ ] 1.3 Add `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` (rendered
+- [x] 1.3 Add `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` (rendered
       `"[[ 'enabled' if use_copilot_cli else 'disabled' ]]"` — this
       template's own Jinja delimiters per `copier.yml`'s `_envops` block
       (`[[ … ]]` expressions, `[% … %]` blocks, never `{{ }}`/`{% %}`,
@@ -90,7 +90,7 @@
       `COPILOT_ALLOW_ALL=true` in a scratch `devcontainer.env` before
       building the disabled render, confirming the container's effective
       value is `"false"`, not the stale `"true"`
-- [ ] 1.4 Add `.devcontainer/config/bot-autonomy/copilot-cli.sh` (named
+- [x] 1.4 Add `.devcontainer/config/bot-autonomy/copilot-cli.sh` (named
       after the `copilot-cli` registry slug, not the shortened `copilot` —
       `bot-autonomy.sh` dispatches `${CONFIG_DIR}/<slug>.sh`): `apply` reads
       `$HARMON_BOT_AUTONOMY_COPILOT`; WHEN `enabled`, confirms
@@ -148,7 +148,7 @@
       absent, with no working system-binary fallback either) and confirms
       `verify` fails naming Copilot even though the wrapper's own content
       and permissions are untouched
-- [ ] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
+- [x] 1.5 Add the `~/.local/bin/copilot` wrapper script itself: injects
       `--allow-all` on a bare `copilot` invocation and on `copilot -p`/
       `--prompt` unless the invocation already carries full allow-all
       coverage explicitly — `--allow-all`, `--yolo`, or all three of
@@ -171,7 +171,7 @@
       partial-flag invocation (e.g. `--allow-all-tools` alone), and on
       `-p`, is absent on every passthrough case, and that it resolves the
       real binary correctly
-- [ ] 1.6 Confirm the wrapper's `PATH` precedence needs no new prepend of
+- [x] 1.6 Confirm the wrapper's `PATH` precedence needs no new prepend of
       its own — `bot-autonomy-bootstrap`'s existing
       `ENV PATH="/home/vscode/.local/bin:${PATH}"` directive in
       `.devcontainer/Dockerfile` (and its `template/` twin) already covers
@@ -181,7 +181,7 @@
 
 ## 2. pi module
 
-- [ ] 2.1 First, confirm `~/.pi/agent/trust.json`'s actual read format
+- [x] 2.1 First, confirm `~/.pi/agent/trust.json`'s actual read format
       against the real `pi` binary: in a scratch container or fixture, run
       `pi` interactively once in a throwaway workspace, use `/trust` to
       record a decision, and inspect the resulting file (key format —
@@ -248,7 +248,7 @@
       incorrectly failing this genuinely safe, explicitly-distrusted
       state); and a fixture confirming bot and dev profiles behave
       identically for this module (no per-profile branch exists to test)
-- [ ] 2.2 Confirm the dev profile's post-create never calls this module
+- [x] 2.2 Confirm the dev profile's post-create never calls this module
       (mirroring `bot-autonomy-bootstrap`'s own "dev never calls
       `bot-autonomy.sh`" wiring — this module is only ever dispatched from
       the bot's own `apply`/`verify` calls, so no separate dev-exclusion
@@ -256,7 +256,7 @@
       behavior happens to be identical either way); verify by grepping
       `.devcontainer/dev/post-create.sh` for any reference to this module
       or `bot-autonomy.sh` and confirming none exists
-- [ ] 2.3 **The real, capability-gap-proving fixture cannot run from this
+- [x] 2.3 **The real, capability-gap-proving fixture cannot run from this
       change's own implementation PR** — same reason as tasks 5.5/6.3: a
       non-interactive `pi -p` invocation needs the actual `pi` binary,
       which is not present in `.devcontainer/Dockerfile`'s pinned image
@@ -293,7 +293,7 @@
 
 ## 3. oh-my-pi module
 
-- [ ] 3.1 Confirm this proposal's researched mechanism
+- [x] 3.1 Confirm this proposal's researched mechanism
       (`tools.approvalMode: yolo` in `~/.omp/agent/config.yml`, `omp config
       get tools.approvalMode --json` as the resolved-value read, project
       override at `<cwd>/.omp/config.yml`) against the actually installed
@@ -305,7 +305,19 @@
       determining from scratch whether any mechanism exists. Record the
       result (confirmed as researched, confirmed with differences, or
       contradicted) in this task's own completion note
-- [ ] 3.2 **IF task 3.1 confirms the mechanism** (as researched, or with
+
+      **Result: CONFIRMED AS RESEARCHED.** Run against the real image
+      `ghcr.io/evanharmon1/harmon-devcontainer@sha256:c46fe85ffcb193e90206739e33399265e4eb2dea8217c86dad405c92c94efb1e`
+      (the digest the open sync-pin PR #1152 bumps to), `omp --version`
+      reports `omp/18.1.2`; `omp config path` reports
+      `/home/vscode/.omp/agent`; `omp config get tools.approvalMode --json`
+      returns `{"key","value","type":"enum","description"}` with `value` =
+      `yolo` on a fresh volume (the documented schema default), tracks
+      `omp config set tools.approvalMode <v>` writes to
+      `~/.omp/agent/config.yml`, and resolves a project-level
+      `<cwd>/.omp/config.yml` OVER the global file. Task 3.2 therefore
+      applies; task 3.3's contingency does not.
+- [x] 3.2 **IF task 3.1 confirms the mechanism** (as researched, or with
       only minor differences that do not change the contract): add
       `.devcontainer/config/bot-autonomy/oh-my-pi.sh`: unconditional; `apply`
       sets `tools: { approvalMode: yolo }` in `~/.omp/agent/config.yml`,
@@ -322,7 +334,7 @@
       keys, an `apply → apply → restore` sequence, and a project-level
       `.omp/config.yml` overriding the global default back to a non-yolo
       mode
-- [ ] 3.3 **IF task 3.1 contradicts the mechanism**: do not add a module.
+- [x] 3.3 **IF task 3.1 contradicts the mechanism**: do not add a module.
       Instead, update the `unsupported` entry `bot-autonomy-bootstrap`'s
       implementation already added for `oh-my-pi` (reason "pending
       `bot-autonomy-new-harnesses`") to state what was actually found,
@@ -335,7 +347,16 @@
       follow-up issue for the resulting rollout question (design.md - Risks:
       the shared image still installs `omp` unconditionally) rather than
       resolving it in this PR
-- [ ] 3.4 Whichever of 3.2/3.3 applies, confirm no path through this
+
+      **Not applicable — no action taken.** Task 3.1's confirmation above
+      upheld the researched mechanism against the real `omp v18.1.2`
+      binary, so the primary path (task 3.2) shipped a real module. This
+      contingency's `unsupported` entry, its fake-`omp` fixture, and its
+      follow-up issue are all deliberately absent, and task 6.3's
+      sync-pin checklist carries the zero-prompts wording rather than the
+      BLOCKING wording. Ticked to record that the branch was evaluated and
+      correctly not taken.
+- [x] 3.4 Whichever of 3.2/3.3 applies, confirm no path through this
       module's logic can leave `omp` both installed and silently uncovered
       — verify by running the registry-completeness unit test with a real
       `omp` binary present (a scratch container or a `PATH`-injected fake)
@@ -344,7 +365,7 @@
 
 ## 4. Registry coverage reconciliation
 
-- [ ] 4.1 Remove the `copilot-cli`, `pi`, and (only if task 3.2 applies)
+- [x] 4.1 Remove the `copilot-cli`, `pi`, and (only if task 3.2 applies)
       `oh-my-pi` placeholder entries from the `unsupported` table
       `bot-autonomy-bootstrap`'s implementation added, in the same PR that
       adds the corresponding real modules — never leaving a slug covered by
@@ -353,7 +374,7 @@
       completeness unit test (`bot-autonomy-bootstrap`'s task 1.3) failing
       on a deliberately-reintroduced stale entry and passing on the real
       state
-- [ ] 4.2 Verify every one of the registry's harness slugs still resolves
+- [x] 4.2 Verify every one of the registry's harness slugs still resolves
       to exactly one of the three coverage buckets after this change
       (`copilot-cli` → module, `pi` → module, `oh-my-pi` → module or
       updated `unsupported` per task 3's outcome, every other slug
@@ -362,16 +383,16 @@
 
 ## 5. Docs, template parity, and CI coverage
 
-- [ ] 5.1 Extend `docs/guides/devcontainers.md`'s bot-autonomy boundary
+- [x] 5.1 Extend `docs/guides/devcontainers.md`'s bot-autonomy boundary
       section (whatever structure `bot-autonomy-bootstrap`'s own task 4.1
       dedup leaves in place — do not assume specific line numbers) with
       Copilot CLI's, pi's, and oh-my-pi's boundaries, matching the level of
       detail already given to Claude Code/Codex/Antigravity/OpenCode;
       verify with `task lint:markdown`
-- [ ] 5.2 Extend `docs/architecture/security.md`'s bot-autonomy boundary
+- [x] 5.2 Extend `docs/architecture/security.md`'s bot-autonomy boundary
       contract section (added by `bot-autonomy-bootstrap`'s task 4.3) with
       the same three boundaries; verify with `task lint:markdown`
-- [ ] 5.3 Apply 5.1's and 5.2's doc edits to their own `template/` twins
+- [x] 5.3 Apply 5.1's and 5.2's doc edits to their own `template/` twins
       (`template/docs/guides/[% if devcontainer %]devcontainers.md[% endif %].jinja`
       and `template/docs/architecture/security.md.jinja`); verify with
       `task test:dogfood-structure` and `task lint:markdown` — plus
@@ -381,7 +402,7 @@
       every rendered heading/task exists in the root copy, not that the
       *prose* added to each stayed in step, and a jinja twin's own report
       is the one surface built to catch that
-- [ ] 5.4 Apply every change in groups 1-4 to the `template/` twin in the
+- [x] 5.4 Apply every change in groups 1-4 to the `template/` twin in the
       same PR (`template/[% if devcontainer %].devcontainer[% endif %]/...`;
       `template/agent-registry.json` stays read-only). The new
       `use_copilot_cli` question is added to root `copier.yml` **only** —
@@ -391,7 +412,7 @@
       no second copy of this question to add; verify with
       `task test:dogfood-parity` and `task test:dogfood-structure`, and
       confirm no `template/copier.yml` file was created
-- [ ] 5.5 Confirm the existing `devcontainer-assert-bot` CI job (wired by
+- [x] 5.5 Confirm the existing `devcontainer-assert-bot` CI job (wired by
       `bot-autonomy-bootstrap`'s task 3.3b) needs no new step of its own —
       it already runs `bot-autonomy.sh verify` inside the built bot
       container, which covers three more harnesses by construction once
@@ -407,7 +428,7 @@
       1.4, 2.1, 3.2/3.3); the container assertion actually covering the
       three new modules runs for the first time once #1152's pin bump
       lands — see task 5.6 and 6.3 below
-- [ ] 5.6 Add the smoke-isolation volume suffix
+- [x] 5.6 Add the smoke-isolation volume suffix
       (`${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}`) to the
       `omp-config`, `copilot-config`, and `pi-config` mounts in both
       `devcontainer.json` twins (root bot + dev) and both `template/`
@@ -447,14 +468,14 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Run `task check`, `task verify`, and `task security` in this
+- [x] 6.1 Run `task check`, `task verify`, and `task security` in this
       worktree; verify all green
-- [ ] 6.2 Run `task test:devcontainer:permissions` and (where a Docker
+- [x] 6.2 Run `task test:devcontainer:permissions` and (where a Docker
       daemon, the `devcontainer` CLI, and a primary — non-worktree —
       checkout are all available) `task test:devcontainer:root`; this stays
       a manual step per `bot-autonomy-bootstrap`'s own documented `ci`
       carve-out (its task 3.5), not wired into `task ci`; verify both pass
-- [ ] 6.3 **This change's own implementation PR cannot rebuild a "freshly
+- [x] 6.3 **This change's own implementation PR cannot rebuild a "freshly
       generated bot devcontainer" that actually has `copilot`/`pi`/`omp`
       installed** — same reason as task 5.5: the pin those binaries need is
       `.devcontainer/Dockerfile`'s, and it is not bumped until the
