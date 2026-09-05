@@ -41,8 +41,10 @@ allows and drives from Herdr the same way a local pane worker does.
   failure fails lane creation.
 - Define the **pool + golden checkpoint** model that makes lane creation
   fast: a small operator-owned pool of pre-bootstrapped sprites, each with a
-  golden checkpoint taken after the image pull and before any credential
-  enters; every lane claims a sprite with a lease, restores that checkpoint,
+  golden checkpoint taken after the image pull, defined by its content —
+  no credential and no checkout remain in it, verified before it is taken,
+  which is what lets a private repository's pool init clone with the bot
+  PAT in memory; every lane claims a sprite with a lease, restores that checkpoint,
   and waits for the restore to complete before anything else, so two lanes
   never fight over one sprite and a lane never inherits a previous lane's
   files or tokens.

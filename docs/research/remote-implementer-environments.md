@@ -242,8 +242,9 @@ Machines viable, and they would then be the most literal match for the
 maintainer's intent — same image, `post-create.sh` invoked by the Machine's
 init, real SSH — at the cost of explicit sizing and no free idle.
 
-**Scores.** Isolation ✅ (explicit sizing). Cold start ✅ ("well under a
-second" from stopped). Cost ◐ (~$0.23/h while started, nothing free while
+**Scores.** Isolation ✅ (explicit sizing). Cold start ? ("well under a
+second" from stopped to booted; time to a usable lane — image start plus
+`post-create.sh` — is unmeasured, the same rule applied to Sprites). Cost ◐ (~$0.23/h while started, nothing free while
 idle beyond stop). Image reuse ❌ today (8 GB rootfs; alternative: slim the
 image). Secrets ✅ (per-Machine env/files; app secrets are app-scoped and
 would leak across units unless one app per unit — foreman#30 already
@@ -448,7 +449,7 @@ Bot-autonomy ✅. Foreman ❌ (no supervisor-facing exec/lifecycle API beyond
 | Dimension | Sprites (nested) | Fly Machines | Claude Code cloud | Codex cloud | Coder (per lane) | Codespaces |
 |---|---|---|---|---|---|---|
 | Isolation and sizing | ✅ microVM · sizing ? | ✅ microVM, explicit | ✅ VM 4/16 | ✅ container | ◐ shared host | ✅ VM, 2–32 cores |
-| Cold start (to a usable lane) | ? VM wake 1–2 s; restore + clone + `devcontainer up` + post-create unmeasured | ✅ <1 s to boot; post-create unmeasured | ✅ | ✅ | ◐ minutes | ◐ minutes |
+| Cold start (to a usable lane) | ? VM wake 1–2 s; restore + clone + `devcontainer up` + post-create unmeasured | ? boots <1 s; image start + post-create unmeasured | ✅ | ✅ | ◐ minutes | ◐ minutes |
 | Cost per active agent-hour | ✅ ~$0.20, idle free | ◐ ~$0.23, stop to save | ✅ included | ✅ included | ✅ $0 marginal | ◐ $0.36–0.72 |
 | Runs the bot image as-is | ◐ nested via Docker | ❌ 8 GB rootfs | ❌ setup script | ❌ setup script | ✅ | ✅ |
 | post-create / bot-autonomy runs | ? nested, unverified until the first lane | ✅ (if it boots) | ❌ | ❌ | ✅ | ✅ |
@@ -593,7 +594,8 @@ the repository's own bot profile from the pinned image with
 `post-create.sh` and `post-start.sh` unchanged, so the `bot-autonomy`
 apply/verify gate runs there exactly as it does locally and on Coder. A
 small operator-owned pool of sprites is initialised once (image pulled,
-golden checkpoint taken before any credential exists) and every lane
+containers torn down, checkout scrubbed, then a golden checkpoint that is
+verified to hold no credential and no checkout) and every lane
 claims a sprite with a lease, restores that checkpoint and waits for it,
 sets the egress allowlist, clones its pushed branch from GitHub onto the
 sprite's workspace folder, runs `devcontainer up` on it with the bot

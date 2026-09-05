@@ -24,8 +24,10 @@ network dependency to the generated repository.
 - **WHEN** `copier copy --defaults` renders the template
 - **THEN** `use_fly_sprites` resolves to `no`, no `taskfiles/sprites.yml`,
   `scripts/sprite-lane.sh`, or `docs/guides/sprites.md` is rendered, the
-  rendered `Taskfile.yml` has no `sprite:*` task, and nothing rendered
-  references a Fly.io account or the `sprite` CLI
+  rendered `Taskfile.yml` has no `sprite:*` task, and no rendered task,
+  script, configuration file, or documentation page references the
+  `sprite` CLI or a Fly.io account — the documentation sections that
+  describe the option are rendered only when the answer is on
 
 #### Scenario: the question discloses account and pricing terms
 - **WHEN** the `use_fly_sprites` question is read in `copier.yml`
