@@ -6,7 +6,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 **routes; it does not hold facts.** Every doc has a *type* and lives in a
 *bucket*.
 
-## The four buckets
+## The buckets
 
 | Bucket | Answers | Holds |
 |---|---|---|
@@ -14,6 +14,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 | [architecture/](architecture/) | **How is it built / secured / governed / tested?** | the durable narrative of how the system *is*; home for subject hubs |
 | [decisions/](decisions/) | **Why was this choice made?** | append-only, backward-looking records — they stop agents from "helpfully" undoing deliberate choices |
 | [guides/](guides/) + [runbooks/](runbooks/) | **How do I do X?** | procedures — `guides/` are calm (read in advance), `runbooks/` are crisis (read under pressure) |
+| [research/](research/) | **What did we find out, and what does it argue for?** | dated, cited spikes that evaluate options against a rubric — the evidence a decision cites, never the decision itself |
 
 ## Doc types
 
@@ -33,6 +34,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 | Architecture (subject hubs) | [architecture/](architecture/) — ci-cd, security, branch-protection, tests |
 | Decisions (ADRs) | [decisions/](decisions/) |
 | Guides (calm how-tos) | [guides/](guides/) — onboarding, deploying, troubleshooting, devcontainers, devflow |
+| Research notes (spikes → recommendation) | [research/](research/) — dated, cited evaluations that an ADR or OpenSpec change cites |
 | Runbooks (crisis procedures) | [runbooks/](runbooks/) |
 | Project management (GitHub Projects) | [project-management.md](project-management.md) |
 | Post-generation setup | [CHECKLIST.md](CHECKLIST.md) |
