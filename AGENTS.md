@@ -229,23 +229,21 @@ local diff. Work in PR-sized units; a PR handed to a human is the deliverable.
 **The loop is the stage skills; this section is the policy they run under.**
 `/orchestrator` is the session's standing operating mode; it dispatches `/claim`
 (take ownership — `/implement` never claims), `/implement` (claimed issue →
-draft PR), `/review` (both confidence stages), and `/integrate` (draft → ready).
-There is **no `dev-loop` skill** — those stages *are* the loop, and the retired
-names map onto them (`gauntlet` → `review`, `shepherd` → `integrate`); the
-vendored pin in `.claude/skills/` still ships the predecessors, which run under
-this policy. The skills carry the procedure — round mechanics, adjudication
-records, review polling, the PR-open ritual — entered by reading their
-`SKILL.md`. Where none is vendored, this section is the whole contract and its
-invariants are owed anyway (with
-[docs/guides/codex-review.md](docs/guides/codex-review.md) for the local
-reviewer's mechanics). Where a **vendored** skill states a different cap, floor,
-or exit condition, **this file wins** — skills sync on their own cadence and can
-lag a change made here.
+gates → draft PR), `/review` (both confidence stages), and `/integrate` (draft →
+ready for review). There is **no `dev-loop` skill** — those stages *are* the
+loop, and the retired names map onto them (`gauntlet` → `review`, `shepherd` →
+`integrate`); the vendored pin in `.claude/skills/` still ships the
+predecessors, which run under this policy. The skills carry the procedure —
+round mechanics, adjudication records, review polling, the PR-open ritual —
+entered by reading their `SKILL.md`. Where none is vendored, this section is the
+whole contract and its invariants are owed anyway. Where a **vendored** skill
+states a different cap, floor, or exit condition, **this file wins** — skills
+sync on their own cadence and can lag a change made here.
 
 ```text
-/claim → /implement → task verify → challenge → review → task security → DRAFT PR
-  → /integrate (CI, deferred findings, reviewers) → readiness gate → ready for
-  review → human review → human merge
+/claim → /implement [ code → task verify → challenge → review → task security → DRAFT PR ]
+  → /integrate [ CI → deferred findings → reviewers → readiness gate ]
+  → ready for review → human review → human merge
 ```
 
 **The draft PR is the workbench.** GitHub reports drafts and non-drafts alike as
@@ -264,12 +262,12 @@ of the readiness gate leaves the PR **draft** with a blocker report.
 
 Binding on every stage, skill, and harness, whatever rigor resolved:
 
-- **Draft-first.** Publish with `gh pr create --draft`, then fetch
-  `headRefOid,isDraft` and require both the SHA you pushed and `isDraft ==
-  true`. Only a passing readiness gate promotes, and `gh pr ready` runs exactly
-  once out of it — never as a judgement that the change looks done. Human
-  approval is deliberately *not* a precondition: ready-for-review is the request
-  for that review, not permission to merge.
+- **Draft-first.** Commit and push whatever the rounds have not already pushed,
+  publish with `gh pr create --draft`, then fetch `headRefOid,isDraft` and
+  require both the SHA you pushed and `isDraft == true`. Only a passing readiness
+  gate promotes, and `gh pr ready` runs exactly once out of it — never as a
+  judgement that the change looks done. Human approval is deliberately *not* a
+  precondition: ready-for-review requests that review, never permission to merge.
 - **Never merge, never cut a release, never rewrite pushed history.** Merging
   and releasing are Evan's decisions, and nothing already pushed is amended,
   rebased, or force-pushed, at any stage.
