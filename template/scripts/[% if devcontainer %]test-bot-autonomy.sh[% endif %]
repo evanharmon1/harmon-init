@@ -695,6 +695,35 @@ for passthrough in login version --version help -h --help update completion init
     *) fail "copilot wrapper did not pass '${passthrough}' through unmodified: ${out}" ;;
     esac
 done
+# An option VALUE spelled exactly like an allow-all flag must not suppress
+# injection: the scan's failure direction is asymmetric, and -p/--prompt is
+# the one option whose value is arbitrary caller text (challenge round 1).
+for prompt_flag in -p --prompt; do
+    out="$(cp_run "$prompt_flag" --allow-all)"
+    case "$out" in
+    "REAL --allow-all ${prompt_flag} --allow-all") ;;
+    *) fail "copilot wrapper treated the ${prompt_flag} VALUE '--allow-all' as an active flag and skipped injection: ${out}" ;;
+    esac
+    out="$(cp_run "$prompt_flag" --yolo)"
+    case "$out" in
+    "REAL --allow-all ${prompt_flag} --yolo") ;;
+    *) fail "copilot wrapper treated the ${prompt_flag} VALUE '--yolo' as an active flag and skipped injection: ${out}" ;;
+    esac
+done
+# A REAL flag after the prompt value is still detected (the skip is exactly
+# one token, not "everything after -p").
+out="$(cp_run -p "some prompt" --allow-all)"
+case "$out" in
+"REAL -p some prompt --allow-all") ;;
+*) fail "copilot wrapper skipped more than the single -p value token: ${out}" ;;
+esac
+# --prompt=<value> is one token and never equals a bare flag.
+out="$(cp_run --prompt=--allow-all)"
+case "$out" in
+"REAL --allow-all --prompt=--allow-all") ;;
+*) fail "copilot wrapper mishandled an attached --prompt=<value> whose value looks like a flag: ${out}" ;;
+esac
+
 # With no copilot anywhere on PATH outside its own directory, the wrapper
 # falls back to the documented system binary rather than execing itself.
 cp_fallback="${work_dir}/copilot-fallback"

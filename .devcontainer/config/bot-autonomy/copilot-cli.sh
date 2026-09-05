@@ -129,11 +129,28 @@ esac
 # the dimension that flag already named, and is what actually grants the two
 # it did not — the sanitized-environment (env -i, no COPILOT_ALLOW_ALL
 # fallback) case this wrapper exists to cover.
+#
+# The scan skips the value token after -p/--prompt. That option carries
+# arbitrary caller text, so it is the one place a token spelled exactly
+# like a flag can appear without being one, and this scan's failure
+# direction is asymmetric: mistaking a VALUE for an allow-all flag
+# suppresses the injection, leaving the invocation restricted — the exact
+# outcome the wrapper exists to prevent. No general argv parser and no
+# table of value-taking options: every other option's value is a model
+# name, a directory, or a URL, none of which is plausibly the literal
+# string "--allow-all". --prompt=<value> needs no handling; that is a
+# single token which never equals a bare flag.
 allow_tools=0
 allow_paths=0
 allow_urls=0
+skip_next=0
 for arg in "\$@"; do
+    if [ "\$skip_next" -eq 1 ]; then
+        skip_next=0
+        continue
+    fi
     case "\$arg" in
+    -p | --prompt) skip_next=1 ;;
     --allow-all | --yolo) exec "\$real" "\$@" ;;
     --allow-all-tools) allow_tools=1 ;;
     --allow-all-paths) allow_paths=1 ;;
