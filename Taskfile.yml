@@ -403,7 +403,7 @@ tasks:
     # No devcontainer paths: filter gates this in CI — it runs as part of the
     # unconditionally-required `verify` job, so a registry change that adds an
     # uncovered harness slug fails on its own, regardless of which paths a PR
-    # touches (openspec/changes/bot-autonomy-bootstrap).
+    # touches (openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap).
     desc: Unit-test bot-autonomy.sh's registry coverage, Codex parity, and per-module fixtures (no container needed)
     cmds:
       - ./scripts/test-bot-autonomy.sh

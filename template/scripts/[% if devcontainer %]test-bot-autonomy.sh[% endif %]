@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Unit tests for .devcontainer/scripts/bot-autonomy.sh and its modules — the
 # registry-completeness and structural-parity gates from
-# openspec/changes/bot-autonomy-bootstrap (tasks 1.3, 1.4, 2.3), plus
+# openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap (tasks 1.3, 1.4, 2.3), plus
 # behavioral fixtures for the per-harness modules not already covered by
 # scripts/devcontainer-assert.sh's unit mode. No container, no real
 # secrets — every fixture uses a scratch HOME/PATH/config file, never the

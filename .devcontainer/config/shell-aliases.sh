@@ -288,4 +288,4 @@ fi
 # ~/.local/bin/agy (bot-autonomy/antigravity.sh apply), installed on the
 # container-wide PATH via the Dockerfile's ENV PATH — not a login-shell
 # function, so headless/programmatic launches are covered too.
-# See openspec/changes/bot-autonomy-bootstrap.
+# See openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap.

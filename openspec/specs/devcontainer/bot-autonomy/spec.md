@@ -101,18 +101,18 @@ the first place.
 
 #### Scenario: the unsupported set documents why and what to detect, for every remaining slug
 - **WHEN** the bot-autonomy unsupported set is inspected
-- **THEN** `qwen-code` carries `executable: "qwen"`, `goose` carries
-  `executable: "goose"`, and `cline` carries `executable: "clite"` (its
-  published `@cline/cli` package's binary name), each with a reason
-  stating it is not installed in the shared devcontainer image;
-  `claude-code-action` carries `executable: null` with a reason stating it
-  runs as a GitHub Actions workflow and has no devcontainer-installable
-  binary; and `copilot-cli` and `pi` carry `executable: "copilot"` and
-  `executable: "pi"` respectively, with a reason stating they are
-  registered but not yet installed — `harness-matrix` installs the
-  binaries and `bot-autonomy-new-harnesses` adds their modules —
-  satisfying the registry-completeness test before any of the five is
-  installed
+- **THEN** it contains exactly four entries: `qwen-code` carries
+  `executable: "qwen"`, `goose` carries `executable: "goose"`, and `cline`
+  carries `executable: "clite"` (its published `@cline/cli` package's
+  binary name), each with a reason stating it is not installed in the
+  shared devcontainer image; and `claude-code-action` carries
+  `executable: null` with a reason stating it runs as a GitHub Actions
+  workflow and has no devcontainer-installable binary. Every other
+  registry slug — including `copilot-cli`, `pi`, and `oh-my-pi` — resolves
+  to its own module, never to this set (`bot-autonomy-bootstrap` shipped
+  `copilot-cli` and `pi` here as placeholders reasoned "registered but not
+  yet installed" until `bot-autonomy-new-harnesses` replaced both with
+  real modules; see the registry-coverage requirement below)
 
 #### Scenario: an installed unsupported harness fails verify until it gets real coverage
 - **WHEN** `bot-autonomy.sh verify` runs and finds a named `unsupported`
@@ -222,11 +222,18 @@ mechanism, which every future Copier-gated harness module follows).
 #### Scenario: the autonomous state is verified when the option is on
 - **WHEN** the Copier option is on and `bot-autonomy.sh apply` runs the
   harness's module
-- **THEN** `apply` sets the harness's allow-all environment variable (and
-  installs a wrapper if the harness needs one for headless launches, the
-  same reasoning as Antigravity's), and `verify` asserts that state —
-  including confirming this repository's own `.dogfood-answers.yml` sets
-  the Copilot option on, so this repository's own bot container runs
+- **THEN** the harness's allow-all environment variable carries its
+  autonomous-state value — established by `apply` itself for a module
+  that owns the variable, or, for a module whose own requirement
+  documents the literal-value variant (GitHub Copilot CLI's
+  `COPILOT_ALLOW_ALL`), validated instead: the rendered `containerEnv`
+  fixes the value before any lifecycle script runs, not writable by
+  `apply` at runtime the way a settings file is, so `apply` treats it as
+  an input to check rather than a value to produce. `apply` also installs
+  a wrapper if the harness needs one for headless launches, the same
+  reasoning as Antigravity's. `verify` asserts the resulting state either
+  way — including confirming this repository's own `.dogfood-answers.yml`
+  sets the Copilot option on, so this repository's own bot container runs
   Copilot autonomously, while a freshly generated repo defaults to
   `disabled-by-option`
 
