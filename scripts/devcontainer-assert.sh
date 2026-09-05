@@ -69,7 +69,8 @@ HARMON_IMAGE_MANIFEST="/usr/local/share/harmon-devcontainer/manifest.json"
 # sync-pin PR (#1152) bumps .devcontainer/Dockerfile — after that, an
 # enabled marker with no wrapper-resolving copilot is a real failure on
 # every image, which is what keeps the assertion from being a permanent
-# success-note. See openspec/changes/bot-autonomy-new-harnesses/tasks.md
+# success-note. See
+# https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/tasks.md
 # task 5.5.
 HARMON_PRE_HARNESS_MATRIX_DIGEST="sha256:b8a305693e996ac5289bf6f18ae47dd75d9d04ed1763499ef03f52949ea5b519"
 
@@ -1200,7 +1201,7 @@ assert_container() {
         # it. Gated on the marker: a default-off consumer has no wrapper to
         # win, and on a pin that predates the harness-matrix image there is
         # no `copilot` at all yet (see
-        # openspec/changes/bot-autonomy-new-harnesses/tasks.md task 5.5 —
+        # https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/tasks.md task 5.5 —
         # this becomes live coverage once the sync-pin PR lands).
         local copilot_marker copilot_path copilot_version
         copilot_marker="$(docker exec -u vscode "$container_id" printenv HARMON_BOT_AUTONOMY_COPILOT 2>/dev/null || true)"

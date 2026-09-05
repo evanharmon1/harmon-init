@@ -158,8 +158,10 @@
       `~/.local/bin/agy`, not the system binary — this is the case a shell
       function or an rc-only `PATH` edit cannot cover
 - [x] 2.7 Add `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` — rendered
-      from `{{ use_antigravity_cli }}` to the literal string `enabled` or
-      `disabled` — to the bot `devcontainer.json` **and**
+      from `[[ 'enabled' if use_antigravity_cli else 'disabled' ]]` (this
+      template's own Jinja delimiters, per `copier.yml`'s `_envops` block
+      — never the standard `{{ }}`/`{% %}` pair) to the literal string
+      `enabled` or `disabled` — to the bot `devcontainer.json` **and**
       `dev/devcontainer.json` jinja twins (both already
       `[% if devcontainer %]`-conditional), plus their `template/` twins;
       set the matching literal value in this repository's own root
@@ -383,7 +385,7 @@
       today and are structure twins, so a root-only doc edit leaves them
       stale in generated repos; verify with `task test:dogfood-structure`
       and `task lint:markdown`
-- [ ] 4.5 File or link the cross-change coordination noted in design.md's
+- [x] 4.5 File or link the cross-change coordination noted in design.md's
       Decisions: when `harness-matrix` adds the `oh-my-pi` registry row,
       whichever of that change and this one merges second must add
       `oh-my-pi` to the `unsupported` set with `executable: "omp"` — the
@@ -394,7 +396,10 @@
       `oh-my-pi` is still `unsupported` makes `verify` fail naming it —
       matching task 1.4's existing pattern — demonstrating the coordination
       is actually enforced rather
-      than merely documented
+      than merely documented — done: #1150 (`c720eab0`) added `oh-my-pi` to
+      `unsupported.json` with `executable: "omp"`; #1165 (`6d2befb5`)
+      replaced it with the real `oh-my-pi.sh` module, removing the
+      placeholder in the same commit
 - [x] 4.6 Add a standing, unchecked checklist item to
       `scripts/sync-devcontainer-image.sh publish`'s PR-body template for
       the sync-pin PR: "bot-autonomy-new-harnesses has merged, covering
@@ -426,3 +431,6 @@
       answer and confirm Claude Code/Codex/OpenCode still show zero
       prompts while Antigravity prompts as expected — the by-design,
       verified-correct outcome at the default, not a regression
+
+      Tracked by #1137's [HUMAN] acceptance criterion; deferred by the
+      maintainer 2026-09-05.

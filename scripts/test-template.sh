@@ -1829,7 +1829,7 @@ fi
 # The bot-autonomy antigravity module (and ensure-antigravity-cli.sh) always
 # exist and are always CALLED, regardless of use_antigravity_cli — only the
 # rendered HARMON_BOT_AUTONOMY_ANTIGRAVITY marker's VALUE varies by profile.
-# See openspec/changes/bot-autonomy-bootstrap/design.md - Decisions.
+# See openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md - Decisions.
 if [ -d .devcontainer ]; then
     [ -x .devcontainer/config/apply-antigravity-settings.sh ] ||
         err "Antigravity settings helper missing from devcontainer output"
@@ -1907,7 +1907,7 @@ fi
 # marker goes into both), and COPILOT_ALLOW_ALL is rendered as an explicit
 # literal in BOTH states rather than omitted when off — an omitted key would
 # let a stale out-of-band value in the --env-file survive a disabled render.
-# See openspec/changes/bot-autonomy-new-harnesses/design.md - Decisions.
+# See openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md - Decisions.
 if [ -d .devcontainer ]; then
     for module in copilot-cli pi oh-my-pi; do
         [ -x ".devcontainer/config/bot-autonomy/${module}.sh" ] ||
