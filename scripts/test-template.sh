@@ -307,10 +307,12 @@ if [ ! -L .github/copilot-instructions.md ] ||
     [ "$(readlink .github/copilot-instructions.md)" != "../AGENTS.md" ]; then
     err ".github/copilot-instructions.md should be a symlink to ../AGENTS.md"
 fi
-# The visible stage ledger (#965): the Dev Loop policy must ship the canonical
-# Stage/Round/Next table, its full glyph legend, and the maintainer-override
-# rule in every profile — and the root dogfood copy must carry the same, since
-# this test otherwise inspects only the rendered file (see "Dogfood parity").
+# The visible stage ledger (#965): AGENTS.md's "Stage Ledger" section must ship
+# the canonical Stage/Round/Next table, its full glyph legend, and the
+# maintainer-override rule in every profile — and the root dogfood copy must
+# carry the same, since this test otherwise inspects only the rendered file (see
+# "Dogfood parity"). The integrate glyph was `shepherd` until #1082 retired that
+# name; the legend tracks the stage names AGENTS.md actually uses.
 assert_stage_ledger() {
     local file="$1" label="$2" taskfile="$3" block flat glyph
     grep -qF 'Post a visible stage ledger' "$file" ||
@@ -346,7 +348,7 @@ assert_stage_ledger() {
         err "$label stage ledger lets an override settle an open P0/P1 (#965)"
     # The complete legend: every glyph keeps its one meaning.
     for glyph in '🔨 implement' '🧪 verify' '⚔️ challenge' '🔍 review' '🏗️ ci' \
-        '🚢 shepherd' '✅ clean/green' '🔴 P0/P1 open' '🟡 P2 deferred' \
+        '🚢 integrate' '✅ clean/green' '🔴 P0/P1 open' '🟡 P2 deferred' \
         '⚪ P3 noted' '⏳ waiting on CI or a reviewer' '⛔ blocked/escalating' \
         '🏁 stage converged'; do
         printf '%s' "$flat" | grep -qF "$glyph" ||
