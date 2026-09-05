@@ -6,8 +6,9 @@ validator="scripts/validate-result-schemas.mjs"
 fixtures="$schema_dir/fixtures"
 oneshot="$fixtures/run.schema/valid/oneshot.json"
 tmp="$(mktemp)"
+tmp2="$(mktemp)"
 known_ids="$(mktemp)"
-trap 'rm -f "$tmp" "$known_ids"' EXIT
+trap 'rm -f "$tmp" "$tmp2" "$known_ids"' EXIT
 printf '[]\n' >"$known_ids"
 
 accepts() {
@@ -84,5 +85,44 @@ jq '
     }]
 ' "$oneshot" >"$tmp"
 rejects run-pr-round-evidence run "$tmp" --no-adjudications --receipt
+jq '
+    .settlements = [{
+        finding_id: "challenge-r1-contract-1",
+        disposition: "file",
+        settled_at: "2026-09-03T00:03:00Z",
+        reference: {type: "issue_number", value: "1"}
+    }]
+' "$oneshot" >"$tmp"
+rejects run-settlement-before-integration run "$tmp"
+
+jq '
+    .run_id = "run-6060-integration-adjudication"
+    | .stage_transitions = [
+        {stage: "kickoff", entered_at: "2026-09-03T00:00:00Z", exit: "claimed"},
+        {stage: "claim", entered_at: "2026-09-03T00:01:00Z", exit: "oneshot"},
+        {stage: "implement", entered_at: "2026-09-03T00:02:00Z", exit: "verified"},
+        {stage: "verify", entered_at: "2026-09-03T00:03:00Z", exit: "reviewed"},
+        {stage: "review", entered_at: "2026-09-03T00:04:00Z", exit: "approved"},
+        {stage: "security", entered_at: "2026-09-03T00:05:00Z", exit: "green"},
+        {stage: "integration", entered_at: "2026-09-03T00:06:00Z"}
+    ]
+    | .pr = {number: 1, url: "https://example.invalid/pr/1"}
+    | .evidence_comments = [{
+        id: "comment-1",
+        author_actor_id: 1,
+        login: "agent",
+        digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        marker: {
+            run_id: "run-6060-integration-adjudication",
+            stage: "integration",
+            destination: "issue",
+            round: 1,
+            sequence: 1
+        }
+    }]
+' "$oneshot" >"$tmp2"
+accepts run "$tmp2" --adjudication "$adjudication" --receipt
+jq '.evidence_comments = []' "$tmp2" >"$tmp"
+rejects run-missing-adjudication-evidence run "$tmp" --adjudication "$adjudication" --receipt
 
 echo "result schema contract tests OK"

@@ -1581,10 +1581,10 @@ function isChronologicallyBefore(a, b) {
 // entered_at; every intervention's `at` and every settlement's
 // `settled_at` must be no earlier than started_at, and no later than
 // promotion.promoted_at when the run has been promoted; and a
-// settlement's `settled_at` must additionally be no earlier than the
-// run's first `integration` transition's entered_at (a deferred finding
-// is settled during integration, never before the run has even reached
-// it). Always runs — every value compared lives in this one
+// settlement requires an integration transition and its `settled_at` must
+// additionally be no earlier than that first transition's entered_at (a
+// deferred finding is settled during integration, never before the run has
+// reached it). Always runs — every value compared lives in this one
 // run.schema.json document.
 function checkRunChronology(document, errors) {
   const startedAt = document.started_at
@@ -1690,6 +1690,11 @@ function checkRunChronology(document, errors) {
   // promotion, and the readiness gate is what integration converges
   // toward), so no settlement should predate the run's first arrival there.
   const firstIntegrationEntry = transitions.find((transition) => transition.stage === 'integration')
+  if ((document.settlements ?? []).length > 0 && !firstIntegrationEntry) {
+    errors.push(
+      '$run.settlements: must be empty until stage_transitions records the integration stage'
+    )
+  }
   if (firstIntegrationEntry && typeof firstIntegrationEntry.entered_at === 'string') {
     const firstIntegrationAt = firstIntegrationEntry.entered_at
     for (const [index, settlement] of (document.settlements ?? []).entries()) {
@@ -1960,6 +1965,22 @@ function checkAdjudicationStagesVisited(document, adjudications, errors) {
   }
 }
 
+function checkAdjudicationEvidenceMarkers(document, adjudications, errors) {
+  const markers = (document.evidence_comments ?? [])
+    .map((comment) => comment.marker)
+    .filter((marker) => marker && marker.destination === 'issue')
+  for (const { file, data } of adjudications) {
+    const hasMarker = markers.some(
+      (marker) => marker.stage === data.stage && marker.round === data.round
+    )
+    if (!hasMarker) {
+      errors.push(
+        `$run.evidence_comments: --adjudication ${file} has no matching issue evidence marker for stage ${data.stage}, round ${data.round}`
+      )
+    }
+  }
+}
+
 // checkSettlementsAgainstAdjudications — every settlement's finding must be
 // adjudicated exactly once across the union of the supplied --adjudication
 // documents, with disposition defer (settlements only ever terminalize a
@@ -2123,6 +2144,7 @@ function main() {
         checkAdjudicationRunIdMatchesRun(instance, options.adjudications, errors)
         checkAdjudicationsUnionUnique(options.adjudications, errors)
         checkAdjudicationStagesVisited(instance, options.adjudications, errors)
+        checkAdjudicationEvidenceMarkers(instance, options.adjudications, errors)
         checkSettlementsAgainstAdjudications(instance, options.adjudications, errors)
         checkDeferredFindingsSettledBeforePromotion(instance, options.adjudications, errors)
       }

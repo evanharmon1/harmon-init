@@ -68,9 +68,10 @@ for rel, text in policy_text.items():
             fail(f"{manifest_rel}: rigor:{value} description drifted from {rel}")
     for name, profile in cfg["rigor"].items():
         required = {"rounds", "breadth", "orchestrator_tier", "implementer_tier", "challenger_tier", "reviewer_tier", "integrator_tier", "tier_escalation", "description"}
-        optional = {"convergence"}
+        optional = {"convergence", "spend"}
         if not required <= set(profile) or set(profile) - required - optional: fail(f"{rel}: rigor.{name} has invalid keys")
         if profile["rounds"] not in cfg["rounds"] or profile["breadth"] not in cfg["breadth"]: fail(f"{rel}: rigor.{name} references missing policy")
+        if "spend" in profile and profile["spend"] not in cfg.get("spend", {}): fail(f"{rel}: rigor.{name} references missing spend policy")
         if any(profile[key] not in tiers for key in required if key.endswith("_tier")): fail(f"{rel}: rigor.{name} has unknown tier")
     for name, rounds in cfg["rounds"].items():
         if set(rounds) != {"challenge", "review", "integration", "remediation", "min_rounds", "wall_clock_min"}: fail(f"{rel}: rounds.{name} has invalid keys")
@@ -136,6 +137,11 @@ with tempfile.TemporaryDirectory() as tmp:
 schema = json.loads((root / ".devflow.schema.json").read_text())
 if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
 if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$ref") != "#/$defs/convergence_override": fail("v2 schema lacks per-rigor convergence overrides")
+if schema["$defs"]["rigor_profile"]["properties"].get("spend", {}).get("type") != "string": fail("v2 schema lacks per-rigor spend pointers")
+stage_schema = schema["$defs"]["stage_profiles"]
+if stage_schema.get("additionalProperties") is not False or set(stage_schema.get("required", [])) != stages or set(stage_schema.get("properties", {})) != stages: fail("v2 schema must close the exact four-stage catalog")
+if {row.get("$ref") for row in schema["$defs"]["convergence_expression"].get("oneOf", [])} != {"#/$defs/convergence_all", "#/$defs/convergence_any"}: fail("v2 schema must make convergence roots an exclusive all/any union")
+if len(schema["$defs"]["convergence_item"].get("oneOf", [])) != 6: fail("v2 schema must make convergence items an exclusive predicate/all/any union")
 for key in ("finders", "finder_fallbacks", "pool"):
     if schema["$defs"]["stage_profile"]["properties"][key].get("$ref") != "#/$defs/strings_allow_empty":
         fail(f"v2 schema must permit an explicit empty stage.{key} list")

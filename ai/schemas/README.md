@@ -430,10 +430,11 @@ instance being validated:
   rollup once a draft PR exists. `round` is the 1-based round number for a
   per-round comment, `null` for a per-stage rollup (whichever destination
   it landed on) — a stage comment aggregates the stage's rounds so far, so
-  no single round describes it. Both are plain schema keywords
-  (`marker.required`, `destination`'s enum, `round`'s `{type: ["integer",
-  "null"], minimum: 1}` mirroring `result.reviewer.schema.json`'s
-  `findings[].line`), not a validator check.
+  no single round describes it. Their individual shapes are plain schema
+  keywords (`marker.required`, `destination`'s enum, and `round`'s
+  `{type: ["integer", "null"], minimum: 1}`), while the cross-field rule
+  that a PR destination requires `round: null` is enforced by
+  `checkEvidenceMarkerPrDestinationRequiresPr`.
 - **`run.schema.json`'s `evidence_comments[]` uniqueness** — `id` is unique
   (it is the harvester's own lookup key), and the `(marker.destination,
   marker.stage, marker.round, marker.sequence)` tuple is unique (that tuple
@@ -933,7 +934,9 @@ decisions):
   context-free check (like `checkEvidenceMarkerStageVisited` beside it): the
   marker's own description says the PR rollup comment is posted "once the
   draft PR exists," and `pr` is this run record's own sibling field for
-  whether that is true yet.
+  whether that is true yet. The same check also requires `round: null` for a
+  PR marker: per-round evidence belongs on the issue, while PR evidence is a
+  per-stage rollup.
 - **`evidence_comments[].digest` has a canonical format,
   `sha256:<64 lowercase hex>` (#686).** Enforced by `pattern`, not
   `minLength` alone: independent producers and harvesters must compute and

@@ -102,8 +102,9 @@ than decrementing implementation breadth, but fail-closed validation still
 requires the numeric allowance to cover each configured primary finder's one
 retry so no shipped rigor begins with an impossible finder contract.
 
-Optional `[spend.*]` tables are declarative ceilings. A missing measurement is
-reported as unenforced, never represented as observed compliance. Foreman
+Optional `[spend.*]` tables are declarative ceilings, selected by an optional
+`spend` pointer on each `[rigor.*]` profile. A missing pointer or measurement
+is reported as unenforced, never represented as observed compliance. Foreman
 intersects resolved policy with its own operational ceilings.
 
 ## Gates

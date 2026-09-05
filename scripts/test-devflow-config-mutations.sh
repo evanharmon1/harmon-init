@@ -146,6 +146,21 @@ rejects_reader unknown-rigor-order-entry replace_once \
     'rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]' \
     'rigor_order = ["cursory", "ghost", "standard", "thorough", "deep", "forensic"]'
 
+reset_policy
+replace_in_table rigor.standard \
+    'breadth           = "standard"' \
+    $'breadth           = "standard"\nspend             = "standard"'
+append_text $'\n[spend.standard]\nmax_tokens = 1000\nmax_usd = 1.5\n'
+spend_resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --registry agent-registry.json \
+    --taskfile-dir . \
+    --json)"
+if [ "$(printf '%s' "$spend_resolved" | jq -r '.spend.policy')" != "standard" ]; then
+    echo "FAIL: JS reader did not resolve an optional per-rigor spend policy" >&2
+    exit 1
+fi
+
 # Reader-specific semantic controls. These bypass the Python structural gate
 # so each failure proves the shipped JavaScript reader enforces the contract.
 reset_policy
@@ -166,6 +181,33 @@ reset_policy
 replace_in_table role.implementer 'families  = ["claude", "gpt", "gemini"]' 'families  = ["claude"]'
 if resolve_reader --strategy council 2>/dev/null; then
     echo "FAIL: JS reader counted council families outside implementer eligibility" >&2
+    exit 1
+fi
+
+reset_policy
+replace_in_table stage.review \
+    '[stage.review]' \
+    $'[stage.review]\npool = ["claude-code"]'
+replace_in_table role.reviewer \
+    'families  = ["gpt", "claude", "gemini"]    # (preference)' \
+    'families  = ["gpt"]'
+replace_in_table role.reviewer \
+    'harnesses = ["codex-cli", "claude-code"]  # (preference) — same' \
+    'harnesses = ["codex-cli"]'
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted a stage pool with no executable role-routing intersection" >&2
+    exit 1
+fi
+
+bad_finder_registry="$tmp/bad-finder-registry.json"
+jq '(.finders[] | select(.slug == "codex-adversarial").invocation.target) = "missing:target"' \
+    agent-registry.json >"$bad_finder_registry"
+reset_policy
+if node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --registry "$bad_finder_registry" \
+    --taskfile-dir . >/dev/null 2>&1; then
+    echo "FAIL: JS reader accepted a local finder with a missing Taskfile target" >&2
     exit 1
 fi
 
@@ -239,6 +281,25 @@ replace_in_table convergence \
     'converged = { all = [ { predicate = "no_gating_findings" } ], extra_condition = true }'
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted an unknown convergence composition key" >&2
+    exit 1
+fi
+
+reset_policy
+replace_in_table convergence \
+    'converged = { all = [ { predicate = "no_gating_findings" } ] }' \
+    'converged = { all = [ { predicate = "no_gating_findings" }, { any = [ { predicate = "provenance_share", min = 0.5 }, { predicate = "repeat_after_fix" } ] } ] }'
+append_text '
+[rigor.standard.convergence]
+converged = { all = [ { predicate = "no_gating_findings" }, { any = [ { min = 0.5, predicate = "provenance_share" }, { predicate = "repeat_after_fix" } ] } ] }
+'
+resolve_reader
+
+reset_policy
+replace_in_table convergence \
+    'exclude_classes = ["design"]' \
+    'exclude_classes = ["design", "design"]'
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted duplicate convergence exclude_classes" >&2
     exit 1
 fi
 

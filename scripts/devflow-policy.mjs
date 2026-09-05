@@ -672,6 +672,8 @@ const PREDICATE_PARAM_VALIDATORS = {
     if (entry.exclude_classes !== undefined) {
       const bad =
         !Array.isArray(entry.exclude_classes) ||
+        entry.exclude_classes.length === 0 ||
+        new Set(entry.exclude_classes).size !== entry.exclude_classes.length ||
         entry.exclude_classes.some((c) => !FINDING_CLASSES.has(c))
       if (bad) {
         throw new PolicyError(
@@ -774,6 +776,17 @@ function validatePredicateExpr(expr, errorPath) {
   return { kind, list }
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
 function checkTightenOnly(base, over, stageName, errorPath) {
   if (base.kind !== over.kind) {
     throw new PolicyError(
@@ -812,7 +825,7 @@ function checkTightenOnly(base, over, stageName, errorPath) {
   const overFlat = over.list.filter((e) => !isNested(e))
   const baseNested = base.list.filter(isNested)
   const overNested = over.list.filter(isNested)
-  const nestedKey = (e) => `nested:${JSON.stringify(e)}`
+  const nestedKey = (e) => `nested:${canonicalJson(e)}`
   const baseNestedKeys = new Set(baseNested.map(nestedKey))
   const overNestedKeys = new Set(overNested.map(nestedKey))
   const nestedAdded = [...overNestedKeys].filter((k) => !baseNestedKeys.has(k))
@@ -1478,6 +1491,16 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
             `[stage.${stage}] finders/finder_fallbacks includes "${slug}", whose registry entry permits only stage(s) ${finder.stages.join(', ')}`
           )
         }
+        if (finder.surface === 'local-cli') {
+          const target = finder.invocation?.target
+          if (finder.invocation?.type !== 'taskfile-target' || typeof target !== 'string') {
+            errors.push(`[stage.${stage}] local finder "${slug}" has no taskfile-target invocation`)
+          } else if (taskTargets && !taskTargets.has(target)) {
+            errors.push(
+              `[stage.${stage}] local finder "${slug}" invokes missing Taskfile target "${target}"`
+            )
+          }
+        }
       }
       if (s.pool) {
         // Present-but-empty is not the documented "unrestricted" default
@@ -1502,6 +1525,32 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
               `[stage.${stage}].pool includes "${slug}", whose registry entry permits only role(s) ${harness.roles?.join(', ') || 'none'}; this stage requires role "${stageRole}"`
             )
           }
+        }
+        const roleConfig = resolved.roles[stageRole]
+        const hasExecutablePoolTuple = s.pool.some((slug) => {
+          const harness = harnessBySlug.get(slug)
+          if (!harness || !roleConfig?.harnesses.includes(slug)) return false
+          if (Array.isArray(harness.roles) && !harness.roles.includes(stageRole)) return false
+          return roleConfig.families.some((familySlug) => {
+            const family = familyBySlug.get(familySlug)
+            if (!family) return false
+            if (
+              Array.isArray(family.models) &&
+              !family.models.some((model) => model.tier === roleConfig.tier)
+            ) {
+              return false
+            }
+            return (
+              harness.family_constraint?.kind !== 'fixed' ||
+              harness.family_constraint.family === familySlug
+            )
+          })
+        })
+        if (!hasExecutablePoolTuple) {
+          errors.push(
+            `[stage.${stage}].pool has no executable intersection with [role.${stageRole}] ` +
+              `for tier "${roleConfig?.tier}"`
+          )
         }
       }
     }
@@ -1587,6 +1636,7 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
   const rigorKeys = new Set([
     'rounds',
     'breadth',
+    'spend',
     'orchestrator_tier',
     'implementer_tier',
     'challenger_tier',
@@ -1602,7 +1652,7 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
       throw new PolicyError(`${errorPath} must be a table`)
     }
     const missing = [...rigorKeys].filter(
-      (key) => key !== 'convergence' && !Object.hasOwn(candidate, key)
+      (key) => key !== 'convergence' && key !== 'spend' && !Object.hasOwn(candidate, key)
     )
     const extra = Object.keys(candidate).filter((key) => !rigorKeys.has(key))
     if (missing.length > 0 || extra.length > 0) {

@@ -85,6 +85,7 @@
       "properties": {
         "rounds": { "type": "string", "minLength": 1 },
         "breadth": { "type": "string", "minLength": 1 },
+        "spend": { "type": "string", "minLength": 1 },
         "orchestrator_tier": { "$ref": "#/$defs/tier" },
         "implementer_tier": { "$ref": "#/$defs/tier" },
         "challenger_tier": { "$ref": "#/$defs/tier" },
@@ -178,8 +179,14 @@
     },
     "stage_profiles": {
       "type": "object",
-      "minProperties": 4,
-      "additionalProperties": { "$ref": "#/$defs/stage_profile" }
+      "additionalProperties": false,
+      "required": ["implement", "challenge", "review", "integration"],
+      "properties": {
+        "implement": { "$ref": "#/$defs/stage_profile" },
+        "challenge": { "$ref": "#/$defs/stage_profile" },
+        "review": { "$ref": "#/$defs/stage_profile" },
+        "integration": { "$ref": "#/$defs/stage_profile" }
+      }
     },
     "strategy_profile": {
       "type": "object",
@@ -279,27 +286,77 @@
       "additionalProperties": { "$ref": "#/$defs/strategy_profile" }
     },
     "convergence_expression": {
+      "oneOf": [{ "$ref": "#/$defs/convergence_all" }, { "$ref": "#/$defs/convergence_any" }]
+    },
+    "convergence_item": {
+      "oneOf": [
+        { "$ref": "#/$defs/predicate_no_gating_findings" },
+        { "$ref": "#/$defs/predicate_provenance_share" },
+        { "$ref": "#/$defs/predicate_count_rising" },
+        { "$ref": "#/$defs/predicate_repeat_after_fix" },
+        { "$ref": "#/$defs/convergence_all" },
+        { "$ref": "#/$defs/convergence_any" }
+      ]
+    },
+    "convergence_all": {
       "type": "object",
       "additionalProperties": false,
-      "minProperties": 1,
+      "required": ["all"],
       "properties": {
-        "predicate": {
-          "enum": ["no_gating_findings", "provenance_share", "count_rising", "repeat_after_fix"]
-        },
-        "any": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/convergence_expression" }
-        },
         "all": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/convergence_expression" }
-        },
-        "increases": { "type": "integer", "minimum": 1 },
-        "min": { "type": "number", "minimum": 0, "maximum": 1 },
-        "exclude_classes": { "$ref": "#/$defs/strings" }
+          "items": { "$ref": "#/$defs/convergence_item" }
+        }
       }
+    },
+    "convergence_any": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["any"],
+      "properties": {
+        "any": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/convergence_item" }
+        }
+      }
+    },
+    "predicate_no_gating_findings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate"],
+      "properties": { "predicate": { "const": "no_gating_findings" } }
+    },
+    "predicate_provenance_share": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate", "min"],
+      "properties": {
+        "predicate": { "const": "provenance_share" },
+        "min": { "type": "number", "minimum": 0, "maximum": 1 },
+        "exclude_classes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["design", "correctness", "consistency", "hardening", "nit"] }
+        }
+      }
+    },
+    "predicate_count_rising": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate", "increases"],
+      "properties": {
+        "predicate": { "const": "count_rising" },
+        "increases": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "predicate_repeat_after_fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate"],
+      "properties": { "predicate": { "const": "repeat_after_fix" } }
     },
     "convergence_override": {
       "type": "object",
