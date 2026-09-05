@@ -140,11 +140,10 @@ the first place.
 
 ### Requirement: A Copier-gated harness's module always exists; only its effective policy is conditional
 When a harness's autonomy policy is gated behind a Copier option (per
-AGENTS.md's Hard Rule on paid or trial-only SaaS dependencies — see the
-Antigravity requirement below for a concrete example already covered by
-this change, keyed to the existing `use_antigravity_cli` answer, and
-`harness-matrix`'s Copilot CLI requirement for the same pattern applied to
-a future module), the harness SHALL still resolve to a real module — never to the `unsupported`
+AGENTS.md's Hard Rule on paid or trial-only SaaS dependencies — the
+Antigravity and GitHub Copilot CLI requirements below are both concrete
+examples, keyed respectively to the `use_antigravity_cli` and
+`use_copilot_cli` answers), the harness SHALL still resolve to a real module — never to the `unsupported`
 bucket and never to no module at all — because the harness IS installed in
 the image regardless of the Copier answer, and an installed, registered
 harness with no module fails `verify` by the coverage requirement above.
@@ -187,11 +186,10 @@ mechanism, which every future Copier-gated harness module follows).
 
 #### Scenario: a Copier-gated harness resolves to a module, never to unsupported
 - **WHEN** the bot-autonomy module directory is inspected for a harness
-  whose autonomy policy is gated behind a Copier option (Antigravity, keyed
-  to `use_antigravity_cli`, is the concrete example within this very
-  change — see its own requirement below; Copilot CLI is the same pattern
-  applied to a future module, added by the `bot-autonomy-new-harnesses`
-  follow-on once `harness-matrix` installs the binary)
+  whose autonomy policy is gated behind a Copier option — Antigravity,
+  keyed to `use_antigravity_cli`, and GitHub Copilot CLI, keyed to
+  `use_copilot_cli`, are both concrete examples in this spec (see their own
+  requirements below)
 - **THEN** that harness has its own module file — it does not appear in
   the `unsupported` set, and `verify` does not skip it merely because the
   option happens to be off
@@ -722,11 +720,16 @@ to a persisted volume; `restore` is what does.
 - **WHEN** an operator rolls back this change's implementation PR on a bot
   container that had already run `apply`
 - **THEN** the operator runs each module's `restore` **before** reverting
-  the PR — while the code implementing `restore` still exists to run —
-  and reverting the PR first, then attempting `restore`, cannot recover
-  the pre-`apply` value, because a reverted checkout no longer contains
-  `bot-autonomy.sh`, `apply-antigravity-settings.sh`, or the OpenCode
-  module's restore logic to invoke
+  the PR. For OpenCode this is required, not merely tidy: its restore
+  logic (`.devcontainer/config/bot-autonomy/opencode.sh`) is introduced by
+  this change, so a reverted checkout no longer contains it, and
+  attempting `restore` after reverting cannot recover the pre-`apply`
+  `permission` value. Antigravity's recovery does not share this
+  constraint — `apply-antigravity-settings.sh` predates this change
+  (introduced by PR #701) and survives a revert intact, so its `restore`
+  subcommand, and the always-proceed recovery path it implements, remains
+  directly invocable whether the operator runs it before or after
+  reverting
 
 ### Requirement: Human dev profile is unaffected by construction
 The bot-autonomy wrappers and modules SHALL be installed by the bot
