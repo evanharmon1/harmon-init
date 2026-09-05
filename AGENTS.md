@@ -227,12 +227,13 @@ Bias toward shipping: drive every change to a PR instead of stopping at a green
 local diff. Work in PR-sized units; a PR handed to a human is the deliverable.
 
 **The loop is the stage skills; this section is the policy they run under.**
-`/orchestrator` is the session's standing operating mode; it dispatches `/claim`
-(take ownership — `/implement` never claims), `/implement` (claimed issue →
-gates → draft PR), `/review` (both confidence stages), and `/integrate` (draft →
-ready for review). There is **no `dev-loop` skill** — those stages *are* the
-loop, and the retired names map onto them (`gauntlet` → `review`, `shepherd` →
-`integrate`); the vendored pin in `.claude/skills/` still ships the
+`/orchestrator` is the session's standing operating mode; it dispatches
+`/implement` (claimed issue → gates → draft PR), `/review` (both confidence
+stages), and `/integrate` (draft → ready for review). `/claim` comes first but
+is **user-invoked** — the user typing it authorizes its issue writes — and
+`/implement` never claims. There is **no `dev-loop` skill** — those stages *are*
+the loop, and the retired names map onto them (`gauntlet` → `review`, `shepherd`
+→ `integrate`); the vendored pin in `.claude/skills/` still ships the
 predecessors, which run under this policy. The skills carry the procedure —
 round mechanics, adjudication records, review polling, the PR-open ritual —
 entered by reading their `SKILL.md`. Where none is vendored, this section is the
@@ -241,7 +242,7 @@ states a different cap, floor, or exit condition, **this file wins** — skills
 sync on their own cadence and can lag a change made here.
 
 ```text
-/claim → /implement [ code → task verify → challenge → review → task security → DRAFT PR ]
+/claim (user) → /implement [ code → task verify → challenge → review → task security → DRAFT PR ]
   → /integrate [ CI → deferred findings → reviewers → readiness gate ]
   → ready for review → human review → human merge
 ```
