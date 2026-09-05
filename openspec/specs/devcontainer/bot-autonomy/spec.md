@@ -109,16 +109,16 @@ the first place.
   `executable: null` with a reason stating it runs as a GitHub Actions
   workflow and has no devcontainer-installable binary. Every other
   registry slug — including `copilot-cli`, `pi`, and `oh-my-pi` — resolves
-  to its own module, never to this set (`bot-autonomy-bootstrap` shipped
-  `copilot-cli` and `pi` here as placeholders reasoned "registered but not
-  yet installed" until `bot-autonomy-new-harnesses` replaced both with
-  real modules; see the registry-coverage requirement below)
+  to its own module, never to this set (the archived `bot-autonomy-bootstrap`
+  change shipped `copilot-cli` and `pi` here as placeholders reasoned
+  "registered but not yet installed" until the archived
+  `bot-autonomy-new-harnesses` change replaced both with real modules; see
+  the registry-coverage requirement below)
 
 #### Scenario: an installed unsupported harness fails verify until it gets real coverage
 - **WHEN** `bot-autonomy.sh verify` runs and finds a named `unsupported`
-  executable installed (whether that is `copilot`/`pi` after
-  `harness-matrix` lands, or, hypothetically, `qwen`/`goose`/`clite` if a
-  future image ever installed one) while its slug still has no module and
+  executable installed — `qwen`, `goose`, or `clite`, hypothetically, if a
+  future image ever installed one — while its slug still has no module and
   no alias
 - **THEN** `verify` exits non-zero naming the harness — no `unsupported`
   reason grants a named executable's exemption that survives installation,
@@ -342,8 +342,9 @@ policy.
 #### Scenario: the CI assertion runs from a clean, isolated volume state every time
 - **WHEN** `devcontainer-build.yml`'s container-assertion job (or a
   repeated local `devcontainer-smoke.sh` run) starts the bot container
-- **THEN** it mounts run-specific, uniquely-named volumes for `~/.gemini`
-  and `~/.config/opencode` — created fresh for that run and removed
+- **THEN** it mounts run-specific, uniquely-named volumes for all five
+  persisted-state paths — `~/.gemini`, `~/.config/opencode`, `~/.copilot`,
+  `~/.pi`, and `~/.omp` — created fresh for that run and removed
   afterward — rather than the same persistent volumes a real bot
   devcontainer reuses across rebuilds, so every run observes `apply`'s true
   first-run, absent-backup behavior instead of a stale backup or
@@ -785,8 +786,8 @@ correct, by-design outcome — not a gap this requirement expects closed.
 ### Requirement: GitHub Copilot CLI's autonomy policy is Copier-gated, following the established Copier-gated-harness contract
 The bot profile SHALL gate GitHub Copilot CLI's non-interactive policy behind
 a new, default-off Copier answer `use_copilot_cli`, following the
-Copier-gated-harness contract `bot-autonomy-bootstrap` establishes for
-Antigravity: the `copilot-cli` module SHALL always exist and always cover
+Copier-gated-harness contract the archived `bot-autonomy-bootstrap` change
+establishes for Antigravity: the `copilot-cli` module SHALL always exist and always cover
 the harness; only its effective policy is conditional. The module's `apply`
 SHALL read the rendered `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` marker
 (`enabled`/`disabled`, rendered as
@@ -924,9 +925,9 @@ appending the flag: `login`, `version`/`--version`, `help`/`-h`/`--help`,
 next `copilot` on `PATH` after excluding its own directory), rather than
 hardcoding one specific installation path.
 
-`verify` SHALL check the enabled-state wrapper the same way
-`bot-autonomy-bootstrap`'s own Antigravity module already checks its
-wrapper — presence and executability are necessary but not sufficient:
+`verify` SHALL check the enabled-state wrapper the same way the archived
+`bot-autonomy-bootstrap` change's own Antigravity module already checks
+its wrapper — presence and executability are necessary but not sufficient:
 `verify` SHALL also compare the installed file's content against the
 module's own known-correct wrapper content (byte-for-byte, generated from
 the same source the `apply` step itself installs from, so `apply` and
@@ -970,8 +971,8 @@ invocation actually fails.
   sources a login shell execs `copilot -p "…"` by resolving it off `PATH`
 - **THEN** the resolved `~/.local/bin/copilot` wrapper adds `--allow-all` —
   the wrapper's precedence over the shared image's `copilot` binary is
-  established at the container level, reusing the `PATH` prepend
-  `bot-autonomy-bootstrap` already ships (an `ENV PATH=…` directive in
+  established at the container level, reusing the `PATH` prepend the
+  archived `bot-autonomy-bootstrap` change already ships (an `ENV PATH=…` directive in
   `.devcontainer/Dockerfile` and its `template/` twin, ahead of the system
   binaries' directory) for Antigravity's own wrapper; this module does not
   need a second `PATH` entry
@@ -996,8 +997,9 @@ invocation actually fails.
 ### Requirement: pi's non-interactive boundary is no elevated trust — decided by the maintainer
 **Status: resolved — maintainer decision 2026-09-03, option (a).** Two
 designs for this requirement were adjudicated and rejected during this
-proposal's own challenge-review process (design.md - Decisions has the
-full record): a global `defaultProjectTrust: "always"` (rejected — grants
+proposal's own challenge-review process
+(`openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md` -
+Decisions has the full record): a global `defaultProjectTrust: "always"` (rejected — grants
 automatic trust, and per pi's own docs, automatic *extension code
 execution*, to every repository the bot's pi installation is ever pointed
 at, not only this one) and a workspace-scoped `~/.pi/agent/trust.json`
@@ -1016,15 +1018,17 @@ pi's own safe out-of-the-box default. This is a deliberate, decided
 fallback, not an oversight: #1137's acceptance criteria require every
 supported harness to reach a **no-prompt** state, which this option
 already satisfies for pi (pi's non-interactive modes never prompt for
-trust regardless of this setting — see the pi Decision in design.md); the
+trust regardless of this setting — see the pi Decision in
+`openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md`); the
 maintainer accepted that the bot's non-interactive pi sessions will
 silently ignore this repository's own `.pi/` project resources (a
 capability gap) rather than ship a mechanism this proposal's own review
 process found two ways to make unsafe (a security gap). The rejected
 workspace-scoped design remains available as a possible **future, explicit
 opt-in** — not the default — if the maintainer later decides the risk it
-carries is acceptable for a specific, bounded use; see design.md - Open
-Questions and Decisions for the full record. `verify` SHALL, however,
+carries is acceptable for a specific, bounded use; see
+`openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md` -
+Open Questions and Decisions for the full record. `verify` SHALL, however,
 fail closed on **either** of pi's two trust-granting surfaces, regardless
 of cause — this module writes to neither, but a stale volume, a manual
 edit, an interactive `/trust` run inside the bot container, or a future
@@ -1034,8 +1038,9 @@ decision anywhere in `~/.pi/agent/trust.json` — not only one applicable to
 the current workspace (its own canonical directory, or, per pi's own
 "closest decision on the current or parent path" rule, a parent of it).
 Checking only the global fallback would leave the exact path-keyed exposure
-the rejected workspace-scoped design carried (design.md - Decisions)
-reachable by any of those same causes, just through the other file —
+the rejected workspace-scoped design carried
+(`openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md` -
+Decisions) reachable by any of those same causes, just through the other file —
 detecting both is a strengthening of this fallback's safety story, not a
 re-attempt at either rejected design. Checking only *applicable* decisions
 in that second file would leave a narrower version of the same gap: the
@@ -1117,9 +1122,11 @@ workspace happened to be current at verify-time.
 Oh-my-pi SHALL NOT be Copier-gated. The primary path is: the bot profile
 SHALL set `tools.approvalMode` to `"yolo"` in `~/.omp/agent/config.yml`
 (oh-my-pi's own schema default, per this proposal's own research against the
-pinned `v18.1.2` release — see design.md - Decisions — but written
-explicitly rather than left to the default, so a project-level override, a
-future upstream default change, or a stale/legacy config file cannot
+pinned `v18.1.2` release — see
+`openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md` -
+Decisions — but written explicitly rather than left to the default, so a
+project-level override, a future upstream default change, or a
+stale/legacy config file cannot
 silently defeat it). `verify` SHALL read the **fully resolved** effective
 value — global configuration layered with any project-level
 `<cwd>/.omp/config.yml` the current repository provides, via oh-my-pi's own
@@ -1133,16 +1140,11 @@ that persists and reverts a managed value the way this one does — pi's
 module writes nothing and has no backup/restore at all); `restore` SHALL
 put that prior value back and clear the backup.
 
-The contingency: IF implementation-time confirmation against the actually
-built shared image contradicts this proposal's own research (oh-my-pi's
-real, installed `v18.1.2` binary does not expose the documented mechanism,
-or exposes it differently), THEN oh-my-pi's module SHALL instead be an
-`unsupported` entry (`executable: "omp"`, reason citing the specific
-contradiction found) rather than a real module — and, per
-`bot-autonomy-bootstrap`'s own uniform rule, this exemption SHALL NOT
-survive `omp` being installed: `verify` SHALL fail closed, naming oh-my-pi,
-on any bot container where `omp` is present and still prompt-enabled, the
-same as any other installed-but-uncovered harness.
+Implementation-time confirmation against the actually built shared image
+upheld this proposal's own research — the real, installed `v18.1.2` binary
+exposes the documented `tools.approvalMode` mechanism exactly as
+researched — so the contingency of falling back to an `unsupported` entry
+never applied.
 
 #### Scenario: apply seeds yolo mode on a fresh volume (confirmed outcome)
 - **WHEN** the `oh-my-pi` module's `apply` runs in the bot profile and
@@ -1176,32 +1178,15 @@ same as any other installed-but-uncovered harness.
   before the *first* `apply` in that sequence, the backup file is removed,
   and every key `apply` did not manage is untouched
 
-#### Scenario: the contingency records an honest, non-surviving exemption
-- **WHEN** implementation-time confirmation shows the real installed
-  oh-my-pi binary does not honor the documented `tools.approvalMode: yolo`
-  mechanism as researched
-- **THEN** oh-my-pi is recorded in the `unsupported` table with
-  `executable: "omp"` and a reason stating what was actually found, instead
-  of a module; the registry-completeness unit test still passes (oh-my-pi
-  resolves to exactly one bucket); and `verify` fails naming oh-my-pi the
-  moment `omp` is found installed and still prompt-enabled, exactly as it
-  would for any other installed harness with no real coverage
-
 ### Requirement: registry coverage no longer defers copilot-cli, pi, or oh-my-pi
-`bot-autonomy-bootstrap`'s own implementation adds `copilot-cli`, `pi`, and
-`oh-my-pi` to the registry-coverage `unsupported` table with a reason of
-"pending `bot-autonomy-new-harnesses`" and, for `oh-my-pi`, the reason
-`harness-matrix` independently states when reconciling its own registry
-addition. This change SHALL remove all three placeholder entries and
-resolve each slug to a real module — except `oh-my-pi` under the confirmed
-contingency above, which instead updates (not removes) its `unsupported`
-entry's reason.
+`copilot-cli`, `pi`, and `oh-my-pi` each resolve to their own module — none
+of the three is in the `unsupported` set (the archived `bot-autonomy-bootstrap`
+change shipped all three there as time-bounded placeholders reasoned
+"pending `bot-autonomy-new-harnesses`"; the archived
+`bot-autonomy-new-harnesses` change removed every placeholder and replaced
+it with a real module).
 
 #### Scenario: the registry-completeness test passes with real coverage
-- **WHEN** the bot-autonomy registry-completeness unit test runs after this
-  change
-- **THEN** `copilot-cli` and `pi` each resolve to their own module (never to
-  `unsupported`), and `oh-my-pi` resolves to either its own module or an
-  `unsupported` entry whose reason is no longer "pending
-  `bot-autonomy-new-harnesses`" — the follow-on this reason names has
-  landed
+- **WHEN** the bot-autonomy registry-completeness unit test runs
+- **THEN** `copilot-cli`, `pi`, and `oh-my-pi` each resolve to their own
+  module, never to `unsupported`

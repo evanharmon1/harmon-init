@@ -245,12 +245,9 @@
       `.devcontainer/Dockerfile` twins; do not bump that pin from this
       change
 
-      **Not yet applicable**: this task is explicitly sequenced after merge
-      and image publish, neither of which has happened yet (this PR is
-      still draft, per its brief's "stop at the draft PR" instruction).
-
-      **Done**: rolling pin PR #1152 carries the new digest for both
-      `.devcontainer/Dockerfile` twins (`.devcontainer/Dockerfile` and
+      **Done 2026-09-05** — rolling pin PR #1152 (digest
+      `sha256:c46fe85ffcb193e90206739e33399265e4eb2dea8217c86dad405c92c94efb1e`)
+      carries the new image for both `.devcontainer/Dockerfile` twins
+      (`.devcontainer/Dockerfile` and
       `template/[% if devcontainer %].devcontainer[% endif %]/Dockerfile`,
-      one line each).
-      Left for whoever shepherds/merges this PR to confirm.
+      one line each); CI green, awaiting maintainer merge.

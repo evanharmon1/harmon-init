@@ -4,8 +4,11 @@
 Defines the shared devcontainer image's agent-harness inventory contract:
 which CLIs are installed, how each is pinned and integrity-verified, and how
 the manifest and smoke-test surface prove a built image matches — the
-foundation `bot-autonomy-bootstrap` and its `bot-autonomy-new-harnesses`
-follow-on depend on to have real binaries to bind policy modules to.
+foundation the archived `bot-autonomy-bootstrap`
+(`openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap`) and
+`bot-autonomy-new-harnesses`
+(`openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses`) changes
+depend on to have real binaries to bind policy modules to.
 
 ## Requirements
 
