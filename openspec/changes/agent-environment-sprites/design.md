@@ -166,6 +166,16 @@ clones) all execute inside `devcontainer up`, so a credential injected
 after the container starts would leave post-create unauthenticated. The
 Codex login is the one credential copied after the container is up,
 because it lives on the `~/.codex` volume rather than in the environment.
+The checkout comes first, on the outer host: the devcontainers CLI reads
+`.devcontainer/` from the workspace folder it is given and bind-mounts that
+folder into the container, so the lane clones the remote branch head to
+`/workspaces/<repo>` on the sprite before `devcontainer up`, with the PAT
+handed to git through the credential helper's environment and never
+written to disk. The same rule makes pool initialisation work for a
+private repository: the clone the profile build needs is made with the
+PAT in memory, the containers are torn down, and the checkout — env-file
+and all — is removed before the golden checkpoint, which is defined by
+its content (no credential, no checkout) rather than by when it was taken.
 Two consequences follow. First,
 the exfiltration prize inside a lane is the same as inside the local bot
 container — the scoped bot PAT and a spendable Claude OAuth token — and the
@@ -225,7 +235,13 @@ the helper installs **inside the inner container** after `devcontainer up`.
 An SSH server on the outer sprite was considered and rejected: the outer
 filesystem deliberately holds no Herdr, so a session landing there has
 nothing to attach to, and a forced-command bridge through `docker exec`
-is a second mechanism to get wrong. The helper refreshes the alias's
+is a second mechanism to get wrong. Authentication is public-key only
+with a per-lane keypair generated on the orchestrator (the private half
+never enters the sprite), the container's host key is recorded in the
+alias at creation so the connection is pinned rather than trusted on
+first use, and both are removed at retirement — the platform's proxy
+authenticates the operator to the sprite, but not to the container, so
+the container's sshd must not be weakened to make the hop work. The helper refreshes the alias's
 address on every reconcile because the container's address can change
 across restarts. Both attach paths are marked for verification in the
 first real lane; the version-match prompt `herdr --remote` shows on a
@@ -251,11 +267,18 @@ running exec session as activity, so a gate or agent launched through
 when it exits; where a Tasks-API hold is needed at all, its owner is an
 in-sprite supervisor wrapping the command, never a heartbeat on the laptop
 — a laptop heartbeat is precisely what dies when a pane is closed while
-the remote gate keeps running. At TTL expiry the helper stops registering
-holds and refuses new commands until `lane:extend`, but never destroys
-anything — the Herdr guide's rule that sweeping is the operator's step
-holds — so a forgotten `working` agent cannot renew its way to an
-unbounded bill, and stored work is never lost to a timer. The pool ceiling
+the remote gate keeps running. No lane command runs unbounded: the in-sprite supervisor applies a
+per-command duration bound and stops the command with its output intact,
+so a hung agent or a stalled fetch cannot keep the sprite active
+indefinitely. At TTL expiry the helper stops registering holds, refuses
+new commands until `lane:extend`, and gives a running command one grace
+period before stopping it the same way — so a lane's active compute is
+bounded by TTL plus grace — but never destroys anything: stopping a
+command preserves the checkout, the container, and the volumes, and the
+Herdr guide's rule that sweeping is the operator's step still holds.
+Reclaiming an expired lease is likewise gated on the sprite showing no
+active session, because an expired lease is bookkeeping, not evidence
+that the work inside is finished. The pool ceiling
 mirrors the plan's concurrency limit so `pool:init` cannot walk the account
 into "concurrent sprites exceeded" errors mid-dispatch.
 
@@ -342,7 +365,11 @@ over the API.
 - A throwaway **feasibility spike** runs first, before any Copier or
   Taskfile work (tasks.md § 0): one hand-made sprite, Docker as a Service,
   `devcontainer up` of the bot profile, `task verify` inside it, a cold
-  wake, and a `sprite proxy -W <inner-address>:22` attach. If it fails,
+  wake, the intended DNS allowlist applied, and — under that policy — the
+  required-host checks and a key-authenticated
+  `sprite proxy -W <inner-address>:22` attach, since the policy blocks
+  private addresses on egress and the attach targets the container's
+  bridge address. If it fails,
   the documented fallback (Fly Machines after slimming; Northflank; Ona)
   is chosen before the tooling is built, and this change is re-planned.
 - The option defaults off; existing generated repositories see no change on

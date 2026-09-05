@@ -55,17 +55,21 @@ allows and drives from Herdr the same way a local pane worker does.
   1Password, no operator `gh` login, no `TS_AUTHKEY`, and — new to this
   environment — **never the org-scoped Sprites API token**, which would let
   one lane exec into its siblings.
-- Define the **checkout model**: one sprite is one lane is one branch,
-  cloned from GitHub over HTTPS; the operator's working tree, gitignored
-  files, and local fixtures never cross into the sprite.
+- Define the **checkout model**: one sprite is one lane is one branch, the
+  remote branch head cloned from GitHub over HTTPS onto the sprite's
+  workspace folder before the container comes up; the operator's working
+  tree, gitignored files, and local fixtures never cross into the sprite,
+  and a local branch ahead of the remote is refused.
 - Define **egress**: an explicit DNS allowlist network policy (GitHub, GHCR,
   package registries, the Anthropic and OpenAI API hosts, and the Convex
   local-backend release host) set from the orchestrator side before any
   credential is injected, with the sprite unable to change it.
 - Define **cost controls**: the sprite stays active exactly while a lane
   command runs (the mechanism lives inside the sprite, never on the
-  orchestrator's machine) and sleeps otherwise; a per-lane TTL whose expiry
-  stops new work without destroying anything; a pool ceiling tied to the
+  orchestrator's machine) and sleeps otherwise; every command runs under an
+  in-sprite duration bound; a per-lane TTL whose expiry stops new work,
+  grants a grace period, and then stops running commands without
+  destroying anything; a pool ceiling tied to the
   Fly plan's concurrency limit; and `task sprite:audit` listing every lane
   with its age and lease so nothing bills unnoticed.
 - Define how the dev-loop dispatch recipe and Foreman **select** the
