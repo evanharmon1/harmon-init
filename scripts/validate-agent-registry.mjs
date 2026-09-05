@@ -3,6 +3,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+import { createSchemaValidator } from './lib/json-schema-subset.mjs'
+
+// REPO_ROOT — resolved from this script's own location, not the caller's cwd,
+// so a role/finder's repo-relative result_schema path (e.g.
+// "ai/schemas/result.challenger.schema.json") checks against the real schema
+// tree even when the registry document under validation lives in a tmpdir
+// copy (scripts/test-agent-registry.sh's mutation tests) or an unrelated cwd.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const registryPath = path.resolve(process.argv[2] ?? 'agent-registry.json')
 const schemaPath = path.resolve(
@@ -21,307 +30,13 @@ function loadJson(file) {
 const registry = loadJson(registryPath)
 const schema = loadJson(schemaPath)
 const errors = []
-
-const supportedSchemaKeywords = new Set([
-  '$schema',
-  '$id',
-  '$defs',
-  '$ref',
-  'title',
-  'description',
-  '$comment',
-  'type',
-  'const',
-  'enum',
-  'minLength',
-  'maxLength',
-  'pattern',
-  'minItems',
-  'uniqueItems',
-  'items',
-  'required',
-  'properties',
-  'additionalProperties'
-])
-
-const supportedInstanceTypes = new Set([
-  'array',
-  'boolean',
-  'integer',
-  'null',
-  'number',
-  'object',
-  'string'
-])
-
-function schemaError(location, keyword, expectation) {
-  throw new Error(`${location}.${keyword}: ${expectation}`)
-}
-
-function isSchemaObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function assertSchemaKeywordValues(rule, location) {
-  for (const keyword of ['$schema', '$id', '$ref', 'title', 'description', '$comment']) {
-    if (Object.hasOwn(rule, keyword) && typeof rule[keyword] !== 'string') {
-      schemaError(location, keyword, 'must be a string')
-    }
-  }
-  for (const keyword of ['$schema', '$id', '$ref']) {
-    if (Object.hasOwn(rule, keyword) && rule[keyword].length === 0) {
-      schemaError(location, keyword, 'must not be empty')
-    }
-  }
-
-  if (Object.hasOwn(rule, 'type')) {
-    const types = Array.isArray(rule.type) ? rule.type : [rule.type]
-    if (
-      types.length === 0 ||
-      types.some((type) => typeof type !== 'string' || !supportedInstanceTypes.has(type)) ||
-      new Set(types).size !== types.length
-    ) {
-      schemaError(location, 'type', 'must name one or more unique supported instance types')
-    }
-  }
-
-  if (Object.hasOwn(rule, 'enum')) {
-    if (!Array.isArray(rule.enum) || rule.enum.length === 0) {
-      schemaError(location, 'enum', 'must be a non-empty array')
-    }
-    if (
-      rule.enum.some((candidate, index) =>
-        rule.enum.slice(0, index).some((earlier) => jsonEqual(candidate, earlier))
-      )
-    ) {
-      schemaError(location, 'enum', 'must contain unique values')
-    }
-  }
-
-  for (const keyword of ['minLength', 'maxLength', 'minItems']) {
-    if (Object.hasOwn(rule, keyword) && (!Number.isInteger(rule[keyword]) || rule[keyword] < 0)) {
-      schemaError(location, keyword, 'must be a non-negative integer')
-    }
-  }
-  if (
-    Object.hasOwn(rule, 'minLength') &&
-    Object.hasOwn(rule, 'maxLength') &&
-    rule.maxLength < rule.minLength
-  ) {
-    schemaError(location, 'maxLength', 'must be >= minLength')
-  }
-
-  if (Object.hasOwn(rule, 'pattern')) {
-    if (typeof rule.pattern !== 'string') schemaError(location, 'pattern', 'must be a string')
-    try {
-      new RegExp(rule.pattern, 'u')
-    } catch {
-      schemaError(location, 'pattern', 'must be a valid regular expression')
-    }
-  }
-
-  if (Object.hasOwn(rule, 'uniqueItems') && typeof rule.uniqueItems !== 'boolean') {
-    schemaError(location, 'uniqueItems', 'must be a boolean')
-  }
-  if (Object.hasOwn(rule, 'required')) {
-    if (
-      !Array.isArray(rule.required) ||
-      rule.required.some((name) => typeof name !== 'string') ||
-      new Set(rule.required).size !== rule.required.length
-    ) {
-      schemaError(location, 'required', 'must be an array of unique strings')
-    }
-  }
-  for (const keyword of ['$defs', 'properties']) {
-    if (
-      Object.hasOwn(rule, keyword) &&
-      (rule[keyword] === null || typeof rule[keyword] !== 'object' || Array.isArray(rule[keyword]))
-    ) {
-      schemaError(location, keyword, 'must be an object')
-    }
-  }
-  if (
-    Object.hasOwn(rule, 'additionalProperties') &&
-    typeof rule.additionalProperties !== 'boolean'
-  ) {
-    schemaError(location, 'additionalProperties', 'must be a boolean')
-  }
-}
-
-function assertSupportedSchema(
-  rule,
-  location = '$schema',
-  audit = { active: new Set(), complete: new Set() }
-) {
-  if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) {
-    throw new Error(`${location}: boolean and non-object schemas are not supported`)
-  }
-  if (audit.active.has(rule)) {
-    throw new Error(`${location}: cyclic schema references are not supported`)
-  }
-  if (audit.complete.has(rule)) return
-
-  audit.active.add(rule)
-  for (const keyword of Object.keys(rule)) {
-    if (!supportedSchemaKeywords.has(keyword)) {
-      throw new Error(`${location}: unsupported schema keyword ${keyword}`)
-    }
-  }
-  assertSchemaKeywordValues(rule, location)
-  if (Object.hasOwn(rule, '$ref') && Object.keys(rule).some((keyword) => keyword !== '$ref')) {
-    throw new Error(`${location}: schema keywords alongside $ref are not supported`)
-  }
-  if (Object.hasOwn(rule, '$ref')) {
-    const target = resolveRef(rule.$ref)
-    if (!isSchemaObject(target)) {
-      throw new Error(
-        `${location}: schema reference ${rule.$ref} does not resolve to an object schema`
-      )
-    }
-    assertSupportedSchema(target, `${location}.$ref(${rule.$ref})`, audit)
-  }
-  for (const [name, child] of Object.entries(rule.$defs ?? {})) {
-    assertSupportedSchema(child, `${location}.$defs.${name}`, audit)
-  }
-  for (const [name, child] of Object.entries(rule.properties ?? {})) {
-    assertSupportedSchema(child, `${location}.properties.${name}`, audit)
-  }
-  if (Object.hasOwn(rule, 'items')) assertSupportedSchema(rule.items, `${location}.items`, audit)
-  audit.active.delete(rule)
-  audit.complete.add(rule)
-}
+const engine = createSchemaValidator(schema)
 
 try {
-  assertSupportedSchema(schema)
+  engine.assertSupportedSchema(schema)
 } catch (error) {
   console.error(`agent registry: invalid or unsupported schema: ${error.message}`)
   process.exit(1)
-}
-
-function canonicalJson(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
-
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-    .join(',')}}`
-}
-
-function jsonEqual(left, right) {
-  return canonicalJson(left) === canonicalJson(right)
-}
-
-function satisfiesMinLength(value, minimum) {
-  let length = 0
-  const codePoints = value[Symbol.iterator]()
-  while (length < minimum && !codePoints.next().done) {
-    length += 1
-  }
-  return length >= minimum
-}
-
-function exceedsMaxLength(value, maximum) {
-  let length = 0
-  const codePoints = value[Symbol.iterator]()
-  while (length <= maximum && !codePoints.next().done) {
-    length += 1
-  }
-  return length > maximum
-}
-
-function instanceType(value) {
-  if (value === null) return 'null'
-  if (Array.isArray(value)) return 'array'
-  if (Number.isInteger(value)) return 'integer'
-  return typeof value
-}
-
-function resolveRef(ref) {
-  if (!ref.startsWith('#/')) throw new Error(`unsupported schema reference: ${ref}`)
-  return ref
-    .slice(2)
-    .split('/')
-    .map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~'))
-    .reduce((node, part) => {
-      if (node === null || typeof node !== 'object' || !Object.hasOwn(node, part)) {
-        return undefined
-      }
-      return node[part]
-    }, schema)
-}
-
-function validateSchema(value, rule, location) {
-  if (Object.hasOwn(rule, '$ref')) {
-    const target = resolveRef(rule.$ref)
-    if (!isSchemaObject(target)) {
-      errors.push(`${location}: schema reference ${rule.$ref} does not resolve to an object schema`)
-      return
-    }
-    validateSchema(value, target, location)
-    return
-  }
-
-  if (Object.hasOwn(rule, 'const') && !jsonEqual(value, rule.const)) {
-    errors.push(`${location}: must equal ${JSON.stringify(rule.const)}`)
-  }
-  if (rule.enum && !rule.enum.some((candidate) => jsonEqual(value, candidate))) {
-    errors.push(`${location}: must be one of ${rule.enum.map(JSON.stringify).join(', ')}`)
-  }
-
-  if (rule.type) {
-    const allowed = Array.isArray(rule.type) ? rule.type : [rule.type]
-    const actual = instanceType(value)
-    const integerSatisfiesNumber = actual === 'integer' && allowed.includes('number')
-    if (!allowed.includes(actual) && !integerSatisfiesNumber) {
-      errors.push(`${location}: expected ${allowed.join(' or ')}, found ${actual}`)
-      return
-    }
-  }
-
-  if (typeof value === 'string') {
-    if (rule.minLength !== undefined && !satisfiesMinLength(value, rule.minLength)) {
-      errors.push(`${location}: must contain at least ${rule.minLength} character(s)`)
-    }
-    if (rule.maxLength !== undefined && exceedsMaxLength(value, rule.maxLength)) {
-      errors.push(`${location}: must contain at most ${rule.maxLength} character(s)`)
-    }
-    if (rule.pattern && !new RegExp(rule.pattern, 'u').test(value)) {
-      errors.push(`${location}: does not match ${rule.pattern}`)
-    }
-  }
-
-  if (Array.isArray(value)) {
-    if (rule.minItems !== undefined && value.length < rule.minItems) {
-      errors.push(`${location}: must contain at least ${rule.minItems} item(s)`)
-    }
-    if (rule.uniqueItems) {
-      const canonicalItems = value.map(canonicalJson)
-      if (new Set(canonicalItems).size !== canonicalItems.length) {
-        errors.push(`${location}: items must be unique`)
-      }
-    }
-    if (rule.items) {
-      value.forEach((item, index) => validateSchema(item, rule.items, `${location}[${index}]`))
-    }
-  }
-
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    for (const required of rule.required ?? []) {
-      if (!Object.hasOwn(value, required))
-        errors.push(`${location}: missing required property ${required}`)
-    }
-    if (rule.additionalProperties === false) {
-      for (const key of Object.keys(value)) {
-        if (!Object.hasOwn(rule.properties ?? {}, key)) {
-          errors.push(`${location}: unexpected property ${key}`)
-        }
-      }
-    }
-    for (const [key, childRule] of Object.entries(rule.properties ?? {})) {
-      if (Object.hasOwn(value, key)) validateSchema(value[key], childRule, `${location}.${key}`)
-    }
-  }
 }
 
 function duplicateSlugs(rows) {
@@ -333,7 +48,7 @@ function semanticError(message) {
   errors.push(`registry: ${message}`)
 }
 
-validateSchema(registry, schema, '$registry')
+errors.push(...engine.validate(registry, schema, '$registry'))
 
 // Cross-record constraints cannot be expressed by the structural schema alone.
 if (errors.length === 0) {
@@ -344,6 +59,19 @@ if (errors.length === 0) {
     semanticError(`duplicate family slug: ${slug}`)
   for (const slug of duplicateSlugs(registry.harnesses))
     semanticError(`duplicate harness slug: ${slug}`)
+  const legacyClaimOwners = new Map()
+  for (const family of registry.families) {
+    for (const label of family.legacy_claim_labels ?? []) {
+      const owner = legacyClaimOwners.get(label)
+      if (owner) {
+        semanticError(
+          `legacy claim label ${label} is shared by families ${owner} and ${family.slug}`
+        )
+      } else {
+        legacyClaimOwners.set(label, family.slug)
+      }
+    }
+  }
   for (const slug of duplicateSlugs(registry.foreman_adapters)) {
     semanticError(`duplicate Foreman adapter slug: ${slug}`)
   }
@@ -487,6 +215,256 @@ if (errors.length === 0) {
     semanticError(
       'MiniMax must use family minimax and provider-rewired harness claude-code-minimax'
     )
+  }
+
+  // ── roles[] (specs/dev-flow-v2.md 'Roles and authority', #635) ──────────
+  const WRITE_RESTRICTED_ROLES = new Set(['challenger', 'reviewer', 'integrator'])
+  const REQUIRED_ROLE_SLUGS = [
+    'orchestrator',
+    'implementer',
+    'challenger',
+    'reviewer',
+    'integrator'
+  ]
+  // The exact writes[] set each role must declare — verbatim from
+  // specs/dev-flow-v2.md's 'Roles and authority' table. challenger/reviewer
+  // are omitted (checked separately above: must be empty).
+  const EXPECTED_ROLE_WRITES = {
+    orchestrator: [
+      'dispositions',
+      'the adjudication record',
+      'gh pr create --draft',
+      'the PR body',
+      'evidence and run-record comments',
+      'gh pr ready'
+    ],
+    implementer: [
+      'commits on the branch its dispatch names',
+      'feature-branch round pushes through the round-push broker'
+    ],
+    integrator: [
+      'the brokered Codex trigger comment',
+      'brokered thread replies containing text supplied by the orchestrator'
+    ]
+  }
+  const roleBySlug = new Map(registry.roles.map((role) => [role.slug, role]))
+
+  for (const required of REQUIRED_ROLE_SLUGS) {
+    if (!roleBySlug.has(required)) semanticError(`roles[] is missing required role ${required}`)
+  }
+  for (const slug of duplicateSlugs(registry.roles)) {
+    semanticError(`duplicate role slug: ${slug}`)
+  }
+  for (const role of registry.roles) {
+    if (role.slug === 'orchestrator') {
+      if (role.result_schema !== null) {
+        semanticError('role orchestrator returns no result and must have result_schema: null')
+      }
+    } else {
+      // Bound to the role's OWN slug, not merely "non-null and some existing
+      // file" — the latter would accept e.g. challenger.result_schema
+      // pointing at result.implementer.schema.json, letting a payload with
+      // no finding core satisfy the challenge stage's own role contract.
+      const expected = `ai/schemas/result.${role.slug}.schema.json`
+      if (role.result_schema !== expected) {
+        semanticError(
+          `role ${role.slug} must name its own result schema (${expected}), found ${role.result_schema}`
+        )
+      } else if (!fs.existsSync(path.join(REPO_ROOT, role.result_schema))) {
+        // Defense in depth, not reachable via a registry-only mutation now
+        // that the branch above pins the value to the role's own slug: every
+        // enum member IS one of today's real files by construction, so this
+        // only fires if a future change deletes/renames that file on disk
+        // without updating the registry to match.
+        semanticError(
+          `role ${role.slug} names result_schema ${role.result_schema}, which does not exist`
+        )
+      }
+    }
+    // challenger and reviewer write nothing outside their own result:
+    // writes must be empty. integrator is ALSO write-restricted (no ambient
+    // writes) but not "no writes at all" — it is limited to its two brokered
+    // actions, so its writes must be non-empty, same as orchestrator and
+    // implementer's real, unrestricted write boundaries.
+    const mustBeEmpty = role.slug === 'challenger' || role.slug === 'reviewer'
+    if (mustBeEmpty && role.writes.length !== 0) {
+      semanticError(`role ${role.slug} must declare no external writes (writes: [])`)
+    }
+    if (!mustBeEmpty && role.writes.length === 0) {
+      semanticError(
+        `role ${role.slug} must declare its permitted external writes (writes must be non-empty)`
+      )
+    }
+    // The schema's enum bounds writes[] to the fixed vocabulary the anchor
+    // spec's table uses at all, but a subset or a mixed-role write (e.g.
+    // orchestrator declaring only "gh pr ready", or integrator borrowing
+    // orchestrator's "the PR body") is still a false claim about that SPECIFIC
+    // role's own authority — so the set for each non-empty-writes role must
+    // match its own expected set exactly, not merely draw from the shared pool.
+    const expectedWrites = EXPECTED_ROLE_WRITES[role.slug]
+    if (expectedWrites && Array.isArray(role.writes)) {
+      const actual = new Set(role.writes)
+      const expected = new Set(expectedWrites)
+      const missing = expectedWrites.filter((w) => !actual.has(w))
+      const extra = role.writes.filter((w) => !expected.has(w))
+      if (missing.length > 0 || extra.length > 0) {
+        semanticError(
+          `role ${role.slug} writes must exactly match its own expected set` +
+            (missing.length > 0 ? `; missing: ${missing.join(', ')}` : '') +
+            (extra.length > 0 ? `; unexpected: ${extra.join(', ')}` : '')
+        )
+      }
+    }
+  }
+
+  // ── finders[] (docs/glossary.md 'finder', #635) ──────────────────────────
+  const PRE_PR_STAGES = new Set(['challenge', 'review'])
+  const ROLE_STAGE_AFFINITY = {
+    challenger: 'challenge',
+    reviewer: 'review',
+    integrator: 'integration'
+  }
+
+  for (const slug of duplicateSlugs(registry.finders)) {
+    semanticError(`duplicate finder slug: ${slug}`)
+  }
+  for (const finder of registry.finders) {
+    if (finder.surface === 'pr-cloud') {
+      if (finder.stages.some((stage) => PRE_PR_STAGES.has(stage))) {
+        semanticError(
+          `finder ${finder.slug} has surface pr-cloud but is configured for a pre-PR stage (${finder.stages.filter((s) => PRE_PR_STAGES.has(s)).join(', ')}) — a PR-only finder cannot serve a stage that runs before a PR exists`
+        )
+      }
+      if (finder.invocation !== null) {
+        semanticError(
+          `finder ${finder.slug} has surface pr-cloud but declares an invocation — pr-cloud finders are collected, never invoked`
+        )
+      }
+      if (finder.collection === null) {
+        semanticError(`finder ${finder.slug} has surface pr-cloud but no collection protocol`)
+      }
+      if (finder.trusted_actor_id === null) {
+        semanticError(
+          `finder ${finder.slug} has surface pr-cloud but no trusted_actor_id — a collected finder needs an immutable actor identity`
+        )
+      }
+    } else if (finder.surface === 'local-cli') {
+      if (finder.collection !== null) {
+        semanticError(
+          `finder ${finder.slug} has surface local-cli but declares a collection protocol — local-cli finders are invoked, never collected`
+        )
+      }
+      if (finder.invocation === null) {
+        semanticError(`finder ${finder.slug} has surface local-cli but no invocation`)
+      }
+      if (finder.trusted_actor_id !== null) {
+        semanticError(
+          `finder ${finder.slug} has surface local-cli but declares trusted_actor_id — a local-cli finder's output is the direct return of a locally-run harness, not a scraped remote identity`
+        )
+      }
+    }
+    if ((finder.trusted_actor_id === null) !== (finder.trusted_actor_login === null)) {
+      semanticError(
+        `finder ${finder.slug} must set trusted_actor_id and trusted_actor_login together (both null or both present)`
+      )
+    }
+    // A pre-PR confidence stage (challenge/review) has no "collected,
+    // role-less" concept the way integration's codex-cloud does — the ONLY
+    // way to produce evidence for those stages in this contract is a real
+    // challenger/reviewer dispatch returning its own enveloped result, so a
+    // finder configured for one must declare that role. Without this, a
+    // role:null finder skipped every role/schema/stage-affinity check below
+    // entirely (they all live inside `if (finder.role !== null)`) and could
+    // be selected for a confidence stage with no schema-bound contract at
+    // all — the reverse half of role dispatch (finder -> role), unchecked.
+    if (finder.role === null && finder.stages.some((stage) => PRE_PR_STAGES.has(stage))) {
+      semanticError(
+        `finder ${finder.slug} serves a pre-PR confidence stage (${finder.stages.filter((s) => PRE_PR_STAGES.has(s)).join(', ')}) but declares no role — challenge/review has no collected, role-less finder concept; every such finder must be a real challenger or reviewer dispatch`
+      )
+    }
+    // Digits-only shape, checked here rather than a schema `pattern`: the
+    // breakdown skill's independent, more restrictive schema-subset engine
+    // (for validating a fetched remote repo's registry) only permits a fixed,
+    // pre-vetted allowlist of pattern strings, and a GitHub actor id has no
+    // fixed enum to fall back on the way result_schema/role do.
+    if (
+      typeof finder.trusted_actor_id === 'string' &&
+      !/^[1-9][0-9]*$/.test(finder.trusted_actor_id)
+    ) {
+      semanticError(
+        `finder ${finder.slug} trusted_actor_id must be a digits-only GitHub actor id: ${finder.trusted_actor_id}`
+      )
+    }
+    if (finder.role === null) {
+      // The converse of the "own result_schema" binding below: a role-less
+      // finder (a collected review product, never its own enveloped result —
+      // see the field's own description) has no role to derive an expected
+      // result_schema from, so it must declare none either. Without this, a
+      // finder could claim role:null (skipping every role check below)
+      // while still naming a real result_schema, an internally contradictory
+      // pair no check caught.
+      if (finder.result_schema !== null) {
+        semanticError(
+          `finder ${finder.slug} declares role null but names result_schema ${finder.result_schema} — a role-less finder has no role to derive an expected schema from and must declare result_schema null too`
+        )
+      }
+    } else {
+      const role = roleBySlug.get(finder.role)
+      if (!role) {
+        semanticError(`finder ${finder.slug} names unknown role ${finder.role}`)
+      } else {
+        if (finder.result_schema !== role.result_schema) {
+          semanticError(
+            `finder ${finder.slug} declares role ${finder.role} but result_schema ${finder.result_schema} does not match that role's own result_schema ${role.result_schema}`
+          )
+        }
+        const requiredStage = ROLE_STAGE_AFFINITY[finder.role]
+        if (requiredStage && finder.stages.some((stage) => stage !== requiredStage)) {
+          semanticError(
+            `finder ${finder.slug} declares role ${finder.role} but is configured for a stage outside that role's own affinity (${finder.stages.join(', ')}, expected only ${requiredStage})`
+          )
+        }
+      }
+    }
+  }
+
+  // ── model tiers (specs/dev-flow-v2.md 'Model strata live in registry
+  // inventory', #635) — group every model by (family, tier); a rung with more
+  // than one model needs exactly one default, a singleton rung needs none. ──
+  for (const family of registry.families) {
+    const rungs = new Map()
+    for (const model of family.models) {
+      const key = model.tier
+      const rung = rungs.get(key) ?? []
+      rung.push(model)
+      rungs.set(key, rung)
+    }
+    for (const [tier, models] of rungs) {
+      const defaults = models.filter((model) => model.default === true)
+      if (models.length > 1 && defaults.length === 0) {
+        semanticError(
+          `family ${family.slug} has ${models.length} models at tier ${tier} (${models.map((m) => m.slug).join(', ')}) and none is marked default`
+        )
+      } else if (defaults.length > 1) {
+        semanticError(
+          `family ${family.slug} has ${defaults.length} default models at tier ${tier} (${defaults.map((m) => m.slug).join(', ')}) — at most one may be default`
+        )
+      }
+    }
+  }
+
+  // ── harness write-restriction (specs/dev-flow-v2.md 'Write boundaries are
+  // enforced capabilities', #635): a harness cannot be trusted to dispatch a
+  // write-restricted role unless it can deny ambient writes. ──────────────
+  for (const harness of registry.harnesses) {
+    if (!harness.can_restrict_writes) {
+      const restricted = harness.roles.filter((role) => WRITE_RESTRICTED_ROLES.has(role))
+      if (restricted.length > 0) {
+        semanticError(
+          `harness ${harness.slug} declares role(s) ${restricted.join(', ')} but can_restrict_writes is false — a harness that cannot deny ambient writes must not dispatch a write-restricted role`
+        )
+      }
+    }
   }
 }
 

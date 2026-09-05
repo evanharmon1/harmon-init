@@ -62,6 +62,17 @@ devcontainer_cli() {
 HARMON_IMAGE="ghcr.io/evanharmon1/harmon-devcontainer"
 HARMON_IMAGE_MANIFEST="/usr/local/share/harmon-devcontainer/manifest.json"
 
+# The ONE image for which "Copilot autonomy is enabled but there is no
+# copilot binary" is a legitimate state rather than a defect: the
+# pre-harness-matrix pin, which ships no copilot at all. Bounding the
+# exception to this exact digest makes it EXPIRE by itself the moment the
+# sync-pin PR (#1152) bumps .devcontainer/Dockerfile — after that, an
+# enabled marker with no wrapper-resolving copilot is a real failure on
+# every image, which is what keeps the assertion from being a permanent
+# success-note. See openspec/changes/bot-autonomy-new-harnesses/tasks.md
+# task 5.5.
+HARMON_PRE_HARNESS_MATRIX_DIGEST="sha256:b8a305693e996ac5289bf6f18ae47dd75d9d04ed1763499ef03f52949ea5b519"
+
 # assert_image_pin <dockerfile>
 # The Dockerfile must extend exactly one approved immutable reference —
 # the public package pinned by BOTH the sha-<40-hex-source-commit> tag and
@@ -103,6 +114,16 @@ assert_image_pin() {
     [ "$last_user" = "vscode" ] ||
         fail "${dockerfile} does not finish as USER vscode (last USER is '${last_user}')"
     printf '%s\n' "$source"
+}
+
+# pinned_image_digest <dockerfile>  — the sha256 manifest digest off the
+# Dockerfile's FROM line. assert_image_pin has already proved the reference's
+# shape and that the RUNNING container's manifest revision matches its source
+# commit, so this is a read of an already-validated pin, not a second parser.
+pinned_image_digest() {
+    local ref
+    ref="$(awk 'toupper($1) == "FROM" { print $2; exit }' "$1")"
+    printf 'sha256:%s' "${ref##*@sha256:}"
 }
 
 # ── unit mode ─────────────────────────────────────────────────────────
@@ -1168,6 +1189,37 @@ assert_container() {
             bash .devcontainer/scripts/bot-autonomy.sh verify 2>&1)" || bot_autonomy_rc=$?
         [ "$bot_autonomy_rc" -eq 0 ] ||
             fail "bot-autonomy.sh verify failed in the bot container: ${bot_autonomy_out}"
+
+        # The Copilot autonomy wrapper only works if it actually WINS on the
+        # container-wide PATH. `bot-autonomy.sh verify` proves the wrapper
+        # exists with the right bytes, but a wrong PATH order would leave
+        # every real `copilot` invocation delegating straight to the system
+        # binary with no --allow-all — a green verify over an ineffective
+        # wrapper. Resolve the name the way a programmatic launcher does
+        # (no login shell), assert WHICH file wins, and only then exercise
+        # it. Gated on the marker: a default-off consumer has no wrapper to
+        # win, and on a pin that predates the harness-matrix image there is
+        # no `copilot` at all yet (see
+        # openspec/changes/bot-autonomy-new-harnesses/tasks.md task 5.5 —
+        # this becomes live coverage once the sync-pin PR lands).
+        local copilot_marker copilot_path copilot_version
+        copilot_marker="$(docker exec -u vscode "$container_id" printenv HARMON_BOT_AUTONOMY_COPILOT 2>/dev/null || true)"
+        copilot_path="$(docker exec -u vscode -w "$workspace_folder" "$container_id" \
+            sh -c 'command -v copilot || true' 2>/dev/null || true)"
+        if [ "$copilot_marker" = "enabled" ] && [ -n "$copilot_path" ]; then
+            [ "$copilot_path" = "/home/vscode/.local/bin/copilot" ] ||
+                fail "copilot resolves to '${copilot_path}' in the bot container, not the autonomy wrapper at /home/vscode/.local/bin/copilot — the container-wide PATH prepend is not winning"
+            copilot_version="$(docker exec -u vscode -w "$workspace_folder" "$container_id" \
+                copilot --version 2>&1)" ||
+                fail "the copilot autonomy wrapper could not run 'copilot --version' in the bot container: ${copilot_version}"
+        elif [ "$copilot_marker" = "enabled" ] &&
+            [ "$(pinned_image_digest "${repo_root}/.devcontainer/Dockerfile")" = "$HARMON_PRE_HARNESS_MATRIX_DIGEST" ]; then
+            # Bounded to the one pin that genuinely ships no copilot, so this
+            # cannot become a standing excuse — see the constant above.
+            echo "==> note: HARMON_BOT_AUTONOMY_COPILOT=enabled on the pre-harness-matrix pin, which ships no copilot binary; wrapper PATH assertion becomes live when #1152 bumps the pin"
+        elif [ "$copilot_marker" = "enabled" ]; then
+            fail "HARMON_BOT_AUTONOMY_COPILOT=enabled but no copilot resolves on PATH in the bot container, and this image is not the pre-harness-matrix pin — the autonomy wrapper is missing or its binary is gone"
+        fi
     else
         [ "$codex_sandbox" = "workspace-write" ] || fail "human Codex sandbox is '${codex_sandbox}'"
         [ "$codex_approval" = "on-request" ] || fail "human Codex approval policy is '${codex_approval}'"

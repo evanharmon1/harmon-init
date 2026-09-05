@@ -64,6 +64,11 @@ devcontainer_coder_folder_uri: ""
 # default stays off because Antigravity requires a Google account.
 use_antigravity_cli: true
 
+# Dogfoods prompt-free GitHub Copilot CLI in the bot profile only. The
+# generated-template default stays off because Copilot requires a GitHub
+# account on a Copilot plan.
+use_copilot_cli: true
+
 # Dogfoods the alternative-model provider wrappers (claude-kimi/deepseek/glm)
 # in both devcontainer profiles. Keys come from 1Password Environments locally.
 use_alternative_claude_providers: true
