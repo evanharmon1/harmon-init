@@ -86,8 +86,16 @@ cmd_apply() {
     # Gated on no backup existing yet, so apply -> apply -> restore returns
     # the value from before the FIRST apply, not from before the last one.
     if [ ! -f "$BACKUP" ]; then
-        local prior tools_prior present values backup_tmp
-        prior="$(yq -r '.tools.approvalMode // ""' "$CONFIG")"
+        local approval_present prior_json tools_prior present values backup_tmp
+        # Presence is has(), never the VALUE. An explicit `approvalMode: null`
+        # and an explicit empty string are both keys that WERE there and must
+        # be put back; a `// ""` default collapses each of them into the same
+        # shell string as a genuinely absent key, so restore would delete a
+        # key it had found.
+        approval_present="$(yq -r '(.tools // {}) | has("approvalMode")' "$CONFIG")"
+        # The raw value, JSON-encoded, so null / "" / a string all round-trip
+        # exactly instead of being flattened through a shell string.
+        prior_json="$(yq -o=json -I=0 '.tools.approvalMode' "$CONFIG")"
         # Three states, not a boolean: `tools:` written with no value is a
         # DIFFERENT prior shape from `tools: {…}`, and apply turns both into a
         # mapping. A has()/boolean backup cannot tell restore which one to put
@@ -97,9 +105,9 @@ cmd_apply() {
         '!!null') tools_prior=null ;;
         *) tools_prior=map ;;
         esac
-        if [ -n "$prior" ]; then
+        if [ "$approval_present" = "true" ]; then
             present='["tools.approvalMode"]'
-            values="$(jq -n --arg v "$prior" '{"tools.approvalMode": $v}')"
+            values="$(jq -n --argjson v "$prior_json" '{"tools.approvalMode": $v}')"
         else
             present='[]'
             values='{}'
@@ -131,17 +139,21 @@ cmd_restore() {
         echo "oh-my-pi: restore failed — ${CONFIG} is missing or not a valid YAML mapping; leaving ${BACKUP} in place" >&2
         return 1
     fi
-    local prior tools_prior
-    prior="$(jq -r '.values["tools.approvalMode"] // ""' "$BACKUP")" || {
+    local approval_present prior_json tools_prior
+    approval_present="$(jq -r '(.present // []) | any(. == "tools.approvalMode")' "$BACKUP")" || {
         echo "oh-my-pi: restore failed — could not read ${BACKUP}; leaving it in place" >&2
         return 1
     }
+    prior_json="$(jq -c '.values["tools.approvalMode"]' "$BACKUP")"
     tools_prior="$(jq -r '.tools_prior // "map"' "$BACKUP")"
-    if [ -n "$prior" ]; then
-        # strenv, never string interpolation: the captured value comes off
-        # disk, and splicing it into the expression would let a hand-edited
-        # backup run arbitrary yq against the operator's config.
-        BOT_AUTONOMY_OMP_PRIOR="$prior" yq -i '.tools.approvalMode = strenv(BOT_AUTONOMY_OMP_PRIOR)' "$CONFIG"
+    if [ "$approval_present" = "true" ]; then
+        # strenv + from_json, never string interpolation: the captured value
+        # comes off disk, so splicing it into the expression would let a
+        # hand-edited backup run arbitrary yq against the operator's config.
+        # from_json is also what makes null and "" restore as themselves
+        # rather than as the string "null" or as a deleted key.
+        BOT_AUTONOMY_OMP_PRIOR="$prior_json" \
+            yq -i '.tools.approvalMode = (strenv(BOT_AUTONOMY_OMP_PRIOR) | from_json)' "$CONFIG"
     else
         yq -i 'del(.tools.approvalMode)' "$CONFIG"
         # apply may have created the `tools` node itself, or turned an

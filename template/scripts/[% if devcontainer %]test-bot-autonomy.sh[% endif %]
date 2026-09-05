@@ -791,6 +791,56 @@ HOME="$cp_stale_home" BOT_AUTONOMY_COPILOT_LINK="$cp_stale_link" \
 [ ! -e "$cp_stale_link" ] ||
     fail "copilot-cli apply left a previous release's own wrapper in place when disabled"
 
+echo "==> 17c. Copilot CLI: an enabled marker with NO copilot binary fails closed, not silently"
+# bot-autonomy.sh's dispatch gate skips a module whose executable is absent
+# from PATH. For an ENABLED Copilot that hides the exact state this module
+# exists to catch — the repo asked for autonomy and there is no copilot to
+# front, so apply installs nothing and verify never runs. The module opts into
+# always_dispatch while the marker is enabled; these two fixtures pin both
+# halves of that, through the TOP-LEVEL entrypoint on a PATH that by
+# construction resolves no copilot at all (Codex cloud review, shepherd r1).
+cp_gate_registry="${work_dir}/registry-copilot-only.json"
+jq -n '{harnesses: [{slug: "copilot-cli"}]}' >"$cp_gate_registry"
+cp_gate_run() {
+    # $1 marker, $2 COPILOT_ALLOW_ALL, $3 subcommand, $4 HOME
+    (cd "$work_dir" && env HOME="$4" \
+        BOT_AUTONOMY_REGISTRY="$cp_gate_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+        BOT_AUTONOMY_COPILOT_LINK="${4}/.local/bin/copilot" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="${4}/.copilot/settings.json" \
+        HARMON_COPILOT_SYSTEM_BINARY="${work_dir}/no-such-copilot-anywhere" \
+        HARMON_BOT_AUTONOMY_COPILOT="$1" COPILOT_ALLOW_ALL="$2" PATH="$SAFE_PATH" \
+        bash "$bot_autonomy" "$3" 2>&1)
+}
+[ "$(HARMON_BOT_AUTONOMY_COPILOT=enabled bash "$copilot_module" always_dispatch)" = "true" ] ||
+    fail "copilot-cli does not opt into always_dispatch while its marker is enabled"
+for quiet_marker in disabled ""; do
+    [ -z "$(HARMON_BOT_AUTONOMY_COPILOT="$quiet_marker" bash "$copilot_module" always_dispatch)" ] ||
+        fail "copilot-cli opted into always_dispatch with the marker '${quiet_marker:-<unset>}' — it must stay on the ordinary executable gate there"
+done
+
+cp_gate_on="${work_dir}/copilot-gate-enabled-home"
+mkdir -p "${cp_gate_on}/.local/bin"
+cp_gate_run enabled true apply "$cp_gate_on" >/dev/null ||
+    fail "bot-autonomy.sh apply failed for an enabled Copilot with no binary installed"
+cp_gate_out="$(cp_gate_run enabled true verify "$cp_gate_on")" && cp_gate_rc=0 || cp_gate_rc=$?
+[ "${cp_gate_rc:-0}" -ne 0 ] ||
+    fail "bot-autonomy.sh verify PASSED with the Copilot marker enabled and no copilot binary anywhere — the module was skipped instead of failing closed"
+case "$cp_gate_out" in
+*copilot*) ;;
+*) fail "bot-autonomy.sh verify's failure for an enabled Copilot with no binary did not name copilot: ${cp_gate_out}" ;;
+esac
+
+# The complementary half: a default-off consumer whose image happens to carry
+# no copilot must NOT be dragged into a policy check with nothing to assert.
+cp_gate_off="${work_dir}/copilot-gate-disabled-home"
+mkdir -p "${cp_gate_off}/.local/bin"
+cp_gate_run disabled false apply "$cp_gate_off" >/dev/null ||
+    fail "bot-autonomy.sh apply failed for a disabled Copilot with no binary installed"
+cp_gate_run disabled false verify "$cp_gate_off" >/dev/null ||
+    fail "bot-autonomy.sh verify failed for a DISABLED Copilot with no binary — the ordinary executable gate is correct there"
+[ ! -e "${cp_gate_off}/.local/bin/copilot" ] ||
+    fail "the disabled branch installed a wrapper while dispatched with no copilot binary"
+
 echo "==> 18. pi: apply writes nothing; verify fails closed on BOTH trust-granting surfaces"
 pi_module="${module_dir}/pi.sh"
 pi_home="${work_dir}/pi-home"
@@ -947,6 +997,28 @@ BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/nul
 [ "$(yq -r '.theme' "$omp_config")" = "dark" ] ||
     fail "oh-my-pi restore did not preserve unrelated keys around a null tools"
 rm -f "$omp_backup" "$omp_config"
+
+# Presence must come from has(), not from the VALUE: an explicit
+# `approvalMode: null` and an explicit empty string are both keys that were
+# there and must come back, byte for byte (Codex cloud review, shepherd r1).
+for prior_shape in 'approvalMode: null' 'approvalMode: ""' 'other: 1'; do
+    printf 'theme: dark\ntools:\n  %s\n' "$prior_shape" >"$omp_config"
+    omp_before="$(cat "$omp_config")"
+    BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+    [ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
+        fail "oh-my-pi apply did not seed yolo over the prior shape '${prior_shape}'"
+    case "$prior_shape" in
+    other:*) omp_want_present=false ;;
+    *) omp_want_present=true ;;
+    esac
+    [ "$(jq -r '(.present // []) | any(. == "tools.approvalMode")' "$omp_backup")" = "$omp_want_present" ] ||
+        fail "oh-my-pi apply recorded the wrong presence for the prior shape '${prior_shape}' — presence must come from has(), not from the value"
+    BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+    [ "$(cat "$omp_config")" = "$omp_before" ] ||
+        fail "oh-my-pi apply->restore did not return '${prior_shape}' byte-for-byte; got: $(cat "$omp_config")"
+    [ ! -f "$omp_backup" ] || fail "oh-my-pi restore left its backup behind for '${prior_shape}'"
+done
+rm -f "$omp_config"
 
 # A SCALAR tools value cannot hold a policy: yq's assignment into it is a
 # silent no-op that still exits 0, so apply must refuse rather than report
