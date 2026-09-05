@@ -118,21 +118,21 @@ own — a PR handed to a human is the deliverable, not something to ask about.
 
 **The loop is the stage skills; this section is the policy they run under.**
 `/orchestrator` is the session's standing operating mode, and the stages it
-dispatches are `/implement` (issue → draft PR), `/review` (both confidence
-stages, challenge and review), and `/integrate` (draft PR → ready for review).
+dispatches are `/claim` (take ownership — `/implement` never claims),
+`/implement` (claimed issue → draft PR), `/review` (both confidence stages),
+and `/integrate` (draft PR → ready for review).
 There is **no `dev-loop` skill** — those stages *are* the loop, and the retired
 names map onto them (`gauntlet` → `review`, `shepherd` → `integrate`); a
 vendored pin still shipping a predecessor runs it under exactly this policy.
 The skills carry the procedure — round mechanics, adjudication records, review
 polling, the PR-open ritual. Where none is vendored, this section is the whole
 contract and its invariants are owed anyway[% if use_codex_review %] (with
-[docs/guides/codex-review.md](docs/guides/codex-review.md) for the local
-reviewer's mechanics)[% endif %]. Where a **vendored** skill states a different
-cap, floor, or exit condition, **this file wins** — skills sync on their own
-cadence and can lag a policy change made here.
+[docs/guides/codex-review.md](docs/guides/codex-review.md) for the reviewer's
+mechanics)[% endif %]. Where a **vendored** skill states a different cap, floor,
+or exit condition, **this file wins** — skills sync on their own cadence.
 
 ```text
-/implement → task verify → [% if use_codex_review %]challenge → review → [% endif %]task security → DRAFT PR
+/claim → /implement → task verify → [% if use_codex_review %]challenge → review → [% endif %]task security → DRAFT PR
   → /integrate (CI, deferred findings, reviewers) → readiness gate → ready for
   review → human review → human merge
 ```
@@ -475,6 +475,26 @@ During the integration stage, accept its clean comments, reviews, or reactions o
 the current-head cycle above: stale activity is not evidence for the current
 commit, and a lone 👀 that disappears or never resolves is an incomplete
 attempt.
+
+**Both procedures for that cycle live here**, because a repo can answer
+`use_codex_review` yes and `use_skills_sync` no.
+**Where the pinned checker is vendored**
+(`.claude/skills/shepherd/assets/check-codex-cloud-review.sh`), it is the
+required implementation — never hand-roll the polling: `reserve` the cycle
+against the captured head *before* posting the trigger (the durable state must
+exist before the GitHub write), then post `@codex review`, `attach` the comment
+ID it returned, and `check`, acting on its exit code (0 clean, 10 findings,
+11 pending, 12 retry, 13 escalate, 2 indeterminate). It never writes to GitHub,
+so posting the trigger stays yours, and its `settle` subcommand records the
+disposition of a badged finding stated outside an inline thread.
+**Where it is not vendored**, the same contract is satisfied by hand: post the
+trigger and record its comment ID and request time yourself, then poll all four
+surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
+reviews, and inline review comments. The top-level comment is the one
+hand-rolled pollers forget, and a clean verdict often lands there rather than as
+a review, so missing it reports a finished cycle as incomplete. A non-inline
+finding is answered and its disposition recorded on the PR in the ordinary way;
+there is no `settle` call to make and none is owed.
 
 **Codex Automatic reviews must stay disabled.** Codex triggers a cloud review
 on three events: opening a PR for review, marking a draft ready, and an

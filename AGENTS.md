@@ -229,8 +229,9 @@ PR handed to a human is the deliverable, not something to ask permission for.
 
 **The loop is the stage skills; this section is the policy they run under.**
 `/orchestrator` is the session's standing operating mode, and the stages it
-dispatches are `/implement` (issue → draft PR), `/review` (both confidence
-stages, challenge and review), and `/integrate` (draft PR → ready for review).
+dispatches are `/claim` (take ownership — `/implement` never claims),
+`/implement` (claimed issue → draft PR), `/review` (both confidence stages),
+and `/integrate` (draft PR → ready for review).
 There is **no `dev-loop` skill** — those stages *are* the loop, and the retired
 names map onto them (`gauntlet` → `review`, `shepherd` → `integrate`); the
 vendored pin in `.claude/skills/` still ships the predecessors, and they run
@@ -244,7 +245,7 @@ floor, or exit condition, **this file wins** — skills sync from harmon-devkit 
 its own cadence and can lag a policy change made here.
 
 ```text
-/implement → task verify → challenge → review → task security → DRAFT PR
+/claim → /implement → task verify → challenge → review → task security → DRAFT PR
   → /integrate (CI, deferred findings, reviewers) → readiness gate → ready for
   review → human review → human merge
 ```
@@ -627,6 +628,22 @@ it posts inline comments only for high-priority findings. During the integration
 accept its clean comments, reviews, or reactions only under the current-head
 cycle above: stale activity is not evidence for the current commit, and a lone
 👀 that disappears or never resolves is an incomplete attempt.
+
+**Both procedures for that cycle live here**, because a repository can answer
+`use_codex_review` yes and `use_skills_sync` no — which is why
+[docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them to
+this file rather than restating either. **Where the pinned checker is
+vendored** — it is, in this repo — the Dev Loop's rule above governs: it is the
+required implementation, `reserve` precedes the trigger comment, and `settle`
+records the disposition of a badged finding stated outside an inline thread.
+**Where it is not vendored**, the same contract is satisfied by hand: post the
+trigger, record its comment ID and request time yourself, and poll all four
+surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
+reviews, and inline review comments. The top-level comment is the surface
+hand-rolled pollers forget, and a clean verdict often lands there rather than
+as a review, so missing it reports a finished cycle as incomplete. A non-inline
+finding is then answered and its disposition recorded on the PR in the ordinary
+way; there is no `settle` call to make and none is owed.
 
 **Codex Automatic reviews must stay disabled.** Codex triggers a cloud review
 on three events: opening a PR for review, marking a draft ready, and an
