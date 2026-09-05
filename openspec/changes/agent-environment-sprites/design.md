@@ -213,9 +213,30 @@ so the readback is the best available check; that is why one pool is
 driven from one orchestrator at a time (documented as a limit, not a
 mechanism), and why an expired lease is reclaimed only by
 `sprite:audit --reclaim` after confirmation rather than silently by the
-next lane — and by the same closing-mark-then-activity-proof protocol
-retirement uses, so a reclaim can no longer race a `lane:exec` between its
-check and its restore.
+next lane. Reclaim is not a second procedure: it is `lane:rm` invoked by
+the audit owner on an expired lease, with the same lane lock, the same
+cleanliness gate, and the same `--force`. The lease is renewed by every
+authenticated activity and by `lane:extend`, and never expires before the
+lane's TTL, so a long-lived valid lane is never mistaken for an abandoned
+one.
+
+**One lane lock per sprite, instead of an ordered closing-mark
+procedure.** Two review rounds hardened the order "closing mark, then
+activity check, then restore", and the next round attacked its seams (a
+command past its own check but not yet visible; a reclaim restoring an
+unclean checkout). Ordering prose accretes a new seam per round, so the
+design replaces it with one invariant and delegates the mechanism: every
+operation that starts a lane command performs its check and the
+registration of its session as one step under a per-sprite lock, and
+every operation that ends a lane takes the same lock, sets a persistent
+closing state, and evaluates activity and cleanliness under it. Nothing
+can start between an ending operation's evaluation and its restore, and
+nothing can be half-started when the lock is taken. The restore may run
+after the lock is released only because the closing state persists and
+refuses new commands. The lock's implementation (a lock file or label with
+owner and expiry, arbitrated on the sprite) is the helper's choice; the
+review's interleavings are carried into the offline test as named cases
+driven deterministically.
 
 **Egress: allowlist first, credentials second.** The default is
 unrestricted; a lane sets the DNS allowlist before any secret exists in the
@@ -251,7 +272,12 @@ never enters the sprite), the container's host key is recorded in the
 alias at creation so the connection is pinned rather than trusted on
 first use, and both are removed at retirement — the platform's proxy
 authenticates the operator to the sprite, but not to the container, so
-the container's sshd must not be weakened to make the hop work. The helper refreshes the alias's
+the container's sshd must not be weakened to make the hop work.
+Reconciliation is idempotent across container identity: a recreated
+container gets sshd reinstalled, `authorized_keys` regenerated from the
+lane's public key, and its new host key re-pinned through the same
+`sprite exec` channel used at creation, never trust-on-first-use over
+SSH. The helper refreshes the alias's
 address on every reconcile because the container's address can change
 across restarts. Both attach paths are marked for verification in the
 first real lane; the version-match prompt `herdr --remote` shows on a
@@ -286,9 +312,9 @@ period before stopping it the same way — so a lane's active compute is
 bounded by TTL plus grace — but never destroys anything: stopping a
 command preserves the checkout, the container, and the volumes, and the
 Herdr guide's rule that sweeping is the operator's step still holds.
-Reclaiming an expired lease is likewise gated on the sprite showing no
-active session, because an expired lease is bookkeeping, not evidence
-that the work inside is finished. The pool ceiling
+Reclaiming an expired lease is retirement under the same lane lock and
+the same cleanliness gate, because an expired lease is bookkeeping, not
+evidence that the work inside is finished or that it was pushed. The pool ceiling
 mirrors the plan's concurrency limit so `pool:init` cannot walk the account
 into "concurrent sprites exceeded" errors mid-dispatch.
 
@@ -351,8 +377,10 @@ over the API.
   Measure in the first lane; the SDK's `region` field is the lever if it
   matters.
 - [A checkpoint restore is destructive and terminates sessions] → The
-  helper restores only at lane start and lane retirement, waits for the
-  restore to complete before any later step, never restores a leased
+  helper restores only at lane start and lane retirement (reclaim being
+  retirement), waits for the restore to complete before any later step,
+  evaluates activity and cleanliness under the lane lock so no command can
+  start or be half-started around the restore, never restores a leased
   sprite it does not own, and refuses retirement over a non-clean checkout
   (modified, staged, or untracked files, or a branch with commits not on
   its upstream, no upstream, or a missing remote counterpart — porcelain

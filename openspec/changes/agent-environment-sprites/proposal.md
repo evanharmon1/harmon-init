@@ -19,8 +19,14 @@ allows and drives from Herdr the same way a local pane worker does.
 - Add a default-off Copier answer, `use_fly_sprites`, asked only when
   `devcontainer` is on, whose help text states the Fly.io account requirement
   and the usage-based pricing next to the question (AGENTS.md hard rule on
-  paid SaaS). Turning it on renders the sprite lane tooling below; leaving it
-  off renders nothing and changes nothing.
+  paid SaaS), and that this version supports only a publicly pullable
+  devcontainer base image (the shared image is public; a private base
+  registry is a named follow-up). Turning it on renders the sprite lane
+  tooling below; leaving it off renders nothing and changes nothing. The
+  Codex stages inside a lane (`task challenge`/`task review`, the
+  `@codex review` trigger) follow the repository's own `use_codex_review`
+  and `use_codex_cloud_review` answers; the unconditional promise is
+  verify → security → draft PR → shepherd CI.
 - Ship a **sprite lane** recipe, `scripts/sprite-lane.sh` behind a
   `taskfiles/sprites.yml` include (`task sprite:*`), that creates, attaches,
   steers, harvests, and retires one lane per sprite **from inside Herdr**,

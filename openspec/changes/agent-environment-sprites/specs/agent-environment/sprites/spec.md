@@ -16,11 +16,14 @@ next to the question, that Fly.io Sprites requires a Fly.io account with
 billing enabled, that billing is usage-based (CPU-hours and memory GB-hours
 while a sprite is active, and storage GB-hours at all times — a sleeping
 sprite stops compute charges but its stored bytes, image layers included,
-keep billing), that only a one-time trial credit is free, and that a
-private repository needs the bot PAT the lane already carries plus a read
-token for any private GHCR package. Turning the
-answer off SHALL render no sprite tooling and add no account, token, or
-network dependency to the generated repository.
+keep billing), that only a one-time trial credit is free, that a private
+repository is supported through the bot PAT the lane already carries, and
+that this version supports only a **publicly pullable** devcontainer base
+image (the shared `harmon-devcontainer` image is public) — a private base
+registry needs a scoped read-credential path and is a named follow-up, not
+a supported case. Turning the answer off SHALL render no sprite tooling
+and add no account, token, or network dependency to the generated
+repository.
 
 #### Scenario: default render carries no Sprites dependency
 - **WHEN** `copier copy --defaults` renders the template
@@ -35,8 +38,9 @@ network dependency to the generated repository.
 - **WHEN** the `use_fly_sprites` question is read in `copier.yml`
 - **THEN** its help text names the Fly.io account requirement, the
   usage-based billing model including that storage bills while a sprite
-  sleeps, the trial-only free allowance, and the private-repository
-  caveat, and `docs/copier-options.md` carries the same row
+  sleeps, the trial-only free allowance, the private-repository caveat,
+  and the public-base-image-only limit, and `docs/copier-options.md`
+  carries the same row
 
 #### Scenario: opting in renders the lane tooling in both layers
 - **WHEN** the template is rendered with `use_fly_sprites: yes`
@@ -119,17 +123,21 @@ helper writes and then reads back, treating any other owner in the readback
 as a lost race and retrying with a different sprite; concurrent `lane:new`
 invocations on one orchestrator SHALL additionally serialise the claim
 through a local lock so two of them never select the same sprite. A leased
-sprite SHALL NOT be restored, retired, or reclaimed by anyone but its owner;
-an expired lease SHALL be reclaimable only by `task sprite:audit --reclaim`
-after the operator confirms, never implicitly by a later `lane:new`, and
-reclaim SHALL follow the same protocol as retirement: first mark the lane
-closing so a concurrent `lane:exec` is refused from that point, then prove
-the sprite has no active lane session or running command (the platform's
-session list and status), refusing while any exists, and only then
-restore — an expired lease is a bookkeeping fact, never a licence to
-terminate work. One pool SHALL be driven from one orchestrator at a time;
-sharing a pool across orchestrators is out of scope and documented as
-unsupported.
+sprite SHALL NOT be restored, retired, or reclaimed by anyone but its owner
+or, once the lease has expired, the audit owner. A lease SHALL be
+**renewed** by the configured lease window on every authenticated lane
+activity (`lane:exec`, `lane:attach`, `lane:harvest`) and by
+`task sprite:lane:extend`, and its expiry SHALL never be earlier than the
+lane's TTL, so a lane that is alive and within its TTL is never reported
+reclaimable. **Reclaim is retirement:** `task sprite:audit --reclaim` is
+`task sprite:lane:rm` invoked by the audit owner on an expired lease,
+after the confirmation prompt — the same lane lock, the same closing state,
+the same activity evaluation, the same cleanliness gate (porcelain and
+upstream), and the same `--force` required to discard work; it is written
+once and reclaim references it, never a second procedure. An expired lease
+is a bookkeeping fact, never a licence to terminate work or discard it. One
+pool SHALL be driven from one orchestrator at a time; sharing a pool across
+orchestrators is out of scope and documented as unsupported.
 
 Every lane SHALL begin by restoring its claimed sprite's golden checkpoint
 **and waiting for that restore to complete** — the platform restores
@@ -176,19 +184,27 @@ has its own setup erased by a restore still in flight.
 
 #### Scenario: reclaim refuses while a lane command is still running
 - **WHEN** `task sprite:audit --reclaim` targets a sprite whose lease has
-  expired but which still shows an active session or a running lane
-  command
-- **THEN** it refuses, names the session, restores nothing, and leaves the
-  lease in place
+  expired but which still has a lane command registered under the lane
+  lock
+- **THEN** it refuses, names the registered command, restores nothing, and
+  leaves the lease in place — exactly as `lane:rm` would
 
-#### Scenario: reclaim serialises against a lane command
-- **WHEN** `task sprite:audit --reclaim` and `task sprite:lane:exec` race on
-  the same expired-lease sprite
-- **THEN** the reclaim writes the closing mark before its activity check,
-  a `lane:exec` that starts after the mark is refused naming the closing
-  lane, a `lane:exec` that started before the mark makes the activity check
-  fail and the reclaim refuse, and the offline test records the closing
-  mark before the activity check and no restore call in either ordering
+#### Scenario: reclaim on an idle but unclean checkout refuses without --force
+- **WHEN** `task sprite:audit --reclaim` targets a sprite whose lease has
+  expired, with no command registered, but whose checkout is not clean
+  (modified, staged, or untracked files, or commits not on its upstream)
+- **THEN** it refuses naming what is uncommitted or unpushed, restores
+  nothing, and proceeds only when `--force` is given — the same cleanliness
+  gate and the same `--force` as retirement, and the offline test records
+  no restore call without it
+
+#### Scenario: a long-lived valid lane is never reported reclaimable
+- **WHEN** a lane runs for longer than the lease window with authenticated
+  activity (`lane:exec`, `lane:attach`, `lane:harvest`) or `lane:extend`
+  calls spread across that time, and its TTL has not expired
+- **THEN** every such call renewed the lease, its expiry is never earlier
+  than the TTL, `task sprite:audit` never reports the lease expired, and
+  `audit --reclaim` refuses it as not reclaimable
 
 #### Scenario: the golden checkpoint holds no credential and no checkout
 - **WHEN** the golden checkpoint is restored and the inner container is
@@ -204,8 +220,10 @@ has its own setup erased by a restore still in flight.
   helper from the exec environment
 - **THEN** the real-run check greps the restored golden checkpoint's
   filesystem (outer host and the devcontainer's volumes) for the PAT and
-  finds nothing, and the offline test records no `sprite exec --file`,
-  env-file write, or git config write carrying the token
+  finds nothing, and the offline test records no `sprite exec --file` or
+  git config write carrying the token — the checkout's env-file, the one
+  file `init-env.sh` writes it to during the pool's single `devcontainer
+  up`, is removed with the checkout before the checkpoint is taken
 
 #### Scenario: a stale golden checkpoint is refused
 - **WHEN** any component of the golden stamp computed from the current
@@ -223,6 +241,56 @@ has its own setup erased by a restore still in flight.
 - **THEN** `task sprite:lane:new` refuses every pool sprite whose recorded
   stamp predates that change, and the offline test drives this case with
   the stubbed CLI's canned label output and records no restore call
+
+### Requirement: One lane lock per sprite serialises every start and every end
+For each sprite there SHALL be exactly one **lane lock**, held on the
+sprite itself (an advisory lock the platform can arbitrate — a lock file or
+label carrying owner and expiry), and the following SHALL hold for every
+interleaving of lane operations: every operation that starts a lane command
+(`lane:exec`, `lane:attach`, `lane:harvest`) performs its decision — the
+closing-state check, the TTL check — **and** the registration of the
+session it is about to start as one step under that lock, before the
+command runs; every operation that ends a lane (`lane:rm`, and
+`audit --reclaim`, which is `lane:rm`) takes the same lock, sets the
+persistent **closing** state, and evaluates activity (any registered
+command or session) and the cleanliness gate under that same lock. No
+command can therefore start between an ending operation's evaluation and
+its restore, and no command can be half-started — past its own check but
+not yet registered — when the lock is taken, because check and
+registration are atomic under the lock. The restore itself MAY run after
+the lock is released only because the closing state persists and refuses
+every new command until the lane is retired or the state is cleared by a
+successful `lane:new`. The lock mechanism is the helper's to choose; the
+invariant is what the offline test asserts, by driving each interleaving
+below deterministically with one side holding the lock and the other
+blocked or refused.
+
+#### Scenario: a command past its check but not yet registered cannot be overtaken by retirement
+- **WHEN** a `lane:exec` has passed its closing-state check and a
+  `lane:rm` starts before the command's session would otherwise be visible
+- **THEN** either the `lane:exec` holds the lock, its registration lands,
+  and the `lane:rm` — taking the lock afterwards — sees the registered
+  command and refuses; or the `lane:rm` holds the lock first, sets the
+  closing state, and the `lane:exec` — re-checking under the lock — is
+  refused naming the closing lane; in neither interleaving does a restore
+  run over a live command, and the offline test drives both orderings
+
+#### Scenario: retirement and exec race for the lock and only one proceeds
+- **WHEN** `lane:rm` and `lane:exec` contend for the lane lock at the same
+  instant
+- **THEN** exactly one acquires it; the other blocks until release (or is
+  refused if the closing state was set meanwhile), the stubbed lock
+  records a single holder at any time, and the recorded sequence never
+  shows a session registration between an ending operation's evaluation
+  and its restore
+
+#### Scenario: the closing state outlives the lock
+- **WHEN** `lane:rm` has released the lane lock after setting the closing
+  state and its restore is still in flight
+- **THEN** a `lane:exec`, `lane:attach`, or `lane:harvest` that takes the
+  lock in that window is refused naming the closing lane, and only a
+  successful `lane:new` on that sprite (after the restore reports complete)
+  clears the state
 
 ### Requirement: A lane is one branch cloned from GitHub, never the operator's tree
 A lane SHALL check the repository out by cloning from GitHub over HTTPS
@@ -276,9 +344,14 @@ workflow or administration permission, so it can push branches and open
 draft PRs but cannot merge `main` or edit workflows) and
 `CLAUDE_CODE_OAUTH_TOKEN`, plus the alternative-provider API keys only when
 the repository opted in — it SHALL NOT forward the bot profile's
-`initializeCommand` list wholesale. The Codex CLI login
-(`~/.codex/auth.json`) is copied into the inner container's Codex state after
-the container is up and before any agent starts. A lane SHALL NOT receive:
+`initializeCommand` list wholesale. Where the repository rendered
+`use_codex_review` on, the Codex CLI login (`~/.codex/auth.json`) is copied
+into the inner container's Codex state after the container is up and
+before any agent starts; where it is off, nothing Codex-related enters the
+lane. The env-file `init-env.sh` composes,
+`.devcontainer/devcontainer.env` inside the checkout, is the one file the
+PAT may be written to: it SHALL be mode `0600`, removed at retirement with
+the checkout, and never present in a checkpoint. A lane SHALL NOT receive:
 `FOREMAN_AGENT_GH_TOKEN` and `AGENT_DECK_TELEGRAM_KEY` (both on the bot
 profile's allow-list, neither needed by a lane), any alternative-provider
 key the repository did not opt into, any 1Password credential or the `op`
@@ -324,10 +397,21 @@ and any process environment) before the golden checkpoint is restored.
   already carried `GH_TOKEN` when the container was created
 
 #### Scenario: the Codex CLI is logged in without a browser
-- **WHEN** a lane is created on an orchestrator whose Codex CLI is logged in
+- **WHEN** the repository rendered `use_codex_review` on and a lane is
+  created on an orchestrator whose Codex CLI is logged in
 - **THEN** `codex login status` inside the inner container reports the same
   login, so `task challenge` and `task review` run without an interactive
-  device-code step
+  device-code step; with the option off, no Codex login is copied and no
+  `~/.codex/auth.json` exists in the lane
+
+#### Scenario: the env-file is the only file that carries the PAT
+- **WHEN** a lane is created and the sprite's filesystem is searched for the
+  PAT (real run), and the offline test inspects every file the helper
+  writes
+- **THEN** the PAT appears in exactly one file, the checkout's
+  `.devcontainer/devcontainer.env` with mode `0600`, and in no file the
+  helper itself writes; after `lane:rm` it appears in no file at all, and
+  it is absent from every checkpoint
 
 #### Scenario: credentials follow the completed restore and the policy
 - **WHEN** the lane creation steps are traced
@@ -352,9 +436,9 @@ read-only there). Any host a lane genuinely needs beyond the list is added to
 the list in this repository, reviewed, not opened ad hoc from inside a lane.
 
 #### Scenario: a lane can reach what the dev loop needs and nothing else
-- **WHEN** a lane runs `task verify`, `task challenge`, `task review`,
-  `task security`, `gh pr create --draft`, and the Convex local backend
-  download
+- **WHEN** a lane runs `task verify`, `task security`, `gh pr create
+  --draft`, the Convex local backend download, and — where
+  `use_codex_review` is on — `task challenge` and `task review`
 - **THEN** each succeeds, and a probe to a host outside the allowlist from
   inside the lane fails to resolve
 
@@ -368,22 +452,36 @@ the list in this repository, reviewed, not opened ad hoc from inside a lane.
 ### Requirement: The full dev loop runs inside the lane
 A lane SHALL be able to run every stage the Dev Loop expects of an
 implementer up to and including the shepherd stage from inside the inner
-container: `task verify`, `task challenge` and `task review` (the Codex CLI
-in the bot profile's `danger-full-access`/`never` posture, with the reviewer
-runs backgrounded per the gauntlet skill), `task security`, the round commits
-and pushes, `gh pr create --draft`, and the shepherd's `gh pr checks`,
-`@codex review` trigger, and per-thread replies. Checks the repository's own
-`ci` reserves for CI-only infrastructure (a Docker daemon, a browser) stay
-CI's job exactly as they do in the local bot container. Codex cloud review
-is a GitHub-side action on the PR head and SHALL need nothing from the lane
-beyond the PR existing.
+container. Unconditionally — for every render with the option on — that is
+`task verify`, `task security`, the round commits and pushes,
+`gh pr create --draft`, and the shepherd's `gh pr checks` and per-thread
+replies. Where the repository also rendered `use_codex_review` on, it
+includes `task challenge` and `task review` (the Codex CLI in the bot
+profile's `danger-full-access`/`never` posture, with the reviewer runs
+backgrounded per the gauntlet skill); where it additionally rendered
+`use_codex_cloud_review` on and the repository is connected to Codex cloud,
+it includes the shepherd's `@codex review` trigger. Checks the repository's
+own `ci` reserves for CI-only infrastructure (a Docker daemon, a browser)
+stay CI's job exactly as they do in the local bot container. Codex cloud
+review, where connected, is a GitHub-side action on the PR head and SHALL
+need nothing from the lane beyond the PR existing.
 
 #### Scenario: a lane carries a change from implementation to draft PR
 - **WHEN** an agent in a lane implements a change and follows the Dev Loop
-- **THEN** `task verify`, `task challenge`, `task review`, and
-  `task security` each run to completion inside the lane, the round commits
-  are pushed by the bot identity, and `gh pr create --draft` opens a draft
-  PR whose head is the lane's branch
+  in a render with only `use_fly_sprites` on
+- **THEN** `task verify` and `task security` each run to completion inside
+  the lane, the round commits are pushed by the bot identity,
+  `gh pr create --draft` opens a draft PR whose head is the lane's branch,
+  and `gh pr checks` reads its CI from inside the lane
+
+#### Scenario: with Codex review on, the gauntlet runs inside the lane
+- **WHEN** the repository rendered `use_codex_review` on (and, for the cloud
+  trigger, `use_codex_cloud_review` on with the repository connected) and
+  an agent in a lane follows the Dev Loop
+- **THEN** `task challenge` and `task review` run to completion inside the
+  lane on the copied Codex login, and the shepherd's `@codex review`
+  trigger posts from inside the lane and is answered on the PR head
+  exactly as from the local bot container
 
 #### Scenario: Docker-gated checks are not attempted in the lane
 - **WHEN** `task ci` is invoked inside a lane
@@ -413,7 +511,14 @@ reuses the existing container and reruns `post-start.sh`, so
 `bot-autonomy.sh verify` gates the restart), restarts the in-container SSH
 server and the in-container Herdr server where one was running, and only
 then proceeds; a `verify` failure on that restart fails the entry non-zero
-as it fails creation. What "proceeds" means per entry: `lane:exec` runs the
+as it fails creation. Reconciliation SHALL be idempotent across container
+identity: when `devcontainer up` yields a new container (rebuilt or
+recreated rather than restarted), the helper reinstalls and configures the
+SSH server, regenerates `authorized_keys` from the per-lane public key,
+re-pins the container's host key through the same authenticated channel
+used at creation — read out of the container over `sprite exec`, never
+trusted on first use over SSH — and refreshes the alias, so the takeover
+path after a recreation is the one that existed at creation. What "proceeds" means per entry: `lane:exec` runs the
 requested command; `lane:harvest` copies the report; `lane:attach`
 reattaches the lane's session when it still exists and otherwise — the
 platform drops sessions on a cold pause — opens a new detachable shell
@@ -435,20 +540,20 @@ connection is pinned rather than trusted on first use, refreshes the
 address on every reconcile, and removes the keypair and alias at
 retirement; the outer sprite runs no SSH server and the private key never
 enters the sprite. Retirement
-(`task sprite:lane:rm -- <lane>`) SHALL first mark the lane closing so no
-new lane command can start, then prove no lane session or command is
-active on the sprite (refusing while any is), and only then check the
-checkout — refusing while it is not clean, where clean means **both** that
-`git status --porcelain --untracked-files=all` is empty (no modified,
-staged, or untracked files) **and** that the branch is fully on its
-remote: it has an upstream, that upstream exists on the remote, and
-`git rev-list --count @{upstream}..HEAD` is zero — porcelain alone cannot
-see an ahead-but-clean branch — unless `--force` is given; it then
-stops the inner container, removes injected credentials, restores the
-golden checkpoint and waits for it, releases the lease, and returns the
-sprite to the pool (or destroys it with `--destroy`). The closing mark,
-the activity proof, and the cleanliness check are ordered so that no
-command can start or keep writing between the check and the restore.
+(`task sprite:lane:rm -- <lane>`) SHALL run under the lane lock of the
+lane-lock requirement above: take the lock, set the persistent closing
+state, evaluate activity (refusing while any command or session is
+registered) and the cleanliness gate under that lock — refusing while the
+checkout is not clean, where clean means **both** that `git status
+--porcelain --untracked-files=all` is empty (no modified, staged, or
+untracked files) **and** that the branch is fully on its remote: it has an
+upstream, that upstream exists on the remote, and `git rev-list --count
+@{upstream}..HEAD` is zero, porcelain alone cannot see an ahead-but-clean
+branch — unless `--force` is given; it then stops the inner container,
+removes injected credentials, restores the golden checkpoint and waits for
+it, releases the lease, and returns the sprite to the pool (or destroys it
+with `--destroy`). `task sprite:audit --reclaim` is this same operation
+invoked by the audit owner on an expired lease, after confirmation.
 
 #### Scenario: a lane pane shows the remote agent's state
 - **WHEN** the orchestrator runs `herdr pane run <id> "task sprite:lane:exec
@@ -474,6 +579,16 @@ command can start or keep writing between the check and the restore.
   refreshed, and the requested command (or the report copy) then runs
   inside the container — or, if `verify` fails, the entry exits non-zero
   naming the harness and runs nothing
+
+#### Scenario: a recreated container is re-provisioned for SSH on reconcile
+- **WHEN** reconciliation's `devcontainer up` yields a new container
+  identity (a different container ID than the lane recorded)
+- **THEN** the helper reinstalls the SSH server, regenerates
+  `authorized_keys` from the lane's public key, re-pins the new host key
+  read over `sprite exec`, refreshes the alias, and `herdr --remote` through
+  the alias succeeds without any trust-on-first-use prompt; the offline test
+  drives the identity change with the stubbed CLI and records the
+  re-provisioning calls in that order
 
 #### Scenario: attaching to a cold-woken lane opens a fresh session and says so
 - **WHEN** a sprite has gone cold and the orchestrator runs
@@ -524,11 +639,12 @@ command can start or keep writing between the check and the restore.
 
 #### Scenario: retirement refuses while a lane command is active
 - **WHEN** `task sprite:lane:rm -- <lane>` runs while a lane command or
-  session is still active on the sprite
-- **THEN** it marks the lane closing (a concurrent `lane:exec` is refused
-  from that point), refuses the retirement naming the active session,
-  restores nothing, and the offline test records the closing mark and the
-  activity check before any cleanliness check, stop, or restore call
+  session is registered under the lane lock
+- **THEN** it takes the lock, sets the closing state (a `lane:exec` taking
+  the lock afterwards is refused), sees the registered command, refuses the
+  retirement naming it, restores nothing, and the offline test records the
+  lock acquisition, the closing state, and the activity evaluation before
+  any cleanliness check, stop, or restore call
 
 ### Requirement: The sprite stays active exactly while lane work runs, and a lane cannot bill unnoticed
 For every lane, the following SHALL hold regardless of whether the
@@ -636,17 +752,25 @@ reported complete before policy, policy before credentials, the clone
 before `devcontainer up`, credentials in the `devcontainer up` environment
 before agents; refusal of absent or ahead branches, stale golden
 checkpoints (including a helper-only change to the stamp), pool overflow,
-contended or expired leases, reclaim over an active session, reclaim
-serialised against a lane command, and retirement over a non-clean
-checkout (including a clean tree ahead of its upstream) — each recording
-no restore call; the incomplete-restore case recording exactly one restore
-call and nothing after it; that no hold, heartbeat, or command bound is
-owned by an orchestrator-side process; that the environment handed to
-`sprite exec` and `devcontainer up` is exactly the lane allow-list and
-never carries `FOREMAN_AGENT_GH_TOKEN` or `AGENT_DECK_TELEGRAM_KEY`; and
-that neither the Sprites token nor the bot PAT appears in any file the
-helper writes (the PAT reaches git only through the credential helper's
-environment). The
+contended or expired leases, and retirement or reclaim over a registered
+command or a non-clean checkout (including a clean tree ahead of its
+upstream, and an idle-but-unclean reclaim without `--force`) — each
+recording no restore call; the three lane-lock interleavings (a command
+past its check but unregistered versus a starting retirement; retirement
+and exec contending for the lock; the closing state outliving the lock),
+each driven deterministically with one side holding the stubbed lock and
+the other blocked or refused; lease renewal on every authenticated
+activity and `lane:extend`, with expiry never earlier than the TTL; SSH
+re-provisioning on a container identity change; the incomplete-restore
+case recording exactly one restore call and nothing after it; that no
+hold, heartbeat, or command bound is owned by an orchestrator-side
+process; that the environment handed to `sprite exec` and
+`devcontainer up` is exactly the lane allow-list and never carries
+`FOREMAN_AGENT_GH_TOKEN` or `AGENT_DECK_TELEGRAM_KEY`; that the Sprites
+token appears in no file the helper writes; and that the bot PAT appears
+in no file other than the checkout's `.devcontainer/devcontainer.env`
+(mode `0600`, removed at retirement, never in a checkpoint — the PAT
+reaches git only through the credential helper's environment). The
 scenarios only the platform can settle — credentials absent from the
 sprite's filesystem after retirement, the golden checkpoint holding none,
 the restore actually removing a previous lane's state, the policy being
@@ -667,9 +791,10 @@ stubs.
 - **WHEN** `task test:sprite-lane` drives the helper through an absent
   branch, a local branch ahead of the remote, a stale golden checkpoint
   (image pin, helper hash, and CLI pin each changed alone), a full pool, a
-  contended lease, an expired lease, a reclaim over an active session, a
-  reclaim racing a lane command, a retirement over a non-clean checkout,
-  and a retirement over a clean tree ahead of its upstream
+  contended lease, an expired lease, a retirement or reclaim over a
+  registered command, a reclaim over an idle-but-unclean checkout without
+  `--force`, a retirement over a non-clean checkout, and a retirement over
+  a clean tree ahead of its upstream
 - **THEN** each case exits non-zero with the documented message and the
   stubs record no create, restore, or destroy call for it
 
