@@ -445,19 +445,15 @@ verifies the pinned binary at `agy-real` and (re)points a plain
 local `agy-real` copy already exists at the pinned version — with one
 exception: WHEN the current on-`PATH` system binary at
 `/usr/local/bin/agy` already matches the pinned version and no local
-`agy-real` copy exists yet, it SHALL create neither, leaving `agy` in
-state (c) when `agy` was already absent too — instead of installing an
-unnecessary shadow copy, `agy` then resolves directly to the sufficient
-system binary via `PATH`, which still satisfies the no-dangling-symlink
-invariant above because nothing points at a missing target. This
-branch's own precondition checks only `agy-real`'s absence, not `agy`'s:
-a pre-existing `agy` (a dangling symlink or another leftover reachable
-only through an out-of-band change to the persisted volume, not through
-this capability's own apply/verify cycle) is left exactly as found here,
-rather than reconciled — the bot profile self-heals regardless, because
-the `antigravity` module's `apply` runs immediately after and
-unconditionally overwrites `agy` with the wrapper, but the dev profile
-has no such follow-on step. WHEN the marker reads anything other than `enabled`
+`agy-real` copy exists yet, it SHALL create neither and SHALL instead
+ensure `agy` reaches state (c) unconditionally — removing it first if a
+dangling symlink or any other leftover already occupies that path,
+reachable only through an out-of-band change to the persisted volume,
+not through this capability's own apply/verify cycle — instead of
+installing an unnecessary shadow copy; `agy` then resolves directly to
+the sufficient system binary via `PATH`, which satisfies the
+no-dangling-symlink invariant above unconditionally, not merely in the
+common case where `agy` already happened to be absent. WHEN the marker reads anything other than `enabled`
 (`disabled`, or absent on an image built before this marker existed), it
 SHALL ensure **neither** `agy-real` nor `agy` exists, removing either if a
 prior run (before a Copier-answer toggle) or a stale image left them
@@ -522,26 +518,24 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
 #### Scenario: ensure-antigravity-cli.sh leaves agy absent when the current system binary already satisfies the pin
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` reads `enabled`,
   `ensure-antigravity-cli.sh` runs, the on-`PATH` system binary at
-  `/usr/local/bin/agy` already matches the pinned version, no local
-  `agy-real` copy exists yet, and `agy` is not already present either
+  `/usr/local/bin/agy` already matches the pinned version, and no local
+  `agy-real` copy exists yet
 - **THEN** it creates neither `agy-real` nor `agy` — avoiding an
   unnecessary shadow copy of a binary the image already ships — and `agy`
   resolves directly to the sufficient system binary via `PATH`, which is
   state (c) and not a dangling symlink
 
-#### Scenario: a pre-existing agy is not reconciled by the system-binary-sufficient exit
+#### Scenario: this same exit removes a stale agy rather than preserving it
 - **WHEN** the on-`PATH` system binary at `/usr/local/bin/agy` already
   matches the pinned version, no local `agy-real` copy exists, and `agy`
-  already exists — a dangling symlink, a wrapper, or any other leftover,
-  reachable only through an out-of-band change to the persisted volume
-- **THEN** `ensure-antigravity-cli.sh` exits without creating `agy-real`
-  or otherwise touching `agy` — this branch's own precondition checks
-  only `agy-real`'s absence, not `agy`'s. In the bot profile this
-  self-heals: the `antigravity` module's `apply` runs immediately after
-  and unconditionally overwrites `agy` with the wrapper regardless of
-  what it finds. The dev profile has no such follow-on step, so a stale
-  `agy` there survives until a full disable/re-enable cycle or a manual
-  cleanup clears it
+  already exists anyway — a dangling symlink, a leftover copy, or any
+  other artifact reachable only through an out-of-band change to the
+  persisted volume, not through this capability's own apply/verify cycle
+- **THEN** `ensure-antigravity-cli.sh` removes it before exiting, the same
+  as `agy-real`, so this branch reaches state (c) unconditionally rather
+  than only when `agy` already happened to be absent — a stale entry
+  never survives to shadow or break resolution of the now-verified
+  system binary in either profile
 
 #### Scenario: ensure-antigravity-cli.sh leaves agy absent when disabled, in either profile
 - **WHEN** `HARMON_BOT_AUTONOMY_ANTIGRAVITY` is not `enabled` and
