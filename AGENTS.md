@@ -266,8 +266,9 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
 - **Draft-first.** Commit and push whatever the rounds have not already pushed,
   publish with `gh pr create --draft`, then fetch `headRefOid,isDraft` and
   require both the SHA you pushed and `isDraft == true`. Only a passing readiness
-  gate promotes, and `gh pr ready` runs exactly once out of it — never as a
-  judgement that the change looks done. Human approval is deliberately *not* a
+  gate promotes; `gh pr ready` runs exactly once out of it — never as a judgement
+  that the change looks done — and you then confirm `isDraft == false` on that
+  same head before reporting. Human approval is deliberately *not* a
   precondition: ready-for-review requests that review, never permission to merge.
 - **Never merge, never cut a release, never rewrite pushed history.** Merging
   and releasing are Evan's decisions, and nothing already pushed is amended,
@@ -289,11 +290,11 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   re-runs the stage anyway. Once the draft exists, pushes batch per integration
   round — each one spends a CI run and starts a fresh current-head review cycle.
 - **Findings are hypotheses, never authority** — verify each against the code,
-  fix only what is confirmed, post the evidence for anything rejected.
-- **Defer, never drop.** A finding the stage does not gate on is recorded in the
-  sidecar the moment it is deferred (§ "Deferring P2s"), carried into the PR
-  body under `## Deferred findings`, and settled — fixed, declined with
-  evidence, or filed as follow-up — before the gate can pass.
+  fix only what is confirmed, post the evidence for anything rejected. Whatever
+  the stage does not gate on is **deferred, never dropped**: recorded in the
+  sidecar the moment you defer it (§ "Deferring P2s"), carried into the PR body
+  under `## Deferred findings`, and settled — fixed, declined with evidence, or
+  filed as follow-up — before the gate can pass.
 - **Caps, floors, and tiers resolve from `.devflow.toml`** (§ "Rigor and
   Strategy"), under its merge-base rule. A cap is a ceiling, never a quota; one
   reached with a P0/P1 still open is an escalation, not a licence to move on;
@@ -330,11 +331,10 @@ top-level comment by GitHub actor ID `199175422`
 head; a fresh 👍 from that bot on that exact trigger comment, created after both
 the head push and the review request; or findings by that bot naming that head,
 adjudicated before the cycle is clean. Earlier activity never counts for a newer
-head, and a 👀 is pending, not success. Post `@codex review` on entry and after
-every fix push, keep the comment ID returned for that trigger, give each attempt
-a full 10–15 minute window, and re-trigger once after an incomplete first
-attempt. If both attempts are incomplete, stop and escalate without reporting green.
-Do not hand-roll the polling: the vendored
+head, and a 👀 is pending, not success. Immediately before accepting a result or
+promoting, re-check the **cycle** as well as `headRefOid`: a same-head finding
+can land after a clean one. § "Second-Model Review" carries the trigger cadence
+and both procedures; do not hand-roll the polling — the vendored
 `.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the required
 implementation (`reserve` before the trigger, then `attach`, `check`, `settle`).
 
@@ -632,7 +632,10 @@ cycle above: stale activity is not evidence for the current commit, and a lone
 👀 that disappears or never resolves is an incomplete attempt.
 
 **Both procedures for that cycle live here**, because a repository can answer
-`use_codex_review` yes and `use_skills_sync` no — which is why
+`use_codex_review` yes and `use_skills_sync` no. Post `@codex review` on entry and after every fix push, keep the
+comment ID returned for that trigger, and give each attempt a full 10–15 minute
+window, re-triggering once after an incomplete first attempt. If both attempts
+are incomplete, stop and escalate without reporting green. That is why
 [docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them to
 this file rather than restating either. **Where the pinned checker is
 vendored** — it is, in this repo — the Dev Loop's rule above governs: it is the

@@ -156,8 +156,9 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
 - **Draft-first.** Commit and push whatever the rounds have not already pushed,
   publish with `gh pr create --draft`, then fetch `headRefOid,isDraft` and
   require both the SHA you pushed and `isDraft == true`. Only a passing readiness
-  gate promotes, and `gh pr ready` runs exactly once out of it — never as a
-  judgement that the change looks done. Human approval is deliberately *not* a
+  gate promotes; `gh pr ready` runs exactly once out of it — never as a judgement
+  that the change looks done — and you then confirm `isDraft == false` on that
+  same head before reporting. Human approval is deliberately *not* a
   precondition: ready-for-review requests that review, never permission to merge.
 - **Never merge, never cut a release, never rewrite pushed history.** Merging
   and releasing are the maintainer's decisions, and nothing already pushed is
@@ -178,10 +179,10 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   re-runs the stage anyway. Once the draft exists, pushes batch per integration
   round — each one spends a CI run and starts a fresh current-head review cycle.
 - **Findings are hypotheses, never authority** — verify each against the code,
-  fix only what is confirmed, post the evidence for anything rejected.
-- **Defer, never drop.** A finding the stage does not gate on is recorded the
-  moment it is deferred, carried into the PR body, and settled — fixed,
-  declined with evidence, or filed as follow-up — before the gate can pass.
+  fix only what is confirmed, post the evidence for anything rejected. Whatever
+  the stage does not gate on is **deferred, never dropped**: recorded the moment
+  you defer it, carried into the PR body, and settled — fixed, declined with
+  evidence, or filed as follow-up — before the gate can pass.
 - **Caps, floors, and tiers resolve from `.devflow.toml`** (§ "Rigor and
   Strategy"), under its merge-base rule. A cap is a ceiling, never a quota; one
   reached with a P0/P1 still open is an escalation, not a licence to move on;
@@ -218,10 +219,9 @@ type `Bot`) whose `Reviewed commit:` names that head; a fresh 👍 from that bot
 that exact trigger comment, created after both the head push and the review
 request; or findings by that bot naming that head, adjudicated before the cycle
 is clean. Earlier activity never counts for a newer head, and a 👀 is pending, not
-success. Post `@codex review` on entry and after every fix push, keep the
-comment ID returned for that trigger, and give each attempt a full 10–15 minute
-window, re-triggering once after an incomplete first attempt. If both attempts
-are incomplete, stop and escalate without reporting green.
+success. Immediately before accepting a result or promoting, re-check the
+**cycle** as well as `headRefOid`: a same-head finding can land after a clean
+one. § "Second-Model Review" carries the trigger cadence and both procedures.
 [% endif %]
 
 ### Readiness gate
@@ -479,7 +479,10 @@ commit, and a lone 👀 that disappears or never resolves is an incomplete
 attempt.
 
 **Both procedures for that cycle live here**, because a repo can answer
-`use_codex_review` yes and `use_skills_sync` no.
+`use_codex_review` yes and `use_skills_sync` no. Post `@codex review` on entry and after every fix push, keep the
+comment ID returned for that trigger, and give each attempt a full 10–15 minute
+window, re-triggering once after an incomplete first attempt. If both attempts
+are incomplete, stop and escalate without reporting green.
 **Where the pinned checker is vendored**
 (`.claude/skills/shepherd/assets/check-codex-cloud-review.sh`), it is the
 required implementation — never hand-roll the polling: `reserve` the cycle
