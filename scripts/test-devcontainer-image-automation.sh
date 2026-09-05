@@ -427,4 +427,51 @@ if run_fixture ./scripts/sync-devcontainer-image.sh publish "$newest_source" "$d
 fi
 pass
 
+# write_body()'s reviewer checklist is the ONLY durable home for the
+# sync-pin PR's manual acceptance items: "a newer publication rewrites this
+# one rolling branch and PR", so anything hand-added to a live PR body is
+# discarded on the next regeneration. Assert each item's literal text so a
+# future edit to write_body() cannot silently drop one. Sourcing the script
+# with a no-op `main` guard is not available here, so drive the real
+# function through a subshell that stops right after it runs.
+body_probe="$tmp_root/write_body_probe.sh"
+cat >"$body_probe" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+# Stop sync-devcontainer-image.sh before its dispatch block runs, then call
+# the real write_body() and print what it produced.
+eval "$(sed '/^case "${1:-}" in$/,$d' scripts/sync-devcontainer-image.sh)"
+write_body old-source new-source sha256:deadbeef
+cat "$BODY_FILE"
+PROBE
+chmod +x "$body_probe"
+body_out="$(run_fixture bash "$body_probe")"
+while IFS= read -r required; do
+    [ -n "$required" ] || continue
+    case "$body_out" in
+    *"$required"*) ;;
+    *) fail "write_body()'s reviewer checklist no longer contains: ${required}" ;;
+    esac
+done <<'REQUIRED'
+- [ ] bot-autonomy-new-harnesses has merged, covering every harness this
+      Dockerfile bump installs (see the container-assertion job's result on
+      this PR)
+- [ ] rebuild a freshly generated bot devcontainer with `use_copilot_cli: true`
+      and exercise one representative TOOL-USING task (a file read/write or a
+      shell command — not a question with no tool call, which never consults
+      the approval policy at all) through each of Copilot CLI, pi, and
+      oh-my-pi; confirm ZERO approval prompts for all three, completing the
+      Copilot clause of #1137's first [CI] acceptance criterion and
+      contributing to its [HUMAN] criterion; repeat at `use_copilot_cli`'s
+      default (off) and confirm Copilot prompts as expected — the by-design
+      outcome, not a regression
+- [ ] confirm pi's accepted capability gap: `pi -p` against a fixture
+      repository carrying `.pi/settings.json` (or another trust-requiring
+      resource) silently ignores that resource — no error, no prompt — the
+      maintainer-decided outcome of pi's "no elevated trust" requirement
+      (bot-autonomy-new-harnesses's spec.md pi requirement), now provable
+      against the real binary
+REQUIRED
+pass
+
 echo "devcontainer image automation: ${cases} offline cases passed"

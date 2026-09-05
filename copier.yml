@@ -382,6 +382,36 @@ use_antigravity_cli:
   when: "[[ devcontainer ]]"
   validator: "[% if use_antigravity_cli and not devcontainer %]Enable DEVCONTAINER before ANTIGRAVITY CLI.[% endif %]"
 
+use_copilot_cli:
+  type: bool
+  help: >-
+    COPILOT CLI: Configure GitHub's account-backed Copilot CLI for prompt-free
+    operation in the BOT devcontainer? Defaults off. Requires a GitHub account
+    and a Copilot plan: a free tier exists (limited monthly completions/chat
+    requests; historically also free for verified students/teachers via GitHub
+    Education and for maintainers of popular open-source projects), with paid
+    tiers (Pro/Business/Enterprise) raising those limits. Sign in once with
+    `copilot login` (or an existing GH_TOKEN); the ~/.copilot named volume
+    persists it. Unlike some competing tools, Copilot documents that it
+    operates on both public and PRIVATE repositories for an authorized
+    account — but plan eligibility, quotas, and data-handling terms change, so
+    review GitHub's current terms before relying on it for proprietary code.
+    Turning this ON makes the bot profile fully autonomous for Copilot:
+    COPILOT_ALLOW_ALL="true" in the bot container plus a bot-only wrapper at
+    ~/.local/bin/copilot (ahead of the system binary on the container-wide
+    PATH) that injects --allow-all (tools + paths + URLs; the environment
+    variable alone covers tools only) for agent runs, covering a programmatic
+    launcher and not just an interactive login shell. Administrative
+    subcommands (login/version/help/update/completion/init/plugin/plugins/
+    mcp/skill/app) pass through unflagged. The HUMAN dev profile is never
+    touched: it receives neither COPILOT_ALLOW_ALL nor the wrapper in either
+    state, so an interactive Copilot session there keeps its own
+    prompt-enabled defaults. Leaving this OFF still installs the binary (the
+    shared image is unconditional) — it just stays prompt-enabled everywhere.
+  default: no
+  when: "[[ devcontainer ]]"
+  validator: "[% if use_copilot_cli and not devcontainer %]Enable DEVCONTAINER before COPILOT CLI.[% endif %]"
+
 use_alternative_claude_providers:
   type: bool
   help: >-

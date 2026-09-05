@@ -240,7 +240,8 @@ slugs, replaces that with one dispatch point:
   container creation also gates the PR that changed it.
 - Every registered harness slug resolves to exactly one of a **module**
   (the harness has an installed executable and a real boundary — Claude
-  Code, Codex CLI, Antigravity, OpenCode today), an **alias** to another
+  Code, Codex CLI, Antigravity, OpenCode, Copilot CLI, pi, oh-my-pi
+  today), an **alias** to another
   slug's module (the six `claude-code-*` provider-rewired variants share
   `claude-code`'s boundary), or an **`unsupported`** entry naming a reason
   and the executable to watch for. A slug in none of the three fails a unit
@@ -249,7 +250,7 @@ slugs, replaces that with one dispatch point:
   `verify` exactly like an uncovered slug, regardless of the reason it was
   unsupported — there is no exemption that survives installation.
 - A harness whose autonomy is gated behind a Copier option (Antigravity,
-  via `use_antigravity_cli`; a future Copilot CLI module the same way) still
+  via `use_antigravity_cli`; Copilot CLI, via `use_copilot_cli`; a future Copilot CLI module the same way) still
   gets a real module — never `unsupported` — because the harness is
   installed in the image regardless of the answer. The option selects the
   module's *policy* (`autonomous` or `disabled-by-option`, both a verified
@@ -259,8 +260,54 @@ slugs, replaces that with one dispatch point:
   twins set from the Copier answer — never `copier.yml`/
   `.copier-answers.yml` introspection, since a verbatim twin ships identical
   bytes to every generated repo regardless of that repo's answers.
-- Antigravity's and OpenCode's policy files live on named volumes that
-  outlive a container rebuild, so each module records the pre-`apply` value
+- **Copilot CLI**'s autonomous state is two things together, both
+  bot-profile-only: the rendered `containerEnv.COPILOT_ALLOW_ALL` (the exact
+  literal `"true"`, checked as that exact string because that is what
+  Copilot's own documented contract honors) and a `~/.local/bin/copilot`
+  wrapper injecting `--allow-all`. The wrapper is not redundant with the
+  variable: `COPILOT_ALLOW_ALL` is documented as the equivalent of
+  `--allow-all-tools` alone, leaving path verification and URL access gated,
+  while `--allow-all` covers all three dimensions. `apply` never writes the
+  variable — a container-wide value is fixed by `containerEnv` before any
+  lifecycle script runs — it validates it and fails loudly on a
+  marker/environment inconsistency rather than installing a wrapper over an
+  environment that will not back it. The disabled state renders the explicit
+  literal `"false"` rather than omitting the key: the bot profile also loads
+  `devcontainer.env` via `--env-file`, `init-env.sh` does not manage that
+  variable, and `containerEnv` outranks `--env-file` only for a key it
+  actually specifies. Neither the variable nor its marker is rendered into
+  the **dev** profile at all, in either state — Copilot honors that variable
+  in whichever profile sets it, so rendering it there would silently make a
+  human's own interactive session allow-all. `verify` additionally fails,
+  naming Copilot, when `~/.copilot/settings.json` sets
+  `permissions.disableBypassPermissionsMode` to `"disable"` **and** the
+  option is on: that key neuters every allow-all mechanism regardless of
+  what `apply` wrote, and it is an administrator control this module
+  surfaces rather than overrides.
+- **pi** is the deliberate exception: its `apply` writes **nothing**, in
+  either profile. pi's non-interactive modes never prompt for trust
+  regardless of the setting, so the bot already reaches a no-prompt state
+  unmodified; what trust would additionally grant is loading a repository's
+  own `.pi/` resources, which per pi's docs includes *executing project
+  extensions*. pi keys trust decisions by canonical directory path with no
+  content or commit authentication, so a global `defaultProjectTrust:
+  "always"` (trusts every repository the installation is ever pointed at)
+  and a workspace-scoped `~/.pi/agent/trust.json` entry (survives an
+  untrusted branch checked out into the same path; extends to anything
+  nested underneath it) were both reviewed and rejected as unsafe defaults.
+  The accepted cost is a capability gap, not a security one: headless pi
+  sessions silently skip project `.pi/` resources. `verify` still fails
+  closed on **either** surface — `defaultProjectTrust: "always"`, or any
+  trusted saved decision anywhere in `trust.json`, applicable to the current
+  workspace or not, since that volume outlives the check.
+- **oh-my-pi** sets `tools.approvalMode: yolo` in `~/.omp/agent/config.yml`,
+  written explicitly rather than relying on the harness's own schema
+  default, and verified against the **resolved** value (`omp config get
+  tools.approvalMode --json`, run from the workspace) because a
+  project-level `<cwd>/.omp/config.yml` overrides the global file — the same
+  layering reason OpenCode's `verify` reads its resolved config.
+- Antigravity's, OpenCode's and oh-my-pi's policy files live on named volumes
+  that outlive a container rebuild, so each module records the pre-`apply` value
   and offers a `restore` mode — reverting this mechanism's own code does
   not undo a value already written to a persisted volume.
 

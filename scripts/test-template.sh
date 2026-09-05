@@ -218,6 +218,7 @@ full)
         --data use_codex_cloud_review=true
         --data use_coderabbit=true
         --data use_antigravity_cli=true
+        --data use_copilot_cli=true
         --data use_alternative_claude_providers=true
         --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
@@ -1868,6 +1869,66 @@ if [ -d .devcontainer ]; then
     if grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh |
         grep -Eq 'antigravity-settings\.json'; then
         err "human dev profile applies the bot-only always-proceed Antigravity policy"
+    fi
+fi
+
+# ── 9e1b. Copilot CLI / pi / oh-my-pi bot-autonomy modules ────────────────
+# Same "module always present, policy Copier-gated" contract as 9e1, with two
+# differences this section exists to pin down: Copilot's marker AND its
+# COPILOT_ALLOW_ALL variable are rendered into the BOT twin only (Antigravity's
+# marker goes into both), and COPILOT_ALLOW_ALL is rendered as an explicit
+# literal in BOTH states rather than omitted when off — an omitted key would
+# let a stale out-of-band value in the --env-file survive a disabled render.
+# See openspec/changes/bot-autonomy-new-harnesses/design.md - Decisions.
+if [ -d .devcontainer ]; then
+    for module in copilot-cli pi oh-my-pi; do
+        [ -x ".devcontainer/config/bot-autonomy/${module}.sh" ] ||
+            err "bot-autonomy ${module} module missing from devcontainer output"
+    done
+    # Each slug now resolves to its own module, so a stale unsupported entry
+    # would leave it doubly covered (bot-autonomy.sh coverage fails that).
+    for slug in copilot-cli pi oh-my-pi; do
+        if grep -Fq "\"${slug}\":" .devcontainer/config/bot-autonomy/unsupported.json; then
+            err "${slug} still has an unsupported entry even though its module renders"
+        fi
+    done
+    grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT"' .devcontainer/devcontainer.json ||
+        err "bot devcontainer.json does not set the HARMON_BOT_AUTONOMY_COPILOT marker"
+    grep -Fq '"COPILOT_ALLOW_ALL"' .devcontainer/devcontainer.json ||
+        err "bot devcontainer.json omits COPILOT_ALLOW_ALL — it must be rendered as an explicit literal in BOTH states"
+    # The dev twin must carry NEITHER key at whatever the answer is: nothing
+    # there reads the marker, and COPILOT_ALLOW_ALL would hand a human's own
+    # interactive Copilot session full allow-all permissions.
+    if grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT"' .devcontainer/dev/devcontainer.json; then
+        err "dev devcontainer.json carries the bot-only HARMON_BOT_AUTONOMY_COPILOT marker"
+    fi
+    if grep -Fq '"COPILOT_ALLOW_ALL"' .devcontainer/dev/devcontainer.json; then
+        err "dev devcontainer.json carries COPILOT_ALLOW_ALL — a human's interactive Copilot session must never be allow-all"
+    fi
+    # Fixture-seeded state these modules' verify reads lives on named volumes,
+    # so a smoke run must not contaminate (or be contaminated by) a real one.
+    for volume in copilot-config pi-config omp-config; do
+        for config in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+            grep -Eq "\"source=${volume}-[^\"]*\\\$\{localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX\}" "$config" ||
+                err "${config}'s ${volume} mount carries no smoke-isolation volume suffix"
+        done
+    done
+    if [ "$profile" = "full" ]; then
+        grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT": "enabled"' .devcontainer/devcontainer.json ||
+            err "bot devcontainer.json Copilot marker is not enabled for the opted-in profile"
+        grep -Fq '"COPILOT_ALLOW_ALL": "true"' .devcontainer/devcontainer.json ||
+            err "bot devcontainer.json does not render COPILOT_ALLOW_ALL as the exact literal \"true\" for the opted-in profile"
+        grep -Fq 'Copilot CLI autonomy is enabled' docs/guides/devcontainers.md ||
+            err "devcontainer guide omits opted-in Copilot CLI account/policy guidance"
+    else
+        # Default-off must be PROVEN on every other devcontainer-enabled
+        # profile, not assumed from `full` being the only opt-in.
+        grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT": "disabled"' .devcontainer/devcontainer.json ||
+            err "bot devcontainer.json Copilot marker is not disabled for the default-off profile"
+        grep -Fq '"COPILOT_ALLOW_ALL": "false"' .devcontainer/devcontainer.json ||
+            err "bot devcontainer.json does not render COPILOT_ALLOW_ALL as the exact literal \"false\" for the default-off profile"
+        grep -Fq 'Copilot CLI autonomy is off by default' docs/guides/devcontainers.md ||
+            err "devcontainer guide omits default-off Copilot CLI posture"
     fi
 fi
 
