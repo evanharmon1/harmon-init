@@ -167,9 +167,10 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   amended, rebased, or force-pushed, at any stage.
 - **Never bypass a gate** — not the git hooks, not a stop-gate BLOCK, not a
   failed *or indeterminate* readiness condition. Fix the cause, or escalate.
-- **Every push is secret-scanned first** — automatic where the `pre-push` hook
-  is installed, otherwise run `task security:secrets` yourself. `task security`
-  is the pre-publication gate before the draft PR; `task ci` stays on demand.
+- **Every push passes its round gate, then a secret scan** — `.devflow.toml`'s
+  `[gates]` names them (`verify` for a code push, `check` for a docs-only one,
+  `security:secrets` always, `security` before the draft PR); the `pre-push`
+  hook runs what it can, otherwise run them yourself. `task ci` stays on demand.
 - **One conventional commit per adjudicated round, pushed** to the branch's own
   writable remote (`git push -u <remote> <branch>` on the first push). Per
   *round*, not per finding: five fixes are one commit, a round with nothing to
@@ -205,8 +206,8 @@ finding's **disposition**, may override a computed stage exit **upward only**
 per-thread replies and the PR body, evaluates the readiness gate, performs the
 single promotion, and escalates on a cap, a blocker, or a scope question. It delegates implementation to `/implement`, the confidence
 rounds to `/review`, and integration polling to `/integrate`; each returns a
-typed result under `ai/schemas/result.envelope` — `result.implementer`,
-`result.challenger`, `result.reviewer`, `result.integrator` — and nothing more;
+typed result validated by `ai/schemas/result.envelope.schema.json` and its
+per-role `result.{implementer,challenger,reviewer,integrator}.schema.json`;
 a delegate never merges, never promotes, never widens its own scope, and never
 adjudicates its own findings.
 [% if use_codex_cloud_review %]

@@ -315,11 +315,11 @@ finding's **disposition**, may override a computed stage exit **upward only**
 per-thread replies and the PR body, evaluates the readiness gate, performs the
 single promotion, and escalates to Evan on a cap, a blocker, or a scope question.
 It delegates implementation to `/implement`, the confidence rounds to `/review`,
-and integration polling to `/integrate`; each returns a typed result under
-`ai/schemas/result.envelope` — `result.implementer`, `result.challenger`,
-`result.reviewer`, `result.integrator` — and nothing more; a delegate never
-merges, never promotes, never widens its own scope, and never adjudicates its
-own findings.
+and integration polling to `/integrate`; each returns a typed result validated
+by `ai/schemas/result.envelope.schema.json` and its per-role
+`result.{implementer,challenger,reviewer,integrator}.schema.json`, and nothing
+more; a delegate never merges, never promotes, never widens its own scope, and
+never adjudicates its own findings.
 
 **The current-head Codex contract** is policy and outlives whatever polls it. A
 result is terminal for the head you captured only when it is a clean review or
