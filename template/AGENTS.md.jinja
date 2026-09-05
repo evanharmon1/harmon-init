@@ -113,14 +113,12 @@ The `a11y` job is deliberately **not** in `ci` — it does not gate merges yet
 ## Dev Loop
 
 Bias toward shipping: drive every change to a PR instead of stopping at a green
-local diff. Work in small, PR-sized units, and move to the next stage on your
-own — a PR handed to a human is the deliverable, not something to ask about.
+local diff. Work in PR-sized units; a PR handed to a human is the deliverable.
 
 **The loop is the stage skills; this section is the policy they run under.**
-`/orchestrator` is the session's standing operating mode, and the stages it
-dispatches are `/claim` (take ownership — `/implement` never claims),
-`/implement` (claimed issue → draft PR), `/review` (both confidence stages),
-and `/integrate` (draft PR → ready for review).
+`/orchestrator` is the session's standing operating mode; it dispatches `/claim`
+(take ownership — `/implement` never claims), `/implement` (claimed issue → draft
+PR), `/review` (both confidence stages), and `/integrate` (draft → ready).
 There is **no `dev-loop` skill** — those stages *are* the loop, and the retired
 names map onto them (`gauntlet` → `review`, `shepherd` → `integrate`); a
 vendored pin still shipping a predecessor runs it under exactly this policy.
@@ -148,9 +146,8 @@ or exit condition, **this file wins** — skills sync on their own cadence.
 
 Creating the draft is a phase transition, not a terminal state: every stop short
 of the readiness gate leaves the PR **draft** with a blocker report. That assumes
-the repository *can* open drafts — GitHub restricts them on private repositories
-to paid plans (docs/CHECKLIST.md); if `gh pr create --draft` is rejected, stop
-and report it rather than dropping it, which silently reverts the lifecycle.
+the repo *can* open drafts (GitHub restricts them on private repositories to
+paid plans — docs/CHECKLIST.md); a rejected `--draft` is reported, never dropped.
 
 ### Policy invariants
 
@@ -203,25 +200,28 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
 `/orchestrator` owns the judgements and delegates the work: it decides every
 finding's **disposition**, may override a computed stage exit **upward only**
 (more rounds, never fewer, and never a promotion the gate refused), owns the
-per-thread replies and the PR body, evaluates the readiness gate, performs the
-single promotion, and escalates on a cap, a blocker, or a scope question. It delegates implementation to `/implement`, the confidence
-rounds to `/review`, and integration polling to `/integrate`; each returns a
-typed result validated by `ai/schemas/result.envelope.schema.json` and its
-per-role `result.{implementer,challenger,reviewer,integrator}.schema.json`;
-a delegate never merges, never promotes, never widens its own scope, and never
-adjudicates its own findings.
+per-thread replies and the PR body, evaluates the readiness gate, promotes, and
+escalates on a cap, a blocker, or a scope question. It delegates implementation
+to `/implement`, the confidence rounds to `/review`, and integration polling to
+`/integrate`; each returns a typed result validated by
+`ai/schemas/result.envelope.schema.json` and its per-role
+`result.{implementer,challenger,reviewer,integrator}.schema.json`. A delegate
+never merges, never promotes, never widens its own scope, and never adjudicates
+its own findings. A delegate's result is **immutable**: the adjudication is a
+separate record keyed by finding id, and every consumer reads the adjudicated
+view — editing reviewer output in place destroys the calibration signal.
 [% if use_codex_cloud_review %]
 **The current-head Codex contract** is policy and outlives whatever polls it. A
 result is terminal for the head you captured only when it is a clean review or
-top-level comment by GitHub actor ID `199175422`
-(`chatgpt-codex-connector[bot]`, type `Bot`) whose `Reviewed commit:` names that
-head; a fresh 👍 from that bot on that exact trigger comment, created after both
-the head push and the review request; or findings by that bot naming that head,
-adjudicated before the cycle is clean. Earlier activity never counts for a newer
-head, and a 👀 is pending, not success. Post `@codex review` on entry and after
-every fix push, keep the comment ID returned for that trigger, give each attempt
-a full 10–15 minute window, and re-trigger once after an incomplete first
-attempt. If both attempts are incomplete, stop and escalate without reporting green.
+top-level comment by GitHub actor ID `199175422` (`chatgpt-codex-connector[bot]`,
+type `Bot`) whose `Reviewed commit:` names that head; a fresh 👍 from that bot on
+that exact trigger comment, created after both the head push and the review
+request; or findings by that bot naming that head, adjudicated before the cycle
+is clean. Earlier activity never counts for a newer head, and a 👀 is pending, not
+success. Post `@codex review` on entry and after every fix push, keep the
+comment ID returned for that trigger, and give each attempt a full 10–15 minute
+window, re-triggering once after an incomplete first attempt. If both attempts
+are incomplete, stop and escalate without reporting green.
 [% endif %]
 
 ### Readiness gate

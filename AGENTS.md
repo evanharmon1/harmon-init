@@ -224,25 +224,23 @@ runner ships.
 ## Dev Loop
 
 Bias toward shipping: drive every change to a PR instead of stopping at a green
-local diff. Work in small, PR-sized units; move to the next stage on your own; a
-PR handed to a human is the deliverable, not something to ask permission for.
+local diff. Work in PR-sized units; a PR handed to a human is the deliverable.
 
 **The loop is the stage skills; this section is the policy they run under.**
-`/orchestrator` is the session's standing operating mode, and the stages it
-dispatches are `/claim` (take ownership — `/implement` never claims),
-`/implement` (claimed issue → draft PR), `/review` (both confidence stages),
-and `/integrate` (draft PR → ready for review).
+`/orchestrator` is the session's standing operating mode; it dispatches `/claim`
+(take ownership — `/implement` never claims), `/implement` (claimed issue →
+draft PR), `/review` (both confidence stages), and `/integrate` (draft → ready).
 There is **no `dev-loop` skill** — those stages *are* the loop, and the retired
 names map onto them (`gauntlet` → `review`, `shepherd` → `integrate`); the
-vendored pin in `.claude/skills/` still ships the predecessors, and they run
-under exactly this policy. The skills carry the procedure — round mechanics,
-adjudication records, review polling, the PR-open ritual — and a
-`disable-model-invocation: true` skill is entered by reading its `SKILL.md`.
-Where none is vendored, this section is the whole contract and its invariants
-are owed anyway (with [docs/guides/codex-review.md](docs/guides/codex-review.md)
-for the local reviewer's mechanics). Where a **vendored** skill states a different cap,
-floor, or exit condition, **this file wins** — skills sync from harmon-devkit on
-its own cadence and can lag a policy change made here.
+vendored pin in `.claude/skills/` still ships the predecessors, which run under
+this policy. The skills carry the procedure — round mechanics, adjudication
+records, review polling, the PR-open ritual — entered by reading their
+`SKILL.md`. Where none is vendored, this section is the whole contract and its
+invariants are owed anyway (with
+[docs/guides/codex-review.md](docs/guides/codex-review.md) for the local
+reviewer's mechanics). Where a **vendored** skill states a different cap, floor,
+or exit condition, **this file wins** — skills sync on their own cadence and can
+lag a change made here.
 
 ```text
 /claim → /implement → task verify → challenge → review → task security → DRAFT PR
@@ -321,7 +319,10 @@ and integration polling to `/integrate`; each returns a typed result validated
 by `ai/schemas/result.envelope.schema.json` and its per-role
 `result.{implementer,challenger,reviewer,integrator}.schema.json`, and nothing
 more; a delegate never merges, never promotes, never widens its own scope, and
-never adjudicates its own findings.
+never adjudicates its own findings. A delegate's result is **immutable**
+([ADR 0009](docs/decisions/0009-dev-flow-v2-orchestrator-and-results.md) D2): the
+adjudication is a separate record keyed by finding id and every consumer reads
+the adjudicated view — editing it in place destroys the calibration signal.
 
 **The current-head Codex contract** is policy and outlives whatever polls it. A
 result is terminal for the head you captured only when it is a clean review or
