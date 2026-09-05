@@ -13,10 +13,12 @@ from billing.
 The template SHALL offer a boolean Copier answer `use_fly_sprites`, asked only
 when `devcontainer` is on, defaulting to **no**. Its help text SHALL state,
 next to the question, that Fly.io Sprites requires a Fly.io account with
-billing enabled, that billing is usage-based (CPU-hours, memory GB-hours, and
-storage GB-hours, with no charge while a sprite sleeps), that only a one-time
-trial credit is free, and that a private repository needs the bot PAT the lane
-already carries plus a read token for any private GHCR package. Turning the
+billing enabled, that billing is usage-based (CPU-hours and memory GB-hours
+while a sprite is active, and storage GB-hours at all times — a sleeping
+sprite stops compute charges but its stored bytes, image layers included,
+keep billing), that only a one-time trial credit is free, and that a
+private repository needs the bot PAT the lane already carries plus a read
+token for any private GHCR package. Turning the
 answer off SHALL render no sprite tooling and add no account, token, or
 network dependency to the generated repository.
 
@@ -32,9 +34,9 @@ network dependency to the generated repository.
 #### Scenario: the question discloses account and pricing terms
 - **WHEN** the `use_fly_sprites` question is read in `copier.yml`
 - **THEN** its help text names the Fly.io account requirement, the
-  usage-based billing model, the trial-only free allowance, and the
-  private-repository caveat, and `docs/copier-options.md` carries the same
-  row
+  usage-based billing model including that storage bills while a sprite
+  sleeps, the trial-only free allowance, and the private-repository
+  caveat, and `docs/copier-options.md` carries the same row
 
 #### Scenario: opting in renders the lane tooling in both layers
 - **WHEN** the template is rendered with `use_fly_sprites: yes`
@@ -362,10 +364,16 @@ Every entry into a lane (`lane:exec`, `lane:attach`, `lane:harvest`) SHALL
 first **reconcile** the lane: if the sprite woke cold and the inner container
 is not running, the helper brings it back with `devcontainer up` (which
 reuses the existing container and reruns `post-start.sh`, so
-`bot-autonomy.sh verify` gates the restart), restarts the in-container Herdr
-server where one was running, and only then runs the requested command; a
-`verify` failure on that restart fails the entry non-zero as it fails
-creation. The sprite session SHALL be detachable: if the orchestrator's pane
+`bot-autonomy.sh verify` gates the restart), restarts the in-container SSH
+server and the in-container Herdr server where one was running, and only
+then proceeds; a `verify` failure on that restart fails the entry non-zero
+as it fails creation. What "proceeds" means per entry: `lane:exec` runs the
+requested command; `lane:harvest` copies the report; `lane:attach`
+reattaches the lane's session when it still exists and otherwise — the
+platform drops sessions on a cold pause — opens a new detachable shell
+session in the inner container and says so, naming the lost session, so
+the operator resumes the agent from inside (Herdr's snapshot restore or
+the harness's own resume) rather than being told the lane is gone. The sprite session SHALL be detachable: if the orchestrator's pane
 dies, the worker keeps running and the operator reattaches with
 `task sprite:lane:attach -- <lane>` (the platform's session attach) or, for
 a full Herdr UI inside the lane, with `herdr --remote` over an SSH server
@@ -410,12 +418,22 @@ command can start or keep writing between the check and the restore.
 
 #### Scenario: a cold-woken lane is reconciled before the command runs
 - **WHEN** a sprite has gone cold (inner container stopped, sessions gone)
-  and the orchestrator runs `task sprite:lane:exec` or `lane:attach`
+  and the orchestrator runs `task sprite:lane:exec` or `lane:harvest`
 - **THEN** the helper brings the inner container back with `devcontainer
-  up`, `post-start.sh` runs `bot-autonomy.sh verify` and passes, the SSH
-  alias's address is refreshed, and the requested command then runs inside
-  the container — or, if `verify` fails, the entry exits non-zero naming
-  the harness and runs nothing
+  up`, `post-start.sh` runs `bot-autonomy.sh verify` and passes, the
+  in-container SSH server is running again and the SSH alias's address is
+  refreshed, and the requested command (or the report copy) then runs
+  inside the container — or, if `verify` fails, the entry exits non-zero
+  naming the harness and runs nothing
+
+#### Scenario: attaching to a cold-woken lane opens a fresh session and says so
+- **WHEN** a sprite has gone cold and the orchestrator runs
+  `task sprite:lane:attach`
+- **THEN** the helper reconciles as above, finds the lane's previous
+  session gone, opens a new detachable shell session inside the inner
+  container, and prints that the previous session was lost to a cold
+  pause with the resume options — it neither fails silently nor reports
+  the lane as gone
 
 #### Scenario: harvest copies the report out and verifies nothing
 - **WHEN** `task sprite:lane:harvest -- <lane> --report <path>` runs after

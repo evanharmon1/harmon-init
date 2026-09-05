@@ -146,7 +146,9 @@ and adds no requirement to either spec.)
 - External: a Fly.io account with Sprites enabled (usage-based; one $30
   trial credit per user), the `sprite` CLI on the orchestrator's machine,
   and the devcontainers CLI + Docker inside each pool sprite.
-- Cross-repo follow-ups (filed, not done here): harmon-devkit (herdr skill
-  and dispatch-recipe text for remote lanes), ponderousdev/foreman (the
-  Sprites-vs-Fly-Machines naming of its isolated runner; D5/D6), harmon-infra
-  (nothing to build; record that Coder stays the fallback).
+- Cross-repo follow-ups (to be filed by task 5.1 of the implementation,
+  not filed by this proposal): harmon-devkit (herdr skill and
+  dispatch-recipe text for remote lanes), ponderousdev/foreman (the
+  Sprites-vs-Fly-Machines naming of its isolated runner; D5/D6),
+  harmon-infra (nothing to build; record that Coder stays the fallback),
+  and a Fly.io feature request (sprite-scoped tokens, fork-from-sprite).
