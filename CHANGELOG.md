@@ -8,6 +8,26 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.43.0](https://github.com/evanharmon1/harmon-init/compare/v4.42.2...v4.43.0) (2026-09-05)
+
+
+### Features
+
+* adopt Dev Flow v2 policy contract ([#1159](https://github.com/evanharmon1/harmon-init/issues/1159)) ([eb199d0](https://github.com/evanharmon1/harmon-init/commit/eb199d03d917e77c4533a052107809b861a7ee48))
+* **ci:** document dual-layer CI_RUNS_ON variable hierarchy and precedence ([#1158](https://github.com/evanharmon1/harmon-init/issues/1158)) ([3f639a5](https://github.com/evanharmon1/harmon-init/commit/3f639a5632b7ce67aa23eca819a4c8ef22a31f88))
+* **ci:** skip redundant tool downloads on pre-baked runner images ([#1140](https://github.com/evanharmon1/harmon-init/issues/1140)) ([897fdda](https://github.com/evanharmon1/harmon-init/commit/897fddae9ff704bbcf41e8fd276d4072dff38f6c))
+* **devcontainer:** bot autonomy modules for Copilot CLI, pi, and oh-my-pi ([#1165](https://github.com/evanharmon1/harmon-init/issues/1165)) ([6d2befb](https://github.com/evanharmon1/harmon-init/commit/6d2befb534dcfaf4588306d29e6d45e4324ba97f))
+* **devcontainer:** fail-closed bot autonomy bootstrap for every installed harness ([#1150](https://github.com/evanharmon1/harmon-init/issues/1150)) ([c720eab](https://github.com/evanharmon1/harmon-init/commit/c720eab0e64dfabb1591622017f6631d05df42b9))
+* **image:** add Copilot CLI, pi, oh-my-pi; remove Gemini CLI; bump herdr to 0.8.2 ([#1149](https://github.com/evanharmon1/harmon-init/issues/1149)) ([3069d85](https://github.com/evanharmon1/harmon-init/commit/3069d85f214a0e9f676ccab17d186768669bcf9a))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 3069d85f ([#1152](https://github.com/evanharmon1/harmon-init/issues/1152)) ([7def6e5](https://github.com/evanharmon1/harmon-init/commit/7def6e5c86ac16d7f3d84c08ba5ce69ad472212c))
+* **openspec:** archive the bot-autonomy and harness-matrix changes and retarget references ([#1166](https://github.com/evanharmon1/harmon-init/issues/1166)) ([a442158](https://github.com/evanharmon1/harmon-init/commit/a44215821f9130cf981c4a2be30796127aea776e))
+* remove the guard-process-kill hook ([#1145](https://github.com/evanharmon1/harmon-init/issues/1145)) ([1670e39](https://github.com/evanharmon1/harmon-init/commit/1670e39ea2bd86db058507c0151f4880e94a3d9b))
+* **template:** shrink the AGENTS.md Dev Loop to policy and a pointer ([#1167](https://github.com/evanharmon1/harmon-init/issues/1167)) ([34b658c](https://github.com/evanharmon1/harmon-init/commit/34b658cb577fc9c1961624f49b4952dcd41b7042)), closes [#1082](https://github.com/evanharmon1/harmon-init/issues/1082)
+
 ## [4.42.2](https://github.com/evanharmon1/harmon-init/compare/v4.42.1...v4.42.2) (2026-09-01)
 
 
