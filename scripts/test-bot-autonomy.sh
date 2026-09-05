@@ -49,7 +49,7 @@ trap 'rm -rf "$work_dir"' EXIT
 # claude/codex/agy/opencode are never among them, by construction.
 safe_bin="${work_dir}/safe-bin"
 mkdir -p "$safe_bin"
-for tool in bash jq sha256sum git mktemp mv chmod install mkdir basename dirname cmp rm; do
+for tool in bash cat grep jq yq sha256sum git mktemp mv chmod install mkdir basename dirname cmp rm; do
     tool_path="$(command -v "$tool" 2>/dev/null || true)"
     [ -n "$tool_path" ] && ln -sf "$tool_path" "${safe_bin}/${tool}"
 done
@@ -170,11 +170,13 @@ assert_unsupported_fails() {
 # qwen-code's binary is "qwen", cline's published @cline/cli package's binary
 # is "clite" (not "cline"). A fixture using the slug itself would never be
 # found by `command -v` and would silently fail to exercise this at all.
-assert_unsupported_fails "copilot-cli" "copilot"
+# copilot-cli, pi and oh-my-pi are deliberately NOT in this list any more:
+# bot-autonomy-new-harnesses replaced their placeholder unsupported entries
+# with real modules, so their executables turning up installed is now the
+# expected state, not a coverage failure. Sections 16-20 below cover them.
 assert_unsupported_fails "qwen-code" "qwen"
 assert_unsupported_fails "goose" "goose"
 assert_unsupported_fails "cline" "clite"
-assert_unsupported_fails "pi" "pi"
 # A fixture literally named "cline" must NOT trip the cline entry (its real
 # executable is "clite") — confirms the check keys off `executable`, not slug.
 cline_slug_bin_dir="${work_dir}/fake-bin-cline-slug"
@@ -495,5 +497,736 @@ HOME="$no_agy_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled PATH="$SAFE_PATH" \
     BOT_AUTONOMY_REGISTRY="$registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
     bash "$bot_autonomy" verify >/dev/null ||
     fail "bot-autonomy.sh verify failed against the correctly-restored disabled state with agy absent from PATH"
+
+# ── bot-autonomy-new-harnesses: Copilot CLI, pi, oh-my-pi ─────────────────
+
+echo "==> 16. Copilot CLI: disabled-by-option is a VERIFIED state, not a default"
+copilot_module="${module_dir}/copilot-cli.sh"
+cp_disabled_home="${work_dir}/copilot-disabled-home"
+mkdir -p "${cp_disabled_home}/.local/bin"
+cp_disabled_env=(
+    HOME="$cp_disabled_home"
+    BOT_AUTONOMY_COPILOT_LINK="${cp_disabled_home}/.local/bin/copilot"
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_disabled_home}/.copilot/settings.json"
+    HARMON_BOT_AUTONOMY_COPILOT=disabled
+    COPILOT_ALLOW_ALL=false
+)
+env "${cp_disabled_env[@]}" bash "$copilot_module" apply >/dev/null
+env "${cp_disabled_env[@]}" bash "$copilot_module" verify >/dev/null ||
+    fail "copilot-cli verify failed against the correct disabled-by-option state"
+[ ! -e "${cp_disabled_home}/.local/bin/copilot" ] ||
+    fail "copilot-cli apply created a wrapper while disabled-by-option"
+
+# The kill-switch check must NOT run in the disabled state: a default-off
+# consumer whose own org locks bypass mode via MDM has nothing wrong with it.
+mkdir -p "${cp_disabled_home}/.copilot"
+printf '{"permissions":{"disableBypassPermissionsMode":"disable"}}\n' >"${cp_disabled_home}/.copilot/settings.json"
+env "${cp_disabled_env[@]}" bash "$copilot_module" verify >/dev/null ||
+    fail "copilot-cli verify failed on a disabled-by-option state whose org separately locks bypass mode — that key is irrelevant when autonomy is off"
+
+# A disabled render must still assert the literal "false": an unset (or
+# truthy) COPILOT_ALLOW_ALL means the rendered containerEnv did not reach
+# this process, which is exactly the stale-env-file channel the always-
+# rendered literal exists to close.
+for bad in "" "true" "1"; do
+    if HOME="$cp_disabled_home" \
+        BOT_AUTONOMY_COPILOT_LINK="${cp_disabled_home}/.local/bin/copilot" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="${cp_disabled_home}/.copilot/settings.json" \
+        HARMON_BOT_AUTONOMY_COPILOT=disabled COPILOT_ALLOW_ALL="$bad" \
+        bash "$copilot_module" verify >/dev/null 2>&1; then
+        fail "copilot-cli verify passed a disabled state whose COPILOT_ALLOW_ALL is '${bad:-<empty>}', not the literal 'false'"
+    fi
+done
+
+echo "==> 16b. Copilot CLI: enabled apply/verify round-trip, and the exact-literal contract"
+cp_home="${work_dir}/copilot-home"
+cp_real_bin="${work_dir}/copilot-real-bin"
+mkdir -p "${cp_home}/.local/bin" "$cp_real_bin"
+printf '#!/bin/sh\necho REAL "$@"\n' >"${cp_real_bin}/copilot"
+chmod +x "${cp_real_bin}/copilot"
+cp_link="${cp_home}/.local/bin/copilot"
+cp_settings="${cp_home}/.copilot/settings.json"
+cp_enabled_env=(
+    HOME="$cp_home"
+    BOT_AUTONOMY_COPILOT_LINK="$cp_link"
+    BOT_AUTONOMY_COPILOT_SETTINGS="$cp_settings"
+    HARMON_BOT_AUTONOMY_COPILOT=enabled
+    COPILOT_ALLOW_ALL=true
+    PATH="${cp_real_bin}:${SAFE_PATH}"
+)
+env "${cp_enabled_env[@]}" bash "$copilot_module" apply >/dev/null
+[ -f "$cp_link" ] && [ -x "$cp_link" ] ||
+    fail "copilot-cli apply did not install an executable wrapper in the enabled state"
+env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null ||
+    fail "copilot-cli verify failed immediately after a correct enabled apply"
+
+# A truthy-looking but non-literal value is NOT the autonomous state: Copilot's
+# own documented contract checks for the string "true".
+for bad in "1" "yes" "TRUE" ""; do
+    if HOME="$cp_home" BOT_AUTONOMY_COPILOT_LINK="$cp_link" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="$cp_settings" \
+        HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL="$bad" \
+        PATH="${cp_real_bin}:${SAFE_PATH}" \
+        bash "$copilot_module" verify >/dev/null 2>&1; then
+        fail "copilot-cli verify accepted COPILOT_ALLOW_ALL='${bad:-<empty>}' as the autonomous state"
+    fi
+    # apply must refuse to install a wrapper against that same environment
+    # rather than papering over a render defect.
+    if HOME="$cp_home" BOT_AUTONOMY_COPILOT_LINK="${work_dir}/never-written-copilot" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="$cp_settings" \
+        HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL="$bad" \
+        PATH="${cp_real_bin}:${SAFE_PATH}" \
+        bash "$copilot_module" apply >/dev/null 2>&1; then
+        fail "copilot-cli apply installed a wrapper with COPILOT_ALLOW_ALL='${bad:-<empty>}' instead of failing on the marker/environment inconsistency"
+    fi
+done
+[ ! -e "${work_dir}/never-written-copilot" ] ||
+    fail "copilot-cli apply wrote a wrapper on the marker/environment-inconsistency path"
+
+echo "==> 16c. Copilot CLI: the enterprise kill-switch fails verify when autonomy is ON"
+mkdir -p "${cp_home}/.copilot"
+printf '{"permissions":{"disableBypassPermissionsMode":"disable"}}\n' >"$cp_settings"
+if env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null 2>&1; then
+    fail "copilot-cli verify passed with permissions.disableBypassPermissionsMode='disable' while autonomy is enabled"
+fi
+# Any other value (including the key being absent) is fine.
+printf '{"permissions":{"disableBypassPermissionsMode":"allow-auto-only"}}\n' >"$cp_settings"
+env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null ||
+    fail "copilot-cli verify failed on a settings.json that does not block bypass mode"
+rm -f "$cp_settings"
+env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null ||
+    fail "copilot-cli verify failed with no ~/.copilot/settings.json at all"
+
+echo "==> 16d. Copilot CLI: verify needs matching wrapper CONTENT and a runnable delegate, not mere presence"
+cp_corrupt="${work_dir}/copilot-corrupt"
+cp "$cp_link" "$cp_corrupt"
+printf '\n# corrupted\n' >>"$cp_link"
+chmod +x "$cp_link"
+if env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null 2>&1; then
+    fail "copilot-cli verify passed a wrapper whose content no longer matches write_wrapper's output"
+fi
+cp "$cp_corrupt" "$cp_link"
+chmod +x "$cp_link"
+env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null ||
+    fail "fixture setup: restoring the wrapper did not return verify to green"
+
+# Correct bytes, no runnable backend: SAFE_PATH carries no copilot at all and
+# the documented system-binary fallback is pointed off any real install, so
+# every invocation would exit 127 while the wrapper still looks perfect.
+if HOME="$cp_home" BOT_AUTONOMY_COPILOT_LINK="$cp_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="$cp_settings" \
+    HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL=true \
+    HARMON_COPILOT_SYSTEM_BINARY="${work_dir}/no-such-copilot" \
+    PATH="$SAFE_PATH" \
+    bash "$copilot_module" verify >/dev/null 2>&1; then
+    fail "copilot-cli verify passed with no runnable delegate (no copilot on PATH, no system fallback)"
+fi
+
+# A symlink is never the wrapper, even a resolvable one.
+mv "$cp_link" "${cp_home}/.local/bin/copilot-stashed"
+ln -s "${cp_real_bin}/copilot" "$cp_link"
+if env "${cp_enabled_env[@]}" bash "$copilot_module" verify >/dev/null 2>&1; then
+    fail "copilot-cli verify accepted a symlink in place of the wrapper"
+fi
+rm -f "$cp_link"
+mv "${cp_home}/.local/bin/copilot-stashed" "$cp_link"
+
+echo "==> 16e. Copilot CLI: toggling the option off removes a previously-installed wrapper"
+HOME="$cp_home" BOT_AUTONOMY_COPILOT_LINK="$cp_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="$cp_settings" \
+    HARMON_BOT_AUTONOMY_COPILOT=disabled COPILOT_ALLOW_ALL=false \
+    PATH="${cp_real_bin}:${SAFE_PATH}" \
+    bash "$copilot_module" apply >/dev/null
+[ ! -e "$cp_link" ] ||
+    fail "copilot-cli apply left the wrapper behind after the marker flipped to disabled"
+HOME="$cp_home" BOT_AUTONOMY_COPILOT_LINK="$cp_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="$cp_settings" \
+    HARMON_BOT_AUTONOMY_COPILOT=disabled COPILOT_ALLOW_ALL=false \
+    PATH="${cp_real_bin}:${SAFE_PATH}" \
+    bash "$copilot_module" verify >/dev/null ||
+    fail "copilot-cli verify failed after a toggle-off returned the container to disabled-by-option"
+
+echo "==> 17. Copilot wrapper: flag injection, partial-flag completion, passthrough, delegate resolution"
+env "${cp_enabled_env[@]}" bash "$copilot_module" apply >/dev/null
+# Invoked DIRECTLY (never via a sourced shell), with the wrapper's own
+# directory first on PATH — exactly how a programmatic launcher reaches it —
+# so a wrapper that failed to exclude its own directory would recurse.
+cp_run() {
+    PATH="${cp_home}/.local/bin:${cp_real_bin}:${SAFE_PATH}" "$cp_link" "$@"
+}
+case "$(cp_run)" in
+"REAL --allow-all") ;;
+*) fail "copilot wrapper did not inject --allow-all on a bare (interactive) invocation: $(cp_run)" ;;
+esac
+case "$(cp_run -p "do a thing")" in
+"REAL --allow-all -p do a thing") ;;
+*) fail "copilot wrapper did not inject --allow-all on a headless -p invocation: $(cp_run -p "do a thing")" ;;
+esac
+# A PARTIAL narrower flag is not full coverage — the two dimensions it did
+# not name would otherwise stay restricted in a sanitized environment.
+for partial in --allow-all-tools --allow-all-paths --allow-all-urls; do
+    case "$(cp_run "$partial" -p x)" in
+    "REAL --allow-all ${partial} -p x") ;;
+    *) fail "copilot wrapper did not add --allow-all alongside the partial flag ${partial}: $(cp_run "$partial" -p x)" ;;
+    esac
+done
+# Already-complete coverage is never duplicated.
+for complete in "--allow-all" "--yolo"; do
+    out="$(cp_run "$complete" -p x)"
+    case "$out" in
+    "REAL ${complete} -p x") ;;
+    *) fail "copilot wrapper modified an invocation that already carries ${complete}: ${out}" ;;
+    esac
+done
+out="$(cp_run --allow-all-tools --allow-all-paths --allow-all-urls -p x)"
+case "$out" in
+"REAL --allow-all-tools --allow-all-paths --allow-all-urls -p x") ;;
+*) fail "copilot wrapper appended --allow-all to an invocation already carrying all three narrower flags: ${out}" ;;
+esac
+# Administrative/informational subcommands pass through untouched. The list
+# is Copilot 1.0.82's own `Commands:` block plus the help/version flag forms.
+for passthrough in login version --version help -h --help update completion init plugin plugins mcp skill app; do
+    out="$(cp_run "$passthrough")"
+    case "$out" in
+    *"--allow-all"*) fail "copilot wrapper injected --allow-all on the administrative subcommand '${passthrough}': ${out}" ;;
+    esac
+    case "$out" in
+    "REAL ${passthrough}") ;;
+    *) fail "copilot wrapper did not pass '${passthrough}' through unmodified: ${out}" ;;
+    esac
+done
+# An option VALUE spelled exactly like an allow-all flag must not suppress
+# injection: the scan's failure direction is asymmetric, and -p/--prompt is
+# the one option whose value is arbitrary caller text (challenge round 1).
+for prompt_flag in -p --prompt; do
+    out="$(cp_run "$prompt_flag" --allow-all)"
+    case "$out" in
+    "REAL --allow-all ${prompt_flag} --allow-all") ;;
+    *) fail "copilot wrapper treated the ${prompt_flag} VALUE '--allow-all' as an active flag and skipped injection: ${out}" ;;
+    esac
+    out="$(cp_run "$prompt_flag" --yolo)"
+    case "$out" in
+    "REAL --allow-all ${prompt_flag} --yolo") ;;
+    *) fail "copilot wrapper treated the ${prompt_flag} VALUE '--yolo' as an active flag and skipped injection: ${out}" ;;
+    esac
+done
+# Everything after a bare "--" is an operand, not an active flag (challenge
+# round 2).
+out="$(cp_run -- --allow-all)"
+case "$out" in
+"REAL --allow-all -- --allow-all") ;;
+*) fail "copilot wrapper treated an operand after the end-of-options separator as an active flag: ${out}" ;;
+esac
+# A REAL flag after the prompt value is still detected (the skip is exactly
+# one token, not "everything after -p").
+out="$(cp_run -p "some prompt" --allow-all)"
+case "$out" in
+"REAL -p some prompt --allow-all") ;;
+*) fail "copilot wrapper skipped more than the single -p value token: ${out}" ;;
+esac
+# --prompt=<value> is one token and never equals a bare flag.
+out="$(cp_run --prompt=--allow-all)"
+case "$out" in
+"REAL --allow-all --prompt=--allow-all") ;;
+*) fail "copilot wrapper mishandled an attached --prompt=<value> whose value looks like a flag: ${out}" ;;
+esac
+
+# With no copilot anywhere on PATH outside its own directory, the wrapper
+# falls back to the documented system binary rather than execing itself.
+cp_fallback="${work_dir}/copilot-fallback"
+printf '#!/bin/sh\necho FALLBACK "$@"\n' >"$cp_fallback"
+chmod +x "$cp_fallback"
+HARMON_COPILOT_SYSTEM_BINARY="$cp_fallback" HOME="$cp_home" \
+    BOT_AUTONOMY_COPILOT_LINK="$cp_link" HARMON_BOT_AUTONOMY_COPILOT=enabled \
+    COPILOT_ALLOW_ALL=true PATH="${cp_real_bin}:${SAFE_PATH}" \
+    bash "$copilot_module" apply >/dev/null
+out="$(PATH="${cp_home}/.local/bin:${SAFE_PATH}" "$cp_link" -p x)"
+case "$out" in
+"FALLBACK --allow-all -p x") ;;
+*) fail "copilot wrapper did not fall back to the documented system binary with no other copilot on PATH: ${out}" ;;
+esac
+
+echo "==> 17b. Copilot CLI: apply never destroys or clobbers a launcher it does not own"
+# challenge round 2. This module claims ~/.local/bin/copilot in BOTH states —
+# enabled installs the wrapper there, disabled requires it absent — so a
+# foreign file at that path is already a broken state under either answer.
+# Deleting it is still not this module's call: refuse and name the conflict.
+cp_foreign_home="${work_dir}/copilot-foreign-home"
+mkdir -p "${cp_foreign_home}/.local/bin"
+cp_foreign_link="${cp_foreign_home}/.local/bin/copilot"
+printf '#!/bin/sh\necho A CONSUMERS OWN LAUNCHER "$@"\n' >"$cp_foreign_link"
+chmod +x "$cp_foreign_link"
+cp_foreign_content="$(cat "$cp_foreign_link")"
+for state in "disabled false" "enabled true"; do
+    set -- $state
+    if HOME="$cp_foreign_home" BOT_AUTONOMY_COPILOT_LINK="$cp_foreign_link" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="${cp_foreign_home}/.copilot/settings.json" \
+        HARMON_BOT_AUTONOMY_COPILOT="$1" COPILOT_ALLOW_ALL="$2" \
+        PATH="${cp_real_bin}:${SAFE_PATH}" \
+        bash "$copilot_module" apply >/dev/null 2>&1; then
+        fail "copilot-cli apply (marker ${1}) touched a launcher this module did not write instead of refusing"
+    fi
+    [ "$(cat "$cp_foreign_link")" = "$cp_foreign_content" ] ||
+        fail "copilot-cli apply (marker ${1}) modified or deleted a launcher this module did not write"
+done
+
+# Ownership is keyed on the STABLE marker line, not a byte-compare against
+# the current write_wrapper output: a wrapper an EARLIER release installed
+# must still be recognised as ours, or a content change would strand it.
+cp_stale_home="${work_dir}/copilot-stale-home"
+mkdir -p "${cp_stale_home}/.local/bin"
+cp_stale_link="${cp_stale_home}/.local/bin/copilot"
+HOME="$cp_stale_home" BOT_AUTONOMY_COPILOT_LINK="$cp_stale_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_stale_home}/.copilot/settings.json" \
+    HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL=true \
+    PATH="${cp_real_bin}:${SAFE_PATH}" bash "$copilot_module" apply >/dev/null
+printf '\n# a line only an older release of this wrapper carried\n' >>"$cp_stale_link"
+grep -Fqx '# harmon-init-bot-autonomy-wrapper: copilot-cli' "$cp_stale_link" ||
+    fail "fixture setup: the installed wrapper carries no ownership marker"
+HOME="$cp_stale_home" BOT_AUTONOMY_COPILOT_LINK="$cp_stale_link" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_stale_home}/.copilot/settings.json" \
+    HARMON_BOT_AUTONOMY_COPILOT=disabled COPILOT_ALLOW_ALL=false \
+    PATH="${cp_real_bin}:${SAFE_PATH}" bash "$copilot_module" apply >/dev/null ||
+    fail "copilot-cli apply refused to remove a wrapper an earlier release installed (marker present, content drifted)"
+[ ! -e "$cp_stale_link" ] ||
+    fail "copilot-cli apply left a previous release's own wrapper in place when disabled"
+
+echo "==> 17c. Copilot CLI stays on the ordinary executable gate, in BOTH marker states"
+# Shepherd round 2 deleted round 1's always_dispatch opt-in. It made the root
+# bot profile unbootable on the checked-in pre-harness-matrix pin: the marker
+# is enabled, post-create runs `bot-autonomy.sh verify`, the hook dispatched
+# this module, and verify failed "no runnable delegate" — aborting every
+# container creation until #1152 lands. So the module is dispatched only when
+# `copilot` actually resolves on PATH, exactly like every other module here.
+#
+# The residual that leaves — an enabled marker with no binary anywhere is
+# SKIPPED in-container, not failed — is covered by the digest-bounded
+# assertion in scripts/devcontainer-assert.sh instead, which is the layer that
+# can tell "this pin ships no copilot" from "the packaging regressed".
+cp_gate_registry="${work_dir}/registry-copilot-only.json"
+jq -n '{harnesses: [{slug: "copilot-cli"}]}' >"$cp_gate_registry"
+cp_gate_run() {
+    # $1 marker, $2 COPILOT_ALLOW_ALL, $3 subcommand, $4 HOME
+    (cd "$work_dir" && env HOME="$4" \
+        BOT_AUTONOMY_REGISTRY="$cp_gate_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+        BOT_AUTONOMY_COPILOT_LINK="${4}/.local/bin/copilot" \
+        BOT_AUTONOMY_COPILOT_SETTINGS="${4}/.copilot/settings.json" \
+        HARMON_COPILOT_SYSTEM_BINARY="${work_dir}/no-such-copilot-anywhere" \
+        HARMON_BOT_AUTONOMY_COPILOT="$1" COPILOT_ALLOW_ALL="$2" PATH="$SAFE_PATH" \
+        bash "$bot_autonomy" "$3" 2>&1)
+}
+# The module must NOT implement always_dispatch at all — re-adding it is what
+# broke the pre-matrix bot container, so make its absence the assertion.
+for any_marker in enabled disabled ""; do
+    if HARMON_BOT_AUTONOMY_COPILOT="$any_marker" bash "$copilot_module" always_dispatch >/dev/null 2>&1; then
+        fail "copilot-cli accepts an always_dispatch subcommand (marker '${any_marker:-<unset>}') — that opt-in made the pre-harness-matrix bot container unbootable and must stay deleted"
+    fi
+done
+
+# Enabled marker, no copilot anywhere: bot-autonomy.sh SKIPS the module, so
+# both apply and verify succeed and nothing is installed. This is the
+# pre-#1152 state of this repository's own bot profile; it must stay bootable.
+cp_gate_on="${work_dir}/copilot-gate-enabled-home"
+mkdir -p "${cp_gate_on}/.local/bin"
+cp_gate_run enabled true apply "$cp_gate_on" >/dev/null ||
+    fail "bot-autonomy.sh apply failed for an enabled Copilot with no binary installed — the pre-#1152 bot container must still boot"
+cp_gate_run enabled true verify "$cp_gate_on" >/dev/null ||
+    fail "bot-autonomy.sh verify failed for an enabled Copilot with no binary installed — the module must be skipped, not dispatched, when its executable is absent"
+[ ! -e "${cp_gate_on}/.local/bin/copilot" ] ||
+    fail "a wrapper was installed for an enabled Copilot whose binary is absent — the module should not have been dispatched at all"
+
+# The complementary half: a default-off consumer whose image happens to carry
+# no copilot behaves identically.
+cp_gate_off="${work_dir}/copilot-gate-disabled-home"
+mkdir -p "${cp_gate_off}/.local/bin"
+cp_gate_run disabled false apply "$cp_gate_off" >/dev/null ||
+    fail "bot-autonomy.sh apply failed for a disabled Copilot with no binary installed"
+cp_gate_run disabled false verify "$cp_gate_off" >/dev/null ||
+    fail "bot-autonomy.sh verify failed for a DISABLED Copilot with no binary — the ordinary executable gate is correct there"
+[ ! -e "${cp_gate_off}/.local/bin/copilot" ] ||
+    fail "the disabled branch installed a wrapper while no copilot binary was present"
+
+# With the binary present the module IS dispatched and the enabled state is
+# fully checked — proving the skip above is the executable gate, not a hole.
+cp_gate_bin="${work_dir}/copilot-gate-bin"
+cp_gate_live="${work_dir}/copilot-gate-live-home"
+mkdir -p "$cp_gate_bin" "${cp_gate_live}/.local/bin"
+printf '#!/bin/sh\necho REAL "$@"\n' >"${cp_gate_bin}/copilot"
+chmod +x "${cp_gate_bin}/copilot"
+(cd "$work_dir" && env HOME="$cp_gate_live" \
+    BOT_AUTONOMY_REGISTRY="$cp_gate_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    BOT_AUTONOMY_COPILOT_LINK="${cp_gate_live}/.local/bin/copilot" \
+    BOT_AUTONOMY_COPILOT_SETTINGS="${cp_gate_live}/.copilot/settings.json" \
+    HARMON_BOT_AUTONOMY_COPILOT=enabled COPILOT_ALLOW_ALL=true \
+    PATH="${cp_gate_bin}:${SAFE_PATH}" bash "$bot_autonomy" apply >/dev/null) ||
+    fail "bot-autonomy.sh apply failed for an enabled Copilot WITH its binary present"
+[ -f "${cp_gate_live}/.local/bin/copilot" ] ||
+    fail "bot-autonomy.sh did not dispatch the copilot module when its executable was on PATH"
+
+echo "==> 18. pi: apply writes nothing; verify fails closed on BOTH trust-granting surfaces"
+pi_module="${module_dir}/pi.sh"
+pi_home="${work_dir}/pi-home"
+pi_workspace="${work_dir}/pi-home/workspace/repo"
+mkdir -p "${pi_home}/.pi/agent" "$pi_workspace"
+# pi's own install leaves a settings.json behind; apply must not touch it.
+printf '{"theme":"dark"}\n' >"${pi_home}/.pi/agent/settings.json"
+pi_before="$(find "${pi_home}/.pi" | sort)"
+pi_before_sum="$(cat "${pi_home}/.pi/agent/settings.json")"
+BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" apply >/dev/null
+[ "$(find "${pi_home}/.pi" | sort)" = "$pi_before" ] ||
+    fail "pi apply created or removed a file under ~/.pi — this module is a no-op by design"
+[ "$(cat "${pi_home}/.pi/agent/settings.json")" = "$pi_before_sum" ] ||
+    fail "pi apply modified ~/.pi/agent/settings.json — this module writes nothing"
+(cd "$pi_workspace" && BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" verify >/dev/null) ||
+    fail "pi verify failed against a clean, untouched ~/.pi"
+
+# There is no `restore` subcommand: a module that writes nothing has nothing
+# captured to put back.
+if BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" restore >/dev/null 2>&1; then
+    fail "pi module accepted a 'restore' subcommand — it never overwrites anything, so it must not offer one"
+fi
+
+# Surface 1: the global fallback. Fails regardless of who wrote it — the
+# fixture deliberately writes it directly, since this module never does.
+printf '{"defaultProjectTrust":"always"}\n' >"${pi_home}/.pi/agent/settings.json"
+if (cd "$pi_workspace" && BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" verify >/dev/null 2>&1); then
+    fail "pi verify passed with defaultProjectTrust='always' in the global settings"
+fi
+for safe in ask never; do
+    printf '{"defaultProjectTrust":"%s"}\n' "$safe" >"${pi_home}/.pi/agent/settings.json"
+    (cd "$pi_workspace" && BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" verify >/dev/null) ||
+        fail "pi verify failed on the safe defaultProjectTrust value '${safe}'"
+done
+
+# Surface 2: a saved decision in trust.json. Confirmed format against the
+# installed pi 0.84.4: a flat object of canonical-directory -> true|false|null,
+# where only `true` grants anything. Not scoped to path-applicability: an
+# unrelated trusted path is still live on a volume that outlives the check.
+pi_trust="${pi_home}/.pi/agent/trust.json"
+for trusted_path in "$pi_workspace" "$(dirname "$pi_workspace")" "/opt/an-unrelated-workspace"; do
+    jq -n --arg p "$trusted_path" '{($p): true}' >"$pi_trust"
+    if (cd "$pi_workspace" && BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" verify >/dev/null 2>&1); then
+        fail "pi verify passed with a trusted saved decision for '${trusted_path}'"
+    fi
+done
+# The positive case: an explicitly DISTRUSTED (or null) decision is safe, so a
+# naive "any entry at all fails" implementation would wrongly reject it.
+jq -n --arg a "$pi_workspace" --arg b "$(dirname "$pi_workspace")" \
+    '{($a): false, ($b): false, "/opt/an-unrelated-workspace": false, "/opt/undecided": null}' >"$pi_trust"
+(cd "$pi_workspace" && BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" verify >/dev/null) ||
+    fail "pi verify failed on explicitly-distrusted saved decisions — only a TRUSTED decision grants anything"
+# A store pi itself refuses to read is not evidence of safety.
+printf '[]\n' >"$pi_trust"
+if (cd "$pi_workspace" && BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" verify >/dev/null 2>&1); then
+    fail "pi verify passed over a trust.json that is not a JSON object"
+fi
+rm -f "$pi_trust"
+
+echo "==> 18b. pi: bot and dev behave identically, and dispatch adds no side effect of its own"
+# The module has no per-profile branch at all, so the marker every OTHER
+# Copier-gated module reads must make no difference here either.
+for marker in enabled disabled ""; do
+    HARMON_BOT_AUTONOMY_COPILOT="$marker" HARMON_BOT_AUTONOMY_ANTIGRAVITY="$marker" \
+        BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" bash "$pi_module" apply >/dev/null
+done
+[ "$(find "${pi_home}/.pi" | sort)" = "$pi_before" ] ||
+    fail "pi apply behaved differently under some profile marker — it has no per-profile branch"
+
+# Task 2.3's stub-executable fixture: dispatching pi through the TOP-LEVEL
+# entrypoint with a fake `pi` on PATH must introduce no flag, config write,
+# or other side effect that could mask pi's own non-interactive handling.
+# (Proving pi's real -p behavior needs the real binary and is deferred to the
+# sync-pin PR's reviewer checklist — see scripts/sync-devcontainer-image.sh.)
+pi_stub_bin="${work_dir}/pi-stub-bin"
+pi_stub_log="${work_dir}/pi-stub.log"
+mkdir -p "$pi_stub_bin"
+cat >"${pi_stub_bin}/pi" <<PI_STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"${pi_stub_log}"
+exit 0
+PI_STUB
+chmod +x "${pi_stub_bin}/pi"
+: >"$pi_stub_log"
+pi_only_registry="${work_dir}/registry-only-pi.json"
+jq -n '{harnesses: [{slug: "pi"}]}' >"$pi_only_registry"
+pi_dispatch_before="$(find "${pi_home}/.pi" | sort)"
+(cd "$pi_workspace" && HOME="$pi_home" BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" \
+    BOT_AUTONOMY_REGISTRY="$pi_only_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    PATH="${pi_stub_bin}:${SAFE_PATH}" bash "$bot_autonomy" apply >/dev/null) ||
+    fail "bot-autonomy.sh apply failed dispatching the pi module against a stub pi executable"
+(cd "$pi_workspace" && HOME="$pi_home" BOT_AUTONOMY_PI_AGENT_DIR="${pi_home}/.pi/agent" \
+    BOT_AUTONOMY_REGISTRY="$pi_only_registry" BOT_AUTONOMY_CONFIG_DIR="$module_dir" \
+    PATH="${pi_stub_bin}:${SAFE_PATH}" bash "$bot_autonomy" verify >/dev/null) ||
+    fail "bot-autonomy.sh verify failed dispatching the pi module against a stub pi executable"
+[ "$(find "${pi_home}/.pi" | sort)" = "$pi_dispatch_before" ] ||
+    fail "dispatching pi through bot-autonomy.sh changed ~/.pi — the module's no-op contract regressed"
+[ ! -s "$pi_stub_log" ] ||
+    fail "the pi module invoked the pi binary (args: $(cat "$pi_stub_log")) — it must add no flag or run of its own"
+
+echo "==> 19. oh-my-pi: fresh apply, override, unrelated keys preserved, apply->apply->restore"
+omp_module="${module_dir}/oh-my-pi.sh"
+omp_agent_dir="${work_dir}/omp-home/.omp/agent"
+omp_config="${omp_agent_dir}/config.yml"
+omp_backup="${omp_config}.harmon-init-autonomy-backup"
+omp_workdir="${work_dir}/omp-workdir"
+mkdir -p "$omp_workdir"
+
+# Fresh volume: no ~/.omp/agent at all.
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+[ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
+    fail "oh-my-pi apply did not seed tools.approvalMode=yolo on a fresh volume"
+jq -e '.present == [] and .tools_prior == "absent"' "$omp_backup" >/dev/null ||
+    fail "oh-my-pi apply did not record the pre-apply ABSENCE of tools.approvalMode"
+
+# Restore removes a key that was absent before the first apply, and does not
+# leave behind the `tools` mapping apply itself created.
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+[ "$(yq -r 'has("tools")' "$omp_config")" = "false" ] ||
+    fail "oh-my-pi restore left behind the tools mapping its own apply created"
+[ ! -f "$omp_backup" ] || fail "oh-my-pi restore left its backup file behind"
+
+# Prior non-yolo value plus unrelated keys; apply -> apply -> restore must
+# return the value from before the FIRST apply.
+printf 'theme: dark\ntools:\n  approvalMode: always-ask\n  other: 1\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+[ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
+    fail "oh-my-pi apply did not override a prior always-ask approval mode"
+[ "$(yq -r '.theme' "$omp_config")" = "dark" ] && [ "$(yq -r '.tools.other' "$omp_config")" = "1" ] ||
+    fail "oh-my-pi apply did not preserve unrelated keys"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+[ "$(yq -r '.tools.approvalMode' "$omp_config")" = "always-ask" ] ||
+    fail "oh-my-pi restore after apply->apply did not return the pre-FIRST-apply value"
+[ "$(yq -r '.theme' "$omp_config")" = "dark" ] && [ "$(yq -r '.tools.other' "$omp_config")" = "1" ] ||
+    fail "oh-my-pi restore did not leave unrelated keys untouched"
+[ ! -f "$omp_backup" ] || fail "oh-my-pi restore left its backup file behind"
+
+# An explicit `tools:` with no value is a DIFFERENT prior shape from
+# `tools: {...}` — apply turns both into a mapping, so a boolean has()
+# backup would silently upgrade the null to an empty mapping on restore
+# (review round 1).
+printf 'theme: dark\ntools:\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+[ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
+    fail "oh-my-pi apply did not seed yolo underneath an explicitly-null tools key"
+jq -e '.tools_prior == "null"' "$omp_backup" >/dev/null ||
+    fail "oh-my-pi apply did not record that tools was explicitly null before the first apply"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+[ "$(yq -r 'has("tools")' "$omp_config")" = "true" ] ||
+    fail "oh-my-pi restore deleted a tools key that was present (as null) before apply"
+[ "$(yq -r '.tools | type' "$omp_config")" = "!!null" ] ||
+    fail "oh-my-pi restore left tools as $(yq -r '.tools | type' "$omp_config"), not the null it found"
+[ "$(yq -r '.theme' "$omp_config")" = "dark" ] ||
+    fail "oh-my-pi restore did not preserve unrelated keys around a null tools"
+rm -f "$omp_backup" "$omp_config"
+
+# Presence must come from has(), not from the VALUE: an explicit
+# `approvalMode: null` and an explicit empty string are both keys that were
+# there and must come back, byte for byte (Codex cloud review, shepherd r1).
+for prior_shape in 'approvalMode: null' 'approvalMode: ""' 'other: 1'; do
+    printf 'theme: dark\ntools:\n  %s\n' "$prior_shape" >"$omp_config"
+    omp_before="$(cat "$omp_config")"
+    BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+    [ "$(yq -r '.tools.approvalMode' "$omp_config")" = "yolo" ] ||
+        fail "oh-my-pi apply did not seed yolo over the prior shape '${prior_shape}'"
+    case "$prior_shape" in
+    other:*) omp_want_present=false ;;
+    *) omp_want_present=true ;;
+    esac
+    [ "$(jq -r '(.present // []) | any(. == "tools.approvalMode")' "$omp_backup")" = "$omp_want_present" ] ||
+        fail "oh-my-pi apply recorded the wrong presence for the prior shape '${prior_shape}' — presence must come from has(), not from the value"
+    BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+    [ "$(cat "$omp_config")" = "$omp_before" ] ||
+        fail "oh-my-pi apply->restore did not return '${prior_shape}' byte-for-byte; got: $(cat "$omp_config")"
+    [ ! -f "$omp_backup" ] || fail "oh-my-pi restore left its backup behind for '${prior_shape}'"
+done
+rm -f "$omp_config"
+
+# A SCALAR tools value cannot hold a policy: yq's assignment into it is a
+# silent no-op that still exits 0, so apply must refuse rather than report
+# success having written nothing.
+printf 'theme: dark\ntools: 3\n' >"$omp_config"
+if BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null 2>&1; then
+    fail "oh-my-pi apply reported success against a scalar tools value it cannot write a policy underneath"
+fi
+[ "$(yq -r '.tools' "$omp_config")" = "3" ] ||
+    fail "oh-my-pi apply modified a scalar tools value instead of refusing"
+[ ! -f "$omp_backup" ] ||
+    fail "oh-my-pi apply wrote a backup for a config it refused to modify"
+rm -f "$omp_config"
+
+# restore must guard the CURRENT shape exactly as apply does: the file can
+# change between apply and restore, and a scalar `tools` would swallow the
+# write silently, leaving the operator with neither their prior value nor the
+# backup that held it (Codex cloud review, shepherd r2).
+printf 'theme: dark\ntools:\n  approvalMode: always-ask\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+[ -f "$omp_backup" ] || fail "fixture setup: expected a backup after apply"
+printf 'theme: dark\ntools: 3\n' >"$omp_config"
+omp_before="$(cat "$omp_config")"
+if BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null 2>&1; then
+    fail "oh-my-pi restore reported success against a scalar tools node it cannot write underneath"
+fi
+[ -f "$omp_backup" ] ||
+    fail "oh-my-pi restore discarded its backup after refusing a scalar tools node — the prior value would be lost outright"
+[ "$(cat "$omp_config")" = "$omp_before" ] ||
+    fail "oh-my-pi restore modified a config whose tools node it had just refused"
+rm -f "$omp_backup" "$omp_config"
+
+# A config file in a shape this module must not rewrite blindly.
+printf -- '- not\n- a mapping\n' >"$omp_config"
+if BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null 2>&1; then
+    fail "oh-my-pi apply rewrote a config.yml that is not a YAML mapping"
+fi
+# Restore fails loudly against that same file and keeps its backup.
+printf 'tools:\n  approvalMode: yolo\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+printf -- '- not\n- a mapping\n' >"$omp_config"
+if BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null 2>&1; then
+    fail "oh-my-pi restore reported success against a config.yml that is not a YAML mapping"
+fi
+[ -f "$omp_backup" ] ||
+    fail "oh-my-pi restore discarded its backup after failing against an invalid config.yml"
+rm -f "$omp_backup" "$omp_config"
+
+# A captured value comes off disk, so restore must treat it as data, never as
+# part of the yq expression — a hand-edited backup must not be able to rewrite
+# keys this module does not manage.
+printf 'theme: dark\n' >"$omp_config"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" apply >/dev/null
+jq '.present = ["tools.approvalMode"] | .values = {"tools.approvalMode": "\" | .theme = \"pwned"}' \
+    "$omp_backup" >"${omp_backup}.tmp" && mv "${omp_backup}.tmp" "$omp_backup"
+BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir" bash "$omp_module" restore >/dev/null
+[ "$(yq -r '.theme' "$omp_config")" = "dark" ] ||
+    fail "oh-my-pi restore let a captured value execute as part of the yq expression (theme was rewritten)"
+[ "$(yq -r '.tools.approvalMode' "$omp_config")" = '" | .theme = "pwned' ] ||
+    fail "oh-my-pi restore did not put the captured value back literally"
+rm -f "$omp_backup" "$omp_config"
+
+echo "==> 19b. oh-my-pi: verify reads the harness's own RESOLVED value, not the global file"
+# `omp config get tools.approvalMode --json` is the resolved-value surface
+# (confirmed against the installed omp v18.1.2). A stub stands in for it here
+# so the layering contract is exercised without the binary; section 19c uses
+# the real CLI when the image actually ships it.
+omp_stub_bin="${work_dir}/omp-stub-bin"
+mkdir -p "$omp_stub_bin"
+cat >"${omp_stub_bin}/omp" <<'OMP_STUB'
+#!/usr/bin/env bash
+# Mimics oh-my-pi's own precedence: <cwd>/.omp/config.yml over the global file.
+set -euo pipefail
+[ "${1:-} ${2:-} ${3:-}" = "config get tools.approvalMode" ] || exit 64
+mode=""
+if [ -f "./.omp/config.yml" ]; then
+    mode="$(yq -r '.tools.approvalMode // ""' ./.omp/config.yml)"
+fi
+if [ -z "$mode" ] && [ -f "${OMP_STUB_GLOBAL:?}" ]; then
+    mode="$(yq -r '.tools.approvalMode // ""' "$OMP_STUB_GLOBAL")"
+fi
+[ -n "$mode" ] || mode=yolo
+printf '{"key":"tools.approvalMode","value":"%s","type":"enum"}\n' "$mode"
+OMP_STUB
+chmod +x "${omp_stub_bin}/omp"
+omp_verify_env=(
+    BOT_AUTONOMY_OMP_AGENT_DIR="$omp_agent_dir"
+    BOT_AUTONOMY_OMP_WORKDIR="$omp_workdir"
+    OMP_STUB_GLOBAL="$omp_config"
+    PATH="${omp_stub_bin}:${SAFE_PATH}"
+)
+env "${omp_verify_env[@]}" bash "$omp_module" apply >/dev/null
+env "${omp_verify_env[@]}" bash "$omp_module" verify >/dev/null ||
+    fail "oh-my-pi verify failed against a correctly-applied global yolo config"
+# A project-level override must not be silently missed, and must be NAMED.
+mkdir -p "${omp_workdir}/.omp"
+printf 'tools:\n  approvalMode: always-ask\n' >"${omp_workdir}/.omp/config.yml"
+omp_out="$(env "${omp_verify_env[@]}" bash "$omp_module" verify 2>&1)" && omp_rc=0 || omp_rc=$?
+[ "${omp_rc:-0}" -ne 0 ] ||
+    fail "oh-my-pi verify did not notice a project-level .omp/config.yml overriding the global default"
+case "$omp_out" in
+*"${omp_workdir}/.omp/config.yml"*) ;;
+*) fail "oh-my-pi verify's failure did not name the project-level file as the cause: ${omp_out}" ;;
+esac
+rm -rf "${omp_workdir}/.omp"
+env "${omp_verify_env[@]}" bash "$omp_module" verify >/dev/null ||
+    fail "oh-my-pi verify still failed after the project-level override was removed"
+# A global file that drifted off yolo fails and names the global file.
+printf 'tools:\n  approvalMode: write\n' >"$omp_config"
+omp_out="$(env "${omp_verify_env[@]}" bash "$omp_module" verify 2>&1)" && omp_rc=0 || omp_rc=$?
+[ "${omp_rc:-0}" -ne 0 ] ||
+    fail "oh-my-pi verify passed a global approval mode of 'write'"
+case "$omp_out" in
+*"$omp_config"*) ;;
+*) fail "oh-my-pi verify's failure did not name the global config as the cause: ${omp_out}" ;;
+esac
+
+echo "==> 19c. oh-my-pi: the real omp CLI agrees with the stub's resolution contract"
+if command -v omp >/dev/null 2>&1; then
+    omp_real_home="${work_dir}/omp-real-home"
+    mkdir -p "${omp_real_home}/.omp/agent" "${work_dir}/omp-real-workdir"
+    HOME="$omp_real_home" BOT_AUTONOMY_OMP_AGENT_DIR="${omp_real_home}/.omp/agent" \
+        bash "$omp_module" apply >/dev/null
+    HOME="$omp_real_home" BOT_AUTONOMY_OMP_AGENT_DIR="${omp_real_home}/.omp/agent" \
+        BOT_AUTONOMY_OMP_WORKDIR="${work_dir}/omp-real-workdir" \
+        bash "$omp_module" verify >/dev/null ||
+        fail "oh-my-pi verify failed against the real omp CLI after a correct apply"
+    mkdir -p "${work_dir}/omp-real-workdir/.omp"
+    printf 'tools:\n  approvalMode: always-ask\n' >"${work_dir}/omp-real-workdir/.omp/config.yml"
+    if HOME="$omp_real_home" BOT_AUTONOMY_OMP_AGENT_DIR="${omp_real_home}/.omp/agent" \
+        BOT_AUTONOMY_OMP_WORKDIR="${work_dir}/omp-real-workdir" \
+        bash "$omp_module" verify >/dev/null 2>&1; then
+        fail "oh-my-pi verify did not notice a project-level override through the REAL omp CLI"
+    fi
+    rm -rf "${work_dir}/omp-real-workdir/.omp"
+else
+    echo "    (omp CLI not on PATH; skipping real-binary verify sub-checks)"
+fi
+
+echo "==> 20. every new slug resolves to real coverage with its executable installed"
+# The reverse of section 5: with a fake executable on PATH, each of the three
+# now dispatches its own module instead of failing as an uncovered harness —
+# and a deliberately-reintroduced stale unsupported entry still fails.
+new_harness_registry="${work_dir}/registry-new-harnesses.json"
+jq -n '{harnesses: [{slug: "copilot-cli"}, {slug: "pi"}, {slug: "oh-my-pi"}]}' >"$new_harness_registry"
+nh_bin="${work_dir}/new-harness-bin"
+nh_home="${work_dir}/new-harness-home"
+nh_workdir="${work_dir}/new-harness-workdir"
+mkdir -p "$nh_bin" "${nh_home}/.local/bin" "$nh_workdir"
+printf '#!/bin/sh\necho REAL "$@"\n' >"${nh_bin}/copilot"
+printf '#!/bin/sh\nexit 0\n' >"${nh_bin}/pi"
+cp "${omp_stub_bin}/omp" "${nh_bin}/omp"
+chmod +x "${nh_bin}/copilot" "${nh_bin}/pi" "${nh_bin}/omp"
+nh_env=(
+    HOME="$nh_home"
+    BOT_AUTONOMY_REGISTRY="$new_harness_registry"
+    BOT_AUTONOMY_CONFIG_DIR="$module_dir"
+    BOT_AUTONOMY_OMP_AGENT_DIR="${nh_home}/.omp/agent"
+    BOT_AUTONOMY_OMP_WORKDIR="$nh_workdir"
+    OMP_STUB_GLOBAL="${nh_home}/.omp/agent/config.yml"
+    BOT_AUTONOMY_PI_AGENT_DIR="${nh_home}/.pi/agent"
+    BOT_AUTONOMY_COPILOT_LINK="${nh_home}/.local/bin/copilot"
+    BOT_AUTONOMY_COPILOT_SETTINGS="${nh_home}/.copilot/settings.json"
+    HARMON_BOT_AUTONOMY_COPILOT=enabled
+    COPILOT_ALLOW_ALL=true
+    PATH="${nh_bin}:${SAFE_PATH}"
+)
+(cd "$nh_workdir" && env "${nh_env[@]}" bash "$bot_autonomy" apply >/dev/null) ||
+    fail "bot-autonomy.sh apply failed with copilot/pi/omp all installed"
+(cd "$nh_workdir" && env "${nh_env[@]}" bash "$bot_autonomy" verify >/dev/null) ||
+    fail "bot-autonomy.sh verify failed with copilot/pi/omp all installed and their modules applied"
+[ "$(yq -r '.tools.approvalMode' "${nh_home}/.omp/agent/config.yml")" = "yolo" ] ||
+    fail "dispatching oh-my-pi through bot-autonomy.sh did not apply yolo"
+[ -f "${nh_home}/.local/bin/copilot" ] ||
+    fail "dispatching copilot-cli through bot-autonomy.sh did not install the wrapper"
+
+# A stale unsupported entry alongside the real module is exactly the
+# double-coverage state task 4.1 forbids, transiently or otherwise.
+stale_dir="${work_dir}/stale-unsupported-config"
+mkdir -p "$stale_dir"
+cp "${module_dir}"/*.sh "${module_dir}/aliases.json" "$stale_dir/"
+jq '. + {"copilot-cli": {"executable": "copilot", "reason": "stale placeholder"}, "pi": {"executable": "pi", "reason": "stale placeholder"}, "oh-my-pi": {"executable": "omp", "reason": "stale placeholder"}}' \
+    "${module_dir}/unsupported.json" >"${stale_dir}/unsupported.json"
+if BOT_AUTONOMY_REGISTRY="$new_harness_registry" BOT_AUTONOMY_CONFIG_DIR="$stale_dir" \
+    bash "$bot_autonomy" coverage >/dev/null 2>&1; then
+    fail "coverage passed with copilot-cli/pi/oh-my-pi covered by BOTH a module and a stale unsupported entry"
+fi
 
 echo "All bot-autonomy unit tests passed."

@@ -67,9 +67,9 @@
     "source=claude-code-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.claude,type=volume",
     "source=codex-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.codex,type=volume",
     "source=gemini-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.gemini,type=volume",
-    "source=copilot-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.copilot,type=volume",
-    "source=pi-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.pi,type=volume",
-    "source=omp-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.omp,type=volume",
+    "source=copilot-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.copilot,type=volume",
+    "source=pi-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.pi,type=volume",
+    "source=omp-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.omp,type=volume",
     "source=agent-deck-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.agent-deck,type=volume",
     "source=herdr-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.config/herdr,type=volume",
     "source=opencode-config-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=/home/vscode/.config/opencode,type=volume",
@@ -91,6 +91,17 @@
   // and bot-autonomy/antigravity.sh may read to learn that per-repo Copier
   // answer. See openspec/changes/bot-autonomy-bootstrap/design.md - Decisions.
   //
+  // HARMON_BOT_AUTONOMY_COPILOT / COPILOT_ALLOW_ALL: rendered from
+  // use_copilot_cli — BOT PROFILE ONLY, unlike the Antigravity marker above
+  // which both twins carry. Nothing in the dev profile reads either one, and
+  // COPILOT_ALLOW_ALL is a plain environment variable Copilot CLI honors in
+  // whichever profile sets it: rendering it into dev too would silently hand
+  // a human's own interactive Copilot session full allow-all permissions.
+  // COPILOT_ALLOW_ALL is rendered explicitly in BOTH states ("true"/"false"),
+  // never omitted — the bot profile also loads devcontainer.env via
+  // --env-file, init-env.sh does not manage or evict this variable, and
+  // containerEnv only outranks --env-file for a key it actually specifies.
+  //
   // PATH (~/.local/bin ahead of /usr/local/bin, so the Antigravity autonomy
   // wrapper's precedence over the system agy binary holds for a `docker
   // exec` or a programmatic launcher too, not just interactive shells) is
@@ -106,7 +117,9 @@
     "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
 [% endif %]
     "FOREMAN_DEVCONTAINER": "bot",
-    "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "[[ 'enabled' if use_antigravity_cli else 'disabled' ]]"
+    "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "[[ 'enabled' if use_antigravity_cli else 'disabled' ]]",
+    "HARMON_BOT_AUTONOMY_COPILOT": "[[ 'enabled' if use_copilot_cli else 'disabled' ]]",
+    "COPILOT_ALLOW_ALL": "[[ 'true' if use_copilot_cli else 'false' ]]"
   },
 [% if include_ansible %]
   "remoteEnv": {
