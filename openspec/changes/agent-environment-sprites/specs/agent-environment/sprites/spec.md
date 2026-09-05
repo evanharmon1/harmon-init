@@ -80,12 +80,16 @@ the outer host.
   starts no agent in the lane, and leaves the sprite in a state the
   operator can inspect (`sprite console`) rather than destroying it
 
-#### Scenario: the sprite's own filesystem holds no agent toolchain
-- **WHEN** the golden checkpoint of a pool sprite is inspected
-- **THEN** it contains Docker, the devcontainers CLI, the lane helper, and
-  the pulled image layers — and no `claude`, `codex`, `task`, `herdr`, or
-  other agent-toolchain binary, and no SSH server, installed on the
-  sprite's own Ubuntu filesystem outside the image
+#### Scenario: the lane helper installs no agent toolchain on the outer host
+- **WHEN** the golden checkpoint of a pool sprite is inspected and its
+  package and binary inventory is diffed against a fresh, untouched sprite
+  of the same platform base
+- **THEN** the difference is exactly Docker, the devcontainers CLI, the
+  lane helper, and the pulled image layers and volumes — no `task`,
+  `herdr`, agent harness, or SSH server was installed or upgraded on the
+  outer host by the helper; whatever the platform's fixed base already
+  ships (it includes Claude and Codex CLIs today) is exempt, unused by
+  the lane, and never relied on
 
 ### Requirement: Lanes start from a pool sprite's golden checkpoint, claimed and restored to completion
 Because a checkpoint cannot seed a new sprite, lane creation SHALL draw from
