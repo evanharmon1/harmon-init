@@ -1517,6 +1517,32 @@ if [ "$profile" = "meta" ]; then
     grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
 fi
 
+# The generated execution policy must honor the same Codex opt-outs as the
+# tasks and setup assets above. A non-zero cap with no matching finder/task is
+# fail-closed invalid, not a harmless unused setting.
+python3 - "$profile" <<'PY' || err ".devflow.toml does not honor Codex review opt-outs"
+import pathlib
+import sys
+import tomllib
+
+profile = sys.argv[1]
+policy = tomllib.loads(pathlib.Path(".devflow.toml").read_text())
+local_review = profile in {"full", "meta"}
+cloud_review = profile == "full"
+
+assert policy["schema_version"] == 2
+for rounds in policy["rounds"].values():
+    if local_review:
+        assert rounds["challenge"] > 0 and rounds["review"] > 0 and rounds["min_rounds"] > 0
+    else:
+        assert rounds["challenge"] == rounds["review"] == rounds["min_rounds"] == 0
+    assert (rounds["integration"] > 0) == cloud_review
+
+for stage in ("challenge", "review"):
+    assert bool(policy["stage"][stage].get("finders", [])) == local_review
+assert bool(policy["stage"]["integration"].get("finders", [])) == cloud_review
+PY
+
 # ── 9d4. CodeRabbit renders only when explicitly enabled ───────────
 # Only `full` opts in; every other profile exercises the default-off path.
 # Keep the config, setup docs, and bot trust wiring aligned with the answer.
