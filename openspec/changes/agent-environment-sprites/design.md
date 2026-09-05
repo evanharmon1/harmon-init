@@ -204,7 +204,11 @@ later.
 restore is asynchronous and terminates active sessions; a lane that
 proceeded while one was in flight would have its own clone or container
 erased. The helper therefore polls the platform until the restore reports
-complete and refuses to continue on a timeout. Before the restore it claims
+complete and refuses to continue on a timeout — leaving the lease in a
+`restoring` state that every later entry command checks against the
+platform, so a half-restored lane is never entered and a timed-out
+`lane:new` resumes at the wait rather than restoring twice. Before the
+restore it claims
 the sprite: a lease (owner, lane, pool sprite name, issue, expiry) written
 to the sprite's labels under the orchestrator-side lane lock. Labels only
 record the lease; the lock arbitrates, which is why one pool is driven
@@ -228,8 +232,15 @@ is a new thing to leave half-written, so the design keeps exactly one
 primitive. The lane lock is an advisory `flock` on a per-sprite lock file
 in the orchestrator's lane state directory, keyed by the pool sprite's
 platform name — sound because one orchestrator drives a pool at a time,
-now stated as the requirement's precondition rather than an aside. Labels
-record the lease and never arbitrate. There is no closing state: an ending
+now stated as the requirement's precondition rather than an aside; `flock`
+itself is a stated prerequisite (util-linux on Linux, `brew install flock`
+on macOS) that the helper checks before any platform call, because a
+home-grown lock is exactly the kind of mechanism this design refuses to
+grow. Labels record the lease and never arbitrate. The platform's session
+list is the only authority on activity; the identifiers the helper caches
+after creating a session are discarded on reconcile when the platform no
+longer lists them, so a finished detached command can never block a
+retirement through a stale record. There is no closing state: an ending
 operation holds the lock from its first check until the golden restore has
 completed and the lease is released, so a refused retirement releases the
 lock with nothing changed and the lane is usable at once, and anything
@@ -251,13 +262,21 @@ policy does not name. The one phase that needs package hosts — installing
 policy writes that add and then remove `archive.ubuntu.com` and
 `security.ubuntu.com` (the shared image's `ubuntu.sources` URIs), with
 `apt-get update` restricted to the Ubuntu sources so the image's
-third-party lists are never fetched; baking `openssh-server` into the
-shared image removes the phase entirely and is the named follow-up. The list is repository-owned and reviewed; the sprite
-cannot widen it. Private IPs are blocked by the platform. The list must
-include the Codex CLI's ChatGPT backend and the Convex local-backend
-download host; the research note marks both hostnames as needing
-confirmation in the first real lane, which is why the spec names them by
-purpose and the implementation carries the literal list.
+third-party lists are never fetched, and the restoring write runs on every
+exit path of that step (a trap on failure and interruption), so a failed
+install never leaves the wide policy behind; baking `openssh-server` into
+the shared image removes the phase entirely and is the named follow-up.
+The list is repository-owned and reviewed; the sprite cannot widen it.
+Private IPs are blocked by the platform. The list itself is not written
+by hand: the feasibility spike runs the whole unconditional loop under a
+deny-by-default policy and records every host it needed, which is the
+only way to get Semgrep's rule registry and API right rather than guessing
+them. The known starting points for that run are `github.com`,
+`api.github.com`, `ghcr.io` and the GitHub content and package hosts they
+redirect to, the npm and PyPI registries, `api.anthropic.com`, the Codex
+CLI's ChatGPT backend, Convex's local-backend release host, and
+`semgrep.dev` for Semgrep's registry — starting points, recorded and then
+replaced by what the spike actually observed.
 
 **Herdr topology: pane-process-is-the-session for orchestration,
 `herdr --remote` for takeover.** The orchestrator's `herdr agent …`
@@ -319,7 +338,12 @@ in-sprite supervisor wrapping the command, never a heartbeat on the laptop
 the remote gate keeps running. No lane command runs unbounded: the in-sprite supervisor applies a
 per-command duration bound and stops the command with its output intact,
 so a hung agent or a stalled fetch cannot keep the sprite active
-indefinitely. At TTL expiry the helper stops registering holds, refuses
+indefinitely. The TTL the supervisor enforces is read from lane-local
+state inside the sprite — a file the helper writes over `sprite exec`
+under the lane lock, with the lease's TTL only a mirror — because a
+supervisor that only knew the TTL it was launched with could never see an
+extension; `lane:extend` writes that file before the lease so a running
+command observes the new deadline. At TTL expiry the helper stops registering holds, refuses
 new commands until `lane:extend`, and gives a running command one grace
 period before stopping it the same way — so a lane's active compute is
 bounded by TTL plus grace — but never destroys anything: stopping a
