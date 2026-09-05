@@ -540,8 +540,12 @@ login/interactive shell, a Foreman-dispatched process, a cron job).
   or otherwise touching `agy` — this branch's own precondition checks
   only `agy-real`'s absence, not `agy`'s. In the bot profile this
   self-heals: the `antigravity` module's `apply` runs immediately after
-  and unconditionally overwrites `agy` with the wrapper regardless of
-  what it finds. The dev profile has no such follow-on step, so a stale
+  and overwrites `agy` with the wrapper for whatever ordinary file or
+  dangling symlink it finds there (the one shape `install_wrapper`'s
+  `mv -f` cannot replace — a symlink to an existing directory, which it
+  would move the wrapper into instead — is not a shape this capability's
+  own state model ever produces). The dev profile has no such follow-on
+  step, so a stale
   `agy` there survives until a full disable/re-enable cycle or a manual
   cleanup clears it. #1171 tracks closing this gap — removing only a
   dangling `agy` here, never a valid wrapper, since an earlier
