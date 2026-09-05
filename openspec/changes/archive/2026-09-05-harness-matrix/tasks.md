@@ -96,7 +96,7 @@
       `task test:agent-registry`, and `task test:dogfood-parity` (the two
       files must stay byte-identical per AGENTS.md's dogfood-parity table)
       — all three verified green
-- [ ] 3.4 Reconcile with `bot-autonomy-bootstrap`'s registry-completeness
+- [x] 3.4 Reconcile with `bot-autonomy-bootstrap`'s registry-completeness
       unit test: whichever of that change and this one merges second must
       add `oh-my-pi` to `bot-autonomy-bootstrap`'s `unsupported` set (reason:
       pending `bot-autonomy-new-harnesses`; **`executable: "omp"`** — the
@@ -119,6 +119,11 @@
       Per this task's own "whichever...merges second" rule, since
       `harness-matrix` (this PR) is merging first, the reconciliation falls
       to `bot-autonomy-bootstrap`'s own implementation when it lands.
+
+      **Done**: #1150 (`c720eab0`) added `oh-my-pi` to
+      `bot-autonomy-bootstrap`'s `unsupported.json` with
+      `executable: "omp"`; #1165 (`6d2befb5`) replaced it with the real
+      `oh-my-pi.sh` module.
 
 ## 4. Remove Gemini CLI
 
@@ -235,7 +240,7 @@
       worktree; verify all green — all three green at the final commit
       (`task verify` completed a full clean end-to-end run, including the
       complete `test:template:all` render matrix)
-- [ ] 6.4 After merge to `main` and image publish, confirm (or file/track)
+- [x] 6.4 After merge to `main` and image publish, confirm (or file/track)
       the rolling `sync-pin` PR picks up the new digest for both
       `.devcontainer/Dockerfile` twins; do not bump that pin from this
       change
@@ -243,4 +248,9 @@
       **Not yet applicable**: this task is explicitly sequenced after merge
       and image publish, neither of which has happened yet (this PR is
       still draft, per its brief's "stop at the draft PR" instruction).
+
+      **Done**: rolling pin PR #1152 carries the new digest for both
+      `.devcontainer/Dockerfile` twins (`.devcontainer/Dockerfile` and
+      `template/[% if devcontainer %].devcontainer[% endif %]/Dockerfile`,
+      one line each).
       Left for whoever shepherds/merges this PR to confirm.
