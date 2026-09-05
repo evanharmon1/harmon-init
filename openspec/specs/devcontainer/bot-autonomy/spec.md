@@ -445,11 +445,12 @@ verifies the pinned binary at `agy-real` and (re)points a plain
 `agy → agy-real` symlink — including on its early-return path where a
 local `agy-real` copy already exists at the pinned version — except one
 path it leaves alone: WHEN the current on-`PATH` system binary at
-`/usr/local/bin/agy` already matches the pinned version and no local
-`agy-real` copy exists yet, it creates neither and leaves `agy` exactly
-as found. On a fresh volume that reaches state (c), the intended end
-state; but this branch's own check is scoped to `agy-real`'s absence,
-not `agy`'s, so a pre-existing `agy` — a dangling symlink, most
+`/usr/local/bin/agy` already matches the pinned version and no
+executable local `agy-real` copy exists (absent, or present but not
+executable), it creates neither and leaves `agy` exactly as found. On a
+fresh volume that reaches state (c), the intended end state; but this
+branch's own check is scoped to `agy-real`'s executability, not `agy`'s,
+so a pre-existing `agy` — a dangling symlink, most
 plausibly — survives here untouched rather than reconciled, in tension
 with the no-dangling-symlink invariant above. Reconciling it safely
 (never deleting a valid wrapper before its replacement is guaranteed —
