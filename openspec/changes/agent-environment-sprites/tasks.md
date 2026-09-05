@@ -1,5 +1,9 @@
 ## 0. Feasibility gate (before anything is productised)
 
+Settle Q1–Q6 from the proposal's "Open design questions for the feasibility
+spike" in this section, recording each answer in the research note's
+verification section before section 1 begins.
+
 - [ ] 0.1 On the maintainer's Fly account, hand-make one throwaway sprite: install Docker from Docker's apt repository and register `dockerd` as a sprite Service; verify `docker info` succeeds after a warm wake and after a forced cold wake (`sprite sessions kill` everything, wait past the idle window, `sprite exec -- docker info`)
 - [ ] 0.2 In that sprite, install the devcontainers CLI, clone this repository's `main`, run `devcontainer up --workspace-folder . --config .devcontainer/devcontainer.json` with `GH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` in the exec environment, and verify `post-create.sh` completes (including `bot-autonomy.sh apply` and `verify`) and `gh auth status` succeeds inside the container
 - [ ] 0.3 Run `task verify` inside the inner container and record wall-clock, peak memory (`/proc/meminfo` sampled during the `shellcheck` step), and whether anything was throttled or killed; record the result in the research note's verification section

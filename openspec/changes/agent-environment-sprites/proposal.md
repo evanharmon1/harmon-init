@@ -94,6 +94,68 @@ allows and drives from Herdr the same way a local pane worker does.
   CLI, and the docs: a `docs/guides/sprites.md` twin, a Herdr-guide section,
   and the `copier-options.md` row.
 
+## Open design questions for the feasibility spike
+
+Codex cloud review of this proposal stopped by maintainer decision on
+2026-09-05; the spec goes to the maintainer's own review. Six findings from
+the last review pass remain open. They are recorded here as questions for
+the feasibility spike (tasks § 0) rather than folded into the requirements,
+because each one is settled by observing the platform, not by more
+specification text. None changes a requirement as written; a spike answer
+that contradicts one is re-planned as its own change.
+
+1. **Activity authority versus Tasks-API holds.** An agent launched through
+   remote Herdr may exist on the platform only as a Tasks-API hold the
+   supervisor owns, while retirement and reclaim consult the platform's
+   session list only. Touches: the takeover invariant in the requirement
+   "A lane is created, attached, steered, harvested, and retired from
+   Herdr" (every agent process runs under the lane supervisor) and the
+   activity authority in the lane-lock requirement. The spike must
+   demonstrate what the platform reports for a supervisor-launched agent
+   that is not an exec session — a listed session, a listed task, or
+   nothing — and decide whether the activity authority is the session list
+   alone or the session list plus the task list.
+2. **Supervisor persistence across container recreation.** The supervisor
+   wrappers under `~/.local/bin` and the lane-local TTL state live on the
+   container's own filesystem, not on a named mount, while reconciliation
+   after a recreated container reinstalls only the SSH server. Touches: the
+   reconcile paragraph of the Herdr requirement and the TTL state in "The
+   sprite stays active exactly while lane work runs". The spike must show
+   what a `devcontainer up` that yields a new container identity keeps and
+   drops, and decide whether reconciliation re-provisions the wrappers and
+   the TTL state or whether both move onto a named volume.
+3. **Cold-lane entry ordering.** The lane-lock requirement has command
+   startup create the inner-container session under the lock, but on a
+   cold lane the container is not running until reconciliation starts it.
+   Touches: task 2.4 (lock, then reconcile, then session). The spike must
+   demonstrate the cold-wake sequence end to end and decide how the lock
+   spans reconcile plus session creation — one hold across both, or
+   reconcile first and then the locked session step.
+4. **Composing the lane supervisor with the bot-autonomy wrappers.** The
+   bot-autonomy modules may occupy the same `~/.local/bin/<executable>`
+   path (Antigravity's `agy` today) and `post-start.sh`'s `verify` checks
+   them byte-exact. Touches: the supervisor-wrapper invariant in the Herdr
+   requirement and the bot-autonomy capability's `verify`. The spike must
+   show whether a supervisor wrapper can wrap a bot-autonomy wrapper (or
+   sit ahead of it) without failing `verify`, and decide the layering — a
+   supervisor that execs the bot-autonomy wrapper, or a bot-autonomy module
+   that knows about the supervisor.
+5. **Pool-init credential ordering.** During `pool init` the bot PAT
+   reaches the sprite (in memory, for the clone) before any egress policy
+   is applied, whereas `lane:new` applies the policy before credentials.
+   Touches: the pool-init paragraph of "Lanes start from a pool sprite's
+   golden checkpoint". The spike must decide whether pool init applies the
+   allowlist before its clone (the same order as a lane) and demonstrate
+   the clone succeeding under it.
+6. **Provisioning-ready state.** A lease becomes `complete` when the
+   restore completes, before `devcontainer up`, `bot-autonomy.sh verify`,
+   the SSH server, and the supervisor wrappers have succeeded, so an entry
+   command can find a half-provisioned lane. Touches: the restore state in
+   "Lanes start from a pool sprite's golden checkpoint" and task 2.3. The
+   spike must decide whether the lease gains a `ready` state set only after
+   every provisioning step succeeds, and the same-owner retry or rollback
+   rule for a lane that fails between `complete` and `ready`.
+
 ## Non-goals
 
 - Does not implement anything: this change is planning artifacts only. The

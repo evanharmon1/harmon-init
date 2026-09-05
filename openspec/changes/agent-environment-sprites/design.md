@@ -497,3 +497,9 @@ breakdown; each is answered by the first real lane run or a Fly release:
   implementation fixes the list from the first lane's DNS log.
 - Whether Fly ships fork-from-sprite or custom images, which would remove
   the pool and the nested Docker layer.
+- The six open design questions recorded in proposal.md ("Open design
+  questions for the feasibility spike", Q1–Q6): activity authority versus
+  Tasks-API holds, supervisor persistence across container recreation,
+  cold-lane entry ordering, composing the supervisor with the bot-autonomy
+  wrappers, pool-init credential ordering, and a provisioning-ready lease
+  state. Each is settled by the spike (tasks § 0), not by more text here.
