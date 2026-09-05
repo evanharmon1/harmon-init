@@ -9,7 +9,8 @@ export DEVCONTAINER_GIT_EMAIL="evanharmon1-bot@users.noreply.github.com"
 # the operator's credential inside a bypassPermissions agent container.
 export DEVCONTAINER_GH_AUTH="token"
 
-# Ordering is load-bearing (AGENTS.md; openspec/changes/bot-autonomy-bootstrap):
+# Ordering is load-bearing (AGENTS.md;
+# https://github.com/evanharmon1/harmon-init/tree/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap):
 #   (i)   post-create-common.sh — ownership fixing and, on Coder, the
 #         persistent-volume symlink setup MUST run before anything below
 #         writes into those directories, or a write lands as the wrong owner

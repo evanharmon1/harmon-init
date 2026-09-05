@@ -1880,7 +1880,8 @@ source of truth: every rendered fact is read from an `adjudication.schema.json`
 document, `run.schema.json`, or a result envelope, and disposition/priority
 always come from the adjudication record, never re-inferred from a raw
 reviewer/challenger finding ([#637](https://github.com/evanharmon1/harmon-devkit/issues/637),
-`openspec/changes/dev-flow-v2/specs/renderer/spec.md`). Invoke via
+`openspec/changes/dev-flow-v2/specs/renderer/spec.md` (spec not yet
+committed)). Invoke via
 `scripts/render-dev-flow.sh <projection> --record <dir> [options]` (a thin
 wrapper; `render-dev-flow.mjs` is the implementation, same pairing as this
 family's other scripts). Requires `gitleaks` on `PATH` (every rendered
@@ -2061,8 +2062,8 @@ old `head` can be rejected outright.
 
 ### Secret scanning
 
-`openspec/changes/dev-flow-v2/specs/evidence/spec.md` § "Evidence is scanned
-and safely redacted": every free-text evidence projection SHALL pass the
+`openspec/changes/dev-flow-v2/specs/evidence/spec.md` (spec not yet
+committed) § "Evidence is scanned and safely redacted": every free-text evidence projection SHALL pass the
 repository's secret scanner before posting, with a detected span replaced
 by a stable placeholder and rule ID. This is a SHALL, never best-effort, so
 every standalone projection's complete rendered output, and every `publish`
