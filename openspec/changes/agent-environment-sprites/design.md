@@ -152,11 +152,21 @@ track and rotation cannot reach. Restoring before every lane is what makes
 "a lane never inherits a sibling's files or tokens" a mechanism rather than
 a hope, and it is cheap (metadata shuffle, per Fly's engineering post).
 
-**Credentials: the bot profile's own allow-list, injected through
-`init-env.sh`, plus one new exclusion.** The inner container is the same
-bot profile, so it gets the same env-file the local bot container gets,
-populated the way Coder populates it (from the host environment, here the
-orchestrator's, through the allow-list). Two consequences follow. First,
+**Credentials: the bot profile's own allow-list, delivered through the
+devcontainer's own lifecycle, plus one new exclusion.** The inner container
+is the same bot profile, so it gets the same env-file the local bot
+container gets, populated the way Coder populates it: the allow-listed
+variables are present in the environment of the `devcontainer up` the lane
+helper runs inside the sprite, and the profile's own `initializeCommand`
+(`init-env.sh`) captures them from that host environment into the env-file
+before the container is created. That is the only order that works with
+the profile unchanged — `initializeCommand`, the `--env-file` in `runArgs`,
+and `postCreateCommand` (which runs `gh auth setup-git` and the sibling
+clones) all execute inside `devcontainer up`, so a credential injected
+after the container starts would leave post-create unauthenticated. The
+Codex login is the one credential copied after the container is up,
+because it lives on the `~/.codex` volume rather than in the environment.
+Two consequences follow. First,
 the exfiltration prize inside a lane is the same as inside the local bot
 container — the scoped bot PAT and a spendable Claude OAuth token — and the
 research note records the same shorter-lived alternatives foreman#30 weighs
@@ -171,6 +181,21 @@ needs no human step. Sprites Connectors were considered for GitHub and
 rejected for now: the gateway proxies API calls, not git over HTTPS, so it
 cannot carry `git push`; it may still be worth using for `gh`-only lanes
 later.
+
+**Claim, then restore to completion, then everything else.** A checkpoint
+restore is asynchronous and terminates active sessions; a lane that
+proceeded while one was in flight would have its own clone or container
+erased. The helper therefore polls the platform until the restore reports
+complete and refuses to continue on a timeout. Before the restore it claims
+the sprite: a lease (owner, lane, issue, expiry) written to the sprite's
+labels and read back — any other owner in the readback is a lost race —
+plus a local lock so two `lane:new` invocations on one orchestrator never
+race each other at all. The platform offers no compare-and-swap on labels,
+so the readback is the best available check; that is why one pool is
+driven from one orchestrator at a time (documented as a limit, not a
+mechanism), and why an expired lease is reclaimed only by
+`sprite:audit --reclaim` after confirmation rather than silently by the
+next lane.
 
 **Egress: allowlist first, credentials second.** The default is
 unrestricted; a lane sets the DNS allowlist before any secret exists in the
@@ -193,19 +218,44 @@ identifies a local `claude` identifies a remote one; where it does not
 Herdr guide already prescribes. For a human taking a lane over with the
 full Herdr UI, a Herdr server runs inside the inner container and the
 operator attaches with `herdr --remote` through an SSH alias whose
-`ProxyCommand` is `sprite proxy -s <lane> -W 22` to an `openssh-server`
-Service inside the lane — the same thin-client shape verified on Coder.
-Both are marked for verification in the first real lane; the version-match
-prompt `herdr --remote` shows on a mismatch installs into `~/.local/bin`,
-which on a sprite persists, so it prompts once per pool sprite rather than
-per rebuild.
+`ProxyCommand` is `sprite proxy -s <lane> -W <inner-address>:22` — the
+proxy's `-W [host]:port` form reaches a host inside the sprite's network,
+and the inner container's bridge address is such a host — to an SSH server
+the helper installs **inside the inner container** after `devcontainer up`.
+An SSH server on the outer sprite was considered and rejected: the outer
+filesystem deliberately holds no Herdr, so a session landing there has
+nothing to attach to, and a forced-command bridge through `docker exec`
+is a second mechanism to get wrong. The helper refreshes the alias's
+address on every reconcile because the container's address can change
+across restarts. Both attach paths are marked for verification in the
+first real lane; the version-match prompt `herdr --remote` shows on a
+mismatch installs into `~/.local/bin`, which on the container's volume
+persists, so it prompts once per pool sprite rather than per rebuild.
 
-**Cost controls: hold while working, TTL as a report, ceiling on the pool.**
-The Tasks API is the platform's own answer to "keep this awake while work
-runs": a hold with a heartbeat that dies with the process that held it, so a
-crashed gate cannot bill forever. The helper never destroys on its own —
-the Herdr guide's rule that sweeping is the operator's step holds here — so
-the TTL is an audit signal, not a timer with side effects. The pool ceiling
+**Cold wake: reconcile on every entry.** A cold pause stops every process,
+including the inner container and its Herdr server; only `dockerd` comes
+back on its own (a Service). Rather than a second Service that races
+`dockerd` to restart the container, every `lane:exec`/`attach`/`harvest`
+first reconciles: `devcontainer up` is idempotent, reuses the existing
+container, and reruns `post-start.sh` — so `bot-autonomy.sh verify` gates
+the restart exactly as it gates a local container start — then the Herdr
+server is restarted if one was running. A failed `verify` fails the entry
+and runs nothing.
+
+**Cost controls: activity lives in the sprite, TTL stops new work, ceiling
+on the pool.** The invariant is that the sprite stays active exactly while
+a lane command runs, whether or not anything on the orchestrator's machine
+is alive. The mechanism is in-sprite by construction: the platform counts a
+running exec session as activity, so a gate or agent launched through
+`lane:exec` keeps the sprite awake for its own lifetime and lets it sleep
+when it exits; where a Tasks-API hold is needed at all, its owner is an
+in-sprite supervisor wrapping the command, never a heartbeat on the laptop
+— a laptop heartbeat is precisely what dies when a pane is closed while
+the remote gate keeps running. At TTL expiry the helper stops registering
+holds and refuses new commands until `lane:extend`, but never destroys
+anything — the Herdr guide's rule that sweeping is the operator's step
+holds — so a forgotten `working` agent cannot renew its way to an
+unbounded bill, and stored work is never lost to a timer. The pool ceiling
 mirrors the plan's concurrency limit so `pool:init` cannot walk the account
 into "concurrent sprites exceeded" errors mid-dispatch.
 
@@ -268,8 +318,17 @@ over the API.
   Measure in the first lane; the SDK's `region` field is the lever if it
   matters.
 - [A checkpoint restore is destructive and terminates sessions] → The
-  helper restores only at lane start and lane retirement, never while a
-  lane is live, and refuses retirement over unpushed commits.
+  helper restores only at lane start and lane retirement, waits for the
+  restore to complete before any later step, never restores a leased
+  sprite it does not own, and refuses retirement over a non-clean checkout
+  (unpushed commits, or modified, staged, or untracked files).
+- [Whether a detached exec session still counts as activity once the
+  client disconnects, and whether the Tasks API is reachable from inside
+  the sprite without the org token] → Both are settled by the feasibility
+  spike before any productised tooling is built (tasks.md § 0); if neither
+  holds, the fallback is an in-sprite Service that holds a Task through
+  `sprite-env` for the command's lifetime, and the spec's invariant is
+  unchanged.
 - [Foreman's D5 forbids the Docker the nested lane needs] → The research
   note recommends foreman supersede D5 and run the same nested lane through
   the Sprites API; if foreman instead slims the image and keeps D5 on Fly
@@ -280,6 +339,12 @@ over the API.
 
 ## Migration Plan
 
+- A throwaway **feasibility spike** runs first, before any Copier or
+  Taskfile work (tasks.md § 0): one hand-made sprite, Docker as a Service,
+  `devcontainer up` of the bot profile, `task verify` inside it, a cold
+  wake, and a `sprite proxy -W <inner-address>:22` attach. If it fails,
+  the documented fallback (Fly Machines after slimming; Northflank; Ona)
+  is chosen before the tooling is built, and this change is re-planned.
 - The option defaults off; existing generated repositories see no change on
   `copier update` unless they opt in.
 - This repository's root adopts the option in `.dogfood-answers.yml` so the
@@ -298,6 +363,10 @@ breakdown; each is answered by the first real lane run or a Fly release:
 - Does Herdr classify a `claude`/`codex` rendered through `sprite exec
   --tty` the same as a local one? (If not, the sentinel/report path is the
   contract, already specified.)
+- Does `sprite proxy -W <host>:22` reach the inner container's bridge
+  address, and does a detached exec session count as activity after its
+  client disconnects? (Both are feasibility-spike items; the spec's
+  invariants do not change with the answer, only the mechanism.)
 - What is the warm→cold transition window, and does a `working` agent's
   Tasks hold ever race it?
 - Which literal hostnames the Codex CLI (ChatGPT-plan auth) and the Convex

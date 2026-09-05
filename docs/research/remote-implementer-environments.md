@@ -200,10 +200,12 @@ itself — alternative: Fly Machines after slimming under 8 GB). Secrets ◐
 (same allow-list as today; org token stays outside; Connectors do not
 cover `git push`). Herdr attach ◐ (`sprite exec --tty` in a local pane for
 orchestration; `herdr --remote` over an sshd Service for takeover — both
-unverified). Gates ✅ (all bash inside the nested container; Codex cloud
-review is GitHub-side). Egress ✅ (DNS allowlist, read-only inside). Data
-boundary ✅ (clone from GitHub only). Bot-autonomy ✅ (post-create/post-start
-run unchanged). Foreman ◐ (see Recommendation).
+unverified). Gates ? (all bash inside the nested container and Codex cloud
+review is GitHub-side, but nothing has run `task verify` inside a nested
+devcontainer in a sprite yet). Egress ✅ (DNS allowlist, read-only inside).
+Data boundary ✅ (clone from GitHub only). Bot-autonomy ? (post-create/
+post-start run unchanged by construction; unverified until the first lane).
+Foreman ◐ (see Recommendation).
 
 ### Fly Machines (found during the research)
 
@@ -445,10 +447,10 @@ Bot-autonomy ✅. Foreman ❌ (no supervisor-facing exec/lifecycle API beyond
 | Cold start | ✅ 1–2 s (pool) | ✅ <1 s | ✅ | ✅ | ◐ minutes | ◐ minutes |
 | Cost per active agent-hour | ✅ ~$0.20, idle free | ◐ ~$0.23, stop to save | ✅ included | ✅ included | ✅ $0 marginal | ◐ $0.36–0.72 |
 | Runs the bot image as-is | ◐ nested via Docker | ❌ 8 GB rootfs | ❌ setup script | ❌ setup script | ✅ | ✅ |
-| post-create / bot-autonomy runs | ✅ | ✅ (if it boots) | ❌ | ❌ | ✅ | ✅ |
+| post-create / bot-autonomy runs | ? nested, unverified until the first lane | ✅ (if it boots) | ❌ | ❌ | ✅ | ✅ |
 | Secrets model | ◐ allow-list; org token outside | ✅ per-machine | ✅ proxy-injected | ✅ | ✅ | ◐ env vars |
 | Herdr attach, survives disconnect | ◐ exec-TTY / sshd (unverified) | ✅ hallpass SSH (unverified) | ❌ no shell | ❌ | ✅ verified | ✅ SSH, 4 h idle cap |
-| All gates + draft PR + shepherd inside | ✅ | ✅ | ◐ | ❌ | ✅ | ✅ |
+| All gates + draft PR + shepherd inside | ? all bash, but nested `verify` unverified | ✅ | ◐ | ❌ | ✅ | ✅ |
 | Egress allowlist | ✅ DNS | ◐ TCP rules | ✅ | ◐ off by default | ❌ | ❌ |
 | Keeps local data out by construction | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Foreman runner fit | ◐ needs D5 revisited | ✅ design / ❌ size | ❌ | ❌ | ◐ "local" | ❌ |
@@ -570,9 +572,9 @@ touch our SSH-and-Herdr use.
 | Boot the bot image as the VM | ❌ fixed Ubuntu base; forking is a roadmap idea | Nest the bot devcontainer via Docker in the sprite (recommended); or slim the image under 8 GB and boot it on Fly Machines |
 | Officially supported Docker | ◐ community-verified, no systemd; `dockerd` as a Service | If Fly withdraws it: Fly Machines (after slimming) or Northflank |
 | A checkpoint that seeds a new sprite | ❌ | A small pool of pre-initialised sprites, each with a golden checkpoint restored before every lane |
-| Real SSH for `herdr --remote` | ❌ WebSocket console only | `openssh-server` as a Service + `sprite proxy -s <lane> -W 22` as `ProxyCommand` (documented workaround) |
+| Real SSH for `herdr --remote` | ❌ WebSocket console only | `openssh-server` inside the inner container + `sprite proxy -s <lane> -W <inner-address>:22` as `ProxyCommand` (the documented workaround, pointed at the container rather than the outer sprite so the session lands where Herdr runs) |
 | Guaranteed RAM for a 4 GB gate peak | ? platform-managed memory | Measure in the first lane; SDK `ramMB`/`cpus` fields; Fly Machines with explicit sizing |
-| Processes survive a cold pause | ❌ | Tasks-API hold while working; Services for sshd/dockerd; Herdr snapshot restore + `resume_agents_on_restore` after a cold wake |
+| Processes survive a cold pause | ❌ | Keep the sprite active exactly while a lane command runs (in-sprite activity, never a laptop heartbeat); `dockerd` as a Service; reconcile the inner container on every entry (`devcontainer up` reruns post-start `verify`); Herdr snapshot restore + `resume_agents_on_restore` |
 | A sprite-scoped API token | ❌ org-scoped only | Keep the token on the orchestrator's side; never inject it; ask Fly (follow-up) |
 | Connectors that carry `git push` | ❌ API gateway only | `GH_TOKEN` (the bot PAT) through the existing `init-env.sh` allow-list, as in every bot container today |
 | Region choice | ? undocumented | SDK `region` field; measure latency in the first lane |
@@ -582,20 +584,27 @@ touch our SSH-and-Herdr use.
 
 **Interactive dispatch from Herdr — primary: a Fly.io Sprite per lane,
 running the bot devcontainer nested inside it.** The sprite is the outer
-host (Docker and sshd as Services, the devcontainers CLI), the inner
-container is the repository's own bot profile from the pinned image with
+host (Docker as a Service, the devcontainers CLI), the inner container is
+the repository's own bot profile from the pinned image with
 `post-create.sh` and `post-start.sh` unchanged, so the `bot-autonomy`
 apply/verify gate runs there exactly as it does locally and on Coder. A
 small operator-owned pool of sprites is initialised once (image pulled,
 golden checkpoint taken before any credential exists) and every lane
-restores that checkpoint, clones its pushed branch from GitHub, gets the
-bot allow-list's secrets through `init-env.sh`, and is driven from the
-orchestrator's Herdr as a pane whose process is `sprite exec --tty` into
-the container — brief, per-attempt sentinel, file report, harvest, retire,
-as the Herdr guide already prescribes. The egress allowlist is set before
-credentials, the org-scoped Sprites token never enters a lane, a Tasks hold
-keeps the sprite awake only while an agent is `working`, and
-`task sprite:audit` lists every lane with its age. The specification is
+claims a sprite with a lease, restores that checkpoint and waits for it,
+sets the egress allowlist, runs `devcontainer up` with the bot allow-list's
+secrets in its environment so `init-env.sh` composes the env-file before
+the container exists, clones its pushed branch from GitHub, and is driven
+from the orchestrator's Herdr as a pane whose process is `sprite exec
+--tty` into the container — brief, per-attempt sentinel, file report,
+harvest, retire, as the Herdr guide already prescribes; takeover with the
+full Herdr UI goes through an SSH server inside the container. The
+org-scoped Sprites token never enters a lane, the sprite stays active
+exactly while a lane command runs (the mechanism is in-sprite, so a closed
+pane cannot pause a running gate), a TTL stops new work without destroying
+anything, and `task sprite:audit` lists every lane with its age and lease.
+A throwaway feasibility spike (Docker as a Service, a nested
+`devcontainer up`, `task verify` inside, a cold wake, the SSH attach) runs
+before any of that is productised. The specification is
 [`openspec/changes/agent-environment-sprites`](../../openspec/changes/agent-environment-sprites/);
 the option defaults off and discloses Fly's account and pricing terms next
 to the question. **Fallback:** a Coder workspace per lane — verified attach

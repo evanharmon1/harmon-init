@@ -26,7 +26,9 @@ allows and drives from Herdr the same way a local pane worker does.
   steers, harvests, and retires one lane per sprite **from inside Herdr**,
   using the Herdr pane-worker contract already documented in
   `docs/guides/herdr.md` (one pane per unit, a self-contained brief, a
-  file-based report, and a per-attempt sentinel line).
+  file-based report, and a per-attempt sentinel line), reconciling a
+  cold-woken lane on every entry and offering `herdr --remote` takeover
+  through an SSH server inside the inner container.
 - Define what a lane runs: **the bot devcontainer itself, nested inside the
   sprite**. Sprites cannot boot a custom OCI image (Fly.io staff,
   community.fly.io, 2026 — see design.md), so the sprite acts as the outer
@@ -40,13 +42,16 @@ allows and drives from Herdr the same way a local pane worker does.
 - Define the **pool + golden checkpoint** model that makes lane creation
   fast: a small operator-owned pool of pre-bootstrapped sprites, each with a
   golden checkpoint taken after the image pull and before any credential
-  enters; every lane starts by restoring that checkpoint, so a lane never
-  inherits a previous lane's files or tokens.
+  enters; every lane claims a sprite with a lease, restores that checkpoint,
+  and waits for the restore to complete before anything else, so two lanes
+  never fight over one sprite and a lane never inherits a previous lane's
+  files or tokens.
 - Define the **credential contract**: a lane receives exactly the bot
   devcontainer's allow-listed secrets (`GH_TOKEN` = the bot's scoped
   fine-grained PAT, `CLAUDE_CODE_OAUTH_TOKEN`, the Codex CLI login, optional
-  provider keys) injected at lane creation into the inner container's
-  env-file through the existing `init-env.sh` allow-list; nothing from
+  provider keys), delivered the way Coder delivers them — present in the
+  environment of the `devcontainer up` the lane runs, so the profile's own
+  `init-env.sh` composes the env-file before the container exists; nothing from
   1Password, no operator `gh` login, no `TS_AUTHKEY`, and — new to this
   environment — **never the org-scoped Sprites API token**, which would let
   one lane exec into its siblings.
@@ -57,10 +62,12 @@ allows and drives from Herdr the same way a local pane worker does.
   package registries, the Anthropic and OpenAI API hosts, and the Convex
   local-backend release host) set from the orchestrator side before any
   credential is injected, with the sprite unable to change it.
-- Define **cost controls**: a Tasks-API hold only while an agent is
-  `working`, sleep otherwise; a per-lane TTL; a pool ceiling tied to the
+- Define **cost controls**: the sprite stays active exactly while a lane
+  command runs (the mechanism lives inside the sprite, never on the
+  orchestrator's machine) and sleeps otherwise; a per-lane TTL whose expiry
+  stops new work without destroying anything; a pool ceiling tied to the
   Fly plan's concurrency limit; and `task sprite:audit` listing every lane
-  with its age so nothing bills unnoticed.
+  with its age and lease so nothing bills unnoticed.
 - Define how the dev-loop dispatch recipe and Foreman **select** the
   environment: an explicit `--env sprite` on the lane task for interactive
   dispatch, and `.foreman.toml`'s existing `runner` key for Foreman — this
