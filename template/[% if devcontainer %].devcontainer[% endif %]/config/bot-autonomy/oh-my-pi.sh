@@ -28,7 +28,7 @@ set -euo pipefail
 # returns {"key","value","type":"enum","description"} and resolves a
 # <cwd>/.omp/config.yml override over the global file; the enum is
 # always-ask | write | yolo with schema default yolo. See
-# openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md - Decisions.
+# https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md - Decisions.
 
 OMP_AGENT_DIR="${BOT_AUTONOMY_OMP_AGENT_DIR:-$HOME/.omp/agent}"
 CONFIG="${OMP_AGENT_DIR}/config.yml"

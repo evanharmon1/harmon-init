@@ -21,7 +21,7 @@ bash .devcontainer/scripts/post-create-common.sh
 # allowlist of common commands, but still prompt for anything else — WHEN
 # HARMON_BOT_AUTONOMY_ANTIGRAVITY reads "enabled" (the rendered
 # use_antigravity_cli marker; see devcontainer.json and
-# openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap). This is deliberately NOT the
+# https://github.com/evanharmon1/harmon-init/tree/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap). This is deliberately NOT the
 # bot's blanket always-proceed policy (antigravity-settings.json); a human
 # driving this container keeps a veto over unlisted or destructive commands.
 # ensure-antigravity-cli.sh always runs — its own internal marker check

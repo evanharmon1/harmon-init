@@ -394,7 +394,9 @@ What *can* vary per repo is a **jinja** file: `devcontainer.json` (bot)
 and `dev/devcontainer.json`, both already `[% if devcontainer %]`
 -conditional twins, render `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY`
 to the literal string `enabled` or `disabled` from
-`{{ use_antigravity_cli }}` at copy/update time — and, for the future
+`[[ 'enabled' if use_antigravity_cli else 'disabled' ]]` (this template's
+own Jinja delimiters, per `copier.yml`'s `_envops` block — never the
+standard `{{ }}`/`{% %}` pair) at copy/update time — and, for the future
 `bot-autonomy-new-harnesses` follow-on's Copilot module,
 `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` from `harness-matrix`'s new,
 default-off Copilot Copier answer (see its Non-goals). Every verbatim

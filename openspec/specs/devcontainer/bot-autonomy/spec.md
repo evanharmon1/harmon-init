@@ -423,7 +423,9 @@ dangling symlink (a symlink whose target does not exist).
 `HARMON_BOT_AUTONOMY_ANTIGRAVITY` SHALL be set by the **rendered**
 `devcontainer.json` (bot) and `dev/devcontainer.json` — both
 `[% if devcontainer %]`-conditional jinja twins — from
-`{{ use_antigravity_cli }}`, to the literal string `enabled` or
+`[[ 'enabled' if use_antigravity_cli else 'disabled' ]]` (this template's
+own Jinja delimiters, per `copier.yml`'s `_envops` block — never the
+standard `{{ }}`/`{% %}` pair), to the literal string `enabled` or
 `disabled`; this repository's own root `.devcontainer/devcontainer.json`
 (the rendered form, not a jinja twin) carries the literal value matching
 `.dogfood-answers.yml`. No **verbatim** script —

@@ -359,13 +359,14 @@ Automated update of the immutable Harmon devcontainer toolchain image.
       Dockerfile bump installs (see the container-assertion job's result on
       this PR)
 - [ ] rebuild a freshly generated bot devcontainer with \`use_copilot_cli: true\`
-      and exercise one representative TOOL-USING task (a file read/write or a
-      shell command — not a question with no tool call, which never consults
-      the approval policy at all) through each of Copilot CLI, pi, and
-      oh-my-pi; confirm ZERO approval prompts for all three, completing the
-      Copilot clause of #1137's first [CI] acceptance criterion and
-      contributing to its [HUMAN] criterion; repeat at \`use_copilot_cli\`'s
-      default (off) and confirm Copilot prompts as expected — the by-design
+      and exercise both a representative filesystem operation (a file
+      read/write or a shell command) and a representative GitHub
+      operation (for example \`gh issue list\` or reading a draft PR)
+      through each of Copilot CLI, pi, and oh-my-pi; confirm ZERO approval
+      prompts on both operations for all three, completing the Copilot
+      clause of #1137's first [CI] acceptance criterion and contributing
+      to its [HUMAN] criterion; repeat at \`use_copilot_cli\`'s default
+      (off) and confirm Copilot prompts as expected — the by-design
       outcome, not a regression
 - [ ] confirm pi's accepted capability gap: \`pi -p\` against a fixture
       repository carrying \`.pi/settings.json\` (or another trust-requiring

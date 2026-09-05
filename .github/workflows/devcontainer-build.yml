@@ -139,7 +139,7 @@ jobs:
   # rebuild), so every supported installed harness's effective policy is
   # actually checked, not just its source files. Not a required
   # branch-protection status check
-  # (openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md -
+  # (https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md -
   # Non-Goals): #1137's fail-closed guarantee is satisfied by
   # apply/verify failing container creation/start directly; this job adds a
   # second, PR-visible signal on top. Deliberately NOT part of the local

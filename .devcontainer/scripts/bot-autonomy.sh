@@ -33,10 +33,11 @@ set -euo pipefail
 #     instant a named executable is found installed, its slug is treated
 #     exactly like an uncovered slug and verify fails naming it, regardless of
 #     why it was unsupported. See
-#     openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md - Decisions.
+#     https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md - Decisions.
 #
 # See docs/architecture/security.md and
-# openspec/specs/devcontainer/bot-autonomy/spec.md for the full contract.
+# https://github.com/evanharmon1/harmon-init/blob/main/openspec/specs/devcontainer/bot-autonomy/spec.md
+# for the full contract.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

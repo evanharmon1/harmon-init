@@ -158,8 +158,10 @@
       `~/.local/bin/agy`, not the system binary — this is the case a shell
       function or an rc-only `PATH` edit cannot cover
 - [x] 2.7 Add `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY` — rendered
-      from `{{ use_antigravity_cli }}` to the literal string `enabled` or
-      `disabled` — to the bot `devcontainer.json` **and**
+      from `[[ 'enabled' if use_antigravity_cli else 'disabled' ]]` (this
+      template's own Jinja delimiters, per `copier.yml`'s `_envops` block
+      — never the standard `{{ }}`/`{% %}` pair) to the literal string
+      `enabled` or `disabled` — to the bot `devcontainer.json` **and**
       `dev/devcontainer.json` jinja twins (both already
       `[% if devcontainer %]`-conditional), plus their `template/` twins;
       set the matching literal value in this repository's own root
