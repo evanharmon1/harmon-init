@@ -388,8 +388,10 @@ Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review �
 ⚪ P3 noted · ⏳ waiting on CI or a reviewer · ⛔ blocked/escalating · 🏁 stage
 converged — one glyph, one meaning, so a reader can tell the state at a glance
 without parsing prose. `Stage` names the stage and, for a capped one, its round
-as **`round n/cap`** against the cap resolved from `.devflow.toml`; the stages
-are counted and capped separately and never combined. `Next` names the next
+as **`round n/cap`** against the `.devflow.toml` cap that bounds *that* work —
+challenge, review, integration (Codex re-review cycles), and remediation
+(integration-stage fix pushes) are counted and capped separately and never
+combined, so name the counter whenever the stage has more than one. `Next` names the next
 concrete gate or action, including the `task verify` a fix owes before the next
 round. Post it at every stage transition, at each round boundary, as the concise
 tick during a long wait (no re-dumping unchanged command output), and
