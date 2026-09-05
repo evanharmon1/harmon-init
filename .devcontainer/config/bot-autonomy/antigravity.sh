@@ -9,7 +9,7 @@ set -euo pipefail
 # Copier answer directly: this file is a verbatim template twin, shipped
 # byte-identical to every generated repo, so it has no template-time
 # substitution to read). See
-# openspec/changes/bot-autonomy-bootstrap/design.md - Decisions for the full
+# https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md - Decisions for the full
 # "~/.local/bin/agy is exactly one of three states" rationale.
 #
 #   marker == enabled  -> apply-antigravity-settings.sh apply (always-proceed)

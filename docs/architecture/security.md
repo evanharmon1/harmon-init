@@ -313,9 +313,8 @@ slugs, replaces that with one dispatch point:
 
 See [../guides/devcontainers.md](../guides/devcontainers.md) for the
 per-harness mechanics and
-[openspec/changes/bot-autonomy-bootstrap](../../openspec/changes/bot-autonomy-bootstrap)
-(or, once archived, `openspec/specs/devcontainer/bot-autonomy/spec.md`) for
-the full contract.
+[openspec/specs/devcontainer/bot-autonomy/spec.md](../../openspec/specs/devcontainer/bot-autonomy/spec.md)
+for the full contract.
 
 ## Two identities: the bot vs the operator
 

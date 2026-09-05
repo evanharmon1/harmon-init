@@ -394,7 +394,9 @@ What *can* vary per repo is a **jinja** file: `devcontainer.json` (bot)
 and `dev/devcontainer.json`, both already `[% if devcontainer %]`
 -conditional twins, render `containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY`
 to the literal string `enabled` or `disabled` from
-`{{ use_antigravity_cli }}` at copy/update time — and, for the future
+`[[ 'enabled' if use_antigravity_cli else 'disabled' ]]` (this template's
+own Jinja delimiters, per `copier.yml`'s `_envops` block — never the
+standard `{{ }}`/`{% %}` pair) at copy/update time — and, for the future
 `bot-autonomy-new-harnesses` follow-on's Copilot module,
 `containerEnv.HARMON_BOT_AUTONOMY_COPILOT` from `harness-matrix`'s new,
 default-off Copilot Copier answer (see its Non-goals). Every verbatim
@@ -749,16 +751,20 @@ from `apply`'s own code path — so a bug in `apply` cannot make its own
   PR does not touch a value already written into a persisted volume.
 - Rollback for the implementation as a whole, in order: **first** run
   `restore` for Antigravity and OpenCode against every bot container that
-  had already run `apply` — while the PR's `bot-autonomy.sh`,
-  `apply-antigravity-settings.sh`, and the OpenCode module's restore logic
-  still exist to run it — **then** revert the PR. Reversing that order
-  breaks it: a reverted checkout no longer contains the code that
-  implements `restore`, so there is nothing left to invoke against an
-  already-`apply`'d persisted volume once the revert lands first. An
-  earlier version of this plan stated the two steps in the broken order;
-  restore-before-revert is the only sequence that actually works, not a
-  stylistic preference. `agent-registry.json` and the human `dev/` profile
-  are untouched by this change either way.
+  had already run `apply` — **then** revert the PR. For OpenCode this
+  order is not a stylistic preference: its restore logic
+  (`.devcontainer/config/bot-autonomy/opencode.sh`) is new in this change,
+  so a reverted checkout no longer contains it, and there is nothing left
+  to invoke against an already-`apply`'d persisted volume once the revert
+  lands first. Antigravity does not share this constraint —
+  `apply-antigravity-settings.sh` predates this change (PR #701) and
+  survives a revert intact, so its `restore` subcommand remains directly
+  invocable either before or after reverting. An earlier version of this
+  plan stated the two steps in the broken order for OpenCode; this is the
+  corrected sequence, applied uniformly to both modules as the simplest
+  safe default even though only OpenCode strictly requires it.
+  `agent-registry.json` and the human `dev/` profile are untouched by this
+  change either way.
 
 ## Open Questions
 
