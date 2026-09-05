@@ -311,7 +311,20 @@ lane's public key, and its new host key re-pinned through the same
 `sprite exec` channel used at creation, never trust-on-first-use over
 SSH. The helper refreshes the alias's
 address on every reconcile because the container's address can change
-across restarts. Both attach paths are marked for verification in the
+across restarts — and the alias does not wait for a reconcile to happen
+to it: its `ProxyCommand` is the helper's `lane ssh-proxy`, which runs the
+same reconcile as every other entry (wake, restart the container, refresh
+the address, re-pin on identity change, under the same lock refusals) and
+only then execs `sprite proxy`, so a cold lane is taken over without a
+prior lane command. Takeover is a UI, not a side door: inside the lane
+every registered harness resolves on `PATH` to the supervisor wrapper (the
+image already puts `~/.local/bin` first for the Antigravity wrapper's
+sake), so whether an agent is launched by `lane:exec`, by `agent start`
+through the in-container Herdr server, or by a human typing its name in a
+remote pane, it runs with the duration bound, the TTL and grace, and the
+platform-visible registration — the activity authority sees every agent,
+and nothing launched through takeover can outlive or escape the lane's
+rules. Both attach paths are marked for verification in the
 first real lane; the version-match prompt `herdr --remote` shows on a
 mismatch installs into `~/.local/bin`, which on the container's volume
 persists, so it prompts once per pool sprite rather than per rebuild.
@@ -423,9 +436,11 @@ over the API.
   so no command can start around the restore and nothing is recorded
   before a session exists, never restores a leased
   sprite it does not own, and refuses retirement over a non-clean checkout
-  (modified, staged, or untracked files, or a branch with commits not on
-  its upstream, no upstream, or a missing remote counterpart — porcelain
-  status alone cannot see an ahead-but-clean branch).
+  (modified, staged, untracked, or ignored files — a restore deletes an
+  ignored `.env` without a trace, the same reason `scripts/worktree-rm.sh`
+  refuses on them — or a branch with commits not on its upstream, no
+  upstream, or a missing remote counterpart — porcelain status alone cannot
+  see an ahead-but-clean branch).
 - [Whether a detached exec session still counts as activity once the
   client disconnects, and whether the Tasks API is reachable from inside
   the sprite without the org token] → Both are settled by the feasibility

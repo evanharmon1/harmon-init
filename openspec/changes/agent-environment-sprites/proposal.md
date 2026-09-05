@@ -147,10 +147,17 @@ and adds no requirement to either spec.)
   `docs/architecture/security.md` (the sprite credential boundary),
   `.foreman.toml` (comment on `runner` values only), `.dogfood-answers.yml`
   (the root adopts the option so the parity gates cover the twins),
-  `scripts/audit-dogfood.sh` (any intentional divergence, with reasons).
-- Read-only: `.devcontainer/devcontainer.json`, `post-create.sh`,
-  `post-start.sh`, `init-env.sh`, `bot-autonomy.sh` — consumed unchanged
-  inside the nested container. If the lane needs anything from them it is a
+  `scripts/audit-dogfood.sh` (any intentional divergence, with reasons),
+  `.devcontainer/devcontainer.json` and its jinja twin (one `containerEnv`
+  line forwarding the lane marker `HARMON_LANE` from `localEnv`, task 3.3),
+  and the lifecycle scripts that gain a skip-when-set guard on that marker
+  (`bootstrap-related-repos.sh`, `fetch-related-repos.sh`,
+  `post-create-conductor.sh`, `post-start-common.sh`, task 3.3) plus the
+  lefthook `pre-push` hook and `Taskfile.yml` (`guard:lane-workflow-push`,
+  task 3.5).
+- Read-only: `post-create.sh`, `post-start.sh`, `init-env.sh`,
+  `bot-autonomy.sh` — consumed unchanged inside the nested container. If
+  the lane needs anything from them beyond the marker guards above it is a
   defect in this change's scripts, not a reason to edit the bootstrap.
 - External: a Fly.io account with Sprites enabled (usage-based; one $30
   trial credit per user), the `sprite` CLI on the orchestrator's machine,

@@ -243,8 +243,8 @@ restore wait rather than restoring again).
 #### Scenario: reclaim on an idle but unclean checkout refuses without --force
 - **WHEN** `task sprite:audit --reclaim` targets a sprite whose lease has
   expired, with no live session on the platform, but whose checkout is not
-  clean (modified, staged, or untracked files, or commits not on its
-  upstream, in any checkout under `/workspaces`)
+  clean (modified, staged, untracked, or ignored files, or commits not on
+  its upstream, in any checkout under `/workspaces`)
 - **THEN** it refuses naming what is uncommitted or unpushed, releases the
   lock with nothing changed, and proceeds only when `--force` is given —
   the same cleanliness gate and the same `--force` as retirement, and the
@@ -692,7 +692,26 @@ records the container's host key in the operator's SSH alias so the
 connection is pinned rather than trusted on first use, refreshes the
 address on every reconcile, and removes the keypair and alias at
 retirement; the outer sprite runs no SSH server and the private key never
-enters the sprite. Lanes run with related-repository bootstrap disabled
+enters the sprite. Two invariants bound the takeover path. First, **every
+agent process in a lane runs under the lane supervisor**, whatever
+launched it: inside the lane, every registered harness executable
+resolves on `PATH` to the supervisor wrapper (the image already puts
+`~/.local/bin` first for exactly this kind of precedence), so an
+`agent start` issued through remote Herdr — which the in-container Herdr
+server executes by launching the harness in a pane shell — or a harness
+name typed in a remote pane runs with `lane:exec` semantics: the duration
+bound, the TTL and grace, and registration with the platform (a session
+or a hold the supervisor owns), so it is visible to the activity authority;
+takeover gives the operator Herdr's UI, never a way to start an
+unsupervised process. Second, **the SSH alias reconciles before it
+connects**: its `ProxyCommand` is a helper subcommand
+(`task sprite:lane:ssh-proxy -- <lane>`) that runs the same reconcile as
+every other entry — wake the sprite, bring the inner container back if it
+is stopped, refresh the address, re-pin the host key if the container's
+identity changed — under the same lane-lock refusals (retiring, pending
+restore), and only then execs `sprite proxy -s <pool-sprite> -W
+<inner-address>:22`; a cold lane is therefore taken over without a prior
+lane command. Lanes run with related-repository bootstrap disabled
 through the lane marker (see the nested-devcontainer requirement), so the
 primary checkout is the only repository a lane clones. Retirement
 (`task sprite:lane:rm -- <lane>`) SHALL hold the lane lock of the lane-lock
@@ -702,12 +721,14 @@ activity — refusing only while the **platform** reports a live session or
 command for the lane; the helper's cached session records are not an
 authority and a stale one is discarded — and the cleanliness gate — enumerating **every** git checkout under
 `/workspaces` before any restore and refusing while any of them is not
-clean, where clean means **both** that `git status --porcelain
---untracked-files=all` is empty (no modified, staged, or untracked files)
-**and** that the branch is fully on its remote: it has an upstream, that
-upstream exists on the remote, and `git rev-list --count @{upstream}..HEAD`
-is zero, porcelain alone cannot see an ahead-but-clean branch — unless
-`--force` is given; it then stops the inner container, removes injected
+clean, where clean means all three of: `git status --porcelain
+--untracked-files=all` is empty (no modified, staged, or untracked
+files); `git ls-files --others --ignored --exclude-standard` is empty (no
+ignored files such as a `.env`, the same guard `scripts/worktree-rm.sh`
+applies, because a restore deletes them without a trace); and the branch
+is fully on its remote — it has an upstream, that upstream exists on the
+remote, and `git rev-list --count @{upstream}..HEAD` is zero, porcelain
+alone cannot see an ahead-but-clean branch — unless `--force` is given; it then stops the inner container, removes injected
 credentials, restores the golden checkpoint and waits for it, releases the
 lease, and only then releases the lock and returns the sprite to the pool
 (or destroys it with `--destroy`). `task sprite:audit --reclaim` is this
@@ -773,6 +794,30 @@ confirmation.
 - **THEN** a Herdr thin client attaches to a Herdr server running inside the
   inner container, and detaching leaves the agents running
 
+#### Scenario: an agent started through remote Herdr runs under the supervisor
+- **WHEN** the operator, attached with `herdr --remote`, runs
+  `herdr agent start … --kind claude` in a lane pane (or types `claude` in
+  a remote pane)
+- **THEN** the harness resolves to the supervisor wrapper, the platform
+  lists the resulting activity (the activity authority sees it exactly as
+  a `lane:exec`-launched agent), `lane:rm` refuses while it runs, and it is
+  stopped with its process group at the per-command bound and at TTL
+  plus grace; the offline test asserts that the lane's `PATH` resolves
+  every registered harness to the wrapper and that no launch path in the
+  container reaches an unwrapped harness binary
+
+#### Scenario: taking over a cold lane reconciles before connecting
+- **WHEN** a lane has gone cold (sprite paused, inner container stopped, no
+  lane command issued since) and the operator runs `herdr --remote
+  <lane-ssh-alias>`
+- **THEN** the alias's `ProxyCommand` reconciles first — the sprite wakes,
+  `devcontainer up` brings the container back with `post-start.sh` and
+  its `verify`, the address is refreshed and the host key re-pinned if
+  the identity changed — and only then proxies to the container's SSH
+  server, so the attach succeeds with no prior `lane:exec`; the offline
+  test records the reconcile calls before the `sprite proxy` call and a
+  refusal (no proxy call) while retiring or during a pending restore
+
 #### Scenario: SSH into the lane is key-authenticated and pinned
 - **WHEN** the lane's SSH alias is used
 - **THEN** authentication succeeds only with the per-lane private key held
@@ -787,6 +832,15 @@ confirmation.
   unpushed commits, or modified, staged, or untracked files
 - **THEN** it refuses, names what is unpushed or uncommitted, and does
   nothing unless `--force` is given
+
+#### Scenario: a gitignored file in the checkout refuses retirement and reclaim
+- **WHEN** `task sprite:lane:rm -- <lane>` or `task sprite:audit --reclaim`
+  runs while a lane checkout has an empty porcelain status but
+  `git ls-files --others --ignored --exclude-standard` lists a file (a
+  `.env` an agent wrote, say)
+- **THEN** it refuses naming the ignored file, restores nothing, and
+  proceeds only with `--force`; the offline test drives it with a stubbed
+  checkout whose only dirt is an ignored file
 
 #### Scenario: retirement refuses a clean tree that is ahead of its upstream
 - **WHEN** `task sprite:lane:rm -- <lane>` runs while the lane's checkout has
@@ -938,9 +992,12 @@ checkpoints (including a helper-only change to the stamp), pool overflow,
 contended or expired leases, entry during a pending restore, a missing
 `flock` or `sprite` prerequisite (no platform call at all), and retirement
 or reclaim over a live platform session or a non-clean checkout (including
-a clean tree ahead of its upstream, a dirty sibling checkout under
-`/workspaces`, and an idle-but-unclean reclaim without `--force`) — each
-recording no restore call; that a stale cached session record never blocks
+a clean tree ahead of its upstream, a checkout whose only dirt is an
+ignored file, a dirty sibling checkout under `/workspaces`, and an
+idle-but-unclean reclaim without `--force`) — each recording no restore
+call; that every registered harness resolves to the supervisor wrapper on
+the lane's `PATH`; that the SSH alias's `ProxyCommand` reconciles before
+proxying and refuses while retiring or during a pending restore; that a stale cached session record never blocks
 retirement; the lane-lock interleavings (exec and retirement contending,
 with exactly one holder; a refused retirement leaving the lane usable at
 once; extend during reclaim refusing; a crash at each mid-startup point
@@ -987,8 +1044,10 @@ stubs.
   contended lease, an expired lease, an entry during a pending restore, a
   missing `flock`, a retirement or reclaim over a live platform session, a
   reclaim over an idle-but-unclean checkout without `--force`, a retirement
-  over a non-clean checkout, a retirement over a dirty sibling checkout,
-  and a retirement over a clean tree ahead of its upstream
+  over a non-clean checkout, a retirement or reclaim over a checkout whose
+  only dirt is an ignored file, a retirement over a dirty sibling checkout,
+  a retirement over a clean tree ahead of its upstream, and an SSH proxy
+  attempt while retiring or during a pending restore
 - **THEN** each case exits non-zero with the documented message and the
   stubs record no create, restore, or destroy call for it
 
