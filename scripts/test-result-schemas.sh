@@ -67,5 +67,22 @@ rejects adjudication-active-run-mismatch adjudication "$adjudication" \
 accepts run "$oneshot" --no-adjudications --receipt
 jq '.stage_transitions[2].stage = "security"' "$oneshot" >"$tmp"
 rejects run-invalid-transition run "$tmp" --no-adjudications --receipt
+jq '
+    .pr = {number: 1, url: "https://example.invalid/pr/1"}
+    | .evidence_comments = [{
+        id: "comment-1",
+        author_actor_id: 1,
+        login: "agent",
+        digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        marker: {
+            run_id: "run-oneshot-transition",
+            stage: "implement",
+            destination: "pr",
+            round: 1,
+            sequence: 1
+        }
+    }]
+' "$oneshot" >"$tmp"
+rejects run-pr-round-evidence run "$tmp" --no-adjudications --receipt
 
 echo "result schema contract tests OK"

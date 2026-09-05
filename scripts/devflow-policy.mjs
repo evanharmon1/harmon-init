@@ -707,6 +707,12 @@ function validatePredicateExpr(expr, errorPath) {
   const kinds = Object.keys(expr).filter((k) => k === 'all' || k === 'any')
   if (kinds.length !== 1) throw new PolicyError(`${errorPath} must have exactly one of "all"/"any"`)
   const kind = kinds[0]
+  const extraCompositionKeys = Object.keys(expr).filter((key) => key !== kind)
+  if (extraCompositionKeys.length > 0) {
+    throw new PolicyError(
+      `${errorPath} has unsupported composition key(s): ${extraCompositionKeys.join(', ')}`
+    )
+  }
   const list = expr[kind]
   if (!Array.isArray(list) || list.length === 0)
     throw new PolicyError(`${errorPath}.${kind} must be a non-empty array`)
@@ -1011,6 +1017,14 @@ function resolveStages(doc) {
       `[stage.${stage}].finder_fallbacks`,
       []
     )
+    const duplicateFallback = finderFallbacks.find(
+      (finder, index) => finderFallbacks.indexOf(finder) !== index
+    )
+    if (duplicateFallback !== undefined) {
+      throw new PolicyError(
+        `[stage.${stage}].finder_fallbacks contains duplicate finder "${duplicateFallback}"`
+      )
+    }
     // A single-primary stage's own primary finder listed in its OWN
     // finder_fallbacks is unconditionally dead configuration — post-merge
     // cloud review, confirmed: dev-flow-exit.mjs's assembleLogicalRounds

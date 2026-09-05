@@ -138,6 +138,9 @@ rejects_reader() {
 rejects_reader unknown-top-level-key replace_once 'schema_version = 2' $'schema_version = 2\nsurprise = true'
 rejects_reader extra-stage-table append_text $'\n[stage.deploy]\n'
 rejects_reader unknown-stage-key replace_in_table stage.challenge '[stage.challenge]' $'[stage.challenge]\nsurprise = []'
+rejects_reader duplicate-fallback-finder replace_in_table stage.challenge \
+    '# finder_fallbacks = []' \
+    'finder_fallbacks = ["codex-verification", "codex-verification"]'
 rejects_reader missing-dormant-rigor delete_table rigor.light
 rejects_reader unknown-rigor-order-entry replace_once \
     'rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]' \
@@ -229,6 +232,15 @@ converged = { all = [
 ] }
 '
 resolve_reader
+
+reset_policy
+replace_in_table convergence \
+    'converged = { all = [ { predicate = "no_gating_findings" } ] }' \
+    'converged = { all = [ { predicate = "no_gating_findings" } ], extra_condition = true }'
+if resolve_reader 2>/dev/null; then
+    echo "FAIL: JS reader accepted an unknown convergence composition key" >&2
+    exit 1
+fi
 
 reset_policy
 if resolve_reader --closure /tmp/not-a-trust-boundary 2>closure.err; then

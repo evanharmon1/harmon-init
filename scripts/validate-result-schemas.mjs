@@ -1833,12 +1833,20 @@ function checkEvidenceMarkerStageVisited(document, errors) {
 // checkEvidenceMarkerStageVisited above.
 function checkEvidenceMarkerPrDestinationRequiresPr(document, errors) {
   if (!Array.isArray(document.evidence_comments)) return
-  if (document.pr !== null && document.pr !== undefined) return
   for (const [index, comment] of document.evidence_comments.entries()) {
     const marker = comment.marker
-    if (marker && marker.destination === 'pr') {
+    if (
+      marker &&
+      marker.destination === 'pr' &&
+      (document.pr === null || document.pr === undefined)
+    ) {
       errors.push(
         `$run.evidence_comments[${index}].marker.destination: "pr" requires a non-null $run.pr — this run has no PR yet`
+      )
+    }
+    if (marker && marker.destination === 'pr' && marker.round !== null) {
+      errors.push(
+        `$run.evidence_comments[${index}].marker.round: must be null when destination is "pr" — PR evidence is a per-stage rollup, while per-round evidence belongs on the issue`
       )
     }
   }
