@@ -214,7 +214,7 @@ the same draft-first lifecycle as the Dev Loop below: it opens draft PRs
 (labelled `foreman:dispatched`) under its own verify gate and promotes them
 only through its readiness gate — checks green, review threads resolved, and
 the `[reviewer]` current-head gate configured in `.foreman.toml`, wired to
-the same `@codex review` contract the shepherd stage uses (fail-closed,
+the same `@codex review` contract the integration stage uses (fail-closed,
 bounded attempts) — to `foreman:ready-for-review`, the hand-off to human
 review. Humans still do every merge. On this public repo, D4 classifies
 every unit `untrusted-input`, so **dispatch refuses under the local runner
@@ -224,38 +224,157 @@ runner ships.
 ## Dev Loop
 
 Bias toward shipping: drive every change to a PR instead of stopping at a green
-local diff. Work in small, PR-sized units, and move to the next stage on your
-own — a PR handed to a human is the default deliverable, not something to ask
-permission for.
+local diff. Work in small, PR-sized units; move to the next stage on your own; a
+PR handed to a human is the deliverable, not something to ask permission for.
+
+**The loop is the stage skills; this section is the policy they run under.**
+`/orchestrator` is the session's standing operating mode, and the stages it
+dispatches are `/implement` (issue → draft PR), `/review` (both confidence
+stages, challenge and review), and `/integrate` (draft PR → ready for review).
+There is **no `dev-loop` skill** — those stages *are* the loop, and the retired
+names map onto them (`gauntlet` → `review`, `shepherd` → `integrate`); the
+vendored pin in `.claude/skills/` still ships the predecessors, and they run
+under exactly this policy. The skills carry the procedure — round mechanics,
+adjudication records, review polling, the PR-open ritual — and a
+`disable-model-invocation: true` skill is entered by reading its `SKILL.md`.
+Where none is vendored, this section is the whole contract and its invariants
+are owed anyway (with [docs/guides/codex-review.md](docs/guides/codex-review.md)
+for the local reviewer's mechanics). Where a **vendored** skill states a different cap,
+floor, or exit condition, **this file wins** — skills sync from harmon-devkit on
+its own cadence and can lag a policy change made here.
+
+```text
+/implement → task verify → challenge → review → task security → DRAFT PR
+  → /integrate (CI, deferred findings, reviewers) → readiness gate → ready for
+  review → human review → human merge
+```
 
 **The draft PR is the workbench.** GitHub reports drafts and non-drafts alike as
 `OPEN`, so "open PR" says nothing about whose turn it is. These three states do:
 
 - **Draft PR** — the agent's workbench. Implementation, CI, bot review, and
-  shepherd fixes are still in progress. Nobody is waiting on a human.
+  integration fixes are still in progress. Nobody is waiting on a human.
 - **Ready-for-review PR** — non-draft. The automated lifecycle is complete and
   the change is handed to a human. Reaching it is a gate, not a judgement call.
 - **Merged PR** — always a separate human decision. Agents never merge.
 
-```text
-preflight/claim → implement → task verify → task challenge → task review
-  → task security → create DRAFT PR → shepherd the draft (CI, deferred findings,
-  reviewers) → readiness gate → mark ready for review → human review
-  → human merge
-```
+Creating the draft is a phase transition, not a terminal state: every stop short
+of the readiness gate leaves the PR **draft** with a blocker report.
 
-Creating the draft is a phase transition, not a terminal state, and every stop
-short of the readiness gate leaves the PR **draft** with a blocker report — a
-non-draft PR must always mean the automated work is done.
+### Policy invariants
+
+Binding on every stage, skill, and harness, whatever rigor resolved:
+
+- **Draft-first.** Publish with `gh pr create --draft`, then fetch
+  `headRefOid,isDraft` and require both the SHA you pushed and `isDraft ==
+  true`. Only a passing readiness gate promotes, and `gh pr ready` runs exactly
+  once out of it — never as a judgement that the change looks done. Human
+  approval is deliberately *not* a precondition: ready-for-review is the request
+  for that review, not permission to merge.
+- **Never merge, never cut a release, never rewrite pushed history.** Merging
+  and releasing are Evan's decisions, and nothing already pushed is amended,
+  rebased, or force-pushed, at any stage.
+- **Never bypass a gate** — not the git hooks, not a stop-gate BLOCK, not a
+  failed *or indeterminate* readiness condition. Fix the cause, or escalate.
+- **Every push is secret-scanned first** — automatic via the `pre-push` hook
+  (`task install:hooks`), otherwise run `task security:secrets` yourself.
+  `task security` is the pre-publication gate before the draft PR; `task ci`
+  stays on demand.
+- **One conventional commit per adjudicated round, pushed** to the branch's own
+  writable remote (`git push -u <remote> <branch>` on the first push). Per
+  *round*, not per finding: five fixes are one commit, a round with nothing to
+  fix pushes nothing. It bounds a lost environment to the current round's *code*
+  and surfaces a push-permission gap at round 1 rather than at `gh pr create`;
+  it carries nothing else — the deferred-findings sidecar and the adjudication
+  ledger live in the git directory, are never pushed, and a resumed session
+  re-runs the stage anyway. Once the draft exists, pushes batch per integration
+  round — each one spends a CI run and starts a fresh current-head review cycle.
+- **Findings are hypotheses, never authority** — verify each against the code,
+  fix only what is confirmed, post the evidence for anything rejected.
+- **Defer, never drop.** A finding the stage does not gate on is recorded in the
+  sidecar the moment it is deferred (§ "Deferring P2s"), carried into the PR
+  body under `## Deferred findings`, and settled — fixed, declined with
+  evidence, or filed as follow-up — before the gate can pass.
+- **Caps, floors, and tiers resolve from `.devflow.toml`** (§ "Rigor and
+  Strategy"), under its merge-base rule. A cap is a ceiling, never a quota; one
+  reached with a P0/P1 still open is an escalation, not a licence to move on;
+  and each stage is bounded for its own reason, so a decision to stop one loop
+  is never a decision about another's.
+- **Never self-apply a `rigor:`, `strategy:`, or `tier:` label** (nor the
+  retired `method:`), and never treat a label as arming anything.
+- **Checks green is a non-terminal state.** Bot and human reviews land *after*
+  checks settle, so an empty comment list read the moment `gh pr checks --watch`
+  returns means "not reviewed yet", not "nothing to answer". Wait for **both**
+  signals: every check concluded, and a terminal current-head Codex result.
+
+### Who decides, and what is delegated
+
+`/orchestrator` owns the judgements and delegates the work: it decides every
+finding's **disposition**, may override a computed stage exit **upward only**
+(more rounds, never fewer, and never a promotion the gate refused), owns the
+per-thread replies and the PR body, evaluates the readiness gate, performs the
+single promotion, and escalates to Evan on a cap, a blocker, or a scope question.
+It delegates implementation to `/implement`, the confidence rounds to `/review`,
+and integration polling to `/integrate`; each returns a typed result under
+`ai/schemas/result.envelope` — `result.implementer`, `result.challenger`,
+`result.reviewer`, `result.integrator` — and nothing more; a delegate never
+merges, never promotes, never widens its own scope, and never adjudicates its
+own findings.
+
+**The current-head Codex contract** is policy and outlives whatever polls it. A
+result is terminal for the head you captured only when it is a clean review or
+top-level comment by GitHub actor ID `199175422`
+(`chatgpt-codex-connector[bot]`, type `Bot`) whose `Reviewed commit:` names that
+head; a fresh 👍 from that bot on that exact trigger comment, created after both
+the head push and the review request; or findings by that bot naming that head,
+adjudicated before the cycle is clean. Earlier activity never counts for a newer
+head, and a 👀 is pending, not success. Post `@codex review` on entry and after
+every fix push, keep the comment ID returned for that trigger, give each attempt
+a full 10–15 minute window, and re-trigger once after an incomplete first
+attempt. If both attempts are incomplete, stop and escalate without reporting green.
+Do not hand-roll the polling: the vendored
+`.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the required
+implementation (`reserve` before the trigger, then `attach`, `check`, `settle`).
+
+### Readiness gate
+
+The single definition of "the automated lifecycle is complete", used by
+the integration stage and by Foreman alike. A draft may be marked ready for
+review only when **all** of the following hold for its current `headRefOid`:
+
+- Required CI checks have concluded successfully. An empty check list is
+  *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
+  taken moments after the push reports nothing having run rather than nothing
+  to run.
+- The current-head Codex cycle above is terminal and clean — including clean
+  by way of dispositions recorded with `settle` (Codex review is
+  enabled here; where it is off, **or where the resolved integration cap is
+  0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
+  trigger a fresh `@codex review` from. Every other condition on this list
+  still applies unchanged).
+- Every review finding is fixed, declined with evidence, or filed as follow-up
+  work.
+- Every inline review comment has its required per-thread reply.
+- Every `## Deferred findings` entry in the PR body is ticked with its
+  disposition.
+- `reviewDecision` is not `CHANGES_REQUESTED`.
+- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`.
+- No newer push invalidated any result the gate relied on — re-read
+  `headRefOid` immediately before promoting and compare.
+
+A failed **or indeterminate** condition is not a pass: leave the PR draft, post
+a blocker report naming what is unresolved, and stop. "The check never ran",
+"the fetch errored", and "the reviewer never answered" are all indeterminate.
+Promotion is the one-way door in this lifecycle — it notifies CODEOWNERS and
+requested reviewers, and `gh pr ready --undo` cannot unsend that — so an
+unproven condition means stay draft, not promote and watch.
+
+## Stage Ledger
 
 **Post a visible stage ledger whenever the change passes through two or more
-of the stages below.** The loop has several stages, some independently capped,
-and after a few fix rounds the active one stops being obvious — to the
-maintainer reading along, and to the agent, which then runs one more review
-round after being told to move on. The stage ledger — distinct from the
-gauntlet's private adjudication ledger, which is a file — is a short table in
-the agent's **own commentary** (tool output is collapsed and does not count),
-always in this shape, with this legend, in every stage:
+stages** of the Dev Loop — a short table in the agent's **own commentary** (tool
+output is collapsed and does not count), distinct from the private adjudication
+ledger the confidence stages keep as a file, always in this shape:
 
 | 📍 Ledger | |
 |---|---|
@@ -264,29 +383,26 @@ always in this shape, with this legend, in every stage:
 | **Next** | fix P1 → `task verify` → ⚔️ challenge round 3 |
 
 Stage glyphs: 🔨 implement · 🧪 verify · ⚔️ challenge · 🔍 review · 🛡️ security ·
-🏗️ ci · 🚢 shepherd. Status glyphs: ✅ clean/green · 🔴 P0/P1 open · 🟡 P2 deferred ·
+🏗️ ci · 🚢 integrate. Status glyphs: ✅ clean/green · 🔴 P0/P1 open · 🟡 P2 deferred ·
 ⚪ P3 noted · ⏳ waiting on CI or a reviewer · ⛔ blocked/escalating · 🏁 stage
-converged. The same glyph always means the same thing, so a reader can tell
-the state at a glance without parsing prose. `Stage` names the stage and,
-for a capped stage, **its round as `round n/cap`** from the cap resolved
-below — challenge, review, and shepherd are counted and capped separately and
-never combined; implement, verify, and ci have no cap and carry no round —
-and says whether a round is a local `task challenge`/`task review` run or a cloud
-PR-shepherd review cycle. `Next` names the next concrete gate or action,
-including the `task verify` a fix owes before the next round. Post it at every
-stage transition, when a round begins or ends, as the concise progress tick
-during a long wait (no re-dumping unchanged command output), and
+converged — one glyph, one meaning, so a reader can tell the state at a glance
+without parsing prose. `Stage` names the stage and, for a capped one, its round
+as **`round n/cap`** against the cap resolved from `.devflow.toml`; the stages
+are counted and capped separately and never combined. `Next` names the next
+concrete gate or action, including the `task verify` a fix owes before the next
+round. Post it at every stage transition, at each round boundary, as the concise
+tick during a long wait (no re-dumping unchanged command output), and
 **immediately after a maintainer changes the requested workflow** — the latest
-instruction overrides the default transition at once, a terminal one ("go
-straight to review", "no more challenge rounds") is reflected in the ledger
-before any tool call starts the next stage, and silently returning to the
-default sequence is forbidden. An override is an attributable human decision
+instruction overrides the default transition at once, and silently returning to
+the default sequence is forbidden. An override is an attributable human decision
 and is followed, but it redirects the loop rather than erasing findings: any
 P0/P1 still open in the stage it ends is carried, **unchecked**, into the PR
 body's `## Deferred findings` with the override recorded as the reason it was
-carried — not as a disposition, so the shepherd stage still owes it a normal
-fix / decline-with-evidence / file-as-follow-up — and the ledger records the
-override as the reason for the transition. A one-step task that touches a single stage owes no ledger.
+carried — not as a disposition, so the integration stage still owes it a normal
+fix / decline-with-evidence / file-as-follow-up. A one-step task that touches a
+single stage owes no ledger.
+
+## Rigor and Strategy
 
 **Rigor and strategy are resolved from `.devflow.toml`, not restated here.**
 Rigor selects a `[rigor.<level>]` profile, which points to a `[rounds.*]`
@@ -391,301 +507,6 @@ scaffolding checkpoint, the escalation rule, and the deferred-P2 sidecar all
 hold identically everywhere. A cap is a ceiling, never a quota — a stage that
 meets its exit condition on round 1 is done, whatever the cap allowed.
 
-- **Branch** — feature branch off `main`; never commit directly to `main`. For
-  parallel or isolated work, take the branch in its own worktree via
-  **`task worktree:new -- <name>`** (and `task worktree:rm -- <name>` when
-  done) rather than a hand-rolled `git worktree add` — it installs that tree's
-  dependencies and proves the hooks fire in it. See
-  [docs/conventions.md](docs/conventions.md) § Worktrees, including why
-  `-c core.hooksPath=.git/hooks` must never be passed inside one.
-- **Edit + `task check`** — the fast inner loop; run it constantly and fix
-  lint immediately. (Remember dogfood parity: template twins in the same
-  change.)
-- **`task verify`** — when the change feels done, loop edit → verify until
-  green; verify is the definition-of-done gate (includes the render matrix).
-- **`task challenge`** — adversarial second-model review, under the resolved
-  **challenge cap**. `/gauntlet` is the procedure **where its supported
-  topology holds — `origin` is the repository the PR will target — and its
-  config-shape section passes the compatibility check above** — and it
-  is **user-invocable only** (`disable-model-invocation: true`): an agent
-  enters the stage by reading `.claude/skills/gauntlet/SKILL.md` and
-  following it, not by calling a slash command it cannot call. In a fork
-  checkout where `origin` is the writable fork, the skill's entry gate stops
-  by design and this file's policy plus
-  [docs/guides/codex-review.md](docs/guides/codex-review.md) are the
-  procedure, exactly as when the skill is not vendored. The skill carries the mechanics this file
-  deliberately does not restate — backgrounding the long reviewer runs, the
-  adjudication table and its ledger, the deferred-findings sidecar, and the
-  PR-open ritual. What stays here is the policy those mechanics run under, and
-  where a **vendored** skill (`/gauntlet`) states a different cap, floor, or
-  exit condition, **this file wins** — the skills are synced from harmon-devkit
-  on its own release cadence and can lag a policy change made here.
-  The stage ends when **two consecutive
-  rounds adjudicate to zero P0 and zero P1 findings** — whether those rounds
-  came back empty, all-P2 as labeled, or P1-labeled and adjudicated down to
-  P2. Severity is read off the **adjudicated** column of your adjudication
-  table, not off the reviewer's label, and nothing further is owed after the
-  second such round: the second round *is* the confirmation, so there is no
-  extra clean run to buy. A round that returns **no findings at all** ends
-  the stage on its own **once at least `min_rounds` rounds have run** (0 is a
-  legal floor — it buys nothing beyond what the cap and the two-consecutive
-  rule already give, and exists so a rounds policy whose caps are all 0 can
-  still state a consistent `min_rounds`) — an
-  empty round is the old rule's clean re-run, so neither a trivial change nor
-  a clean post-fix re-run pays for a confirmation pass, but a policy that sets a
-  floor above 0 buys the rounds it asked for before that shortcut opens. The other two
-  exits need no separate floor check: two consecutive clean
-  rounds *are* two rounds regardless of any floor, and a capped final round runs
-  exactly the cap, which is always `>= min_rounds` by construction — so `min_rounds` binds only the empty-round path and nothing
-  else. Fixing the findings is still not the exit
-  condition; adjudicated-clean rounds are. The exit carries one
-  precondition: every P2 you deferred during the stage must already be in the
-  deferred-findings sidecar (see "Deferring P2s" below) — an exit that drops
-  a P2 is not an exit, because nothing downstream will ever see it again.
-  **P2s do not gate this stage**: carry
-  them to the PR. This loop is
-  **self-referential** — the fixes you make in response to a round become the
-  next round's input, so it can generate its own work indefinitely — and that
-  is what the cap defends against: the resolved **challenge cap** bounds the
-  challenge → fix → re-challenge rounds; if P0/P1 findings persist at it, stop
-  and escalate to Evan. A capped
-  final round that adjudicates to zero P0/P1 ends the stage by itself — its
-  confirmation would be a run the cap forbids, and a clean last round is
-  convergence, not the persisting disagreement escalation exists for.
-  "Between rounds, check what the findings are about" below is how you catch
-  the loop feeding on itself before the cap does, and round 2 is where that
-  check is owed rather than optional.
-  **Each adjudicated round, before the draft PR exists, ends in one
-  conventional commit, pushed.** Per
-  *round*, not per finding: five fixes are one commit, and a round adjudicated
-  clean with nothing to fix commits and pushes nothing. Before the draft PR
-  exists this costs essentially nothing — `build.yml` triggers on
-  `pull_request` and pushes to `main` only, Codex cloud review is
-  comment-triggered with Automatic reviews disabled, and a bare `task
-  challenge`/`task review` covers branch commits *and* working tree alike, so
-  commit boundaries never change what a round reviews. It must not outrun
-  secret scanning, though, and that is an obligation rather than a claim about
-  the setup: **every round's commit is secret-scanned before it is pushed.**
-  Where the `pre-push` hook is installed it is automatic (this repo installs
-  it via `task install:hooks`); where it is not, run `task security:secrets`
-  yourself first. The full security suite (`task security`) runs before the
-  draft PR as the pre-publication gate.
-  **Push to the branch's own writable remote** — the one `gh pr create` will
-  push to — and set it on the first push (`git push -u <remote> <branch>`),
-  since a new branch has no upstream to infer. What it buys is that a
-  lost environment costs at most the current round's *code* rather than every
-  round's, and
-  that a push-permission gap surfaces at round 1 rather than at
-  `gh pr create` — both observed failures. It buys nothing beyond the code: it
-  does **not** carry the
-  deferred-findings sidecar or the adjudication ledger, which live in the git
-  directory and are never pushed, so a resumed session recovers the commits and
-  still re-runs the stage. Those stay single-copy until the PR body
-  takes them, and the exit precondition above is not discharged by having
-  pushed. After the draft PR exists the granularity changes: pushes batch per
-  shepherd round, because each one spends a CI matrix run and starts a fresh
-  current-head Codex cycle. Amending or otherwise rewriting anything already
-  pushed stays forbidden at every stage.
-- **`task review`** — verification-checkpoint review, run out of the same
-  procedure — the skill where its topology holds, the fallback otherwise;
-  same adjudication, the same per-round commit-and-push, the
-  same exit condition counted over its own
-  rounds, the same self-referential shape and so the
-  same reason for a cap, under
-  its own resolved **review cap**. The two stages are counted separately — and
-  capped separately, even where the level gives them equal numbers: a converged
-  challenge says nothing about review.
-- **`task security`** — Semgrep CE + gitleaks + dependency audit; the
-  pre-publication security gate (~1 min). `task ci` remains available on demand
-  when CI is red and you want to iterate the full mirror locally.
-- **Open the draft PR** — conventional commit, push whatever the rounds above
-  have not already pushed,
-  **`gh pr create --draft`** with a clear what/why/verification summary (mind
-  the `template/` → `fix:`/`feat:` title rule below). Then fetch
-  `headRefOid,isDraft` and require both the SHA you pushed and
-  `isDraft == true`: a non-draft result is not the normal publication path, so
-  reconcile it before going further.
-- **Git transport** — pushes authenticate over HTTPS via `gh`. Provisioned hosts
-  and the devcontainers rewrite GitHub SSH URLs to HTTPS via `url.insteadOf` so
-  that git never needs an SSH agent: a headless container has none, forwarding
-  one into an interactive container is lockout-prone, and `gh` already holds an
-  HTTPS credential that works for both. Never work around an SSH failure by
-  pushing to a raw `https://…` URL — a URL push bypasses the named remote and
-  leaves stale tracking refs. On an unprovisioned host, force the helper
-  and the rewrite against the *named* remote:
-  `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
-  (a credential helper only applies to HTTPS, and `insteadOf` is prefix
-  matching — every SSH form needs its own mapping, hence all four).
-- **Shepherd the draft to ready for review (`/shepherd`, under the resolved
-  integration-cycle and remediation caps).**
-  `gh pr create --draft` returning is
-  the trigger for this stage, not the end of the work — enter it deliberately
-  instead of judging for yourself when the PR is finished. The PR stays draft
-  for the whole stage; only the readiness gate below may promote it.
-  `/shepherd` is the procedure only when its config-shape section passes the
-  compatibility check above; otherwise the remainder of this bullet is the
-  fallback procedure, including every readiness condition and directly
-  required checker asset. The skill is **user-invocable only**
-  (`disable-model-invocation: true`): an agent enters the stage by reading
-  `.claude/skills/shepherd/SKILL.md` and following it, not by calling a slash
-  command it cannot call. Start by
-  re-reading the **unchecked** entries under `## Deferred findings` in the PR
-  description — those P2s are open work, not a changelog; tick each one off
-  in the body as you settle it. Then watch CI
-  (`gh pr checks <n> --watch`) and incoming bot/human reviews. When a check
-  fails or a review lands findings, treat the findings as hypotheses: verify
-  them against the code, fix only what's confirmed, explain rejections in a
-  PR comment, push the fix commit, and watch again. **This is where P2s are
-  settled** — the ones the PR description defers here plus anything the PR
-  reviewers raise: fix, decline with reasoning, or file as a follow-up issue,
-  but do not leave them unaddressed. Shepherd-round fixes must pass `task
-  verify` before each push; the local challenge/review loops are not
-  re-entered — the post-push cloud/bot review is the second-model check at
-  this stage.
-  **Require a current-head Codex result.** On initial shepherd entry and
-  immediately after every fix push, capture the PR's current `headRefOid` and
-  the head's push time.
-  **Do not hand-roll the polling.** Run the vendored
-  `.claude/skills/shepherd/assets/check-codex-cloud-review.sh`, in its order:
-  `reserve` a cycle against the captured head **before** posting the
-  trigger — the durable state must exist before the GitHub write, or an
-  interruption between the two leaves an untracked trigger a resumed session
-  can double-spend — then post `@codex review`, `attach` the comment ID
-  returned for that trigger, and `check`, acting on the exit code it returns
-  (0 clean, 10 findings, 11 pending, 12 retry, 13 escalate,
-  2 indeterminate). The
-  script exists
-  because ad-hoc pollers fail in one specific, repeatable way — they watch
-  reviews and inline comments and miss the **top-level comment** surface, so a
-  clean `Reviewed commit:` verdict posted there reads as silence and a
-  finished cycle is reported incomplete (harmon-devkit#334; seen again on
-  PR #731). It never writes to GitHub, so posting the trigger comment stays
-  yours.
-  The contract below is normative and stays here whatever tooling runs it: it
-  is what "terminal" means, and the script is the implementation you are
-  required to use rather than a substitute definition. A Codex result is
-  terminal for that captured head only
-  when it is either: a clean review or top-level comment authored by GitHub
-  actor ID `199175422` (`chatgpt-codex-connector[bot]`, type `Bot`) whose
-  `Reviewed commit:` identifies that head; a fresh 👍 from that bot on that
-  exact trigger comment, created after both the head push and the review
-  request, with no newer contradictory bot result; or review findings authored
-  by that bot which identify that head and must be adjudicated before the
-  cycle can become clean. Earlier comments, reviews,
-  inline findings, and reactions never count for a newer head. A 👀 is pending,
-  not success; if it disappears without a terminal result, the attempt is
-  incomplete.
-  Give each attempt a full 10–15 minute window. An attempt is **incomplete**
-  when its window elapses with no terminal result for the captured head
-  (the script's exit 12). After an incomplete first attempt, repeat the
-  reserve-first sequence as attempt 2: `reserve --attempt 2` against the same
-  head, then post `@codex review` once more, then `attach` the comment ID
-  returned for that trigger, and run one more full window. If both attempts
-  are incomplete, stop and escalate without reporting green (the script's
-  exit 13). Waiting and the
-  one allowed re-trigger do not consume a shepherd fix round. Immediately
-  before accepting the result or reporting green, re-`check` the cycle and
-  re-read `headRefOid`; a changed head invalidates the result and starts
-  a new current-head cycle.
-  A badged finding stated **outside an inline thread** — in a top-level
-  comment or in a review's own body — has no reply linkage, so the
-  reply-based adjudication path cannot reach it and findings outrank a later
-  clean result on the same head. The checker's `settle` subcommand records the
-  disposition instead; its exact invocation lives with the recipe in
-  `.claude/skills/shepherd/SKILL.md`, which this file deliberately does not
-  restate — the same reason it routes you to the checker rather than
-  describing how to poll.
-  What belongs here is when it applies. Answer the finding on the PR as usual,
-  and note that only two of the three answers end with `settle`: **fixing** it
-  means a push, which moves the head and starts a fresh cycle that reviews the
-  fix on its own merits, and `settle` neither applies nor accepts that
-  disposition. It records the two answers that leave the code alone —
-  declining with evidence, or filing it as follow-up work — and requires a
-  note for exactly that reason: the record is a human's adjudication, not a
-  suppression. It is head-bound and fingerprinted against the body it settled,
-  so a finding Codex edits afterwards blocks again while the superseded entry
-  survives as the record of what was decided about the earlier text. Once
-  every non-thread finding on the head carries one, `check` reports clean with
-  a detail naming the disposition applied.
-  Shepherd is **externally driven** — CI results and other people's comments
-  are its input, so it cannot manufacture a round on its own. A round is one
-  fix push, or one no-change cycle where everything is answered and nothing
-  needs fixing; waiting on CI or a reviewer is never a round, and this cap is
-  independent of any other stage's. What it bounds is other people's findings,
-  not self-generated work. It is not wholly immune, though — a reviewer can
-  flag the fix your *last* round pushed, so if the rounds start circling your
-  own patches, step back and ask whether the findings are about the change you
-  set out to make or about a previous round's fix. Whether anything more has
-  landed is settled by "Checks green is a non-terminal state" below, not by
-  the absence of an immediate reply. Stopping one stage's loop is never a
-  decision about another's:
-  **a decision to stop one loop does not transfer to another**,
-  because each is bounded for its own reason. "We have looped enough" is a
-  judgement about one loop's self-generated work, and carrying it here skips
-  this stage instead of bounding it, leaving the PR with reviews unanswered.
-  The converse also holds: stopping to **escalate** something you cannot
-  resolve halts the whole change rather than one loop, so it is not a licence
-  to move on to the next stage either — a persistent P0/P1 at the challenge or
-  review cap means wait for Evan, not open the PR anyway.
-  If checks still fail or findings remain when the remediation cap is spent,
-  stop and summarize what's unresolved on the PR for Evan. Remediation bounds
-  fix pushes prompted by other people's findings; reaching it means escalate,
-  not drop a finding. A remediation cap of 0 makes the first required code fix
-  an immediate escalation. The independent integration cap bounds current-head
-  Codex cycles. An integration cap of 0 removes only that readiness condition;
-  CI and every other finding/disposition condition remain unchanged.
-  Where a **vendored** skill (`/shepherd`)
-  states a different cap or exit condition, **this file wins** — the skills
-  are synced from harmon-devkit on its own release cadence and can lag a
-  policy change made here.
-- **Checks green is a non-terminal state.** Reporting "all checks pass"
-  without having polled reviews and inline comments is not a handoff — it is
-  the middle of the shepherd stage. Bot and human reviews land *after* checks
-  settle, so `gh pr checks --watch` returns at exactly the moment the review
-  has not run yet: an empty comment list read at that instant means "not
-  reviewed yet", not "nothing to answer". Wait for **both** signals: every
-  check must conclude, and the required current-head Codex cycle above must
-  reach a terminal result. Green CI while that cycle is pending or incomplete
-  is still non-terminal.
-- **Stop at ready-for-review.** When the readiness gate below passes, promote
-  the draft **exactly once** with `gh pr ready <n>`, confirm `isDraft == false`
-  on the same head, report, and stop. Human approval is deliberately *not* a
-  precondition: ready-for-review is the request for that review, not permission
-  to merge. Merging is always a human decision.
-
-### Readiness gate
-
-The single definition of "the automated lifecycle is complete", used by
-interactive shepherding and by Foreman alike. A draft may be marked ready for
-review only when **all** of the following hold for its current `headRefOid`:
-
-- Required CI checks have concluded successfully. An empty check list is
-  *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
-  taken moments after the push reports nothing having run rather than nothing
-  to run.
-- The current-head Codex cycle above is terminal and clean — including clean
-  by way of dispositions recorded with `settle` (Codex review is
-  enabled here; where it is off, **or where the resolved integration cap is
-  0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
-  trigger a fresh `@codex review` from. Every other condition on this list
-  still applies unchanged).
-- Every review finding is fixed, declined with evidence, or filed as follow-up
-  work.
-- Every inline review comment has its required per-thread reply.
-- Every `## Deferred findings` entry in the PR body is ticked with its
-  disposition.
-- `reviewDecision` is not `CHANGES_REQUESTED`.
-- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`.
-- No newer push invalidated any result the gate relied on — re-read
-  `headRefOid` immediately before promoting and compare.
-
-A failed **or indeterminate** condition is not a pass: leave the PR draft, post
-a blocker report naming what is unresolved, and stop. "The check never ran",
-"the fetch errored", and "the reviewer never answered" are all indeterminate.
-Promotion is the one-way door in this lifecycle — it notifies CODEOWNERS and
-requested reviewers, and `gh pr ready --undo` cannot unsend that — so an
-unproven condition means stay draft, not promote and watch.
-
 ## Critical Copier Gotchas
 
 - **`--vcs-ref=HEAD` is load-bearing.** Without it, `copier copy` from a local path
@@ -713,7 +534,7 @@ unproven condition means stay draft, not promote and watch.
   `verify` + `security` status checks.
 - **Agents never merge to main** — no `gh pr merge`, `git merge`, or push to
   `main` without Evan's explicit, per-merge approval, even when CI is green and
-  the ruleset would allow it. Open the draft PR and shepherd it — checks green
+  the ruleset would allow it. Open the draft PR and integrate it — checks green
   with reviews unpolled is not the stopping point — then promote it through the
   readiness gate, report, and stop; merging is always a human decision.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on merge
@@ -795,12 +616,13 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
 These tasks slot into the **Dev Loop** above: after `task verify` goes green,
 before `task security` and the draft PR — and, where the skill's supported topology holds (`origin`
 is the repository the PR will target) and its config-shape section passes the
-compatibility check above, the procedure for running them to
-convergence is the vendored `/gauntlet` skill, entered by reading
-`.claude/skills/gauntlet/SKILL.md`; otherwise the Dev Loop's fallback above
-is the procedure. What follows here is the policy that skill
+compatibility check in § "Rigor and Strategy", the procedure for running them to
+convergence is the vendored confidence-stage skill (`/review`, or the retired
+`/gauntlet` at the current pin), entered by reading its `SKILL.md`; otherwise
+this section plus the Dev Loop's invariants are the procedure. What follows here
+is the policy that skill
 runs under; where the two disagree, this file wins. Codex cloud review is also connected to this repo's PRs —
-it posts inline comments only for high-priority findings. During shepherding,
+it posts inline comments only for high-priority findings. During the integration stage,
 accept its clean comments, reviews, or reactions only under the current-head
 cycle above: stale activity is not evidence for the current commit, and a lone
 👀 that disappears or never resolves is an incomplete attempt.
@@ -832,7 +654,7 @@ run, and nothing waits on it.
    appropriate.
 4. Explain why any rejected finding is incorrect or irrelevant.
 5. Re-run `task verify` (and the other relevant gates) after fixes.
-6. Post the stage ledger for the round (Dev Loop above), then finish the
+6. Post the stage ledger for the round (§ "Stage Ledger"), then finish the
    round with an adjudication table — at minimum finding →
    reviewer priority → **adjudicated** priority → classification → evidence →
    action, plus the round-2 provenance column — and record it; the skill
@@ -909,7 +731,7 @@ owed only for a finding left unresolved and carried forward — one fixed in
 place, or adjudicated genuinely cosmetic, leaves nothing to defer. What the
 badge may never do is skip the adjudication that decides which it is.
 **Only P0 and P1 gate the local loops.** Adjudicate P2s too — never suppress
-or ignore one — but carry them to the PR-shepherd stage rather than spending
+or ignore one — but carry them to the integration stage rather than spending
 a local round on them. A P2 you judge worth fixing
 immediately may of course be fixed in place; it just does not hold the stage
 open.
@@ -926,19 +748,21 @@ review both run before `gh pr create`, so there is usually no PR body to write
 to yet: it goes to the per-branch sidecar in the git directory, and the sweep
 for stray notes happens when you open the PR. The path, the reason it is keyed
 by branch and lives outside the worktree, and the append-once matching rule
-are the skill's (`.claude/skills/gauntlet/SKILL.md`), with the recipe in
+are the confidence-stage skill's (`.claude/skills/gauntlet/SKILL.md` at the
+current pin), with the recipe in
 [docs/guides/codex-review.md](docs/guides/codex-review.md) — this file states
 only the obligation, because terminal scrollback is not a record: a context
 reset between `task challenge` and `gh pr create` would take the findings with
 it.
 
-The shepherd stage settles every entry and **edits the PR body to tick it**
+The integration stage settles every entry and **edits the PR body to tick it**
 (`- [x] … — fixed in <sha>` / `declined: <reason>` / `filed as #<n>`) in the
 same round. The checkbox is the resolution state: an entry left unchecked is
 open work, so a later round — or a different session — can tell at a glance
 what it still owes without re-adjudicating what is done. That obligation is
 stated here and in the Dev Loop above, and holds whether or not the optional
-`/shepherd` skill is installed to automate it.
+integration skill (`/integrate`, or the retired `/shepherd` at the current pin)
+is installed to automate it.
 
 **Loop cap and exit:** a stage — challenge and review counted separately —
 ends when **two consecutive rounds adjudicate to zero P0 and zero P1
@@ -973,8 +797,8 @@ practice could spend every remaining round re-proving a change nobody still
 disputed. Two things ride along with the exit: every P2
 deferred during the stage must already be recorded in the sidecar (an exit
 that drops a P2 is not an exit), and round 2 owes the scaffolding checkpoint
-above. Each stage's cap is the one resolved from `.devflow.toml` per "Rigor
-and strategy are resolved, not stated here" in the Dev Loop above (challenge → fix →
+above. Each stage's cap is the one resolved from `.devflow.toml` per § "Rigor
+and Strategy" (challenge → fix →
 re-challenge, and likewise for review), counted separately per stage; if
 P0/P1 disagreement persists at the cap, stop and surface it to Evan instead
 of iterating further — escalation at the cap is for P0/P1 that **persist**,
@@ -995,6 +819,24 @@ the workflow rules above:
 
 - `group:action` Taskfile naming (e.g. `lint:shell`, not `shell:lint`); pin
   actions by SHA + `# vX.Y.Z`.
+- Work on a feature branch off `main`; never commit directly to `main`. For
+  parallel or isolated work take the branch in its own worktree via
+  **`task worktree:new -- <name>`** (and `task worktree:rm -- <name>` when
+  done) rather than a hand-rolled `git worktree add` — it installs that tree's
+  dependencies and proves the hooks fire in it. See
+  [docs/conventions.md](docs/conventions.md) § Worktrees, including why
+  `-c core.hooksPath=.git/hooks` must never be passed inside one.
+- **Git transport** — pushes authenticate over HTTPS via `gh`. Provisioned
+  hosts and the devcontainers rewrite GitHub SSH URLs to HTTPS via
+  `url.insteadOf` so that git never needs an SSH agent: a headless container
+  has none, forwarding one into an interactive container is lockout-prone, and
+  `gh` already holds an HTTPS credential that works for both. Never work around
+  an SSH failure by pushing to a raw `https://…` URL — a URL push bypasses the
+  named remote and leaves stale tracking refs. On an unprovisioned host, force
+  the helper and the rewrite against the *named* remote:
+  `git -c credential.helper= -c credential.helper='!gh auth git-credential' -c url."https://github.com/".insteadOf="git@github.com:" -c url."https://github.com/".insteadOf="ssh://git@github.com/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com:443/" -c url."https://github.com/".insteadOf="ssh://git@ssh.github.com/" push`
+  (a credential helper only applies to HTTPS, and `insteadOf` is prefix
+  matching — every SSH form needs its own mapping, hence all four).
 - **Never gate a template file on `skill_categories`** — filename, `[% if %]`,
   or a computed answer alike. The answer is recorded at scaffold time while
   consumers are told to change categories in `.skills-sync.yaml`, so a gate on
