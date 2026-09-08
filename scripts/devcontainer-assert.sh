@@ -276,8 +276,8 @@ assert_unit() {
     # Strip comments first: dev/post-create.sh's own explanatory comment names
     # bot-autonomy.sh to say it does NOT call it, which a bare grep would
     # misread as a real invocation.
-    if grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh" |
-        grep -q 'bot-autonomy.sh'; then
+    if grep -q 'bot-autonomy.sh' \
+        < <(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh"); then
         fail "human post-create calls bot-autonomy.sh (bot-only)"
     fi
     grep -q 'bot-autonomy.sh verify' "${repo_root}/.devcontainer/post-start.sh" ||
@@ -865,8 +865,7 @@ SENTINEL_SCRIPT
     # always-proceed policy (antigravity-settings.json). Strip comment lines
     # first so an explanatory comment naming the bot file is not a false match;
     # the regex then matches the bot defaults filename but not the "-dev.json".
-    if grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh" |
-        grep -Eq 'antigravity-settings\.json'; then
+    if grep -Eq 'antigravity-settings\.json' < <(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh"); then
         fail "human dev profile applies the bot-only always-proceed Antigravity policy"
     fi
 
@@ -991,7 +990,7 @@ SENTINEL_SCRIPT
     # run this here" warning; a substring test would read that warning as the
     # very thing it warns against, and the check would be worse than useless.
     offers_login() {
-        printf '%s\n' "$1" | grep -qE '^[[:space:]]*gh[[:space:]]+auth[[:space:]]+login'
+        grep -qE '^[[:space:]]*gh[[:space:]]+auth[[:space:]]+login' <<<"$1"
     }
 
     help_out="$(unset DEVCONTAINER_GH_AUTH && "$bash_bin" -c '. "$2"; . "$1"; gh_auth_help "gh auth setup-git"' _ "$helper_src" "$scopes_lib")"
@@ -1155,7 +1154,7 @@ assert_container() {
     # `task --version` prints a bare "3.52.0"; older builds printed
     # "Task version: v3.52.0" — reduce both shapes to the bare version first.
     local actual_version
-    actual_version="$(printf '%s' "$actual_task" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    actual_version="$(grep -m1 -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$actual_task")"
     [ -n "$actual_version" ] ||
         fail "could not parse a version out of 'task --version' output '${actual_task}' in the ${profile} container"
     [ "$actual_version" = "$pinned_task" ] ||

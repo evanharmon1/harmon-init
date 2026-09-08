@@ -140,7 +140,7 @@ docker run --rm "$overlay" sh -eu -c '
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
     infocmp -1 xterm-ghostty >/dev/null
-    infocmp -1 xterm-ghostty | grep -q "sgr=.*%p5%t;2"
+    grep -q "sgr=.*%p5%t;2" < <(infocmp -1 xterm-ghostty)
 '
 
 # LEGACY OVERLAY — the compatibility guarantee, retained.

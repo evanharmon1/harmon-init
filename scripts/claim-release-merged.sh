@@ -164,6 +164,6 @@ while IFS= read -r issue; do
         job_rc="$rc"
         ;;
     esac
-done < <(sort -nu "$issues_file" | head -n "$max_candidates")
+done < <(sort -nu "$issues_file" | sed -n "1,${max_candidates}p")
 
 exit "$job_rc"

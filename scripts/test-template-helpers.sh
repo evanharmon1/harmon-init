@@ -19,6 +19,7 @@ repo="$(git rev-parse --show-toplevel)"
 subject="${repo}/scripts/test-template.sh"
 
 fail() {
+    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }

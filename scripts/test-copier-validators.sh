@@ -40,10 +40,14 @@ work="$(mktemp -d -t harmon-init-validators-XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 
 failures=0
-pass() { echo "  ok — $1"; }
+pass() {
+    echo "  ok — $1"
+    return 0
+}
 fail() {
     echo "  FAIL — $1" >&2
     failures=$((failures + 1))
+    return 0
 }
 
 # Name the real cause when a render dies on copier's dirty-tree wip commit
@@ -237,7 +241,7 @@ pin_from() {
     # fail-closed, but unexplained. Emptiness is the signal the explicit
     # `[ -n ... ] || fail` checks below turn into a named failure. grep's own
     # stderr is deliberately NOT redirected, so a missing file still says so.
-    grep -oE "$2" "$1" | head -n1 | cut -d= -f2 | tr -d '"' || true
+    grep -m1 -oE "$2" "$1" | cut -d= -f2 | tr -d '"' || true
 }
 image_pin="$(pin_from "$repo/images/devcontainer/Dockerfile" '^ARG COPIER_VERSION=[^[:space:]]+')"
 install_pin="$(pin_from "$repo/scripts/install-copier.sh" '^COPIER_VERSION=[^[:space:]]+')"

@@ -8,12 +8,14 @@ trap 'rm -rf "$tmp_root"' EXIT
 cases=0
 
 fail() {
+    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }
 
 pass() {
     cases=$((cases + 1))
+    return 0
 }
 
 sha_a=1111111111111111111111111111111111111111
@@ -53,8 +55,8 @@ grep -q '\$NF == "C874011F0AB405110D02105534365D9472D7468F"' "$producer_dockerfi
     fail "Terraform checksum verification does not require HashiCorp's pinned primary fingerprint"
 grep -q 'terraform_gnupg_home="$(mktemp -d)"' "$producer_dockerfile" ||
     fail "Terraform verification does not fail if its temporary GPG home cannot be created"
-if grep -Ev '^[[:space:]]*#' "$producer_dockerfile" |
-    grep -Eqi '(^|[^[:alnum:]_-])(ansible|checkov)([^[:alnum:]_-]|$)'; then
+if grep -Eqi '(^|[^[:alnum:]_-])(ansible|checkov)([^[:alnum:]_-]|$)' \
+    < <(grep -Ev '^[[:space:]]*#' "$producer_dockerfile"); then
     fail "shared image adds project-local Ansible or on-demand Checkov"
 fi
 pass
@@ -326,7 +328,7 @@ grep -q "^pull --platform linux/amd64 ghcr.io/evanharmon1/harmon-devcontainer@${
     "$docker_log" || fail "amd64 validation did not pull its own child digest"
 grep -q "^pull --platform linux/arm64 ghcr.io/evanharmon1/harmon-devcontainer@${child_arm64}\$" \
     "$docker_log" || fail "arm64 validation did not pull its own child digest"
-if grep '^pull ' "$docker_log" | grep -q "@${digest_a}"; then
+if grep -q "@${digest_a}" < <(grep '^pull ' "$docker_log"); then
     fail "validation pulled through the top-level index digest"
 fi
 pass
@@ -341,7 +343,7 @@ pass
 # The credential-bearing publish phase must not invoke registry validation;
 # that check belongs to the earlier unprivileged jobs.
 publish_body="$(sed -n '/^cmd_publish_prepared()/,/^}/p' scripts/sync-devcontainer-image.sh)"
-if printf '%s\n' "$publish_body" | grep -q 'validate_remote'; then
+if grep -q 'validate_remote' <<<"$publish_body"; then
     fail "token-bearing publish phase still invokes registry validation"
 fi
 pass
@@ -380,8 +382,9 @@ git -C "$fixture" push origin main >/dev/null
 
 # The Docker stub returns digest_a; use that digest for registry agreement.
 sync_fixture "$new_source" "$digest_a" >/dev/null
-git --git-dir="$origin" show "refs/heads/bot/sync-harmon-devcontainer:.devcontainer/Dockerfile" |
-    grep -q "sha-${new_source}@${digest_a}" || fail "rolling branch did not advance to the new source"
+grep -q "sha-${new_source}@${digest_a}" \
+    < <(git --git-dir="$origin" show "refs/heads/bot/sync-harmon-devcontainer:.devcontainer/Dockerfile") ||
+    fail "rolling branch did not advance to the new source"
 [ -s "$tmp_root/gh.log" ] || fail "rolling update did not create/update a PR"
 [ -s "$tmp_root/task.log" ] || fail "rolling update skipped verification"
 pass

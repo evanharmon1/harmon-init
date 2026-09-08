@@ -123,6 +123,7 @@ tasks:
       - task: test:codex-review
 [% endif %]
       - task: test:lint-hygiene
+      - task: test:lint-shell-robustness
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
@@ -185,6 +186,7 @@ tasks:
       - lint:markdown
       - lint:actions
       - lint:hygiene
+      - lint:shell-robustness
 [% if use_node %]
       - lint:prettier
       - lint:eslint
@@ -232,6 +234,14 @@ tasks:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
     cmds:
       - ./scripts/lint-hygiene.sh {{.CLI_ARGS}}
+
+  lint:shell-robustness:
+    # Two idioms shellcheck does not model, both of which report a success as a
+    # failure: producer-to-quiet-grep pipelines under pipefail, and a test
+    # reporter whose own exit status lands inside the assertion.
+    desc: Shell idioms whose exit status lies (quiet grep pipelines, reporters)
+    cmds:
+      - ./scripts/lint-shell-robustness.sh {{.CLI_ARGS}}
 
   lint:commit-msg:
     desc: Validate commit message (conventional commits)
@@ -829,6 +839,11 @@ tasks:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
     cmds:
       - ./scripts/test-lint-hygiene.sh
+
+  test:lint-shell-robustness:
+    desc: Unit-test the shell robustness static guard
+    cmds:
+      - ./scripts/test-lint-shell-robustness.sh
 [% if use_release_please %]
 
   test:release-title:

@@ -26,6 +26,7 @@ command -v jq >/dev/null 2>&1 || {
 bash_bin=$(command -v bash)
 
 fail() {
+    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }
@@ -219,7 +220,7 @@ export STATUSLINE_GH_RESPONSE='{"number":1047,"url":"https://example.test/pull/1
 out=$(render_cached "$switch_cache" 30 "$payload")
 case "$out" in *'PR #'*) fail "branch-switch race rendered the old branch PR: $out" ;; esac
 [ "$(wc -l <"$STATUSLINE_GH_LOG")" -eq 1 ] || fail "branch-switch race did not make one lookup"
-if find "$switch_cache" -type f -print -quit | grep -q .; then
+if grep -q . < <(find "$switch_cache" -type f -print -quit); then
     fail "branch-switch race wrote a cache row for the old branch"
 fi
 export STATUSLINE_GH_MODE=ok

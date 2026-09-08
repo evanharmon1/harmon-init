@@ -38,6 +38,7 @@ fails=0
 fail() {
     echo "TEST FAIL: $*" >&2
     fails=$((fails + 1))
+    return 0
 }
 
 for required in label-registry.json label-registry.schema.json \
@@ -1124,7 +1125,7 @@ if [ "$template_mode" = 0 ]; then
     if [ -n "$answers" ]; then
         tracker="$(sed -n 's/^project_management:[[:space:]]*//p' "$answers" |
             sed 's/[[:space:]]*#.*$//' | tr -d "\"'" |
-            sed 's/[[:space:]]*$//' | head -n1)"
+            sed 's/[[:space:]]*$//' | sed -n '1p')"
     fi
     if [ -z "$tracker" ]; then
         if [ -f scripts/setup-github-project.sh ]; then tracker="github"; else tracker="none"; fi

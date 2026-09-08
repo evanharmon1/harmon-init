@@ -282,12 +282,12 @@ refresh_fields
 
 field_id() {
     printf '%s' "$fields_json" |
-        jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .id' | head -n1
+        head -n1 < <(jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .id')
 }
 
 field_type() {
     printf '%s' "$fields_json" |
-        jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .dataType' | head -n1
+        head -n1 < <(jq -r --arg n "$1" '.data.node.fields.nodes[] | select(.name==$n) | .dataType')
 }
 
 # existing_options NAME — the single-select field's CURRENT options, as a JSON

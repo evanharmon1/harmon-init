@@ -8,6 +8,7 @@
 set -euo pipefail
 
 fail() {
+    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }
@@ -30,6 +31,7 @@ cleanup() {
     if [ -e "$tmp" ]; then
         echo "test-devcontainer-changed: cleanup left $tmp after ${cleanup_attempt} attempts" >&2
     fi
+    return 0
 }
 
 on_exit() {
