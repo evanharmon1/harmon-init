@@ -89,6 +89,24 @@ BODY
 expect_flagged "a plain pipeline" "$(fixture plain.sh "$body")" 'grep -q'
 
 cat >"$body" <<'BODY'
+seq 1 100000 |& grep -q 1
+BODY
+expect_flagged "a stderr-inclusive pipeline" \
+    "$(fixture pipe-stderr.sh "$body")" '|& grep -q'
+
+cat >"$body" <<'BODY'
+seq 1 100000 | (grep -q 1)
+BODY
+expect_flagged "a subshell RHS" \
+    "$(fixture subshell-rhs.sh "$body")" 'compound-command RHS'
+
+cat >"$body" <<'BODY'
+seq 1 100000 | { grep -q 1; }
+BODY
+expect_flagged "a brace-group RHS" \
+    "$(fixture brace-rhs.sh "$body")" 'compound-command RHS'
+
+cat >"$body" <<'BODY'
 seq 1 3 | grep --quiet 2
 seq 1 3 | grep -F -q 2
 BODY

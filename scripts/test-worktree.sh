@@ -842,6 +842,27 @@ rm_wt debris >/dev/null || fail "worktree-rm.sh could not clear leftover gitlink
 refute_exists "$fixture/.worktrees/debris" "worktree-rm.sh left gitlink debris behind"
 git -C "$fixture" branch -D debris >/dev/null 2>&1 || true
 
+echo "==> a failed leftover scan refuses deletion instead of treating the tree as empty"
+mkdir -p "$fixture/.worktrees/findfail"
+: >"$fixture/.worktrees/findfail/.git"
+find_fail_bin="$test_tmp/find-fail-bin"
+mkdir -p "$find_fail_bin"
+cat >"$find_fail_bin/find" <<'SHIM'
+#!/bin/sh
+exit 73
+SHIM
+chmod +x "$find_fail_bin/find"
+if find_fail_out="$(PATH="$find_fail_bin:$PATH" rm_wt findfail 2>&1)"; then
+    fail "worktree-rm.sh deleted a tree whose leftover scan failed"
+fi
+case "$find_fail_out" in
+*"could not inspect"*"refusing to delete"*) ;;
+*) fail "the failed leftover scan did not explain its fail-closed refusal: $find_fail_out" ;;
+esac
+[ -f "$fixture/.worktrees/findfail/.git" ] ||
+    fail "the failed leftover scan deleted the candidate gitlink"
+rm -rf "${fixture:?}/.worktrees/findfail"
+
 # ── .worktrees/ is anchored to the MAIN worktree ─────────────────────
 echo "==> creating from inside a linked worktree still anchors to the main tree"
 new outer >/dev/null || fail "worktree-new.sh failed creating the outer tree"

@@ -199,8 +199,15 @@ for f in "${files[@]}"; do
         }
         skip = (exempt_file || block || inline_ok)
 
+        # R0 — alternate pipe/RHS spellings with the same early-exit hazard.
+        # `|&` pipes stderr too; a subshell or brace group does not insulate the
+        # producer from SIGPIPE when its quiet grep exits on the first match.
+        if (!skip && line ~ /(^|[^|])\|&[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
+            printf "%s:%d: `|& grep -q` — grep exits on match, SIGPIPEs the producer, and `pipefail` turns a MATCH into a failure\n", FILE, FNR
+        else if (!skip && line ~ /(^|[^|])\|[[:space:]]*[({][[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
+            printf "%s:%d: compound-command RHS contains `grep -q` — the producer still receives SIGPIPE when grep exits early\n", FILE, FNR
         # R1 — a pipe feeding a grep that carries a quiet flag.
-        if (!skip && line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
+        else if (!skip && line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
             printf "%s:%d: `| grep -q` — grep exits on match, SIGPIPEs the producer, and `pipefail` turns a MATCH into a failure\n", FILE, FNR
         # R2 — a pipe feeding a grep whose options continue on the next line.
         else if (!skip && line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]*\\[[:space:]]*$/)

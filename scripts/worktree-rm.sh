@@ -831,7 +831,9 @@ fi
 # Auto-cleaning the file shape is safe; the directory shape gets the same
 # refusal as any other unexpected content.
 if [ -d "$tree" ]; then
-    leftovers="$(head -n 1 < <(find "$tree" -mindepth 1 -maxdepth 1 ! -name .git))"
+    if ! leftovers="$(find "$tree" -mindepth 1 -maxdepth 1 ! -name .git)"; then
+        die "could not inspect $tree for leftover files — refusing to delete it"
+    fi
     if [ -z "$leftovers" ] && [ ! -d "$tree/.git" ]; then
         rm -rf "$tree"
         echo "==> Removed leftover gitlink directory $tree"
