@@ -91,7 +91,7 @@
 #     this check exists to stop it returning in the obvious form.
 #
 # Scope: every tracked shell script under scripts/ and template/scripts/. The
-# reporter check additionally applies only to test-*.sh suites.
+# reporter check additionally applies only to test-*.sh / test-*.bash suites.
 #
 # Usage: ./scripts/lint-shell-robustness.sh [file ...]
 #   With no arguments, checks every tracked file in scope.
@@ -127,7 +127,9 @@ else
     fi
     while IFS= read -r -d '' f; do
         case "$f" in
-        scripts/*.sh | template/scripts/*.sh | template/scripts/*.sh'[% endif %]')
+        scripts/*.sh | scripts/*.bash | \
+            template/scripts/*.sh | template/scripts/*.bash | \
+            template/scripts/*.sh'[% endif %]' | template/scripts/*.bash'[% endif %]')
             files+=("$f")
             ;;
         esac
@@ -144,7 +146,9 @@ findings="$(mktemp)"
 trap 'rm -f "${findings}"' EXIT
 
 for f in "${files[@]}"; do
-    awk -v FILE="$f" '
+    # Byte-oriented so token normalization remains deterministic when a
+    # fixture or generated asset contains malformed locale input.
+    LC_ALL=C awk -v FILE="$f" '
     # The reason must follow the MARKER. Matching a dash anywhere on the line
     # let an earlier `--option` stand in for it, so
     # `producer | grep --quiet x # shell-robustness: ok` passed with no reason
@@ -159,7 +163,49 @@ for f in "${files[@]}"; do
     # pipe operator, then an optional compound-command opener, then a grep
     # invocation carrying a quiet flag. Adding another operator/wrapper cross
     # product must not require another regex branch.
+    # Quoted grep operands are still one token when they contain whitespace or
+    # shell separators. Mask only those quoted boundaries before applying the
+    # deliberately textual matcher; this is token normalization, not an attempt
+    # to classify code versus comments/here-docs/strings.
+    function token_boundary(c) {
+        return (c ~ /[[:space:]|);&]/ || c == "]")
+    }
+    function mask_quoted_token_boundaries(s,   out, i, c, quote, escaped, sq) {
+        out = ""
+        quote = ""
+        escaped = 0
+        sq = sprintf("%c", 39)
+        for (i = 1; i <= length(s); i++) {
+            c = substr(s, i, 1)
+            if (quote != "") {
+                if (escaped) {
+                    out = out (token_boundary(c) ? "_" : c)
+                    escaped = 0
+                }
+                else if (quote == "\"" && c == "\\") {
+                    out = out "_"
+                    escaped = 1
+                }
+                else if (c == quote) {
+                    out = out "_"
+                    quote = ""
+                }
+                else {
+                    out = out (token_boundary(c) ? "_" : c)
+                }
+            }
+            else if (c == sq || c == "\"") {
+                out = out "_"
+                quote = c
+            }
+            else {
+                out = out c
+            }
+        }
+        return out
+    }
     function quiet_grep_rhs(s) {
+        s = mask_quoted_token_boundaries(s)
         return (s ~ /^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
     }
     function hazardous_quiet_grep_pipeline(s,   rest, pos, before, after, rhs) {
@@ -281,7 +327,8 @@ done >>"$findings"
 # ── reporter helpers (test suites only) ─────────────────────────────────────
 for f in "${files[@]}"; do
     case "${f##*/}" in
-    test-*.sh | test-*.sh'[% endif %]' | '[% if '*'%]test-'*.sh'[% endif %]') ;;
+    test-*.sh | test-*.bash | test-*.sh'[% endif %]' | test-*.bash'[% endif %]' | \
+        '[% if '*'%]test-'*.sh'[% endif %]' | '[% if '*'%]test-'*.bash'[% endif %]') ;;
     *) continue ;;
     esac
     # The file arrives on STDIN, never as an awk operand: awk reads an operand
@@ -292,6 +339,36 @@ for f in "${files[@]}"; do
         t = s
         if (!sub(/^.*shell-robustness:[[:space:]]*(ok|begin-exempt|exempt-file)[[:space:]]*/, "", t)) return 0
         return (t ~ /^(—|--)[[:space:]]*[^[:space:]]/)
+    }
+    function definition_line(s) {
+        return (s ~ /^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\(\))?([[:space:]]*\{.*)?[[:space:]]*$/ &&
+                s ~ /(^[[:space:]]*function[[:space:]]|\(\))/)
+    }
+    function finish_reporter() {
+        if (!reporter_active) return
+        if ((reporter_named || reporter_counts) && !reporter_found)
+            printf "%s:%d: reporter `%s()` — no `return 0` in its block, so its own status is read as the assertion s. Add `return 0`, or annotate it if it always exits.\n", FILE, reporter_open, reporter_name
+        reporter_active = 0
+    }
+    function inspect_reporter_line(s) {
+        if (s ~ /shell-robustness:[[:space:]]*ok/ && reason_ok(s)) reporter_found = 1
+        else if (s !~ /^[[:space:]]*#/ &&
+                 s ~ /(^|;)[[:space:]]*return 0[[:space:]]*;?[[:space:]]*(\}[[:space:]]*)?$/) reporter_found = 1
+        if (s !~ /^[[:space:]]*#/ && s ~ /[A-Za-z_][A-Za-z0-9_]*=\$\(\([A-Za-z_]/) reporter_counts = 1
+    }
+    function start_reporter(s,   name) {
+        name = s
+        sub(/^[[:space:]]*function[[:space:]]+/, "", name)
+        sub(/[[:space:]]*\(\).*$/, "", name)
+        sub(/[[:space:]]*\{.*$/, "", name)
+        gsub(/[[:space:]]/, "", name)
+        reporter_active = 1
+        reporter_name = name
+        reporter_named = (name ~ /^(ok|bad|pass|fail|failed|good|note|warn|skip|skipped|report|expect|start)$/)
+        reporter_open = FNR
+        reporter_counts = 0
+        reporter_found = 0
+        inspect_reporter_line(s)
     }
     { if (FNR == 1) in_header = 1
       if (in_header && $0 ~ /[^[:space:]]/ && $0 !~ /^[[:space:]]*#/ && $0 !~ /^#!/) in_header = 0 }
@@ -312,38 +389,22 @@ for f in "${files[@]}"; do
     # block ends at the first top-level `}`, the next definition, or EOF, and
     # stopping early can only produce a LOUD false positive that one
     # annotation answers.
-    $0 ~ /^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\(\))?([[:space:]]*\{.*)?[[:space:]]*$/ &&
-    $0 ~ /(^[[:space:]]*function[[:space:]]|\(\))/ {
-        name = $0
-        sub(/^[[:space:]]*function[[:space:]]+/, "", name)
-        sub(/[[:space:]]*\(\).*$/, "", name)
-        sub(/[[:space:]]*\{.*$/, "", name)
-        gsub(/[[:space:]]/, "", name)
-        is_reporter_name = (name ~ /^(ok|bad|pass|fail|failed|good|note|warn|skip|skipped|report|expect|start)$/)
-        open = FNR
-        # `return 0` must be a STATEMENT, not any textual occurrence: a
-        # `# TODO: add return 0` comment used to satisfy this check while the
-        # reporter still ended on a failing `echo`.
-        counts = ($0 ~ /[A-Za-z_][A-Za-z0-9_]*=\$\(\([A-Za-z_]/)
-        found = ($0 ~ /(^|;)[[:space:]]*return 0[[:space:]]*;?[[:space:]]*(\}[[:space:]]*)?$/) ||
-            ($0 ~ /shell-robustness:[[:space:]]*ok/ && reason_ok($0))
-        while ((getline nxt) > 0) {
-            if (nxt ~ /shell-robustness:[[:space:]]*ok/ && reason_ok(nxt)) found = 1
-            else if (nxt !~ /^[[:space:]]*#/ &&
-                nxt ~ /(^|;)[[:space:]]*return 0[[:space:]]*;?[[:space:]]*(\}[[:space:]]*)?$/) found = 1
-            if (nxt !~ /^[[:space:]]*#/ && nxt ~ /[A-Za-z_][A-Za-z0-9_]*=\$\(\([A-Za-z_]/) counts = 1
-            if (nxt ~ /^\}/) break
-            if (nxt ~ /^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/) break
+    {
+        if (definition_line($0)) {
+            # Every input record is examined by the AWK outer loop. Finalize the
+            # previous function before starting this one; `getline` consumed
+            # exactly the reporter definition it was meant to protect.
+            finish_reporter()
+            start_reporter($0)
+            if ($0 ~ /\}[[:space:]]*$/) finish_reporter()
+            next
         }
-        # A function that keeps a pass/fail tally IS a reporter, whatever it is
-        # called. A fixed name list missed `expect()` and `start()` — both used
-        # in this repository, both repaired by hand in this very change, which
-        # is proof enough that the list was the wrong invariant.
-        if (!is_reporter_name && !counts) next
-        if (!found)
-            printf "%s:%d: reporter `%s()` — no `return 0` in its block, so its own status is read as the assertion s. Add `return 0`, or annotate it if it always exits.\n", FILE, open, name
+        if (!reporter_active) next
+        inspect_reporter_line($0)
+        if ($0 ~ /^\}/) finish_reporter()
         next
     }
+    END { finish_reporter() }
     ' <"$f"
 done >>"$findings"
 

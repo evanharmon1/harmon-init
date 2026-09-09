@@ -120,6 +120,12 @@ expect_flagged "long --quiet and a split option word" \
     "$(fixture flags.sh "$body")" 'grep -q'
 
 cat >"$body" <<'BODY'
+seq 100000 | grep -E -e '1|2' -q
+BODY
+expect_flagged "a quoted alternation pipe stays inside one grep operand" \
+    "$(fixture quoted-alternation.sh "$body")" 'grep -q'
+
+cat >"$body" <<'BODY'
 printf '%s\n' "$x" |
     grep -q needle
 BODY
@@ -327,6 +333,16 @@ expect_flagged "a one-line always-exiting reporter, likewise" \
     "$(fixture test-oneline-exits.sh "$body")" 'no `return 0`'
 
 cat >"$body" <<'BODY'
+cleanup() { :; }
+note() { printf '%s\n' "$*"; }
+BODY
+expect_flagged "a one-line helper cannot consume the following reporter definition" \
+    "$(fixture test-reporter-after-oneline.sh "$body")" 'reporter `note()`'
+
+expect_clean "the shipped conditional sync-devkit reporters return success" \
+    "$repo/template/scripts/[% if use_skills_sync %]test-sync-devkit-release.sh[% endif %]"
+
+cat >"$body" <<'BODY'
 # shell-robustness: begin-exempt — a real reason, but never closed
 x=1
 printf '%s\n' "$y" | grep -q boom
@@ -524,8 +540,14 @@ else
 fi
 
 repo_scan="$TMPROOT/repo-scan"
-mkdir -p "$repo_scan/template/scripts"
+mkdir -p "$repo_scan/scripts" "$repo_scan/template/scripts"
 git -C "$repo_scan" init -q
+tracked_bash='scripts/tracked-hazard.bash'
+cat >"$repo_scan/$tracked_bash" <<'BODY'
+#!/usr/bin/env bash
+set -euo pipefail
+producer | grep -q needle
+BODY
 conditional_pipe='template/scripts/[% if feature %]conditional.sh[% endif %]'
 cat >"$repo_scan/$conditional_pipe" <<'BODY'
 #!/usr/bin/env bash
@@ -541,9 +563,12 @@ ok()
     echo "ok: $*"
 }
 BODY
-git -C "$repo_scan" add -- "$conditional_pipe" "$conditional_reporter"
+git -C "$repo_scan" add -- "$tracked_bash" "$conditional_pipe" "$conditional_reporter"
 if out="$(cd "$repo_scan" && "$GUARD" 2>&1)"; then
-    bad "conditionally named shipped scripts were omitted from repository discovery"
+    bad "tracked shell scripts were omitted from repository discovery"
+elif ! grep -qF "$tracked_bash" <<<"$out"; then
+    bad "the tracked .bash script was not scanned"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
 elif ! grep -qF "$conditional_pipe" <<<"$out"; then
     bad "the conditional pipeline script was not scanned"
     printf '%s\n' "$out" | sed 's/^/      /' >&2
@@ -551,7 +576,7 @@ elif ! grep -qF 'reporter `ok()`' <<<"$out"; then
     bad "the conditional test reporter was not scanned under its rendered basename"
     printf '%s\n' "$out" | sed 's/^/      /' >&2
 else
-    ok "repository discovery includes conditional template names and their reporters"
+    ok "repository discovery includes .bash and conditional template names/reporters"
 fi
 
 echo "==> the hazard the guard exists for is real, and the fixed shapes are not"
@@ -591,6 +616,17 @@ case "$legacy" in
     "— the defect, reproduced" || true ;;
 *) echo "  · note: the legacy pipeline exited $legacy (not the SIGPIPE path)" || true ;;
 esac
+
+quoted_alt=0
+(
+    set -o pipefail
+    seq 100000 | grep -E -e '1|2' -q
+) || quoted_alt=$?
+if [ "$quoted_alt" -eq 141 ]; then
+    ok "quoted alternation: the exact bypass reproduces SIGPIPE 141"
+else
+    bad "quoted alternation: expected SIGPIPE 141, got $quoted_alt"
+fi
 
 echo "==> the guard is wired to the real tree"
 if "$GUARD" >/dev/null 2>&1; then
