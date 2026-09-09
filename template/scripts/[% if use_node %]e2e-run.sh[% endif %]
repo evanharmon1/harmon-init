@@ -21,7 +21,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if ! find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+if ! playwright_config="$(find . -maxdepth 1 -name 'playwright.config.*' -print -quit 2>/dev/null)"; then
+    echo "test:e2e: could not inspect the project root for a Playwright config" >&2
+    exit 1
+fi
+if [ -z "$playwright_config" ]; then
     echo "test:e2e: no Playwright config yet -- skipping (add playwright.config.ts after scaffolding the app)"
     exit 0
 fi

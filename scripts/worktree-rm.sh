@@ -627,9 +627,12 @@ else
                     # refuses to remove a worktree containing submodules,
                     # so leaving it "different" only puts this guard's
                     # message ahead of git's own refusal.
-                    if [ -d "$tree/$flagged_path" ] && [ ! -e "$tree/$flagged_path/.git" ] &&
-                        [ -z "$(head -n 1 < <(find "$tree/$flagged_path" -mindepth 1 -maxdepth 1 2>/dev/null))" ]; then
-                        flagged_differs=0
+                    if [ -d "$tree/$flagged_path" ] && [ ! -e "$tree/$flagged_path/.git" ]; then
+                        gitlink_entry=""
+                        if gitlink_entry="$(find "$tree/$flagged_path" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" &&
+                            [ -z "$gitlink_entry" ]; then
+                            flagged_differs=0
+                        fi
                     fi
                 elif [ ! -L "$tree/$flagged_path" ] && [ -f "$tree/$flagged_path" ]; then
                     # Compare against the CHECKOUT representation —
@@ -807,17 +810,26 @@ fi
 # directory is re-checked immediately before acting for the same reason — a
 # recreated worktree has one, a genuinely stale record does not.
 prune_err=""
-if [ "$stale_record" -eq 1 ] && grep -qxF "worktree $tree" < <(git worktree list --porcelain); then
-    if [ -d "$tree" ]; then
-        die "$tree was recreated while this removal was running (another 'task worktree:new'?) — refusing to remove a worktree this run did not"
+if [ "$stale_record" -eq 1 ]; then
+    prune_records=""
+    if ! prune_records="$(git worktree list --porcelain)"; then
+        die "could not re-read the worktree registry before stale-record cleanup — refusing to remove anything"
     fi
-    prune_err="$(git worktree remove "$tree" 2>&1 >/dev/null)" || true
-    if grep -qxF "worktree $tree" < <(git worktree list --porcelain); then
-        # `remove --force` is NOT enough for a locked record — git answers a
-        # single force with "use 'remove -f -f' to override or unlock first" —
-        # so the instruction leads with the unlock, which is the path that also
-        # works when the directory is already gone.
-        die "$tree is still registered after cleanup (${prune_err:-git reported no reason}) — if its record is locked, run 'git worktree unlock \"$tree\"' then re-run, or force past the lock with 'git worktree remove -f -f \"$tree\"'"
+    if grep -qxF "worktree $tree" <<<"$prune_records"; then
+        if [ -d "$tree" ]; then
+            die "$tree was recreated while this removal was running (another 'task worktree:new'?) — refusing to remove a worktree this run did not"
+        fi
+        prune_err="$(git worktree remove "$tree" 2>&1 >/dev/null)" || true
+        if ! prune_records="$(git worktree list --porcelain)"; then
+            die "could not verify the worktree registry after stale-record cleanup — refusing to report success"
+        fi
+        if grep -qxF "worktree $tree" <<<"$prune_records"; then
+            # `remove --force` is NOT enough for a locked record — git answers a
+            # single force with "use 'remove -f -f' to override or unlock first" —
+            # so the instruction leads with the unlock, which is the path that also
+            # works when the directory is already gone.
+            die "$tree is still registered after cleanup (${prune_err:-git reported no reason}) — if its record is locked, run 'git worktree unlock \"$tree\"' then re-run, or force past the lock with 'git worktree remove -f -f \"$tree\"'"
+        fi
     fi
 fi
 
@@ -831,7 +843,7 @@ fi
 # Auto-cleaning the file shape is safe; the directory shape gets the same
 # refusal as any other unexpected content.
 if [ -d "$tree" ]; then
-    if ! leftovers="$(find "$tree" -mindepth 1 -maxdepth 1 ! -name .git)"; then
+    if ! leftovers="$(find "$tree" -mindepth 1 -maxdepth 1 ! -name .git -print -quit)"; then
         die "could not inspect $tree for leftover files — refusing to delete it"
     fi
     if [ -z "$leftovers" ] && [ ! -d "$tree/.git" ]; then

@@ -541,7 +541,11 @@ cleanup() {
         # prune has nothing left to do that is ours to do. A record surviving
         # both is reported, never swept.
         rollback_tree_gone=1
-        if grep -qxF "worktree $tree" < <(git worktree list --porcelain); then
+        rollback_worktree_records=""
+        if ! rollback_worktree_records="$(git worktree list --porcelain)"; then
+            rollback_tree_gone=0
+            echo "worktree:new: could not verify the worktree registry after rollback — leaving branch '$branch' alone" >&2
+        elif grep -qxF "worktree $tree" <<<"$rollback_worktree_records"; then
             rollback_tree_gone=0
             echo "worktree:new: $tree is still registered after rollback — clear it with 'task worktree:rm -- $name'" >&2
         fi
@@ -560,7 +564,7 @@ cleanup() {
             # HEAD (challenge round 3).
             if [ "$rollback_tree_gone" -eq 0 ]; then
                 echo "worktree:new: leaving branch '$branch' alone — its worktree could not be removed and still has it checked out" >&2
-            elif grep -qxF "branch refs/heads/$branch" < <(git worktree list --porcelain); then
+            elif grep -qxF "branch refs/heads/$branch" <<<"$rollback_worktree_records"; then
                 # A non-cooperating client — a raw `git worktree add`,
                 # outside the branch lock — can attach the just-published
                 # branch before this run's own attach fails on it, and
@@ -594,7 +598,11 @@ cleanup() {
                 echo "worktree:new: leaving branch '$branch' alone — its tip moved since this run created it" >&2
             fi
         elif [ "$branch_is_ours" -eq 1 ]; then
-            LEFTHOOK=0 git branch -D "$branch" >/dev/null 2>&1 || true
+            if [ "$rollback_tree_gone" -eq 0 ]; then
+                echo "worktree:new: leaving branch '$branch' alone — its worktree registry state could not be proven clear" >&2
+            else
+                LEFTHOOK=0 git branch -D "$branch" >/dev/null 2>&1 || true
+            fi
         elif [ "$branch_created" -eq 1 ]; then
             echo "worktree:new: leaving branch '$branch' alone — this run did not create it" >&2
         fi

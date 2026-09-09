@@ -640,7 +640,7 @@ test_usage_exit() {
     FIXTURE="$(build_fixture v0.1.0)"
     _rc=0
     _out="$(run_helper 2>&1)" || _rc=$?
-    echo "$_out" | grep -q usage || {
+    grep -q usage <<<"$_out" || {
         echo "expected usage, got: $_out"
         return 1
     }

@@ -107,6 +107,12 @@ expect_flagged "a brace-group RHS" \
     "$(fixture brace-rhs.sh "$body")" 'compound-command RHS'
 
 cat >"$body" <<'BODY'
+seq 1 100000 |& (grep -q 1)
+BODY
+expect_flagged "stderr-inclusive pipe plus compound RHS is the same invariant" \
+    "$(fixture pipe-stderr-subshell-rhs.sh "$body")" '|& grep -q'
+
+cat >"$body" <<'BODY'
 seq 1 3 | grep --quiet 2
 seq 1 3 | grep -F -q 2
 BODY
@@ -193,7 +199,7 @@ expect_flagged "8. grep options continued across a line" \
 
 printf 'ok()\n{\n    pass=$((pass+1))\n    echo "x"\n}\n' >"$body"
 expect_flagged "9. a reporter whose opening brace is on its own line" \
-    "$(fixture test-m9.sh "$body")" 'return 0'
+    "$(fixture test-m9.sh "$body")" 'reporter `ok()`'
 
 printf 'ok() {\n    pass=$((pass+1))\n    log "$*"\n}\n' >"$body"
 expect_flagged "10. a reporter that delegates its printing" \
@@ -515,6 +521,37 @@ elif grep -qF 'no such file' <<<"$out"; then
 else
     bad "a missing named file failed, but not with 'no such file'"
     printf '%s\n' "$out" | sed 's/^/      /' >&2
+fi
+
+repo_scan="$TMPROOT/repo-scan"
+mkdir -p "$repo_scan/template/scripts"
+git -C "$repo_scan" init -q
+conditional_pipe='template/scripts/[% if feature %]conditional.sh[% endif %]'
+cat >"$repo_scan/$conditional_pipe" <<'BODY'
+#!/usr/bin/env bash
+set -euo pipefail
+producer | grep -q needle
+BODY
+conditional_reporter='template/scripts/[% if feature %]test-conditional.sh[% endif %]'
+cat >"$repo_scan/$conditional_reporter" <<'BODY'
+#!/usr/bin/env bash
+set -euo pipefail
+ok()
+{
+    echo "ok: $*"
+}
+BODY
+git -C "$repo_scan" add -- "$conditional_pipe" "$conditional_reporter"
+if out="$(cd "$repo_scan" && "$GUARD" 2>&1)"; then
+    bad "conditionally named shipped scripts were omitted from repository discovery"
+elif ! grep -qF "$conditional_pipe" <<<"$out"; then
+    bad "the conditional pipeline script was not scanned"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
+elif ! grep -qF 'reporter `ok()`' <<<"$out"; then
+    bad "the conditional test reporter was not scanned under its rendered basename"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
+else
+    ok "repository discovery includes conditional template names and their reporters"
 fi
 
 echo "==> the hazard the guard exists for is real, and the fixed shapes are not"

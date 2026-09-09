@@ -120,14 +120,17 @@ else
     # status, so a partial index read would silently shrink the scan and the
     # guard would call the remainder clean. That is this PR's own defect class.
     _list="$(mktemp)"
-    if ! git ls-files -z -- 'scripts/*.sh' 'scripts/**/*.sh' \
-        'template/scripts/*.sh' 'template/scripts/**/*.sh' >"$_list"; then
+    if ! git ls-files -z -- scripts template/scripts >"$_list"; then
         rm -f "$_list"
         echo "lint-shell-robustness: could not enumerate tracked shell files" >&2
         exit 1
     fi
     while IFS= read -r -d '' f; do
-        files+=("$f")
+        case "$f" in
+        scripts/*.sh | template/scripts/*.sh | template/scripts/*.sh'[% endif %]')
+            files+=("$f")
+            ;;
+        esac
     done <"$_list"
     rm -f "$_list"
 fi
@@ -150,6 +153,37 @@ for f in "${files[@]}"; do
         t = s
         if (!sub(/^.*shell-robustness:[[:space:]]*(ok|begin-exempt|exempt-file)[[:space:]]*/, "", t)) return 0
         return (t ~ /^(—|--)[[:space:]]*[^[:space:]]/)
+    }
+
+    # Match the invariant, not a list of syntax combinations: either shell
+    # pipe operator, then an optional compound-command opener, then a grep
+    # invocation carrying a quiet flag. Adding another operator/wrapper cross
+    # product must not require another regex branch.
+    function quiet_grep_rhs(s) {
+        return (s ~ /^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
+    }
+    function hazardous_quiet_grep_pipeline(s,   rest, pos, before, after, rhs) {
+        rest = s
+        while ((pos = index(rest, "|")) > 0) {
+            before = (pos > 1 ? substr(rest, pos - 1, 1) : "")
+            after = substr(rest, pos + 1)
+            # `||` is an or-list, not a pipeline. Advance past either half.
+            if (substr(after, 1, 1) == "|") {
+                rest = substr(after, 2)
+                continue
+            }
+            if (before == "|") {
+                rest = after
+                continue
+            }
+            if (substr(after, 1, 1) == "&") after = substr(after, 2)
+            rhs = after
+            sub(/^[[:space:]]*/, "", rhs)
+            sub(/^[({][[:space:]]*/, "", rhs)
+            if (quiet_grep_rhs(rhs)) return 1
+            rest = after
+        }
+        return 0
     }
 
     # Exemption markers. Each needs a reason; a bare marker is itself reported.
@@ -199,16 +233,10 @@ for f in "${files[@]}"; do
         }
         skip = (exempt_file || block || inline_ok)
 
-        # R0 — alternate pipe/RHS spellings with the same early-exit hazard.
-        # `|&` pipes stderr too; a subshell or brace group does not insulate the
-        # producer from SIGPIPE when its quiet grep exits on the first match.
-        if (!skip && line ~ /(^|[^|])\|&[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
-            printf "%s:%d: `|& grep -q` — grep exits on match, SIGPIPEs the producer, and `pipefail` turns a MATCH into a failure\n", FILE, FNR
-        else if (!skip && line ~ /(^|[^|])\|[[:space:]]*[({][[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
-            printf "%s:%d: compound-command RHS contains `grep -q` — the producer still receives SIGPIPE when grep exits early\n", FILE, FNR
-        # R1 — a pipe feeding a grep that carries a quiet flag.
-        else if (!skip && line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
-            printf "%s:%d: `| grep -q` — grep exits on match, SIGPIPEs the producer, and `pipefail` turns a MATCH into a failure\n", FILE, FNR
+        # R1 — `|` or `|&`, optionally followed by `(` or `{`, feeding a grep
+        # that carries a quiet flag. Every combination has the same hazard.
+        if (!skip && hazardous_quiet_grep_pipeline(line))
+            printf "%s:%d: `| grep -q` / `|& grep -q`; optional compound-command RHS does not prevent SIGPIPE from turning a MATCH into a failure\n", FILE, FNR
         # R2 — a pipe feeding a grep whose options continue on the next line.
         else if (!skip && line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]*\\[[:space:]]*$/)
             printf "%s:%d: `| grep \\` — options continue on the next line; a quiet flag here would be the SIGPIPE shape\n", FILE, FNR
@@ -252,8 +280,8 @@ done >>"$findings"
 
 # ── reporter helpers (test suites only) ─────────────────────────────────────
 for f in "${files[@]}"; do
-    case "$f" in
-    */test-*.sh | test-*.sh) ;;
+    case "${f##*/}" in
+    test-*.sh | test-*.sh'[% endif %]' | '[% if '*'%]test-'*.sh'[% endif %]') ;;
     *) continue ;;
     esac
     # The file arrives on STDIN, never as an awk operand: awk reads an operand
@@ -286,7 +314,6 @@ for f in "${files[@]}"; do
     # annotation answers.
     $0 ~ /^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\(\))?([[:space:]]*\{.*)?[[:space:]]*$/ &&
     $0 ~ /(^[[:space:]]*function[[:space:]]|\(\))/ {
-    $0 ~ /\{/ &&
         name = $0
         sub(/^[[:space:]]*function[[:space:]]+/, "", name)
         sub(/[[:space:]]*\(\).*$/, "", name)
