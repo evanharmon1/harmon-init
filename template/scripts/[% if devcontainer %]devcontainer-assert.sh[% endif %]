@@ -618,18 +618,28 @@ SENTINEL_SCRIPT
     printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.0.0"' >"${agy_roll_home}/.local/bin/agy-real"
     chmod 0755 "$agy_system_binary" "${agy_roll_home}/.local/bin/agy-real"
 
-    # Disabled marker (including entirely absent): no download; agy-real and
-    # agy are removed even if a prior enabled run (or a stale image) left them.
-    local agy_disabled_home
+    # Disabled marker (including entirely absent): no download. This models a
+    # rolling update from a pre-ownership-metadata release: neither the natural
+    # agy -> agy-real shape nor the markerless executable proves ownership, so
+    # both paths must be preserved byte-for-byte.
+    local agy_disabled_home agy_disabled_real_before
     agy_disabled_home="${work_dir}/agy-disabled-home"
+    agy_disabled_real_before="${work_dir}/agy-disabled-real-before"
     mkdir -p "${agy_disabled_home}/.local/bin"
-    : >"${agy_disabled_home}/.local/bin/agy-real"
-    : >"${agy_disabled_home}/.local/bin/agy"
+    printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "1.0.0"' >"${agy_disabled_home}/.local/bin/agy-real"
+    chmod 0755 "${agy_disabled_home}/.local/bin/agy-real"
+    cp "${agy_disabled_home}/.local/bin/agy-real" "$agy_disabled_real_before"
+    ln -s "${agy_disabled_home}/.local/bin/agy-real" "${agy_disabled_home}/.local/bin/agy"
     HOME="$agy_disabled_home" bash "$agy_ensure" >/dev/null
-    [ ! -e "${agy_disabled_home}/.local/bin/agy-real" ] ||
-        fail "ensure-antigravity-cli.sh left agy-real behind with the marker disabled"
-    [ ! -e "${agy_disabled_home}/.local/bin/agy" ] ||
-        fail "ensure-antigravity-cli.sh left agy behind with the marker disabled"
+    cmp -s "$agy_disabled_real_before" "${agy_disabled_home}/.local/bin/agy-real" ||
+        fail "disabled cleanup changed a markerless pre-metadata agy-real"
+    [ -L "${agy_disabled_home}/.local/bin/agy" ] &&
+        [ "$(readlink "${agy_disabled_home}/.local/bin/agy")" = "${agy_disabled_home}/.local/bin/agy-real" ] ||
+        fail "disabled cleanup changed a markerless pre-metadata agy symlink"
+    [ ! -e "${agy_disabled_home}/.local/bin/.agy-real.harmon-init-owned" ] ||
+        fail "disabled cleanup claimed a markerless pre-metadata agy-real"
+    [ ! -e "${agy_disabled_home}/.local/bin/.agy.harmon-init-owned" ] ||
+        fail "disabled cleanup claimed a markerless pre-metadata agy launcher"
 
     # Enabled marker, current shared-image binary already sufficient, no
     # pre-existing local shadow: no shadow copy is created, and agy stays
@@ -652,11 +662,17 @@ SENTINEL_SCRIPT
         fail "stale user-local Antigravity binary still shadows the shared-image pin"
     [ "$(readlink -f "${agy_roll_home}/.local/bin/agy")" = "$(readlink -f "${agy_roll_home}/.local/bin/agy-real")" ] ||
         fail "ensure-antigravity-cli.sh did not point agy at agy-real as a plain symlink"
+    [ -f "${agy_roll_home}/.local/bin/.agy-real.harmon-init-owned" ] &&
+        [ -f "${agy_roll_home}/.local/bin/.agy.harmon-init-owned" ] ||
+        fail "ensure-antigravity-cli.sh did not publish independent path ownership proofs"
 
     # Toggling back to disabled fully removes both — not merely skips the
     # download — reaching absence rather than a dangling link.
     HOME="$agy_roll_home" bash "$agy_ensure" >/dev/null
-    [ ! -e "${agy_roll_home}/.local/bin/agy-real" ] && [ ! -e "${agy_roll_home}/.local/bin/agy" ] ||
+    [ ! -e "${agy_roll_home}/.local/bin/agy-real" ] &&
+        [ ! -e "${agy_roll_home}/.local/bin/agy" ] &&
+        [ ! -e "${agy_roll_home}/.local/bin/.agy-real.harmon-init-owned" ] &&
+        [ ! -e "${agy_roll_home}/.local/bin/.agy.harmon-init-owned" ] ||
         fail "toggling the marker off did not fully remove agy-real/agy"
 
     agy_home="${work_dir}/agy-home"
@@ -665,11 +681,11 @@ SENTINEL_SCRIPT
     agy_workspace="${work_dir}/trusted-workspace"
     agy_workspace_moved="${work_dir}/trusted-workspace-renamed"
     mkdir -p "$(dirname "$agy_settings")"
-    printf '%s\n' '{"model":"Gemini test","toolPermission":"request-review","permissions":{"allow":["command(task)"]}}' >"$agy_settings"
+    printf '%s\n' '{"model":"Gemini test","toolPermission":"request-review","permissions":{"allow":["command(task)"],"bash":"deny"}}' >"$agy_settings"
     HOME="$agy_home" bash "$agy_apply" apply "$agy_defaults" "$agy_workspace" >/dev/null
     jq -e '
         .model == "Gemini test" and
-        .permissions.allow == ["command(task)"] and
+        .permissions == {} and
         .toolPermission == "always-proceed" and
         .artifactReviewPolicy == "always-proceed" and
         .allowNonWorkspaceAccess == true and
@@ -686,7 +702,7 @@ SENTINEL_SCRIPT
         .schemaVersion == 6 and
         .present == ["toolPermission","permissions"] and
         .values.toolPermission == "request-review" and
-        .values.permissions == {"allow":["command(task)"]} and
+        .values.permissions == {"allow":["command(task)"],"bash":"deny"} and
         .introducedWorkspaces == [$workspace] and
         .trustedWorkspacesKeyWasPresent == false
     ' --arg workspace "$agy_workspace" "$agy_backup" >/dev/null ||

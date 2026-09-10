@@ -53,3 +53,45 @@
 - [x] 4.2 Tick this issue's `[CI]` acceptance criteria via
       `.claude/skills/track-work/assets/tick-criteria.sh` once each is
       independently verified against the code.
+
+## 5. Challenge-round-3 ownership remediation (#1205/#1207)
+
+- [x] 5.1 Remove launcher-derived authority to delete `agy-real`; require the
+      installer's matching inode proof, while preserving interrupted managed
+      install cleanup.
+- [x] 5.2 Reuse an unowned exact-version `agy-real` executable or symlink
+      without replacing it or publishing ownership metadata.
+- [x] 5.3 Add focused fixtures for system-binary-only setup followed by an
+      independent `agy-real`, exact-version symlink preservation, interrupted
+      install cleanup, and canonical/delta requirement consistency.
+- [x] 5.4 Reconcile this delta and the canonical bot-autonomy requirement to
+      ownership-based disabled cleanup and verification semantics.
+- [x] 5.5 Run `task test:bot-autonomy`, `task spec:validate`, `task check`,
+      `task test:template:all`, `task verify`, and `task security:secrets`.
+
+## 6. Challenge-round-4 legacy fixture remediation (#1205/#1207)
+
+- [x] 6.1 Update the root/template devcontainer assertion fixture so a
+      disabled rolling update removes the owned `agy` launcher but preserves a
+      markerless pre-ownership-metadata `agy-real` byte-for-byte.
+- [x] 6.2 Add the equivalent explicit scenario to the in-flight delta and
+      canonical bot-autonomy spec without weakening the independent inode
+      ownership invariant.
+- [x] 6.3 Run the focused bot-autonomy and devcontainer assertions, then
+      `task spec:validate`, `task check`, `task test:template:all`, `task
+      verify`, and `task security:secrets`.
+
+## 7. Challenge-round-5 ownership protocol remediation (#1205/#1207)
+
+- [x] 7.1 Replace launcher-shape and same-inode ownership heuristics with
+      independent per-path identity-and-content proofs for `agy` and
+      `agy-real`; cleanup and disabled verification require those proofs.
+- [x] 7.2 Publish executable and launcher generations through recoverable
+      transactions, and add exact regression fixtures for an independent
+      natural symlink, an in-place executable rewrite, and an interrupted
+      old-to-new upgrade.
+- [x] 7.3 Preserve all affected root/template twins and reconcile the
+      canonical and in-flight bot-autonomy requirement with the new invariant.
+- [x] 7.4 Run the focused bot-autonomy and devcontainer assertions, then
+      `task spec:validate`, `task check`, `task test:template:all`, `task
+      verify`, and `task security:secrets`.
