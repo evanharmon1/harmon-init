@@ -10,6 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 fail() {
+    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }
@@ -240,8 +241,8 @@ fi
 symlink_mode_after="$(ls -ld "$symlink_target/.git" | awk '{ print $1 }')"
 [ "$symlink_mode_after" = "$symlink_mode_before" ] ||
     fail "symlink rejection changed the external Git metadata mode"
-! git config --file "$symlink_config" --get-all safe.directory 2>/dev/null |
-    grep -Fqx "$symlink_repo" ||
+symlink_safe_entries="$(git config --file "$symlink_config" --get-all safe.directory 2>/dev/null || true)"
+! grep -Fqx "$symlink_repo" <<<"$symlink_safe_entries" ||
     fail "symlink rejection persisted safe.directory"
 
 echo "==> permission failures stop before adding safe.directory"
@@ -256,8 +257,8 @@ failed_owner_before="$(ls -dn "$failed_repo/.git" | awk '{ print $3 ":" $4 }')"
 if SUDO_FAIL=chmod run_reconcile_at "$failed_repo" "$failed_config" "$failed_log" >/dev/null 2>"$tmp_root/failed.err"; then
     fail "a failed permissions reconciliation unexpectedly succeeded"
 fi
-! git config --file "$failed_config" --get-all safe.directory 2>/dev/null |
-    grep -Fqx "$failed_repo" ||
+failed_safe_entries="$(git config --file "$failed_config" --get-all safe.directory 2>/dev/null || true)"
+! grep -Fqx "$failed_repo" <<<"$failed_safe_entries" ||
     fail "a failed reconciliation persisted safe.directory"
 failed_owner_after="$(ls -dn "$failed_repo/.git" | awk '{ print $3 ":" $4 }')"
 [ "$failed_owner_after" = "$failed_owner_before" ] ||

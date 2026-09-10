@@ -1763,8 +1763,10 @@ HOME="$agy24_quarantine_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled \
     [ ! -e "${agy24_quarantine_home}/.local/bin/.agy-real.harmon-init-owned" ] &&
     [ ! -e "${agy24_quarantine_home}/.local/bin/.agy.harmon-init-owned" ] ||
     fail "quarantine cleanup deleted a concurrent replacement or retained stale proof"
-if find "${agy24_quarantine_home}/.local/bin" -name 'agy-real.harmon-init-quarantine.*' -print |
-    grep -q .; then
+if ! agy24_quarantine_leftover="$(find "${agy24_quarantine_home}/.local/bin" -name 'agy-real.harmon-init-quarantine.*' -print -quit)"; then
+    fail "could not inspect quarantine leftovers"
+fi
+if [ -n "$agy24_quarantine_leftover" ]; then
     fail "quarantine cleanup did not restore the captured independent replacement"
 fi
 
@@ -1926,8 +1928,11 @@ if HOME="$agy24_qr_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled HARMON_TEST_QU
 fi
 [ ! -e "$agy24_qr_target" ] && grep -q '^temp_name=agy-real.harmon-init-quarantine\.' "${agy24_qr_home}/.local/bin/.agy-real.harmon-init-owned" || fail "quarantine recovery name was not durable"
 HOME="$agy24_qr_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled bash "$ensure_script" >/dev/null
+if ! agy24_qr_leftover="$(find "${agy24_qr_home}/.local/bin" -name 'agy-real.harmon-init-quarantine.*' -print -quit)"; then
+    fail "could not inspect recovered quarantine leftovers"
+fi
 [ ! -e "${agy24_qr_home}/.local/bin/.agy-real.harmon-init-owned" ] &&
-    ! find "${agy24_qr_home}/.local/bin" -name 'agy-real.harmon-init-quarantine.*' -print | grep -q . || fail "interrupted quarantine was not recovered"
+    [ -z "$agy24_qr_leftover" ] || fail "interrupted quarantine was not recovered"
 
 # The in-flight delta is the source for this correction and is reconciled into
 # the canonical requirement in the same commit. Compare the complete modified
