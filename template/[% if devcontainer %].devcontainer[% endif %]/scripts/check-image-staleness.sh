@@ -142,7 +142,7 @@ while IFS= read -r f; do
     # A path the diff pass already counted must not be counted again just
     # because its MODE also changed — one drifted config is one entry, or the
     # summary claims "2 baked configs" for a single file.
-    if printf '%s' "${names}" | grep -qxF "      ${rel}"; then
+    if grep -qxF "      ${rel}" <<<"${names}"; then
         continue
     fi
     if [ "$(xbits_of "${f}")" != "$(xbits_of "${other}")" ]; then

@@ -81,8 +81,10 @@ reconcile_workspace_permissions() {
     # another repository path) does not satisfy the workspace's own entry. It
     # is written only after the permission repair succeeds, so a failed
     # lifecycle never leaves a trusted-but-unusable checkout.
-    if ! git config --file "$env_gitconfig" --get-all safe.directory 2>/dev/null |
-        grep -Fqx "$workspace_root"; then
+    safe_directories=""
+    if ! safe_directories="$(git config --file "$env_gitconfig" \
+        --get-all safe.directory 2>/dev/null)" ||
+        ! grep -Fqx "$workspace_root" <<<"$safe_directories"; then
         git config --file "$env_gitconfig" --add safe.directory "$workspace_root" || return 1
     fi
 

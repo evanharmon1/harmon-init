@@ -90,8 +90,11 @@
 #     change that introduced this guard already removed the defect tree-wide;
 #     this check exists to stop it returning in the obvious form.
 #
-# Scope: every tracked shell script under scripts/ and template/scripts/. The
-# reporter check additionally applies only to test-*.sh / test-*.bash suites.
+# Scope: the same root shell surface as lint-shell.sh — every tracked *.sh and
+# *.bash outside template/ — plus shell scripts under template/scripts/, whose
+# conditional Jinja filenames do not literally end in the shell extension.
+# Other template paths are rendered and linted by test:template. The reporter
+# check additionally applies only to test-*.sh / test-*.bash suites.
 #
 # Usage: ./scripts/lint-shell-robustness.sh [file ...]
 #   With no arguments, checks every tracked file in scope.
@@ -112,7 +115,10 @@ if [ $# -gt 0 ]; then
 else
     REPO_ONLY=1
     cd "$(git rev-parse --show-toplevel)"
-    # Scan both the root convention and the shipped template convention.
+    # Enumerate the whole index once, then apply the authoritative shell-scope
+    # invariant: every tracked root *.sh/*.bash outside template/, plus the
+    # template/scripts convention including conditional Jinja suffixes. A list
+    # of root directories would drift whenever another shell surface is added.
     #
     # NUL-delimited: a tracked filename may legally contain a newline, and
     # splitting one into nonexistent pieces would silently shrink the scan.
@@ -120,18 +126,19 @@ else
     # status, so a partial index read would silently shrink the scan and the
     # guard would call the remainder clean. That is this PR's own defect class.
     _list="$(mktemp)"
-    if ! git ls-files -z -- scripts template/scripts >"$_list"; then
+    if ! git ls-files -z -- >"$_list"; then
         rm -f "$_list"
         echo "lint-shell-robustness: could not enumerate tracked shell files" >&2
         exit 1
     fi
     while IFS= read -r -d '' f; do
         case "$f" in
-        scripts/*.sh | scripts/*.bash | \
-            template/scripts/*.sh | template/scripts/*.bash | \
+        template/scripts/*.sh | template/scripts/*.bash | \
             template/scripts/*.sh'[% endif %]' | template/scripts/*.bash'[% endif %]')
             files+=("$f")
             ;;
+        template/*) ;;
+        *.sh | *.bash) files+=("$f") ;;
         esac
     done <"$_list"
     rm -f "$_list"
@@ -206,7 +213,7 @@ for f in "${files[@]}"; do
     }
     function quiet_grep_rhs(s) {
         s = mask_quoted_token_boundaries(s)
-        return (s ~ /^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
+        return (s ~ /^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec|time|timeout|nice)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
     }
     function hazardous_quiet_grep_pipeline(s,   rest, pos, before, after, rhs) {
         rest = s

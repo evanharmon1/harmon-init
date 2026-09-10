@@ -493,6 +493,14 @@ expect_flagged "a prefix option that takes a separate ARGUMENT (env -u NAME)" \
     "$(fixture prefix-optarg.sh "$body")" 'grep -q'
 
 cat >"$body" <<'BODY'
+seq 100000 | time grep -q 1
+seq 100000 | timeout 5 grep -q 1
+seq 100000 | nice -n 5 grep -q 1
+BODY
+expect_flagged "an explicitly supported command-prefix wrapper before quiet grep" \
+    "$(fixture command-wrapper-grep.sh "$body")" 'grep -q'
+
+cat >"$body" <<'BODY'
 seq 100000 | \
     grep -q 1
 BODY
@@ -540,10 +548,24 @@ else
 fi
 
 repo_scan="$TMPROOT/repo-scan"
-mkdir -p "$repo_scan/scripts" "$repo_scan/template/scripts"
+mkdir -p "$repo_scan/scripts" "$repo_scan/.claude/hooks" \
+    "$repo_scan/.devcontainer" "$repo_scan/template/scripts" \
+    "$repo_scan/template/elsewhere" "$repo_scan/docs"
 git -C "$repo_scan" init -q
 tracked_bash='scripts/tracked-hazard.bash'
 cat >"$repo_scan/$tracked_bash" <<'BODY'
+#!/usr/bin/env bash
+set -euo pipefail
+producer | grep -q needle
+BODY
+hook_pipe='.claude/hooks/tracked-hazard.sh'
+cat >"$repo_scan/$hook_pipe" <<'BODY'
+#!/usr/bin/env bash
+set -euo pipefail
+producer | grep -q needle
+BODY
+devcontainer_pipe='.devcontainer/tracked-hazard.bash'
+cat >"$repo_scan/$devcontainer_pipe" <<'BODY'
 #!/usr/bin/env bash
 set -euo pipefail
 producer | grep -q needle
@@ -563,11 +585,28 @@ ok()
     echo "ok: $*"
 }
 BODY
-git -C "$repo_scan" add -- "$tracked_bash" "$conditional_pipe" "$conditional_reporter"
+excluded_template='template/elsewhere/intentionally-not-shell-input.sh'
+cat >"$repo_scan/$excluded_template" <<'BODY'
+#!/usr/bin/env bash
+producer | grep -q needle
+BODY
+excluded_non_shell='docs/shell-example.txt'
+cat >"$repo_scan/$excluded_non_shell" <<'BODY'
+producer | grep -q needle
+BODY
+git -C "$repo_scan" add -- "$tracked_bash" "$hook_pipe" \
+    "$devcontainer_pipe" "$conditional_pipe" "$conditional_reporter" \
+    "$excluded_template" "$excluded_non_shell"
 if out="$(cd "$repo_scan" && "$GUARD" 2>&1)"; then
     bad "tracked shell scripts were omitted from repository discovery"
 elif ! grep -qF "$tracked_bash" <<<"$out"; then
     bad "the tracked .bash script was not scanned"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
+elif ! grep -qF "$hook_pipe" <<<"$out"; then
+    bad "the tracked .claude hook was not scanned"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
+elif ! grep -qF "$devcontainer_pipe" <<<"$out"; then
+    bad "the tracked .devcontainer script was not scanned"
     printf '%s\n' "$out" | sed 's/^/      /' >&2
 elif ! grep -qF "$conditional_pipe" <<<"$out"; then
     bad "the conditional pipeline script was not scanned"
@@ -575,8 +614,14 @@ elif ! grep -qF "$conditional_pipe" <<<"$out"; then
 elif ! grep -qF 'reporter `ok()`' <<<"$out"; then
     bad "the conditional test reporter was not scanned under its rendered basename"
     printf '%s\n' "$out" | sed 's/^/      /' >&2
+elif grep -qF "$excluded_template" <<<"$out"; then
+    bad "a shell-shaped file elsewhere under template/ was not excluded"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
+elif grep -qF "$excluded_non_shell" <<<"$out"; then
+    bad "a tracked non-shell file was not excluded"
+    printf '%s\n' "$out" | sed 's/^/      /' >&2
 else
-    ok "repository discovery includes .bash and conditional template names/reporters"
+    ok "repository discovery follows the tracked shell scope and template exclusions"
 fi
 
 echo "==> the hazard the guard exists for is real, and the fixed shapes are not"
@@ -626,6 +671,17 @@ if [ "$quoted_alt" -eq 141 ]; then
     ok "quoted alternation: the exact bypass reproduces SIGPIPE 141"
 else
     bad "quoted alternation: expected SIGPIPE 141, got $quoted_alt"
+fi
+
+wrapped=0
+(
+    set -o pipefail
+    seq 100000 | time grep -q 1
+) 2>/dev/null || wrapped=$?
+if [ "$wrapped" -eq 141 ]; then
+    ok "time wrapper: the exact bypass reproduces SIGPIPE 141"
+else
+    bad "time wrapper: expected SIGPIPE 141, got $wrapped"
 fi
 
 echo "==> the guard is wired to the real tree"
