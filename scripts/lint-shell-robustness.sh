@@ -215,6 +215,10 @@ for f in "${files[@]}"; do
         s = mask_quoted_token_boundaries(s)
         return (s ~ /^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec|time|timeout|nice)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]+(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
     }
+    function leading_quiet_grep(s) {
+        sub(/^[[:space:]]*/, "", s)
+        return quiet_grep_rhs(s)
+    }
     function hazardous_quiet_grep_pipeline(s,   rest, pos, before, after, rhs) {
         rest = s
         while ((pos = index(rest, "|")) > 0) {
@@ -237,6 +241,42 @@ for f in "${files[@]}"; do
             rest = after
         }
         return 0
+    }
+    # A pipe whose RHS is only a compound opener continues into later lines.
+    # Keep this deliberately structural: opener-only and closer-only lines are
+    # the invariant, not general shell grammar. That covers normally formatted
+    # brace/subshell groups (and nested groups) without reopening a lexer seam.
+    function compound_pipeline_opener(s,   rest, pos, before, after, rhs) {
+        rest = s
+        while ((pos = index(rest, "|")) > 0) {
+            before = (pos > 1 ? substr(rest, pos - 1, 1) : "")
+            after = substr(rest, pos + 1)
+            if (substr(after, 1, 1) == "|") {
+                rest = substr(after, 2)
+                continue
+            }
+            if (before == "|") {
+                rest = after
+                continue
+            }
+            if (substr(after, 1, 1) == "&") after = substr(after, 2)
+            rhs = after
+            sub(/^[[:space:]]*/, "", rhs)
+            if (rhs ~ /^[{][[:space:]]*(#.*)?$/) return "{"
+            if (rhs ~ /^[(][[:space:]]*(#.*)?$/) return "("
+            rest = after
+        }
+        return ""
+    }
+    function compound_body_opener(s, kind) {
+        sub(/^[[:space:]]*/, "", s)
+        if (kind == "{") return (s ~ /^[{][[:space:]]*(#.*)?$/)
+        return (s ~ /^[(][[:space:]]*(#.*)?$/)
+    }
+    function compound_body_closer(s, kind) {
+        sub(/^[[:space:]]*/, "", s)
+        if (kind == "{") return (s ~ /^[}][[:space:]]*([;&|][[:space:]]*)?(#.*)?$/)
+        return (s ~ /^[)][[:space:]]*([;&|][[:space:]]*)?(#.*)?$/)
     }
 
     # Exemption markers. Each needs a reason; a bare marker is itself reported.
@@ -290,6 +330,11 @@ for f in "${files[@]}"; do
         # that carries a quiet flag. Every combination has the same hazard.
         if (!skip && hazardous_quiet_grep_pipeline(line))
             printf "%s:%d: `| grep -q` / `|& grep -q`; optional compound-command RHS does not prevent SIGPIPE from turning a MATCH into a failure\n", FILE, FNR
+        # R1b — a pipe whose brace/subshell RHS opens on one line and contains
+        # the quiet consumer on a later line. The opener/closer state below is
+        # intentionally narrower than shell parsing.
+        else if (!skip && compound_pipe_depth > 0 && leading_quiet_grep(line))
+            printf "%s:%d: quiet grep inside a multiline compound-command RHS; the upstream pipe can still SIGPIPE after a MATCH\n", FILE, FNR
         # R2 — a pipe feeding a grep whose options continue on the next line.
         else if (!skip && line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]+[^[:space:]|)\];&]+)*[[:space:]]*\\[[:space:]]*$/)
             printf "%s:%d: `| grep \\` — options continue on the next line; a quiet flag here would be the SIGPIPE shape\n", FILE, FNR
@@ -309,16 +354,31 @@ for f in "${files[@]}"; do
                  line ~ /(^|[[:space:]])(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:]]|$)/)
             printf "%s:%d: continued `| grep -q` pipeline — the quiet flag continues onto a third line\n", FILE, FNR
 
-        # One bit of state: a PIPED grep whose option list is still open across
-        # backslash continuations. This is the only cross-line state the guard
-        # keeps, and it tracks a formatting fact rather than shell grammar.
+        # A PIPED grep whose option list is still open across backslash
+        # continuations. Like compound_pipe_depth, this tracks formatting facts
+        # rather than attempting shell grammar.
         if (line ~ /\\[[:space:]]*$/ &&
             (grep_cont ||
+             (compound_pipe_depth > 0 && line ~ /^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]|$)/) ||
              (prev ~ /(^|[^|])\|[[:space:]]*\\?[[:space:]]*$/ && line ~ /^[[:space:]]*\|?[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]|$)/) ||
              line ~ /(^|[^|])\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]|]*[[:space:]]+)*((command|env|exec)[[:space:]]+([^[:space:]|)\];&]+[[:space:]]+)*)?grep([[:space:]]|$)/))
             grep_cont = 1
         else
             grep_cont = 0
+
+        if (compound_pipe_depth > 0) {
+            if (compound_body_opener(line, compound_pipe_kind))
+                compound_pipe_depth++
+            else if (compound_body_closer(line, compound_pipe_kind)) {
+                compound_pipe_depth--
+                if (compound_pipe_depth == 0) compound_pipe_kind = ""
+            }
+        }
+        new_compound_kind = compound_pipeline_opener(line)
+        if (new_compound_kind != "") {
+            compound_pipe_kind = new_compound_kind
+            compound_pipe_depth = 1
+        }
 
         prev = $0
     }

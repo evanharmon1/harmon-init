@@ -113,6 +113,46 @@ expect_flagged "stderr-inclusive pipe plus compound RHS is the same invariant" \
     "$(fixture pipe-stderr-subshell-rhs.sh "$body")" '|& grep -q'
 
 cat >"$body" <<'BODY'
+seq 100000 | {
+    grep -q 1
+}
+BODY
+expect_flagged "a multiline brace-group RHS retains pipeline state" \
+    "$(fixture multiline-brace-rhs.sh "$body")" 'multiline compound-command RHS'
+
+cat >"$body" <<'BODY'
+seq 100000 |& {
+    grep -q 1
+}
+BODY
+expect_flagged "a multiline brace-group RHS retains stderr-inclusive pipeline state" \
+    "$(fixture multiline-stderr-brace-rhs.sh "$body")" 'multiline compound-command RHS'
+
+cat >"$body" <<'BODY'
+seq 100000 | (
+    (
+        grep -q 1
+    )
+)
+BODY
+expect_flagged "nested multiline compound openers retain pipeline state" \
+    "$(fixture nested-multiline-compound-rhs.sh "$body")" 'multiline compound-command RHS'
+
+cat >"$body" <<'BODY'
+seq 10 | {
+    grep 1 >/dev/null
+}
+false || {
+    grep -q needle /dev/null
+}
+{
+    grep -q needle /dev/null
+}
+BODY
+expect_clean "non-quiet pipelines and unpiped/or-list compound groups stay safe" \
+    "$(fixture multiline-compound-controls.sh "$body")"
+
+cat >"$body" <<'BODY'
 seq 1 3 | grep --quiet 2
 seq 1 3 | grep -F -q 2
 BODY
@@ -682,6 +722,32 @@ if [ "$wrapped" -eq 141 ]; then
     ok "time wrapper: the exact bypass reproduces SIGPIPE 141"
 else
     bad "time wrapper: expected SIGPIPE 141, got $wrapped"
+fi
+
+multiline_brace=0
+(
+    set -o pipefail
+    seq 100000 | {
+        grep -q 1
+    }
+) || multiline_brace=$?
+if [ "$multiline_brace" -eq 141 ]; then
+    ok "multiline brace RHS: the exact bypass reproduces SIGPIPE 141"
+else
+    bad "multiline brace RHS: expected SIGPIPE 141, got $multiline_brace"
+fi
+
+multiline_stderr_brace=0
+(
+    set -o pipefail
+    seq 100000 |& {
+        grep -q 1
+    }
+) || multiline_stderr_brace=$?
+if [ "$multiline_stderr_brace" -eq 141 ]; then
+    ok "multiline |& brace RHS: the exact bypass reproduces SIGPIPE 141"
+else
+    bad "multiline |& brace RHS: expected SIGPIPE 141, got $multiline_stderr_brace"
 fi
 
 echo "==> the guard is wired to the real tree"
