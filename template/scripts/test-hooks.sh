@@ -31,7 +31,6 @@ done
 unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }

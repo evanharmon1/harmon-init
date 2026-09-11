@@ -32,7 +32,7 @@ if command -v code >/dev/null 2>&1; then
     # Desktop CLIs expose --open-url, while the remote CLI may accept and
     # ignore it with exit 0. Check the advertised capability before using it.
     code_help=""
-    if code_help="$(code --help 2>&1)" && grep -q -- '--open-url' <<<"$code_help"; then
+    if code_help="$(code --help 2>&1)" && grep -- '--open-url' <<<"$code_help" >/dev/null; then
         if code --open-url "$url"; then
             exit 0
         fi

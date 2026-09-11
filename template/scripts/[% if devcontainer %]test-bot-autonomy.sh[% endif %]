@@ -18,7 +18,6 @@ set -euo pipefail
 # design.md - Risks ("Forgetting to add oh-my-pi's unsupported entry...").
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "FAIL: $*" >&2
     exit 1
 }

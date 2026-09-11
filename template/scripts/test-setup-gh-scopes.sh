@@ -46,7 +46,6 @@ cp "${output_lib}" "${TMP}/repo/scripts/lib/output.sh"
 SUT="${TMP}/repo/scripts/setup-gh-scopes.sh"
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }

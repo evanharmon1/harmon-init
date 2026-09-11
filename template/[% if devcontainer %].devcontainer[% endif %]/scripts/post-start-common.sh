@@ -77,7 +77,7 @@ REPO_NAME="$(basename "$PWD")"
 conductor_status=""
 if command -v agent-deck &>/dev/null &&
     conductor_status="$(agent-deck conductor status "$REPO_NAME" 2>/dev/null)" &&
-    grep -qi "stopped" <<<"$conductor_status"; then
+    grep -i "stopped" <<<"$conductor_status" >/dev/null; then
     agent-deck session start "conductor-$REPO_NAME" 2>/dev/null &
     echo "==> Conductor $REPO_NAME started"
 fi

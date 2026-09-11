@@ -815,7 +815,7 @@ if [ "$stale_record" -eq 1 ]; then
     if ! prune_records="$(git worktree list --porcelain)"; then
         die "could not re-read the worktree registry before stale-record cleanup — refusing to remove anything"
     fi
-    if grep -qxF "worktree $tree" <<<"$prune_records"; then
+    if grep -xF "worktree $tree" <<<"$prune_records" >/dev/null; then
         if [ -d "$tree" ]; then
             die "$tree was recreated while this removal was running (another 'task worktree:new'?) — refusing to remove a worktree this run did not"
         fi
@@ -823,7 +823,7 @@ if [ "$stale_record" -eq 1 ]; then
         if ! prune_records="$(git worktree list --porcelain)"; then
             die "could not verify the worktree registry after stale-record cleanup — refusing to report success"
         fi
-        if grep -qxF "worktree $tree" <<<"$prune_records"; then
+        if grep -xF "worktree $tree" <<<"$prune_records" >/dev/null; then
             # `remove --force` is NOT enough for a locked record — git answers a
             # single force with "use 'remove -f -f' to override or unlock first" —
             # so the instruction leads with the unlock, which is the path that also

@@ -7,7 +7,6 @@ root_action="${repo}/.github/actions/setup/action.yml"
 template_action="${repo}/template/.github/actions/setup/action.yml.jinja"
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }
@@ -49,10 +48,8 @@ template_segment = "\n".join(
 ) + "\n"
 if root_segment != template_segment:
     raise SystemExit("root/template pinned lint-tool installer segments differ")
-# shell-robustness: begin-exempt — Python assertion text, not a shell pipeline
 if "| grep -q" in root_segment:
     raise SystemExit("version guard reintroduced the producer | grep -q hazard")
-# shell-robustness: end-exempt — resume scanning shell fixture text
 for expected in (
     "X64|x86_64)",
     "ARM64|arm64|aarch64)",

@@ -9,7 +9,6 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     [ -f "$tmp/out" ] && sed 's/^/    /' "$tmp/out" >&2
     exit 1

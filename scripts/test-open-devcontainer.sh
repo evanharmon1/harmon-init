@@ -20,7 +20,6 @@ launcher="scripts/open-devcontainer.sh"
 }
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }

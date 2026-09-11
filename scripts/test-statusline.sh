@@ -26,7 +26,6 @@ command -v jq >/dev/null 2>&1 || {
 bash_bin=$(command -v bash)
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }

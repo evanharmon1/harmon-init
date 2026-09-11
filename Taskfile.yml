@@ -185,10 +185,9 @@ tasks:
       - ./scripts/lint-hygiene.sh {{.CLI_ARGS}}
 
   lint:shell-robustness:
-    # Two idioms shellcheck does not model, both of which report a success as a
-    # failure: producer-to-quiet-grep pipelines under pipefail, and a test
-    # reporter whose own exit status lands inside the assertion.
-    desc: Shell idioms whose exit status lies (quiet grep pipelines, reporters)
+    # A lexical production invariant shellcheck does not model: quiet grep is
+    # forbidden because any future producer pipeline makes it unsafe.
+    desc: Ban quiet-mode grep in production shell scripts
     cmds:
       - ./scripts/lint-shell-robustness.sh {{.CLI_ARGS}}
 
@@ -538,7 +537,7 @@ tasks:
       - ./scripts/test-lint-hygiene.sh
 
   test:lint-shell-robustness:
-    desc: Unit-test the shell robustness static guard
+    desc: Unit-test the production quiet-grep guard
     cmds:
       - ./scripts/test-lint-shell-robustness.sh
 

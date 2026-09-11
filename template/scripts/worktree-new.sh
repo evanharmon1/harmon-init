@@ -516,7 +516,7 @@ cleanup() {
         if [ "$branch_owned" -eq 0 ] &&
             [ "$branch_created" -eq 1 ] && [ "$tree_registered_before" -eq 0 ] &&
             worktree_records="$(git worktree list --porcelain)" &&
-            grep -qxF "worktree $tree" <<<"$worktree_records"; then
+            grep -xF "worktree $tree" <<<"$worktree_records" >/dev/null; then
             branch_is_ours=1
         fi
         # `rmdir`, never `rm -rf`. What this run created is either a worktree
@@ -545,7 +545,7 @@ cleanup() {
         if ! rollback_worktree_records="$(git worktree list --porcelain)"; then
             rollback_tree_gone=0
             echo "worktree:new: could not verify the worktree registry after rollback — leaving branch '$branch' alone" >&2
-        elif grep -qxF "worktree $tree" <<<"$rollback_worktree_records"; then
+        elif grep -xF "worktree $tree" <<<"$rollback_worktree_records" >/dev/null; then
             rollback_tree_gone=0
             echo "worktree:new: $tree is still registered after rollback — clear it with 'task worktree:rm -- $name'" >&2
         fi
@@ -564,7 +564,7 @@ cleanup() {
             # HEAD (challenge round 3).
             if [ "$rollback_tree_gone" -eq 0 ]; then
                 echo "worktree:new: leaving branch '$branch' alone — its worktree could not be removed and still has it checked out" >&2
-            elif grep -qxF "branch refs/heads/$branch" <<<"$rollback_worktree_records"; then
+            elif grep -xF "branch refs/heads/$branch" <<<"$rollback_worktree_records" >/dev/null; then
                 # A non-cooperating client — a raw `git worktree add`,
                 # outside the branch lock — can attach the just-published
                 # branch before this run's own attach fails on it, and
@@ -1030,7 +1030,7 @@ EOF
         printf 'chore: worktree hook probe\n' >"$probe_dir/msg"
         (cd "$tree" && LEFTHOOK_BIN="$probe_dir/probe" "$hooks_dir/$hook" "$probe_dir/msg") ||
             die "the $hook hook at $hooks_dir failed to execute from $tree"
-        grep -q "^run $hook" "$marker" 2>/dev/null ||
+        grep "^run $hook" "$marker" 2>/dev/null >/dev/null ||
             die "the $hook hook did not delegate to lefthook from $tree — reinstall with 'task install:hooks'"
     done
     echo "==> Hooks verified: git resolves $hooks_dir and$configured_hooks fire in the new tree"

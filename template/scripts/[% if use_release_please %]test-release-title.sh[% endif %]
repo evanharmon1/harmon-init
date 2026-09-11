@@ -8,7 +8,6 @@ cd "$(dirname "$0")/.."
 guard="./scripts/require-release-title.sh"
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }

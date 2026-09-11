@@ -91,7 +91,7 @@ if [ -z "$remotes" ]; then
     echo "clean:branches: no remote configured — no merge evidence is possible; nothing to do."
     exit 0
 fi
-if grep -qx origin <<<"$remotes"; then
+if grep -x origin <<<"$remotes" >/dev/null; then
     remote=origin
 elif [ "$(printf '%s\n' "$remotes" | wc -l | tr -d ' ')" = "1" ]; then
     remote="$remotes"
@@ -423,7 +423,7 @@ delete_one() (
         echo "SKIP  $branch — could not re-read the worktree registry before deletion"
         exit 3
     fi
-    if grep -Fxq "branch refs/heads/$branch" <<<"$checkout_records"; then
+    if grep -Fx "branch refs/heads/$branch" <<<"$checkout_records" >/dev/null; then
         echo "SKIP  $branch — became checked out in a worktree since classification"
         exit 3
     fi

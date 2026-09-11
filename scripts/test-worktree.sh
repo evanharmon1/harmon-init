@@ -55,7 +55,6 @@ done
 unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 fail() {
-    # shell-robustness: ok — always exits, so its status is never read
     echo "TEST FAIL: $*" >&2
     exit 1
 }
@@ -3044,7 +3043,7 @@ chmod +x "$fixture/scripts/worktree-new.sh"
 # of its `rm -rf`.
 echo "==> the EXIT trap turns a swallowed timeout into a failing suite"
 # Captured, never piped: Bash 3.2 resets traps in a pipeline's subshell, so
-# `trap -p EXIT | grep -q …` reads an empty trap list and fails even when the # shell-robustness: ok — prose describing the shape, not code
+# `trap -p EXIT | grep -q …` reads an empty trap list and fails even when the
 # trap is wired (harmon-init#844). `$(trap -p EXIT)` reports the parent
 # shell's traps on every supported Bash.
 exit_trap="$(trap -p EXIT)"
