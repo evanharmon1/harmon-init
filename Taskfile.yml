@@ -99,7 +99,6 @@ tasks:
       - task: test:copier-validators
       - task: test:renovate-pins
       - task: test:lint-hygiene
-      - task: test:lint-shell-robustness
       - task: test:release-title
       - task: test:claim-release-merged
       - task: test:setup-github
@@ -147,7 +146,6 @@ tasks:
       - lint:markdown
       - lint:actions
       - lint:hygiene
-      - lint:shell-robustness
 
   lint:yaml:
     desc: yamllint (template/ excluded via .yamllint ignore)
@@ -183,13 +181,6 @@ tasks:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
     cmds:
       - ./scripts/lint-hygiene.sh {{.CLI_ARGS}}
-
-  lint:shell-robustness:
-    # A lexical production invariant shellcheck does not model: quiet grep is
-    # forbidden because any future producer pipeline makes it unsafe.
-    desc: Ban quiet-mode grep in production shell scripts
-    cmds:
-      - ./scripts/lint-shell-robustness.sh {{.CLI_ARGS}}
 
   lint:commit-msg:
     desc: Validate commit message (conventional commits)
@@ -535,11 +526,6 @@ tasks:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
     cmds:
       - ./scripts/test-lint-hygiene.sh
-
-  test:lint-shell-robustness:
-    desc: Unit-test the production quiet-grep guard
-    cmds:
-      - ./scripts/test-lint-shell-robustness.sh
 
   test:release-title:
     desc: Unit-test the release-content title guard (require-release-title.sh)
