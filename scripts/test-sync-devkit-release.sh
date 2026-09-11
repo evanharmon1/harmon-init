@@ -410,6 +410,7 @@ start() {
     cases=$((cases + 1))
     reset_stub_state
     echo "==> $1"
+    return 0
 }
 
 logged() { grep -qF -- "$1" "$STUB_LOG"; }
@@ -816,11 +817,11 @@ STUB_SYNC_ADD_SKILL="issue-title-support"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "a new managed skill's portable link was rejected: $(cat "$LAST_OUT")"
 pushed_tree="$(git -C "$fix.origin.git" ls-tree -r --name-only "$SYNC_BRANCH")"
-printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/issue-title-support' ||
+grep -qx '.agents/skills/issue-title-support' <<<"$pushed_tree" ||
     fail "the new skill's portable link is missing from the pushed commit"
-printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/standardize-repo' ||
+grep -qx '.agents/skills/standardize-repo' <<<"$pushed_tree" ||
     fail "an existing skill's portable link is missing from the pushed commit"
-printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/local-only' ||
+grep -qx '.agents/skills/local-only' <<<"$pushed_tree" ||
     fail "the local skill's portable link is missing from the pushed commit"
 
 start "a nested path beneath a managed portable link fails closed"
@@ -850,9 +851,9 @@ AGENT_SKILLS_DIR="./.agents/skills"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "a noncanonical AGENT_SKILLS_DIR spelling was rejected: $(cat "$LAST_OUT")"
 pushed_tree="$(git -C "$fix.origin.git" ls-tree -r --name-only "$SYNC_BRANCH")"
-printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/issue-title-support' ||
+grep -qx '.agents/skills/issue-title-support' <<<"$pushed_tree" ||
     fail "the new skill's portable link is missing under a noncanonical pdir: $(cat "$LAST_OUT")"
-printf '%s\n' "$pushed_tree" | grep -qx '.agents/skills/standardize-repo' ||
+grep -qx '.agents/skills/standardize-repo' <<<"$pushed_tree" ||
     fail "an existing skill's portable link is missing under a noncanonical pdir: $(cat "$LAST_OUT")"
 
 start "an AGENT_SKILLS_DIR overlapping the skills dest fails closed"

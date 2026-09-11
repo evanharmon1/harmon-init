@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-pinned="$(sed -nE 's/^[[:space:]]*OPENSPEC_VERSION:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' Taskfile.yml | head -1)"
+pinned="$(sed -nE 's/^[[:space:]]*OPENSPEC_VERSION:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' Taskfile.yml | sed -n '1p')"
 [ -n "$pinned" ] || {
     echo "FAIL: could not read OPENSPEC_VERSION from Taskfile.yml" >&2
     exit 1
@@ -29,7 +29,7 @@ checked=0
 # committed is a real "forgot to regenerate" instance.
 while IFS= read -r f; do
     checked=$((checked + 1))
-    found="$(sed -nE 's/^[[:space:]]*generatedBy:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$f" | head -1)"
+    found="$(sed -nE 's/^[[:space:]]*generatedBy:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$f" | sed -n '1p')"
     if [ "$found" != "$pinned" ]; then
         echo "FAIL: ${f} declares generatedBy \"${found}\", pinned OPENSPEC_VERSION is \"${pinned}\" — run 'task spec:update' after bumping the pin" >&2
         fail=1

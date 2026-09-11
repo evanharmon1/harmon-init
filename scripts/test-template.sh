@@ -322,36 +322,36 @@ assert_stage_ledger() {
     block="$(grep -A4 -F '| 📍 Ledger | |' "$file" || true)"
     [ "$(printf '%s\n' "$block" | wc -l | tr -d ' ')" = "5" ] ||
         err "$label stage-ledger table is not a contiguous 5-line block (#965)"
-    printf '%s\n' "$block" | sed -n 2p | grep -qx '|---|---|' ||
+    grep -qx '|---|---|' < <(sed -n 2p <<<"$block") ||
         err "$label stage-ledger table lacks its header rule (#965)"
-    printf '%s\n' "$block" | sed -n 3p | grep -qE '^\| \*\*Stage\*\* \| .*round [0-9]+/[0-9]+' ||
+    grep -qE '^\| \*\*Stage\*\* \| .*round [0-9]+/[0-9]+' < <(sed -n 3p <<<"$block") ||
         err "$label stage-ledger Stage row does not show round n/cap (#965)"
-    printf '%s\n' "$block" | sed -n 4p | grep -qF '| **Round** |' ||
+    grep -qF '| **Round** |' < <(sed -n 4p <<<"$block") ||
         err "$label stage-ledger Round row is missing or out of order (#965)"
-    printf '%s\n' "$block" | sed -n 5p | grep -qF '| **Next** |' ||
+    grep -qF '| **Next** |' < <(sed -n 5p <<<"$block") ||
         err "$label stage-ledger Next row is missing or out of order (#965)"
     # Profile coherence: a copy without the second-model reviewer must not tell
     # the agent to run a task its Taskfile does not define.
     if ! grep -qE '^  challenge:' "$taskfile"; then
-        ! printf '%s\n' "$block" | grep -qF 'task challenge' ||
+        ! grep -qF 'task challenge' <<<"$block" ||
             err "$label stage-ledger example cites task challenge in a profile without it (#965)"
     fi
     # Prose wraps, so flatten before matching the multi-word phrases.
     flat="$(tr '\n' ' ' <"$file")"
-    printf '%s' "$flat" | grep -qF 'round n/cap' ||
+    grep -qF 'round n/cap' <<<"$flat" ||
         err "$label stage ledger does not show the round against its cap (#965)"
-    printf '%s' "$flat" | grep -qF 'silently returning to the default sequence is forbidden' ||
+    grep -qF 'silently returning to the default sequence is forbidden' <<<"$flat" ||
         err "$label stage ledger lost the maintainer-override rule (#965)"
-    printf '%s' "$flat" | grep -qF 'counted and capped separately and never combined' ||
+    grep -qF 'counted and capped separately and never combined' <<<"$flat" ||
         err "$label stage ledger lost the independent-caps rule (#965)"
-    printf '%s' "$flat" | grep -qF 'not as a disposition' ||
+    grep -qF 'not as a disposition' <<<"$flat" ||
         err "$label stage ledger lets an override settle an open P0/P1 (#965)"
     # The complete legend: every glyph keeps its one meaning.
     for glyph in '🔨 implement' '🧪 verify' '⚔️ challenge' '🔍 review' '🏗️ ci' \
         '🚢 integrate' '✅ clean/green' '🔴 P0/P1 open' '🟡 P2 deferred' \
         '⚪ P3 noted' '⏳ waiting on CI or a reviewer' '⛔ blocked/escalating' \
         '🏁 stage converged'; do
-        printf '%s' "$flat" | grep -qF "$glyph" ||
+        grep -qF "$glyph" <<<"$flat" ||
             err "$label stage-ledger legend is missing '$glyph' (#965)"
     done
 }
@@ -437,7 +437,7 @@ fi
 # answers file that actually exists.
 grep -qE '^ *COPIER_ANSWERS_FILE: ' Taskfile.yml ||
     err "test:registry-docs does not supply the configured Copier answers-file name"
-rendered_answers="$(sed -n 's/^ *COPIER_ANSWERS_FILE: //p' Taskfile.yml | head -n1 | tr -d '"')"
+rendered_answers="$(sed -n 's/^ *COPIER_ANSWERS_FILE: //p' Taskfile.yml | sed -n '1p' | tr -d '"')"
 [ -f "$rendered_answers" ] ||
     err "test:registry-docs names a Copier answers file that does not exist: '${rendered_answers}'"
 if have task; then
@@ -564,8 +564,8 @@ fi
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"
 ! grep -qi 'snyk' Brewfile || err "Brewfile must not install optional Snyk"
 if grep -q 'brew "pnpm"' Brewfile; then
-    sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml |
-        grep -q -- '- ./scripts/bootstrap-pnpm.sh' ||
+    grep -q -- '- ./scripts/bootstrap-pnpm.sh' \
+        < <(sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml) ||
         err "Node install must invoke pnpm ownership migration"
     [ -x scripts/bootstrap-pnpm.sh ] ||
         err "Node bootstrap pnpm migration helper is missing or not executable"
@@ -667,7 +667,7 @@ if [ -f .github/workflows/codeql.yml ]; then
     for language in javascript-typescript python; do
         answer_has=false
         workflow_has=false
-        printf '%s\n' "$answer_languages" | grep -q -- "- ${language}" && answer_has=true
+        grep -q -- "- ${language}" <<<"$answer_languages" && answer_has=true
         grep -q -- "- ${language}" .github/workflows/codeql.yml && workflow_has=true
         [ "$answer_has" = "$workflow_has" ] ||
             err "CodeQL workflow matrix does not match recorded language '${language}'"
@@ -838,8 +838,8 @@ if [ -d .github/workflows ]; then
         # Also assert the implementation: `yq` is two different programs, and
         # the Python one (kislyuk) does not understand these expressions, so it
         # would error on every workflow and, before this, pass everything.
-        if ! yq --version 2>&1 | grep -q 'github.com/mikefarah/yq'; then
-            err "yq on PATH is not mikefarah/yq — the checkout audit cannot evaluate: $(yq --version 2>&1 | head -1)"
+        if ! grep -q 'github.com/mikefarah/yq' < <(yq --version 2>&1); then
+            err "yq on PATH is not mikefarah/yq — the checkout audit cannot evaluate: $(yq --version 2>&1 | sed -n '1p')"
         else
             yq_count() { # FILE EXPR -> count, or non-zero with the error on stderr
                 _yqc_out=$(yq -r "$2" "$1" 2>&1) || {
@@ -1130,7 +1130,7 @@ minimal) # project_management=github on a PERSONAL account, use_foreman=false
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
-    head -1 docs/project-management.md | grep -qx '# Linear' || err "Linear project-management.md not titled 'Linear'"
+    grep -qx '# Linear' < <(head -1 docs/project-management.md) || err "Linear project-management.md not titled 'Linear'"
     grep -q 'TODO' docs/project-management.md || err "Linear project-management.md missing TODO marker"
     [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management!=github for profile '$profile'"
     [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management!=github for profile '$profile'"
@@ -1173,19 +1173,19 @@ esac
 sca_row="$(grep '^| \*\*SCA\*\*' docs/architecture/security.md || true)"
 case "$profile" in
 iac)
-    printf '%s\n' "$sca_row" | grep -q 'pip-audit' || err "Python SCA row is missing pip-audit"
-    ! printf '%s\n' "$sca_row" | grep -q 'pnpm audit' || err "Python-only SCA row mentions pnpm audit"
+    grep -q 'pip-audit' <<<"$sca_row" || err "Python SCA row is missing pip-audit"
+    ! grep -q 'pnpm audit' <<<"$sca_row" || err "Python-only SCA row mentions pnpm audit"
     ;;
 web | webapp | meta)
-    printf '%s\n' "$sca_row" | grep -q 'pnpm audit' || err "Node SCA row is missing pnpm audit"
-    ! printf '%s\n' "$sca_row" | grep -q 'pip-audit' || err "Node-only SCA row mentions pip-audit"
+    grep -q 'pnpm audit' <<<"$sca_row" || err "Node SCA row is missing pnpm audit"
+    ! grep -q 'pip-audit' <<<"$sca_row" || err "Node-only SCA row mentions pip-audit"
     ;;
 full)
-    printf '%s\n' "$sca_row" | grep -q 'pnpm audit' || err "combined SCA row is missing pnpm audit"
-    printf '%s\n' "$sca_row" | grep -q 'pip-audit' || err "combined SCA row is missing pip-audit"
+    grep -q 'pnpm audit' <<<"$sca_row" || err "combined SCA row is missing pnpm audit"
+    grep -q 'pip-audit' <<<"$sca_row" || err "combined SCA row is missing pip-audit"
     ;;
 minimal)
-    ! printf '%s\n' "$sca_row" | grep -Eq 'pnpm audit|pip-audit' || err "tool-free SCA row names an ecosystem audit"
+    ! grep -Eq 'pnpm audit|pip-audit' <<<"$sca_row" || err "tool-free SCA row names an ecosystem audit"
     ;;
 esac
 
@@ -1364,32 +1364,32 @@ iac | full)
     [ -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh missing for use_foreman=true"
     grep -q 'label-registry-render.mjs' scripts/setup-github-labels.sh ||
         err "label script does not render from the label registry"
-    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:approved|' ||
+    grep -q '^foreman:approved|' < <(node scripts/label-registry-render.mjs labels --foreman) ||
         err "rendered label set lacks the foreman protocol arming labels"
-    node scripts/label-registry-render.mjs labels --foreman | grep -q '^foreman:claude|' ||
+    grep -q '^foreman:claude|' < <(node scripts/label-registry-render.mjs labels --foreman) ||
         err "rendered label set does not include the registry's foreman:claude adapter selector"
     grep -q 'setup-github-labels.sh --repo "{{.REPO}}" --foreman' Taskfile.yml || err "setup:github-labels does not pass --foreman (use_foreman=true)"
     if [ "$profile" = "iac" ]; then
         checklist_flat="$(tr -s '[:space:]' ' ' <docs/CHECKLIST.md)"
-        printf '%s' "$checklist_flat" | grep -Fq 'Labels: run `task setup:github-labels`' ||
+        grep -Fq 'Labels: run `task setup:github-labels`' <<<"$checklist_flat" ||
             err "CHECKLIST omits label setup for project_management=none + use_foreman=true"
-        printf '%s' "$checklist_flat" | grep -Fq 'Retire any legacy `agent:*` claim labels' ||
+        grep -Fq 'Retire any legacy `agent:*` claim labels' <<<"$checklist_flat" ||
             err "CHECKLIST omits legacy-label migration for project_management=none + use_foreman=true"
-        printf '%s' "$checklist_flat" | grep -Fq 'An exactly-full manual result is capped' ||
+        grep -Fq 'An exactly-full manual result is capped' <<<"$checklist_flat" ||
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
-        ! printf '%s' "$checklist_flat" | grep -Fq '[project-management.md](project-management.md)' ||
+        ! grep -Fq '[project-management.md](project-management.md)' <<<"$checklist_flat" ||
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
-        ! printf '%s' "$checklist_flat" | grep -Fq 'ADR 0005' ||
+        ! grep -Fq 'ADR 0005' <<<"$checklist_flat" ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
-        printf '%s' "$checklist_flat" | grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' ||
+        grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' <<<"$checklist_flat" ||
             err "CHECKLIST loses the Copilot broker/default-family distinction"
-        printf '%s' "$checklist_flat" | grep -Fq 'and is never a guessed destination' ||
+        grep -Fq 'and is never a guessed destination' <<<"$checklist_flat" ||
             err "CHECKLIST permits treating the Copilot broker default as migration evidence"
-        printf '%s' "$checklist_flat" | grep -Fq 'For `suggest:copilot`, there is no claim/session record: re-express each' ||
+        grep -Fq 'For `suggest:copilot`, there is no claim/session record: re-express each' <<<"$checklist_flat" ||
             err "CHECKLIST loses the suggestion-specific Copilot handling"
-        printf '%s' "$checklist_flat" | grep -Fq 'For `claim:copilot`,' ||
+        grep -Fq 'For `claim:copilot`,' <<<"$checklist_flat" ||
             err "CHECKLIST loses the per-record Copilot claim handling"
-        printf '%s' "$checklist_flat" | grep -Fq 'use `claim:mai` only when the record confirms' ||
+        grep -Fq 'use `claim:mai` only when the record confirms' <<<"$checklist_flat" ||
             err "CHECKLIST permits guessing MAI for a Copilot claim"
     fi
     ! grep -q '^review_sender_trust\|^required_review_bots\|^require_codex_cloud_review' .foreman.toml ||
@@ -1617,7 +1617,7 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
         err "$claude_wf is missing"
         continue
     }
-    ! awk '/^on:/,/^jobs:/' "$claude_wf_path" | grep -q 'labeled' ||
+    ! grep -q 'labeled' < <(awk '/^on:/,/^jobs:/' "$claude_wf_path") ||
         err "$claude_wf still accepts a labeled event trigger"
     ! grep -q 'label_trigger:' "$claude_wf_path" ||
         err "$claude_wf still passes label_trigger to claude-code-action"
@@ -1675,8 +1675,8 @@ for wf in .github/workflows/*.yml; do
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
 done
 build_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/build.yml)"
-if printf '%s\n' "$build_trigger" | grep -q 'types:' &&
-    ! printf '%s\n' "$build_trigger" | grep -Fq 'types: [opened, edited, synchronize, reopened]'; then
+if grep -q 'types:' <<<"$build_trigger" &&
+    ! grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$build_trigger"; then
     err "build.yml pull_request types omit a draft-closing-keyword trigger"
 fi
 
@@ -1692,7 +1692,7 @@ if [ "$profile" = "minimal" ]; then
     [ ! -f scripts/devcontainer-smoke.sh ] || err "scripts/devcontainer-smoke.sh rendered but devcontainer=false"
     ! grep -q 'test:devcontainer:permissions' Taskfile.yml || err "test:devcontainer references rendered but devcontainer=false"
     grep -Fq '  test:hooks:' Taskfile.yml || err "test:hooks is missing with devcontainer=false"
-    awk '/^  verify:/,/^  # ── Quality Checks/' Taskfile.yml | grep -Fq 'task: test:hooks' ||
+    grep -Fq 'task: test:hooks' < <(awk '/^  verify:/,/^  # ── Quality Checks/' Taskfile.yml) ||
         err "verify does not run test:hooks with devcontainer=false"
     grep -Fq 'Codex adapter fixtures skipped (devcontainer assets absent)' scripts/test-hooks.sh ||
         err "test:hooks does not skip Codex adapter fixtures with devcontainer=false"
@@ -1780,7 +1780,7 @@ else
         err "bot post-create does not call bot-autonomy.sh verify"
     grep -Fq 'bot-autonomy.sh verify' .devcontainer/post-start.sh ||
         err "bot post-start does not call bot-autonomy.sh verify"
-    if grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh | grep -Fq 'bot-autonomy.sh'; then
+    if grep -Fq 'bot-autonomy.sh' < <(grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh); then
         err "human dev profile calls bot-autonomy.sh (bot-only)"
     fi
     grep -q -- '- task: test:devcontainer:permissions' Taskfile.yml || err "ci task is missing the devcontainer permission assertion"
@@ -1894,8 +1894,8 @@ if [ -d .devcontainer ]; then
     # but must never apply the bot's always-proceed policy (antigravity-settings.json).
     # Strip comment lines first so an explanatory comment naming the bot file is
     # not a false match; the regex then matches the bot filename but not "-dev.json".
-    if grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh |
-        grep -Eq 'antigravity-settings\.json'; then
+    if grep -Eq 'antigravity-settings\.json' \
+        < <(grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh); then
         err "human dev profile applies the bot-only always-proceed Antigravity policy"
     fi
 fi
