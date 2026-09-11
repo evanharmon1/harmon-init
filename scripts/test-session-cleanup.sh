@@ -122,6 +122,10 @@ if [ "$cmd" = pr ] && [ "$sub" = list ]; then
             if [ -n "${GH_STUB_CHECKOUT:-}" ] && [ "$head_filter" = "$GH_STUB_CHECKOUT" ]; then
                 git worktree add -q "$GH_STUB_CHECKOUT_DIR" "$head_filter"
             fi
+            if [ -n "${GH_STUB_ARM_WORKTREE_LIST_FAIL:-}" ] &&
+                [ "$head_filter" = "$GH_STUB_ARM_WORKTREE_LIST_FAIL" ]; then
+                : >"$GH_STUB_WORKTREE_LIST_MARKER"
+            fi
             # Simulate a concurrent fetch of a REWRITTEN default: move both
             # the origin's main and the local tracking ref to a divergent
             # commit built on main~1 (excludes anything merged last).
@@ -526,6 +530,45 @@ expect_contains "$race_out" "became checked out in a worktree since classificati
 branch_exists sq-race || fail "race: sq-race deleted although a worktree claimed it mid-run"
 echo "ok: delete-phase worktree re-check catches a mid-run checkout"
 
+# ── Case E2b: delete-phase registry read failure refuses deletion ───────────
+
+enum_tip="$(make_branch sq-enumfail enumfail.txt)"
+(
+    cd "$fixture"
+    echo enumfail >enumfail.txt
+    git add enumfail.txt
+    git commit -qm "squash of sq-enumfail"
+    git push -q origin main
+)
+retire_remote sq-enumfail
+printf '%s\t%s\t%s\t%s\n' sq-enumfail "$enum_tip" 115 main >>"$GH_STUB_PRS"
+
+enum_git_bin="$test_tmp/enum-git-bin"
+mkdir -p "$enum_git_bin"
+enum_real_git="$(command -v git)"
+enum_marker="$test_tmp/enum-worktree-list-fail"
+cat >"$enum_git_bin/git" <<SHIM
+#!/bin/sh
+if [ -e "$enum_marker" ] && [ "\${1:-}" = "worktree" ] &&
+    [ "\${2:-}" = "list" ] && [ "\${3:-}" = "--porcelain" ]; then
+    exit 78
+fi
+exec "$enum_real_git" "\$@"
+SHIM
+chmod +x "$enum_git_bin/git"
+enum_out="$(cd "$fixture" && PATH="$enum_git_bin:$PATH" CLEAN_PR_LIMIT=1 \
+    GH_STUB_ARM_WORKTREE_LIST_FAIL=sq-enumfail \
+    GH_STUB_WORKTREE_LIST_MARKER="$enum_marker" \
+    bash scripts/clean-branches.sh --delete 2>&1)" ||
+    fail "registry-failure delete run exited nonzero: $enum_out"
+expect_contains "$enum_out" "could not re-read the worktree registry before deletion" \
+    "registry failure: delete-phase re-check refused"
+branch_exists sq-enumfail ||
+    fail "registry failure: sq-enumfail was deleted without a complete worktree list"
+rm -f "$enum_marker"
+git -C "$fixture" branch -D sq-enumfail >/dev/null 2>&1
+echo "ok: delete-phase worktree enumeration failure refuses branch deletion"
+
 # ── Case E3: a held branch lifecycle lock refuses the deletion ─────────────
 # The lock is the serialization boundary shared with worktree:new/rm; an
 # ownerless entry always refuses (crash-vs-suspension is undecidable), which
@@ -674,14 +717,14 @@ fi
 expect_contains "$prune_out" "KEPT  refs/session-cleanup/pin/wt-det" "record prune: orphan commit's pin kept and reported"
 expect_contains "$prune_out" "git update-ref -d 'refs/session-cleanup/pin/wt-det' $det_sha" "record prune: drop remedy is compare-and-delete, immune to record-name reuse"
 worktrees_admin="$(git -C "$fixture" rev-parse --path-format=absolute --git-common-dir)/worktrees"
-if ls "$worktrees_admin" 2>/dev/null | grep -Eq '^(wt-det|wt-br)$'; then
+if grep -Eq '^(wt-det|wt-br)$' < <(ls "$worktrees_admin" 2>/dev/null); then
     fail "record prune: stale records survived the prune"
 fi
 [ "$(git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-det)" = "$det_sha" ] ||
     fail "record prune: pin does not hold the detached commit"
 git -C "$fixture" rev-parse --quiet --verify refs/session-cleanup/pin/wt-live >/dev/null &&
     fail "record prune: redundant pin for a live worktree was kept"
-if git -C "$fixture" fsck --unreachable 2>/dev/null | grep -q "$det_sha"; then
+if grep -q "$det_sha" < <(git -C "$fixture" fsck --unreachable 2>/dev/null); then
     fail "record prune: detached commit became unreachable despite the pin"
 fi
 echo "ok: record prune pins an orphan detached commit through the prune"

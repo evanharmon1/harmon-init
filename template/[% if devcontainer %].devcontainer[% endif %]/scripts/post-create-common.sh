@@ -81,8 +81,10 @@ reconcile_workspace_permissions() {
     # another repository path) does not satisfy the workspace's own entry. It
     # is written only after the permission repair succeeds, so a failed
     # lifecycle never leaves a trusted-but-unusable checkout.
-    if ! git config --file "$env_gitconfig" --get-all safe.directory 2>/dev/null |
-        grep -Fqx "$workspace_root"; then
+    safe_directories=""
+    if ! safe_directories="$(git config --file "$env_gitconfig" \
+        --get-all safe.directory 2>/dev/null)" ||
+        ! grep -Fx "$workspace_root" <<<"$safe_directories" >/dev/null; then
         git config --file "$env_gitconfig" --add safe.directory "$workspace_root" || return 1
     fi
 
@@ -389,7 +391,7 @@ echo "==> Wiring up shell aliases/functions source line..."
 # works regardless of which shell is active (scripts still use bash).
 for rcfile in ~/.bashrc ~/.zshrc; do
     touch "$rcfile"
-    if ! grep -Fqx "${PROFILE_SOURCE_LINE}" "$rcfile"; then
+    if ! grep -Fx "${PROFILE_SOURCE_LINE}" "$rcfile" >/dev/null; then
         {
             echo ""
             echo "# Added by devcontainer post-create"

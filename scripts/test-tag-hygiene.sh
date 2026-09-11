@@ -57,7 +57,7 @@ while IFS= read -r tag; do
     [ -n "$tag" ] || continue
     checked=$((checked + 1))
     # `grep -E`, not `grep -P`: BSD grep has no -P.
-    if ! printf '%s\n' "$tag" | grep -qE "$RELEASE_TAG_RE"; then
+    if ! grep -qE "$RELEASE_TAG_RE" <<<"$tag"; then
         bad="${bad}${bad:+ }${tag}"
     fi
 done < <(git tag --points-at "$selected_commit")

@@ -84,7 +84,7 @@ while IFS= read -r target; do
         [ -n "$link" ] || continue
         dest=$(readlink "$link") || continue
         [ -n "$dest" ] || continue
-        if printf '%s\n' "$dest" | grep -qEi "$PATTERN"; then
+        if grep -qEi "$PATTERN" <<<"$dest"; then
             echo "FAIL: ${link} is a symlink to ${dest}" >&2
             fail=1
         fi

@@ -30,6 +30,7 @@ cleanup() {
     if [ -e "$tmp" ]; then
         echo "test-devcontainer-changed: cleanup left $tmp after ${cleanup_attempt} attempts" >&2
     fi
+    return 0
 }
 
 on_exit() {

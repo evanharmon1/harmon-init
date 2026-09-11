@@ -26,7 +26,7 @@ has_entries() {
     local dir="$1"
     shift
     [ -d "$dir" ] || return 1
-    find "$dir" -mindepth 1 -maxdepth 1 "$@" -print -quit 2>/dev/null | grep -q .
+    grep . < <(find "$dir" -mindepth 1 -maxdepth 1 "$@" -print -quit 2>/dev/null) >/dev/null
 }
 
 if ! has_entries openspec/changes -not -name archive && ! has_entries openspec/specs; then

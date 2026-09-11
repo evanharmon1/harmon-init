@@ -279,7 +279,7 @@ agents_dest_from_manifest() {
         return 0
     fi
     sed -n '/^agents:/,$p' "$ROOT_MANIFEST" |
-        sed -n 's/^[[:space:]]*dest:[[:space:]]*//p' | head -n 1 |
+        sed -n 's/^[[:space:]]*dest:[[:space:]]*//p' | sed -n '1p' |
         sed 's/[[:space:]]*#.*//' | tr -d '"'"'"''
 }
 

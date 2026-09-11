@@ -139,8 +139,14 @@ docker run --rm "$overlay" sh -eu -c '
     [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
-    infocmp -1 xterm-ghostty >/dev/null
-    infocmp -1 xterm-ghostty | grep -q "sgr=.*%p5%t;2"
+    terminfo="$(infocmp -1 xterm-ghostty)"
+    case "$terminfo" in
+        *"sgr="*"%p5%t;2"*) ;;
+        *)
+            echo "xterm-ghostty sgr capability is missing the dim branch" >&2
+            exit 1
+            ;;
+    esac
 '
 
 # LEGACY OVERLAY — the compatibility guarantee, retained.
