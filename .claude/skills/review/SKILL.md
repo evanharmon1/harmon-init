@@ -109,14 +109,18 @@ computation immediately and advance only when its disabled-stage verdict says
 `action: advance`; any other result is a blocker. A zero cap disables the
 stage—it is not permission to manufacture a clean round.
 
-The dispatcher is a capability boundary: dispatch a challenger or reviewer
-only through a harness that provides a read-only reviewed snapshot (the
-captured diff, source content, and applicable design record) while denying
-shell, git, `gh`, network write, and external credentials, except for the
-result-return channel. If that read/write split cannot be installed and
-verified, refuse the dispatch and record a blocker; prose in the agent file is
-never a substitute for this boundary. Give every pass the captured base/head,
-run identity, policy, finder slot, and that snapshot. Include the complete
+Runtime isolation is optional; its absence alone is not a dispatch blocker.
+The challenger or reviewer still stays within its declared role scope and gets
+the captured base/head plus access to the source and diff it must review. For a
+committed round, require every source and diff read to resolve from those
+captured Git revisions, never mutable worktree bytes. For an orchestrated
+`codex-cli` pass, give `scripts/codex-review.sh` the resolved values as leading
+`--model <model> --reasoning <level>` arguments. Pass each dispatch the
+remaining whole-run wall-clock budget and bound the caller's supervision and
+wait by that deadline. On expiry, stop waiting, follow the orchestrator's
+capped-run handling, and reject any late result; this grants no authority to
+terminate a process. Give every pass the run identity, policy, and finder slot.
+Include the complete
 validated finding records from every earlier round of this same stage, not
 merely their IDs, so the role can compare evidence before asserting
 `repeat-of` or `supersedes`; an empty list is explicit in round 1.
