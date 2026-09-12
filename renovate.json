@@ -144,6 +144,11 @@
       "description": "Eject ponderousdev/foreman from the Devcontainer batch (which claims taskfiles/**): a Foreman bump changes what `task foreman:*` executes and is reviewed on its own, not inside an unrelated tooling batch. Must come after the grouping rules so this override wins.",
       "matchPackageNames": ["ponderousdev/foreman"],
       "groupName": null
+    },
+    {
+      "description": "Ignore sesh v2.30.0 — upstream release was published without binary assets",
+      "matchPackageNames": ["joshmedeski/sesh"],
+      "allowedVersions": "<2.30.0"
     }
   ]
 }
