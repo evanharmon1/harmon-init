@@ -44,8 +44,8 @@ ARG PI_VERSION=0.85.1
 ARG OH_MY_PI_VERSION=18.1.15
 # oh-my-pi release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG OH_MY_PI_SHA256_AMD64=c6a306347a57c872bf38587e81132db50490228867e3e179a363a4cf874da1a0
-ARG OH_MY_PI_SHA256_ARM64=2865c21a73ae8b893fd5553bf302afc5be8a0bcafa015af99732349d518830da
+ARG OH_MY_PI_SHA256_AMD64=747518a41fbb32ac47491b4677a7a921d0d9e5977ae006c358d6836813149adc
+ARG OH_MY_PI_SHA256_ARM64=2e1142ccd4bb76413b63a05711ac51c7b95551f36387ef295661bb86f0576189
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.30
 # Pinned from Google's per-platform release manifests. Keep the version, build,
@@ -55,7 +55,8 @@ ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
 ARG AGENT_DECK_VERSION=1.16.4
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
-ARG SESH_VERSION=2.30.0
+# Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
+ARG SESH_VERSION=2.29.0
 # renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
 # Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
 ARG HERDR_VERSION=0.8.2
