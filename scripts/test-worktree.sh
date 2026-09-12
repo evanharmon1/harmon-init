@@ -131,7 +131,7 @@ worktree_exit() {
         sleep 2
         if ! rm -rf "$test_tmp"; then
             echo "TEST FAIL: teardown could not remove $test_tmp — survivors:" >&2
-            find "$test_tmp" 2>/dev/null | head -20 >&2 || true
+            find "$test_tmp" 2>/dev/null | sed -n '1,20p' >&2 || true
             exit 1
         fi
     fi
@@ -283,7 +283,7 @@ rm_in() {
 echo "==> worktree:new creates .worktrees/<name> with its own branch"
 out="$(new scratch)" || fail "worktree-new.sh failed"
 [ -d "$fixture/.worktrees/scratch" ] || fail "worktree-new.sh did not create .worktrees/scratch"
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/scratch" ||
+grep -qx "worktree $fixture/.worktrees/scratch" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "the new tree is not registered as a worktree"
 git -C "$fixture" show-ref --verify --quiet refs/heads/scratch ||
     fail "worktree-new.sh did not create the branch"
@@ -326,7 +326,7 @@ fi
 echo "==> worktree:rm removes the tree and prunes the registry"
 rm_wt scratch >/dev/null || fail "worktree-rm.sh failed on a clean tree"
 refute_exists "$fixture/.worktrees/scratch" "worktree-rm.sh left the directory behind"
-if git -C "$fixture" worktree list --porcelain | grep -q "scratch"; then
+if grep -q "scratch" < <(git -C "$fixture" worktree list --porcelain); then
     fail "worktree-rm.sh left a stale registry record"
 fi
 
@@ -386,6 +386,35 @@ rm_wt hidden-clean >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal over an unmodified skip-worktree entry"
 refute_exists "$fixture/.worktrees/hidden-clean" "worktree-rm.sh left the tree behind"
 
+echo "==> a failed gitlink emptiness scan fails closed"
+new hidden-gitlink-find >/dev/null || fail "worktree-new.sh failed for the gitlink-find case"
+gitlink_tree="$fixture/.worktrees/hidden-gitlink-find"
+gitlink_sha="$(git -C "$gitlink_tree" rev-parse HEAD)"
+git -C "$gitlink_tree" update-index --add --cacheinfo "160000,$gitlink_sha,gitlink-empty"
+LEFTHOOK=0 git -C "$gitlink_tree" commit -qm "test: add gitlink fixture"
+mkdir -p "$gitlink_tree/gitlink-empty"
+git -C "$gitlink_tree" update-index --skip-worktree gitlink-empty
+gitlink_find_bin="$test_tmp/gitlink-find-bin"
+mkdir -p "$gitlink_find_bin"
+real_find="$(command -v find)"
+cat >"$gitlink_find_bin/find" <<SHIM
+#!/bin/sh
+if [ "\${1:-}" = "$gitlink_tree/gitlink-empty" ]; then
+    exit 73
+fi
+exec "$real_find" "\$@"
+SHIM
+chmod +x "$gitlink_find_bin/find"
+if gitlink_find_out="$(PATH="$gitlink_find_bin:$PATH" rm_wt hidden-gitlink-find 2>&1)"; then
+    fail "worktree-rm.sh removed a tree whose gitlink emptiness scan failed"
+fi
+case "$gitlink_find_out" in
+*gitlink-empty*) ;;
+*) fail "the failed gitlink scan did not preserve the path as an unsafe hidden entry: $gitlink_find_out" ;;
+esac
+[ -d "$gitlink_tree" ] || fail "the failed gitlink scan deleted the worktree"
+rm_wt hidden-gitlink-find --force >/dev/null || fail "cleanup of the gitlink-find tree failed"
+
 echo "==> a clean SPARSE worktree is removable (absent skip-worktree paths)"
 # Sparse checkout marks every excluded path skip-worktree with no file on
 # disk, so treating that absence as a hidden edit would refuse the removal
@@ -397,7 +426,7 @@ git -C "$fixture/.worktrees/hidden-sparse" sparse-checkout set --no-cone '/scrip
     fail "could not enable sparse checkout in the fixture worktree"
 [ ! -e "$fixture/.worktrees/hidden-sparse/README.md" ] ||
     fail "fixture assumption broken: sparse checkout left README.md in place"
-git -C "$fixture/.worktrees/hidden-sparse" ls-files -v | grep -q '^S README.md' ||
+grep -q '^S README.md' < <(git -C "$fixture/.worktrees/hidden-sparse" ls-files -v) ||
     fail "fixture assumption broken: sparse README.md is not marked skip-worktree"
 rm_wt hidden-sparse >/dev/null ||
     fail "worktree-rm.sh refused an ordinary removal of a clean sparse worktree"
@@ -841,6 +870,60 @@ rm_wt debris >/dev/null || fail "worktree-rm.sh could not clear leftover gitlink
 refute_exists "$fixture/.worktrees/debris" "worktree-rm.sh left gitlink debris behind"
 git -C "$fixture" branch -D debris >/dev/null 2>&1 || true
 
+echo "==> a failed leftover scan refuses deletion instead of treating the tree as empty"
+mkdir -p "$fixture/.worktrees/findfail"
+: >"$fixture/.worktrees/findfail/.git"
+find_fail_bin="$test_tmp/find-fail-bin"
+mkdir -p "$find_fail_bin"
+cat >"$find_fail_bin/find" <<'SHIM'
+#!/bin/sh
+exit 73
+SHIM
+chmod +x "$find_fail_bin/find"
+if find_fail_out="$(PATH="$find_fail_bin:$PATH" rm_wt findfail 2>&1)"; then
+    fail "worktree-rm.sh deleted a tree whose leftover scan failed"
+fi
+case "$find_fail_out" in
+*"could not inspect"*"refusing to delete"*) ;;
+*) fail "the failed leftover scan did not explain its fail-closed refusal: $find_fail_out" ;;
+esac
+[ -f "$fixture/.worktrees/findfail/.git" ] ||
+    fail "the failed leftover scan deleted the candidate gitlink"
+rm -rf "${fixture:?}/.worktrees/findfail"
+
+echo "==> leftover emptiness checks request at most one pathname"
+mkdir -p "$fixture/.worktrees/findbounded"
+: >"$fixture/.worktrees/findbounded/.git"
+: >"$fixture/.worktrees/findbounded/kept"
+find_bound_bin="$test_tmp/find-bound-bin"
+mkdir -p "$find_bound_bin"
+cat >"$find_bound_bin/find" <<SHIM
+#!/bin/sh
+if [ "\${1:-}" = "$fixture/.worktrees/findbounded" ]; then
+    saw_print=0
+    saw_quit=0
+    for arg in "\$@"; do
+        [ "\$arg" = "-print" ] && saw_print=1
+        [ "\$arg" = "-quit" ] && saw_quit=1
+    done
+    [ "\$saw_print" -eq 1 ] && [ "\$saw_quit" -eq 1 ] || exit 74
+    printf '%s\n' "$fixture/.worktrees/findbounded/kept"
+    exit 0
+fi
+exec "$real_find" "\$@"
+SHIM
+chmod +x "$find_bound_bin/find"
+if find_bound_out="$(PATH="$find_bound_bin:$PATH" rm_wt findbounded 2>&1)"; then
+    fail "worktree-rm.sh deleted a tree containing bounded-scan debris"
+fi
+case "$find_bound_out" in
+*"still holds files"*) ;;
+*) fail "the bounded leftover scan did not report the retained debris: $find_bound_out" ;;
+esac
+[ -f "$fixture/.worktrees/findbounded/kept" ] ||
+    fail "the bounded leftover scan deleted retained debris"
+rm -rf "${fixture:?}/.worktrees/findbounded"
+
 # ── .worktrees/ is anchored to the MAIN worktree ─────────────────────
 echo "==> creating from inside a linked worktree still anchors to the main tree"
 new outer >/dev/null || fail "worktree-new.sh failed creating the outer tree"
@@ -905,12 +988,52 @@ if new half-made >/dev/null 2>&1; then
 fi
 rm -f "$shared_hooks/post-checkout"
 refute_exists "$fixture/.worktrees/half-made" "a partially created worktree was not rolled back"
-if git -C "$fixture" worktree list --porcelain | grep -q "half-made"; then
+if grep -q "half-made" < <(git -C "$fixture" worktree list --porcelain); then
     fail "a partially created worktree stayed in the registry"
 fi
 if git -C "$fixture" show-ref --verify --quiet refs/heads/half-made; then
     fail "the branch from a partially created worktree was not rolled back"
 fi
+
+echo "==> rollback preserves the branch when its registry verification fails"
+rollback_enum_bin="$test_tmp/rollback-enum-bin"
+mkdir -p "$rollback_enum_bin"
+rollback_enum_marker="$test_tmp/rollback-enum-armed"
+rollback_enum_count="$test_tmp/rollback-enum-count"
+rollback_real_git="$(command -v git)"
+cat >"$rollback_enum_bin/git" <<SHIM
+#!/usr/bin/env bash
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "list" ] &&
+    [ "\${3:-}" = "--porcelain" ] && [ "\$#" -eq 3 ] &&
+    [ -e "$rollback_enum_marker" ]; then
+    count=0
+    [ ! -f "$rollback_enum_count" ] || count="\$(cat "$rollback_enum_count")"
+    count=\$((count + 1))
+    printf '%s\n' "\$count" >"$rollback_enum_count"
+    [ "\$count" -ne 2 ] || exit 75
+fi
+exec "$rollback_real_git" "\$@"
+SHIM
+chmod +x "$rollback_enum_bin/git"
+cat >"$shared_hooks/post-checkout" <<SHIM
+#!/bin/sh
+: >"$rollback_enum_marker"
+exit 1
+SHIM
+chmod +x "$shared_hooks/post-checkout"
+if rollback_enum_out="$(cd "$fixture" && PATH="$rollback_enum_bin:$PATH" bash scripts/worktree-new.sh rollback-enum --no-install 2>&1)"; then
+    rm -f "$shared_hooks/post-checkout"
+    fail "worktree-new.sh reported success despite the forced rollback failure"
+fi
+rm -f "$shared_hooks/post-checkout"
+case "$rollback_enum_out" in
+*"could not verify the worktree registry"*"leaving branch 'rollback-enum' alone"*) ;;
+*) fail "the rollback enumeration failure was not reported fail-closed: $rollback_enum_out" ;;
+esac
+git -C "$fixture" show-ref --verify --quiet refs/heads/rollback-enum ||
+    fail "rollback deleted the branch after registry enumeration failed"
+refute_exists "$fixture/.worktrees/rollback-enum" "failed rollback verification left its removed tree behind"
+git -C "$fixture" branch -D rollback-enum >/dev/null 2>&1 || true
 
 # ── a concurrent same-name run cannot destroy the winner's tree ──────
 echo "==> a second run that loses the path race does not roll back the winner"
@@ -979,7 +1102,7 @@ for mode in "--force" ""; do
 done
 [ -f "$fixture/.worktrees/nestparent/kid/KID.md" ] ||
     fail "worktree-rm.sh deleted the nested worktree's uncommitted work"
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/nestparent/kid" ||
+grep -qx "worktree $fixture/.worktrees/nestparent/kid" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "worktree-rm.sh dropped the nested worktree's registry record"
 rm_wt nestparent/kid --force >/dev/null || fail "cleanup of the nested child failed"
 rm_wt nestparent >/dev/null || fail "cleanup of the nesting parent failed"
@@ -1004,9 +1127,9 @@ new goer >/dev/null || fail "worktree-new.sh failed creating the unrelated tree"
 rm_wt goer >/dev/null || fail "worktree-rm.sh failed removing the unrelated tree"
 [ -d "$keeper_admin" ] ||
     fail "removing one worktree pruned an unrelated worktree's stale record"
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/keeper" ||
+grep -qx "worktree $fixture/.worktrees/keeper" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "removing one worktree deregistered an unrelated worktree"
-if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$held"; then
+if grep -q "$held" < <(git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null); then
     fail "removing one worktree left another's commit unreachable"
 fi
 # The scoped cleanup still clears the record it IS asked about. `--force`
@@ -1014,7 +1137,7 @@ fi
 # discarding the last reference to it is exactly what the stale-record guard
 # below makes deliberate.
 rm_wt keeper --force >/dev/null || fail "worktree-rm.sh could not clear the keeper's own stale record"
-if git -C "$fixture" worktree list --porcelain | grep -q "keeper"; then
+if grep -q "keeper" < <(git -C "$fixture" worktree list --porcelain); then
     fail "worktree-rm.sh left the keeper's stale record behind"
 fi
 git -C "$fixture" branch -D keeper goer >/dev/null 2>&1 || true
@@ -1040,7 +1163,7 @@ if new rbfail --branch rbholder >/dev/null 2>&1; then
     fail "worktree-new.sh attached a branch already checked out elsewhere"
 fi
 [ -d "$rb_admin" ] || fail "a failed create pruned an unrelated worktree's stale record"
-if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$rb_held"; then
+if grep -q "$rb_held" < <(git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null); then
     fail "a failed create left an unrelated worktree's commit unreachable"
 fi
 rm_wt rbholder >/dev/null || fail "cleanup of the rollback-holder tree failed"
@@ -1078,9 +1201,9 @@ rm -rf "${fixture:?}/.worktrees/stalehead"
 if rm_wt stalehead >/dev/null 2>&1; then
     fail "worktree-rm.sh discarded a stale record holding an unreferenced detached commit"
 fi
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/stalehead" ||
+grep -qx "worktree $fixture/.worktrees/stalehead" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "the stale record was dropped despite the refusal"
-if git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null | grep -q "$stale_held"; then
+if grep -q "$stale_held" < <(git -C "$fixture" fsck --unreachable --no-progress 2>/dev/null); then
     fail "the refused removal still left the commit unreachable"
 fi
 rm_wt stalehead --force >/dev/null || fail "worktree-rm.sh --force failed on the stale record"
@@ -1095,7 +1218,7 @@ echo "==> creating over a registered descendant record is refused"
 git -C "$fixture" worktree add -q "$fixture/.worktrees/dparent/kid" -b dkid ||
     fail "could not plant the descendant worktree"
 rm -rf "${fixture:?}/.worktrees/dparent"
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/dparent/kid" ||
+grep -qx "worktree $fixture/.worktrees/dparent/kid" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "fixture assumption broken: the descendant record did not survive"
 if new dparent >"$test_tmp/descendant.log" 2>&1; then
     fail "worktree-new.sh provisioned over a registered descendant record"
@@ -2157,7 +2280,7 @@ refute_exists "$fixture/.worktrees/rollback-remote" "the failed remote-only atta
 if git -C "$fixture" show-ref --verify --quiet refs/heads/rollback-remote; then
     fail "the failed remote-only attach left its pre-created branch behind"
 fi
-if git -C "$fixture" worktree list --porcelain | grep -q "rollback-remote"; then
+if grep -q "rollback-remote" < <(git -C "$fixture" worktree list --porcelain); then
     fail "the failed remote-only attach left a registry record behind"
 fi
 git -C "$fixture" push -q origin :refs/heads/rollback-remote
@@ -2217,7 +2340,7 @@ SHIM
 chmod +x "$shim_dir/git"
 attachrace_out="$(cd "$fixture" && PATH="$shim_dir:$PATH" WTSHIM_ATTACH_RACE=1 "$TIMEOUT_BIN" -k "$WORKTREE_OP_KILL_GRACE" "$WORKTREE_OP_TIMEOUT" bash scripts/worktree-new.sh attachrace 2>&1)" &&
     fail "worktree-new.sh reported success although its branch was attached elsewhere mid-run"
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $rival_tree" ||
+grep -qx "worktree $rival_tree" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "fixture assumption broken: the rival attach did not register"
 git -C "$fixture" show-ref --verify --quiet refs/heads/attachrace ||
     fail "rollback deleted a branch another worktree had attached (harmon-init#916)"
@@ -2249,7 +2372,7 @@ heldtree_out="$(new heldtree 2>&1)" && {
     fail "worktree-new.sh reported success despite the locked-tree attach failure"
 }
 rm -f "$shared_hooks/post-checkout"
-git -C "$fixture" worktree list --porcelain | grep -qx "worktree $fixture/.worktrees/heldtree" ||
+grep -qx "worktree $fixture/.worktrees/heldtree" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "fixture assumption broken: the locked tree was deregistered after all"
 git -C "$fixture" show-ref --verify --quiet refs/heads/heldtree ||
     fail "rollback deleted the branch of a worktree it could not remove (harmon-init#916)"
@@ -2605,7 +2728,7 @@ det_commit "declared npm against a foreign-only lockfile"
 det_status=0
 det_out="$(new det-foreign 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded for a declaration contradicted by a foreign-only lockfile"
-printf '%s\n' "$det_out" | grep -q "carries other managers' files (pnpm) and none of npm's" ||
+grep -q "carries other managers' files (pnpm) and none of npm's" <<<"$det_out" ||
     fail "the foreign-only-lockfile refusal did not name the contradiction"
 det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-foreign" "worktree-new.sh left a tree behind after refusing a contradicted declaration"
@@ -2621,7 +2744,7 @@ det_commit "declared npm@6 against a newer installed npm"
 det_status=0
 det_out="$(new det-verpin 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh installed under a version pin its npm does not satisfy"
-printf '%s\n' "$det_out" | grep -q "pins npm@6.14.18 but npm 10.9.2 is installed" ||
+grep -q "pins npm@6.14.18 but npm 10.9.2 is installed" <<<"$det_out" ||
     fail "the version-pin refusal did not name the pinned and installed versions"
 det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-verpin" "worktree-new.sh left a tree behind after refusing a version-pin mismatch"
@@ -2636,7 +2759,7 @@ det_commit "unsupported manager declaration"
 det_status=0
 det_out="$(new det-unsupported 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded with an unsupported packageManager declaration"
-printf '%s\n' "$det_out" | grep -q "does not support" ||
+grep -q "does not support" <<<"$det_out" ||
     fail "the unsupported-manager refusal did not say the declaration is unsupported"
 det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-unsupported" "worktree-new.sh left a tree behind after refusing an unsupported manager"
@@ -2653,7 +2776,7 @@ det_commit "conflicting lockfiles"
 det_status=0
 det_out="$(new det-conflict 2>&1)" || det_status=$?
 [ "$det_status" -ne 0 ] || fail "worktree-new.sh succeeded with lockfiles from two package managers"
-printf '%s\n' "$det_out" | grep -q "conflicting Node package-manager signals in this tree: npm bun" ||
+grep -q "conflicting Node package-manager signals in this tree: npm bun" <<<"$det_out" ||
     fail "the conflicting-lockfile refusal did not name both managers"
 det_assert_installer "" "" ""
 refute_exists "$fixture/.worktrees/det-conflict" "worktree-new.sh left a tree behind after refusing conflicting lockfiles"
@@ -2666,7 +2789,7 @@ det_reset
 printf '{"name":"fixture","private":true}\n' >"$fixture/package.json"
 det_commit "bare manifest, no manager signal"
 det_out="$(new det-bare 2>&1)" || fail "worktree-new.sh failed on a signal-less Node repo"
-printf '%s\n' "$det_out" | grep -q "no package-manager signal" ||
+grep -q "no package-manager signal" <<<"$det_out" ||
     fail "the signal-less run did not say why the install was skipped"
 det_assert_installer "" "" ""
 rm_wt det-bare >/dev/null || fail "cleanup of the signal-less tree failed"
@@ -3007,7 +3130,7 @@ grep -qi 'removed:' "$rm_out" &&
     fail "the refusal still printed a removal line (#963): $(cat "$rm_out")"
 [ -d "$outside_root/parked" ] ||
     fail "worktree:rm deleted a worktree it had refused to remove (#963)"
-git -C "$fixture" worktree list --porcelain | grep -qxF "worktree $outside_root/parked" ||
+grep -qxF "worktree $outside_root/parked" < <(git -C "$fixture" worktree list --porcelain) ||
     fail "worktree:rm dropped the registry record of a worktree it refused (#963)"
 git -C "$fixture" worktree remove --force "$outside_root/parked"
 
@@ -3253,6 +3376,67 @@ grep -q 'Stale record cleared' "$rm_stale" ||
     fail "clearing a stale record did not say so (#963): $(cat "$rm_stale")"
 grep -q '^Worktree removed:' "$rm_stale" &&
     fail "clearing a stale record still claimed a directory was removed (#963): $(cat "$rm_stale")"
+
+echo "==> stale-record cleanup fails closed on registry enumeration errors"
+rm_enum_bin="$test_tmp/rm-enum-bin"
+mkdir -p "$rm_enum_bin"
+rm_enum_real_git="$(command -v git)"
+cat >"$rm_enum_bin/git" <<SHIM
+#!/usr/bin/env bash
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ] &&
+    [ -n "\${WT_ARM_AFTER_REMOVE:-}" ]; then
+    "$rm_enum_real_git" "\$@"
+    status=\$?
+    : >"\$WT_ARM_AFTER_REMOVE"
+    exit "\$status"
+fi
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "list" ] &&
+    [ "\${3:-}" = "--porcelain" ] && [ "\$#" -eq 3 ]; then
+    if [ -n "\${WT_FAIL_NORMAL_AT:-}" ]; then
+        count=0
+        [ ! -f "\$WT_FAIL_NORMAL_AT" ] || count="\$(cat "\$WT_FAIL_NORMAL_AT")"
+        count=\$((count + 1))
+        printf '%s\n' "\$count" >"\$WT_FAIL_NORMAL_AT"
+        [ "\$count" -ne 3 ] || exit 76
+    fi
+    if [ -n "\${WT_ARM_AFTER_REMOVE:-}" ] && [ -e "\$WT_ARM_AFTER_REMOVE" ]; then
+        exit 77
+    fi
+fi
+exec "$rm_enum_real_git" "\$@"
+SHIM
+chmod +x "$rm_enum_bin/git"
+
+new stale-enum-before --no-install >/dev/null || fail "could not create the pre-cleanup enumeration fixture"
+rm -rf "$fixture/.worktrees/stale-enum-before"
+rm_enum_count="$test_tmp/rm-enum-count"
+if rm_enum_before="$(cd "$fixture" && PATH="$rm_enum_bin:$PATH" WT_FAIL_NORMAL_AT="$rm_enum_count" bash scripts/worktree-rm.sh stale-enum-before 2>&1)"; then
+    fail "worktree-rm.sh reported success when its pre-cleanup registry read failed"
+fi
+case "$rm_enum_before" in
+*"could not re-read the worktree registry before stale-record cleanup"*) ;;
+*) fail "the pre-cleanup registry failure was not reported: $rm_enum_before" ;;
+esac
+rm_enum_records="$(git -C "$fixture" worktree list --porcelain)"
+grep -qxF "worktree $fixture/.worktrees/stale-enum-before" <<<"$rm_enum_records" ||
+    fail "the pre-cleanup registry failure removed the stale record"
+rm_wt stale-enum-before >/dev/null || fail "cleanup after the pre-cleanup registry failure failed"
+
+new stale-enum-after --no-install >/dev/null || fail "could not create the post-cleanup enumeration fixture"
+rm -rf "$fixture/.worktrees/stale-enum-after"
+rm_enum_marker="$test_tmp/rm-enum-after"
+if rm_enum_after="$(cd "$fixture" && PATH="$rm_enum_bin:$PATH" WT_ARM_AFTER_REMOVE="$rm_enum_marker" bash scripts/worktree-rm.sh stale-enum-after 2>&1)"; then
+    fail "worktree-rm.sh reported success when its post-cleanup registry read failed"
+fi
+case "$rm_enum_after" in
+*"could not verify the worktree registry after stale-record cleanup"*) ;;
+*) fail "the post-cleanup registry failure was not reported: $rm_enum_after" ;;
+esac
+rm_enum_records="$(git -C "$fixture" worktree list --porcelain)"
+if grep -qxF "worktree $fixture/.worktrees/stale-enum-after" <<<"$rm_enum_records"; then
+    fail "the delegated stale-record removal did not run before its verification failure"
+fi
+git -C "$fixture" branch -D stale-enum-after >/dev/null 2>&1 || true
 
 # ...and a genuine removal must still say it removed a worktree, so the fix
 # above cannot be satisfied by simply never printing the removal line.

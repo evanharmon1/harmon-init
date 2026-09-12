@@ -33,7 +33,7 @@ head="${2:-HEAD}"
 # terraform/ — say a modules/dns/zone.tpl pulled in via templatefile() — is not
 # matched. Keep such files under terraform/, or add their path here.
 matches_terraform() {
-    grep -qE '(^terraform/|^\.github/workflows/terraform\.yml$|\.tf$|\.tf\.json$|\.tfvars$|\.tfvars\.json$|(^|/)\.terraform\.lock\.hcl$)'
+    grep -E '(^terraform/|^\.github/workflows/terraform\.yml$|\.tf$|\.tf\.json$|\.tfvars$|\.tfvars\.json$|(^|/)\.terraform\.lock\.hcl$)' >/dev/null
 }
 
 emit() {

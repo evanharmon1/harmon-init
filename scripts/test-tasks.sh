@@ -35,18 +35,18 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         inblock { print }
     ' "$taskfile")"
     [ -n "$block" ] || fail "${taskfile}: guard:closing-keywords task not found"
-    printf '%s\n' "$block" | grep -Fq 'git merge-base "$base_sha" "$head_sha"' ||
+    grep -Fq 'git merge-base "$base_sha" "$head_sha"' <<<"$block" ||
         fail "${taskfile}: closing-keyword guard does not resolve the merge base"
-    printf '%s\n' "$block" | grep -Fq 'git rev-list --count "${merge_base}..${head_sha}"' ||
+    grep -Fq 'git rev-list --count "${merge_base}..${head_sha}"' <<<"$block" ||
         fail "${taskfile}: closing-keyword guard does not mirror the workflow commit cap"
-    printf '%s\n' "$block" | grep -Fq 'git log --format=%B "${merge_base}..${head_sha}"' ||
+    grep -Fq 'git log --format=%B "${merge_base}..${head_sha}"' <<<"$block" ||
         fail "${taskfile}: closing-keyword guard does not scan merge-base-to-head only"
-    if printf '%s\n' "$block" | grep -Fq '${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}'; then
+    if grep -Fq '${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}' <<<"$block"; then
         fail "${taskfile}: closing-keyword guard still scans the symmetric difference"
     fi
-    printf '%s\n' "$block" | grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' ||
+    grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' <<<"$block" ||
         fail "${taskfile}: closing-keyword guard does not distinguish unset metadata from an empty body"
-    printf '%s\n' "$block" | grep -Fq 'gh pr list --head "$branch" --state open --limit 2 --json title,body' ||
+    grep -Fq 'gh pr list --head "$branch" --state open --limit 2 --json title,body' <<<"$block" ||
         fail "${taskfile}: closing-keyword guard does not distinguish a missing PR from an API failure"
 done
 
@@ -457,9 +457,7 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         # explaining why the key is there, and that comment names the key — so a
         # substring match passes on the prose alone and the assertion silently
         # stops asserting. (It did, until a mutation test caught it.)
-        printf '%s\n' "$block" |
-            grep -vE '^[[:space:]]*#' |
-            grep -qE '^[[:space:]]*interactive:[[:space:]]*true[[:space:]]*$' ||
+        grep -qE '^[[:space:]]*interactive:[[:space:]]*true[[:space:]]*$' < <(printf '%s\n' "$block" | grep -vE '^[[:space:]]*#') ||
             fail "${taskfile}: ${t} lacks 'interactive: true' — global 'output: group' hides its terminal from the script"
     done
 done
@@ -492,9 +490,9 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         inblock { print }
     ' "$taskfile")"
     [ -n "$block" ] || fail "${taskfile}: setup:github task not found"
-    printf '%s\n' "$block" | grep -Fq './scripts/setup-github.sh --repo "{{.REPO}}"' ||
+    grep -Fq './scripts/setup-github.sh --repo "{{.REPO}}"' <<<"$block" ||
         fail "${taskfile}: setup:github does not delegate to scripts/setup-github.sh"
-    if printf '%s\n' "$block" | grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*\|'; then
+    if grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*\|' <<<"$block"; then
         fail "${taskfile}: setup:github contains inline action logic instead of a trivial script command"
     fi
 done
@@ -508,6 +506,11 @@ fi
 if [ -x ./scripts/test-terraform-changed.sh ]; then
     echo "==> Terraform change detection drives the required terraform-verify check"
     ./scripts/test-terraform-changed.sh
+fi
+
+if [ -x ./scripts/test-setup-action-tool-versions.sh ]; then
+    echo "==> setup action replaces mismatched lint-tool versions"
+    ./scripts/test-setup-action-tool-versions.sh
 fi
 
 echo "==> task targets OK (compile + bootstrap idempotency + path-safe formatting)"

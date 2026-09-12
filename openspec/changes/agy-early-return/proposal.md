@@ -14,6 +14,13 @@ reconciliation spec now documents the unresolved gap as launcher state
 Issue `#1171` tracks a narrower, ordered fix; this change proposes and
 implements it.
 
+Issues `#1205`/`#1207` later exposed a related ownership boundary: preserving
+independent launchers on disabled cleanup requires `agy` and `agy-real` to have
+separate proof. Challenge round 3 confirmed that a wrapper proves only launcher
+ownership, and that version equality cannot authorize replacing or claiming an
+independently managed `agy-real` symlink. This in-flight change now carries the
+canonical contract reconciliation for those constraints as well.
+
 ## What Changes
 
 - `ensure-antigravity-cli.sh` (+ its verbatim `template/` twin): on the
@@ -52,6 +59,16 @@ implements it.
 - `docs/guides/devcontainers.md` (+ its jinja `template/` twin): drop the
   state-(d)/#1171 caveat in the Antigravity section now that the early return
   self-heals a leftover that would otherwise block reconciliation.
+- `ensure-antigravity-cli.sh` and `bot-autonomy/antigravity.sh` (+ their
+  verbatim `template/` twins): give `agy` and `agy-real` separate durable
+  identity-and-content proofs, never infer ownership from launcher shape or
+  version, and publish each replacement through a recoverable transaction.
+  Cleanup deletes a path only while both its identity and immutable installed
+  content match, so an in-place external rewrite is preserved and an
+  interrupted old-to-new upgrade remains recognizable.
+- The delta and canonical bot-autonomy specs define disabled state in terms of
+  absence of independently proven module-owned remnants, explicitly allowing
+  independent launchers at the natural `agy → agy-real` target too.
 
 ## Capabilities
 
@@ -79,7 +96,8 @@ implements it.
 - Spec: `openspec/specs/devcontainer/bot-autonomy/spec.md` (the "Antigravity's
   launcher is exactly one of four states" requirement, renamed to three, and
   the "Human dev profile is unaffected by construction" requirement's
-  scenario that carries the state-(d) exception).
+  scenario that carries the state-(d) exception), plus ownership-based
+  disabled cleanup and verification semantics reconciled from this delta.
 - Docs: `docs/guides/devcontainers.md` and its `template/` jinja twin.
 - No new Copier answer, environment variable, or external dependency. No
   change to `bot-autonomy/antigravity.sh`'s existing settings-apply-then-

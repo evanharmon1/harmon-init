@@ -74,8 +74,10 @@ fi
 # are relocated with `agent-deck conductor migrate-dir --apply` — a fixed
 # path would go stale there. Matches post-create-common.sh's setup guard.
 REPO_NAME="$(basename "$PWD")"
+conductor_status=""
 if command -v agent-deck &>/dev/null &&
-    agent-deck conductor status "$REPO_NAME" 2>/dev/null | grep -qi "stopped"; then
+    conductor_status="$(agent-deck conductor status "$REPO_NAME" 2>/dev/null)" &&
+    grep -i "stopped" <<<"$conductor_status" >/dev/null; then
     agent-deck session start "conductor-$REPO_NAME" 2>/dev/null &
     echo "==> Conductor $REPO_NAME started"
 fi

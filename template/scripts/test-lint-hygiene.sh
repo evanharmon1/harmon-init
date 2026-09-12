@@ -36,6 +36,7 @@ expect() {
         fail=$((fail + 1))
         echo "  FAIL: $name (want exit $want, got $got)" >&2
     fi
+    return 0
 }
 
 expect_vendored_asset() {
@@ -58,6 +59,7 @@ expect_vendored_asset() {
         fail=$((fail + 1))
         echo "  FAIL: $name (want exit $want, got $got)" >&2
     fi
+    return 0
 }
 
 vendored_fixture="lint-hygiene-vendored-$$"
