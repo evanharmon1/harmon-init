@@ -4,8 +4,20 @@ Date: 2026-08-29
 
 ## Status
 
-Proposed — becomes Accepted when the anchor spec merges
-(evanharmon1/harmon-devkit#665).
+Accepted (2026-09-12) — both acceptance conditions have held since:
+evanharmon1/harmon-devkit#665 merged (and the spec was subsequently revised
+by harmon-devkit#700/#739/#852), and [ADR 0008](0008-versioned-devflow-compatibility-contract.md)
+is Accepted. Maintainer approval recorded on
+[harmon-init#1115](https://github.com/evanharmon1/harmon-init/issues/1115).
+
+**Amendment note (2026-09-12):** the policy-table rename this record
+describes as `[review.*]` → `[caps.*]` shipped under the name **`[rounds.*]`**
+(see harmon-devkit's `.devflow.toml`, `.devflow.schema.json`, and AGENTS.md;
+no `[caps.*]` table exists). Per this record's own conflict rule the spec and
+shipped config win: read every `[caps.*]` reference below as the shipped
+`[rounds.*]`. The substance of the amendment — independent `integration` and
+`remediation` caps replacing the single `shepherd` cap — is unchanged and
+shipped as described.
 
 Extends [ADR 0007](0007-rigor-and-strategy-axes.md): rigor and strategy stay
 the two primary axes, and this record adds the execution model those axes
