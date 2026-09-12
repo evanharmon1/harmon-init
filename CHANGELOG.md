@@ -8,6 +8,17 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.43.2](https://github.com/evanharmon1/harmon-init/compare/v4.43.1...v4.43.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* **ci:** enforce pinned lint tool versions ([#1218](https://github.com/evanharmon1/harmon-init/issues/1218)) ([780d869](https://github.com/evanharmon1/harmon-init/commit/780d86903b29f878e46b6198185b5e2d8d1f233c))
+* **ci:** reclaim disk before devcontainer assertion ([#1216](https://github.com/evanharmon1/harmon-init/issues/1216)) ([d119b0b](https://github.com/evanharmon1/harmon-init/commit/d119b0b0869c713d3c0c39c9f40977a503d6355c))
+* **devcontainer:** harden Antigravity ownership and recovery ([#1219](https://github.com/evanharmon1/harmon-init/issues/1219)) ([a5352c9](https://github.com/evanharmon1/harmon-init/commit/a5352c9247db0279b779e630b821d3475b7bb528))
+* harden shell pipeline status handling ([#1222](https://github.com/evanharmon1/harmon-init/issues/1222)) ([5e6a2e8](https://github.com/evanharmon1/harmon-init/commit/5e6a2e81bf1e0fa1dca7631db7ae2768dff7b37e))
+* **template:** sync harmon-devkit skills to v0.41.1 ([#1215](https://github.com/evanharmon1/harmon-init/issues/1215)) ([8131a24](https://github.com/evanharmon1/harmon-init/commit/8131a243f3395eecbb02e12dd1043a24da94be53))
+
 ## [4.43.1](https://github.com/evanharmon1/harmon-init/compare/v4.43.0...v4.43.1) (2026-09-09)
 
 
