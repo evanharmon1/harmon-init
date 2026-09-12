@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.43.3](https://github.com/evanharmon1/harmon-init/compare/v4.43.2...v4.43.3) (2026-09-12)
+
+
+### Bug Fixes
+
+* **decisions:** accept ADR 0008/0009 and mark 0007's amendment in effect ([#1230](https://github.com/evanharmon1/harmon-init/issues/1230)) ([04ad4e4](https://github.com/evanharmon1/harmon-init/commit/04ad4e443533f19e6616a6fa687af58dca381c52))
+
 ## [4.43.2](https://github.com/evanharmon1/harmon-init/compare/v4.43.1...v4.43.2) (2026-09-12)
 
 
