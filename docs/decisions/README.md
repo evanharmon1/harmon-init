@@ -30,3 +30,5 @@ one's status.
   OpenSpec as this repo's spec-driven change process, root-only.
 - [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
   — the process-kill guard hook is removed; the hard rule binds the agent directly.
+- [2026-09-13-brief-envelope-schema-bound-free-form-body.md](2026-09-13-brief-envelope-schema-bound-free-form-body.md)
+  — briefs get a schema-bound envelope around a free-form body (amends 0009 D2).

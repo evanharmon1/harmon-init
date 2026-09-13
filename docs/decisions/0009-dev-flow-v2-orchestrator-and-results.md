@@ -19,6 +19,14 @@ shipped config win: read every `[caps.*]` reference below as the shipped
 `remediation` caps replacing the single `shepherd` cap — is unchanged and
 shipped as described.
 
+**D2 amended by
+[2026-09-13-brief-envelope-schema-bound-free-form-body](2026-09-13-brief-envelope-schema-bound-free-form-body.md)**
+— briefs are a schema-bound envelope around a free-form body, not
+unstructured prose; the original "nothing downstream parses it" premise is
+now false. The body remains free-form; only the machine-read facts gain a
+validated envelope. Maintainer decision recorded on
+[harmon-devkit#910](https://github.com/evanharmon1/harmon-devkit/issues/910).
+
 Extends [ADR 0007](0007-rigor-and-strategy-axes.md): rigor and strategy stay
 the two primary axes, and this record adds the execution model those axes
 select — who decides what during a run, and what form the evidence takes.
