@@ -29,19 +29,19 @@ ARG YQ_VERSION=4.53.6
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.259
+ARG WORKMUX_VERSION=0.1.261
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.15.3
+ARG AOE_VERSION=1.16.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.266
+ARG CLAUDE_CODE_VERSION=2.1.269
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.154.0
 # renovate: datasource=npm depName=@github/copilot
 ARG COPILOT_VERSION=1.0.83
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=0.85.1
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.1.15
+ARG OH_MY_PI_VERSION=18.1.18
 # oh-my-pi release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
 ARG OH_MY_PI_SHA256_AMD64=747518a41fbb32ac47491b4677a7a921d0d9e5977ae006c358d6836813149adc
@@ -53,7 +53,7 @@ ARG OPENCODE_VERSION=1.18.30
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.4
+ARG AGENT_DECK_VERSION=1.16.5
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -63,7 +63,7 @@ ARG HERDR_VERSION=0.8.2
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.176.1
+ARG SEMGREP_VERSION=1.177.0
 # renovate: datasource=pypi depName=copier
 ARG COPIER_VERSION=9.18.2
 # renovate: datasource=npm depName=@playwright/test
@@ -103,7 +103,7 @@ ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
-ARG UV_VERSION=0.12.11
+ARG UV_VERSION=0.12.13
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
 ARG STARSHIP_VERSION=1.26.0
 
