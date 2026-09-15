@@ -87,7 +87,7 @@ fi
 if ! echo "$summary_out" | grep -q '\*\*FAIL\*\* — 1 finding(s)'; then
   fail "expected FAIL result in summary, got $summary_out"
 fi
-if ! echo "$summary_out" | grep -Fq '`test-rule` | `test-file.txt` | 42 | `a1b2c3d`'; then
+if ! echo "$summary_out" | grep -Fq "\`test-rule\` | \`test-file.txt\` | 42 | \`a1b2c3d\`"; then
   fail "expected finding details in summary, got $summary_out"
 fi
 
