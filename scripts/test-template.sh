@@ -623,8 +623,10 @@ grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
 grep -q 'task test:ci-results' .github/workflows/build.yml ||
     err "rendered build workflow does not run the CI result helper regression (test:ci-results)"
-[ -x scripts/test-ci-results.sh ] || err "CI result helper regression missing or not executable"
-./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
+[ -x scripts/test-verify-ci-results.sh ] || err "CI result helper regression missing or not executable"
+./scripts/test-verify-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
+[ -x scripts/test-ci-results.sh ] || err "closing-keyword logic regression missing or not executable"
+./scripts/test-ci-results.sh >/dev/null || err "rendered closing-keyword logic regression failed"
 [ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
 EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
     err "rendered CI result helper rejected successful trusted jobs"

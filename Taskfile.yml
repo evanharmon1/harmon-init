@@ -479,6 +479,7 @@ tasks:
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
+      - ./scripts/test-verify-ci-results.sh
       - ./scripts/test-ci-results.sh
 
   test:devcontainer-changed:
