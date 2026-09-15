@@ -62,7 +62,7 @@ is_releasing_title() {
     # Leading conventional type (feat/fix), before an optional (scope).
     _rt_type="${_rt_head%%(*}"
     case "$_rt_type" in
-    feat | fix | test | *"test"*) return 0 ;;
+    feat | fix) return 0 ;;
     *) return 1 ;;
     esac
 }
