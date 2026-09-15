@@ -92,6 +92,7 @@ tasks:
       - task: test:ci-results
       - task: test:audit-ruleset
       - task: test:devcontainer-changed
+      - task: test:summarize-gitleaks
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
@@ -485,6 +486,11 @@ tasks:
     desc: Unit-test the devcontainer-build.yml change detector (devcontainer-changed.sh)
     cmds:
       - ./scripts/test-devcontainer-changed.sh
+
+  test:summarize-gitleaks:
+    desc: Unit-test the gitleaks JSON report summarizer
+    cmds:
+      - ./scripts/test-summarize-gitleaks.sh
 
   test:output:
     desc: Unit-test shared color/Unicode fallbacks and spinner cleanup
