@@ -27,7 +27,7 @@ fi
 
 for tool in task shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
     claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
-    dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv fresh; do
+    dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv fresh ttt mc nano; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
 
@@ -90,6 +90,9 @@ run_version wtfutil wtfutil --version
 run_version lychee lychee --version
 run_version tv tv --version
 run_version fresh fresh --version
+run_version ttt ttt --version
+run_version mc mc --version
+run_version nano nano --version
 
 for tool in workmux dmux; do
     _loader_rc=0
@@ -145,5 +148,29 @@ expected_fresh=/usr/local/bin/fresh
     fail "zsh -ic 'command -v fresh' does not resolve to $expected_fresh"
 [ "$(fresh --version | awk '{print $1}')" = "fresh" ] ||
     fail "fresh --version output does not start with fresh"
+
+ttt_version="$(ttt --version | awk 'NR == 1 { print $2 }' | sed 's/^v//')"
+[ "$ttt_version" = "$(jq -r '.tools.ttt' "$manifest")" ] ||
+    fail "ttt $ttt_version does not match the manifest"
+
+expected_ttt=/usr/local/bin/ttt
+[ "$(command -v ttt)" = "$expected_ttt" ] ||
+    fail "command -v ttt does not resolve to $expected_ttt"
+[ "$(zsh -ic 'command -v ttt' 2>/dev/null)" = "$expected_ttt" ] ||
+    fail "zsh -ic 'command -v ttt' does not resolve to $expected_ttt"
+[ "$(ttt --version | awk '{print $1}')" = "ttt" ] ||
+    fail "ttt --version output does not start with ttt"
+
+expected_mc=/usr/bin/mc
+[ "$(command -v mc)" = "$expected_mc" ] ||
+    fail "command -v mc does not resolve to $expected_mc"
+[ "$(zsh -ic 'command -v mc' 2>/dev/null)" = "$expected_mc" ] ||
+    fail "zsh -ic 'command -v mc' does not resolve to $expected_mc"
+
+expected_nano=/usr/bin/nano
+[ "$(command -v nano)" = "$expected_nano" ] ||
+    fail "command -v nano does not resolve to $expected_nano"
+[ "$(zsh -ic 'command -v nano' 2>/dev/null)" = "$expected_nano" ] ||
+    fail "zsh -ic 'command -v nano' does not resolve to $expected_nano"
 
 echo "harmon-devcontainer smoke: passed"

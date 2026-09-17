@@ -172,6 +172,8 @@ assert_unit() {
         fail "shell-aliases.sh does not define pnpm-relock alias"
     ! grep -E '^alias fresh=' "$shell_aliases" >/dev/null ||
         fail "shell-aliases.sh still defines fresh alias, shadowing Fresh editor"
+    ! grep -E '^alias (mc|nano|ttt)=' "$shell_aliases" >/dev/null ||
+        fail "shell-aliases.sh defines alias shadowing mc, nano, or ttt"
 
     # `task` and the rest of the shared toolchain come from the pinned public
     # image, never a devcontainer Feature: the go-task Feature resolved
