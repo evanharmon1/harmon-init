@@ -29,23 +29,23 @@ ARG YQ_VERSION=4.53.6
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.259
+ARG WORKMUX_VERSION=0.1.262
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.15.3
+ARG AOE_VERSION=1.16.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.266
+ARG CLAUDE_CODE_VERSION=2.1.270
 # renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.154.0
 # renovate: datasource=npm depName=@github/copilot
 ARG COPILOT_VERSION=1.0.83
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=0.85.1
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.1.15
+ARG OH_MY_PI_VERSION=18.1.21
 # oh-my-pi release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG OH_MY_PI_SHA256_AMD64=747518a41fbb32ac47491b4677a7a921d0d9e5977ae006c358d6836813149adc
-ARG OH_MY_PI_SHA256_ARM64=2e1142ccd4bb76413b63a05711ac51c7b95551f36387ef295661bb86f0576189
+ARG OH_MY_PI_SHA256_AMD64=0d9dfcc4561b5877f571cac81226fe8a1466d951cb840e091f3f82a684b3fde4
+ARG OH_MY_PI_SHA256_ARM64=63086a9f6307a49595dc39b0ddcf9e97e1e63abb32b972595651202c58bb833a
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.30
 # Pinned from Google's per-platform release manifests. Keep the version, build,
@@ -53,7 +53,7 @@ ARG OPENCODE_VERSION=1.18.30
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.4
+ARG AGENT_DECK_VERSION=1.16.10
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -63,7 +63,7 @@ ARG HERDR_VERSION=0.8.2
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
 # renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.176.1
+ARG SEMGREP_VERSION=1.177.0
 # renovate: datasource=pypi depName=copier
 ARG COPIER_VERSION=9.18.2
 # renovate: datasource=npm depName=@playwright/test
@@ -87,7 +87,7 @@ ARG FRESH_SHA256_ARM64=237bdb8c774fc402dc0dc13428215d5c63d70fe0e673aa99bf9897ed7
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=2.1.2
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
-ARG LAZYGIT_VERSION=0.65.0
+ARG LAZYGIT_VERSION=0.65.1
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
@@ -101,7 +101,7 @@ ARG WTF_VERSION=0.50.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
 ARG XH_VERSION=0.26.2
 # renovate: datasource=github-releases depName=evilmartians/lefthook extractVersion=^v?(?<version>.+)$
-ARG LEFTHOOK_VERSION=2.1.12
+ARG LEFTHOOK_VERSION=2.1.14
 # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
 ARG GITLEAKS_VERSION=8.30.1
 # renovate: datasource=github-releases depName=lycheeverse/lychee extractVersion=^lychee-v(?<version>.+)$
@@ -109,7 +109,7 @@ ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
-ARG UV_VERSION=0.12.11
+ARG UV_VERSION=0.12.13
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
 ARG STARSHIP_VERSION=1.26.0
 
