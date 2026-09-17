@@ -27,7 +27,7 @@ fi
 
 for tool in task shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
     claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
-    dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv; do
+    dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv fresh; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
 
@@ -89,6 +89,7 @@ run_version gh-dash gh-dash --version
 run_version wtfutil wtfutil --version
 run_version lychee lychee --version
 run_version tv tv --version
+run_version fresh fresh --version
 
 for tool in workmux dmux; do
     _loader_rc=0
@@ -133,5 +134,16 @@ pi_version="$(pi --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 omp_version="$(omp --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [ "$omp_version" = "$(jq -r '.tools.omp' "$manifest")" ] ||
     fail "oh-my-pi $omp_version does not match the manifest"
+fresh_version="$(fresh --version | awk 'NR == 1 { print $2 }')"
+[ "$fresh_version" = "$(jq -r '.tools.fresh' "$manifest")" ] ||
+    fail "fresh $fresh_version does not match the manifest"
+
+expected_fresh=/usr/local/bin/fresh
+[ "$(command -v fresh)" = "$expected_fresh" ] ||
+    fail "command -v fresh does not resolve to $expected_fresh"
+[ "$(zsh -ic 'command -v fresh' 2>/dev/null)" = "$expected_fresh" ] ||
+    fail "zsh -ic 'command -v fresh' does not resolve to $expected_fresh"
+[ "$(fresh --version | awk '{print $1}')" = "fresh" ] ||
+    fail "fresh --version output does not start with fresh"
 
 echo "harmon-devcontainer smoke: passed"

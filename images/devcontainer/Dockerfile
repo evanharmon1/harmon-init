@@ -78,6 +78,12 @@ ARG ACT_VERSION=0.2.89
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
 ARG FX_VERSION=39.2.0
+# renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
+ARG FRESH_VERSION=0.5.1
+# Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
+# update these reviewed, architecture-specific digests with each release.
+ARG FRESH_SHA256_AMD64=dd162ec4b367860d4235b4919be9dc3184211b663b5a81af34455c4b1d2c6ec2
+ARG FRESH_SHA256_ARM64=237bdb8c774fc402dc0dc13428215d5c63d70fe0e673aa99bf9897ed7ce3aac1
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=2.1.2
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
@@ -479,6 +485,24 @@ RUN case "${TARGETARCH}" in \
     && install -m 0755 "/tmp/omp-linux-${OMP_ARCH}" /usr/local/bin/omp \
     && rm -f "/tmp/omp-linux-${OMP_ARCH}"
 
+# Fresh editor ships prebuilt binaries. Verify the downloaded archive against a
+# per-architecture digest reviewed and pinned above -- not a SHA256SUMS.txt
+# fetched from the same release at build time -- matching TFLint and oh-my-pi.
+# Installed after all npm layers to guarantee command resolution.
+RUN case "${TARGETARCH}" in \
+        "amd64") export FRESH_ARCH="x86_64" FRESH_SHA256="${FRESH_SHA256_AMD64}" ;; \
+        "arm64") export FRESH_ARCH="aarch64" FRESH_SHA256="${FRESH_SHA256_ARM64}" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/sinelaw/fresh/releases/download/v${FRESH_VERSION}/fresh-editor-${FRESH_ARCH}-unknown-linux-gnu.tar.xz" \
+        -o "/tmp/fresh-editor-${FRESH_ARCH}-unknown-linux-gnu.tar.xz" \
+    && echo "${FRESH_SHA256}  /tmp/fresh-editor-${FRESH_ARCH}-unknown-linux-gnu.tar.xz" | sha256sum --check - \
+    && tar -xJf "/tmp/fresh-editor-${FRESH_ARCH}-unknown-linux-gnu.tar.xz" \
+        --strip-components=1 -C /usr/local/bin "fresh-editor-${FRESH_ARCH}-unknown-linux-gnu/fresh" \
+    && rm -f "/tmp/fresh-editor-${FRESH_ARCH}-unknown-linux-gnu.tar.xz" \
+    && chmod 0755 /usr/local/bin/fresh \
+    && /usr/local/bin/fresh --version
+
 # Claude Code is installed globally as root above, but containers run as
 # `vscode`, so its in-place auto-updater can never write to
 # /usr/lib/node_modules/@anthropic-ai/claude-code and fails every attempt with
@@ -544,6 +568,7 @@ RUN chmod 0755 \
         "act=${ACT_VERSION}" \
         "lefthook=${LEFTHOOK_VERSION}" \
         "gitleaks=${GITLEAKS_VERSION}" \
+        "fresh=${FRESH_VERSION}" \
         "uv=${UV_VERSION}" \
         "starship=${STARSHIP_VERSION}"
 
