@@ -168,6 +168,10 @@ assert_unit() {
     [ -x "$gh_browser" ] || fail "GitHub browser bridge is missing or not executable at ${gh_browser}"
     grep '^unset BROWSER$' "$shell_aliases" >/dev/null ||
         fail "shell-aliases.sh no longer removes generic BROWSER from interactive shells"
+    grep -E '^alias pnpm-relock=' "$shell_aliases" >/dev/null ||
+        fail "shell-aliases.sh does not define pnpm-relock alias"
+    ! grep -E '^alias fresh=' "$shell_aliases" >/dev/null ||
+        fail "shell-aliases.sh still defines fresh alias, shadowing Fresh editor"
 
     # `task` and the rest of the shared toolchain come from the pinned public
     # image, never a devcontainer Feature: the go-task Feature resolved
