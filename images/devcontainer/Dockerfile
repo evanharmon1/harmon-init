@@ -84,6 +84,12 @@ ARG FRESH_VERSION=0.5.1
 # update these reviewed, architecture-specific digests with each release.
 ARG FRESH_SHA256_AMD64=dd162ec4b367860d4235b4919be9dc3184211b663b5a81af34455c4b1d2c6ec2
 ARG FRESH_SHA256_ARM64=237bdb8c774fc402dc0dc13428215d5c63d70fe0e673aa99bf9897ed7ce3aac1
+# renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
+ARG TTT_VERSION=1.5.0
+# TTT release SHA-256 values. The version pin is Renovate-managed;
+# update these reviewed, architecture-specific digests with each release.
+ARG TTT_SHA256_AMD64=d5b5e3ef0c3c8c834360c7506628c23c2a61c00c006e402490ad4f336cacbe5f
+ARG TTT_SHA256_ARM64=667ace6b7288ffbd7724a82335e68fe1dcb9c03fe526c9df8da77ab9f811a1c3
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=2.1.2
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
@@ -150,6 +156,7 @@ RUN apt-get update \
         mc \
         micro \
         mkcert \
+        nano \
         nmap \
         ncdu \
         ncurses-bin \
@@ -503,6 +510,20 @@ RUN case "${TARGETARCH}" in \
     && chmod 0755 /usr/local/bin/fresh \
     && /usr/local/bin/fresh --version
 
+# TTT editor ships prebuilt raw binaries per architecture. Verify against
+# the reviewed and pinned digests above.
+RUN case "${TARGETARCH}" in \
+        "amd64") export TTT_SHA256="${TTT_SHA256_AMD64}" ;; \
+        "arm64") export TTT_SHA256="${TTT_SHA256_ARM64}" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/eugenioenko/ttt/releases/download/v${TTT_VERSION}/ttt-linux-${TARGETARCH}" \
+        -o "/tmp/ttt-linux-${TARGETARCH}" \
+    && echo "${TTT_SHA256}  /tmp/ttt-linux-${TARGETARCH}" | sha256sum --check - \
+    && install -m 0755 "/tmp/ttt-linux-${TARGETARCH}" /usr/local/bin/ttt \
+    && rm -f "/tmp/ttt-linux-${TARGETARCH}" \
+    && /usr/local/bin/ttt --version
+
 # Claude Code is installed globally as root above, but containers run as
 # `vscode`, so its in-place auto-updater can never write to
 # /usr/lib/node_modules/@anthropic-ai/claude-code and fails every attempt with
@@ -569,6 +590,7 @@ RUN chmod 0755 \
         "lefthook=${LEFTHOOK_VERSION}" \
         "gitleaks=${GITLEAKS_VERSION}" \
         "fresh=${FRESH_VERSION}" \
+        "ttt=${TTT_VERSION}" \
         "uv=${UV_VERSION}" \
         "starship=${STARSHIP_VERSION}"
 
