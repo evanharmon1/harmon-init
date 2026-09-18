@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.45.0](https://github.com/evanharmon1/harmon-init/compare/v4.44.0...v4.45.0) (2026-09-18)
+
+
+### Features
+
+* **docs:** use index.md for folder landing pages instead of README.md ([#1296](https://github.com/evanharmon1/harmon-init/issues/1296)) ([a520b7e](https://github.com/evanharmon1/harmon-init/commit/a520b7eeff7d39b9d4c513c43e76a334fc76e9f2))
+
 ## [4.44.0](https://github.com/evanharmon1/harmon-init/compare/v4.43.3...v4.44.0) (2026-09-18)
 
 
