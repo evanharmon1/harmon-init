@@ -37,15 +37,15 @@ LICENSE
 todo.md
 .github/CODEOWNERS
 .github/SECURITY.md
-docs/README.md
+docs/index.md
 docs/CHECKLIST.md
 docs/project-management.md
-docs/architecture/README.md
+docs/architecture/index.md
 docs/architecture/branch-protection.md
 docs/architecture/ci-cd.md
 docs/architecture/security.md
 docs/architecture/tests.md
-docs/guides/README.md
+docs/guides/index.md
 docs/guides/bot-account.md
 .devcontainer/related-repos.txt
 # sync-harmon-devkit root/template twins: root variants are harmon-init-
