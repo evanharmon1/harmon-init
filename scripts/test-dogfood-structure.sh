@@ -34,15 +34,15 @@ SKIP_FILES="
 CHANGELOG.md
 README.md
 DESIGN.md
-docs/README.md
+docs/index.md
 docs/CHECKLIST.md
 docs/project-management.md
-docs/architecture/README.md
+docs/architecture/index.md
 docs/architecture/branch-protection.md
 docs/architecture/ci-cd.md
 docs/architecture/security.md
 docs/architecture/tests.md
-docs/guides/README.md
+docs/guides/index.md
 docs/guides/bot-account.md
 "
 

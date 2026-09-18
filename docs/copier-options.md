@@ -472,7 +472,7 @@ grep -rhoE 'vars\.[A-Z0-9_]+' template | sort -u        # 6
 grep -rhoE 'secrets\.[A-Z0-9_]+' template | sort -u     # 8
 
 # this doc is routed from the hub
-grep -n copier-options docs/README.md
+grep -n copier-options docs/index.md
 ```
 
 The **indented** `when: false` pattern is deliberate: an unanchored
