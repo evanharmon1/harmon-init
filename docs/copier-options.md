@@ -74,7 +74,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 38 | `obsidian_project_add` | bool | no | always | `.meta/<project>.md` + `_tasks`: `task util:obsidian-install` (macOS) |
 | 39 | `obsidian_directory` | str | `~/Local/Memex/Professional` | `obsidian_project_add` | Vault destination — **validator** (shell-unsafe characters) |
 | 40 | `run_task_install` | bool | no | always | `_tasks`: `task install` — **ungated on `_copier_operation`, so it re-runs on every update** |
-| 41 | `decisions_seed_date` | str | today (`'%Y-%m-%d' \| strftime`) | always | Names and dates the seed decision record `docs/decisions/<date>-record-architecture-decisions.md` (and its README link) — **validator** (real calendar date); recorded once, so updates never rename the seed |
+| 41 | `decisions_seed_date` | str | today (`'%Y-%m-%d' \| strftime`) | always | Names and dates the seed decision record `docs/decisions/<date>-record-architecture-decisions.md` (and its index link) — **validator** (real calendar date); recorded once, so updates never rename the seed |
 
 ### Conditionally asked (13)
 
