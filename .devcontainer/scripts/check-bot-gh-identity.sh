@@ -98,8 +98,16 @@ fi
 # wordings alike ("Logged in to" cannot false-match it), "as <login>"
 # covers older gh wording, and the anchor keeps unrelated text like
 # "Active account: true" out.
+# The login is captured to the next WHITESPACE, not to the end of a
+# [A-Za-z0-9-] run. GitHub Enterprise Managed User logins carry an underscore
+# and a shortcode — `alice-bot_acme` — and a character class that stops at the
+# underscore records `alice-bot`, which passes the '-bot' test below while the
+# real account does not end in '-bot' at all. That is a bypass of this
+# script's own predicate, not a cosmetic parse: the suffix has to be tested
+# against the WHOLE login. gh prints the source in parentheses after a space,
+# so stopping at whitespace still excludes it.
 logins="$(printf '%s\n' "$status_out" |
-    grep -oE '(Logged in to|log in to) [^ ]+ (account|as) [A-Za-z0-9][A-Za-z0-9-]*' |
+    grep -oE '(Logged in to|log in to) [^ ]+ (account|as) [A-Za-z0-9][^[:space:]]*' |
     awk '{ print $NF }' | sort -u)" || logins=""
 
 # gh reads AT MOST ONE environment token per host class — the highest-

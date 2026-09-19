@@ -1156,6 +1156,33 @@ SENTINEL_SCRIPT
         fail "gh-identity violation warning offers an operator login in a bot container"
     fi
 
+    # An Enterprise Managed User login carries an underscore and a shortcode
+    # (`alice-bot_acme`). A capture that stops at the underscore records
+    # `alice-bot`, which passes the '-bot' test while the REAL account does
+    # not end in '-bot' — a bypass of this script's own predicate. The suffix
+    # must be tested against the whole login. Found by challenge round 4.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account alice-bot_acme (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "EMU login 'alice-bot_acme' exited ${gh_id_rc}, expected violation (1) — the capture truncated at the underscore"
+    case "$gh_id_out" in
+    *alice-bot_acme*) ;;
+    *) fail "EMU violation warning does not name the full login: ${gh_id_out}" ;;
+    esac
+
+    # ...and a genuine EMU BOT account still passes: the shortcode is part of
+    # the login, so the relationship is spelled with it.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner_acme-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "0" ] ||
+        fail "EMU bot login 'someowner_acme-bot' exited ${gh_id_rc}, expected pass (0)"
+
     # A stored login names its account even when validation fails (offline
     # or revoked): the CREDENTIAL is the violation, not the token's
     # freshness, so this must not degrade to indeterminate.
