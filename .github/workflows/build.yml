@@ -105,6 +105,14 @@ jobs:
         run: task test:category-gates
       - name: Dogfood parity (verbatim template files match their root twins)
         run: task test:dogfood-parity
+      # Root-only for the same reason as the two guards above: it compares the
+      # root settings twin against template/.claude/settings.json.jinja, which
+      # a generated repo does not have. Listed HERE and not only in `verify`
+      # because this job enumerates its steps by hand — the #614/#962 drift:
+      # the grant could be deleted from both twins and required CI would stay
+      # green, which is precisely the silent removal the script exists to stop.
+      - name: Permission allowlist (narrowed/dropped/required grants, twin parity)
+        run: task test:permission-allowlist
       # The structure check renders template/, so it needs copier. Installed
       # explicitly rather than via scripts/install-copier.sh: that script no-ops
       # when brew is present, and GitHub's ubuntu images ship linuxbrew — it
