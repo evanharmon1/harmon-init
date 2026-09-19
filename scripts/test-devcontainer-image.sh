@@ -130,13 +130,17 @@ docker run --rm "$overlay" sh -eu -c '
     }
     [ -f /etc/codex/managed_config.toml ]
     [ -x /etc/codex/hooks/claude-compat.sh ]
-    [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
+    # The boundary lives in managed_config.toml; the overridable defaults live
+    # in /etc/codex/config.toml. Asserting the model against the managed layer
+    # would re-enshrine the bug the split fixed (harmon-init#1186), so assert
+    # each key against the layer it now belongs to -- and assert the
+    # separation, not just the values.
     [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
     ! grep -Eq "session-start-context|post-edit-format|enforce-conventional-commits" /etc/codex/managed_config.toml
-    [ -f /etc/codex/managed_config.toml ]
-    [ -x /etc/codex/hooks/claude-compat.sh ]
-    [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
-    [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
+    ! grep -Eq "^(model|model_reasoning_effort|project_doc_max_bytes) = " /etc/codex/managed_config.toml
+    [ -f /etc/codex/config.toml ]
+    [ "$(yq ".model" /etc/codex/config.toml)" = "gpt-5.6-sol" ]
+    [ "$(yq ".model_reasoning_effort" /etc/codex/config.toml)" = "medium" ]
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
     terminfo="$(infocmp -1 xterm-ghostty)"

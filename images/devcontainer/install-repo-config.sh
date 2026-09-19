@@ -18,7 +18,6 @@ claude-settings.json
 claude-statusline.sh
 claude-user-defaults.json
 codex-managed-config.toml
-codex-system-config.toml
 ghostty.terminfo
 gitconfig
 micro-bindings.json
@@ -70,10 +69,19 @@ install -m 0644 "${config_dir}/claude-settings.json" /etc/claude-code/managed-se
 install -m 0755 "${config_dir}/claude-statusline.sh" /etc/claude-code/statusline.sh
 install -m 0755 "${config_dir}/claude-statusline.sh" /etc/antigravity/statusline.sh
 install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
-# Overridable system defaults (model, reasoning effort, doc budget, TUI).
-# Deliberately a SEPARATE layer from managed_config.toml, whose keys Codex
+# Overridable system defaults (model, reasoning effort, doc budget, TUI),
+# deliberately a SEPARATE layer from managed_config.toml, whose keys Codex
 # treats as unoverridable requirements -- see harmon-init#1186.
-install -m 0644 "${config_dir}/codex-system-config.toml" /etc/codex/config.toml
+#
+# OPTIONAL for the same reason as the optional Claude hooks below: this image
+# is consumed by repositories generated before the split existed, whose
+# overlay has no codex-system-config.toml. Listing it in required_files would
+# fail their Docker build outright -- a new image must never break an old
+# consumer. They keep whatever their managed config already pins until they
+# take the template update. Promote it into required_files once the fleet has.
+if [ -f "${config_dir}/codex-system-config.toml" ]; then
+    install -m 0644 "${config_dir}/codex-system-config.toml" /etc/codex/config.toml
+fi
 for hook in \
     block-no-verify.sh \
     enforce-conventional-commits.sh \

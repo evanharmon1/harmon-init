@@ -558,8 +558,10 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   | `/etc/codex/managed_config.toml` | legacy MDM **requirements** (`codex-managed-config*.toml`) | **no** |
 
   Every key in the managed layer is a hard requirement: it outranks `-c`,
-  `-m`, `~/.codex/config.toml`, and a trusted project `.codex/config.toml`
-  alike, without logging that it overrode anything. That is
+  `~/.codex/config.toml`, and a trusted project `.codex/config.toml` alike,
+  without logging that it overrode anything. The explicit `-m` flag was the
+  one model override that still took effect, which is why a pinned `model`
+  looked half-working rather than plainly broken. That is
   deliberate for `sandbox_mode` and `approval_policy`, which nothing should be
   able to relax — and it is why model, reasoning effort, the project-doc
   budget, and the TUI status line live in the defaults layer instead. Pinning
@@ -575,7 +577,7 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   ```
 
   If the header disagrees with what you asked for, check whether that key has
-  drifted into a managed config; `task test:devcontainer:assert` fails when it
+  drifted into a managed config; `task test:devcontainer:permissions` fails when it
   has. Effort levels are not model-specific: under a ChatGPT-account login on
   the pinned CLI, `low`, `medium`, `high`, and `xhigh` all take effect for
   every supported model once the key is out of the managed layer.

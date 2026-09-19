@@ -225,6 +225,13 @@ assert_unit() {
         fail "Codex devcontainer default model is not gpt-5.6-sol"
     [ "$(toml_root_scalar model_reasoning_effort "$codex_system_config")" = "medium" ] ||
         fail "Codex devcontainer default reasoning is not medium"
+    [ "$(toml_root_scalar project_doc_max_bytes "$codex_system_config")" = "65536" ] ||
+        fail "Codex devcontainer default project-doc budget is not 65536"
+    grep -q '^\[tui\]$' "$codex_system_config" ||
+        fail "the Codex TUI status line is missing from the defaults layer"
+    # Presence above, separation here: deleting a moved default from the system
+    # file, or moving one back into a managed file, must both fail. Checking
+    # only the second would let the first pass silently.
     local codex_boundary_file codex_forbidden_key
     for codex_boundary_file in "$codex_config" "$codex_bot_config"; do
         for codex_forbidden_key in model model_reasoning_effort project_doc_max_bytes; do
@@ -234,6 +241,10 @@ assert_unit() {
                     "codex-system-config.toml (harmon-init#1186)"
             fi
         done
+        if grep -q '^\[tui\]$' "$codex_boundary_file"; then
+            fail "${codex_boundary_file##*/} pins a [tui] table in the unoverridable" \
+                "managed layer; it belongs in codex-system-config.toml (harmon-init#1186)"
+        fi
     done
     [ "$(toml_root_scalar sandbox_mode "$codex_config")" = "workspace-write" ] ||
         fail "human Codex baseline does not enable workspace-write"
