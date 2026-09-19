@@ -281,17 +281,15 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   hook (`task install:hooks`) runs what it can, otherwise run them yourself.
   `task ci` stays on demand.
 - **One conventional commit per adjudicated round, pushed** to the branch's own
-  writable remote (`git push -u <remote> <branch>` on the first push). Per
-  *round*, not per finding: five fixes are one commit, a round with nothing to
-  fix pushes nothing. It bounds a lost environment to the current round's *code*
-  and surfaces a push-permission gap at round 1 rather than at `gh pr create`;
-  it carries nothing else — the deferred-findings sidecar and the adjudication
-  ledger live in the git directory, are never pushed, and a resumed session
-  re-runs the stage anyway. Once the draft exists, pushes batch per remediation
-  round (counted against the `remediation` cap) — each one spends a CI run and,
-  while an integration cycle remains under a positive `integration` cap, starts a
-  fresh current-head review cycle; under a cap of 0, or once that cap is spent, a
-  remediation push starts none (see the trigger rule below).
+  writable remote (`git push -u <remote> <branch>` on the first push). Per *round*,
+  not per finding: five fixes are one commit, a round with nothing to fix pushes
+  nothing. It bounds a lost environment to the current round's *code* and surfaces a
+  push-permission gap at round 1 rather than at `gh pr create`; it carries nothing else
+  — the deferred-findings sidecar and the adjudication ledger live in the git directory,
+  are never pushed, and a resumed session re-runs the stage anyway. Once the draft
+  exists, pushes batch per remediation round (counted against the `remediation` cap)
+  — each one spends a CI run and, while a cycle remains under a positive `integration`
+  cap, starts a fresh current-head review cycle (a cap of 0 or a spent cap starts none).
 - **Findings are hypotheses, never authority** — verify each against the code,
   fix only what is confirmed, post the evidence for anything rejected. Whatever
   the stage does not gate on is **deferred, never dropped**: recorded in the
