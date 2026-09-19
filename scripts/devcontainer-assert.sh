@@ -1569,8 +1569,16 @@ SENTINEL_SCRIPT
     # interactive login can happen at any point in a container's life, not
     # just at create); the human profile must not — a human login is that
     # profile's correct state.
-    grep -q 'check-bot-gh-identity.sh' "${repo_root}/.devcontainer/post-start.sh" ||
-        fail "bot post-start does not run the gh-identity tripwire"
+    #
+    # Matched as an EXECUTION line with comments stripped, the way the
+    # status-board assertion above is. A bare grep over the whole file passes
+    # on any mention of the filename — today the only mention is the
+    # invocation, so it does bite, but the comments right above it describe
+    # the tripwire and one edit that names the file there would silently make
+    # this check vacuous. Cheap to close now; invisible once it happens.
+    grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-start.sh" |
+        grep -qE '^[[:space:]]*bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' ||
+        fail "bot post-start does not EXECUTE the gh-identity tripwire (a mention in a comment is not a run)"
     if grep -q 'check-bot-gh-identity.sh' "${repo_root}/.devcontainer/dev/post-start.sh"; then
         fail "human post-start runs the bot-only gh-identity tripwire"
     fi
