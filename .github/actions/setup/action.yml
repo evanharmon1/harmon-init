@@ -152,11 +152,27 @@ runs:
       if: inputs.gitleaks == 'true'
       shell: bash
       run: |
-        if ! command -v gitleaks >/dev/null 2>&1; then
-          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
-          GITLEAKS_VERSION=8.24.3
+        # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
+        GITLEAKS_VERSION=8.24.3
+        # A pre-installed gitleaks (a self-hosted or pre-baked runner) is only
+        # reused when its version matches the pin exactly — otherwise the
+        # runner silently ran whatever version happened to be on it.
+        installed_gitleaks_version=
+        if command -v gitleaks >/dev/null 2>&1; then
+          installed_gitleaks_version="$(gitleaks version 2>/dev/null | tr -d '[:space:]')"
+        fi
+        if [ "$installed_gitleaks_version" != "$GITLEAKS_VERSION" ]; then
+          runner_arch="${RUNNER_ARCH:-$(uname -m)}"
+          case "$runner_arch" in
+            X64|x86_64) gitleaks_arch=x64 ;;
+            ARM64|arm64|aarch64) gitleaks_arch=arm64 ;;
+            *)
+              echo "::error::Unsupported runner architecture for pinned gitleaks: ${runner_arch}" >&2
+              exit 1
+              ;;
+          esac
           curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz"
           tar -xzf /tmp/gitleaks.tgz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
         fi
@@ -164,8 +180,13 @@ runs:
       if: inputs.snyk == 'true'
       shell: bash
       run: |
-        if ! command -v snyk >/dev/null 2>&1; then
-          # renovate: datasource=npm depName=snyk
-          SNYK_VERSION=1.1305.2
+        # renovate: datasource=npm depName=snyk
+        SNYK_VERSION=1.1305.2
+        # Same reuse-only-on-exact-match reasoning as gitleaks above.
+        installed_snyk_version=
+        if command -v snyk >/dev/null 2>&1; then
+          installed_snyk_version="$(snyk --version 2>/dev/null | tr -d '[:space:]')"
+        fi
+        if [ "$installed_snyk_version" != "$SNYK_VERSION" ]; then
           npm install --global "snyk@${SNYK_VERSION}"
         fi
