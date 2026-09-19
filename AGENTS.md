@@ -792,7 +792,7 @@ same round. The checkbox is the resolution state: an entry left unchecked is
 open work, so a later round — or a different session — can tell at a glance
 what it still owes without re-adjudicating what is done. That obligation is
 stated here and in the Dev Loop above, and holds whether or not the optional
-integration skill (`/integrate`, or the retired `/shepherd` at the current pin)
+integration skill (`/integrate`, or the retired `/shepherd` at an older pin)
 is installed to automate it.
 
 **Loop cap and exit:** a stage — challenge and review counted separately —
