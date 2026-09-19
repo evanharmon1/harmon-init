@@ -64,6 +64,8 @@ grep -Fq 'chmod -R u=rwX,g=rwX,o=rX "$git_dir"' "$helpers" ||
     fail "permissions reconciliation does not grant the original group write access"
 grep -Fq 'find "$git_dir" -type d -exec chmod g+s {} +' "$helpers" ||
     fail "permissions reconciliation does not set the setgid bit (scoped to directories only) so new entries inherit the original group"
+grep -Fq 'git -c safe.directory="$workspace_root" -C "$workspace_root" config core.sharedRepository 0664' "$helpers" ||
+    fail "permissions reconciliation does not configure an explicit, umask-independent core.sharedRepository so future commits stay group-writable, never world-writable"
 
 reconcile_line="$(grep -nF 'reconcile_workspace_permissions "$ENV_GITCONFIG"' "$post_create" |
     head -1 | cut -d: -f1)"
@@ -201,6 +203,39 @@ fi
 host_status="$(GIT_CONFIG_NOSYSTEM=1 HOME="$host_home" XDG_CONFIG_HOME="$host_xdg" git -C "$repo" status --short)"
 [ -z "$host_status" ] ||
     fail "host-side Git was not usable after container setup: $host_status"
+
+echo "==> a commit made AFTER reconciliation still produces group-writable, never world-writable, Git metadata (#1241 challenge round 2, finding F5)"
+[ "$(git -C "$repo" config core.sharedRepository)" = "0664" ] ||
+    fail "reconciliation did not configure an explicit, umask-independent core.sharedRepository"
+# Force a permissive umask for this one check: the symbolic
+# core.sharedRepository=group value only raises the GROUP class to match
+# the owner, leaving "other" governed by umask — a real regression this
+# fixture caught under this environment's own ambient umask (000). Forcing
+# it explicitly makes the case deterministic regardless of the umask the
+# CALLING environment happens to have, rather than depending on it.
+(
+    umask 000
+    # A directory's mtime bumps whenever ANY child changes (e.g. index/
+    # COMMIT_EDITMSG rewrites touch .git itself), so "-newer" over-matches
+    # pre-existing directories. Diff the directory LISTING instead to
+    # isolate genuinely new paths — object fanout directories a fresh
+    # blob/tree/commit needs that did not exist before.
+    dirs_before="$(find "$repo/.git" -type d | sort)"
+    repo_branch="$(git -C "$repo" symbolic-ref --short HEAD)"
+    printf '%s\n' second >"$repo/second.txt"
+    git -C "$repo" -c user.name=fixture -c user.email=fixture@example.test add second.txt
+    git -C "$repo" -c user.name=fixture -c user.email=fixture@example.test commit -qm "second (post-reconciliation)"
+    dirs_after="$(find "$repo/.git" -type d | sort)"
+    new_dirs="$(comm -13 <(printf '%s\n' "$dirs_before") <(printf '%s\n' "$dirs_after"))"
+    [ -n "$new_dirs" ] ||
+        fail "fixture setup: the post-reconciliation commit did not create any new Git directory to check"
+    printf '%s\n' "$new_dirs" | while IFS= read -r new_dir; do
+        [ "$(git_mode "$new_dir")" = "2775" ] ||
+            fail "a directory ($new_dir) created by a post-reconciliation commit under a permissive umask is not exactly group-writable/setgid (core.sharedRepository regression — world-writable or umask-dependent)"
+    done
+    [ "$(git_mode "$repo/.git/refs/heads/$repo_branch")" = "664" ] ||
+        fail "the branch ref rewritten by a post-reconciliation commit under a permissive umask is not exactly group-writable"
+)
 
 cat >"$fake_bin/lefthook" <<'LEFTHOOK'
 #!/bin/sh

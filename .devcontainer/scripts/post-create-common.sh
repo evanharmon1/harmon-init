@@ -133,6 +133,24 @@ reconcile_workspace_permissions() {
         echo "ERROR: could not set the setgid bit under $git_dir" >&2
         return 1
     }
+    # setgid only propagates GROUP OWNERSHIP to new entries — it does not
+    # make Git create them group-WRITABLE. Git's own loose-object and ref
+    # creation honors the process umask by default, so the very next commit
+    # made after reconciliation would otherwise create fresh object-fanout
+    # directories and ref files the host's group cannot write to, breaking
+    # host access again immediately (#1241 challenge round 2, finding F5).
+    # core.sharedRepository is Git's own mechanism for exactly this: a
+    # repository shared read-write across a Unix group. The symbolic value
+    # "group" is NOT umask-independent — Git only raises the group class to
+    # match the owner class, leaving "other" governed by umask, so a
+    # permissive umask (this environment's default is 000) would still
+    # create world-writable metadata and silently reopen the exact exposure
+    # this whole change exists to close. An explicit octal pins the bits
+    # Git actually applies regardless of umask.
+    git -c safe.directory="$workspace_root" -C "$workspace_root" config core.sharedRepository 0664 || {
+        echo "ERROR: could not configure shared-repository permissions for $workspace_root" >&2
+        return 1
+    }
 
     # This read is deliberately an exact-line match. An existing wildcard (or
     # another repository path) does not satisfy the workspace's own entry. It
