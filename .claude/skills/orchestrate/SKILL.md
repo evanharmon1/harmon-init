@@ -1,13 +1,13 @@
 ---
-name: orchestrator
+name: orchestrate
 description: >-
   Standing mode for policy-resolved, worktree-isolated Dev flow runs. It
   dispatches scoped roles, owns run records and adjudication, monitors durable
   events, and schedules a merge queue without making product or safety choices.
-  Use when coordinating one or more Dev Loop lanes. Invoke as /orchestrator.
+  Use when coordinating one or more Dev Loop lanes. Invoke as /orchestrate.
 ---
 
-# Orchestrator
+# Orchestrate
 
 Resolve and announce policy with `scripts/devflow-policy.mjs`; record resolved
 rigor, rounds, breadth, roles, strategy, and disclosures in the run. That
@@ -25,7 +25,75 @@ record ownership, scope, dependencies, and the complete file overlap.
 Before dispatching overlapping scopes, either serialize them or record the
 explicit merge dependency in both lane briefs.
 
+## Planning
+
+Before provisioning or dispatching a slate, turn its milestone or explicit
+issue list and the resolved policy into a durable plan at
+`<git-common-dir>/dev-flow-v2/slates/<slate-id>/plan.json`. Resolve the common
+Git directory with `git rev-parse --git-common-dir`; a linked worktree's `.git`
+path is a file and is never the shared-state root. Planning is orchestrator
+judgement written down, not a new autonomous planner: the schema, validator,
+and append-only recompute rule make its deterministic parts checkable.
+A second writer of the same `plan.json` is a blocker, not a race to lock
+against.
+
+Build and publish the plan in this order:
+
+1. **Graph.** When `.foreman.toml` exists and the slate is milestone-backed,
+   consume `task foreman:plan -- --milestone <n>` for dependencies, waves, and
+   the ready set instead of reimplementing Foreman's graph. Otherwise read
+   native blocked-by edges and the fixed `Blocked by:` fallback lines from
+   `breakdown` §4. For an explicit issue list in a Foreman repository, include
+   its containing milestone in the graph input or stop if no authoritative
+   Foreman graph can cover the list.
+2. **Re-verify.** Check every ready issue read-only against the live target
+   tree. Record `valid`, `partial`, or `done` and a complete candidate-file
+   list; issue-body line numbers are hints, never evidence. Remove `done`
+   issues from dispatch waves without erasing their verified verdict.
+3. **Overlap.** Compare every pair of dispatchable candidate-file lists. Record
+   the complete shared-path intersection for each overlapping pair, choose
+   `serialize` or `split`, and record the resulting merge dependency. A split
+   also becomes the ownership fence in both lane briefs; an overlap absent
+   from the plan is not safe to dispatch.
+4. **Cap.** Record which dispatcher applies and the cap it actually uses. An
+   interactive orchestrator uses the resolved
+   `[breadth].max_parallel_agents` directly. Only when Foreman is the dispatcher
+   is that policy cap intersected with `.foreman.toml`'s `max_parallel`; a
+   configured Foreman limit never lowers an interactive run's cap.
+5. **Project.** In a complete revision `plan`, record the resolved policy
+   snapshot; re-verified issues and candidate files; pairwise overlaps and
+   resolutions; waves; and lane, issue, branch, run id, and fence assignments.
+   Each lane fence uses exactly the `brief.envelope.schema.json` `fence` item
+   shape. Later authorized expansions append `{path, at, reason}` entries to
+   that lane's `expansions` array instead of rewriting its original fence. An
+   accepted expansion is a recomputation reason: before the lane edits the
+   expanded path, publish a complete new revision through the candidate,
+   validate, rename, and canonical-readback sequence in step 7.
+6. **Emit and validate.** Write the closed record and validate it with
+   `node scripts/validate-result-schemas.mjs plan <plan.json>`. Refuse dispatch
+   on a structural error, a broken revision digest, an incomplete overlap set,
+   a graph/projection mismatch, an ownership error, or a cap violation.
+   Immediately before each lane dispatch, compare the live target head with the
+   last revision's `plan.base_sha`; when they differ, recompute and validate the
+   plan before dispatching.
+7. **Recompute after every external merge.** Re-read the new default-branch
+   head, release newly unblocked dependents, rebuild waves, and repeat live
+   re-verification and pairwise overlap checks. Append the next `revisions[]`
+   entry with the complete new `plan` plus `seq`, `prev_digest`, `digest`, `at`,
+   and `reason`, using the same canonical-JSON SHA-256 chain convention as
+   `run.schema.json`; the digest covers the complete sorted-key `plan` and the
+   chain fields. The last revision is current, and earlier revisions remain
+   reconstructable without a second top-level projection. As the slate's single
+   writer, write the complete candidate beside `plan.json`, validate that
+   candidate with the `plan` kind, rename it over the canonical record, then
+   validate the canonical readback. Either validation or rename failure is a
+   blocker; dispatch and merge-queue mutation remain paused.
+
 ## Lane briefs
+
+Lane briefs consume the validated plan's last revision assignments, fences,
+overlap choices, and merge dependencies rather than reconstructing them from
+session prose.
 
 ### File-scope fences
 
@@ -169,6 +237,36 @@ produce evidence and did not; when the condition fails and the skill
 path is available for the lane's topology, the routing failed and the
 lane must be re-run before the PR is promoted.
 
+The maintainer-facing ready report is the last message about a promoted PR,
+not the first one after promotion. **Invariant: the ready report is sent
+only for a `POST-PROMOTION-CLOSED` event that names the promotion event id
+the watcher armed on, with zero activity rows in that window, and only
+after one re-read taken after the close shows the same head, the same
+readiness fingerprint, and every check still concluded green; any other
+observation (a different promotion id, any activity row, any changed
+value, any indeterminate read) withdraws the report and re-arms.** The
+re-read uses the same mechanisms `AGENTS.md` § Readiness gate names for the
+promotion-time check (`headRefOid`/`isDraft`, required CI status, and
+`readiness-gate.sh fingerprint`); promotion itself is never reported as
+readiness, and a status sent during the watch instead reads "promoted at
+T, post-promotion watch until T+15", never "ready". Matching the vendored
+`/integrate` skill's own handling of an invalidated promotion
+(`.claude/skills/integrate/SKILL.md` step 6): withdrawing runs
+`gh pr ready --undo` and confirms the PR is draft on the current head
+before deciding whether to re-verify or escalate. The mechanism that
+satisfies this invariant — window arming, activity/close correlation by
+promotion event id, retry on an indeterminate read — belongs to
+`assets/lane-watch.sh`; this section states only what must be true before
+the report is sent, never the ordering or per-endpoint steps the watcher
+uses to get there.
+This maintainer-facing report is distinct from § Persistent supervision's
+internal per-lane ledger entry ("a ready PR is reported"), which is
+orchestrator bookkeeping, not the maintainer-facing message this rule defines.
+
+If the orchestrator reverses its own promotion (`gh pr ready --undo`, for any
+reason, including mid-watch), the withdrawal is announced before anything
+else in the next maintainer-facing message — "#n is no longer ready: `<reason>`; back to draft on `<head>`" — ahead of any other status in that same message.
+
 ## Implementer selection
 
 Select implementers only from
@@ -213,11 +311,34 @@ never paste its loop inline. Keep the state file across re-arms so reported
 sentinels and post-promotion activity remain deduplicated. The watcher bounds
 every `herdr` and `gh` read, prefers each lane's `.lane-report.md` sentinel,
 tags pane-only fallback results, and watches reviews plus top-level and inline
-comments for 15 minutes after a draft becomes ready. Keep the registry argument
+comments for 15 minutes after a draft becomes ready. When a lane's
+post-promotion window's promotion event cannot be resolved before that
+window's own deadline passes, the watcher emits
+`POST-PROMOTION-INDETERMINATE <lane>: #<pr>` instead of silently abandoning
+the window — the event means only that the promotion epoch could not be
+confirmed in time; that path also clears the lane's tracked `PR` state as it
+tears the window down, so the very next observation — the watcher's own next
+poll, or a fresh process restarted against the same `--state-file` — sees
+the still-promoted PR as newly observed and re-arms a fresh window on its
+own, which is what makes restarting with the same state file a genuine
+retry rather than a no-op. Keep the registry argument
 bound to the immutable kickoff snapshot across every re-arm. It only reports
 events; the orchestrator remains responsible for every action. The watcher-owned
 `lane-watch.state` is separate from the run's canonical `monitor.json`; never
 pass that JSON monitor state to `--state-file`.
+
+The watcher's own restart durability does not, by itself, make the
+orchestrator's reporting durable: `POST-PROMOTION-ACTIVITY` and
+`POST-PROMOTION-CLOSED` are lines on the watcher's stdout, consumed by a
+separate orchestrator process, and the § PR-open confirmation gate depends
+on the orchestrator having durably seen every activity line for the
+*current* window — never merely on what its own live stdout stream has shown
+since its own last restart. An orchestrator restart mid-window must not
+silently default to "no activity seen"; confirm that against durable state,
+either by re-deriving what happened over the window's `[since,until]`
+directly from the same GitHub activity sources `lane-watch.sh` itself polls,
+or by maintaining its own durable log of every `POST-PROMOTION-ACTIVITY` /
+`POST-PROMOTION-CLOSED` line it has actually processed.
 
 Every emitted transition terminates in a recorded action: idle reads and
 adjudicates the lane status (including any unsupported claim that the user was
