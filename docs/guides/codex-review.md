@@ -268,8 +268,10 @@ from, and which inputs are even available depends on how the repository is
 set up. Challenge and review bound confidence passes; `integration` bounds
 current-head Codex review cycles; `remediation` bounds integration-stage fix
 pushes. These numbers move together with the resolved policy, and a cap of 0
-disables only the work it names, never a deterministic gate, security scan, or
-the readiness gate obligations (watching CI, current-head clean signal). Announce
+disables only the work it names, never a deterministic gate, a security scan, or
+the other readiness-gate conditions — under an `integration` cap of 0 only the
+current-head Codex condition drops out, exactly as `AGENTS.md` § Readiness gate
+states; CI, thread replies, and the rest still apply. Announce
 the resolved profile — caps and floor included — when you enter the loop.
 
 If Codex cloud review is connected to the repo, PRs

@@ -633,9 +633,11 @@ cycle above: stale activity is not evidence for the current commit, and a lone
 
 **Both procedures for that cycle live here**, because a repository can answer
 `use_codex_review` yes and `use_skills_sync` no. Where the resolved integration
-cap is positive, post `@codex review` on entry and after every remediation push,
-keep the comment ID returned for that trigger, and give each attempt a full
-10–15 minute window, re-triggering once after an incomplete first attempt.
+cap is positive, post `@codex review` on entry and after every remediation push
+while a cycle remains under the `integration` cap — a remediation push with no
+cycle left is the cap-reached escalation, not a trigger — keep the
+comment ID returned for that trigger, and give each attempt a full 10–15 minute
+window, re-triggering once after an incomplete first attempt.
 (Where the resolved integration cap is 0, no cloud review is triggered and that
 condition drops out of the readiness gate; every other gate still applies.)
 If both attempts are incomplete, stop and escalate without reporting green. That
