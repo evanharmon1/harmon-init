@@ -52,6 +52,7 @@ use_codeql: false
 use_codex_review: true
 use_codex_cloud_review: true
 use_coderabbit: false
+use_gemini_code_assist: false
 
 devcontainer: true
 # Dogfoods the opt-in, read-only GitHub CLI fallback for a missing Claude PR

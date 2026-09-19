@@ -52,29 +52,30 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 16 | `use_skills_sync` | bool | **yes** | always | `.skills-sync.yaml`, `sync-harmon-devkit.yml`, `task sync:skills` / `verify:skills`; seeds `claim_release_available` |
 | 17 | `skill_categories` | multiselect `universal`/`backend`/`frontend`/`infra`/`matt-pocock`/`mobile`/`repo` | seeded from `project_type` | `use_skills_sync` | **Seeds `.skills-sync.yaml` only** — never a file gate (see below) |
 | 18 | `use_shared_agents` | bool | **yes** | `use_skills_sync` | Also vendors devkit subagents into `.claude/agents` + `.codex/agents/implementer.toml` |
-| 19 | `use_foreman` | bool | **no** | always | `taskfiles/`, `.foreman.toml`, tag-protection rulesets, `audit-foreman-adapters.sh`; **requires `devcontainer`** (validator on Q26) |
+| 19 | `use_foreman` | bool | **no** | always | `taskfiles/`, `.foreman.toml`, tag-protection rulesets, `audit-foreman-adapters.sh`; **requires `devcontainer`** (validator on Q27) |
 | 20 | `foreman_additional_trusted_actors` | str (CSV) | `""` | `use_foreman` | Additional GitHub logins trusted to arm Foreman or supply prompt content; security-sensitive and deduplicated with the built-in actors |
 | 21 | `use_codeql` | bool | `project_type in ['web-astro','web-app']` | always | `codeql.yml` — free on public repos; private needs Code Security + `FULL_SECURITY_SCAN` |
 | 22 | `codeql_languages` | multiselect `javascript-typescript`/`python` | seeded; `[]` when `use_codeql` off | always | CodeQL matrix — **validator**: ≥1 required when `use_codeql` |
 | 23 | `use_codex_review` | bool | no | always | `docs/guides/codex-review.md`, `codex-review.sh`, `codex-gate.sh`, `task challenge` / `task review` |
 | 24 | `use_codex_cloud_review` | bool | no | `use_codex_review` | Makes a terminal Codex review a **required shepherd signal** — **validator** |
 | 25 | `use_coderabbit` | bool | no | always | `.coderabbit.yaml` + bot trust |
-| 26 | `devcontainer` | bool | **yes** | always | The whole dual-profile `.devcontainer/`, `devcontainer-build.yml`, 4 scripts, 4 guides — **validator** rejects `use_foreman` without it |
-| 27 | `use_statusline_pr_lookup` | bool | no | `devcontainer` | `statusline-pr-lookup.enabled`; read-only, bounded cached `gh pr view` fallback when Claude omits PR data — requires authenticated GitHub CLI and never prompts |
-| 28 | `devcontainer_coder_folder_uri` | str | `""` | `devcontainer` | Optional captured `vscode-remote://dev-container+…` URI for the personal Coder README badge; **validator**, empty keeps only the local fallback |
-| 29 | `use_antigravity_cli` | bool | no | `devcontainer` | Prompt-free Google Antigravity CLI in the bot profile — **validator** |
-| 30 | `use_copilot_cli` | bool | no | `devcontainer` | Prompt-free GitHub Copilot CLI in the **bot** profile only — `COPILOT_ALLOW_ALL` + the `~/.local/bin/copilot` wrapper; **validator**, **security-sensitive** |
-| 31 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into *both* profiles |
-| 32 | `project_management` | choice `none`/`github`/`linear` | `none` | always | `docs/project-management.md`, `setup:github-project` / `-labels`, `close-milestone-on-release.yml` |
-| 33 | `git_init` | bool | **yes** | always | `_tasks`: `git init` + scaffold commit (copy only); also the fresh-scaffold signal for the other side effects |
-| 34 | `github_remote_create` | bool | no | always | `_tasks`: `gh repo create --private --push` (copy only) |
-| 35 | `github_release_init` | bool | no | always | `_tasks`: `task release:init` (copy only) |
-| 36 | `bunch_add` | bool | no | always | `.meta/*.bunch` + `_tasks`: `task util:bunch-install` (macOS) |
-| 37 | `bunches_directory` | str | `~/Library/Mobile Documents/com~apple~CloudDocs/Bunches` | `bunch_add` | Bunch install destination — **validator** (shell-unsafe characters) |
-| 38 | `obsidian_project_add` | bool | no | always | `.meta/<project>.md` + `_tasks`: `task util:obsidian-install` (macOS) |
-| 39 | `obsidian_directory` | str | `~/Local/Memex/Professional` | `obsidian_project_add` | Vault destination — **validator** (shell-unsafe characters) |
-| 40 | `run_task_install` | bool | no | always | `_tasks`: `task install` — **ungated on `_copier_operation`, so it re-runs on every update** |
-| 41 | `decisions_seed_date` | str | today (`'%Y-%m-%d' \| strftime`) | always | Names and dates the seed decision record `docs/decisions/<date>-record-architecture-decisions.md` (and its index link) — **validator** (real calendar date); recorded once, so updates never rename the seed |
+| 26 | `use_gemini_code_assist` | bool | no | always | `.gemini/` (`config.yaml` + `styleguide.md`) |
+| 27 | `devcontainer` | bool | **yes** | always | The whole dual-profile `.devcontainer/`, `devcontainer-build.yml`, 4 scripts, 4 guides — **validator** rejects `use_foreman` without it |
+| 28 | `use_statusline_pr_lookup` | bool | no | `devcontainer` | `statusline-pr-lookup.enabled`; read-only, bounded cached `gh pr view` fallback when Claude omits PR data — requires authenticated GitHub CLI and never prompts |
+| 29 | `devcontainer_coder_folder_uri` | str | `""` | `devcontainer` | Optional captured `vscode-remote://dev-container+…` URI for the personal Coder README badge; **validator**, empty keeps only the local fallback |
+| 30 | `use_antigravity_cli` | bool | no | `devcontainer` | Prompt-free Google Antigravity CLI in the bot profile — **validator** |
+| 31 | `use_copilot_cli` | bool | no | `devcontainer` | Prompt-free GitHub Copilot CLI in the **bot** profile only — `COPILOT_ALLOW_ALL` + the `~/.local/bin/copilot` wrapper; **validator**, **security-sensitive** |
+| 32 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into *both* profiles |
+| 33 | `project_management` | choice `none`/`github`/`linear` | `none` | always | `docs/project-management.md`, `setup:github-project` / `-labels`, `close-milestone-on-release.yml` |
+| 34 | `git_init` | bool | **yes** | always | `_tasks`: `git init` + scaffold commit (copy only); also the fresh-scaffold signal for the other side effects |
+| 35 | `github_remote_create` | bool | no | always | `_tasks`: `gh repo create --private --push` (copy only) |
+| 36 | `github_release_init` | bool | no | always | `_tasks`: `task release:init` (copy only) |
+| 37 | `bunch_add` | bool | no | always | `.meta/*.bunch` + `_tasks`: `task util:bunch-install` (macOS) |
+| 38 | `bunches_directory` | str | `~/Library/Mobile Documents/com~apple~CloudDocs/Bunches` | `bunch_add` | Bunch install destination — **validator** (shell-unsafe characters) |
+| 39 | `obsidian_project_add` | bool | no | always | `.meta/<project>.md` + `_tasks`: `task util:obsidian-install` (macOS) |
+| 40 | `obsidian_directory` | str | `~/Local/Memex/Professional` | `obsidian_project_add` | Vault destination — **validator** (shell-unsafe characters) |
+| 41 | `run_task_install` | bool | no | always | `_tasks`: `task install` — **ungated on `_copier_operation`, so it re-runs on every update** |
+| 42 | `decisions_seed_date` | str | today (`'%Y-%m-%d' \| strftime`) | always | Names and dates the seed decision record `docs/decisions/<date>-record-architecture-decisions.md` (and its index link) — **validator** (real calendar date); recorded once, so updates never rename the seed |
 
 ### Conditionally asked (13)
 
@@ -185,6 +186,7 @@ and copier drops the path.
 | `use_release_please and project_management == 'github'` | `close-milestone-on-release.yml` |
 | `project_management == 'github' or use_foreman` | `setup-github-labels.sh` |
 | `use_coderabbit` | `.coderabbit.yaml` |
+| `use_gemini_code_assist` | `.gemini/` |
 | `use_codeql` | `codeql.yml` |
 | `use_alternative_claude_providers` | `.devcontainer/config/claude-providers.sh` |
 | `snyk_scan_schedule != 'off'` | `snyk-scheduled.yml` |

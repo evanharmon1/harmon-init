@@ -295,6 +295,16 @@ use_coderabbit:
     installation separately.
   default: no
 
+use_gemini_code_assist:
+  type: bool
+  help: >-
+    GEMINI CODE ASSIST: Add the Gemini Code Assist configuration (.gemini/config.yaml
+    and .gemini/styleguide.md) for Google Cloud SCM PR reviews? Defaults off.
+    Requires a Google Cloud project with the Gemini Code Assist Management and
+    Developer Connect APIs enabled, plus the Gemini Code Assist GitHub App
+    installed and linked to this repository.
+  default: no
+
 devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"

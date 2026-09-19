@@ -217,6 +217,7 @@ full)
         --data use_codex_review=true
         --data use_codex_cloud_review=true
         --data use_coderabbit=true
+        --data use_gemini_code_assist=true
         --data use_antigravity_cli=true
         --data use_copilot_cli=true
         --data use_alternative_claude_providers=true
@@ -1576,6 +1577,22 @@ else
         ! grep -q 'coderabbitai' .foreman.toml ||
             err "Foreman trusts CodeRabbit reviews but use_coderabbit is off"
     fi
+fi
+
+if [ "$profile" = "full" ]; then
+    [ -f .gemini/config.yaml ] || err ".gemini/config.yaml missing (use_gemini_code_assist=true)"
+    [ -f .gemini/styleguide.md ] || err ".gemini/styleguide.md missing (use_gemini_code_assist=true)"
+    grep -Eq '^  comment_severity_threshold: LOW$' .gemini/config.yaml ||
+        err ".gemini/config.yaml severity threshold is not LOW"
+    grep -Fq 'Connect Gemini Code Assist on GitHub' docs/CHECKLIST.md ||
+        err "CHECKLIST missing Gemini Code Assist setup (use_gemini_code_assist=true)"
+else
+    [ ! -f .gemini/config.yaml ] ||
+        err ".gemini/config.yaml rendered but use_gemini_code_assist is off"
+    [ ! -f .gemini/styleguide.md ] ||
+        err ".gemini/styleguide.md rendered but use_gemini_code_assist is off"
+    ! grep -Fq 'Connect Gemini Code Assist on GitHub' docs/CHECKLIST.md ||
+        err "CHECKLIST mentions Gemini Code Assist setup but use_gemini_code_assist is off"
 fi
 
 # ── 9d5. the draft-PR workbench lifecycle renders in every profile ──
