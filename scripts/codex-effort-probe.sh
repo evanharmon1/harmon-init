@@ -22,10 +22,25 @@ set -euo pipefail
 # The probe effort must DIFFER from the shipped default, or a run that ignores
 # the override looks identical to one that honours it and the probe is vacuous.
 readonly PROBE_EFFORT="${CODEX_PROBE_EFFORT:-xhigh}"
+# Refuse to run where the layered config is absent. The probe exists to prove
+# that the devcontainer's two-layer install lets a requested effort through; on
+# a bare host there is no /etc/codex/managed_config.toml to override anything,
+# so the run tests a different CLI against a different configuration and passes
+# trivially -- it would report success while the pinned devcontainer still
+# carried the original unoverridable pin. A tool whose whole job is detecting
+# that must not be able to pass by being run in the wrong place.
+default_effort_file=/etc/codex/config.toml
+if [ ! -r "$default_effort_file" ] && [ "${CODEX_PROBE_ALLOW_HOST:-0}" != "1" ]; then
+    echo "codex-effort-probe: ${default_effort_file} not found — this looks like a host" >&2
+    echo "  checkout rather than the devcontainer. A host run proves nothing about the" >&2
+    echo "  container's config layering. Run it inside the devcontainer, or set" >&2
+    echo "  CODEX_PROBE_ALLOW_HOST=1 to probe this machine's CLI deliberately." >&2
+    exit 1
+fi
+
 # Read the shipped default from the live defaults layer rather than hardcoding
 # it. A literal that drifts to equal PROBE_EFFORT would make the anti-vacuity
 # check below pass while proving nothing.
-default_effort_file=/etc/codex/config.toml
 if [ -z "${CODEX_PROBE_DEFAULT_EFFORT:-}" ] && [ -r "$default_effort_file" ]; then
     CODEX_PROBE_DEFAULT_EFFORT="$(sed -n 's/^[[:space:]]*"\{0,1\}model_reasoning_effort"\{0,1\}[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\)"\{0,1\}.*/\1/p' \
         "$default_effort_file" | head -1)"

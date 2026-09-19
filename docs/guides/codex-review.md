@@ -572,8 +572,10 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   run will actually use:
 
   ```sh
+  # 2>&1 is load-bearing: codex exec writes the run header to stderr and only
+  # the assistant's reply to stdout, so a stdout-only pipeline prints nothing.
   codex exec -c 'model_reasoning_effort="xhigh"' --skip-git-repo-check \
-      'Reply with exactly: ok' | grep -iE '^model:|reasoning effort'
+      'Reply with exactly: ok' 2>&1 | grep -iE '^model:|reasoning effort'
   ```
 
   If the header disagrees with what you asked for, check whether that key has
