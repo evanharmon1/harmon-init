@@ -1156,32 +1156,76 @@ SENTINEL_SCRIPT
         fail "gh-identity violation warning offers an operator login in a bot container"
     fi
 
-    # An Enterprise Managed User login carries an underscore and a shortcode
-    # (`alice-bot_acme`). A capture that stops at the underscore records
-    # `alice-bot`, which passes the '-bot' test while the REAL account does
-    # not end in '-bot' — a bypass of this script's own predicate. The suffix
-    # must be tested against the whole login. Found by challenge round 4.
+    # Enterprise Managed Users. GitHub appends `_<enterprise-shortcode>` to
+    # the IdP username, so the bot account provisioned as `someowner-bot` IS
+    # `someowner-bot_acme` there — the canonical generated shape, and it must
+    # PASS. An earlier round tested the raw login and rejected exactly this
+    # account; the relationship belongs on the IdP component.
     printf '%s\n' \
         'github.com' \
-        '  ✓ Logged in to github.com account alice-bot_acme (keyring)' \
-        >"$gh_id_fixture"
-    gh_identity_run 0
-    [ "$gh_id_rc" = "1" ] ||
-        fail "EMU login 'alice-bot_acme' exited ${gh_id_rc}, expected violation (1) — the capture truncated at the underscore"
-    case "$gh_id_out" in
-    *alice-bot_acme*) ;;
-    *) fail "EMU violation warning does not name the full login: ${gh_id_out}" ;;
-    esac
-
-    # ...and a genuine EMU BOT account still passes: the shortcode is part of
-    # the login, so the relationship is spelled with it.
-    printf '%s\n' \
-        'github.com' \
-        '  ✓ Logged in to github.com account someowner_acme-bot (GH_TOKEN)' \
+        '  ✓ Logged in to github.com account someowner-bot_acme (GH_TOKEN)' \
         >"$gh_id_fixture"
     gh_identity_run 0
     [ "$gh_id_rc" = "0" ] ||
-        fail "EMU bot login 'someowner_acme-bot' exited ${gh_id_rc}, expected pass (0)"
+        fail "canonical EMU bot login 'someowner-bot_acme' exited ${gh_id_rc}, expected pass (0)"
+
+    # ...and an EMU login whose IdP component is NOT a bot is still a
+    # violation, named in full so the operator can find the real account.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator_acme (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "EMU non-bot login 'someoperator_acme' exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *someoperator_acme*) ;;
+    *) fail "EMU violation warning does not name the FULL login: ${gh_id_out}" ;;
+    esac
+
+    # The ORDINARY naming pair this repo uses — `alice` beside `alice-bot` —
+    # is the case a substring source-lookup gets wrong: `alice` also matches
+    # the bot's (GH_TOKEN) record, which would classify the human credential
+    # as environment-sourced, drop the `gh auth logout` it needs, and send the
+    # operator to repair an already-correct bot token. The stored human
+    # credential must still get the logout instruction.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account alice-bot (GH_TOKEN)' \
+        '  ✓ Logged in to github.com account alice (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "human 'alice' beside bot 'alice-bot' exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*) ;;
+    *) fail "the stored human credential 'alice' lost its logout instruction to a substring match on 'alice-bot': ${gh_id_out}" ;;
+    esac
+
+    # Every INDETERMINATE report carries the remedy, never a bare verdict: the
+    # acceptance criteria ask for indeterminate *with* the remedy, and a
+    # reader told only "unverified" has nothing to act on. Timeout path:
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 124
+    [ "$gh_id_rc" = "3" ] ||
+        fail "timed-out enumeration exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the timeout indeterminate report carries no provisioning remedy: ${gh_id_out}" ;;
+    esac
+
+    # ...and the unparseable-output path:
+    printf '%s\n' 'something gh has never printed before' >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "3" ] ||
+        fail "unparseable gh output exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the unparseable indeterminate report carries no provisioning remedy: ${gh_id_out}" ;;
+    esac
 
     # The violation remedy must match the credential SOURCE. `gh auth logout`
     # removes a stored record and can do nothing about a token from the

@@ -160,17 +160,32 @@ fi
 # keyring/hosts.yml record and can do nothing about a token supplied through
 # the environment. A misprovisioned GH_TOKEN carrying the wrong account is a
 # PRIMARY failure mode here, so that is not a corner worth getting wrong.
+# The '-bot' relationship is tested against the IdP component of the login,
+# never the raw string. An ordinary GitHub username is alphanumerics and
+# hyphens only, so the ONLY thing that can put an underscore in a login is
+# Enterprise Managed Users, which appends `_<enterprise-shortcode>` to the IdP
+# username: the bot account `someowner-bot` IS `someowner-bot_acme` there.
+# Testing the raw login rejects every legitimate EMU bot; stripping a trailing
+# `_<shortcode>` first tests the name the operator actually provisioned. The
+# FULL login is what gets displayed, so a warning always names the real
+# account.
+#
+# The source lookup matches the account's OWN record, anchored on the word gh
+# prints before it. A substring search is wrong for the ordinary naming pair
+# this repo uses — `alice` and `alice-bot` — because `alice` matches the bot's
+# `(GH_TOKEN)` record too, which would classify the human credential as
+# environment-sourced, drop the `gh auth logout` it actually needs, and send
+# the operator to repair an already-correct bot token while the personal
+# credential stays installed.
 bad=""
 bad_stored=false
 bad_env=false
 for login in $logins; do
-    case "$login" in
+    case "${login%_*}" in
     *-bot) continue ;;
     esac
     bad="${bad}${bad:+ }${login}"
-    # The record naming this login also names where its credential came from,
-    # in the trailing parentheses gh prints.
-    if printf '%s\n' "$status_out" | grep -F "$login" |
+    if printf '%s\n' "$status_out" | grep -E "(account|as) ${login} \\(" |
         grep -qE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
         bad_env=true
     else
@@ -252,6 +267,10 @@ fi
 if [ "$status_rc" = "124" ] || [ "$status_rc" = "137" ]; then
     echo "==> gh-identity: gh auth status timed out after ${GH_IDENTITY_TIMEOUT}s —" \
         "credential enumeration incomplete, bot login unverified (indeterminate)."
+    # An indeterminate read is reported WITH the remedy, never bare: a timeout
+    # is precisely the offline case the acceptance criteria call out, and a
+    # reader who sees only "unverified" is left with nothing to do about it.
+    remedy_provisioning
     exit 3
 fi
 
@@ -308,6 +327,7 @@ case "$status_out" in
     ;;
 *)
     echo "==> gh-identity: could not parse gh auth status output — bot login unverified (indeterminate)."
+    remedy_provisioning
     exit 3
     ;;
 esac
