@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.46.0](https://github.com/evanharmon1/harmon-init/compare/v4.45.0...v4.46.0) (2026-09-19)
+
+
+### Features
+
+* **template:** add use_gemini_code_assist option for gemini code assist reviews ([#1301](https://github.com/evanharmon1/harmon-init/issues/1301)) ([5300cf7](https://github.com/evanharmon1/harmon-init/commit/5300cf7bab610bac7f0d0b885a7f0399e7d82fb7))
+
 ## [4.45.0](https://github.com/evanharmon1/harmon-init/compare/v4.44.0...v4.45.0) (2026-09-18)
 
 
