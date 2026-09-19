@@ -155,12 +155,27 @@ if printf '%s\n' "$status_out" |
     unnamed_token=true
 fi
 
+# Collected with their credential SOURCE, because the remedy differs and a
+# remedy that cannot work is worse than none: `gh auth logout` removes a
+# keyring/hosts.yml record and can do nothing about a token supplied through
+# the environment. A misprovisioned GH_TOKEN carrying the wrong account is a
+# PRIMARY failure mode here, so that is not a corner worth getting wrong.
 bad=""
+bad_stored=false
+bad_env=false
 for login in $logins; do
     case "$login" in
-    *-bot) ;;
-    *) bad="${bad}${bad:+ }${login}" ;;
+    *-bot) continue ;;
     esac
+    bad="${bad}${bad:+ }${login}"
+    # The record naming this login also names where its credential came from,
+    # in the trailing parentheses gh prints.
+    if printf '%s\n' "$status_out" | grep -F "$login" |
+        grep -qE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
+        bad_env=true
+    else
+        bad_stored=true
+    fi
 done
 
 # A KNOWN non-bot credential outranks everything else, an unverifiable
@@ -177,10 +192,19 @@ if [ -n "$bad" ]; then
     echo "  and a personal credential must never sit inside a"
     echo "  bypassPermissions agent container."
     echo ""
-    echo "  First remove the human credential — for each stored login run"
-    echo "      gh auth logout --hostname <host> --user <login>"
-    echo "  with the host 'gh auth status' lists it under (and consider"
-    echo "  rotating it). Then:"
+    echo "  First remove the human credential (and consider rotating it):"
+    if [ "$bad_stored" = true ]; then
+        echo "    * a STORED login — run"
+        echo "        gh auth logout --hostname <host> --user <login>"
+        echo "      with the host 'gh auth status' lists it under;"
+    fi
+    if [ "$bad_env" = true ]; then
+        echo "    * a credential from the ENVIRONMENT — 'gh auth logout'"
+        echo "      cannot remove it. The wrong account was provisioned into"
+        echo "      this container's token, so fix it at the source below"
+        echo "      rather than in the container;"
+    fi
+    echo "  then:"
     echo ""
     remedy_provisioning
     banner

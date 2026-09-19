@@ -1183,6 +1183,41 @@ SENTINEL_SCRIPT
     [ "$gh_id_rc" = "0" ] ||
         fail "EMU bot login 'someowner_acme-bot' exited ${gh_id_rc}, expected pass (0)"
 
+    # The violation remedy must match the credential SOURCE. `gh auth logout`
+    # removes a stored record and can do nothing about a token from the
+    # environment — and a misprovisioned GH_TOKEN carrying the wrong account
+    # is a primary failure mode, so a remedy that cannot work there is worse
+    # than none. Found by the review stage.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "env-sourced non-bot login exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"cannot remove it"*) ;;
+    *) fail "env-sourced violation remedy does not say gh auth logout cannot remove it: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*)
+        fail "env-sourced violation remedy prescribes gh auth logout, which cannot remove an environment token"
+        ;;
+    esac
+
+    # ...while a STORED non-bot record still gets the logout instruction.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "stored non-bot login exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*) ;;
+    *) fail "stored violation remedy omits the gh auth logout instruction: ${gh_id_out}" ;;
+    esac
+
     # A stored login names its account even when validation fails (offline
     # or revoked): the CREDENTIAL is the violation, not the token's
     # freshness, so this must not degrade to indeterminate.
@@ -1579,6 +1614,31 @@ SENTINEL_SCRIPT
     if ! offers_login "$remedy_out"; then
         fail "status board's gh remedy omits the operator login outside the bot profile: ${remedy_out}"
     fi
+
+    # The SCOPE remedy gets the same behavioral treatment as the login remedy.
+    # The static guard in test-status.sh exempts this helper's whole body —
+    # correctly, since it is the derivation — which means reverting its bot
+    # branch to `task setup:gh-scopes` would slip past a purely static check.
+    # That residual is what this pair closes. Found by the review stage.
+    local scope_src
+    scope_src="$(sed -n '/^gh_scope_remedy_default() {/,/^}/p' "$status_sh")"
+    remedy_out="$(FOREMAN_DEVCONTAINER=bot "$bash_bin" -c \
+        ". \"$scopes_lib\"; $scope_src; gh_scope_remedy_default")"
+    case "$remedy_out" in
+    *"setup:gh-scopes"* | *"gh auth refresh"* | *"gh auth login"*)
+        fail "status board's bot-profile scope remedy tells the reader to act on the current login, which the tripwire may be about to condemn: ${remedy_out}"
+        ;;
+    esac
+    case "$remedy_out" in
+    *GH_TOKEN*) ;;
+    *) fail "status board's bot-profile scope remedy does not point at re-provisioning GH_TOKEN: ${remedy_out}" ;;
+    esac
+    remedy_out="$(FOREMAN_DEVCONTAINER= "$bash_bin" -c \
+        ". \"$scopes_lib\"; $scope_src; gh_scope_remedy_default")"
+    case "$remedy_out" in
+    *"setup:gh-scopes"*) ;;
+    *) fail "status board's scope remedy outside the bot profile no longer names the scopes task: ${remedy_out}" ;;
+    esac
 
     # 11. Static devcontainer.json invariants via the devcontainers CLI.
     assert_config_invariants "$repo_root" "$bot_config" bot
