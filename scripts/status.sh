@@ -609,6 +609,58 @@ render_gh_scope_check() {
     fi
 }
 
+# Bot gh-identity tripwire (harmon-init#1236) — the VISIBLE surface for the
+# same check the bot post-start writes to its log: that log is not somewhere
+# a human (or an agent reading the session-start probe) looks, and the gh
+# credential line is a local read that cannot say WHO gh writes as. Gated by
+# the bot profile's containerEnv marker so the human profile's board never
+# prints a bot warning; honors STATUS_NO_NETWORK like the scope probe;
+# warn-only, like check-image-staleness.sh — a diagnostic never breaks the
+# board.
+#
+# A PAIR of functions rather than an inline block, because
+# render_local_credentials has TWO call sites — the `creds` section and the
+# `setup` audit's "Local credentials" group — and `should_show creds` is false
+# under SECTION=setup. Inlining it at the first site left `task status:setup`
+# rendering a green authenticated gh line with no identity warning in a bot
+# container authenticated as a human, which is the exact state this exists to
+# surface.
+#
+# Budget: the session-start hooks kill the creds section from the SUM of its
+# sequential probe bounds (four probes at the 3s local bound — see the hook
+# comment), so a fifth sequential probe would overrun the deadline and cost
+# the reader the whole buffered section exactly when the network is degraded.
+# This probe therefore runs in PARALLEL with those sequential probes —
+# launched before them, collected after. The helper self-bounds at 2s + a 1s
+# kill grace so its own timed-out note survives even a TERM-trapping gh, and
+# the outer run_timeout 5 contains deadline + grace as the backstop (an outer
+# bound tighter than the inner kill grace would swallow the note in exactly
+# the kill-resistant case). 5s + grace still sits far inside the ~16s the
+# sequential probes already cost, so worst-case wall clock and the hook
+# budget are unchanged.
+GH_IDENTITY_PID=""
+GH_IDENTITY_OUT=""
+
+gh_identity_launch() {
+    GH_IDENTITY_PID=""
+    GH_IDENTITY_OUT="${TMPDIR_STATUS}/gh-identity.txt"
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ] && [ "${STATUS_NO_NETWORK:-0}" != "1" ] &&
+        [ -r .devcontainer/scripts/check-bot-gh-identity.sh ]; then
+        GH_IDENTITY_TIMEOUT=2 GH_IDENTITY_KILL_GRACE=1 run_timeout 5 \
+            bash .devcontainer/scripts/check-bot-gh-identity.sh \
+            >"${GH_IDENTITY_OUT}" 2>&1 &
+        GH_IDENTITY_PID=$!
+    fi
+}
+
+gh_identity_collect() {
+    if [ -n "${GH_IDENTITY_PID}" ]; then
+        wait "${GH_IDENTITY_PID}" || true
+        cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
+        GH_IDENTITY_PID=""
+    fi
+}
+
 # The interactive-login remedy is HUMAN-profile advice. In the bot profile
 # an operator `gh auth login` is the escalation harmon-init#1236 exists to
 # stop, and the gh-identity tripwire banner below this section says exactly
@@ -791,45 +843,12 @@ render_local_credentials() {
 }
 
 if should_show "creds"; then
-    # Bot gh-identity tripwire (harmon-init#1236) — the VISIBLE surface for the
-    # same check the bot post-start writes to its log: that log is not somewhere
-    # a human (or an agent reading the session-start probe) looks, and the gh
-    # line below is a local read that cannot say WHO gh writes as. Gated by the
-    # bot profile's containerEnv marker so the human profile's board never
-    # prints a bot warning; honors STATUS_NO_NETWORK like the scope probe;
-    # warn-only, like check-image-staleness.sh — a diagnostic never breaks the
-    # board.
-    #
-    # Budget: the session-start hooks kill this section from the SUM of its
-    # sequential probe bounds (four probes at the 3s local bound — see the
-    # hook comment), so a fifth sequential probe would overrun the deadline
-    # and cost the reader the whole buffered section exactly when the
-    # network is degraded. This probe therefore runs in PARALLEL with those
-    # sequential probes — launched before them, collected after. The
-    # helper self-bounds at 2s + a 1s kill grace so its own timed-out note
-    # survives even a TERM-trapping gh, and the outer run_timeout 5
-    # contains deadline + grace as the backstop (an outer bound tighter
-    # than the inner kill grace would swallow the note in exactly the
-    # kill-resistant case). 5s + grace still sits far inside the ~16s the
-    # sequential probes already cost, so worst-case wall clock and the
-    # hook budget are unchanged.
-    GH_IDENTITY_PID=""
-    GH_IDENTITY_OUT="${TMPDIR_STATUS}/gh-identity.txt"
-    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ] && [ "${STATUS_NO_NETWORK:-0}" != "1" ] &&
-        [ -r .devcontainer/scripts/check-bot-gh-identity.sh ]; then
-        GH_IDENTITY_TIMEOUT=2 GH_IDENTITY_KILL_GRACE=1 run_timeout 5 \
-            bash .devcontainer/scripts/check-bot-gh-identity.sh \
-            >"${GH_IDENTITY_OUT}" 2>&1 &
-        GH_IDENTITY_PID=$!
-    fi
+    gh_identity_launch
 
     section_header "Local Credentials"
     render_local_credentials | section_box
 
-    if [ -n "${GH_IDENTITY_PID}" ]; then
-        wait "${GH_IDENTITY_PID}" || true
-        cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
-    fi
+    gh_identity_collect
 fi
 
 # ── Setup Completeness ──────────────────────────────────────────────────────
@@ -876,10 +895,12 @@ if [[ "${SECTION}" == "setup" ]]; then
     # below returns its results. The plumbing is worth it — a summary reading
     # "100% · 0 missing" directly under a red ✗ Codex CLI line on the same screen
     # is a worse defect than the file is.
+    gh_identity_launch
     {
         subhead "Local credentials"
         render_local_credentials
     } | section_box
+    gh_identity_collect
 
     # Reuses the single bounded probe above rather than making a second,
     # unbounded `gh auth status` call to learn the same thing. Sharing that probe

@@ -1502,6 +1502,24 @@ SENTINEL_SCRIPT
     [ "$((status_invoke_line - status_guard_line))" -le 10 ] ||
         fail "status board's gh-identity run (line ${status_invoke_line}) is too far from its bot-profile guard (line ${status_guard_line}) to be inside it"
 
+    # EVERY render_local_credentials call site must be covered, not just the
+    # first. `should_show creds` is false under SECTION=setup, so an inline
+    # launch at the creds site alone left `task status:setup` printing a green
+    # authenticated gh line with no identity warning in a bot container
+    # authenticated as a human — the exact state the tripwire exists to
+    # surface. Found by the challenge stage; this is its regression test.
+    local render_sites launch_sites
+    render_sites="$(grep -cE '^[[:space:]]*render_local_credentials([[:space:]]|\||$)' "$status_sh")"
+    launch_sites="$(grep -cE '^[[:space:]]*gh_identity_launch[[:space:]]*$' "$status_sh")"
+    [ "$render_sites" -gt 0 ] ||
+        fail "status board has no render_local_credentials call site to guard"
+    [ "$launch_sites" -ge "$render_sites" ] ||
+        fail "status board renders local credentials at ${render_sites} site(s) but launches the gh-identity tripwire at only ${launch_sites} — a section that renders creds without it reports a human login as healthy"
+    # ...and each launch must be paired with a collect, or the banner is
+    # computed and never printed.
+    [ "$(grep -cE '^[[:space:]]*gh_identity_collect[[:space:]]*$' "$status_sh")" = "$launch_sites" ] ||
+        fail "status board's gh_identity_launch and gh_identity_collect calls are unpaired — a launched probe whose output is never collected prints nothing"
+
     # The credential line's own remedy must not contradict the tripwire banner
     # on the same screen: in the bot profile an operator `gh auth login` is the
     # escalation harmon-init#1236 exists to stop.
