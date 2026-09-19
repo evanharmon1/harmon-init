@@ -1783,7 +1783,8 @@ else
     # Model and reasoning effort are overridable DEFAULTS, so a generated repo
     # must carry them in the /etc/codex/config.toml layer -- and must not carry
     # them in the managed layer, where Codex makes every key an unoverridable
-    # requirement that silently downgrades `-c`/`-m` (harmon-init#1186).
+    # requirement that silently downgrades `-c` (harmon-init#1186). An explicit
+    # `-m` still worked; `-c model=` did not.
     grep -q '^model = "gpt-5.6-sol"$' .devcontainer/config/codex-system-config.toml ||
         err "Codex devcontainer default is not pinned to gpt-5.6-sol"
     grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-system-config.toml ||

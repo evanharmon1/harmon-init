@@ -209,8 +209,9 @@ gh auth status || true
 #
 # Model, reasoning effort, the project-doc budget and the TUI status line moved
 # OUT of /etc/codex/managed_config.toml, where Codex treats every key as an
-# unoverridable requirement that silently beats `-c`, `-m` and the user's own
-# config, and INTO /etc/codex/config.toml, its system *defaults* layer.
+# unoverridable requirement that silently beats `-c` and the user's own config,
+# and INTO /etc/codex/config.toml, its system *defaults* layer. (An explicit
+# `-m` still overrode a pinned `model`; it was `-c model=` that was swallowed.)
 #
 # The installer that writes that file lives in the shared IMAGE, but this repo
 # pins an image by digest, so between this change landing and the consumer-pin
