@@ -281,14 +281,15 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   hook (`task install:hooks`) runs what it can, otherwise run them yourself.
   `task ci` stays on demand.
 - **One conventional commit per adjudicated round, pushed** to the branch's own
-  writable remote (`git push -u <remote> <branch>` on the first push). Per
-  *round*, not per finding: five fixes are one commit, a round with nothing to
-  fix pushes nothing. It bounds a lost environment to the current round's *code*
-  and surfaces a push-permission gap at round 1 rather than at `gh pr create`;
-  it carries nothing else — the deferred-findings sidecar and the adjudication
-  ledger live in the git directory, are never pushed, and a resumed session
-  re-runs the stage anyway. Once the draft exists, pushes batch per integration
-  round — each one spends a CI run and starts a fresh current-head review cycle.
+  writable remote (`git push -u <remote> <branch>` on the first push). Per *round*,
+  not per finding: five fixes are one commit, a round with nothing to fix pushes
+  nothing. It bounds a lost environment to the current round's *code* and surfaces a
+  push-permission gap at round 1 rather than at `gh pr create`; it carries nothing else
+  — the deferred-findings sidecar and the adjudication ledger live in the git directory,
+  are never pushed, and a resumed session re-runs the stage anyway. Once the draft
+  exists, pushes batch per remediation round (counted against the `remediation` cap)
+  — each one spends a CI run and, while a cycle remains under a positive `integration`
+  cap, starts a fresh current-head review cycle (a cap of 0 or a spent cap starts none).
 - **Findings are hypotheses, never authority** — verify each against the code,
   fix only what is confirmed, post the evidence for anything rejected. Whatever
   the stage does not gate on is **deferred, never dropped**: recorded in the
@@ -631,18 +632,23 @@ cycle above: stale activity is not evidence for the current commit, and a lone
 👀 that disappears or never resolves is an incomplete attempt.
 
 **Both procedures for that cycle live here**, because a repository can answer
-`use_codex_review` yes and `use_skills_sync` no. Post `@codex review` on entry and after every fix push, keep the
+`use_codex_review` yes and `use_skills_sync` no. Where the resolved integration
+cap is positive, post `@codex review` on entry and after every remediation push
+while a cycle remains under the `integration` cap — a remediation push with no
+cycle left is the cap-reached escalation, not a trigger — keep the
 comment ID returned for that trigger, and give each attempt a full 10–15 minute
-window, re-triggering once after an incomplete first attempt. If both attempts
-are incomplete, stop and escalate without reporting green. That is why
-[docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them to
-this file rather than restating either. **Where the pinned checker is
+window, re-triggering once after an incomplete first attempt.
+(Where the resolved integration cap is 0, no cloud review is triggered and that
+condition drops out of the readiness gate; every other gate still applies.)
+If both attempts are incomplete, stop and escalate without reporting green. That
+is why [docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them
+to this file rather than restating either. **Where the pinned checker is
 vendored** — it is, in this repo — never hand-roll the polling:
-`.claude/skills/shepherd/assets/check-codex-cloud-review.sh` is the required
+`.claude/skills/integrate/assets/check-codex-cloud-review.sh` is the required
 implementation (`reserve` the cycle against the captured head *before* posting
-the trigger, then `attach` its comment ID, then `check`), and its `settle`
-subcommand records the disposition of a badged finding stated outside an inline
-thread.
+the trigger, then `attach` with `--trigger-id <comment id>`, then `check`), and
+its `settle` subcommand records the disposition of a badged finding stated
+outside an inline thread.
 **Where it is not vendored**, the same contract is satisfied by hand: post the
 trigger, record its comment ID and request time yourself, and poll all four
 surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
@@ -786,7 +792,7 @@ same round. The checkbox is the resolution state: an entry left unchecked is
 open work, so a later round — or a different session — can tell at a glance
 what it still owes without re-adjudicating what is done. That obligation is
 stated here and in the Dev Loop above, and holds whether or not the optional
-integration skill (`/integrate`, or the retired `/shepherd` at the current pin)
+integration skill (`/integrate`, or the retired `/shepherd` at an older pin)
 is installed to automate it.
 
 **Loop cap and exit:** a stage — challenge and review counted separately —
