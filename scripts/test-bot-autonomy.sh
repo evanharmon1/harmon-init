@@ -1933,6 +1933,100 @@ fi
 [ ! -e "${agy24_qr_home}/.local/bin/.agy-real.harmon-init-owned" ] &&
     [ -z "$agy24_qr_leftover" ] || fail "interrupted quarantine was not recovered"
 
+echo "==> 25. discard_transaction / discard_launcher_transaction revalidate the temp file before deleting it (#1241 item 7)"
+# Extracted verbatim (same technique as test-devcontainer-git-ownership.sh)
+# so the fixture is attached to the real implementation, not a second,
+# drifting copy of it.
+agy25_ensure_helpers="${work_dir}/agy25-ensure-helpers.sh"
+awk '
+    /^path_exists\(\) \{/ { p = 1 }
+    /^recover_transaction\(\) \{/ { exit }
+    p { print }
+' "$ensure_script" >"$agy25_ensure_helpers"
+grep -q '^discard_transaction() {' "$agy25_ensure_helpers" ||
+    fail "could not extract discard_transaction from ensure-antigravity-cli.sh"
+
+agy25_launcher_helpers="${work_dir}/agy25-launcher-helpers.sh"
+awk '
+    /^metadata_exists\(\) \{/ { p = 1 }
+    /^recover_launcher_transaction\(\) \{/ { exit }
+    p { print }
+' "$agy_module" >"$agy25_launcher_helpers"
+grep -q '^discard_launcher_transaction() {' "$agy25_launcher_helpers" ||
+    fail "could not extract discard_launcher_transaction from bot-autonomy/antigravity.sh"
+
+agy25_home="${work_dir}/agy25-home"
+mkdir -p "$agy25_home"
+
+echo "==> 25a. ensure-antigravity-cli.sh discard_transaction: matching proof deletes, tampered proof survives"
+bash -c '
+    set -euo pipefail
+    install_dir="$1"
+    . "$2"
+    printf "original bytes\n" >"${install_dir}/agy-real.tmp.MATCH01"
+    write_proof "${install_dir}/agy-real.tmp.MATCH01" "${install_dir}/.agy-real.harmon-init-transaction" "agy-real.tmp.MATCH01"
+    discard_transaction "${install_dir}/.agy-real.harmon-init-transaction" "agy-real"
+' _ "$agy25_home" "$agy25_ensure_helpers"
+[ ! -e "${agy25_home}/agy-real.tmp.MATCH01" ] ||
+    fail "discard_transaction did not remove a temp file whose proof still matched"
+[ ! -e "${agy25_home}/.agy-real.harmon-init-transaction" ] ||
+    fail "discard_transaction left its own transaction record behind after a matching removal"
+
+bash -c '
+    set -euo pipefail
+    install_dir="$1"
+    . "$2"
+    printf "original bytes\n" >"${install_dir}/agy-real.tmp.TAMPER1"
+    write_proof "${install_dir}/agy-real.tmp.TAMPER1" "${install_dir}/.agy-real.harmon-init-transaction" "agy-real.tmp.TAMPER1"
+    printf "replaced by another actor\n" >"${install_dir}/agy-real.tmp.TAMPER1"
+    discard_transaction "${install_dir}/.agy-real.harmon-init-transaction" "agy-real"
+' _ "$agy25_home" "$agy25_ensure_helpers"
+[ -e "${agy25_home}/agy-real.tmp.TAMPER1" ] ||
+    fail "discard_transaction deleted a temp file whose bytes no longer matched its proof (#1241 item 7 regression)"
+[ "$(cat "${agy25_home}/agy-real.tmp.TAMPER1")" = "replaced by another actor" ] ||
+    fail "discard_transaction's mismatch path modified the tampered temp file"
+[ ! -e "${agy25_home}/.agy-real.harmon-init-transaction" ] ||
+    fail "discard_transaction left its transaction record behind after reporting a mismatch"
+
+echo "==> 25b. bot-autonomy/antigravity.sh discard_launcher_transaction: the mirrored fix behaves identically"
+agy25_link_transaction="${agy25_home}/.agy.harmon-init-transaction"
+bash -c '
+    set -euo pipefail
+    AGY_LINK="$1"
+    AGY_LINK_TRANSACTION="$2"
+    temp_path="$3"
+    . "$4"
+    printf "original bytes\n" >"$temp_path"
+    identity="$(path_identity "$temp_path")"
+    digest="$(file_sha512 "$temp_path")"
+    printf "type=file\nidentity=%s\nsha512=%s\ntemp_name=%s\n" "$identity" "$digest" "$(basename "$temp_path")" >"$AGY_LINK_TRANSACTION"
+    discard_launcher_transaction
+' _ "${agy25_home}/agy" "$agy25_link_transaction" "${agy25_home}/agy.tmp.MATCH02" "$agy25_launcher_helpers"
+[ ! -e "${agy25_home}/agy.tmp.MATCH02" ] ||
+    fail "discard_launcher_transaction did not remove a temp file whose proof still matched"
+[ ! -e "$agy25_link_transaction" ] ||
+    fail "discard_launcher_transaction left its own transaction record behind after a matching removal"
+
+bash -c '
+    set -euo pipefail
+    AGY_LINK="$1"
+    AGY_LINK_TRANSACTION="$2"
+    temp_path="$3"
+    . "$4"
+    printf "original bytes\n" >"$temp_path"
+    identity="$(path_identity "$temp_path")"
+    digest="$(file_sha512 "$temp_path")"
+    printf "type=file\nidentity=%s\nsha512=%s\ntemp_name=%s\n" "$identity" "$digest" "$(basename "$temp_path")" >"$AGY_LINK_TRANSACTION"
+    printf "replaced by another actor\n" >"$temp_path"
+    discard_launcher_transaction
+' _ "${agy25_home}/agy" "$agy25_link_transaction" "${agy25_home}/agy.tmp.TAMPER2" "$agy25_launcher_helpers"
+[ -e "${agy25_home}/agy.tmp.TAMPER2" ] ||
+    fail "discard_launcher_transaction deleted a temp file whose bytes no longer matched its proof (#1241 item 7 regression)"
+[ "$(cat "${agy25_home}/agy.tmp.TAMPER2")" = "replaced by another actor" ] ||
+    fail "discard_launcher_transaction's mismatch path modified the tampered temp file"
+[ ! -e "$agy25_link_transaction" ] ||
+    fail "discard_launcher_transaction left its transaction record behind after reporting a mismatch"
+
 # The in-flight delta is the source for this correction and is reconciled into
 # the canonical requirement in the same commit. Compare the complete modified
 # requirement when those root-only OpenSpec artifacts are present; generated

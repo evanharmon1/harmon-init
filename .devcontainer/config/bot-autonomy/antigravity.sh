@@ -108,7 +108,19 @@ launcher_proof_matches() (
 discard_launcher_transaction() {
     temp_name="$(proof_value "$AGY_LINK_TRANSACTION" temp_name 2>/dev/null || true)"
     case "$temp_name" in
-    agy.tmp.*) rm -f "$(dirname "$AGY_LINK")/${temp_name}" ;;
+    agy.tmp.*)
+        temp_path="$(dirname "$AGY_LINK")/${temp_name}"
+        # Revalidate the temp file against its own transaction proof before
+        # deleting it — the same resumed-after-a-stop race as the mirrored
+        # ensure-antigravity-cli.sh discard_transaction (#1241 item 7).
+        if metadata_exists "$temp_path"; then
+            if launcher_proof_matches "$AGY_LINK_TRANSACTION" "$temp_path"; then
+                rm -f "$temp_path"
+            else
+                echo "antigravity: transaction proof for ${temp_path} no longer matches its content; leaving it for manual review" >&2
+            fi
+        fi
+        ;;
     esac
     rm -f "$AGY_LINK_TRANSACTION"
 }

@@ -144,7 +144,22 @@ discard_transaction() {
     prefix="$2"
     temp_name="$(proof_value "$transaction" temp_name 2>/dev/null || true)"
     case "$temp_name" in
-    "${prefix}.tmp."*) rm -f "${install_dir}/${temp_name}" ;;
+    "${prefix}.tmp."*)
+        temp_path="${install_dir}/${temp_name}"
+        # Revalidate the temp file against its own transaction proof before
+        # deleting it. If reconciliation resumes after a stop between
+        # publishing this proof and the rename that would have consumed it,
+        # another process can have replaced the bytes at this exact
+        # temp_name — trusting the recorded name alone would then delete an
+        # unrelated file (#1241 item 7).
+        if path_exists "$temp_path"; then
+            if proof_matches "$transaction" "$temp_path"; then
+                rm -f "$temp_path"
+            else
+                echo "Transaction proof for ${temp_path} no longer matches its content; leaving it for manual review" >&2
+            fi
+        fi
+        ;;
     esac
     rm -f "$transaction"
 }
