@@ -4,8 +4,9 @@
 # boundary in that profile.
 #
 # This is Codex's legacy MDM layer: every key here is a hard REQUIREMENT that
-# silently outranks `-c`/`-m`, ~/.codex/config.toml and a trusted project
-# .codex/config.toml. Put a
+# silently outranks `-c`, ~/.codex/config.toml and a trusted project
+# .codex/config.toml. (The explicit `-m` flag still beat a pinned `model`,
+# which is why the pin looked half-working rather than plainly broken.) Put a
 # key here ONLY when no one -- human, agent, or orchestration session -- may
 # override it. Overridable defaults (model, reasoning effort, doc budget, TUI)
 # live in codex-system-config.toml, which installs to /etc/codex/config.toml.

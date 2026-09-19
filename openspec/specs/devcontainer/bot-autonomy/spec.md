@@ -395,9 +395,11 @@ config rather than pattern-matching individual keys.
 
 ### Requirement: Overridable Codex defaults stay out of the managed layer
 `/etc/codex/managed_config.toml` is Codex's legacy MDM layer, in which every
-key is an unoverridable requirement that outranks `-c` and `-m` flags,
+key is an unoverridable requirement that outranks `-c`,
 `~/.codex/config.toml`, and a trusted project `.codex/config.toml` alike,
-without reporting that it did so. Both
+without reporting that it did so. The explicit `-m` flag is the documented
+exception: it still overrode a pinned `model`, so the pin degraded quietly
+instead of failing outright. Both
 devcontainer profiles SHALL therefore restrict that file to the
 sandbox/approval boundary and its hooks, and SHALL carry overridable
 preferences -- model, reasoning effort, project-doc budget, TUI status line --

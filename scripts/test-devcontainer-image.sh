@@ -137,7 +137,7 @@ docker run --rm "$overlay" sh -eu -c '
     # separation, not just the values.
     [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
     ! grep -Eq "session-start-context|post-edit-format|enforce-conventional-commits" /etc/codex/managed_config.toml
-    ! grep -Eq "^(model|model_reasoning_effort|project_doc_max_bytes) = " /etc/codex/managed_config.toml
+    ! grep -Eq "^[[:space:]]*\"?(model|model_reasoning_effort|project_doc_max_bytes)\"?[[:space:]]*=" /etc/codex/managed_config.toml
     [ -f /etc/codex/config.toml ]
     [ "$(yq ".model" /etc/codex/config.toml)" = "gpt-5.6-sol" ]
     [ "$(yq ".model_reasoning_effort" /etc/codex/config.toml)" = "medium" ]

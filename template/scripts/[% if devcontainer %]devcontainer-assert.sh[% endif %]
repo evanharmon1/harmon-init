@@ -227,7 +227,7 @@ assert_unit() {
         fail "Codex devcontainer default reasoning is not medium"
     [ "$(toml_root_scalar project_doc_max_bytes "$codex_system_config")" = "65536" ] ||
         fail "Codex devcontainer default project-doc budget is not 65536"
-    grep -q '^\[tui\]$' "$codex_system_config" ||
+    grep -qE '^[[:space:]]*"?status_line"?[[:space:]]*=' "$codex_system_config" ||
         fail "the Codex TUI status line is missing from the defaults layer"
     # Presence above, separation here: deleting a moved default from the system
     # file, or moving one back into a managed file, must both fail. Checking
@@ -235,13 +235,13 @@ assert_unit() {
     local codex_boundary_file codex_forbidden_key
     for codex_boundary_file in "$codex_config" "$codex_bot_config"; do
         for codex_forbidden_key in model model_reasoning_effort project_doc_max_bytes; do
-            if grep -qE "^${codex_forbidden_key} = " "$codex_boundary_file"; then
+            if grep -qE "^[[:space:]]*\"?${codex_forbidden_key}\"?[[:space:]]*=" "$codex_boundary_file"; then
                 fail "${codex_boundary_file##*/} pins '${codex_forbidden_key}' in the" \
                     "unoverridable managed layer; overridable defaults belong in" \
                     "codex-system-config.toml (harmon-init#1186)"
             fi
         done
-        if grep -q '^\[tui\]$' "$codex_boundary_file"; then
+        if grep -qE '^[[:space:]]*\[tui\]' "$codex_boundary_file"; then
             fail "${codex_boundary_file##*/} pins a [tui] table in the unoverridable" \
                 "managed layer; it belongs in codex-system-config.toml (harmon-init#1186)"
         fi
@@ -1177,7 +1177,7 @@ assert_container() {
     # The running container must keep the two layers separate, not just the
     # repo copies: a preference in the managed layer is unoverridable.
     if docker exec -u vscode "$container_id" \
-        grep -qE '^(model|model_reasoning_effort) = ' /etc/codex/managed_config.toml; then
+        grep -qE '^[[:space:]]*"?(model|model_reasoning_effort)"?[[:space:]]*=' /etc/codex/managed_config.toml; then
         fail "/etc/codex/managed_config.toml pins model or reasoning effort;" \
             "those are overridable defaults and belong in /etc/codex/config.toml" \
             "(harmon-init#1186)"

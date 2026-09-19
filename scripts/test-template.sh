@@ -1789,7 +1789,7 @@ else
     grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-system-config.toml ||
         err "Codex devcontainer default is not pinned to medium reasoning"
     for codex_boundary in codex-managed-config.toml codex-managed-config.bot.toml; do
-        ! grep -Eq '^(model|model_reasoning_effort|project_doc_max_bytes) = ' \
+        ! grep -Eq '^[[:space:]]*"?(model|model_reasoning_effort|project_doc_max_bytes)"?[[:space:]]*=' \
             ".devcontainer/config/${codex_boundary}" ||
             err "${codex_boundary} pins an overridable default in the unoverridable managed layer"
     done

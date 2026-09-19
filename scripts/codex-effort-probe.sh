@@ -22,6 +22,14 @@ set -euo pipefail
 # The probe effort must DIFFER from the shipped default, or a run that ignores
 # the override looks identical to one that honours it and the probe is vacuous.
 readonly PROBE_EFFORT="${CODEX_PROBE_EFFORT:-xhigh}"
+# Read the shipped default from the live defaults layer rather than hardcoding
+# it. A literal that drifts to equal PROBE_EFFORT would make the anti-vacuity
+# check below pass while proving nothing.
+default_effort_file=/etc/codex/config.toml
+if [ -z "${CODEX_PROBE_DEFAULT_EFFORT:-}" ] && [ -r "$default_effort_file" ]; then
+    CODEX_PROBE_DEFAULT_EFFORT="$(sed -n 's/^[[:space:]]*"\{0,1\}model_reasoning_effort"\{0,1\}[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\)"\{0,1\}.*/\1/p' \
+        "$default_effort_file" | head -1)"
+fi
 readonly DEFAULT_EFFORT="${CODEX_PROBE_DEFAULT_EFFORT:-medium}"
 # Probing only the default model would let a combination pass where the default
 # accepts xhigh but a dispatched worker model quietly falls back, which is the
@@ -41,11 +49,14 @@ command -v codex >/dev/null 2>&1 || fail "the codex CLI is not on PATH"
 echo "==> codex $(codex --version 2>&1)"
 echo "==> requesting reasoning effort: ${PROBE_EFFORT}"
 
-# `codex`, not a shell function: interactive shells may wrap it to inject a
-# --profile, and a profile is exactly the kind of hidden precedence this probe
-# exists to detect. Scripts get the real binary because functions are not
-# exported into them, but resolve it explicitly so that stays true.
-codex_bin="$(command -v codex)"
+# The real binary, never a shell function: interactive shells wrap `codex` to
+# inject a --profile, and a profile is exactly the kind of hidden precedence
+# this probe exists to detect. `command -v` is not enough -- for an exported
+# function it returns the NAME, which would re-invoke the wrapper this comment
+# promises to bypass. `type -P` searches PATH only.
+codex_bin="$(type -P codex || true)"
+[ -n "$codex_bin" ] && [ -x "$codex_bin" ] ||
+    fail "could not resolve a real codex executable on PATH (a shell function is not enough)"
 
 probe_one() {
     local model="$1" run_log rc header effective
