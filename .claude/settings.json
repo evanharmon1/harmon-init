@@ -73,6 +73,7 @@
       "Bash(actionlint)",
       "Bash(basename *)",
       "Bash(dirname *)",
+      "Bash(herdr agent start:*)",
       "Bash(jq *)",
       "Bash(mktemp)",
       "Bash(mktemp *)",

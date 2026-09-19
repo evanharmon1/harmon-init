@@ -184,6 +184,48 @@ not isolation. Fan out only mutually trusted workers over trusted inputs;
 work that chews on untrusted content (third-party repos, inbound issue text)
 belongs in a separate user, container, or VM, not a sibling pane.
 
+**Launching a worker needs a permission grant.** `agent start` is an ordinary
+Bash call, so a Claude Code orchestrator meets its own tool-approval layer
+before Herdr ever runs — and in auto mode the classifier reads a launch line
+carrying `-s danger-full-access` or `--dangerously-skip-permissions` as
+creating an unsafe agent and denies it. The shipped project-scope settings
+therefore allow it outright:
+
+```json
+"Bash(herdr agent start:*)"
+```
+
+The prefix form is deliberate: the flags after `--` vary per harness and per
+policy, and a rule that has to be re-edited per flag defeats its purpose. It
+reaches named sessions too: `--session` is accepted **after** the subcommand as
+well as before it, so `herdr agent start … --session NAME` matches the grant
+and targets that session's server. Only the leading form,
+`herdr --session NAME agent start …`, falls outside the prefix and still
+prompts — an artifact of prefix matching, not a control. Do not rely on it as
+one. It
+is ungated because herdr has no copier answer — the devcontainer installs it
+unconditionally — and an allow rule for a command that is not installed is
+inert.
+
+Be precise about what the grant concedes, because it is not nothing. The
+launch line decides the *worker's* gate, and the lines this rule exists to
+permit start a child with no approval layer at all — so an orchestrator that
+can launch a worker can reach anything its own `ask` rules would have stopped
+(this repo asks on `gh pr merge`, `git merge`, `git push origin main`, and
+force-pushes) simply by asking a child to do it. That is accepted here for two
+reasons, neither of which is "it is safe": the orchestrator already holds
+`Bash(task:*)`, an unconditional grant over a checked-out Taskfile, so no new
+capability class is created; and the fan-out brief is trusted by construction
+(§ Panes are not a security boundary). A repo that tightens its orchestrator's
+`ask`/`deny` list should revisit this rule in the same change, and a repo that
+fans out over untrusted input should not be using this surface at all.
+
+The other concession is that lane workers run **unsandboxed**, which for Codex
+is not a preference: `workspace-write` re-protects a *linked worktree's*
+git-dir (`.git/worktrees/<lane>`) even with the git common dir in
+`sandbox_workspace_write.writable_roots`, so a sandboxed Codex lane can
+neither commit nor push without a per-command escalation on every git write.
+
 **The loop** (each step is a `herdr` command the orchestrator runs):
 
 1. **Lay out** — a fresh tab for the fan-out, one pane per unit, each with
