@@ -169,12 +169,12 @@ done
 [ -n "$archive" ] && [ -n "$destination" ]
 case "${archive##*/}" in
 shellcheck.tar.xz)
-    mkdir -p "${destination}/shellcheck-v0.10.0"
-    cat >"${destination}/shellcheck-v0.10.0/shellcheck" <<'SHELLCHECK'
+    mkdir -p "${destination}/shellcheck-v0.11.0"
+    cat >"${destination}/shellcheck-v0.11.0/shellcheck" <<'SHELLCHECK'
 #!/usr/bin/env bash
-printf '%s\n' 'ShellCheck - shell script analysis tool' 'version: 0.10.0'
+printf '%s\n' 'ShellCheck - shell script analysis tool' 'version: 0.11.0'
 SHELLCHECK
-    chmod +x "${destination}/shellcheck-v0.10.0/shellcheck"
+    chmod +x "${destination}/shellcheck-v0.11.0/shellcheck"
     ;;
 actionlint.tar.gz)
     cat >"${destination}/actionlint" <<'ACTIONLINT'
@@ -266,7 +266,7 @@ assert_pins() {
     tool_path="${published_bin}:${stale_bin}:${helper_bin}:${PATH}"
     shellcheck_output="$(PATH="$tool_path" shellcheck --version)"
     case "$shellcheck_output" in
-    *"version: 0.10.0"*) : ;;
+    *"version: 0.11.0"*) : ;;
     *) fail "wrong-version shellcheck remained authoritative: ${shellcheck_output}" ;;
     esac
     [ "$(PATH="$tool_path" shfmt --version)" = v3.13.1 ] ||
@@ -297,7 +297,7 @@ run_arch_case() {
     run_action "$arch" "$runner_temp" "$github_path"
     published_bin="$(tail -n 1 "$github_path")"
     case "$published_bin" in
-    "${runner_temp}/harmon-init-lint-tools/0.10.0-3.13.1-1.7.12-1.38.0/${arch}") : ;;
+    "${runner_temp}/harmon-init-lint-tools/0.11.0-3.13.1-1.7.12-1.38.0/${arch}") : ;;
     *) fail "${arch}: GITHUB_PATH did not receive the job-private versioned bin first" ;;
     esac
     assert_pins "$published_bin"
@@ -322,12 +322,12 @@ run_arch_case() {
 }
 
 run_arch_case X64 \
-    shellcheck-v0.10.0.linux.x86_64.tar.xz \
+    shellcheck-v0.11.0.linux.x86_64.tar.xz \
     shfmt_v3.13.1_linux_amd64 \
     actionlint_1.7.12_linux_amd64.tar.gz \
     yq_linux_amd64
 run_arch_case ARM64 \
-    shellcheck-v0.10.0.linux.aarch64.tar.xz \
+    shellcheck-v0.11.0.linux.aarch64.tar.xz \
     shfmt_v3.13.1_linux_arm64 \
     actionlint_1.7.12_linux_arm64.tar.gz \
     yq_linux_arm64
