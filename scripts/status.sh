@@ -609,6 +609,19 @@ render_gh_scope_check() {
     fi
 }
 
+# The interactive-login remedy is HUMAN-profile advice. In the bot profile
+# an operator `gh auth login` is the escalation harmon-init#1236 exists to
+# stop, and the gh-identity tripwire banner below this section says exactly
+# that — so the credential line's own remedy must not contradict it on the
+# same screen. Gated by the same containerEnv marker as the tripwire.
+gh_login_remedy() {
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
+        printf '%s' "bot profile: provision GH_TOKEN — never an interactive login here"
+    else
+        printf '%s' "gh auth login"
+    fi
+}
+
 render_local_credentials() {
     # Not-installed is tested FIRST because it makes every other branch
     # meaningless: with no gh on PATH the shared probe above exits 127, which
@@ -632,7 +645,7 @@ render_local_credentials() {
             checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
             render_gh_scope_check
         else
-            checkline no "GitHub CLI (gh)" "gh auth login"
+            checkline no "GitHub CLI (gh)" "$(gh_login_remedy)"
         fi
     else
         # Standalone `status:creds`: nothing probed the API, and this section is
@@ -669,7 +682,7 @@ render_local_credentials() {
         *)
             case "$(printf '%s' "${gh_token_err}" | tr '[:upper:]' '[:lower:]')" in
             *"no oauth token"* | *"not logged in"*)
-                checkline no "GitHub CLI (gh)" "gh auth login"
+                checkline no "GitHub CLI (gh)" "$(gh_login_remedy)"
                 ;;
             *)
                 checkline unknown "GitHub CLI (gh)" \
@@ -778,8 +791,45 @@ render_local_credentials() {
 }
 
 if should_show "creds"; then
+    # Bot gh-identity tripwire (harmon-init#1236) — the VISIBLE surface for the
+    # same check the bot post-start writes to its log: that log is not somewhere
+    # a human (or an agent reading the session-start probe) looks, and the gh
+    # line below is a local read that cannot say WHO gh writes as. Gated by the
+    # bot profile's containerEnv marker so the human profile's board never
+    # prints a bot warning; honors STATUS_NO_NETWORK like the scope probe;
+    # warn-only, like check-image-staleness.sh — a diagnostic never breaks the
+    # board.
+    #
+    # Budget: the session-start hooks kill this section from the SUM of its
+    # sequential probe bounds (four probes at the 3s local bound — see the
+    # hook comment), so a fifth sequential probe would overrun the deadline
+    # and cost the reader the whole buffered section exactly when the
+    # network is degraded. This probe therefore runs in PARALLEL with those
+    # sequential probes — launched before them, collected after. The
+    # helper self-bounds at 2s + a 1s kill grace so its own timed-out note
+    # survives even a TERM-trapping gh, and the outer run_timeout 5
+    # contains deadline + grace as the backstop (an outer bound tighter
+    # than the inner kill grace would swallow the note in exactly the
+    # kill-resistant case). 5s + grace still sits far inside the ~16s the
+    # sequential probes already cost, so worst-case wall clock and the
+    # hook budget are unchanged.
+    GH_IDENTITY_PID=""
+    GH_IDENTITY_OUT="${TMPDIR_STATUS}/gh-identity.txt"
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ] && [ "${STATUS_NO_NETWORK:-0}" != "1" ] &&
+        [ -r .devcontainer/scripts/check-bot-gh-identity.sh ]; then
+        GH_IDENTITY_TIMEOUT=2 GH_IDENTITY_KILL_GRACE=1 run_timeout 5 \
+            bash .devcontainer/scripts/check-bot-gh-identity.sh \
+            >"${GH_IDENTITY_OUT}" 2>&1 &
+        GH_IDENTITY_PID=$!
+    fi
+
     section_header "Local Credentials"
     render_local_credentials | section_box
+
+    if [ -n "${GH_IDENTITY_PID}" ]; then
+        wait "${GH_IDENTITY_PID}" || true
+        cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
+    fi
 fi
 
 # ── Setup Completeness ──────────────────────────────────────────────────────

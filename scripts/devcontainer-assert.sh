@@ -300,11 +300,18 @@ assert_unit() {
     # must never launch against a drifted policy) and NODE_OPTIONS must be
     # unset before verify (so a Node-based harness CLI verify step is not
     # itself broken by an inherited VS Code debug value).
+    #
+    # The grep filter below deliberately sees only those three Node-relevant
+    # steps, so this asserts their ORDER RELATIVE TO EACH OTHER, not that
+    # nothing whatsoever precedes them. The gh-identity tripwire (10b) does
+    # run first, by design — it is a bash script driving a Go binary, so the
+    # unset does not apply to it, and running it ahead of the set -e verify
+    # step is what makes it fire on every start.
     local post_start_order
     post_start_order="$(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-start.sh" |
         grep -E 'unset NODE_OPTIONS|bot-autonomy\.sh verify|post-start-common\.sh')"
     [ "$(printf '%s\n' "$post_start_order" | sed -n '1p')" = "unset NODE_OPTIONS" ] ||
-        fail "bot post-start does not unset NODE_OPTIONS before anything else"
+        fail "bot post-start does not unset NODE_OPTIONS before the Node-dependent startup steps"
     case "$(printf '%s\n' "$post_start_order" | sed -n '2p')" in
     *"bot-autonomy.sh verify") ;;
     *) fail "bot post-start does not call bot-autonomy.sh verify immediately after unsetting NODE_OPTIONS" ;;
@@ -1030,6 +1037,490 @@ SENTINEL_SCRIPT
         esac
     done
 
+    # 10b. The bot profile's gh-identity tripwire (harmon-init#1236). The git-identity
+    #    assertions prove who a container COMMITS as; nothing proved who `gh`
+    #    WRITES as. A bot container whose gh holds a human credential
+    #    attributes every issue, PR, and comment to that human — and parks a
+    #    personal credential inside a bypassPermissions container. The helper
+    #    decides from `gh auth status` output ALONE (the stored-credential
+    #    shapes name their account even when validation fails), so these cases
+    #    run against a stub gh with no network. The contract under test:
+    #    unauthenticated passes-with-remedy (a fresh container before token
+    #    provisioning is healthy), any credential naming a non-bot account is
+    #    a violation, and an unverifiable token is indeterminate — never a
+    #    failure.
+    local gh_check gh_id_bin gh_id_fixture gh_id_out gh_id_rc
+    gh_check="${repo_root}/.devcontainer/scripts/check-bot-gh-identity.sh"
+    [ -f "$gh_check" ] || fail "check-bot-gh-identity.sh not found at ${gh_check}"
+
+    gh_id_bin="${work_dir}/gh-identity-bin"
+    gh_id_fixture="${work_dir}/gh-identity-fixture"
+    mkdir -p "$gh_id_bin"
+    ln -s "$bash_bin" "${gh_id_bin}/bash"
+    for gh_id_dep in cat grep awk sort sleep; do
+        ln -s "$(command -v "$gh_id_dep")" "${gh_id_bin}/${gh_id_dep}"
+    done
+    # timeout: Homebrew coreutils on macOS ships it as gtimeout (the same
+    # split scripts/status.sh handles), so resolve whichever exists and link
+    # it under the name the helper probes — the wedged-gh case below depends
+    # on the bound existing, and `ln -s ""` under set -e would otherwise
+    # abort the whole unit run before any identity case.
+    local gh_id_timeout
+    gh_id_timeout="$(command -v timeout || command -v gtimeout)" ||
+        fail "neither timeout nor gtimeout is available for the gh-identity unit cases"
+    ln -s "$gh_id_timeout" "${gh_id_bin}/timeout"
+
+    gh_identity_run() {
+        # $1 = stub gh exit code; the fixture file holds the stub's output.
+        # The token aliases are cleared explicitly: unit mode also runs
+        # inside the bot container, whose real GH_TOKEN would otherwise
+        # leak into every case's environment.
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" \
+            GH_IDENTITY_TEST_RC="$1" \
+            GH_TOKEN= GITHUB_TOKEN= GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    }
+
+    # gh ABSENT from PATH: indeterminate (3), never a violation — the image
+    # toolchain checks own "gh is installed"; this check owns identity only.
+    # Runs before the stub gh below is created, so the constrained PATH
+    # genuinely has no gh.
+    gh_id_rc=0
+    PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "gh-identity check exited ${gh_id_rc} with no gh on PATH — expected indeterminate (3)"
+
+    printf '%s\n' '#!/bin/sh' 'cat "$GH_IDENTITY_TEST_FIXTURE"' \
+        'exit "${GH_IDENTITY_TEST_RC:-0}"' >"${gh_id_bin}/gh"
+    chmod 0755 "${gh_id_bin}/gh"
+
+    # Fresh container, token never provisioned: PASS-WITH-REMEDY (2). The
+    # remedy must name GH_TOKEN and the env-file, and must never be an
+    # operator login — gh's own output suggests exactly that, which is how
+    # the live violation happened.
+    printf '%s\n' \
+        'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "2" ] ||
+        fail "unauthenticated gh exited ${gh_id_rc}, expected pass-with-remedy (2)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "unauthenticated gh-identity warning does not name GH_TOKEN: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *.devcontainer/devcontainer.env*) ;;
+    *) fail "unauthenticated gh-identity warning does not name .devcontainer/devcontainer.env: ${gh_id_out}" ;;
+    esac
+    # The remedy must describe the PROVISIONING chain (harmon-init#1236 scope correction):
+    # on Coder the PAT arrives from the workspace's template parameter, and
+    # generically from the host env init-env.sh projects — never a
+    # hand-authored secret file, and never an interactive login.
+    case "$gh_id_out" in
+    *"template parameter"*) ;;
+    *) fail "unauthenticated gh-identity warning does not name the Coder template parameter: ${gh_id_out}" ;;
+    esac
+    if offers_login "$gh_id_out"; then
+        fail "gh-identity warning offers an operator login in a bot container"
+    fi
+
+    # Authenticated as the bot: OK. The RELATIONSHIP (a '-bot' suffix, same
+    # style as the git-identity assertions) — never a literal account name.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "0" ] ||
+        fail "bot-suffixed gh login exited ${gh_id_rc}, expected pass (0)"
+
+    # The observed violation (harmon-init#1236): an operator login in the bot container.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        '  - Active account: true' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot gh login exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *someoperator*) ;;
+    *) fail "gh-identity violation warning does not name the offending login: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "gh-identity violation warning does not name the GH_TOKEN remedy: ${gh_id_out}" ;;
+    esac
+    if offers_login "$gh_id_out"; then
+        fail "gh-identity violation warning offers an operator login in a bot container"
+    fi
+
+    # A stored login names its account even when validation fails (offline
+    # or revoked): the CREDENTIAL is the violation, not the token's
+    # freshness, so this must not degrade to indeterminate.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com account someoperator (/home/vscode/.config/gh/hosts.yml)' \
+        '  - Active account: true' \
+        '  - The token in /home/vscode/.config/gh/hosts.yml is invalid.' \
+        '  - To re-authenticate, run: gh auth refresh -h github.com' \
+        '  - To forget about this account, run: gh auth logout -h github.com -u someoperator' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "1" ] ||
+        fail "stale non-bot gh credential exited ${gh_id_rc}, expected violation (1)"
+    if offers_login "$gh_id_out"; then
+        fail "stale-credential gh-identity warning offers an operator login in a bot container"
+    fi
+
+    # GH_TOKEN present but unverifiable (offline, rate-limited, expired):
+    # gh names no account, so identity is INDETERMINATE (3) — a network
+    # hiccup must not fail the assert or block a fresh container.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '  - The token in GH_TOKEN is invalid.' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "3" ] ||
+        fail "unverifiable GH_TOKEN exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # A human credential parked BESIDE a valid bot token is still a
+    # violation: gh can switch accounts, and the personal credential is
+    # inside the container either way.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot credential beside the bot token exited ${gh_id_rc}, expected violation (1)"
+
+    # An UNNAMED failed-token entry beside a named stored bot login: gh
+    # prefers an environment token for writes, so while one is unverified
+    # the ACTIVE identity is unknown no matter which stored logins are also
+    # present — indeterminate (3), never a clean 0 off the stored account.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '' \
+        '  ✓ Logged in to github.com account someowner-bot (keyring)' \
+        '  - Active account: false' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "3" ] ||
+        fail "unverifiable token beside a stored bot login exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # ...but a KNOWN non-bot credential still outranks that indeterminacy:
+    # the stored human login is a violation regardless of what the unnamed
+    # token would have resolved to.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        '  - Active account: false' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot stored login beside an unverifiable token exited ${gh_id_rc}, expected violation (1)"
+
+    # A SHADOWED environment-token alias is credential material gh cannot
+    # enumerate: with both GH_TOKEN and GITHUB_TOKEN set, gh auth status
+    # reports only GH_TOKEN (verified live), so a valid bot token in front
+    # of a different personal token must not read as "every credential is
+    # a bot". Indeterminate — and the warning names the alias, never the
+    # value.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN=sentinel-shadowed \
+        GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "a shadowed GITHUB_TOKEN behind a bot GH_TOKEN exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *GITHUB_TOKEN*) ;;
+    *) fail "shadowed-alias warning does not name the shadowed variable: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *sentinel-shadowed* | *sentinel-primary*)
+        fail "shadowed-alias warning printed a token VALUE"
+        ;;
+    esac
+
+    # The same value spelled through two aliases is one credential twice,
+    # not a shadow: stays clean.
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN=sentinel-primary \
+        GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "0" ] ||
+        fail "duplicate same-value aliases exited ${gh_id_rc}, expected pass (0)"
+
+    # A known non-bot login still outranks the shadow's indeterminacy.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN=sentinel-shadowed \
+        GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot login beside shadowed aliases exited ${gh_id_rc}, expected violation (1)"
+
+    # An environment token gh attributes to NO host (an enterprise alias
+    # with no configured GHES host) must not read as clean-unauthenticated:
+    # the credential is present, just invisible to the enumeration.
+    printf '%s\n' \
+        'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=1 \
+        GH_TOKEN= GITHUB_TOKEN= GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "an unattributed enterprise token with no logins exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # gh's own BUILT-IN timeout is a fourth status shape: it exits with the
+    # ordinary failure code (not 124/137) and writes "Timeout ... log in to
+    # <host> using token" / "... account <login>". A timed-out active token
+    # beside a stored bot login must stay unverified, not clean.
+    printf '%s\n' \
+        'github.com' \
+        '  X Timeout trying to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '' \
+        '  ✓ Logged in to github.com account someowner-bot (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "3" ] ||
+        fail "a gh-internal token timeout beside a stored bot login exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # ...and a timeout record that NAMES a non-bot account is still a
+    # credential claiming a human identity: violation, whatever wording
+    # variant gh used.
+    printf '%s\n' \
+        'github.com' \
+        '  X Timeout error trying to log in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "1" ] ||
+        fail "a gh-internal timeout naming a non-bot account exited ${gh_id_rc}, expected violation (1)"
+
+    # The two alias pairs are INDEPENDENT precedence groups (gh help
+    # environment): a bot GH_TOKEN beside a different GH_ENTERPRISE_TOKEN,
+    # both enumerated as bot accounts on their own hosts, is a legitimate
+    # setup — never a shadow.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        '' \
+        'ghe.example.com' \
+        '  ✓ Logged in to ghe.example.com account someowner-bot (GH_ENTERPRISE_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN= \
+        GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "0" ] ||
+        fail "cross-pair bot tokens on their own hosts exited ${gh_id_rc}, expected pass (0)"
+
+    # A *.ghe.com tenant host is served by GH_TOKEN (gh help environment),
+    # so its presence is NOT evidence the enterprise token was enumerated:
+    # only a record explicitly sourced from the enterprise alias is.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        '' \
+        'tenant.ghe.com' \
+        '  ✓ Logged in to tenant.ghe.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN= \
+        GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "an enterprise token with only GH_TOKEN-sourced ghe.com records exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *"never enumerated"*) ;;
+    *) fail "the ghe.com-tenant note does not say the enterprise token was never enumerated: ${gh_id_out}" ;;
+    esac
+
+    # gh's "(default)" pseudo-source — GH_HOST selecting a host with
+    # neither a stored login nor a token — is the ordinary unauthenticated
+    # state, not an unverified token: the banner-and-remedy exit, never a
+    # false token-present indeterminate.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (default)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "2" ] ||
+        fail "a (default) pseudo-source with no aliases exited ${gh_id_rc}, expected unauthenticated (2)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the (default) unauthenticated banner does not name GH_TOKEN: ${gh_id_out}" ;;
+    esac
+    if offers_login "$gh_id_out"; then
+        fail "the (default) unauthenticated banner offers an operator login"
+    fi
+
+    # ...but an enterprise token gh attributes to NO host was never
+    # enumerated: present-but-invisible credential material, indeterminate
+    # even while the github.com login reads bot.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN= \
+        GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "an enterprise token with no GHES host enumerated exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *"never enumerated"*) ;;
+    *) fail "the unattributed enterprise-token note does not say the token was never enumerated: ${gh_id_out}" ;;
+    esac
+
+    # A TIMED-OUT enumeration is INCOMPLETE, not clean: gh validates
+    # accounts sequentially, so a probe killed after printing the bot
+    # account but before a later stored human credential must not read as
+    # "every credential is a bot". The stub reproduces the partial output
+    # and timeout(1)'s 124.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 124
+    [ "$gh_id_rc" = "3" ] ||
+        fail "timed-out bot-only enumeration exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # ...while a non-bot login already parsed BEFORE the deadline is
+    # evidence that stands: the violation outranks the incompleteness.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 124
+    [ "$gh_id_rc" = "1" ] ||
+        fail "timed-out enumeration with a parsed non-bot login exited ${gh_id_rc}, expected violation (1)"
+
+    # A WEDGED gh (stalled network, DNS, or credential backend) must not
+    # hang the callers: post-start and the container assert invoke the
+    # helper with no wrapper, so the bound has to live inside it. The stub
+    # sleeps far past the 1s override; only the helper's own timeout can
+    # end the run quickly, and the elapsed bound is what catches an
+    # unbounded probe.
+    local gh_id_start gh_id_elapsed
+    printf '%s\n' '#!/bin/sh' 'sleep 45' >"${gh_id_bin}/gh"
+    gh_id_start="$(date +%s)"
+    gh_id_rc=0
+    GH_IDENTITY_TIMEOUT=1 PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    gh_id_elapsed=$(($(date +%s) - gh_id_start))
+    [ "$gh_id_elapsed" -lt 30 ] ||
+        fail "gh-identity probe ran ${gh_id_elapsed}s against a wedged gh — the helper carries no timeout"
+    [ "$gh_id_rc" = "3" ] ||
+        fail "wedged gh exited ${gh_id_rc}, expected indeterminate (3) via the helper's own timeout"
+
+    # A kill-resistant gh (TERM trapped) must still resolve inside the
+    # caller's window: the kill grace is parameterized so the status
+    # board's outer bound can contain deadline + grace, and the helper's
+    # own timed-out note survives to be printed. Elapsed is the assertion:
+    # the default 5s grace would run ~6s and lose the note to the outer
+    # kill.
+    printf '%s\n' '#!/bin/sh' "trap '' TERM" 'sleep 45' >"${gh_id_bin}/gh"
+    gh_id_start="$(date +%s)"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TIMEOUT=1 GH_IDENTITY_KILL_GRACE=1 \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    gh_id_elapsed=$(($(date +%s) - gh_id_start))
+    [ "$gh_id_elapsed" -lt 5 ] ||
+        fail "kill-resistant gh took ${gh_id_elapsed}s under a 1s deadline + 1s grace — the grace is not parameterized"
+    [ "$gh_id_rc" = "3" ] ||
+        fail "kill-resistant gh exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *"timed out"*) ;;
+    *) fail "kill-resistant gh lost the helper's own timed-out note: ${gh_id_out}" ;;
+    esac
+
+    # Wiring: the BOT post-start runs the tripwire on every start (an
+    # interactive login can happen at any point in a container's life, not
+    # just at create); the human profile must not — a human login is that
+    # profile's correct state.
+    grep -q 'check-bot-gh-identity.sh' "${repo_root}/.devcontainer/post-start.sh" ||
+        fail "bot post-start does not run the gh-identity tripwire"
+    if grep -q 'check-bot-gh-identity.sh' "${repo_root}/.devcontainer/dev/post-start.sh"; then
+        fail "human post-start runs the bot-only gh-identity tripwire"
+    fi
+
+    # Post-start redirects everything to a log nobody watches, so the board
+    # is the VISIBLE surface (same reasoning as check-image-staleness.sh):
+    # the session-start hook runs the creds section, which must run the
+    # tripwire — gated to the bot profile by its FOREMAN_DEVCONTAINER=bot
+    # containerEnv marker, so the human profile's board never prints a
+    # bot warning.
+    #
+    # Two SEPARATE assertions, because one grep over both cannot tell them
+    # apart. The guarded block opens with a `[ -r … ]` readability test that
+    # NAMES the helper, so a proximity match on the filename alone passes on
+    # that test while the line that actually runs the helper says something
+    # else entirely — verified by mutation: replacing the invocation's path
+    # left a filename-proximity check green. So assert the guard and the
+    # INVOCATION independently, and require the invocation to be a real
+    # execution (optionally wrapped in run_timeout and env overrides) rather
+    # than any mention.
+    local status_sh status_guard_line status_invoke_line
+    status_sh="${repo_root}/scripts/status.sh"
+    status_invoke_line="$(grep -nE '^[[:space:]]*([A-Z_]+=[^[:space:]]*[[:space:]]+)*(run_timeout[[:space:]]+[0-9]+[[:space:]]+)?bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' \
+        "$status_sh" | head -1 | cut -d: -f1)"
+    [ -n "$status_invoke_line" ] ||
+        fail "status board never executes check-bot-gh-identity.sh (a mention in a [ -r ] test is not a run)"
+    # The invocation must sit INSIDE a bot guard. Anchor on the guard NEAREST
+    # ABOVE the invocation, not the file's first one: status.sh also consults
+    # the same marker in gh_login_remedy several hundred lines earlier, and
+    # anchoring on that match would measure the distance to an unrelated guard.
+    status_guard_line="$(grep -n 'FOREMAN_DEVCONTAINER:-}" = "bot"' "$status_sh" |
+        cut -d: -f1 | awk -v n="$status_invoke_line" '$1 < n { g = $1 } END { print g }')"
+    [ -n "$status_guard_line" ] ||
+        fail "status board runs the gh-identity tripwire with no FOREMAN_DEVCONTAINER=bot guard above it"
+    [ "$((status_invoke_line - status_guard_line))" -le 10 ] ||
+        fail "status board's gh-identity run (line ${status_invoke_line}) is too far from its bot-profile guard (line ${status_guard_line}) to be inside it"
+
+    # The credential line's own remedy must not contradict the tripwire banner
+    # on the same screen: in the bot profile an operator `gh auth login` is the
+    # escalation harmon-init#1236 exists to stop.
+    local remedy_out
+    remedy_out="$(FOREMAN_DEVCONTAINER=bot "$bash_bin" -c \
+        "$(sed -n '/^gh_login_remedy() {/,/^}/p' "$status_sh"); gh_login_remedy")"
+    if offers_login "$remedy_out"; then
+        fail "status board's gh remedy offers an interactive login in the bot profile: ${remedy_out}"
+    fi
+    case "$remedy_out" in
+    *GH_TOKEN*) ;;
+    *) fail "status board's bot-profile gh remedy does not name GH_TOKEN: ${remedy_out}" ;;
+    esac
+    remedy_out="$(FOREMAN_DEVCONTAINER= "$bash_bin" -c \
+        "$(sed -n '/^gh_login_remedy() {/,/^}/p' "$status_sh"); gh_login_remedy")"
+    if ! offers_login "$remedy_out"; then
+        fail "status board's gh remedy omits the operator login outside the bot profile: ${remedy_out}"
+    fi
+
     # 11. Static devcontainer.json invariants via the devcontainers CLI.
     assert_config_invariants "$repo_root" "$bot_config" bot
     assert_config_invariants "$repo_root" "$dev_config" dev
@@ -1186,6 +1677,25 @@ assert_container() {
         case "$git_name" in
         *-bot) ;;
         *) fail "bot git name '${git_name}' does not end with '-bot'" ;;
+        esac
+
+        # Who gh WRITES as, not just who git commits as (harmon-init#1236) —
+        # the live counterpart of unit check 10b. The checkout's helper runs
+        # inside the container over stdin, so no workspace mount path is
+        # assumed. Only exit 1 — a credential naming a non-bot account — is the
+        # violation this assert exists to catch. Unauthenticated (2) passes:
+        # the helper already printed the GH_TOKEN remedy, and a fresh
+        # container before token provisioning is healthy. Indeterminate (3:
+        # offline, rate-limited, or an unverifiable token) is not evidence
+        # of a violation and must not fail a smoke run.
+        local gh_identity_rc=0
+        docker exec -i -u vscode "$container_id" bash -s \
+            <"${repo_root}/.devcontainer/scripts/check-bot-gh-identity.sh" ||
+            gh_identity_rc=$?
+        case "$gh_identity_rc" in
+        0 | 2 | 3) ;;
+        1) fail "bot container gh credential does not match the '-bot' relationship (see warning above)" ;;
+        *) fail "could not run the gh-identity check in the bot container (exit ${gh_identity_rc})" ;;
         esac
 
         # `command` is a shell BUILTIN, so it must run inside a shell: bare
