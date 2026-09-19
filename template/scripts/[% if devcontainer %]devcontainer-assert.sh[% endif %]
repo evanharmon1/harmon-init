@@ -600,14 +600,173 @@ SENTINEL_SCRIPT
     # 7. tailscale-connect.sh no-ops (exit 0, prints its "unavailable" message)
     #    when `tailscale` is not on PATH. Invoke with an absolute bash path so
     #    the unreachable PATH doesn't also hide the interpreter.
+    #    `env -u DEVCONTAINER_TAILSCALE` is load-bearing: THIS SUITE RUNS INSIDE
+    #    A DEVCONTAINER, and the dev profile sets that marker to true, which
+    #    makes a missing CLI fatal rather than a skip. Without the strip, this
+    #    assertion silently inverts depending on which profile runs it — passing
+    #    on the host and on the bot profile, failing on dev.
     local ts_out
-    if ! ts_out="$(PATH="/nonexistent" "$bash_bin" "$ts_connect" 2>&1)"; then
+    if ! ts_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+        PATH="/nonexistent" "$bash_bin" "$ts_connect" 2>&1)"; then
         fail "tailscale-connect.sh exited nonzero when tailscale is absent"
     fi
     case "$ts_out" in
     *"unavailable"*) ;;
     *) fail "tailscale-connect.sh did not report tailscale unavailable: ${ts_out}" ;;
     esac
+
+    # 7b. The tailnet gate itself. A profile whose defining feature is the
+    #     tailnet must FAIL ITS BUILD when it cannot join one — it must never
+    #     start clean, report success, and sit there logged out. Every path in
+    #     this script used to `exit 0`, which is exactly that failure.
+    #
+    #     Every case strips both knobs from the inherited environment for the
+    #     reason above, then sets only what it is testing.
+    local ts_bin ts_sock ts_up_marker ts_rc ts_case_out ts_dep ts_dep_path
+    ts_bin="${work_dir}/tailscale-bin"
+    mkdir -p "$ts_bin"
+    ln -s "$bash_bin" "${ts_bin}/bash"
+    for ts_dep in seq sleep tail cat printf hostname basename cut git timeout; do
+        ts_dep_path="$(command -v "$ts_dep" 2>/dev/null)" || continue
+        ln -s "$ts_dep_path" "${ts_bin}/${ts_dep}"
+    done
+    # sudo → exec "$@" and pgrep → exit 0: the connect paths below must be
+    # reachable without root and without a real daemon. pgrep succeeding means
+    # the script skips the start-tailscaled branch and goes straight to the
+    # unconditional socket wait, which is the ordering this change introduced.
+    printf '%s\n' '#!/bin/sh' 'exec "$@"' >"${ts_bin}/sudo"
+    printf '%s\n' '#!/bin/sh' 'exit 0' >"${ts_bin}/pgrep"
+    chmod 0755 "${ts_bin}/sudo" "${ts_bin}/pgrep"
+
+    # The tailscale stub answers `status --json` from TS_STUB_STATE and `up`
+    # from TS_STUB_UP_RC, touching TS_STUB_UP_MARKER so a case can tell whether
+    # `up` ran at all — which is how case (g) proves the already-connected fast
+    # path short-circuits instead of reconnecting.
+    cat >"${ts_bin}/tailscale" <<'TS_STUB'
+#!/bin/sh
+case "$1" in
+status)
+    printf '{"BackendState": "%s"}\n' "${TS_STUB_STATE:-NeedsLogin}"
+    exit 0
+    ;;
+up)
+    [ -n "${TS_STUB_UP_MARKER:-}" ] && : >"${TS_STUB_UP_MARKER}"
+    [ "${TS_STUB_UP_RC:-0}" = "0" ] || echo "stub: tailscale up refused the key" >&2
+    exit "${TS_STUB_UP_RC:-0}"
+    ;;
+esac
+exit 0
+TS_STUB
+    chmod 0755 "${ts_bin}/tailscale"
+
+    # A REAL unix socket, because the script tests with `[ -S ... ]`. Without
+    # one every case below would fall into the socket-wait bail after 10s.
+    ts_sock="${work_dir}/tailscaled.sock"
+    python3 -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])
+s.listen(1)' "$ts_sock" ||
+        fail "could not create the stub tailscaled socket at ${ts_sock}"
+    ts_up_marker="${work_dir}/ts-up-ran"
+
+    # ts_connect_run <expected-rc> <label> [VAR=VAL ...]
+    # Runs tailscale-connect.sh with both knobs stripped and only the named
+    # variables set, then asserts the exit code. Output lands in ts_case_out.
+    ts_connect_run() {
+        local want_rc="$1" label="$2"
+        shift 2
+        ts_rc=0
+        # The caller's assignments come LAST so a case can override any of the
+        # defaults — case (a) overrides PATH to take the CLI away, and a fixed
+        # PATH here would silently hand it back and test the wrong path.
+        ts_case_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+            -u TS_AUTHKEY -u TS_AUTH_KEY -u TS_STUB_STATE -u TS_STUB_UP_RC \
+            TS_SOCKET_PATH="$ts_sock" TS_STUB_UP_MARKER="$ts_up_marker" \
+            PATH="$ts_bin" "$@" "$bash_bin" "$ts_connect" 2>&1)" || ts_rc=$?
+        [ "$ts_rc" = "$want_rc" ] ||
+            fail "tailscale-connect.sh case ${label}: exited ${ts_rc}, expected ${want_rc}: ${ts_case_out}"
+    }
+
+    # (a) optional + no CLI → exit 0, and still says "unavailable" (test 7's
+    #     assertion greps for that substring, so the wording is a contract).
+    ts_connect_run 0 "a (optional, no CLI)" PATH="/nonexistent"
+    case "$ts_case_out" in
+    *"unavailable"*) ;;
+    *) fail "tailscale-connect.sh case a: did not report tailscale unavailable: ${ts_case_out}" ;;
+    esac
+
+    # (b) required + no CLI → exit 1, FATAL. The missing-CLI path is the one
+    #     that used to be most obviously harmless.
+    ts_rc=0
+    ts_case_out="$(env -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+        DEVCONTAINER_TAILSCALE=true PATH="/nonexistent" \
+        "$bash_bin" "$ts_connect" 2>&1)" || ts_rc=$?
+    [ "$ts_rc" = "1" ] ||
+        fail "tailscale-connect.sh case b: exited ${ts_rc} with no CLI and the tailnet required, expected 1"
+    case "$ts_case_out" in
+    *FATAL*) ;;
+    *) fail "tailscale-connect.sh case b: required + no CLI did not report FATAL: ${ts_case_out}" ;;
+    esac
+
+    # (c) required + CLI + no key → exit 1, and names the variable to set.
+    ts_connect_run 1 "c (required, no key)" DEVCONTAINER_TAILSCALE=true
+    case "$ts_case_out" in
+    *TS_AUTHKEY*) ;;
+    *) fail "tailscale-connect.sh case c: missing-key FATAL does not name TS_AUTHKEY: ${ts_case_out}" ;;
+    esac
+
+    # (d) optional + CLI + no key → exit 0. The bot profile and every plain
+    #     local devcontainer live here; this is the behavior that must NOT
+    #     change.
+    ts_connect_run 0 "d (optional, no key)"
+
+    # (e) required + the opt-out → exit 0. The smoke test's path.
+    ts_connect_run 0 "e (required, opted out)" \
+        DEVCONTAINER_TAILSCALE=true DEVCONTAINER_TAILSCALE_OPTIONAL=true
+
+    # (f) required + DEVCONTAINER_TAILSCALE_OPTIONAL=1 → exit 1. ONLY the exact
+    #     string `true` demotes; a truthy-looking value must not disarm a gate.
+    ts_connect_run 1 "f (required, OPTIONAL=1 is not true)" \
+        DEVCONTAINER_TAILSCALE=true DEVCONTAINER_TAILSCALE_OPTIONAL=1
+
+    # (g) required + BackendState=Running → exit 0 via the fast path, and
+    #     `tailscale up` is NOT called. Proves readiness is judged by
+    #     BackendState rather than by reconnecting unconditionally.
+    rm -f "$ts_up_marker"
+    ts_connect_run 0 "g (required, already Running)" \
+        DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATE=Running
+    [ ! -e "$ts_up_marker" ] ||
+        fail "tailscale-connect.sh case g: ran 'tailscale up' although BackendState was already Running"
+
+    # (h) required + NeedsLogin + up succeeds → exit 0, and reports the
+    #     environment-appropriate node name.
+    rm -f "$ts_up_marker"
+    ts_connect_run 0 "h (required, NeedsLogin, up ok)" \
+        DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
+        TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=0
+    [ -e "$ts_up_marker" ] ||
+        fail "tailscale-connect.sh case h: never ran 'tailscale up' from NeedsLogin"
+    case "$ts_case_out" in
+    *"Connected to tailnet as cr-"* | *"Connected to tailnet as dc-"* | *"Connected to tailnet as gh-"*) ;;
+    *) fail "tailscale-connect.sh case h: did not report a prefixed node name: ${ts_case_out}" ;;
+    esac
+
+    # (i) required + NeedsLogin + up FAILS → exit 1, FATAL. THE case this whole
+    #     change exists for: an expired or already-consumed auth key. Mutating
+    #     the script back to its swallow-on-failure behavior makes this one
+    #     return 0, which is the mutation test the issue asks for.
+    ts_connect_run 1 "i (required, NeedsLogin, up failed)" \
+        DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
+        TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
+    case "$ts_case_out" in
+    *FATAL*) ;;
+    *) fail "tailscale-connect.sh case i: failed connect did not report FATAL: ${ts_case_out}" ;;
+    esac
+
+    # (j) optional + NeedsLogin + up FAILS → exit 0. The unchanged behavior
+    #     everywhere the tailnet is genuinely optional.
+    ts_connect_run 0 "j (optional, NeedsLogin, up failed)" \
+        TS_AUTHKEY=stub-key TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
 
     # 8. Antigravity runs without permission prompts inside the container,
     #    which is the isolation boundary. The apply helper must enforce those
@@ -1079,6 +1238,37 @@ assert_config_invariants() {
         jq -r '.configuration.customizations.vscode.settings["terminal.integrated.env.linux"].BROWSER // "<absent>"')"
     [ "$terminal_browser_config" = "" ] ||
         fail "${profile} config no longer blanks generic BROWSER in VS Code terminals"
+
+    # The tailnet gate's two config-level invariants.
+    #
+    # DEVCONTAINER_TAILSCALE is what tells tailscale-connect.sh that a failed
+    # connect is a broken build rather than a skip. Losing it from the dev
+    # config breaks nothing visibly — the container still starts, still reports
+    # success, and silently restores the exit-0-on-every-failure behavior the
+    # gate exists to prevent. Asserted per profile: dev sets it, bot must not.
+    local ts_marker ts_optional_env ts_map
+    ts_marker="$(printf '%s' "$cfg" |
+        jq -r '.configuration.containerEnv.DEVCONTAINER_TAILSCALE // "<absent>"')"
+    if [ "$profile" = "dev" ]; then
+        [ "$ts_marker" = "true" ] ||
+            fail "dev config does not set containerEnv.DEVCONTAINER_TAILSCALE=true (a failed tailnet would silently become a no-op); found '${ts_marker}'"
+    else
+        [ "$ts_marker" != "true" ] ||
+            fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE=true — only the tailnet-bearing profile may require the tailnet"
+    fi
+
+    # DEVCONTAINER_TAILSCALE_OPTIONAL demotes a required tailnet back to
+    # optional, and is meant to arrive via `devcontainer up --remote-env` so
+    # opting out is an explicit act at the CALL SITE. remoteEnv in a
+    # devcontainer.json IS applied to lifecycle commands, so a profile that set
+    # it either way could disable the gate from inside the very config the gate
+    # exists to guard. NEITHER profile may carry it in either map.
+    for ts_map in containerEnv remoteEnv; do
+        ts_optional_env="$(printf '%s' "$cfg" |
+            jq -r --arg m "$ts_map" '(.configuration[$m] // {}).DEVCONTAINER_TAILSCALE_OPTIONAL // "<absent>"')"
+        [ "$ts_optional_env" = "<absent>" ] ||
+            fail "${profile} config sets ${ts_map}.DEVCONTAINER_TAILSCALE_OPTIONAL ('${ts_optional_env}') — the tailnet opt-out belongs at the call site, not in the config it guards"
+    done
 
     if [ "$profile" = "bot" ]; then
         [ "$has_ts_feature" = "0" ] || fail "bot config has a tailscale feature"
