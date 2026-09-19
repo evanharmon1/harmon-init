@@ -199,9 +199,22 @@ The prefix form is deliberate: the flags after `--` vary per harness and per
 policy, and a rule that has to be re-edited per flag defeats its purpose. It
 is ungated because herdr has no copier answer — the devcontainer installs it
 unconditionally — and an allow rule for a command that is not installed is
-inert. The grant does not widen what a worker may do; each worker's own
-harness settings still govern that, and a pane is not a boundary either way.
-What it does concede is that lane workers run **unsandboxed**, which for Codex
+inert.
+
+Be precise about what the grant concedes, because it is not nothing. The
+launch line decides the *worker's* gate, and the lines this rule exists to
+permit start a child with no approval layer at all — so an orchestrator that
+can launch a worker can reach anything its own `ask` rules would have stopped
+(this repo asks on `gh pr merge`, `git merge`, `git push origin main`, and
+force-pushes) simply by asking a child to do it. That is accepted here for two
+reasons, neither of which is "it is safe": the orchestrator already holds
+`Bash(task:*)`, an unconditional grant over a checked-out Taskfile, so no new
+capability class is created; and the fan-out brief is trusted by construction
+(§ Panes are not a security boundary). A repo that tightens its orchestrator's
+`ask`/`deny` list should revisit this rule in the same change, and a repo that
+fans out over untrusted input should not be using this surface at all.
+
+The other concession is that lane workers run **unsandboxed**, which for Codex
 is not a preference: `workspace-write` re-protects a *linked worktree's*
 git-dir (`.git/worktrees/<lane>`) even with the git common dir in
 `sandbox_workspace_write.writable_roots`, so a sandboxed Codex lane can
