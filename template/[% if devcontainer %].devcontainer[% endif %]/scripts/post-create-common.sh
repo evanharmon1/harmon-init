@@ -34,11 +34,10 @@ mkdir -p "$(dirname "$ENV_GITCONFIG")"
 # --- Workspace permissions reconciliation ---
 # Git 2.35+ refuses to inspect a bind-mounted repository when the host checkout
 # owner differs from the in-container user. Resolve the mounted workspace from
-# its .git marker without asking Git first, grant the Git metadata tree the
-# permissions needed by this container, then add only that exact path to the
-# environment config. Changing permissions preserves the host runner's UID/GID;
-# a wildcard safe.directory would trust unrelated repositories, so it is never
-# used here.
+# its .git marker without asking Git first, reclaim the Git metadata tree for
+# the container user (never grant other users on the host access to it), then
+# add only the workspace's exact path to the environment config. A wildcard
+# safe.directory would trust unrelated repositories, so it is never used here.
 resolve_workspace_root() {
     local candidate="$1"
     while [ "$candidate" != "/" ]; do
@@ -55,9 +54,35 @@ resolve_workspace_root() {
     return 1
 }
 
+# resolve_git_dir <workspace_root> — the actual Git directory to reconcile.
+# For an ordinary checkout this is "$workspace_root/.git" itself; in a linked
+# worktree .git is a FILE pointing at this checkout's private admin dir inside
+# the MAIN checkout's .git, and only that main .git holds the shared
+# objects/refs/hooks tree this reconciliation exists to fix (issue #1241 item
+# 6). Delegating the resolution to Git rather than hand-parsing the pointer
+# file tracks whatever format the installed Git version actually uses.
+# safe.directory is scoped to this exact invocation via -c — never persisted,
+# never a wildcard — because Git's ownership check runs before the workspace
+# root has been trusted anywhere durable.
+resolve_git_dir() {
+    local workspace_root="$1"
+    local git_dir
+
+    git_dir="$(git -c safe.directory="$workspace_root" -C "$workspace_root" \
+        rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
+        echo "ERROR: could not resolve the Git directory for $workspace_root" >&2
+        return 1
+    }
+    [ -n "$git_dir" ] || {
+        echo "ERROR: Git reported an empty common directory for $workspace_root" >&2
+        return 1
+    }
+    printf '%s\n' "$git_dir"
+}
+
 reconcile_workspace_permissions() {
     local env_gitconfig="$1"
-    local workspace_root
+    local workspace_root git_dir
 
     workspace_root="$(resolve_workspace_root "$(pwd -P)")" || {
         echo "ERROR: could not resolve the repository/workspace root from $(pwd -P)" >&2
@@ -68,12 +93,25 @@ reconcile_workspace_permissions() {
         return 1
     }
 
-    # Keep the host checkout's UID/GID intact. Git and Lefthook write under
-    # .git, so make only that repository metadata tree readable, writable, and
-    # traversable for the container user. Capital X adds execute permission to
-    # directories and files that were already executable, not every file.
-    sudo chmod -R a+rwX "$workspace_root/.git" || {
-        echo "ERROR: could not grant Git metadata permissions at $workspace_root/.git" >&2
+    git_dir="$(resolve_git_dir "$workspace_root")" || return 1
+
+    # Reclaim the Git metadata tree for the container user's own uid/gid
+    # instead of widening it to every user on the host, then set exact modes
+    # (no world-writable bits) — Git and Lefthook need the tree readable,
+    # writable, and traversable for the container user, nothing more.
+    # Lefthook (re)installs its managed hooks with their own chmod +x after
+    # this runs, so forcing a uniform file mode here cannot strand a hook
+    # without its executable bit.
+    sudo chown -R "$(id -u):$(id -g)" "$git_dir" || {
+        echo "ERROR: could not reclaim ownership of the Git directory at $git_dir" >&2
+        return 1
+    }
+    find "$git_dir" -type d -exec chmod 0755 {} + || {
+        echo "ERROR: could not set directory permissions under $git_dir" >&2
+        return 1
+    }
+    find "$git_dir" -type f -exec chmod 0644 {} + || {
+        echo "ERROR: could not set file permissions under $git_dir" >&2
         return 1
     }
 

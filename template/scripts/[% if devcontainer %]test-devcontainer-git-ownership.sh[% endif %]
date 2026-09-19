@@ -46,16 +46,22 @@ sed -n '/^resolve_workspace_root()/,/^# --- End workspace permissions reconcilia
 [ -s "$helpers" ] || fail "could not extract workspace permissions helpers"
 grep -q '^reconcile_workspace_permissions()' "$helpers" ||
     fail "the extracted helpers do not include reconcile_workspace_permissions"
-! grep -Fq 'chown' "$helpers" ||
-    fail "permissions reconciliation still changes ownership"
-! grep -Fq 'find' "$helpers" ||
-    fail "permissions reconciliation still walks the workspace"
+grep -q '^resolve_git_dir()' "$helpers" ||
+    fail "the extracted helpers do not include resolve_git_dir"
+! grep -Fq 'a+rwX' "$helpers" ||
+    fail "permissions reconciliation still grants world-writable Git metadata permissions"
 ! grep -Eq 'mountpoint|hard.?link|core[.]hooksPath' "$helpers" ||
     fail "permissions reconciliation retained recursive filesystem policy"
 grep -Fq '[ -L "$candidate/.git" ]' "$helpers" ||
     fail "permissions reconciliation does not reject symlinked Git markers"
-grep -Fq 'sudo chmod -R a+rwX "$workspace_root/.git"' "$helpers" ||
-    fail "permissions reconciliation does not grant Git metadata permissions"
+grep -Fq 'git_dir="$(resolve_git_dir "$workspace_root")"' "$helpers" ||
+    fail "permissions reconciliation does not resolve the real Git directory before touching it"
+grep -Fq 'sudo chown -R "$(id -u):$(id -g)" "$git_dir"' "$helpers" ||
+    fail "permissions reconciliation does not reclaim ownership of the Git directory"
+grep -Fq 'find "$git_dir" -type d -exec chmod 0755 {} +' "$helpers" ||
+    fail "permissions reconciliation does not set exact directory permissions"
+grep -Fq 'find "$git_dir" -type f -exec chmod 0644 {} +' "$helpers" ||
+    fail "permissions reconciliation does not set exact file permissions"
 
 reconcile_line="$(grep -nF 'reconcile_workspace_permissions "$ENV_GITCONFIG"' "$post_create" |
     head -1 | cut -d: -f1)"
@@ -79,6 +85,8 @@ assert_managed_hook_script() {
         fail "$bot_script does not copy named managed hooks"
     grep -Fq 'chmod +x "$target"' "$bot_script" ||
         fail "$bot_script does not chmod named managed hooks"
+    ! grep -Fq 'chmod +x "$target" || true' "$bot_script" ||
+        fail "$bot_script still swallows a chmod +x failure on a managed hook"
     ! grep -Fq 'chmod +x .git/hooks/*' "$bot_script" ||
         fail "$bot_script still chmods every Git sample hook"
     ! grep -Fq 'chmod +x "$hooks_dir"/*' "$bot_script" ||
@@ -118,10 +126,16 @@ git -C "$repo" -c user.name=fixture -c user.email=fixture@example.test commit -q
 git -C "$repo" config --file "$xdg/git/config" --add safe.directory '*'
 chmod 0500 "$repo/.git/hooks"
 chmod 0700 "$repo/.git"
-owner_before="$(ls -dn "$repo/.git" | awk '{ print $3 ":" $4 }')"
 
-# The real post-create script invokes sudo; this fixture records the exact
-# target while allowing chmod to operate on the fixture's own Git metadata.
+git_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+expected_owner="$(id -u):$(id -g)"
+
+# The real post-create script invokes sudo only for chown (the fixture's
+# invoking user already owns the tree, so chown to its own uid/gid needs no
+# real privilege); this fixture records the exact target while letting the
+# command actually run against the fixture's own Git metadata.
 cat >"$fake_bin/sudo" <<'SUDO'
 #!/bin/sh
 set -eu
@@ -129,14 +143,7 @@ printf '%s\n' "$*" >>"$SUDO_LOG"
 if [ "$SUDO_FAIL" = "$1" ]; then
     exit 1
 fi
-case "$1" in
-chmod)
-    "$@"
-    ;;
-*)
-    "$@"
-    ;;
-esac
+"$@"
 SUDO
 chmod 0755 "$fake_bin/sudo"
 SUDO_FAIL=""
@@ -152,19 +159,25 @@ run_reconcile() {
     run_reconcile_at "$repo" "$xdg/git/config" "$log"
 }
 
-echo "==> mismatched-workspace fixture uses permissions at the exact root"
+echo "==> mismatched-workspace fixture reclaims ownership and sets exact, non-world-writable modes"
 resolved="$(run_reconcile)"
 [ "$resolved" = "$repo" ] ||
     fail "resolved workspace root was '$resolved', expected '$repo'"
-grep -Fqx "chmod -R a+rwX $repo/.git" "$log" ||
-    fail "Git metadata permissions were not repaired at the resolved root"
-! grep -Eq '^(chown|find|mountpoint|mkdir) ' "$log" ||
-    fail "permissions reconciliation touched unrelated filesystem state"
+grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
+    fail "Git metadata ownership was not reclaimed for the container user at the resolved root"
+! grep -Eq '^(find|mountpoint|mkdir) ' "$log" ||
+    fail "permissions reconciliation ran unexpected commands under sudo"
 ! grep -Fq "$unrelated" "$log" ||
     fail "permissions reconciliation touched an unrelated path"
-owner_after="$(ls -dn "$repo/.git" | awk '{ print $3 ":" $4 }')"
-[ "$owner_after" = "$owner_before" ] ||
-    fail "Git metadata ownership changed from $owner_before to $owner_after"
+[ "$(git_mode "$repo/.git")" = "755" ] ||
+    fail "Git metadata directory is not exactly 0755 after permissions repair"
+[ "$(git_mode "$repo/.git/hooks")" = "755" ] ||
+    fail "Git hooks directory is not exactly 0755 after permissions repair"
+[ "$(git_mode "$repo/.git/config")" = "644" ] ||
+    fail "a Git metadata file is not exactly 0644 after permissions repair"
+if find "$repo/.git" -perm -022 | grep -q .; then
+    fail "some Git metadata entry remains group- or world-writable"
+fi
 [ -r "$repo/.git" ] && [ -w "$repo/.git" ] && [ -x "$repo/.git" ] ||
     fail "Git metadata directory is not readable, writable, and traversable"
 [ -r "$repo/.git/hooks" ] && [ -w "$repo/.git/hooks" ] && [ -x "$repo/.git/hooks" ] ||
@@ -219,9 +232,49 @@ run_reconcile >/dev/null
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
 [ "$(printf '%s\n' "$safe_entries" | grep -Fxc "$repo")" -eq 1 ] ||
     fail "repeated reconciliation duplicated safe.directory: $safe_entries"
-owner_after="$(ls -dn "$repo/.git" | awk '{ print $3 ":" $4 }')"
-[ "$owner_after" = "$owner_before" ] ||
-    fail "repeated reconciliation changed Git metadata ownership"
+grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
+    fail "repeated reconciliation did not re-assert ownership"
+[ "$(git_mode "$repo/.git")" = "755" ] ||
+    fail "repeated reconciliation changed the Git metadata directory mode"
+
+echo "==> linked-worktree fixture reconciles the real common directory, not the .git pointer file (#1241 item 6)"
+wt_main="$fixture/workspaces/wt-main"
+wt_linked="$fixture/workspaces/wt-linked"
+wt_xdg="$fixture/wt-xdg/git/config"
+wt_log="$fixture/wt-sudo.log"
+mkdir -p "$wt_main" "$fixture/wt-xdg/git"
+wt_main="$(cd "$wt_main" && pwd -P)"
+git -C "$wt_main" init -q
+git -C "$wt_main" -c user.name=fixture -c user.email=fixture@example.test commit --allow-empty -qm init
+git -C "$wt_main" worktree add -q "$wt_linked" -b wt-fixture-branch
+wt_linked="$(cd "$wt_linked" && pwd -P)"
+mkdir -p "$wt_linked/subdirectory"
+[ -f "$wt_linked/.git" ] && [ ! -d "$wt_linked/.git" ] ||
+    fail "fixture setup: expected the linked worktree's .git to be a file, not a directory"
+wt_admin_name="$(basename "$wt_linked")"
+[ -d "$wt_main/.git/worktrees/$wt_admin_name" ] ||
+    fail "fixture setup: expected a worktree admin directory at $wt_main/.git/worktrees/$wt_admin_name"
+
+resolved="$(run_reconcile_at "$wt_linked" "$wt_xdg" "$wt_log")"
+[ "$resolved" = "$wt_linked" ] ||
+    fail "linked-worktree resolved workspace root was '$resolved', expected '$wt_linked'"
+grep -Fqx "chown -R $expected_owner $wt_main/.git" "$wt_log" ||
+    fail "linked-worktree reconciliation did not reclaim ownership of the MAIN checkout's common Git directory"
+! grep -Fq "$wt_linked/.git " "$wt_log" ||
+    fail "linked-worktree reconciliation targeted the worktree's .git POINTER FILE instead of the resolved common directory"
+[ "$(git_mode "$wt_main/.git")" = "755" ] ||
+    fail "linked-worktree reconciliation did not set the common directory's mode"
+[ "$(git_mode "$wt_main/.git/worktrees/$wt_admin_name")" = "755" ] ||
+    fail "linked-worktree reconciliation did not reach the worktree's own private admin directory"
+if find "$wt_main/.git" -perm -022 | grep -q .; then
+    fail "linked-worktree reconciliation left some common-directory entry group- or world-writable"
+fi
+wt_safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$fixture/wt-xdg" git config --file "$wt_xdg" --get-all safe.directory)"
+[ "$(printf '%s\n' "$wt_safe_entries" | grep -Fxc "$wt_linked")" -eq 1 ] ||
+    fail "linked-worktree safe.directory entry does not name the worktree root: $wt_safe_entries"
+wt_host_status="$(GIT_CONFIG_NOSYSTEM=1 HOME="$host_home" XDG_CONFIG_HOME="$host_xdg" git -C "$wt_linked" status --short)"
+[ -z "$wt_host_status" ] ||
+    fail "host-side Git was not usable in the linked worktree after container setup: $wt_host_status"
 
 echo "==> symlinked Git markers fail closed before chmod"
 symlink_repo="$fixture/workspaces/symlinked"
@@ -236,7 +289,7 @@ if run_reconcile_at "$symlink_repo" "$symlink_config" "$symlink_log" >/dev/null 
     fail "a symlinked Git marker unexpectedly passed permissions reconciliation"
 fi
 [ ! -e "$symlink_log" ] || [ ! -s "$symlink_log" ] ||
-    fail "symlink rejection invoked sudo chmod"
+    fail "symlink rejection invoked sudo"
 symlink_mode_after="$(ls -ld "$symlink_target/.git" | awk '{ print $1 }')"
 [ "$symlink_mode_after" = "$symlink_mode_before" ] ||
     fail "symlink rejection changed the external Git metadata mode"
@@ -253,7 +306,7 @@ git -C "$failed_repo" init -q
 mkdir -p "$failed_repo/.git/hooks"
 chmod 0700 "$failed_repo/.git"
 failed_owner_before="$(ls -dn "$failed_repo/.git" | awk '{ print $3 ":" $4 }')"
-if SUDO_FAIL=chmod run_reconcile_at "$failed_repo" "$failed_config" "$failed_log" >/dev/null 2>"$tmp_root/failed.err"; then
+if SUDO_FAIL=chown run_reconcile_at "$failed_repo" "$failed_config" "$failed_log" >/dev/null 2>"$tmp_root/failed.err"; then
     fail "a failed permissions reconciliation unexpectedly succeeded"
 fi
 failed_safe_entries="$(git config --file "$failed_config" --get-all safe.directory 2>/dev/null || true)"
@@ -281,5 +334,28 @@ chmod 0644 "$hook_fixture/.git/hooks/applypatch-msg.sample"
     fail "the Git sample hook was unexpectedly chmodded"
 grep -Fqx 'echo managed' "$hook_fixture/.git/hooks/post-checkout" ||
     fail "the managed hook was not copied"
+
+echo "==> a managed hook that cannot be made executable fails post-create loudly (#1241 item 5)"
+hook_fail_fixture="$fixture/managed-hooks-fail"
+hook_fail_bin="$fixture/hook-fail-bin"
+mkdir -p "$hook_fail_fixture/.devcontainer/hooks" "$hook_fail_fixture/.git/hooks" "$hook_fail_bin"
+printf '%s\n' '#!/bin/sh' 'echo managed' >"$hook_fail_fixture/.devcontainer/hooks/post-checkout"
+chmod 0644 "$hook_fail_fixture/.devcontainer/hooks/post-checkout"
+cat >"$hook_fail_bin/chmod" <<'CHMODFAIL'
+#!/bin/sh
+echo "simulated chmod +x failure" >&2
+exit 1
+CHMODFAIL
+chmod 0755 "$hook_fail_bin/chmod"
+if (
+    cd "$hook_fail_fixture"
+    PATH="$hook_fail_bin:$PATH"
+    . "$managed_helpers"
+    install_repo_managed_hooks
+) >/dev/null 2>"$tmp_root/hook-fail.err"; then
+    fail "a chmod +x failure on a managed hook did not abort install_repo_managed_hooks"
+fi
+grep -q . "$tmp_root/hook-fail.err" ||
+    fail "a chmod +x failure on a managed hook produced no diagnostic output"
 
 echo "devcontainer Git permissions: all cases passed"

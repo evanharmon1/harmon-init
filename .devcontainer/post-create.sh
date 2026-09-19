@@ -48,7 +48,7 @@ install_repo_managed_hooks() {
         hook_name="$(basename "$hook")"
         target=".git/hooks/$hook_name"
         cp "$hook" "$target"
-        chmod +x "$target" || true
+        chmod +x "$target"
     done
 }
 install_repo_managed_hooks
