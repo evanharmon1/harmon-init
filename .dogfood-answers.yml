@@ -48,10 +48,11 @@ foreman_additional_trusted_actors: AdmiralFraggle
 # still ships CodeQL for consumers that select a language.
 use_codeql: false
 
-# This repo dogfoods local and cloud Codex review; CodeRabbit stays off.
+# This repo dogfoods local and cloud Codex review, plus Gemini Code Assist; CodeRabbit stays off.
 use_codex_review: true
 use_codex_cloud_review: true
 use_coderabbit: false
+use_gemini_code_assist: true
 
 devcontainer: true
 # Dogfoods the opt-in, read-only GitHub CLI fallback for a missing Claude PR
