@@ -282,7 +282,7 @@ for good_date in 2024-02-29 2026-12-31 2000-02-29; do
     if render_seed_date "$good_date" "$work/good-date"; then
         if [ -f "$work/good-date/docs/decisions/${good_date}-record-architecture-decisions.md" ] &&
             grep -q "^Date: ${good_date}\$" "$work/good-date/docs/decisions/${good_date}-record-architecture-decisions.md" &&
-            grep -q "${good_date}-record-architecture-decisions.md" "$work/good-date/docs/decisions/README.md"; then
+            grep -q "${good_date}-record-architecture-decisions.md" "$work/good-date/docs/decisions/index.md"; then
             pass "accepted $good_date and named, dated, and linked the seed record by it"
         else
             fail "accepted $good_date but the seed record was not rendered by that date"

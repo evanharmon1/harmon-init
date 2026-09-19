@@ -13,8 +13,8 @@ an application; it is a template repository used via the
 [Copier](https://copier.readthedocs.io/en/stable/) templating tool.
 
 Repo: https://github.com/evanharmon1/harmon-init — see
-[docs/README.md](docs/README.md) for the documentation map,
-[docs/architecture/README.md](docs/architecture/README.md) for the architecture,
+[docs/index.md](docs/index.md) for the documentation map,
+[docs/architecture/index.md](docs/architecture/index.md) for the architecture,
 and [DESIGN.md](DESIGN.md) for design/UX intent.
 
 ## Hard Rules

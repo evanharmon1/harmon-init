@@ -147,6 +147,26 @@ docker run --rm "$overlay" sh -eu -c '
             exit 1
             ;;
     esac
+    [ "$(command -v fresh)" = "/usr/local/bin/fresh" ]
+    [ "$(zsh -ic "command -v fresh" 2>/dev/null)" = "/usr/local/bin/fresh" ]
+    case "$(fresh --version)" in
+        fresh*) ;;
+        *)
+            echo "fresh --version output does not start with fresh" >&2
+            exit 1
+            ;;
+    esac
+    [ "$(command -v ttt)" = "/usr/local/bin/ttt" ]
+    [ "$(zsh -ic "command -v ttt" 2>/dev/null)" = "/usr/local/bin/ttt" ]
+    case "$(ttt --version)" in
+        ttt*) ;;
+        *)
+            echo "ttt --version output does not start with ttt" >&2
+            exit 1
+            ;;
+    esac
+    [ "$(command -v mc)" = "/usr/bin/mc" ]
+    [ "$(command -v nano)" = "/usr/bin/nano" ]
 '
 
 # LEGACY OVERLAY — the compatibility guarantee, retained.

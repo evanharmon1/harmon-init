@@ -233,7 +233,7 @@ it points here.
   · `docs/architecture/` (how) · `docs/decisions/` (ADRs, date-named
   `YYYY-MM-DD-…`; older records keep their `0001-` names) ·
   `docs/guides/` (build it) · `docs/runbooks/` (operate it). Folder landing
-  pages are `README.md`.
+  pages within `docs/` are `index.md`.
 
 ## Template authoring
 

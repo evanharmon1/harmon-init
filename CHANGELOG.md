@@ -8,6 +8,27 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.45.0](https://github.com/evanharmon1/harmon-init/compare/v4.44.0...v4.45.0) (2026-09-18)
+
+
+### Features
+
+* **docs:** use index.md for folder landing pages instead of README.md ([#1296](https://github.com/evanharmon1/harmon-init/issues/1296)) ([a520b7e](https://github.com/evanharmon1/harmon-init/commit/a520b7eeff7d39b9d4c513c43e76a334fc76e9f2))
+
+## [4.44.0](https://github.com/evanharmon1/harmon-init/compare/v4.43.3...v4.44.0) (2026-09-18)
+
+
+### Features
+
+* **devcontainer:** install Fresh editor and rename reset alias to pnpm-relock ([#1293](https://github.com/evanharmon1/harmon-init/issues/1293)) ([636fd70](https://github.com/evanharmon1/harmon-init/commit/636fd70610653eca951fa4665280d312effc3a28))
+* **devcontainer:** install nano and ttt editor ([#1295](https://github.com/evanharmon1/harmon-init/issues/1295)) ([a578c84](https://github.com/evanharmon1/harmon-init/commit/a578c844a4036f3473df9089d5368de2ac9ace28))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to a578c844 ([#1294](https://github.com/evanharmon1/harmon-init/issues/1294)) ([811202d](https://github.com/evanharmon1/harmon-init/commit/811202d490b8e218eab709fa335b01140761f000))
+* **template:** sync harmon-devkit skills to v0.45.0 ([#1252](https://github.com/evanharmon1/harmon-init/issues/1252)) ([9e928a4](https://github.com/evanharmon1/harmon-init/commit/9e928a400047e40fd7c9c487bfeca3385dc8710c))
+
 ## [4.43.3](https://github.com/evanharmon1/harmon-init/compare/v4.43.2...v4.43.3) (2026-09-13)
 
 

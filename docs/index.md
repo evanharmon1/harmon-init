@@ -10,15 +10,15 @@ This is the **hub** — read it when you're unsure where something belongs. It
 
 | Bucket | Answers | Holds |
 |---|---|---|
-| [product/](product/) | **Why does it exist / who is it for?** | business & problem-space knowledge — the non-code, non-how layer |
-| [architecture/](architecture/) | **How is it built / secured / governed / tested?** | the durable narrative of how the system *is*; home for subject hubs |
-| [decisions/](decisions/) | **Why was this choice made?** | append-only, backward-looking records — they stop agents from "helpfully" undoing deliberate choices |
-| [guides/](guides/) + [runbooks/](runbooks/) | **How do I do X?** | procedures — `guides/` are calm (read in advance), `runbooks/` are crisis (read under pressure) |
-| [research/](research/) | **What did we find out, and what does it argue for?** | dated, cited spikes that evaluate options against a rubric — the evidence a decision cites, never the decision itself |
+| [product/](product/index.md) | **Why does it exist / who is it for?** | business & problem-space knowledge — the non-code, non-how layer |
+| [architecture/](architecture/index.md) | **How is it built / secured / governed / tested?** | the durable narrative of how the system *is*; home for subject hubs |
+| [decisions/](decisions/index.md) | **Why was this choice made?** | append-only, backward-looking records — they stop agents from "helpfully" undoing deliberate choices |
+| [guides/](guides/index.md) + [runbooks/](runbooks/index.md) | **How do I do X?** | procedures — `guides/` are calm (read in advance), `runbooks/` are crisis (read under pressure) |
+| [research/](research/index.md) | **What did we find out, and what does it argue for?** | dated, cited spikes that evaluate options against a rubric — the evidence a decision cites, never the decision itself |
 
 ## Doc types
 
-- **Hub** — every `README.md`. Routes to where facts live; never duplicates them.
+- **Hub** — every `index.md`. Routes to where facts live; never duplicates them.
 - **Typed** — holds one kind of content (a vision, an ADR, a guide…).
 - **Flat lookup** (root) — [conventions.md](conventions.md), [glossary.md](glossary.md), [copier-options.md](copier-options.md): grep them, don't read them.
 - **Procedural, run-once** — [CHECKLIST.md](CHECKLIST.md): tick through once when the repo is created, then ignore.
@@ -30,12 +30,12 @@ This is the **hub** — read it when you're unsure where something belongs. It
 | Conventions (enforced rules) | [conventions.md](conventions.md) |
 | Glossary (term → definition) | [glossary.md](glossary.md) |
 | Copier inputs (questions, hidden answers, fleet answers) | [copier-options.md](copier-options.md) |
-| Product — vision, roadmap, domain | [product/](product/) |
-| Architecture (subject hubs) | [architecture/](architecture/) — ci-cd, security, branch-protection, tests |
-| Decisions (ADRs) | [decisions/](decisions/) |
-| Guides (calm how-tos) | [guides/](guides/) — onboarding, deploying, troubleshooting, devcontainers, devflow |
-| Research notes (spikes → recommendation) | [research/](research/) — dated, cited evaluations that an ADR or OpenSpec change cites |
-| Runbooks (crisis procedures) | [runbooks/](runbooks/) |
+| Product — vision, roadmap, domain | [product/](product/index.md) |
+| Architecture (subject hubs) | [architecture/](architecture/index.md) — ci-cd, security, branch-protection, tests |
+| Decisions (ADRs) | [decisions/](decisions/index.md) |
+| Guides (calm how-tos) | [guides/](guides/index.md) — onboarding, deploying, troubleshooting, devcontainers, devflow |
+| Research notes (spikes → recommendation) | [research/](research/index.md) — dated, cited evaluations that an ADR or OpenSpec change cites |
+| Runbooks (crisis procedures) | [runbooks/](runbooks/index.md) |
 | Project management (GitHub Projects) | [project-management.md](project-management.md) |
 | Post-generation setup | [CHECKLIST.md](CHECKLIST.md) |
 
