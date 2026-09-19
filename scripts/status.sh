@@ -193,7 +193,23 @@ GH_SCOPES_LINE=""
 # The raw command rides along for a reader who is not in a checkout yet, and is
 # derived from the same required-scope list — the two divergent remedy strings
 # #596 reported were exactly this string drifting from the skills' hint.
-GH_REMEDY_DEFAULT="run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
+#
+# Profile-aware for the same reason gh_login_remedy is: in the bot profile
+# every one of these remedies acts on the CURRENT login, and the gh-identity
+# tripwire may be about to say that login is a personal credential which must
+# be removed. Telling the reader to widen it first, on the same screen, is the
+# escalation harmon-init#1236 exists to stop — worse than the login advice,
+# because it grants the unsafe credential more reach. The env-token branches
+# in derive_gh_scope_state below already say "reissue", which is correct in
+# both profiles; only this stored-credential default needed splitting.
+gh_scope_remedy_default() {
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
+        printf '%s' "bot profile: re-provision GH_TOKEN with the required permissions — never widen the current login here"
+    else
+        printf '%s' "run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
+    fi
+}
+GH_REMEDY_DEFAULT="$(gh_scope_remedy_default)"
 GH_REMEDY="${GH_REMEDY_DEFAULT}"
 
 # derive_gh_scope_state FILE — set GH_SCOPES_LINE and GH_REMEDY from a captured
@@ -204,7 +220,7 @@ GH_REMEDY="${GH_REMEDY_DEFAULT}"
 derive_gh_scope_state() {
     local file="$1"
     GH_SCOPES_LINE=""
-    GH_REMEDY="${GH_REMEDY_DEFAULT}"
+    GH_REMEDY="$(gh_scope_remedy_default)"
     [[ -s "${file}" ]] || return 0
     GH_SCOPES_LINE="$(grep -i 'token scopes:' "${file}" 2>/dev/null || true)"
     case "$(<"${file}")" in
@@ -644,21 +660,36 @@ GH_IDENTITY_OUT=""
 gh_identity_launch() {
     GH_IDENTITY_PID=""
     GH_IDENTITY_OUT="${TMPDIR_STATUS}/gh-identity.txt"
-    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ] && [ "${STATUS_NO_NETWORK:-0}" != "1" ] &&
-        [ -r .devcontainer/scripts/check-bot-gh-identity.sh ]; then
-        GH_IDENTITY_TIMEOUT=2 GH_IDENTITY_KILL_GRACE=1 run_timeout 5 \
-            bash .devcontainer/scripts/check-bot-gh-identity.sh \
-            >"${GH_IDENTITY_OUT}" 2>&1 &
-        GH_IDENTITY_PID=$!
+    [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ] || return 0
+    if [ "${STATUS_NO_NETWORK:-0}" = "1" ]; then
+        return 0
     fi
+    # A bot profile whose helper cannot be read (a conflicted copier update,
+    # permission drift) must SAY the identity check did not run. Skipping
+    # silently leaves the ordinary credential line looking healthy while the
+    # advertised check is absent — a fail-silent in a security check is the
+    # one outcome worse than a noisy one.
+    if [ ! -r .devcontainer/scripts/check-bot-gh-identity.sh ]; then
+        printf '%s\n' "==> gh-identity: .devcontainer/scripts/check-bot-gh-identity.sh is missing or unreadable — the bot login was NOT checked (indeterminate)." \
+            >"${GH_IDENTITY_OUT}"
+        GH_IDENTITY_PID="skipped"
+        return 0
+    fi
+    GH_IDENTITY_TIMEOUT=2 GH_IDENTITY_KILL_GRACE=1 run_timeout 5 \
+        bash .devcontainer/scripts/check-bot-gh-identity.sh \
+        >"${GH_IDENTITY_OUT}" 2>&1 &
+    GH_IDENTITY_PID=$!
 }
 
 gh_identity_collect() {
-    if [ -n "${GH_IDENTITY_PID}" ]; then
+    [ -n "${GH_IDENTITY_PID}" ] || return 0
+    # "skipped" is the unreadable-helper note above: there is no child to wait
+    # on, but its message still has to reach the reader.
+    if [ "${GH_IDENTITY_PID}" != "skipped" ]; then
         wait "${GH_IDENTITY_PID}" || true
-        cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
-        GH_IDENTITY_PID=""
     fi
+    cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
+    GH_IDENTITY_PID=""
 }
 
 # The interactive-login remedy is HUMAN-profile advice. In the bot profile

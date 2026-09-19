@@ -702,22 +702,56 @@ else
     echo "    (skipped: no timeout binary — the probe is unbounded here)"
 fi
 
-echo "==> no user-facing message hardcodes the refresh remedy"
-# The remedy is derived from the credential source once, because `gh auth refresh`
-# is wrong for an env-provided or fine-grained token. Every message must use that
-# derivation — a hardcoded copy is how one call site silently drifts back to
-# advice that cannot work, and the setup section (which needs live GitHub data to
-# render) cannot be driven by the stub above. So assert it statically instead:
-# the literal may appear only in a comment or in the derivation itself.
+echo "==> no user-facing message hardcodes a remedy that acts on the current login"
+# One invariant, widened from the original refresh-only form (issue #596).
+#
+# The remedy is derived from the credential source once, because `gh auth
+# refresh` is wrong for an env-provided or fine-grained token — a hardcoded
+# copy is how one call site silently drifts back to advice that cannot work,
+# and the setup section (which needs live GitHub data to render) cannot be
+# driven by the stub above. So assert it statically.
+#
+# The class is wider than refresh, and the bot profile is why
+# (harmon-init#1236). There, EVERY remedy that acts on the current gh login is
+# wrong, not just the one that cannot work: the gh-identity tripwire may be
+# about to report that login as a personal credential which must be removed,
+# and advice to use it (`gh auth login`) or widen it (`gh auth refresh -s`,
+# `task setup:gh-scopes`) on the same screen re-creates the exact escalation
+# the tripwire exists to stop. Challenge found two such sites in two
+# consecutive rounds — the setup audit's login line, then the scope remedy —
+# so the guard is written against the class.
+#
+# The literal may appear only in a comment or inside one of the profile-aware
+# derivation helpers, which ARE the rule.
+#
+# The original form also exempted any `GH_REMEDY*=` assignment, because back
+# then the assignment WAS the derivation. It no longer is, and that exemption
+# had become a hole wide enough to drive the finding through: `GH_REMEDY_DEFAULT
+# ="see: task setup:gh-scopes"` matched it and sailed past. Mutation-verified
+# after removal. The patterns below are deliberately the RUNNABLE recommendation
+# forms — `gh auth refresh -s` rather than bare `gh auth refresh` — so
+# derive_gh_scope_state is exempt on the same grounds as the other two: it IS
+# the derivation, and its "an env token overrides gh auth refresh" branches
+# explain why that command will not work rather than recommending it. The
+# exemption is by FUNCTION, not by line shape — which is what the removed
+# assignment exemption got wrong.
+remedy_helper_lines="$(awk '
+    /^(gh_login_remedy|gh_scope_remedy_default|derive_gh_scope_state)\(\) \{/ { inf = 1 }
+    inf { print NR }
+    inf && /^\}/ { inf = 0 }
+' "${status}")"
 while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
-    *"#"*"gh auth refresh"*) continue ;; # a comment explaining the rule
-    *GH_REMEDY*=*) continue ;;           # the derivation itself
-    *) fail "hardcoded refresh remedy — use \${GH_REMEDY}: ${line}" ;;
+    *"#"*"gh auth refresh"* | *"#"*"gh auth login"* | *"#"*"setup:gh-scopes"*) continue ;;
     esac
+    # Inside a derivation helper? Then it is the single source, not a copy.
+    if printf '%s\n' "${remedy_helper_lines}" | grep -qx "${line%%:*}"; then
+        continue
+    fi
+    fail "hardcoded remedy acting on the current login — derive it: ${line}"
 done <<EOF
-$(grep -n 'gh auth refresh' "${status}" || true)
+$(grep -nE "gh auth refresh|gh auth login|task setup:gh-scopes" "${status}" || true)
 EOF
 
 echo "==> the session-start hook allows more time than this section can spend"

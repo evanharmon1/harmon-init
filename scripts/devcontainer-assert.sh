@@ -1487,20 +1487,29 @@ SENTINEL_SCRIPT
     # than any mention.
     local status_sh status_guard_line status_invoke_line
     status_sh="${repo_root}/scripts/status.sh"
-    status_invoke_line="$(grep -nE '^[[:space:]]*([A-Z_]+=[^[:space:]]*[[:space:]]+)*(run_timeout[[:space:]]+[0-9]+[[:space:]]+)?bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' \
-        "$status_sh" | head -1 | cut -d: -f1)"
-    [ -n "$status_invoke_line" ] ||
-        fail "status board never executes check-bot-gh-identity.sh (a mention in a [ -r ] test is not a run)"
-    # The invocation must sit INSIDE a bot guard. Anchor on the guard NEAREST
-    # ABOVE the invocation, not the file's first one: status.sh also consults
-    # the same marker in gh_login_remedy several hundred lines earlier, and
-    # anchoring on that match would measure the distance to an unrelated guard.
-    status_guard_line="$(grep -n 'FOREMAN_DEVCONTAINER:-}" = "bot"' "$status_sh" |
-        cut -d: -f1 | awk -v n="$status_invoke_line" '$1 < n { g = $1 } END { print g }')"
-    [ -n "$status_guard_line" ] ||
-        fail "status board runs the gh-identity tripwire with no FOREMAN_DEVCONTAINER=bot guard above it"
-    [ "$((status_invoke_line - status_guard_line))" -le 10 ] ||
-        fail "status board's gh-identity run (line ${status_invoke_line}) is too far from its bot-profile guard (line ${status_guard_line}) to be inside it"
+    # STRUCTURAL, not proximity-based: the invocation must live inside
+    # gh_identity_launch, and that function must carry the bot guard. An
+    # earlier line-distance heuristic broke the moment the function body grew
+    # a branch — the number was measuring layout, not the property. Extract
+    # the function body once and assert both facts against it.
+    local launch_body
+    launch_body="$(awk '
+        /^gh_identity_launch\(\) \{/ { inf = 1; next }
+        inf && /^\}/ { exit }
+        inf { print }
+    ' "$status_sh")"
+    [ -n "$launch_body" ] ||
+        fail "status board has no gh_identity_launch function to carry the tripwire"
+    printf '%s\n' "$launch_body" |
+        grep -qE '^[[:space:]]*([A-Z_]+=[^[:space:]]*[[:space:]]+)*(run_timeout[[:space:]]+[0-9]+[[:space:]]+)?bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' ||
+        fail "gh_identity_launch never executes check-bot-gh-identity.sh (a mention in a [ -r ] test is not a run)"
+    printf '%s\n' "$launch_body" | grep -q 'FOREMAN_DEVCONTAINER:-}" = "bot"' ||
+        fail "gh_identity_launch does not gate on the bot profile — the human board would print a bot warning"
+    # An unreadable helper must REPORT, never silently skip: a fail-silent in
+    # a security check leaves the ordinary credential line looking healthy
+    # while the advertised identity check is simply absent.
+    printf '%s\n' "$launch_body" | grep -q 'missing or unreadable' ||
+        fail "gh_identity_launch skips silently when the helper cannot be read — it must report the check did not run"
 
     # EVERY render_local_credentials call site must be covered, not just the
     # first. `should_show creds` is false under SECTION=setup, so an inline
@@ -1520,22 +1529,10 @@ SENTINEL_SCRIPT
     [ "$(grep -cE '^[[:space:]]*gh_identity_collect[[:space:]]*$' "$status_sh")" = "$launch_sites" ] ||
         fail "status board's gh_identity_launch and gh_identity_collect calls are unpaired — a launched probe whose output is never collected prints nothing"
 
-    # NO user-facing output line in the status board may hardcode the
-    # interactive-login remedy: in the bot profile it would contradict the
-    # tripwire banner printed on the same screen and re-create the escalation
-    # this change exists to stop. gh_login_remedy is the single place that
-    # decides the wording, so every echo/printf/checkline must route through
-    # it. Comments are exempt (they explain the rule); the helper's own body is
-    # exempt because it IS the rule. Found by challenge round 2, which caught a
-    # third remedy site in the setup audit that the first pass missed.
-    local stray_remedy
-    stray_remedy="$(grep -nE "(echo|printf|checkline)[^#]*gh auth login" "$status_sh" |
-        grep -vE '^[0-9]+:[[:space:]]*#' |
-        awk -F: -v s="$(grep -n '^gh_login_remedy() {' "$status_sh" | cut -d: -f1)" \
-            -v e="$(awk '/^gh_login_remedy\(\) \{/{f=1} f&&/^\}/{print NR; exit}' "$status_sh")" \
-            '$1 < s || $1 > e' || true)"
-    [ -z "$stray_remedy" ] ||
-        fail "status board hardcodes the interactive-login remedy outside gh_login_remedy — it would contradict the bot tripwire banner: ${stray_remedy}"
+    # The "no hardcoded remedy acting on the current login" invariant lives in
+    # scripts/test-status.sh, beside the ${GH_REMEDY} derivation guard it was
+    # widened from (issue #596) — one invariant, one home. This file keeps the
+    # devcontainer WIRING assertions only.
 
     # The credential line's own remedy must not contradict the tripwire banner
     # on the same screen: in the bot profile an operator `gh auth login` is the
