@@ -110,6 +110,13 @@ environment — against the items below
       installation. Deleting `.coderabbit.yaml` and bot trust does not revoke
       existing App access.
 [% endif %]
+[% if use_gemini_code_assist %]
+- [ ] **[human-only] Connect Gemini Code Assist on GitHub** — in Google Cloud
+      Console (under your foundation project), navigate to **Gemini Code Assist →
+      Agents & Tools → Code Assist Source Code Management**, create/select the
+      connection in `us-east1`, install the Gemini Code Assist GitHub App for
+      this repository, and complete the Cloud-side repository link.
+[% endif %]
 [% if use_codex_cloud_review %]
 - [ ] **[human-only] Connect Codex cloud review** — connect this repository in
       ChatGPT Codex settings, grant private-repository access if applicable,
