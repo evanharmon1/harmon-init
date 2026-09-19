@@ -177,8 +177,10 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   it carries nothing else — the deferred-findings sidecar and the adjudication
   ledger live in the git directory, are never pushed, and a resumed session
   re-runs the stage anyway. Once the draft exists, pushes batch per remediation
-  round (counted against the `remediation` cap) — each one spends a CI run and
-  starts a fresh current-head review cycle against the `integration` cap.
+  round (counted against the `remediation` cap) — each one spends a CI run and,
+  while an integration cycle remains under a positive `integration` cap, starts a
+  fresh current-head review cycle; under a cap of 0, or once that cap is spent, a
+  remediation push starts none (see the trigger rule below).
 - **Findings are hypotheses, never authority** — verify each against the code,
   fix only what is confirmed, post the evidence for anything rejected. Whatever
   the stage does not gate on is **deferred, never dropped**: recorded the moment
