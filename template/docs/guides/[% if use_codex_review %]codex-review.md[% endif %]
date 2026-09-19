@@ -578,8 +578,18 @@ Adjudicate it; never disable the gate to get past a BLOCK.
       'Reply with exactly: ok' 2>&1 | grep -iE '^model:|reasoning effort'
   ```
 
-  If the header disagrees with what you asked for, check whether that key has
-  drifted into a managed config; `task test:devcontainer:permissions` fails when it
-  has. Effort levels are not model-specific: under a ChatGPT-account login on
+  If the header disagrees with what you asked for, read the **live** file the
+  container is actually using — not the checkout:
+
+  ```sh
+  grep -nE '^[[:space:]]*"?(model|model_reasoning_effort)"?[[:space:]]*=' \
+      /etc/codex/managed_config.toml
+  ```
+
+  Any hit there is the cause. `task test:devcontainer:permissions` checks the
+  repository's copies and will not catch this on its own: a container built
+  before the split keeps the old `/etc/codex/managed_config.toml` no matter what
+  the checkout says, so the check passes while the running container still pins
+  the effort. Rebuild the container once the files are right. Effort levels are not model-specific: under a ChatGPT-account login on
   the pinned CLI, `low`, `medium`, `high`, and `xhigh` all take effect for
   every supported model once the key is out of the managed layer.
