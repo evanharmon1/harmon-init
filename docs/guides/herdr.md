@@ -197,6 +197,12 @@ therefore allow it outright:
 
 The prefix form is deliberate: the flags after `--` vary per harness and per
 policy, and a rule that has to be re-edited per flag defeats its purpose. It
+covers the default session only. A **named** session puts its flag before the
+subcommand (`herdr --session NAME agent start …`), which no prefix rule can
+match without also granting `herdr --session NAME server stop` and every other
+subcommand — so named-session fan-out still prompts, by choice. Run
+orchestrated lanes on the default session, and treat the prompt on a named one
+as the intended cost of an isolated server. It
 is ungated because herdr has no copier answer — the devcontainer installs it
 unconditionally — and an allow rule for a command that is not installed is
 inert.
