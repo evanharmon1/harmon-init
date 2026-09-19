@@ -1520,6 +1520,23 @@ SENTINEL_SCRIPT
     [ "$(grep -cE '^[[:space:]]*gh_identity_collect[[:space:]]*$' "$status_sh")" = "$launch_sites" ] ||
         fail "status board's gh_identity_launch and gh_identity_collect calls are unpaired — a launched probe whose output is never collected prints nothing"
 
+    # NO user-facing output line in the status board may hardcode the
+    # interactive-login remedy: in the bot profile it would contradict the
+    # tripwire banner printed on the same screen and re-create the escalation
+    # this change exists to stop. gh_login_remedy is the single place that
+    # decides the wording, so every echo/printf/checkline must route through
+    # it. Comments are exempt (they explain the rule); the helper's own body is
+    # exempt because it IS the rule. Found by challenge round 2, which caught a
+    # third remedy site in the setup audit that the first pass missed.
+    local stray_remedy
+    stray_remedy="$(grep -nE "(echo|printf|checkline)[^#]*gh auth login" "$status_sh" |
+        grep -vE '^[0-9]+:[[:space:]]*#' |
+        awk -F: -v s="$(grep -n '^gh_login_remedy() {' "$status_sh" | cut -d: -f1)" \
+            -v e="$(awk '/^gh_login_remedy\(\) \{/{f=1} f&&/^\}/{print NR; exit}' "$status_sh")" \
+            '$1 < s || $1 > e' || true)"
+    [ -z "$stray_remedy" ] ||
+        fail "status board hardcodes the interactive-login remedy outside gh_login_remedy — it would contradict the bot tripwire banner: ${stray_remedy}"
+
     # The credential line's own remedy must not contradict the tripwire banner
     # on the same screen: in the bot profile an operator `gh auth login` is the
     # escalation harmon-init#1236 exists to stop.

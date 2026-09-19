@@ -910,7 +910,12 @@ if [[ "${SECTION}" == "setup" ]]; then
     if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
         echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s, or was killed -- skipping)" | section_box
     elif [[ "${GH_AUTHED}" != true ]]; then
-        echo "  (gh not authenticated -- run 'gh auth login')" | section_box
+        # Routed through gh_login_remedy like the credential lines: in the bot
+        # profile the setup audit prints the tripwire banner immediately above
+        # this line, and a literal "run 'gh auth login'" underneath it would
+        # contradict that banner on the same screen — re-creating the exact
+        # escalation harmon-init#1236 exists to stop.
+        echo "  (gh not authenticated -- $(gh_login_remedy))" | section_box
     else
         d="${TMPDIR_STATUS}"
 
