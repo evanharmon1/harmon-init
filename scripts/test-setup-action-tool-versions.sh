@@ -406,12 +406,13 @@ esac
     fail "unsupported architecture downloaded an asset before failing"
 
 ## ── gitleaks: version-check reuse + architecture selection (#1241 item 2) ──
+## Job-scoped install dir + GITHUB_PATH prepend (#1241 challenge round 1,
+## finding F3): a stale gitleaks earlier on PATH than /usr/local/bin must
+## not keep winning resolution after the pin lands on disk.
 
 gitleaks_bin="${test_tmp}/gitleaks-bin"
-fake_usr_local_bin="${test_tmp}/fake-usr-local-bin"
 gitleaks_curl_log="${test_tmp}/gitleaks-curl.log"
-gitleaks_mv_log="${test_tmp}/gitleaks-mv.log"
-mkdir -p "$gitleaks_bin" "$fake_usr_local_bin"
+mkdir -p "$gitleaks_bin"
 
 cat >"${gitleaks_bin}/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -439,48 +440,48 @@ cat >"${gitleaks_bin}/tar" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 destination=
+member=
 while [ "$#" -gt 0 ]; do
     case "$1" in
     -C)
         destination="$2"
         shift 2
         ;;
+    -xzf)
+        shift 2
+        ;;
+    gitleaks)
+        member="$1"
+        shift
+        ;;
     *) shift ;;
     esac
 done
-[ -n "$destination" ]
+[ -n "$destination" ] && [ "$member" = gitleaks ]
+mkdir -p "$destination"
 printf '#!/usr/bin/env bash\nprintf "%s\\n" "%s"\n' "$FAKE_GITLEAKS_DOWNLOADED_VERSION" >"${destination}/gitleaks"
 chmod +x "${destination}/gitleaks"
 EOF
-# The real script hardcodes /tmp and /usr/local/bin (no RUNNER_TEMP-scoped
-# override exists for gitleaks, unlike the lint tools above), so the fake
-# mv redirects only the one destination this test must not actually write —
-# every other invocation passes through to the real mv unchanged.
-cat >"${gitleaks_bin}/mv" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "\$*" >>"\$GITLEAKS_MV_LOG"
-if [ "\$#" -eq 2 ] && [ "\$2" = /usr/local/bin/gitleaks ]; then
-    exec $(command -v mv) "\$1" "${fake_usr_local_bin}/gitleaks"
-fi
-exec $(command -v mv) "\$@"
-EOF
-cat >"${gitleaks_bin}/sudo" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-exec "$@"
-EOF
 chmod +x "${gitleaks_bin}"/*
 
+# Resolve the binary GITHUB_PATH published (its last line) so assertions can
+# check the actual PATH-prepended install, not just curl's download log.
+gitleaks_published_bin() {
+    local github_path="$1"
+    [ -s "$github_path" ] || return 1
+    tail -n 1 "$github_path"
+}
+
 run_gitleaks_install() {
-    local arch="$1" pre_installed_path="$2"
-    rm -f "${fake_usr_local_bin}/gitleaks"
+    local arch="$1" pre_installed_path="$2" runner_temp="$3" github_path="$4"
+    mkdir -p "$runner_temp"
     : >"$gitleaks_curl_log"
-    : >"$gitleaks_mv_log"
+    : >"$github_path"
     PATH="${pre_installed_path}:${gitleaks_bin}:${PATH}" \
         RUNNER_ARCH="$arch" \
+        RUNNER_TEMP="$runner_temp" \
+        GITHUB_PATH="$github_path" \
         GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
-        GITLEAKS_MV_LOG="$gitleaks_mv_log" \
         FAKE_GITLEAKS_DOWNLOADED_VERSION="8.24.3" \
         bash "${test_tmp}/install-lint-tools.sh.gitleaks"
 }
@@ -493,13 +494,15 @@ cat >"${gitleaks_match_bin}/gitleaks" <<'EOF'
 printf '8.24.3\n'
 EOF
 chmod +x "${gitleaks_match_bin}/gitleaks"
-run_gitleaks_install X64 "$gitleaks_match_bin"
+gitleaks_match_temp="${test_tmp}/gitleaks-runner-match"
+gitleaks_match_ghpath="${test_tmp}/gitleaks-github-path-match"
+run_gitleaks_install X64 "$gitleaks_match_bin" "$gitleaks_match_temp" "$gitleaks_match_ghpath"
 [ ! -s "$gitleaks_curl_log" ] ||
     fail "a version-matching pre-installed gitleaks was redownloaded"
-[ ! -e "${fake_usr_local_bin}/gitleaks" ] ||
-    fail "a version-matching pre-installed gitleaks was reinstalled to /usr/local/bin"
+[ ! -s "$gitleaks_match_ghpath" ] ||
+    fail "a version-matching pre-installed gitleaks published a GITHUB_PATH entry"
 
-echo "==> a pre-installed gitleaks at the WRONG version is replaced (#1241 item 2)"
+echo "==> a pre-installed gitleaks at the WRONG version is replaced and wins PATH resolution (#1241 items 2, F3)"
 gitleaks_stale_bin="${test_tmp}/gitleaks-stale-bin"
 mkdir -p "$gitleaks_stale_bin"
 cat >"${gitleaks_stale_bin}/gitleaks" <<'EOF'
@@ -507,22 +510,37 @@ cat >"${gitleaks_stale_bin}/gitleaks" <<'EOF'
 printf '8.18.0\n'
 EOF
 chmod +x "${gitleaks_stale_bin}/gitleaks"
-run_gitleaks_install X64 "$gitleaks_stale_bin"
+gitleaks_stale_temp="${test_tmp}/gitleaks-runner-stale"
+gitleaks_stale_ghpath="${test_tmp}/gitleaks-github-path-stale"
+run_gitleaks_install X64 "$gitleaks_stale_bin" "$gitleaks_stale_temp" "$gitleaks_stale_ghpath"
 grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
     fail "a version-mismatched pre-installed gitleaks was not replaced with the pin"
-[ "$(bash "${fake_usr_local_bin}/gitleaks")" = "8.24.3" ] ||
+gitleaks_published="$(gitleaks_published_bin "$gitleaks_stale_ghpath")" ||
+    fail "the replacement gitleaks install did not publish a GITHUB_PATH entry"
+[ "$(bash "${gitleaks_published}/gitleaks")" = "8.24.3" ] ||
     fail "the replacement gitleaks binary is not the pinned version"
+# The stale binary is still earlier on PATH (as a shadowing self-hosted
+# runner would have it) — resolution must prefer the PUBLISHED directory,
+# proving the fix actually wins PATH order, not just installs a fresh file.
+gitleaks_resolved="$(PATH="${gitleaks_published}:${gitleaks_stale_bin}:${PATH}" command -v gitleaks)"
+[ "$gitleaks_resolved" = "${gitleaks_published}/gitleaks" ] ||
+    fail "the pinned gitleaks does not take precedence over a stale binary already on PATH"
 
 echo "==> gitleaks architecture selection: X64 and ARM64 fetch the matching asset, an unsupported arch fails loudly"
-run_gitleaks_install X64 "$test_tmp/nonexistent"
+run_gitleaks_install X64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-x64" "${test_tmp}/gitleaks-github-path-x64"
 grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
     fail "X64 did not fetch the x64 gitleaks asset"
-run_gitleaks_install ARM64 "$test_tmp/nonexistent"
+run_gitleaks_install ARM64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-arm64" "${test_tmp}/gitleaks-github-path-arm64"
 grep -Fq '/gitleaks_8.24.3_linux_arm64.tar.gz' "$gitleaks_curl_log" ||
     fail "ARM64 did not fetch the arm64 gitleaks asset"
 : >"$gitleaks_curl_log"
+gitleaks_unsupported_temp="${test_tmp}/gitleaks-runner-unsupported"
+gitleaks_unsupported_ghpath="${test_tmp}/gitleaks-github-path-unsupported"
+mkdir -p "$gitleaks_unsupported_temp"
+: >"$gitleaks_unsupported_ghpath"
 if gitleaks_unsupported_output="$(PATH="${test_tmp}/nonexistent:${gitleaks_bin}:${PATH}" \
-    RUNNER_ARCH=RISCV64 GITLEAKS_CURL_LOG="$gitleaks_curl_log" GITLEAKS_MV_LOG="$gitleaks_mv_log" \
+    RUNNER_ARCH=RISCV64 RUNNER_TEMP="$gitleaks_unsupported_temp" GITHUB_PATH="$gitleaks_unsupported_ghpath" \
+    GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
     bash "${test_tmp}/install-lint-tools.sh.gitleaks" 2>&1)"; then
     fail "an unsupported runner architecture was accepted for gitleaks"
 fi
@@ -532,8 +550,12 @@ case "$gitleaks_unsupported_output" in
 esac
 [ ! -s "$gitleaks_curl_log" ] ||
     fail "unsupported gitleaks architecture downloaded an asset before failing"
+[ ! -s "$gitleaks_unsupported_ghpath" ] ||
+    fail "unsupported gitleaks architecture published a GITHUB_PATH entry before failing"
 
 ## ── Snyk: version-check reuse (#1241 item 2) ───────────────────────────────
+## Same job-scoped install dir + GITHUB_PATH prepend as gitleaks (#1241
+## challenge round 1, finding F4).
 
 snyk_bin="${test_tmp}/snyk-bin"
 npm_log="${test_tmp}/npm.log"
@@ -542,13 +564,41 @@ cat >"${snyk_bin}/npm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NPM_LOG"
+prefix=
+pkg=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --prefix)
+        prefix="$2"
+        shift 2
+        ;;
+    snyk@*)
+        pkg="$1"
+        shift
+        ;;
+    *) shift ;;
+    esac
+done
+[ -n "$prefix" ] && [ -n "$pkg" ]
+mkdir -p "${prefix}/bin"
+printf '#!/usr/bin/env bash\nprintf "%s\\n" "%s"\n' "${pkg#snyk@}" >"${prefix}/bin/snyk"
+chmod +x "${prefix}/bin/snyk"
 EOF
 chmod +x "${snyk_bin}/npm"
 
+snyk_published_bin() {
+    local github_path="$1"
+    [ -s "$github_path" ] || return 1
+    tail -n 1 "$github_path"
+}
+
 run_snyk_install() {
-    local pre_installed_path="$1"
+    local pre_installed_path="$1" runner_temp="$2" github_path="$3"
+    mkdir -p "$runner_temp"
     : >"$npm_log"
-    PATH="${pre_installed_path}:${snyk_bin}:${PATH}" NPM_LOG="$npm_log" \
+    : >"$github_path"
+    PATH="${pre_installed_path}:${snyk_bin}:${PATH}" \
+        RUNNER_TEMP="$runner_temp" GITHUB_PATH="$github_path" NPM_LOG="$npm_log" \
         bash "${test_tmp}/install-lint-tools.sh.snyk"
 }
 
@@ -560,11 +610,14 @@ cat >"${snyk_match_bin}/snyk" <<'EOF'
 printf '1.1305.2\n'
 EOF
 chmod +x "${snyk_match_bin}/snyk"
-run_snyk_install "$snyk_match_bin"
+snyk_match_ghpath="${test_tmp}/snyk-github-path-match"
+run_snyk_install "$snyk_match_bin" "${test_tmp}/snyk-runner-match" "$snyk_match_ghpath"
 [ ! -s "$npm_log" ] ||
     fail "a version-matching pre-installed Snyk CLI was reinstalled"
+[ ! -s "$snyk_match_ghpath" ] ||
+    fail "a version-matching pre-installed Snyk CLI published a GITHUB_PATH entry"
 
-echo "==> a pre-installed Snyk CLI at the WRONG version is replaced (#1241 item 2)"
+echo "==> a pre-installed Snyk CLI at the WRONG version is replaced and wins PATH resolution (#1241 items 2, F4)"
 snyk_stale_bin="${test_tmp}/snyk-stale-bin"
 mkdir -p "$snyk_stale_bin"
 cat >"${snyk_stale_bin}/snyk" <<'EOF'
@@ -572,12 +625,20 @@ cat >"${snyk_stale_bin}/snyk" <<'EOF'
 printf '1.1200.0\n'
 EOF
 chmod +x "${snyk_stale_bin}/snyk"
-run_snyk_install "$snyk_stale_bin"
+snyk_stale_ghpath="${test_tmp}/snyk-github-path-stale"
+run_snyk_install "$snyk_stale_bin" "${test_tmp}/snyk-runner-stale" "$snyk_stale_ghpath"
 grep -Fq 'snyk@1.1305.2' "$npm_log" ||
     fail "a version-mismatched pre-installed Snyk CLI was not replaced with the pin"
+snyk_published="$(snyk_published_bin "$snyk_stale_ghpath")" ||
+    fail "the replacement Snyk install did not publish a GITHUB_PATH entry"
+[ "$(bash "${snyk_published}/snyk")" = "1.1305.2" ] ||
+    fail "the replacement Snyk binary is not the pinned version"
+snyk_resolved="$(PATH="${snyk_published}:${snyk_stale_bin}:${PATH}" command -v snyk)"
+[ "$snyk_resolved" = "${snyk_published}/snyk" ] ||
+    fail "the pinned Snyk CLI does not take precedence over a stale binary already on PATH"
 
 echo "==> a missing Snyk CLI is installed"
-run_snyk_install "$test_tmp/nonexistent"
+run_snyk_install "$test_tmp/nonexistent" "${test_tmp}/snyk-runner-missing" "${test_tmp}/snyk-github-path-missing"
 grep -Fq 'snyk@1.1305.2' "$npm_log" ||
     fail "a missing Snyk CLI was not installed"
 

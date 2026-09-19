@@ -82,7 +82,7 @@ resolve_git_dir() {
 
 reconcile_workspace_permissions() {
     local env_gitconfig="$1"
-    local workspace_root git_dir
+    local workspace_root git_dir orig_gid
 
     workspace_root="$(resolve_workspace_root "$(pwd -P)")" || {
         echo "ERROR: could not resolve the repository/workspace root from $(pwd -P)" >&2
@@ -95,23 +95,42 @@ reconcile_workspace_permissions() {
 
     git_dir="$(resolve_git_dir "$workspace_root")" || return 1
 
-    # Reclaim the Git metadata tree for the container user's own uid/gid
-    # instead of widening it to every user on the host, then set exact modes
-    # (no world-writable bits) — Git and Lefthook need the tree readable,
-    # writable, and traversable for the container user, nothing more.
-    # Lefthook (re)installs its managed hooks with their own chmod +x after
-    # this runs, so forcing a uniform file mode here cannot strand a hook
-    # without its executable bit.
-    sudo chown -R "$(id -u):$(id -g)" "$git_dir" || {
+    # Capture the tree's CURRENT group before reassigning ownership: the
+    # host checkout's original group keeps write access afterward, instead
+    # of only the container user — a bare owner reassignment would lock the
+    # host side out of its own checkout the next time it commits, checks
+    # out, or fetches outside the container (#1241 challenge round 1,
+    # finding F1; confirmed empirically — the fix is a maintainer-ruled
+    # ownership-model revision, not a mode-only change).
+    orig_gid="$(stat -c '%g' "$git_dir" 2>/dev/null || stat -f '%g' "$git_dir")" || {
+        echo "ERROR: could not determine the current group of $git_dir" >&2
+        return 1
+    }
+
+    # Reclaim the Git metadata tree for the container user's own uid, keep
+    # the original gid, then set exact modes (no world-writable bits) — Git
+    # and Lefthook need the tree readable, writable, and traversable for
+    # BOTH the container user and the host's original group, nothing more.
+    # Capital X adds execute permission to directories and files that were
+    # already executable, not every file — an unmanaged hook that predates
+    # this reconciliation (not one of Lefthook's own, which it (re)installs
+    # with its own chmod +x after this runs) keeps its executable bit
+    # instead of being silently disabled.
+    sudo chown -R "$(id -u):${orig_gid}" "$git_dir" || {
         echo "ERROR: could not reclaim ownership of the Git directory at $git_dir" >&2
         return 1
     }
-    find "$git_dir" -type d -exec chmod 0755 {} + || {
-        echo "ERROR: could not set directory permissions under $git_dir" >&2
+    chmod -R u=rwX,g=rwX,o=rX "$git_dir" || {
+        echo "ERROR: could not set permissions under $git_dir" >&2
         return 1
     }
-    find "$git_dir" -type f -exec chmod 0644 {} + || {
-        echo "ERROR: could not set file permissions under $git_dir" >&2
+    # setgid on directories only (never files — on a FILE this bit means
+    # something unrelated and security-sensitive, set-group-ID on
+    # execution, which must never land on a hook script): every new file or
+    # directory Git creates under here inherits the original group instead
+    # of whichever process's primary group happened to create it.
+    find "$git_dir" -type d -exec chmod g+s {} + || {
+        echo "ERROR: could not set the setgid bit under $git_dir" >&2
         return 1
     }
 

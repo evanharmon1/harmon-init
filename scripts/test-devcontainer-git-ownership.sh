@@ -56,12 +56,14 @@ grep -Fq '[ -L "$candidate/.git" ]' "$helpers" ||
     fail "permissions reconciliation does not reject symlinked Git markers"
 grep -Fq 'git_dir="$(resolve_git_dir "$workspace_root")"' "$helpers" ||
     fail "permissions reconciliation does not resolve the real Git directory before touching it"
-grep -Fq 'sudo chown -R "$(id -u):$(id -g)" "$git_dir"' "$helpers" ||
-    fail "permissions reconciliation does not reclaim ownership of the Git directory"
-grep -Fq 'find "$git_dir" -type d -exec chmod 0755 {} +' "$helpers" ||
-    fail "permissions reconciliation does not set exact directory permissions"
-grep -Fq 'find "$git_dir" -type f -exec chmod 0644 {} +' "$helpers" ||
-    fail "permissions reconciliation does not set exact file permissions"
+grep -Fq "orig_gid=\"\$(stat -c '%g' \"\$git_dir\"" "$helpers" ||
+    fail "permissions reconciliation does not capture the original group before reassigning ownership"
+grep -Fq 'sudo chown -R "$(id -u):${orig_gid}" "$git_dir"' "$helpers" ||
+    fail "permissions reconciliation does not preserve the original group when reclaiming ownership"
+grep -Fq 'chmod -R u=rwX,g=rwX,o=rX "$git_dir"' "$helpers" ||
+    fail "permissions reconciliation does not grant the original group write access"
+grep -Fq 'find "$git_dir" -type d -exec chmod g+s {} +' "$helpers" ||
+    fail "permissions reconciliation does not set the setgid bit (scoped to directories only) so new entries inherit the original group"
 
 reconcile_line="$(grep -nF 'reconcile_workspace_permissions "$ENV_GITCONFIG"' "$post_create" |
     head -1 | cut -d: -f1)"
@@ -124,6 +126,11 @@ printf '%s\n' tracked >"$repo/tracked.txt"
 git -C "$repo" -c user.name=fixture -c user.email=fixture@example.test add tracked.txt
 git -C "$repo" -c user.name=fixture -c user.email=fixture@example.test commit -qm init
 git -C "$repo" config --file "$xdg/git/config" --add safe.directory '*'
+# An unmanaged hook (not one of the repo's own, which install_repo_managed_hooks
+# re-chmods separately): permissions repair must preserve its executable bit,
+# never strip it, the same way the original capital-X chmod always did.
+printf '%s\n' '#!/bin/sh' 'echo unmanaged' >"$repo/.git/hooks/pre-push"
+chmod 0755 "$repo/.git/hooks/pre-push"
 chmod 0500 "$repo/.git/hooks"
 chmod 0700 "$repo/.git"
 
@@ -159,24 +166,32 @@ run_reconcile() {
     run_reconcile_at "$repo" "$xdg/git/config" "$log"
 }
 
-echo "==> mismatched-workspace fixture reclaims ownership and sets exact, non-world-writable modes"
+echo "==> mismatched-workspace fixture reclaims ownership, preserves the original group, and sets non-world-writable modes"
 resolved="$(run_reconcile)"
 [ "$resolved" = "$repo" ] ||
     fail "resolved workspace root was '$resolved', expected '$repo'"
 grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
-    fail "Git metadata ownership was not reclaimed for the container user at the resolved root"
+    fail "Git metadata ownership was not reclaimed (owner) / preserved (group) at the resolved root"
 ! grep -Eq '^(find|mountpoint|mkdir) ' "$log" ||
     fail "permissions reconciliation ran unexpected commands under sudo"
 ! grep -Fq "$unrelated" "$log" ||
     fail "permissions reconciliation touched an unrelated path"
-[ "$(git_mode "$repo/.git")" = "755" ] ||
-    fail "Git metadata directory is not exactly 0755 after permissions repair"
-[ "$(git_mode "$repo/.git/hooks")" = "755" ] ||
-    fail "Git hooks directory is not exactly 0755 after permissions repair"
-[ "$(git_mode "$repo/.git/config")" = "644" ] ||
-    fail "a Git metadata file is not exactly 0644 after permissions repair"
-if find "$repo/.git" -perm -022 | grep -q .; then
-    fail "some Git metadata entry remains group- or world-writable"
+# Directories are setgid (leading "2"): rwx for owner+group, r-x for other.
+# Files are group-writable but never setgid: rw- for owner+group, r-- for
+# other — except a pre-existing executable file, which keeps its exec bit
+# in every class (rwx owner+group, r-x other) via capital-X.
+[ "$(git_mode "$repo/.git")" = "2775" ] ||
+    fail "Git metadata directory is not exactly 2775 (setgid, group-writable) after permissions repair"
+[ "$(git_mode "$repo/.git/hooks")" = "2775" ] ||
+    fail "Git hooks directory is not exactly 2775 (setgid, group-writable) after permissions repair"
+[ "$(git_mode "$repo/.git/config")" = "664" ] ||
+    fail "a Git metadata file is not exactly 0664 (group-writable) after permissions repair"
+[ -x "$repo/.git/hooks/pre-push" ] ||
+    fail "an unmanaged hook's executable bit was stripped by permissions repair"
+[ "$(git_mode "$repo/.git/hooks/pre-push")" = "775" ] ||
+    fail "an unmanaged hook is not exactly 0775 (group-writable, exec bit preserved, no setgid on a file) after permissions repair"
+if find "$repo/.git" -perm -002 | grep -q .; then
+    fail "some Git metadata entry remains world-writable"
 fi
 [ -r "$repo/.git" ] && [ -w "$repo/.git" ] && [ -x "$repo/.git" ] ||
     fail "Git metadata directory is not readable, writable, and traversable"
@@ -200,6 +215,32 @@ chmod 0755 "$fake_bin/lefthook"
 )
 [ -f "$repo/.git/hooks/pre-commit" ] ||
     fail "a Lefthook hook could not be written after permissions repair"
+
+echo "==> the ORIGINAL group survives reconciliation, distinct from the invoking process's primary gid (#1241 challenge round 1, finding F1)"
+# A single-user sandbox can't create a real UID mismatch, but a distinct
+# SECONDARY group id proves the same thing this fix depends on: the group is
+# read from the tree at reconciliation time, not defaulted to whatever the
+# reconciling process's own primary gid happens to be.
+secondary_gid="$(id -G | tr ' ' '\n' | grep -vx "$(id -g)" | head -1 || true)"
+if [ -n "$secondary_gid" ]; then
+    gid_repo="$fixture/workspaces/gid-example"
+    gid_config="$fixture/gid-xdg/git/config"
+    gid_log="$fixture/gid-sudo.log"
+    mkdir -p "$gid_repo/subdirectory" "$fixture/gid-xdg/git"
+    git -C "$gid_repo" init -q
+    chgrp "$secondary_gid" "$gid_repo/.git"
+    [ "$(stat -c '%g' "$gid_repo/.git" 2>/dev/null || stat -f '%g' "$gid_repo/.git")" = "$secondary_gid" ] ||
+        fail "fixture setup: could not set the Git directory's group to $secondary_gid"
+    gid_resolved="$(run_reconcile_at "$gid_repo" "$gid_config" "$gid_log")"
+    [ "$gid_resolved" = "$gid_repo" ] ||
+        fail "gid-preservation resolved workspace root was '$gid_resolved', expected '$gid_repo'"
+    grep -Fqx "chown -R $(id -u):${secondary_gid} $gid_repo/.git" "$gid_log" ||
+        fail "reconciliation did not preserve the original (non-primary) group when reclaiming ownership"
+    [ "$(stat -c '%g' "$gid_repo/.git" 2>/dev/null || stat -f '%g' "$gid_repo/.git")" = "$secondary_gid" ] ||
+        fail "reconciliation changed the group away from the original (non-primary) one"
+else
+    echo "  (skipped: the test-invoking user belongs to no secondary group to exercise this with)"
+fi
 
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
@@ -234,7 +275,7 @@ safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/
     fail "repeated reconciliation duplicated safe.directory: $safe_entries"
 grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
     fail "repeated reconciliation did not re-assert ownership"
-[ "$(git_mode "$repo/.git")" = "755" ] ||
+[ "$(git_mode "$repo/.git")" = "2775" ] ||
     fail "repeated reconciliation changed the Git metadata directory mode"
 
 echo "==> linked-worktree fixture reconciles the real common directory, not the .git pointer file (#1241 item 6)"
@@ -262,12 +303,12 @@ grep -Fqx "chown -R $expected_owner $wt_main/.git" "$wt_log" ||
     fail "linked-worktree reconciliation did not reclaim ownership of the MAIN checkout's common Git directory"
 ! grep -Fq "$wt_linked/.git " "$wt_log" ||
     fail "linked-worktree reconciliation targeted the worktree's .git POINTER FILE instead of the resolved common directory"
-[ "$(git_mode "$wt_main/.git")" = "755" ] ||
+[ "$(git_mode "$wt_main/.git")" = "2775" ] ||
     fail "linked-worktree reconciliation did not set the common directory's mode"
-[ "$(git_mode "$wt_main/.git/worktrees/$wt_admin_name")" = "755" ] ||
+[ "$(git_mode "$wt_main/.git/worktrees/$wt_admin_name")" = "2775" ] ||
     fail "linked-worktree reconciliation did not reach the worktree's own private admin directory"
-if find "$wt_main/.git" -perm -022 | grep -q .; then
-    fail "linked-worktree reconciliation left some common-directory entry group- or world-writable"
+if find "$wt_main/.git" -perm -002 | grep -q .; then
+    fail "linked-worktree reconciliation left some common-directory entry world-writable"
 fi
 wt_safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$fixture/wt-xdg" git config --file "$wt_xdg" --get-all safe.directory)"
 [ "$(printf '%s\n' "$wt_safe_entries" | grep -Fxc "$wt_linked")" -eq 1 ] ||

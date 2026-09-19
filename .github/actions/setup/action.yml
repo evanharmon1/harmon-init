@@ -171,10 +171,20 @@ runs:
               exit 1
               ;;
           esac
+          # Install into a job-scoped directory and PREPEND it via
+          # GITHUB_PATH, rather than /usr/local/bin: on a self-hosted
+          # runner, a stale gitleaks earlier on PATH than /usr/local/bin
+          # would otherwise keep winning command resolution even after the
+          # pinned binary lands on disk.
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required for the job-private gitleaks install}"
+          : "${GITHUB_PATH:?GITHUB_PATH is required to publish the pinned gitleaks}"
+          gitleaks_bin="${RUNNER_TEMP}/harmon-init-gitleaks/${GITLEAKS_VERSION}"
+          mkdir -p "$gitleaks_bin"
           curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz"
-          tar -xzf /tmp/gitleaks.tgz -C /tmp
-          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          tar -xzf /tmp/gitleaks.tgz -C "$gitleaks_bin" gitleaks
+          printf '%s\n' "$gitleaks_bin" >> "$GITHUB_PATH"
+          export PATH="${gitleaks_bin}:${PATH}"
         fi
     - name: Install Snyk CLI
       if: inputs.snyk == 'true'
@@ -188,5 +198,15 @@ runs:
           installed_snyk_version="$(snyk --version 2>/dev/null | tr -d '[:space:]')"
         fi
         if [ "$installed_snyk_version" != "$SNYK_VERSION" ]; then
-          npm install --global "snyk@${SNYK_VERSION}"
+          # Same job-scoped-directory + GITHUB_PATH-prepend reasoning as
+          # gitleaks above: `npm install --global` alone does not change
+          # PATH order, so a stale snyk earlier on PATH than npm's global
+          # bin directory would otherwise keep winning resolution.
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required for the job-private Snyk install}"
+          : "${GITHUB_PATH:?GITHUB_PATH is required to publish the pinned Snyk CLI}"
+          snyk_install_dir="${RUNNER_TEMP}/harmon-init-snyk/${SNYK_VERSION}"
+          mkdir -p "$snyk_install_dir"
+          npm install --global --prefix "$snyk_install_dir" "snyk@${SNYK_VERSION}"
+          printf '%s\n' "${snyk_install_dir}/bin" >> "$GITHUB_PATH"
+          export PATH="${snyk_install_dir}/bin:${PATH}"
         fi
