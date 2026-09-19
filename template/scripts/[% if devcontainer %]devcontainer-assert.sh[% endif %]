@@ -134,11 +134,13 @@ assert_unit() {
     # run it from a throwaway, non-repo working directory.
     local script_dir repo_root init_env ts_connect bash_bin codex_config
     local bot_autonomy bot_autonomy_module_dir codex_module claude_module codex_bot_config
+    local codex_system_config
     script_dir="$(cd "$(dirname "$0")" && pwd)"
     repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
     init_env="${repo_root}/.devcontainer/scripts/init-env.sh"
     ts_connect="${repo_root}/.devcontainer/scripts/tailscale-connect.sh"
     codex_config="${repo_root}/.devcontainer/config/codex-managed-config.toml"
+    codex_system_config="${repo_root}/.devcontainer/config/codex-system-config.toml"
     bot_autonomy="${repo_root}/.devcontainer/scripts/bot-autonomy.sh"
     bot_autonomy_module_dir="${repo_root}/.devcontainer/config/bot-autonomy"
     codex_module="${bot_autonomy_module_dir}/codex-cli.sh"
@@ -149,6 +151,8 @@ assert_unit() {
     [ -f "$init_env" ] || fail "init-env.sh not found at ${init_env}"
     [ -f "$ts_connect" ] || fail "tailscale-connect.sh not found at ${ts_connect}"
     [ -f "$codex_config" ] || fail "Codex managed config not found at ${codex_config}"
+    [ -f "$codex_system_config" ] ||
+        fail "Codex system defaults config not found at ${codex_system_config}"
     [ -x "$bot_autonomy" ] || fail "bot-autonomy.sh not found or not executable at ${bot_autonomy}"
     [ -x "$codex_module" ] || fail "bot-autonomy Codex module not found at ${codex_module}"
     [ -x "$claude_module" ] || fail "bot-autonomy Claude Code module not found at ${claude_module}"
@@ -209,10 +213,28 @@ assert_unit() {
 
     # The shared managed layer is the balanced human default. Bot post-create
     # must switch only that profile to the Docker-boundary autonomy preset.
-    [ "$(toml_root_scalar model "$codex_config")" = "gpt-5.6-sol" ] ||
-        fail "Codex devcontainer model is not gpt-5.6-sol"
-    [ "$(toml_root_scalar model_reasoning_effort "$codex_config")" = "medium" ] ||
-        fail "Codex devcontainer reasoning is not medium"
+    #
+    # Model and reasoning effort are DEFAULTS, so they are asserted against the
+    # /etc/codex/config.toml layer -- never the managed one. Codex treats every
+    # key in managed_config.toml as an unoverridable requirement, so a pin
+    # there silently downgrades any worker dispatched with `-c` or `-m`
+    # (harmon-init#1186). The guard below is the durable half of that fix: it
+    # fails if a preference ever drifts back into the boundary layer, in either
+    # profile, which is how the bug arrived in the first place.
+    [ "$(toml_root_scalar model "$codex_system_config")" = "gpt-5.6-sol" ] ||
+        fail "Codex devcontainer default model is not gpt-5.6-sol"
+    [ "$(toml_root_scalar model_reasoning_effort "$codex_system_config")" = "medium" ] ||
+        fail "Codex devcontainer default reasoning is not medium"
+    local codex_boundary_file codex_forbidden_key
+    for codex_boundary_file in "$codex_config" "$codex_bot_config"; do
+        for codex_forbidden_key in model model_reasoning_effort project_doc_max_bytes; do
+            if grep -qE "^${codex_forbidden_key} = " "$codex_boundary_file"; then
+                fail "${codex_boundary_file##*/} pins '${codex_forbidden_key}' in the" \
+                    "unoverridable managed layer; overridable defaults belong in" \
+                    "codex-system-config.toml (harmon-init#1186)"
+            fi
+        done
+    done
     [ "$(toml_root_scalar sandbox_mode "$codex_config")" = "workspace-write" ] ||
         fail "human Codex baseline does not enable workspace-write"
     [ "$(toml_root_scalar approval_policy "$codex_config")" = "on-request" ] ||
@@ -1131,16 +1153,24 @@ assert_container() {
         fail "could not read git user.name in container"
     git_email="$(docker exec -u vscode "$container_id" git config --global user.email)" ||
         fail "could not read git user.email in container"
-    codex_model="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar model -)" ||
-        fail "could not read the managed Codex model"
-    codex_effort="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar model_reasoning_effort -)" ||
-        fail "could not read the managed Codex reasoning effort"
+    codex_model="$(docker exec -u vscode "$container_id" cat /etc/codex/config.toml | toml_root_scalar model -)" ||
+        fail "could not read the Codex default model"
+    codex_effort="$(docker exec -u vscode "$container_id" cat /etc/codex/config.toml | toml_root_scalar model_reasoning_effort -)" ||
+        fail "could not read the Codex default reasoning effort"
     codex_sandbox="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar sandbox_mode -)" ||
         fail "could not read the managed Codex sandbox mode"
     codex_approval="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar approval_policy -)" ||
         fail "could not read the managed Codex approval policy"
-    [ "$codex_model" = "gpt-5.6-sol" ] || fail "Codex model is '${codex_model}', expected gpt-5.6-sol"
-    [ "$codex_effort" = "medium" ] || fail "Codex reasoning is '${codex_effort}', expected medium"
+    [ "$codex_model" = "gpt-5.6-sol" ] || fail "Codex default model is '${codex_model}', expected gpt-5.6-sol"
+    [ "$codex_effort" = "medium" ] || fail "Codex default reasoning is '${codex_effort}', expected medium"
+    # The running container must keep the two layers separate, not just the
+    # repo copies: a preference in the managed layer is unoverridable.
+    if docker exec -u vscode "$container_id" \
+        grep -qE '^(model|model_reasoning_effort) = ' /etc/codex/managed_config.toml; then
+        fail "/etc/codex/managed_config.toml pins model or reasoning effort;" \
+            "those are overridable defaults and belong in /etc/codex/config.toml" \
+            "(harmon-init#1186)"
+    fi
 
     # `task` ships from the pinned shared image, NOT a devcontainer Feature
     # (harmon-init#427 history). The expected version comes from the image's

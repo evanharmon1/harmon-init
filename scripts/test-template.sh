@@ -1778,10 +1778,21 @@ else
         err "retired enable-claude-bypass.sh still rendered"
     [ ! -e .devcontainer/scripts/enable-codex-bypass.sh ] ||
         err "retired enable-codex-bypass.sh still rendered"
-    grep -q '^model = "gpt-5.6-sol"$' .devcontainer/config/codex-managed-config.toml ||
-        err "Codex devcontainer baseline is not pinned to gpt-5.6-sol"
-    grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-managed-config.toml ||
-        err "Codex devcontainer baseline is not pinned to medium reasoning"
+    [ -f .devcontainer/config/codex-system-config.toml ] ||
+        err "Codex system defaults config missing from devcontainer output"
+    # Model and reasoning effort are overridable DEFAULTS, so a generated repo
+    # must carry them in the /etc/codex/config.toml layer -- and must not carry
+    # them in the managed layer, where Codex makes every key an unoverridable
+    # requirement that silently downgrades `-c`/`-m` (harmon-init#1186).
+    grep -q '^model = "gpt-5.6-sol"$' .devcontainer/config/codex-system-config.toml ||
+        err "Codex devcontainer default is not pinned to gpt-5.6-sol"
+    grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-system-config.toml ||
+        err "Codex devcontainer default is not pinned to medium reasoning"
+    for codex_boundary in codex-managed-config.toml codex-managed-config.bot.toml; do
+        ! grep -Eq '^(model|model_reasoning_effort|project_doc_max_bytes) = ' \
+            ".devcontainer/config/${codex_boundary}" ||
+            err "${codex_boundary} pins an overridable default in the unoverridable managed layer"
+    done
     grep -q '^sandbox_mode = "workspace-write"$' .devcontainer/config/codex-managed-config.toml ||
         err "Codex human devcontainer baseline does not enable workspace-write"
     ! grep -Eq 'session-start-context|post-edit-format|enforce-conventional-commits' \
