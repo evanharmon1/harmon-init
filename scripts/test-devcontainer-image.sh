@@ -192,6 +192,12 @@ legacy_context="$(mktemp -d)"
 mkdir -p "${legacy_context}/.devcontainer"
 cp -R .devcontainer/config "${legacy_context}/.devcontainer/config"
 rm -f "${legacy_context}/.devcontainer/config/claude-hooks/session-end-archive.sh"
+# A pre-split overlay has no codex-system-config.toml either. Without removing
+# it here the optional-install guard is never exercised: the fixture would
+# supply the file, the build would pass, and making it required again (or
+# dropping the guard) would keep CI green while every pre-update consumer's
+# build broke (harmon-init#1186).
+rm -f "${legacy_context}/.devcontainer/config/codex-system-config.toml"
 
 docker build \
     --build-arg "BASE_IMAGE=${candidate}" \
@@ -203,8 +209,13 @@ docker run --rm "$legacy_overlay" sh -eu -c '
     # The mandatory hooks still install …
     [ -x /etc/claude-code/hooks/protect-files.sh ]
     [ -f /etc/claude-code/managed-settings.json ]
-    # … and the optional one is simply absent rather than a failed build.
+    # … and the optional ones are simply absent rather than a failed build.
     [ ! -e /etc/claude-code/hooks/session-end-archive.sh ]
+    [ ! -e /etc/codex/config.toml ]
+    # The boundary layer still installs, so a legacy consumer keeps a working
+    # Codex policy -- it just does not gain the overridable defaults until it
+    # takes the template update.
+    [ -f /etc/codex/managed_config.toml ]
 '
 
 echo "test-devcontainer-image: candidate, repository overlay, and legacy overlay passed"

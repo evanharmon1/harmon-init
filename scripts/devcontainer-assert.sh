@@ -217,8 +217,8 @@ assert_unit() {
     # Model and reasoning effort are DEFAULTS, so they are asserted against the
     # /etc/codex/config.toml layer -- never the managed one. Codex treats every
     # key in managed_config.toml as an unoverridable requirement, so a pin
-    # there silently downgrades any worker dispatched with `-c` or `-m`
-    # (harmon-init#1186). The guard below is the durable half of that fix: it
+    # there silently downgrades any worker dispatched with `-c` (an explicit
+    # `-m` still overrode a pinned model; `-c model=` did not) (harmon-init#1186). The guard below is the durable half of that fix: it
     # fails if a preference ever drifts back into the boundary layer, in either
     # profile, which is how the bug arrived in the first place.
     [ "$(toml_root_scalar model "$codex_system_config")" = "gpt-5.6-sol" ] ||
