@@ -706,7 +706,12 @@ gh_identity_reap() {
 # Emit the counted line. Called from inside render_local_credentials so the
 # increment lands in the same group whose tallies reach the setup summary.
 render_gh_identity_check() {
-    gh_identity_reap
+    # Deliberately does NOT reap: render_local_credentials runs on the left of
+    # `| section_box`, and a pipeline subshell cannot `wait` on a child of the
+    # PARENT shell — bash answers "is not a child of this shell" and returns
+    # 127, so every verdict (clean, violation, indeterminate alike) was recorded
+    # as unknown. The caller reaps in the launching shell first and this reads
+    # the result it left in GH_IDENTITY_RC, which the subshell inherits.
     [ -n "${GH_IDENTITY_RC}" ] || return 0
     case "${GH_IDENTITY_RC}" in
     0) checkline ok "bot gh identity" "every gh credential matches the bot relationship" ;;
@@ -907,6 +912,11 @@ if should_show "creds"; then
     gh_identity_launch
 
     section_header "Local Credentials"
+    # Reap BEFORE the pipeline: this is the shell that launched the probe, so
+    # it is the only one that can wait on it. It also guarantees the output
+    # file is complete before gh_identity_collect reads it — a slow probe used
+    # to leave the visible warning empty.
+    gh_identity_reap
     render_local_credentials | section_box
 
     gh_identity_collect
@@ -957,6 +967,9 @@ if [[ "${SECTION}" == "setup" ]]; then
     # "100% · 0 missing" directly under a red ✗ Codex CLI line on the same screen
     # is a worse defect than the file is.
     gh_identity_launch
+    # Same reason as the creds section: reap in the launching shell, never
+    # inside the `| section_box` pipeline.
+    gh_identity_reap
     {
         subhead "Local credentials"
         render_local_credentials

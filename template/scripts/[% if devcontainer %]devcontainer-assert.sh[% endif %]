@@ -1749,6 +1749,46 @@ SENTINEL_SCRIPT
         grep -qx ok ||
         fail "render_gh_identity_check runs after the cred-counts tally is written — the verdict would be counted too late to matter"
 
+    # BEHAVIORAL, not structural: the verdict must survive the pipeline.
+    # render_local_credentials runs on the left of `| section_box`, so a `wait`
+    # placed inside it executes in a subshell that cannot wait on the PARENT
+    # shell's child — bash returns 127 ("is not a child of this shell") and
+    # every verdict, clean or violation, was recorded as unknown. A structural
+    # check that render_gh_identity_check is merely *called* passes happily on
+    # that bug, which is why this one runs the real functions against a stub.
+    local reap_probe reap_out
+    reap_probe="$(mktemp)"
+    cat >"$reap_probe" <<'REAP_FIXTURE'
+TMPDIR_STATUS="$(mktemp -d)"
+run_timeout() { shift; "$@"; }
+checkline() { printf 'checkline:%s
+' "$1"; }
+section_box() { cat; }
+REAP_FIXTURE
+    # Source the three real functions under test, then drive them exactly the
+    # way the creds section does: launch, reap in this shell, render through a
+    # pipeline.
+    sed -n '/^gh_identity_launch() {/,/^}/p;/^gh_identity_reap() {/,/^}/p;/^render_gh_identity_check() {/,/^}/p' \
+        "$status_sh" >>"$reap_probe"
+    cat >>"$reap_probe" <<'REAP_DRIVER'
+FOREMAN_DEVCONTAINER=bot
+mkdir -p .devcontainer/scripts
+printf '%s
+' '#!/bin/sh' 'exit 0' >.devcontainer/scripts/check-bot-gh-identity.sh
+chmod +x .devcontainer/scripts/check-bot-gh-identity.sh
+gh_identity_launch
+gh_identity_reap
+render_gh_identity_check | section_box
+REAP_DRIVER
+    reap_out="$(cd "$work_dir" && "$bash_bin" "$reap_probe" 2>&1)" || true
+    case "$reap_out" in
+    *"checkline:ok"*) ;;
+    *"not a child of this shell"*)
+        fail "the gh-identity probe is reaped inside the render pipeline — wait cannot see the parent's child, so every verdict reads unknown: ${reap_out}"
+        ;;
+    *) fail "a clean gh-identity probe did not produce a counted ok line: ${reap_out}" ;;
+    esac
+
     # The credential line's own remedy must not contradict the tripwire banner
     # on the same screen: in the bot profile an operator `gh auth login` is the
     # escalation harmon-init#1236 exists to stop.
