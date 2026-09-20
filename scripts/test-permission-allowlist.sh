@@ -17,7 +17,9 @@
 #      (e.g. an "ask" entry for `Bash(ps aux)`) is never mistaken for a
 #      re-widened allow grant, and moving a grant out of allow into ask/deny
 #      is never mistaken for it still being present.
-#   2. Each "dropped entirely" command has no allow entry at all.
+#   2. Each "dropped entirely" command has no allow entry at all, and each
+#      grant a *fix* depends on is still present — deleting one would silently
+#      restore the denial the fix removed, which nothing else catches.
 #   3. The two files' permissions.allow arrays are byte-identical — the
 #      documented invariant for this dogfood pair (unlike most jinja twins,
 #      neither file has a conditional inside the allow array itself, so nothing
@@ -84,6 +86,18 @@ dropped_prefixes=(
     'Bash(shfmt'
 )
 
+# Grants a fix DEPENDS on: removing one re-breaks the thing it fixed, and no
+# other check notices because parity still holds when both twins drop it
+# together. Each entry is the exact allow string plus the reason it is load-
+# bearing, so a later reader can tell a required grant from an ordinary one.
+#   Bash(herdr agent start:*) — harmon-init#1239: without it the Claude Code
+#   auto-mode classifier denies an orchestrator's lane-worker launch as
+#   "Create Unsafe Agents". Prefix form is deliberate; the args after `--`
+#   vary per harness.
+required_grants=(
+    'Bash(herdr agent start:*)'
+)
+
 check_allow_block() {
     local file="$1" allow_block="$2"
 
@@ -101,6 +115,13 @@ check_allow_block() {
         *"\"${prefix} "* | *"\"${prefix}:"*)
             note_fail "$file: an argument-bearing or wildcard form of the narrowed grant \"${exact}\" has reappeared in permissions.allow"
             ;;
+        esac
+    done
+
+    for required in "${required_grants[@]}"; do
+        case "$allow_block" in
+        *"\"${required}\""*) : ;;
+        *) note_fail "$file: missing required grant \"${required}\" in permissions.allow — removing it re-breaks the fix that added it" ;;
         esac
     done
 
@@ -124,7 +145,7 @@ if [ "$root_block" != "$template_block" ]; then
 fi
 
 if [ "$fail" -eq 0 ]; then
-    echo "test-permission-allowlist: narrowed/dropped grants intact, allow arrays match"
+    echo "test-permission-allowlist: narrowed/dropped/required grants intact, allow arrays match"
 fi
 
 exit "$fail"

@@ -728,6 +728,11 @@ tasks:
     cmds:
       - ./scripts/codex-review.sh challenge {{.CLI_ARGS}}
 
+  codex:effort-probe:
+    desc: "Prove a requested Codex reasoning effort actually takes effect (spends a real Codex call; run on a CODEX_VERSION bump)"
+    cmds:
+      - ./scripts/codex-effort-probe.sh
+
   codex:gate:enable:
     desc: Enable the automatic Claude → Codex stop-gate review (this repo, this machine)
     cmds:

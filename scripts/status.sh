@@ -193,7 +193,23 @@ GH_SCOPES_LINE=""
 # The raw command rides along for a reader who is not in a checkout yet, and is
 # derived from the same required-scope list — the two divergent remedy strings
 # #596 reported were exactly this string drifting from the skills' hint.
-GH_REMEDY_DEFAULT="run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
+#
+# Profile-aware for the same reason gh_login_remedy is: in the bot profile
+# every one of these remedies acts on the CURRENT login, and the gh-identity
+# tripwire may be about to say that login is a personal credential which must
+# be removed. Telling the reader to widen it first, on the same screen, is the
+# escalation harmon-init#1236 exists to stop — worse than the login advice,
+# because it grants the unsafe credential more reach. The env-token branches
+# in derive_gh_scope_state below already say "reissue", which is correct in
+# both profiles; only this stored-credential default needed splitting.
+gh_scope_remedy_default() {
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
+        printf '%s' "bot profile: re-provision GH_TOKEN with the required permissions — never widen the current login here"
+    else
+        printf '%s' "run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
+    fi
+}
+GH_REMEDY_DEFAULT="$(gh_scope_remedy_default)"
 GH_REMEDY="${GH_REMEDY_DEFAULT}"
 
 # derive_gh_scope_state FILE — set GH_SCOPES_LINE and GH_REMEDY from a captured
@@ -204,7 +220,7 @@ GH_REMEDY="${GH_REMEDY_DEFAULT}"
 derive_gh_scope_state() {
     local file="$1"
     GH_SCOPES_LINE=""
-    GH_REMEDY="${GH_REMEDY_DEFAULT}"
+    GH_REMEDY="$(gh_scope_remedy_default)"
     [[ -s "${file}" ]] || return 0
     GH_SCOPES_LINE="$(grep -i 'token scopes:' "${file}" 2>/dev/null || true)"
     case "$(<"${file}")" in
@@ -609,6 +625,36 @@ render_gh_scope_check() {
     fi
 }
 
+# The status board deliberately carries NO gh-identity probe.
+#
+# It had one, and it was dropped rather than hardened a fourth time. The
+# tripwire's two surviving surfaces — the bot post-start warning and the
+# container assert — carry the security property and have been stable since
+# they landed. The board's version needed a backgrounded probe, a reaper, a
+# counter hand-off, and a coupling to the session-start hook's time budget, and
+# that plumbing produced three consecutive regressions, each one introduced by
+# the previous round's fix: an uncounted verdict, then a reap inside a pipeline
+# subshell that could never observe its own child, then a serialization that
+# blew the hook budget it was written to respect. Every finding was correct and
+# every fix was sound; the surface still would not converge.
+#
+# What remains here is the part that never churned: the two remedy derivations
+# below, which stop the board advising an operator to use or widen the very
+# credential the tripwire condemns. They need no probe to be right.
+
+# The interactive-login remedy is HUMAN-profile advice. In the bot profile
+# an operator `gh auth login` is the escalation harmon-init#1236 exists to
+# stop, and the gh-identity tripwire banner below this section says exactly
+# that — so the credential line's own remedy must not contradict it on the
+# same screen. Gated by the same containerEnv marker as the tripwire.
+gh_login_remedy() {
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
+        printf '%s' "bot profile: provision GH_TOKEN — never an interactive login here"
+    else
+        printf '%s' "gh auth login"
+    fi
+}
+
 render_local_credentials() {
     # Not-installed is tested FIRST because it makes every other branch
     # meaningless: with no gh on PATH the shared probe above exits 127, which
@@ -632,7 +678,7 @@ render_local_credentials() {
             checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
             render_gh_scope_check
         else
-            checkline no "GitHub CLI (gh)" "gh auth login"
+            checkline no "GitHub CLI (gh)" "$(gh_login_remedy)"
         fi
     else
         # Standalone `status:creds`: nothing probed the API, and this section is
@@ -669,7 +715,7 @@ render_local_credentials() {
         *)
             case "$(printf '%s' "${gh_token_err}" | tr '[:upper:]' '[:lower:]')" in
             *"no oauth token"* | *"not logged in"*)
-                checkline no "GitHub CLI (gh)" "gh auth login"
+                checkline no "GitHub CLI (gh)" "$(gh_login_remedy)"
                 ;;
             *)
                 checkline unknown "GitHub CLI (gh)" \
@@ -839,7 +885,12 @@ if [[ "${SECTION}" == "setup" ]]; then
     if [[ "${GH_AUTH_TIMEDOUT}" == true ]]; then
         echo "  (gh auth status timed out after ${NETWORK_TIMEOUT}s, or was killed -- skipping)" | section_box
     elif [[ "${GH_AUTHED}" != true ]]; then
-        echo "  (gh not authenticated -- run 'gh auth login')" | section_box
+        # Routed through gh_login_remedy like the credential lines: in the bot
+        # profile the setup audit prints the tripwire banner immediately above
+        # this line, and a literal "run 'gh auth login'" underneath it would
+        # contradict that banner on the same screen — re-creating the exact
+        # escalation harmon-init#1236 exists to stop.
+        echo "  (gh not authenticated -- $(gh_login_remedy))" | section_box
     else
         d="${TMPDIR_STATUS}"
 

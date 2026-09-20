@@ -239,9 +239,17 @@ parity_baseline="${work_dir}/parity-baseline.toml"
 parity_bot="${work_dir}/parity-bot.toml"
 cp "$codex_baseline" "$parity_baseline"
 cp "$codex_bot" "$parity_bot"
-sed -i.bak 's/^model = .*/model = "a-different-model"/' "$parity_bot" && rm -f "${parity_bot}.bak"
+# The canary must be a key these files actually carry, or the mutation is a
+# no-op and this fixture proves nothing. It used to be `model`, which moved to
+# codex-system-config.toml (harmon-init#1186) -- so assert presence first and
+# fail here, loudly, rather than let the fixture rot into a vacuous pass.
+parity_canary="approvals_reviewer"
+grep -qE "^${parity_canary} = " "$parity_bot" ||
+    fail "parity fixture canary '${parity_canary}' is not in codex-managed-config.bot.toml; pick a key that is"
+sed -i.bak "s/^${parity_canary} = .*/${parity_canary} = \"a-different-value\"/" "$parity_bot" &&
+    rm -f "${parity_bot}.bak"
 if diff <(strip_overrides "$parity_baseline") <(strip_overrides "$parity_bot") >/dev/null; then
-    fail "structural parity check failed to notice a divergent 'model' key"
+    fail "structural parity check failed to notice a divergent '${parity_canary}' key"
 fi
 
 echo "==> 9. Antigravity wrapper: flag injection, passthrough, and agy-real preference"
