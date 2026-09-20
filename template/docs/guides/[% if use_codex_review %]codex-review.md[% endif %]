@@ -549,3 +549,48 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   A recurring dump usually means the CLI is older than the API it is talking
   to — compare `codex --version` against the version your devcontainer image
   ships, and rebuild or pull a newer image if it lags.
+- **A requested `-c` override is silently ignored, and the run header shows a
+  different value** — if this repo ships the devcontainer, it installs two
+  Codex config layers, and only one of them is overridable:
+
+  | File | Layer | Overridable? |
+  | --- | --- | --- |
+  | `/etc/codex/config.toml` | system **defaults** (`codex-system-config.toml`) | yes |
+  | `/etc/codex/managed_config.toml` | legacy MDM **requirements** (`codex-managed-config*.toml`) | **no** |
+
+  Every key in the managed layer is a hard requirement: it outranks `-c`,
+  `~/.codex/config.toml`, and a trusted project `.codex/config.toml` alike,
+  without logging that it overrode anything. The explicit `-m` flag was the
+  one model override that still took effect, which is why a pinned `model`
+  looked half-working rather than plainly broken. That is
+  deliberate for `sandbox_mode` and `approval_policy`, which nothing should be
+  able to relax — and it is why model, reasoning effort, the project-doc
+  budget, and the TUI status line live in the defaults layer instead. Pinning
+  reasoning effort in the managed layer makes every worker dispatched at a
+  higher effort silently run at the pinned one.
+
+  Read the run header rather than trusting the request — it reports what the
+  run will actually use:
+
+  ```sh
+  # 2>&1 is load-bearing: codex exec writes the run header to stderr and only
+  # the assistant's reply to stdout, so a stdout-only pipeline prints nothing.
+  codex exec -c 'model_reasoning_effort="xhigh"' --skip-git-repo-check \
+      'Reply with exactly: ok' 2>&1 | grep -iE '^model:|reasoning effort'
+  ```
+
+  If the header disagrees with what you asked for, read the **live** file the
+  container is actually using — not the checkout:
+
+  ```sh
+  grep -nE '^[[:space:]]*"?(model|model_reasoning_effort)"?[[:space:]]*=' \
+      /etc/codex/managed_config.toml
+  ```
+
+  Any hit there is the cause. `task test:devcontainer:permissions` checks the
+  repository's copies and will not catch this on its own: a container built
+  before the split keeps the old `/etc/codex/managed_config.toml` no matter what
+  the checkout says, so the check passes while the running container still pins
+  the effort. Rebuild the container once the files are right. Effort levels are not model-specific: under a ChatGPT-account login on
+  the pinned CLI, `low`, `medium`, `high`, and `xhigh` all take effect for
+  every supported model once the key is out of the managed layer.

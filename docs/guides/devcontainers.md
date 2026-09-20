@@ -308,11 +308,20 @@ at it — the seed merge will not overwrite it or add `refreshInterval`.
 
 ## Codex CLI settings in the container
 
-Codex policy is baked at `/etc/codex/managed_config.toml` from
-`config/codex-managed-config.toml`; its shared hook adapters are installed under
-`/etc/codex/hooks/`. The config pins Sol/medium, loads the standard project
-skills from `.agents/skills`, and renders a compact built-in footer with project,
-branch, model/effort, context, quota, token, and run-state fields. Unlike
+Codex settings arrive as **two** layers, and the split is load-bearing.
+Boundary policy is baked at `/etc/codex/managed_config.toml` from
+`config/codex-managed-config.toml` — Codex's legacy MDM layer, where every key
+is an unoverridable requirement that beats `-c`, `~/.codex/config.toml` and a
+trusted project `.codex/config.toml` without saying so. Only the sandbox and
+approval boundary and the image-owned hooks belong there. Overridable defaults
+— model, reasoning effort, the project-instruction budget and the status line —
+are baked at `/etc/codex/config.toml` from `config/codex-system-config.toml`,
+so an agent or orchestration session can raise the effort for one run. Pinning
+those in the managed layer silently downgraded dispatched workers instead.
+Together they default to Sol/medium, load the standard project skills from
+`.agents/skills`, and render a compact built-in footer with project, branch,
+model/effort, context, quota, token, and run-state fields. Its shared hook
+adapters are installed under `/etc/codex/hooks/`. Unlike
 Claude's renderer, Codex's supported status line is a single ordered list rather
 than an external multi-line command. System-managed Codex hooks are limited to
 image-owned policy scripts; checkout-controlled status and formatter tasks stay
