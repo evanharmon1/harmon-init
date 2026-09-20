@@ -4,8 +4,17 @@ on:
   push:
     branches:
       - main
+  # No `edited`: it fires on a PR title/body edit, and the dev loop's readiness
+  # gate REQUIRES body edits (ticking `## Deferred findings`), so carrying it
+  # here made satisfying one gate condition invalidate another — every
+  # settlement restarted the whole matrix. `edited` also fires on a
+  # base-BRANCH change; dropping that re-run is deliberate. Retargeting a PR
+  # is rare, and a strict required-status-checks policy already forces an
+  # up-to-date head before merge, which lands as a `synchronize` this list
+  # does cover. Title/body-dependent guards keep `edited` in their OWN
+  # workflows: closing-keywords.yml[% if use_release_please and release_content_paths %] and release-content-guard.yml[% endif %].
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, synchronize, reopened]
     branches:
       - main
   merge_group:
@@ -109,67 +118,6 @@ jobs:
       - run: task test:open-devcontainer
       - run: task test:devcontainer-changed
 [% endif %]
-
-  # Metadata-only by design: this executes the trusted default-branch script,
-  # queries PR/issue data through read-only APIs, and never checks out a PR.
-  # It intentionally runs on forks too; no write-capable credential is present.
-  closing-keywords:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
-    steps:
-      - name: No PR closing-reference check is needed for this trigger
-        if: github.event_name != 'pull_request'
-        run: echo "Closing-keyword guard applies to pull requests only."
-      - name: Require completed issues before a same-repo closing reference
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_COMMITS: ${{ github.event.pull_request.commits }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          commits_file=$(mktemp)
-          trap 'rm -f "$commits_file" ./check-closing-keywords.sh' EXIT
-          if [ "$PR_COMMITS" -gt 250 ]; then
-            echo "::error::PR has ${PR_COMMITS} commits, exceeding the 250-commit API limit; closing-keyword result is indeterminate" >&2
-            exit 1
-          fi
-          gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/commits" \
-            --jq '.[].commit.message' > "$commits_file"
-          fetch_error=$(mktemp)
-          fetch_script() {
-            gh api -H 'Accept: application/vnd.github.raw' \
-              "repos/${GH_REPO}/contents/scripts/check-closing-keywords.sh?ref=$1" \
-              > ./check-closing-keywords.sh 2>"$fetch_error"
-          }
-          # Workflow definitions are taken from the default branch for PRs.
-          # Prefer that trusted program even if this PR edits it. The one
-          # bootstrap exception lets the introducing PR run only after a
-          # confirmed 404, and only for a same-repository head. A fork never
-          # executes head-controlled code; network/auth errors never fall back.
-          if ! fetch_script "$DEFAULT_BRANCH"; then
-            if grep -q '(HTTP 404)' "$fetch_error" && [ "$HEAD_REPO" = "$GH_REPO" ]; then
-              echo '::notice::default-branch guard script is absent; using same-repo PR head for bootstrap'
-              fetch_script "$HEAD_SHA"
-            else
-              cat "$fetch_error" >&2
-              echo '::error::trusted default-branch guard script is unavailable; refusing to execute PR code' >&2
-              exit 1
-            fi
-          fi
-          rm -f "$fetch_error"
-          chmod +x ./check-closing-keywords.sh
-          ./check-closing-keywords.sh --repo "$GH_REPO" \
-            --title-env PR_TITLE --body-env PR_BODY --commits-file "$commits_file"
 
 [% if use_node %]
 
@@ -428,7 +376,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, security, closing-keywords[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
+    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
@@ -441,7 +389,6 @@ jobs:
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
-          CLOSING_KEYWORDS_RESULT: ${{ needs.closing-keywords.result }}
 [% if use_node %]
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -459,10 +406,6 @@ jobs:
           }
           check_skipped lint "$LINT_RESULT"
           check_skipped security "$SECURITY_RESULT"
-          if [ "$CLOSING_KEYWORDS_RESULT" != "success" ]; then
-            echo "Job closing-keywords result: $CLOSING_KEYWORDS_RESULT (expected success)"
-            fail=1
-          fi
 [% if use_node %]
           check_skipped build-test "$BUILD_TEST_RESULT"
           check_skipped e2e "$E2E_RESULT"
@@ -484,7 +427,6 @@ jobs:
           EXPECTED_RESULT: success
           LINT_RESULT: ${{ needs.lint.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
-          CLOSING_KEYWORDS_RESULT: ${{ needs.closing-keywords.result }}
 [% if use_node %]
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -492,7 +434,7 @@ jobs:
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
 [% endif %]
-        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}" "closing-keywords=${CLOSING_KEYWORDS_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
+        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
 
 # Keep a literal final line after the inline Jinja conditionals above; with
 # trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.
