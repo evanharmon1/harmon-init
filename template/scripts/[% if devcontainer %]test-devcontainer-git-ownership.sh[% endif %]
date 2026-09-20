@@ -50,7 +50,12 @@ grep -q '^resolve_git_dir()' "$helpers" ||
     fail "the extracted helpers do not include resolve_git_dir"
 ! grep -Fq 'a+rwX' "$helpers" ||
     fail "permissions reconciliation still grants world-writable Git metadata permissions"
-! grep -Eq 'mountpoint|hard.?link|core[.]hooksPath' "$helpers" ||
+# "hard link"/"hard-link" is deliberately NOT in this guard: F23 (review
+# round 3) legitimately scopes the ownership/mode mutation by link count
+# (`-links 1`), a narrow, necessary exclusion — not the kind of open-ended
+# recursive-filesystem heuristic (crossing mountpoints, rewriting Git's own
+# hooksPath config) this guard exists to keep out.
+! grep -Eq 'mountpoint|core[.]hooksPath' "$helpers" ||
     fail "permissions reconciliation retained recursive filesystem policy"
 grep -Fq '[ -L "$candidate/.git" ]' "$helpers" ||
     fail "permissions reconciliation does not reject symlinked Git markers"
@@ -70,10 +75,12 @@ grep -q '^reconcile_git_metadata_ownership()' "$helpers" ||
     fail "the extracted helpers do not include reconcile_git_metadata_ownership (#1241 review round 2, finding F22)"
 grep -Fq "orig_gid=\"\$(stat -c '%g' \"\$git_dir\"" "$helpers" ||
     fail "permissions reconciliation does not capture the original group before reassigning ownership"
-grep -Fq 'sudo chown -R "$(id -u):${orig_gid}" "$git_dir"' "$helpers" ||
+grep -Fq '-exec chown "$(id -u):${orig_gid}" {} +' "$helpers" ||
     fail "permissions reconciliation does not preserve the original group when reclaiming ownership"
-grep -Fq 'chmod -R u=rwX,g=rwX,o=rX "$git_dir"' "$helpers" ||
+grep -Fq '-exec chmod u=rwX,g=rwX,o=rX {} +' "$helpers" ||
     fail "permissions reconciliation does not grant the original group write access"
+grep -Fq '\( -type d -o \( -type f -a -links 1 \) \)' "$helpers" ||
+    fail "permissions reconciliation does not scope ownership/mode changes to directories and single-linked files (#1241 review round 3, finding F23)"
 grep -Fq 'sudo find "$git_dir" -type d -exec chmod g+s {} +' "$helpers" ||
     fail "permissions reconciliation does not set the setgid bit (scoped to directories only, privileged so it survives a non-member gid) so new entries inherit the original group"
 grep -Fq 'git -c safe.directory="$workspace_root" -C "$workspace_root" config core.sharedRepository 0664' "$helpers" ||
@@ -156,11 +163,22 @@ git_mode() {
     stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
 }
 expected_owner="$(id -u):$(id -g)"
+# The fake sudo shim logs its args verbatim, so the ownership reclaim's
+# expected log line is the exact `find ... -exec chown ... {} +` invocation
+# scoped to directories and single-linked regular files (#1241 review round
+# 3, finding F23) — a bare `chown -R` no longer appears anywhere in the log.
+expected_chown_log() {
+    printf 'find %s ( -type d -o ( -type f -a -links 1 ) ) -exec chown %s {} +' "$1" "$2"
+}
 
-# The real post-create script invokes sudo only for chown (the fixture's
-# invoking user already owns the tree, so chown to its own uid/gid needs no
-# real privilege); this fixture records the exact target while letting the
-# command actually run against the fixture's own Git metadata.
+# The real post-create script invokes sudo only for the scoped ownership
+# reclaim and the setgid pass — both now `sudo find ... -exec ... {} +`
+# since F23 (review round 3) scoped them to directories and single-linked
+# files (the fixture's invoking user already owns the tree, so reclaiming
+# its own uid/gid needs no real privilege); this fixture records the exact
+# invocation while letting the command actually run against the fixture's
+# own Git metadata. SUDO_FAIL matches against sudo's first argument, which
+# is "find" for either privileged step — not "chown"/"chmod" directly.
 cat >"$fake_bin/sudo" <<'SUDO'
 #!/bin/sh
 set -eu
@@ -188,7 +206,7 @@ echo "==> mismatched-workspace fixture reclaims ownership, preserves the origina
 resolved="$(run_reconcile)"
 [ "$resolved" = "$repo" ] ||
     fail "resolved workspace root was '$resolved', expected '$repo'"
-grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
+grep -Fqx "$(expected_chown_log "$repo/.git" "$expected_owner")" "$log" ||
     fail "Git metadata ownership was not reclaimed (owner) / preserved (group) at the resolved root"
 grep -Fqx "find $repo/.git -type d -exec chmod g+s {} +" "$log" ||
     fail "the setgid pass did not run under sudo (#1241 challenge round 5, finding F13)"
@@ -304,7 +322,7 @@ if [ -n "$secondary_gid" ]; then
     gid_resolved="$(run_reconcile_at "$gid_repo" "$gid_config" "$gid_log")"
     [ "$gid_resolved" = "$gid_repo" ] ||
         fail "gid-preservation resolved workspace root was '$gid_resolved', expected '$gid_repo'"
-    grep -Fqx "chown -R $(id -u):${secondary_gid} $gid_repo/.git" "$gid_log" ||
+    grep -Fqx "$(expected_chown_log "$gid_repo/.git" "$(id -u):${secondary_gid}")" "$gid_log" ||
         fail "reconciliation did not preserve the original (non-primary) group when reclaiming ownership"
     [ "$(stat -c '%g' "$gid_repo/.git" 2>/dev/null || stat -f '%g' "$gid_repo/.git")" = "$secondary_gid" ] ||
         fail "reconciliation changed the group away from the original (non-primary) one"
@@ -351,6 +369,43 @@ else
     echo "  (skipped: no non-member gid and/or passwordless sudo available to exercise this with)"
 fi
 
+echo "==> reconciling a locally-cloned checkout never mutates the source repository's hard-linked objects (#1241 review round 3, finding F23)"
+f23_source="$fixture/f23-source"
+f23_clone="$fixture/workspaces/f23-clone"
+f23_xdg="$fixture/f23-xdg/git/config"
+f23_log="$fixture/f23-sudo.log"
+mkdir -p "$f23_source" "$fixture/f23-xdg/git"
+git -C "$f23_source" init -q
+printf '%s\n' tracked >"$f23_source/file.txt"
+git -C "$f23_source" -c user.name=fixture -c user.email=fixture@example.test add file.txt
+git -C "$f23_source" -c user.name=fixture -c user.email=fixture@example.test commit -qm init
+# `git clone --local` (the default when the source is a local path) hard-links
+# loose objects into the clone instead of copying them — verified below by
+# comparing inodes, not assumed.
+git clone -q --local "$f23_source" "$f23_clone"
+mkdir -p "$f23_clone/subdirectory"
+f23_object="$(find "$f23_source/.git/objects" -type f | sort | head -1)"
+[ -n "$f23_object" ] || fail "fixture setup: source repo has no loose objects to test with"
+f23_object_relative="${f23_object#"$f23_source"/}"
+f23_clone_object="$f23_clone/$f23_object_relative"
+[ "$(stat -c '%i' "$f23_object")" = "$(stat -c '%i' "$f23_clone_object")" ] ||
+    fail "fixture setup: git clone --local did not hard-link objects (same inode expected) — cannot exercise F23 without this"
+f23_before="$(stat -c '%u:%g:%a' "$f23_object")"
+f23_resolved="$(run_reconcile_at "$f23_clone" "$f23_xdg" "$f23_log")"
+[ "$f23_resolved" = "$f23_clone" ] ||
+    fail "reconciliation of a locally-cloned checkout did not resolve its own workspace root (resolved '$f23_resolved', expected '$f23_clone')"
+f23_after="$(stat -c '%u:%g:%a' "$f23_object")"
+[ "$f23_before" = "$f23_after" ] ||
+    fail "reconciling the clone changed the SOURCE repository's hard-linked object (before='$f23_before' after='$f23_after') — an out-of-scope mutation outside \$git_dir"
+# The reconciliation must still do its job on the clone's own, non-hard-linked
+# files — F23's fix narrows scope, it must not silently no-op the whole step.
+grep -Fqx "$(expected_chown_log "$f23_clone/.git" "$expected_owner")" "$f23_log" ||
+    fail "reconciliation did not scope ownership reclaim to directories and single-linked files against the clone's own .git"
+[ "$(git_mode "$f23_clone/.git/HEAD")" = "664" ] ||
+    fail "reconciliation did not grant group-write on the clone's own (non-hard-linked) HEAD file"
+[ "$(git_mode "$f23_clone/.git")" = "2775" ] ||
+    fail "reconciliation did not set the clone's own .git directory mode/setgid"
+
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
 [ "$(printf '%s\n' "$safe_entries" | grep -Fxc "$repo")" -eq 1 ] ||
@@ -382,7 +437,7 @@ run_reconcile >/dev/null
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
 [ "$(printf '%s\n' "$safe_entries" | grep -Fxc "$repo")" -eq 1 ] ||
     fail "repeated reconciliation duplicated safe.directory: $safe_entries"
-grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
+grep -Fqx "$(expected_chown_log "$repo/.git" "$expected_owner")" "$log" ||
     fail "repeated reconciliation did not re-assert ownership"
 [ "$(git_mode "$repo/.git")" = "2775" ] ||
     fail "repeated reconciliation changed the Git metadata directory mode"
@@ -408,7 +463,7 @@ wt_admin_name="$(basename "$wt_linked")"
 resolved="$(run_reconcile_at "$wt_linked" "$wt_xdg" "$wt_log")"
 [ "$resolved" = "$wt_linked" ] ||
     fail "linked-worktree resolved workspace root was '$resolved', expected '$wt_linked'"
-grep -Fqx "chown -R $expected_owner $wt_main/.git" "$wt_log" ||
+grep -Fqx "$(expected_chown_log "$wt_main/.git" "$expected_owner")" "$wt_log" ||
     fail "linked-worktree reconciliation did not reclaim ownership of the MAIN checkout's common Git directory"
 ! grep -Fq "$wt_linked/.git " "$wt_log" ||
     fail "linked-worktree reconciliation targeted the worktree's .git POINTER FILE instead of the resolved common directory"
@@ -516,7 +571,7 @@ else
     f21_resolved="$(run_reconcile_at "$f21_linked" "$f21_xdg" "$f21_log")"
     [ "$f21_resolved" = "$f21_linked" ] ||
         fail "a legitimate --relative-paths worktree was not accepted (resolved '$f21_resolved', expected '$f21_linked')"
-    grep -Fqx "chown -R $expected_owner $f21_main/.git" "$f21_log" ||
+    grep -Fqx "$(expected_chown_log "$f21_main/.git" "$expected_owner")" "$f21_log" ||
         fail "reconciliation did not reach the common directory for a --relative-paths worktree"
 fi
 
@@ -575,7 +630,7 @@ git -C "$failed_repo" init -q
 mkdir -p "$failed_repo/.git/hooks"
 chmod 0700 "$failed_repo/.git"
 failed_owner_before="$(ls -dn "$failed_repo/.git" | awk '{ print $3 ":" $4 }')"
-if SUDO_FAIL=chown run_reconcile_at "$failed_repo" "$failed_config" "$failed_log" >/dev/null 2>"$tmp_root/failed.err"; then
+if SUDO_FAIL=find run_reconcile_at "$failed_repo" "$failed_config" "$failed_log" >/dev/null 2>"$tmp_root/failed.err"; then
     fail "a failed permissions reconciliation unexpectedly succeeded"
 fi
 failed_safe_entries="$(git config --file "$failed_config" --get-all safe.directory 2>/dev/null || true)"

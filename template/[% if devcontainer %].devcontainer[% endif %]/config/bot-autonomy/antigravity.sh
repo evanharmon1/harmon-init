@@ -110,14 +110,24 @@ discard_launcher_transaction() {
     case "$temp_name" in
     agy.tmp.*)
         temp_path="$(dirname "$AGY_LINK")/${temp_name}"
-        # Revalidate the temp file against its own transaction proof before
-        # deleting it — the same resumed-after-a-stop race as the mirrored
-        # ensure-antigravity-cli.sh discard_transaction (#1241 item 7).
+        # Quarantine-rename before validating, then delete — the same
+        # resumed-after-a-stop race as the mirrored ensure-antigravity-cli.sh
+        # discard_transaction, and the same fix: revalidating against the
+        # pathname alone narrows the window a racing process could replace
+        # temp_path in, but does not close it. An atomic mv pins whichever
+        # inode currently sits at temp_path under a private name nothing
+        # else knows, so nothing can swap the bytes between validating and
+        # deleting them (#1241 item 7, re-raised as review round 3, finding
+        # F6).
         if metadata_exists "$temp_path"; then
-            if launcher_proof_matches "$AGY_LINK_TRANSACTION" "$temp_path"; then
-                rm -f "$temp_path"
-            else
-                echo "antigravity: transaction proof for ${temp_path} no longer matches its content; leaving it for manual review" >&2
+            quarantine_path="$(mktemp "${temp_path}.discard.XXXXXX")"
+            rm -f "$quarantine_path"
+            if mv -f "$temp_path" "$quarantine_path" 2>/dev/null; then
+                if launcher_proof_matches "$AGY_LINK_TRANSACTION" "$quarantine_path"; then
+                    rm -f "$quarantine_path"
+                else
+                    echo "antigravity: transaction proof for ${quarantine_path} (quarantined from ${temp_path}) no longer matches its content; leaving it for manual review" >&2
+                fi
             fi
         fi
         ;;

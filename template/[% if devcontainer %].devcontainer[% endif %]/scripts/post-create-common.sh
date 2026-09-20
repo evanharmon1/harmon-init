@@ -278,11 +278,28 @@ reconcile_git_metadata_ownership() {
     # this reconciliation (not one of Lefthook's own, which it (re)installs
     # with its own chmod +x after this runs) keeps its executable bit
     # instead of being silently disabled.
-    sudo chown -R "$(id -u):${orig_gid}" "$git_dir" || {
+    #
+    # Directories always get reconciled — the filesystem itself refuses
+    # hard links to directories. Regular files are reconciled only when
+    # their link count is exactly 1: a local `git clone` (no
+    # --no-hardlinks/--dissociate) hard-links loose objects and packs to
+    # the source repository by default, and a recursive chown/chmod on a
+    # hard-linked file mutates the SAME inode for every path referencing
+    # it — silently changing ownership and permissions on an unrelated
+    # repository entirely outside $git_dir. Those objects are immutable and
+    # world-readable (mode 0444) by Git's own default, so a multiply-linked
+    # one never needed this reconciliation's write grant in the first
+    # place; skipping it removes an out-of-scope mutation, not a needed one
+    # (#1241 review round 3, finding F23 — confirmed empirically: a local
+    # clone's object files share an inode, nlink=2, with the source
+    # repository's, and mutating the clone's copy mutated the source's).
+    sudo find "$git_dir" \( -type d -o \( -type f -a -links 1 \) \) \
+        -exec chown "$(id -u):${orig_gid}" {} + || {
         reconcile_step_failed "could not reclaim ownership of the Git directory at $git_dir"
         return 1
     }
-    chmod -R u=rwX,g=rwX,o=rX "$git_dir" || {
+    find "$git_dir" \( -type d -o \( -type f -a -links 1 \) \) \
+        -exec chmod u=rwX,g=rwX,o=rX {} + || {
         reconcile_step_failed "could not set permissions under $git_dir"
         return 1
     }

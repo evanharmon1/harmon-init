@@ -146,17 +146,24 @@ discard_transaction() {
     case "$temp_name" in
     "${prefix}.tmp."*)
         temp_path="${install_dir}/${temp_name}"
-        # Revalidate the temp file against its own transaction proof before
-        # deleting it. If reconciliation resumes after a stop between
-        # publishing this proof and the rename that would have consumed it,
-        # another process can have replaced the bytes at this exact
-        # temp_name — trusting the recorded name alone would then delete an
-        # unrelated file (#1241 item 7).
+        # Quarantine-rename before validating, then delete: revalidating
+        # against the pathname alone (as this used to) narrows the window a
+        # racing process could replace temp_path in, but does not close it —
+        # the check and the rm -f are still two separate operations on the
+        # same name. An atomic mv pins whichever inode currently sits at
+        # temp_path under a private name nothing else knows, so nothing can
+        # swap the bytes between validating and deleting them (#1241 item 7,
+        # re-raised as review round 3, finding F6; same shape as
+        # remove_if_owned's own quarantine step below).
         if path_exists "$temp_path"; then
-            if proof_matches "$transaction" "$temp_path"; then
-                rm -f "$temp_path"
-            else
-                echo "Transaction proof for ${temp_path} no longer matches its content; leaving it for manual review" >&2
+            quarantine_path="$(mktemp "${temp_path}.discard.XXXXXX")"
+            rm -f "$quarantine_path"
+            if mv -f "$temp_path" "$quarantine_path" 2>/dev/null; then
+                if proof_matches "$transaction" "$quarantine_path"; then
+                    rm -f "$quarantine_path"
+                else
+                    echo "Transaction proof for ${quarantine_path} (quarantined from ${temp_path}) no longer matches its content; leaving it for manual review" >&2
+                fi
             fi
         fi
         ;;
@@ -185,13 +192,29 @@ remove_if_owned() {
     case "$prior_temp_name" in
     "$(basename "$path")".harmon-init-quarantine.*)
         prior_quarantine="$(dirname "$path")/${prior_temp_name}"
-        if path_exists "$prior_quarantine" && proof_matches "$proof" "$prior_quarantine"; then
-            if ! rm -f "$prior_quarantine"; then
-                echo "Could not remove recovered managed ${label} at ${prior_quarantine}" >&2
-                return 1
+        # Same quarantine-rename-then-validate shape as discard_transaction
+        # and the primary quarantine step below: pin the exact bytes under a
+        # private name before revalidating, so a process racing the
+        # recorded prior_quarantine pathname cannot have its replacement
+        # deleted on the strength of this check (#1241 review round 3,
+        # finding F6).
+        if path_exists "$prior_quarantine"; then
+            recheck="$(mktemp "${prior_quarantine}.recheck.XXXXXX")"
+            rm -f "$recheck"
+            if mv -f "$prior_quarantine" "$recheck" 2>/dev/null; then
+                if proof_matches "$proof" "$recheck"; then
+                    if ! rm -f "$recheck"; then
+                        echo "Could not remove recovered managed ${label} at ${recheck} (quarantined from ${prior_quarantine})" >&2
+                        return 1
+                    fi
+                    rm -f "$proof"
+                    return 0
+                fi
+                # Not the recorded generation after all — restore it under
+                # its original name so a human or a later run still finds
+                # it there, and fall through to the ordinary $path handling.
+                mv -f "$recheck" "$prior_quarantine" 2>/dev/null || true
             fi
-            rm -f "$proof"
-            return 0
         fi
         ;;
     esac

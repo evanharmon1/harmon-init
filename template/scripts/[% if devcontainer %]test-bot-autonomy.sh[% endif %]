@@ -1981,10 +1981,17 @@ bash -c '
     printf "replaced by another actor\n" >"${install_dir}/agy-real.tmp.TAMPER1"
     discard_transaction "${install_dir}/.agy-real.harmon-init-transaction" "agy-real"
 ' _ "$agy25_home" "$agy25_ensure_helpers"
-[ -e "${agy25_home}/agy-real.tmp.TAMPER1" ] ||
-    fail "discard_transaction deleted a temp file whose bytes no longer matched its proof (#1241 item 7 regression)"
-[ "$(cat "${agy25_home}/agy-real.tmp.TAMPER1")" = "replaced by another actor" ] ||
+# The mismatch path now quarantine-renames before validating (#1241 review
+# round 3, finding F6), so the surviving bytes land under a private
+# "<name>.discard.XXXXXX" name, not back at the original predictable path —
+# that rename is exactly what closes the check-then-delete race.
+agy25_tamper1_quarantine="$(find "${agy25_home}" -maxdepth 1 -name 'agy-real.tmp.TAMPER1.discard.*' -print -quit)"
+[ -n "$agy25_tamper1_quarantine" ] ||
+    fail "discard_transaction deleted a temp file whose bytes no longer matched its proof, instead of quarantining it (#1241 item 7 / review round 3, finding F6 regression)"
+[ "$(cat "$agy25_tamper1_quarantine")" = "replaced by another actor" ] ||
     fail "discard_transaction's mismatch path modified the tampered temp file"
+[ ! -e "${agy25_home}/agy-real.tmp.TAMPER1" ] ||
+    fail "discard_transaction left the tampered file at its original, predictable pathname instead of quarantining it under a private name"
 [ ! -e "${agy25_home}/.agy-real.harmon-init-transaction" ] ||
     fail "discard_transaction left its transaction record behind after reporting a mismatch"
 
@@ -2020,10 +2027,16 @@ bash -c '
     printf "replaced by another actor\n" >"$temp_path"
     discard_launcher_transaction
 ' _ "${agy25_home}/agy" "$agy25_link_transaction" "${agy25_home}/agy.tmp.TAMPER2" "$agy25_launcher_helpers"
-[ -e "${agy25_home}/agy.tmp.TAMPER2" ] ||
-    fail "discard_launcher_transaction deleted a temp file whose bytes no longer matched its proof (#1241 item 7 regression)"
-[ "$(cat "${agy25_home}/agy.tmp.TAMPER2")" = "replaced by another actor" ] ||
+# Same quarantine-rename shape as discard_transaction above (#1241 review
+# round 3, finding F6) — the survivor lands under a private name, not back
+# at the original predictable path.
+agy25_tamper2_quarantine="$(find "${agy25_home}" -maxdepth 1 -name 'agy.tmp.TAMPER2.discard.*' -print -quit)"
+[ -n "$agy25_tamper2_quarantine" ] ||
+    fail "discard_launcher_transaction deleted a temp file whose bytes no longer matched its proof, instead of quarantining it (#1241 item 7 / review round 3, finding F6 regression)"
+[ "$(cat "$agy25_tamper2_quarantine")" = "replaced by another actor" ] ||
     fail "discard_launcher_transaction's mismatch path modified the tampered temp file"
+[ ! -e "${agy25_home}/agy.tmp.TAMPER2" ] ||
+    fail "discard_launcher_transaction left the tampered file at its original, predictable pathname instead of quarantining it under a private name"
 [ ! -e "$agy25_link_transaction" ] ||
     fail "discard_launcher_transaction left its transaction record behind after reporting a mismatch"
 
