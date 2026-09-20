@@ -87,6 +87,18 @@ resolve_git_dir() {
     local git_dir admin_dir reverse_pointer reverse_pointer_resolved
 
     if [ -d "$git_marker" ]; then
+        # A .git DIRECTORY containing its own "commondir" file is indirection
+        # Git itself follows (the same marker a worktree admin dir uses) —
+        # not an ordinary checkout, even though it is a directory. Trusting
+        # it unconditionally here would reconcile $git_marker itself while
+        # Git's own commands operate on wherever commondir actually points,
+        # silently reconciling the wrong tree. Treat it the same as any
+        # other non-worktree indirection this reconciliation cannot verify
+        # (#1241 integration round 3, Codex finding 4056166565).
+        if [ -e "$git_marker/commondir" ]; then
+            echo "NOTE: $workspace_root's .git is non-worktree indirection (a .git directory containing its own commondir file, which Git itself follows) — skipping the privileged Git metadata reconciliation for it. This is a known, intentional non-goal: see docs/guides/devcontainers.md." >&2
+            return 2
+        fi
         # Ordinary checkout: no attacker-controlled indirection to validate
         # — $git_marker IS the Git directory, not a pointer to one.
         printf '%s\n' "$git_marker"
@@ -305,33 +317,50 @@ reconcile_git_metadata_ownership() {
         reconcile_step_failed "could not reclaim ownership of the Git directory at $git_dir"
         return 1
     }
-    find "$git_dir" \( -type d -o \( -type f -a -links 1 \) \) \
+    # Privileged (sudo), like the chown pass above: the container user does
+    # not yet own — and, before this exact call, may not even be able to
+    # TRAVERSE into — every directory here. chown alone does not add the
+    # execute/traverse bit a mismatched-ownership directory can be missing
+    # entirely, so an unprivileged find attempting to enter it would
+    # silently skip everything underneath, exactly like the ownership
+    # mismatch this reconciliation exists to fix (#1241 integration round
+    # 3, Gemini findings on the same shape as the ownership pass above).
+    sudo find "$git_dir" \( -type d -o \( -type f -a -links 1 \) \) \
         -exec chmod u=rwX,g=rwX,o=rX {} + || {
         reconcile_step_failed "could not set permissions under $git_dir"
         return 1
     }
 
-    # The pass above deliberately skips multi-linked regular files (F23),
-    # since they never need the write grant this reconciliation exists to
-    # give — but a restrictive host-side umask at clone time can leave one
-    # genuinely UNREADABLE to the container user (e.g. mode 0440, owned by
-    # neither the container's uid nor its preserved group), defeating the
-    # whole point of this reconciliation for that one object. Directories
-    # and single-linked files above are already reconciled by this point,
-    # so traversal into every subtree now actually works, and this can run
-    # AFTER them. Break the hard link for exactly the unreadable ones —
-    # never a readable one, which correctly stays untouched and still
-    # shares the source repository's inode — by privileged-copying the
-    # bytes (only root can read the original in the first place) into a
-    # sibling temp name in the same directory, chowning/chmoding that copy
-    # to match this reconciliation's own target state, then atomically
-    # replacing the path with it: the original inode, and whatever else
-    # still references it outside $git_dir, is never touched (#1241
-    # integration round 2, Codex finding 4056048549 — verified empirically
-    # with a --local clone fixture under umask 027).
-    while IFS= read -r unreadable_object; do
-        [ -n "$unreadable_object" ] || continue
-        [ -r "$unreadable_object" ] && continue
+    # The pass above deliberately skips multi-linked regular files under
+    # objects/ (F23) — Git's immutable, hash-addressed loose objects and
+    # packs, which never need the write grant this reconciliation exists
+    # to give. That exemption is scoped to objects/ specifically, not
+    # "any multi-linked file anywhere": a hard link OUTSIDE objects/ means
+    # shared MUTABLE metadata (a hook, a config file, anything this
+    # workspace or Git itself might rewrite in place) — e.g. a
+    # hard-linked .git/hooks/pre-commit left unreconciled by a blanket
+    # exemption would later make install_repo_managed_hooks's own `cp`
+    # fail against it. Break the hard link unconditionally for anything
+    # outside objects/, and for anything inside objects/ that the
+    # container user genuinely cannot read (a restrictive host-side
+    # umask at clone time can leave one at mode 0440, owned by neither
+    # the container's uid nor its preserved group) — never for a
+    # readable objects/ file, which correctly stays untouched and still
+    # shares the source repository's inode. Privileged-copy the bytes
+    # (only root can read an unreadable original) into a sibling temp
+    # name in the same directory, chown/chmod that copy to this
+    # reconciliation's own target state, then atomically replace the
+    # path with it: the original inode, and whatever else still
+    # references it outside $git_dir, is never touched (#1241 integration
+    # round 2, Codex finding 4056048549, scope narrowed to objects/ in
+    # round 3, Codex finding 4056166568 — both verified empirically).
+    while IFS= read -r linked_object; do
+        [ -n "$linked_object" ] || continue
+        case "$linked_object" in
+        "$git_dir"/objects/*)
+            [ -r "$linked_object" ] && continue
+            ;;
+        esac
         sudo sh -c '
             target="$1"
             owner="$2"
@@ -341,11 +370,11 @@ reconcile_git_metadata_ownership() {
                 exit 1
             fi
             chown "$owner" "$tmp" && chmod u=rwX,g=rwX,o=rX "$tmp" && mv -f "$tmp" "$target"
-        ' _ "$unreadable_object" "$(id -u):${orig_gid}" || {
-            reconcile_step_failed "could not break the hard link for an unreadable object at $unreadable_object"
+        ' _ "$linked_object" "$(id -u):${orig_gid}" || {
+            reconcile_step_failed "could not break the hard link for a multi-linked object at $linked_object"
             return 1
         }
-    done < <(find "$git_dir" -type f -links +1 -print 2>/dev/null)
+    done < <(sudo find "$git_dir" -type f -links +1 -print 2>/dev/null)
 
     # setgid on directories only (never files — on a FILE this bit means
     # something unrelated and security-sensitive, set-group-ID on

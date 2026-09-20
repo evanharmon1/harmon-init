@@ -413,8 +413,12 @@ echo "==> reconciliation breaks the hard link for a multi-linked object the cont
 # Needs REAL sudo (not the logging shim above): the whole point is that only
 # a privileged process can read a mode-0000 object to copy it. Skip
 # gracefully, like the F13 non-member-gid fixture, if this environment has
-# no passwordless sudo.
-if sudo -n true 2>/dev/null; then
+# no passwordless sudo — and skip when the invoking user IS root: chmod 0000
+# below cannot make anything unreadable to uid 0 (root bypasses discretionary
+# permission checks on regular-file reads), so this fixture's own setup
+# assertion would fail as a false alarm, not a real regression (#1241
+# integration round 3, Codex finding 4056166570).
+if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
     f2_source="$fixture/f2-source"
     f2_clone="$fixture/workspaces/f2-clone"
     f2_xdg="$fixture/f2-xdg/git/config"
@@ -465,8 +469,51 @@ if sudo -n true 2>/dev/null; then
     [ "$(git_mode "$f2_clone_object")" = "664" ] ||
         fail "the clone's own (now single-linked) copy was not reconciled to this workspace's target mode"
 else
-    echo "  (skipped: no passwordless sudo available to exercise this with)"
+    echo "  (skipped: running as root, and/or no passwordless sudo available to exercise this with)"
 fi
+
+echo "==> reconciliation un-links a multi-linked file OUTSIDE objects/ unconditionally, never mutating what it was shared with (#1241 integration round 3, Codex finding 4056166568)"
+hook_hl_repo="$fixture/workspaces/hook-hl-repo"
+hook_hl_shared="$fixture/hook-hl-shared-source"
+hook_hl_xdg="$fixture/hook-hl-xdg/git/config"
+hook_hl_log="$fixture/hook-hl-sudo.log"
+mkdir -p "$hook_hl_repo/subdirectory" "$fixture/hook-hl-xdg/git"
+git -C "$hook_hl_repo" init -q
+# A hard link on a MUTABLE, non-objects path — e.g. a user's own shared
+# hook-management setup linking .git/hooks/pre-commit to a file elsewhere —
+# is exactly the shape the objects/-only exemption must NOT also cover.
+printf '%s\n' '#!/bin/sh' 'echo pre-existing-shared-hook' >"$hook_hl_shared"
+chmod 0644 "$hook_hl_shared"
+ln "$hook_hl_shared" "$hook_hl_repo/.git/hooks/pre-commit"
+[ "$(stat -c '%i' "$hook_hl_shared")" = "$(stat -c '%i' "$hook_hl_repo/.git/hooks/pre-commit")" ] ||
+    fail "fixture setup: pre-commit was not hard-linked to the shared source"
+hook_hl_shared_inode_before="$(stat -c '%i' "$hook_hl_shared")"
+hook_hl_shared_mode_before="$(stat -c '%a' "$hook_hl_shared")"
+hook_hl_resolved="$(run_reconcile_at "$hook_hl_repo" "$hook_hl_xdg" "$hook_hl_log")"
+[ "$hook_hl_resolved" = "$hook_hl_repo" ] ||
+    fail "reconciliation of the hard-linked-hook fixture did not resolve its own workspace root (resolved '$hook_hl_resolved', expected '$hook_hl_repo')"
+[ "$(stat -c '%i' "$hook_hl_shared")" = "$hook_hl_shared_inode_before" ] ||
+    fail "un-linking the repo's hook changed the SHARED source's inode — it must never be mutated"
+[ "$(stat -c '%a' "$hook_hl_shared")" = "$hook_hl_shared_mode_before" ] ||
+    fail "un-linking the repo's hook changed the SHARED source's mode — it must never be mutated"
+[ "$(stat -c '%i' "$hook_hl_repo/.git/hooks/pre-commit")" != "$hook_hl_shared_inode_before" ] ||
+    fail "the repo's own hooks/pre-commit is still hard-linked to the shared source after reconciliation — the objects/-only exemption leaked outside objects/"
+[ "$(git_mode "$hook_hl_repo/.git/hooks/pre-commit")" = "664" ] ||
+    fail "the repo's own (now single-linked) hooks/pre-commit was not reconciled to this workspace's target mode"
+grep -Fqx 'echo pre-existing-shared-hook' "$hook_hl_repo/.git/hooks/pre-commit" ||
+    fail "un-linking the repo's hook did not preserve its content"
+# The actual regression this closes: install_repo_managed_hooks's own `cp`
+# must now succeed against the (formerly hard-linked, now reconciled) path.
+mkdir -p "$hook_hl_repo/.devcontainer/hooks"
+printf '%s\n' '#!/bin/sh' 'echo managed-now' >"$hook_hl_repo/.devcontainer/hooks/pre-commit"
+chmod 0644 "$hook_hl_repo/.devcontainer/hooks/pre-commit"
+(
+    cd "$hook_hl_repo"
+    . "$managed_helpers"
+    install_repo_managed_hooks
+) || fail "install_repo_managed_hooks still fails against a hook path that was hard-linked before reconciliation"
+grep -Fqx 'echo managed-now' "$hook_hl_repo/.git/hooks/pre-commit" ||
+    fail "install_repo_managed_hooks did not actually install the managed hook after reconciliation un-linked the path"
 
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
@@ -661,6 +708,39 @@ f22_gitdir_listing_after="$(find "$f22_gitdir" | sort)"
 f22_safe_entries="$(git config --file "$f22_xdg" --get-all safe.directory 2>/dev/null || true)"
 grep -Fqx "$f22_repo" <<<"$f22_safe_entries" ||
     fail "a skipped --separate-git-dir checkout was not trusted via safe.directory so post-create can still proceed"
+
+echo "==> resolve_git_dir treats a .git DIRECTORY containing its own commondir file as unverifiable indirection, never trusting it directly (#1241 integration round 3, Codex finding 4056166565)"
+cd_repo="$fixture/workspaces/cd-repo"
+cd_victim="$fixture/cd-victim-common"
+cd_xdg="$fixture/cd-xdg/git/config"
+cd_log="$fixture/cd-sudo.log"
+mkdir -p "$cd_repo/.git" "$cd_repo/subdirectory" "$cd_victim" "$fixture/cd-xdg/git"
+git -C "$cd_victim" init -q
+cd_victim="$(cd "$cd_victim" && pwd -P)"
+# A .git DIRECTORY (not a file) that additionally carries its own
+# "commondir" — the same marker a worktree admin dir uses — is indirection
+# Git itself follows via --git-common-dir, not an ordinary checkout, even
+# though `[ -d .git ]` is true.
+printf '%s\n' "$cd_victim/.git" >"$cd_repo/.git/commondir"
+printf 'ref: refs/heads/main\n' >"$cd_repo/.git/HEAD"
+cd_victim_listing_before="$(find "$cd_victim/.git" | sort)"
+cd_resolved="$(run_reconcile_at "$cd_repo" "$cd_xdg" "$cd_log" 2>"$tmp_root/cd.err")" ||
+    fail "reconciliation aborted post-create for a .git directory with its own commondir file instead of skipping it"
+[ "$cd_resolved" = "$cd_repo" ] ||
+    fail "a .git-directory-with-commondir checkout was not resolved as its own workspace root (resolved '$cd_resolved', expected '$cd_repo')"
+grep -Fq "non-worktree indirection" "$tmp_root/cd.err" ||
+    fail "reconciliation did not explain why privileged reconciliation was skipped for a .git directory with its own commondir file"
+[ ! -e "$cd_log" ] || [ ! -s "$cd_log" ] ||
+    fail "reconciliation invoked sudo against a .git directory with its own commondir file — it must only skip, never trust it directly"
+cd_victim_listing_after="$(find "$cd_victim/.git" | sort)"
+[ "$cd_victim_listing_before" = "$cd_victim_listing_after" ] ||
+    fail "the commondir-redirected victim repository's contents changed despite being skipped, not mutated"
+# core.sharedRepository is part of the skipped privileged mutation too — no
+# config file should have been created on either side of the redirection.
+[ ! -e "$cd_repo/.git/config" ] ||
+    fail "reconciliation wrote a Git config (core.sharedRepository or otherwise) directly to the .git directory this shape must skip entirely"
+[ ! -e "$cd_victim/.git/config" ] || ! grep -Fq "sharedRepository" "$cd_victim/.git/config" ||
+    fail "reconciliation wrote core.sharedRepository to the commondir-redirected victim despite skipping privileged mutation for this shape"
 
 echo "==> symlinked Git markers fail closed before chmod"
 symlink_repo="$fixture/workspaces/symlinked"
