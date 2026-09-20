@@ -252,7 +252,12 @@ a host process running as a *different* uid than the container sees the
 reconciled checkout as owned by someone else regardless of the group
 permissions — the same check that made `a+rwX` (world-writable) tempting
 in the first place, and the reason this reconciliation never reintroduces
-it. The reconciliation can only write its `safe.directory` trust entry
+it. It is also a deliberate non-goal for a workspace root that is itself a
+Git submodule or a `--separate-git-dir` checkout, rather than a linked
+worktree: Git gives that shape no reverse pointer to validate a redirect
+against, so the privileged mutation is skipped there (with a logged reason)
+instead of trusting it, and the workspace still becomes usable without the
+ownership repair. The reconciliation can only write its `safe.directory` trust entry
 into the container's own environment-scoped Git config
 (`.devcontainer/scripts/post-create-common.sh`'s `$ENV_GITCONFIG`), a
 location a separate host machine's own Git installation has no way to

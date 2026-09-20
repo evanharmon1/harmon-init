@@ -120,6 +120,27 @@ resolve_git_dir() {
         return 1
     }
 
+    # .git can be a FILE for shapes other than a linked worktree too — a
+    # submodule, or a repository made with `git init --separate-git-dir` —
+    # where --git-dir and --git-common-dir resolve to the SAME directory
+    # (no admin/worktrees split to validate). Git provides no reverse-
+    # pointer mechanism for this shape the way it does for worktrees
+    # (verified empirically: neither sets core.worktree or an equivalent),
+    # so there is no way to distinguish a legitimate submodule/separate-
+    # git-dir checkout from a crafted ".git" naming an arbitrary unrelated
+    # repository directly. Rather than either trusting it blindly (F17's
+    # original vulnerability) or aborting post-create entirely, skip the
+    # privileged reconciliation for this one shape with a clear line
+    # explaining why — this reconciliation's own scope (issue #1241 item 6)
+    # was always linked worktrees specifically, and a devcontainer
+    # workspace pointed directly at a submodule or separate-git-dir root is
+    # rare enough here that preserving the security property matters more
+    # than covering it (maintainer decision, review round 2, finding F22).
+    if [ "$admin_dir" = "$git_dir" ]; then
+        echo "NOTE: $workspace_root's .git is non-worktree indirection (a submodule or a --separate-git-dir checkout) — skipping the privileged Git metadata reconciliation for it. This is a known, intentional non-goal: see docs/guides/devcontainers.md." >&2
+        return 2
+    fi
+
     # A round-trip check on the admin dir ALONE is not enough: a crafted
     # admin directory can carry a correct reverse pointer back to this
     # workspace while its OWN "commondir" file names a different, unrelated
@@ -175,7 +196,8 @@ reconcile_step_failed() {
 
 reconcile_workspace_permissions() {
     local env_gitconfig="$1"
-    local workspace_root git_dir orig_gid
+    local workspace_root git_dir resolve_status
+    local skip_privileged_reconciliation=false
 
     workspace_root="$(resolve_workspace_root "$(pwd -P)")" || {
         echo "ERROR: could not resolve the repository/workspace root from $(pwd -P)" >&2
@@ -186,7 +208,54 @@ reconcile_workspace_permissions() {
         return 1
     }
 
-    git_dir="$(resolve_git_dir "$workspace_root")" || return 1
+    # The exit status is consumed by this `if` (not a bare assignment) so
+    # that `set -e` does not abort here on resolve_git_dir's deliberate
+    # `return 2` — verified empirically: a bare
+    # `git_dir="$(resolve_git_dir ...)"; resolve_status=$?` aborts the whole
+    # function under set -e before the status is ever read.
+    if git_dir="$(resolve_git_dir "$workspace_root")"; then
+        skip_privileged_reconciliation=false
+    else
+        resolve_status=$?
+        if [ "$resolve_status" -eq 2 ]; then
+            # Non-worktree .git indirection (submodule / --separate-git-dir)
+            # — resolve_git_dir already explained why on stderr. Skip the
+            # privileged mutation but still let post-create continue, and
+            # still trust the workspace for the ownership-CHECK bypass below
+            # (that grants no new filesystem access on its own, unlike the
+            # mutation steps this skips).
+            skip_privileged_reconciliation=true
+        else
+            return 1
+        fi
+    fi
+
+    if [ "$skip_privileged_reconciliation" != true ]; then
+        reconcile_git_metadata_ownership "$git_dir" "$workspace_root" || return 1
+    fi
+
+    # This read is deliberately an exact-line match. An existing wildcard (or
+    # another repository path) does not satisfy the workspace's own entry. It
+    # is written only after the permission repair succeeds, so a failed
+    # lifecycle never leaves a trusted-but-unusable checkout.
+    safe_directories=""
+    if ! safe_directories="$(git config --file "$env_gitconfig" \
+        --get-all safe.directory 2>/dev/null)" ||
+        ! grep -Fx "$workspace_root" <<<"$safe_directories" >/dev/null; then
+        git config --file "$env_gitconfig" --add safe.directory "$workspace_root" || return 1
+    fi
+
+    RECONCILED_WORKSPACE_ROOT="$workspace_root"
+}
+
+# reconcile_git_metadata_ownership <git_dir> <workspace_root> — the
+# privileged mutation steps, factored out so reconcile_workspace_permissions
+# can skip them entirely for non-worktree .git indirection (review round 2,
+# finding F22) without duplicating them.
+reconcile_git_metadata_ownership() {
+    local git_dir="$1"
+    local workspace_root="$2"
+    local orig_gid
 
     # Capture the tree's CURRENT group before reassigning ownership: the
     # host checkout's original group keeps write access afterward, instead
@@ -249,19 +318,6 @@ reconcile_workspace_permissions() {
         reconcile_step_failed "could not configure shared-repository permissions for $workspace_root"
         return 1
     }
-
-    # This read is deliberately an exact-line match. An existing wildcard (or
-    # another repository path) does not satisfy the workspace's own entry. It
-    # is written only after the permission repair succeeds, so a failed
-    # lifecycle never leaves a trusted-but-unusable checkout.
-    safe_directories=""
-    if ! safe_directories="$(git config --file "$env_gitconfig" \
-        --get-all safe.directory 2>/dev/null)" ||
-        ! grep -Fx "$workspace_root" <<<"$safe_directories" >/dev/null; then
-        git config --file "$env_gitconfig" --add safe.directory "$workspace_root" || return 1
-    fi
-
-    RECONCILED_WORKSPACE_ROOT="$workspace_root"
 }
 
 # --- End workspace permissions reconciliation ---

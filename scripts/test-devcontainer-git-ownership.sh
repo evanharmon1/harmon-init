@@ -64,6 +64,10 @@ grep -Fq '[ "$(dirname "$admin_dir")" = "$git_dir/worktrees" ]' "$helpers" ||
     fail "resolve_git_dir does not validate the admin dir is a direct worktrees/ child of the resolved common dir (#1241 review round 1, finding F19)"
 grep -q '^resolve_relative_to()' "$helpers" ||
     fail "the extracted helpers do not include resolve_relative_to (#1241 review round 1, finding F21)"
+grep -Fq 'if [ "$admin_dir" = "$git_dir" ]; then' "$helpers" ||
+    fail "resolve_git_dir does not skip privileged reconciliation for non-worktree .git indirection (#1241 review round 2, finding F22)"
+grep -q '^reconcile_git_metadata_ownership()' "$helpers" ||
+    fail "the extracted helpers do not include reconcile_git_metadata_ownership (#1241 review round 2, finding F22)"
 grep -Fq "orig_gid=\"\$(stat -c '%g' \"\$git_dir\"" "$helpers" ||
     fail "permissions reconciliation does not capture the original group before reassigning ownership"
 grep -Fq 'sudo chown -R "$(id -u):${orig_gid}" "$git_dir"' "$helpers" ||
@@ -422,7 +426,7 @@ wt_host_status="$(GIT_CONFIG_NOSYSTEM=1 HOME="$host_home" XDG_CONFIG_HOME="$host
 [ -z "$wt_host_status" ] ||
     fail "host-side Git was not usable in the linked worktree after container setup: $wt_host_status"
 
-echo "==> resolve_git_dir refuses a .git pointer redirected at an unrelated repository (#1241 challenge round 6, finding F17)"
+echo "==> resolve_git_dir never mutates a .git pointer redirected at an unrelated repository, even though the identical shape is now skipped rather than hard-refused (#1241 challenge round 6 / review round 2, findings F17/F22)"
 crafted_victim="$fixture/workspaces/crafted-victim"
 crafted_attacker="$fixture/workspaces/crafted-attacker"
 crafted_xdg="$fixture/crafted-xdg/git/config"
@@ -432,23 +436,32 @@ git -C "$crafted_victim" init -q
 crafted_victim="$(cd "$crafted_victim" && pwd -P)"
 victim_listing_before="$(find "$crafted_victim/.git" | sort)"
 # A stale/crafted .git FILE naming a real, unrelated repository directly —
-# not a genuine worktree admin dir — is exactly the attack the finding
-# describes: safe.directory would let Git resolve it, but it carries no
-# "gitdir" reverse pointer at all, so the round-trip check refuses it.
+# not a genuine worktree admin dir — carries no "gitdir" reverse pointer of
+# its OWN and is therefore indistinguishable, at the Git-metadata level,
+# from a legitimate submodule or --separate-git-dir checkout (F22): both
+# resolve --git-dir and --git-common-dir to the identical directory. The
+# maintainer's ruling ("made non-fatal") accepts that this one shape can no
+# longer be told apart and made a deliberate trade: privileged mutation is
+# refused unconditionally for it (never chown/chmod an admin dir that isn't
+# a validated worktrees/ child), while post-create itself no longer aborts.
+# What this fixture proves is the security property that survives that
+# trade — the crafted redirect never gets privileged access to the
+# unrelated victim — not that the pointer is rejected outright.
 printf 'gitdir: %s\n' "${crafted_victim}/.git" >"$crafted_attacker/.git"
-if run_reconcile_at "$crafted_attacker" "$crafted_xdg" "$crafted_log" >/dev/null 2>"$tmp_root/crafted.err"; then
-    fail "reconciliation accepted a .git pointer redirected at an unrelated repository"
-fi
-grep -Fq "refusing an untrusted worktree admin directory" "$tmp_root/crafted.err" ||
-    fail "reconciliation did not name the untrusted-pointer refusal"
+crafted_resolved="$(run_reconcile_at "$crafted_attacker" "$crafted_xdg" "$crafted_log" 2>"$tmp_root/crafted.err")" ||
+    fail "reconciliation aborted post-create for a same-shape .git redirect instead of skipping the privileged mutation (F22)"
+[ "$crafted_resolved" = "$crafted_attacker" ] ||
+    fail "the skipped workspace was not resolved as its own root (resolved '$crafted_resolved', expected '$crafted_attacker')"
+grep -Fq "non-worktree indirection" "$tmp_root/crafted.err" ||
+    fail "reconciliation did not explain why the crafted redirect's privileged reconciliation was skipped"
 [ ! -e "$crafted_log" ] || [ ! -s "$crafted_log" ] ||
-    fail "reconciliation invoked sudo against the crafted pointer before refusing it"
+    fail "reconciliation invoked sudo against the crafted pointer — the F17 attack's privileged mutation must still never fire"
 victim_listing_after="$(find "$crafted_victim/.git" | sort)"
 [ "$victim_listing_before" = "$victim_listing_after" ] ||
     fail "the unrelated victim repository's Git directory contents changed"
 crafted_safe_entries="$(git config --file "$crafted_xdg" --get-all safe.directory 2>/dev/null || true)"
-! grep -Fqx "$crafted_attacker" <<<"$crafted_safe_entries" ||
-    fail "the crafted-pointer refusal persisted safe.directory"
+grep -Fqx "$crafted_attacker" <<<"$crafted_safe_entries" ||
+    fail "a skipped workspace was not trusted via safe.directory so post-create can still proceed"
 
 echo "==> resolve_git_dir refuses a crafted admin dir whose commondir redirects to an unrelated repository (#1241 review round 1, finding F19)"
 f19_victim="$fixture/workspaces/f19-victim"
@@ -506,6 +519,31 @@ else
     grep -Fqx "chown -R $expected_owner $f21_main/.git" "$f21_log" ||
         fail "reconciliation did not reach the common directory for a --relative-paths worktree"
 fi
+
+echo "==> resolve_git_dir skips privileged reconciliation for a genuine --separate-git-dir checkout, without aborting post-create (#1241 review round 2, finding F22)"
+f22_repo="$fixture/workspaces/f22-repo"
+f22_gitdir="$fixture/f22-external-gitdir"
+f22_xdg="$fixture/f22-xdg/git/config"
+f22_log="$fixture/f22-sudo.log"
+mkdir -p "$f22_repo/subdirectory" "$fixture/f22-xdg/git"
+git init -q --separate-git-dir="$f22_gitdir" "$f22_repo"
+f22_repo="$(cd "$f22_repo" && pwd -P)"
+f22_gitdir="$(cd "$f22_gitdir" && pwd -P)"
+f22_gitdir_listing_before="$(find "$f22_gitdir" | sort)"
+f22_resolved="$(run_reconcile_at "$f22_repo" "$f22_xdg" "$f22_log" 2>"$tmp_root/f22.err")" ||
+    fail "reconciliation aborted post-create for a genuine --separate-git-dir checkout instead of skipping it"
+[ "$f22_resolved" = "$f22_repo" ] ||
+    fail "a --separate-git-dir checkout was not resolved as its own workspace root (resolved '$f22_resolved', expected '$f22_repo')"
+grep -Fq "non-worktree indirection" "$tmp_root/f22.err" ||
+    fail "reconciliation did not explain why privileged reconciliation was skipped for the --separate-git-dir checkout"
+[ ! -e "$f22_log" ] || [ ! -s "$f22_log" ] ||
+    fail "reconciliation invoked sudo against a --separate-git-dir checkout it should only skip"
+f22_gitdir_listing_after="$(find "$f22_gitdir" | sort)"
+[ "$f22_gitdir_listing_before" = "$f22_gitdir_listing_after" ] ||
+    fail "the external --separate-git-dir directory's contents changed despite being skipped, not mutated"
+f22_safe_entries="$(git config --file "$f22_xdg" --get-all safe.directory 2>/dev/null || true)"
+grep -Fqx "$f22_repo" <<<"$f22_safe_entries" ||
+    fail "a skipped --separate-git-dir checkout was not trusted via safe.directory so post-create can still proceed"
 
 echo "==> symlinked Git markers fail closed before chmod"
 symlink_repo="$fixture/workspaces/symlinked"
