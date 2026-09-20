@@ -568,9 +568,12 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   changes (docs, this repo's own tooling) keep their normal type. Pre-flight it
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
-- **A PR body that closes an issue must pre-flight `guard:closing-keywords`
-  too.** A same-repo `Closes #N` while `#N` still has unchecked acceptance
-  criteria fails the required `closing-keywords` check, and the guard is a
+- **A PR that closes an issue must pre-flight `guard:closing-keywords` too —
+  from the body, the title, or a commit message.** The checker scans all
+  three, so a `Closes #N` written only into a commit subject counts and is the
+  easy one to forget. A same-repo `Closes #N` while `#N` still has unchecked
+  acceptance criteria fails the required `closing-keywords` check, and the
+  guard is a
   metadata read — so pay for it locally, in the second before `gh pr create`,
   rather than in a CI round and a fix push. It stays **out of `verify`**
   deliberately: `verify` is offline and this guard calls the GitHub API.

@@ -1703,7 +1703,9 @@ done
 build_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/build.yml)"
 grep -Fq 'types: [opened, synchronize, reopened]' <<<"$build_trigger" ||
     err "build.yml pull_request types must be [opened, synchronize, reopened]"
-! grep -Eq '^ *types:.*\bedited\b' <<<"$build_trigger" ||
+# Fixed-string with comments stripped — see test-ci-results.sh for why `\b`
+# is avoided in a negative assertion, and why comments must go first.
+! grep -v '^[[:space:]]*#' <<<"$build_trigger" | grep -Fq 'edited' ||
     err "build.yml re-runs the whole matrix on a PR title/body edit"
 ck_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/closing-keywords.yml)"
 grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$ck_trigger" ||
