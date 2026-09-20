@@ -64,10 +64,27 @@ resolve_workspace_root() {
 # safe.directory is scoped to this exact invocation via -c — never persisted,
 # never a wildcard — because Git's ownership check runs before the workspace
 # root has been trusted anywhere durable.
+# resolve_relative_to <base_dir> <maybe_relative_path> — canonicalize a path
+# that may be relative to base_dir (Git's own worktree "gitdir" pointers are
+# relative when the worktree was created with --relative-paths /
+# worktree.useRelativePaths). Portable (cd + pwd -P), no GNU-only realpath.
+resolve_relative_to() {
+    local base_dir="$1" maybe_relative="$2"
+    case "$maybe_relative" in
+    /*) printf '%s\n' "$maybe_relative" ;;
+    *)
+        (
+            cd "$base_dir" && cd "$(dirname "$maybe_relative")" 2>/dev/null &&
+                printf '%s/%s\n' "$(pwd -P)" "$(basename "$maybe_relative")"
+        )
+        ;;
+    esac
+}
+
 resolve_git_dir() {
     local workspace_root="$1"
     local git_marker="$workspace_root/.git"
-    local git_dir admin_dir reverse_pointer
+    local git_dir admin_dir reverse_pointer reverse_pointer_resolved
 
     if [ -d "$git_marker" ]; then
         # Ordinary checkout: no attacker-controlled indirection to validate
@@ -83,14 +100,7 @@ resolve_git_dir() {
     # crafted pointer (e.g. "gitdir: /path/to/another/repo/...") would
     # otherwise redirect the privileged recursive chown/chmod below onto an
     # unrelated repository (#1241 challenge rounds 3/4/6, findings
-    # F8/F11/F17).
-    #
-    # Require the resolved admin directory to round-trip: every worktree
-    # admin directory Git itself creates (`git worktree add`) contains its
-    # OWN "gitdir" file naming the linked worktree's .git file right back —
-    # verified empirically against a real `git worktree add`. A path that
-    # does not carry this exact reverse pointer is refused before anything
-    # is mutated.
+    # F8/F11/F17; review round 1, finding F19).
     admin_dir="$(git -c safe.directory="$workspace_root" -C "$workspace_root" \
         rev-parse --path-format=absolute --git-dir 2>/dev/null)" || {
         echo "ERROR: could not resolve the Git admin directory for $workspace_root" >&2
@@ -100,15 +110,6 @@ resolve_git_dir() {
         echo "ERROR: Git reported an empty admin directory for $workspace_root" >&2
         return 1
     }
-    reverse_pointer="$(cat "$admin_dir/gitdir" 2>/dev/null)" || {
-        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — no reverse gitdir pointer found" >&2
-        return 1
-    }
-    [ "$reverse_pointer" = "$git_marker" ] || {
-        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — its reverse pointer ($reverse_pointer) does not name $git_marker" >&2
-        return 1
-    }
-
     git_dir="$(git -c safe.directory="$workspace_root" -C "$workspace_root" \
         rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
         echo "ERROR: could not resolve the Git directory for $workspace_root" >&2
@@ -118,6 +119,40 @@ resolve_git_dir() {
         echo "ERROR: Git reported an empty common directory for $workspace_root" >&2
         return 1
     }
+
+    # A round-trip check on the admin dir ALONE is not enough: a crafted
+    # admin directory can carry a correct reverse pointer back to this
+    # workspace while its OWN "commondir" file names a different, unrelated
+    # repository, which --git-common-dir would then happily return — the
+    # privileged chown/chmod would follow it there (review round 1, finding
+    # F19). Require the admin directory to actually be the exact
+    # "worktrees/<name>" child of the resolved common directory — the only
+    # shape Git itself ever creates — before trusting either path.
+    [ "$(dirname "$admin_dir")" = "$git_dir/worktrees" ] || {
+        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — it is not a direct worktrees/ child of the resolved common directory $git_dir" >&2
+        return 1
+    }
+
+    # THEN require the admin directory to round-trip: every worktree admin
+    # directory Git itself creates (`git worktree add`) contains its OWN
+    # "gitdir" file naming the linked worktree's .git file right back —
+    # verified empirically. The reverse pointer is RELATIVE (to the admin
+    # dir) when the worktree was created with --relative-paths — resolved
+    # before comparing, so a Git-supported relative worktree is accepted,
+    # not just an absolute one (review round 1, finding F21).
+    reverse_pointer="$(cat "$admin_dir/gitdir" 2>/dev/null)" || {
+        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — no reverse gitdir pointer found" >&2
+        return 1
+    }
+    reverse_pointer_resolved="$(resolve_relative_to "$admin_dir" "$reverse_pointer")" || {
+        echo "ERROR: could not resolve the reverse gitdir pointer at $admin_dir/gitdir" >&2
+        return 1
+    }
+    [ "$reverse_pointer_resolved" = "$git_marker" ] || {
+        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — its reverse pointer ($reverse_pointer_resolved) does not name $git_marker" >&2
+        return 1
+    }
+
     printf '%s\n' "$git_dir"
 }
 

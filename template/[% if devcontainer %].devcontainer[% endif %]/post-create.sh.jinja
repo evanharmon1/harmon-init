@@ -39,14 +39,20 @@ bash .devcontainer/scripts/bot-autonomy.sh verify
 # auto-installing node_modules in new worktrees. Only these named hooks are
 # copied or chmodded; Git's sample hooks are left untouched.
 install_repo_managed_hooks() {
-    local hook hook_name target
+    local hook hook_name target hooks_dir
 
     [ -d .devcontainer/hooks ] || return 0
+    # .git is a FILE, not a directory, in a linked worktree —
+    # post-create-common.sh (which ran before this and already persisted
+    # safe.directory trust) resolves this correctly; hardcoding ".git/hooks"
+    # as a path segment would make `cp` fail ("Not a directory") and abort
+    # the whole script under set -e (review round 1, finding F20).
+    hooks_dir="$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
     echo "==> Installing git hooks from .devcontainer/hooks/..."
     for hook in .devcontainer/hooks/*; do
         [ -f "$hook" ] || continue
         hook_name="$(basename "$hook")"
-        target=".git/hooks/$hook_name"
+        target="$hooks_dir/$hook_name"
         cp "$hook" "$target"
         chmod +x "$target"
     done

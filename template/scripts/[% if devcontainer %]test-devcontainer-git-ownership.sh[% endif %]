@@ -58,8 +58,12 @@ grep -Fq 'git_dir="$(resolve_git_dir "$workspace_root")"' "$helpers" ||
     fail "permissions reconciliation does not resolve the real Git directory before touching it"
 grep -Fq 'reverse_pointer="$(cat "$admin_dir/gitdir" 2>/dev/null)"' "$helpers" ||
     fail "resolve_git_dir does not require the worktree admin dir's reverse pointer before trusting it (#1241 challenge round 6, finding F17)"
-grep -Fq '[ "$reverse_pointer" = "$git_marker" ]' "$helpers" ||
+grep -Fq '[ "$reverse_pointer_resolved" = "$git_marker" ]' "$helpers" ||
     fail "resolve_git_dir does not validate the reverse pointer round-trips to this exact workspace"
+grep -Fq '[ "$(dirname "$admin_dir")" = "$git_dir/worktrees" ]' "$helpers" ||
+    fail "resolve_git_dir does not validate the admin dir is a direct worktrees/ child of the resolved common dir (#1241 review round 1, finding F19)"
+grep -q '^resolve_relative_to()' "$helpers" ||
+    fail "the extracted helpers do not include resolve_relative_to (#1241 review round 1, finding F21)"
 grep -Fq "orig_gid=\"\$(stat -c '%g' \"\$git_dir\"" "$helpers" ||
     fail "permissions reconciliation does not capture the original group before reassigning ownership"
 grep -Fq 'sudo chown -R "$(id -u):${orig_gid}" "$git_dir"' "$helpers" ||
@@ -446,6 +450,63 @@ crafted_safe_entries="$(git config --file "$crafted_xdg" --get-all safe.director
 ! grep -Fqx "$crafted_attacker" <<<"$crafted_safe_entries" ||
     fail "the crafted-pointer refusal persisted safe.directory"
 
+echo "==> resolve_git_dir refuses a crafted admin dir whose commondir redirects to an unrelated repository (#1241 review round 1, finding F19)"
+f19_victim="$fixture/workspaces/f19-victim"
+f19_attacker="$fixture/workspaces/f19-attacker"
+f19_fake_admin="$fixture/f19-fake-admin"
+f19_xdg="$fixture/f19-xdg/git/config"
+f19_log="$fixture/f19-sudo.log"
+mkdir -p "$f19_victim" "$f19_attacker/subdirectory" "$f19_fake_admin" "$fixture/f19-xdg/git"
+git -C "$f19_victim" init -q
+f19_victim="$(cd "$f19_victim" && pwd -P)"
+f19_victim_listing_before="$(find "$f19_victim/.git" | sort)"
+mkdir -p "$f19_attacker/subdirectory"
+f19_attacker="$(cd "$f19_attacker" && pwd -P)"
+# The fake admin dir's OWN reverse pointer correctly names the attacker's
+# .git file (satisfies the round-trip check alone) — but its "commondir"
+# names the unrelated victim repository instead of a real common dir. A
+# minimal HEAD file is required for Git to recognize the directory as a
+# Git dir at all.
+printf 'gitdir: %s/.git\n' "$f19_attacker" >"$f19_fake_admin/gitdir"
+printf '%s\n' "$f19_victim/.git" >"$f19_fake_admin/commondir"
+printf 'ref: refs/heads/main\n' >"$f19_fake_admin/HEAD"
+printf 'gitdir: %s\n' "$f19_fake_admin" >"$f19_attacker/.git"
+if run_reconcile_at "$f19_attacker" "$f19_xdg" "$f19_log" >/dev/null 2>"$tmp_root/f19.err"; then
+    fail "reconciliation accepted a crafted admin dir whose commondir redirects to an unrelated repository"
+fi
+grep -Fq "not a direct worktrees/ child" "$tmp_root/f19.err" ||
+    fail "reconciliation did not name the admin-dir/common-dir relationship refusal"
+[ ! -e "$f19_log" ] || [ ! -s "$f19_log" ] ||
+    fail "reconciliation invoked sudo against the crafted commondir before refusing it"
+f19_victim_listing_after="$(find "$f19_victim/.git" | sort)"
+[ "$f19_victim_listing_before" = "$f19_victim_listing_after" ] ||
+    fail "the unrelated victim repository's Git directory contents changed"
+
+echo "==> resolve_git_dir accepts a legitimate --relative-paths worktree (#1241 review round 1, finding F21)"
+f21_main="$fixture/workspaces/f21-main"
+f21_linked="$fixture/workspaces/f21-linked"
+f21_xdg="$fixture/f21-xdg/git/config"
+f21_log="$fixture/f21-sudo.log"
+mkdir -p "$f21_main" "$fixture/f21-xdg/git"
+git -C "$f21_main" init -q
+git -C "$f21_main" -c user.name=fixture -c user.email=fixture@example.test commit --allow-empty -qm init
+f21_main="$(cd "$f21_main" && pwd -P)"
+if ! git -C "$f21_main" worktree add --relative-paths -q "$f21_linked" -b f21-branch 2>"$tmp_root/f21-setup.err"; then
+    echo "  (skipped: this Git version does not support --relative-paths)"
+else
+    f21_linked="$(cd "$f21_linked" && pwd -P)"
+    mkdir -p "$f21_linked/subdirectory"
+    case "$(cat "$f21_linked/.git")" in
+    "gitdir: ../"*) : ;;
+    *) fail "fixture setup: expected a relative gitdir pointer in the --relative-paths worktree" ;;
+    esac
+    f21_resolved="$(run_reconcile_at "$f21_linked" "$f21_xdg" "$f21_log")"
+    [ "$f21_resolved" = "$f21_linked" ] ||
+        fail "a legitimate --relative-paths worktree was not accepted (resolved '$f21_resolved', expected '$f21_linked')"
+    grep -Fqx "chown -R $expected_owner $f21_main/.git" "$f21_log" ||
+        fail "reconciliation did not reach the common directory for a --relative-paths worktree"
+fi
+
 echo "==> symlinked Git markers fail closed before chmod"
 symlink_repo="$fixture/workspaces/symlinked"
 symlink_target="$fixture/external-git-target"
@@ -530,7 +591,11 @@ converge_resolved="$(run_reconcile_at "$converge_repo" "$converge_config" "$conv
 
 echo "==> only repository-managed hook names are chmodded"
 hook_fixture="$fixture/managed-hooks"
-mkdir -p "$hook_fixture/.devcontainer/hooks" "$hook_fixture/.git/hooks"
+mkdir -p "$hook_fixture/.devcontainer/hooks"
+# A real repository, not just a directory shaped like one: install_repo_managed_hooks
+# resolves its target via `git rev-parse --git-common-dir` (#1241 review
+# round 1, finding F20), which requires genuine Git metadata to answer.
+git -C "$hook_fixture" init -q
 printf '%s\n' '#!/bin/sh' 'echo managed' >"$hook_fixture/.devcontainer/hooks/post-checkout"
 chmod 0644 "$hook_fixture/.devcontainer/hooks/post-checkout"
 printf '%s\n' sample >"$hook_fixture/.git/hooks/applypatch-msg.sample"
@@ -547,10 +612,35 @@ chmod 0644 "$hook_fixture/.git/hooks/applypatch-msg.sample"
 grep -Fqx 'echo managed' "$hook_fixture/.git/hooks/post-checkout" ||
     fail "the managed hook was not copied"
 
+echo "==> managed hooks install correctly from a linked worktree, where .git is a file (#1241 review round 1, finding F20)"
+hook_wt_main="$fixture/workspaces/hook-wt-main"
+hook_wt_linked="$fixture/workspaces/hook-wt-linked"
+mkdir -p "$hook_wt_main"
+git -C "$hook_wt_main" init -q
+git -C "$hook_wt_main" -c user.name=fixture -c user.email=fixture@example.test commit --allow-empty -qm init
+hook_wt_main="$(cd "$hook_wt_main" && pwd -P)"
+git -C "$hook_wt_main" worktree add -q "$hook_wt_linked" -b hook-wt-branch
+hook_wt_linked="$(cd "$hook_wt_linked" && pwd -P)"
+mkdir -p "$hook_wt_linked/.devcontainer/hooks"
+[ -f "$hook_wt_linked/.git" ] ||
+    fail "fixture setup: expected the linked worktree's .git to be a file"
+printf '%s\n' '#!/bin/sh' 'echo managed-worktree' >"$hook_wt_linked/.devcontainer/hooks/post-checkout"
+chmod 0644 "$hook_wt_linked/.devcontainer/hooks/post-checkout"
+(
+    cd "$hook_wt_linked"
+    . "$managed_helpers"
+    install_repo_managed_hooks
+) || fail "install_repo_managed_hooks aborted from a linked worktree instead of resolving the shared hooks directory"
+[ -x "$hook_wt_main/.git/hooks/post-checkout" ] ||
+    fail "the managed hook was not installed into the linked worktree's shared (main-checkout) hooks directory"
+grep -Fqx 'echo managed-worktree' "$hook_wt_main/.git/hooks/post-checkout" ||
+    fail "the managed hook content was not copied for a linked worktree"
+
 echo "==> a managed hook that cannot be made executable fails post-create loudly (#1241 item 5)"
 hook_fail_fixture="$fixture/managed-hooks-fail"
 hook_fail_bin="$fixture/hook-fail-bin"
-mkdir -p "$hook_fail_fixture/.devcontainer/hooks" "$hook_fail_fixture/.git/hooks" "$hook_fail_bin"
+mkdir -p "$hook_fail_fixture/.devcontainer/hooks" "$hook_fail_bin"
+git -C "$hook_fail_fixture" init -q
 printf '%s\n' '#!/bin/sh' 'echo managed' >"$hook_fail_fixture/.devcontainer/hooks/post-checkout"
 chmod 0644 "$hook_fail_fixture/.devcontainer/hooks/post-checkout"
 cat >"$hook_fail_bin/chmod" <<'CHMODFAIL'
