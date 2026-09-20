@@ -18,7 +18,6 @@ claude-settings.json
 claude-statusline.sh
 claude-user-defaults.json
 codex-managed-config.toml
-codex-managed-config.toml
 ghostty.terminfo
 gitconfig
 micro-bindings.json
@@ -33,8 +32,6 @@ claude-hooks/enforce-conventional-commits.sh
 claude-hooks/post-edit-format.sh
 claude-hooks/protect-files.sh
 claude-hooks/session-start-context.sh
-codex-hooks/claude-compat.sh
-codex-hooks/file-payload.sh
 codex-hooks/claude-compat.sh
 codex-hooks/file-payload.sh
 "
@@ -72,7 +69,19 @@ install -m 0644 "${config_dir}/claude-settings.json" /etc/claude-code/managed-se
 install -m 0755 "${config_dir}/claude-statusline.sh" /etc/claude-code/statusline.sh
 install -m 0755 "${config_dir}/claude-statusline.sh" /etc/antigravity/statusline.sh
 install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
-install -m 0644 "${config_dir}/codex-managed-config.toml" /etc/codex/managed_config.toml
+# Overridable system defaults (model, reasoning effort, doc budget, TUI),
+# deliberately a SEPARATE layer from managed_config.toml, whose keys Codex
+# treats as unoverridable requirements -- see harmon-init#1186.
+#
+# OPTIONAL for the same reason as the optional Claude hooks below: this image
+# is consumed by repositories generated before the split existed, whose
+# overlay has no codex-system-config.toml. Listing it in required_files would
+# fail their Docker build outright -- a new image must never break an old
+# consumer. They keep whatever their managed config already pins until they
+# take the template update. Promote it into required_files once the fleet has.
+if [ -f "${config_dir}/codex-system-config.toml" ]; then
+    install -m 0644 "${config_dir}/codex-system-config.toml" /etc/codex/config.toml
+fi
 for hook in \
     block-no-verify.sh \
     enforce-conventional-commits.sh \
@@ -97,9 +106,6 @@ for hook in \
     session-end-archive.sh; do
     [ -f "${config_dir}/claude-hooks/${hook}" ] || continue
     install -m 0755 "${config_dir}/claude-hooks/${hook}" "/etc/claude-code/hooks/${hook}"
-done
-for hook in claude-compat.sh file-payload.sh; do
-    install -m 0755 "${config_dir}/codex-hooks/${hook}" "/etc/codex/hooks/${hook}"
 done
 for hook in claude-compat.sh file-payload.sh; do
     install -m 0755 "${config_dir}/codex-hooks/${hook}" "/etc/codex/hooks/${hook}"

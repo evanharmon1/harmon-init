@@ -205,6 +205,33 @@ gh auth status || true
 # push.autoSetupRemote is baked in the environment gitconfig alongside the
 # other static settings.
 
+# --- Transitional: Codex overridable-defaults layer (harmon-init#1186) ---
+#
+# Model, reasoning effort, the project-doc budget and the TUI status line moved
+# OUT of /etc/codex/managed_config.toml, where Codex treats every key as an
+# unoverridable requirement that silently beats `-c` and the user's own config,
+# and INTO /etc/codex/config.toml, its system *defaults* layer. (An explicit
+# `-m` still overrode a pinned `model`; it was `-c model=` that was swallowed.)
+#
+# The installer that writes that file lives in the shared IMAGE, but this repo
+# pins an image by digest, so between this change landing and the consumer-pin
+# bump the pinned image still ships the old installer -- it would create no
+# /etc/codex/config.toml at all, and the defaults would simply vanish rather
+# than become overridable. This step closes that window from the consumer side.
+#
+# It is deliberately self-retiring: once the pinned image's own installer
+# writes the file, the `-f` test is true on every subsequent build and this is
+# a no-op. Delete it after the pin bump has landed everywhere.
+# `workspace_root` is local to reconcile_workspace_permissions, so resolve it
+# here rather than reaching for a name that is unbound under `set -u`.
+codex_defaults_root="$(resolve_workspace_root "$(pwd -P)" || true)"
+codex_defaults_src="${codex_defaults_root:-/nonexistent}/.devcontainer/config/codex-system-config.toml"
+if [ ! -f /etc/codex/config.toml ] && [ -f "$codex_defaults_src" ]; then
+    echo "==> Installing Codex defaults layer (image predates the split)..."
+    sudo install -d -m 0755 /etc/codex
+    sudo install -m 0644 "$codex_defaults_src" /etc/codex/config.toml
+fi
+
 echo "==> Fixing ownership of persistent volume dirs..."
 for dir in /home/vscode/.codex /home/vscode/.claude /home/vscode/.gemini \
     /home/vscode/.copilot /home/vscode/.pi /home/vscode/.omp \

@@ -130,13 +130,17 @@ docker run --rm "$overlay" sh -eu -c '
     }
     [ -f /etc/codex/managed_config.toml ]
     [ -x /etc/codex/hooks/claude-compat.sh ]
-    [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
+    # The boundary lives in managed_config.toml; the overridable defaults live
+    # in /etc/codex/config.toml. Asserting the model against the managed layer
+    # would re-enshrine the bug the split fixed (harmon-init#1186), so assert
+    # each key against the layer it now belongs to -- and assert the
+    # separation, not just the values.
     [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
     ! grep -Eq "session-start-context|post-edit-format|enforce-conventional-commits" /etc/codex/managed_config.toml
-    [ -f /etc/codex/managed_config.toml ]
-    [ -x /etc/codex/hooks/claude-compat.sh ]
-    [ "$(yq ".model" /etc/codex/managed_config.toml)" = "gpt-5.6-sol" ]
-    [ "$(yq ".sandbox_mode" /etc/codex/managed_config.toml)" = "workspace-write" ]
+    ! grep -Eq "^[[:space:]]*\"?(model|model_reasoning_effort|project_doc_max_bytes)\"?[[:space:]]*=" /etc/codex/managed_config.toml
+    [ -f /etc/codex/config.toml ]
+    [ "$(yq ".model" /etc/codex/config.toml)" = "gpt-5.6-sol" ]
+    [ "$(yq ".model_reasoning_effort" /etc/codex/config.toml)" = "medium" ]
     [ -f /home/vscode/.config/git/config ]
     [ -f /usr/local/share/devcontainer-config/claude-user-defaults.json ]
     terminfo="$(infocmp -1 xterm-ghostty)"
@@ -188,6 +192,12 @@ legacy_context="$(mktemp -d)"
 mkdir -p "${legacy_context}/.devcontainer"
 cp -R .devcontainer/config "${legacy_context}/.devcontainer/config"
 rm -f "${legacy_context}/.devcontainer/config/claude-hooks/session-end-archive.sh"
+# A pre-split overlay has no codex-system-config.toml either. Without removing
+# it here the optional-install guard is never exercised: the fixture would
+# supply the file, the build would pass, and making it required again (or
+# dropping the guard) would keep CI green while every pre-update consumer's
+# build broke (harmon-init#1186).
+rm -f "${legacy_context}/.devcontainer/config/codex-system-config.toml"
 
 docker build \
     --build-arg "BASE_IMAGE=${candidate}" \
@@ -199,8 +209,13 @@ docker run --rm "$legacy_overlay" sh -eu -c '
     # The mandatory hooks still install …
     [ -x /etc/claude-code/hooks/protect-files.sh ]
     [ -f /etc/claude-code/managed-settings.json ]
-    # … and the optional one is simply absent rather than a failed build.
+    # … and the optional ones are simply absent rather than a failed build.
     [ ! -e /etc/claude-code/hooks/session-end-archive.sh ]
+    [ ! -e /etc/codex/config.toml ]
+    # The boundary layer still installs, so a legacy consumer keeps a working
+    # Codex policy -- it just does not gain the overridable defaults until it
+    # takes the template update.
+    [ -f /etc/codex/managed_config.toml ]
 '
 
 echo "test-devcontainer-image: candidate, repository overlay, and legacy overlay passed"
