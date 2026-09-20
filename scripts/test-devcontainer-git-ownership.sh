@@ -62,8 +62,8 @@ grep -Fq 'sudo chown -R "$(id -u):${orig_gid}" "$git_dir"' "$helpers" ||
     fail "permissions reconciliation does not preserve the original group when reclaiming ownership"
 grep -Fq 'chmod -R u=rwX,g=rwX,o=rX "$git_dir"' "$helpers" ||
     fail "permissions reconciliation does not grant the original group write access"
-grep -Fq 'find "$git_dir" -type d -exec chmod g+s {} +' "$helpers" ||
-    fail "permissions reconciliation does not set the setgid bit (scoped to directories only) so new entries inherit the original group"
+grep -Fq 'sudo find "$git_dir" -type d -exec chmod g+s {} +' "$helpers" ||
+    fail "permissions reconciliation does not set the setgid bit (scoped to directories only, privileged so it survives a non-member gid) so new entries inherit the original group"
 grep -Fq 'git -c safe.directory="$workspace_root" -C "$workspace_root" config core.sharedRepository 0664' "$helpers" ||
     fail "permissions reconciliation does not configure an explicit, umask-independent core.sharedRepository so future commits stay group-writable, never world-writable"
 grep -q '^reconcile_step_failed()' "$helpers" ||
@@ -178,7 +178,9 @@ resolved="$(run_reconcile)"
     fail "resolved workspace root was '$resolved', expected '$repo'"
 grep -Fqx "chown -R $expected_owner $repo/.git" "$log" ||
     fail "Git metadata ownership was not reclaimed (owner) / preserved (group) at the resolved root"
-! grep -Eq '^(find|mountpoint|mkdir) ' "$log" ||
+grep -Fqx "find $repo/.git -type d -exec chmod g+s {} +" "$log" ||
+    fail "the setgid pass did not run under sudo (#1241 challenge round 5, finding F13)"
+! grep -Eq '^(mountpoint|mkdir) ' "$log" ||
     fail "permissions reconciliation ran unexpected commands under sudo"
 ! grep -Fq "$unrelated" "$log" ||
     fail "permissions reconciliation touched an unrelated path"
@@ -296,6 +298,45 @@ if [ -n "$secondary_gid" ]; then
         fail "reconciliation changed the group away from the original (non-primary) one"
 else
     echo "  (skipped: no secondary group available that is both distinct from the primary gid and actually assignable here)"
+fi
+
+echo "==> setgid survives reconciliation even when the invoking user is NOT a member of the preserved group (#1241 challenge round 5, finding F13)"
+# The fixture above only ever proves preservation for a gid the invoking
+# user already belongs to — the realistic UID-mismatch case is a host
+# group the container user has no reason to be a member of, and Linux
+# silently drops S_ISGID (while chmod still reports success) unless the
+# caller is either a member or privileged. This needs a REAL sudo, not the
+# logging shim: the shim never grants actual privilege, so it could not
+# tell a privileged setgid pass from an unprivileged one that got silently
+# dropped. Constructing the fixture itself also needs real sudo (chgrp to
+# a group the invoking user does not belong to is exactly as restricted).
+nonmember_gid=""
+for candidate_gid in $(getent group | awk -F: '{print $3}'); do
+    case " $(id -G) " in
+    *" $candidate_gid "*) continue ;;
+    esac
+    nonmember_gid="$candidate_gid"
+    break
+done
+if [ -n "$nonmember_gid" ] && sudo -n true 2>/dev/null; then
+    nonmember_repo="$fixture/workspaces/nonmember-gid"
+    nonmember_xdg="$fixture/nonmember-xdg"
+    mkdir -p "$nonmember_repo/subdirectory" "$nonmember_xdg/git"
+    git -C "$nonmember_repo" init -q
+    sudo chgrp "$nonmember_gid" "$nonmember_repo/.git"
+    [ "$(stat -c '%g' "$nonmember_repo/.git" 2>/dev/null || stat -f '%g' "$nonmember_repo/.git")" = "$nonmember_gid" ] ||
+        fail "fixture setup: could not set the Git directory's group to the non-member gid $nonmember_gid"
+    (
+        cd "$nonmember_repo/subdirectory"
+        HOME="$home" XDG_CONFIG_HOME="$nonmember_xdg" \
+            bash -c 'set -e; . "$1"; reconcile_workspace_permissions "$2"' _ "$helpers" "$nonmember_xdg/git/config"
+    ) || fail "reconciliation failed against a non-member-gid fixture"
+    [ "$(git_mode "$nonmember_repo/.git")" = "2775" ] ||
+        fail "setgid did not survive reconciliation when the container user is not a member of the preserved group (#1241 challenge round 5, finding F13 regression)"
+    [ "$(stat -c '%g' "$nonmember_repo/.git" 2>/dev/null || stat -f '%g' "$nonmember_repo/.git")" = "$nonmember_gid" ] ||
+        fail "the non-member group was not preserved by reconciliation"
+else
+    echo "  (skipped: no non-member gid and/or passwordless sudo available to exercise this with)"
 fi
 
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"

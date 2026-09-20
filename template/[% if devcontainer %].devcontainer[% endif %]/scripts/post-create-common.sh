@@ -145,8 +145,13 @@ reconcile_workspace_permissions() {
     # something unrelated and security-sensitive, set-group-ID on
     # execution, which must never land on a hook script): every new file or
     # directory Git creates under here inherits the original group instead
-    # of whichever process's primary group happened to create it.
-    find "$git_dir" -type d -exec chmod g+s {} + || {
+    # of whichever process's primary group happened to create it. Privileged
+    # (sudo): an unprivileged chmod silently CLEARS S_ISGID — reporting
+    # success while not setting it — whenever the caller is not itself a
+    # member of the target group, which is the ordinary case here (the
+    # container user has no reason to belong to the host's original group)
+    # (#1241 challenge round 5, finding F13).
+    sudo find "$git_dir" -type d -exec chmod g+s {} + || {
         reconcile_step_failed "could not set the setgid bit under $git_dir"
         return 1
     }

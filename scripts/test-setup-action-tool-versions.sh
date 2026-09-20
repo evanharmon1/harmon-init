@@ -12,10 +12,16 @@ fail() {
 }
 
 test_tmp="$(mktemp -d -t harmon-init-setup-versions-XXXXXX)"
+trap 'rm -rf "$test_tmp"' EXIT
 # The gitleaks installer hardcodes /tmp/gitleaks.tgz (no RUNNER_TEMP-scoped
-# override exists for it, unlike the lint tools below) — the fake curl below
-# writes there faithfully, so clean it up alongside the test's own scratch dir.
-trap 'rm -rf "$test_tmp" /tmp/gitleaks.tgz' EXIT
+# override exists for it, unlike the lint tools below), and the fake curl
+# below writes there faithfully — but NOT cleaned up here: two concurrent
+# invocations (or a real `task security` run racing this test) would
+# otherwise delete each other's in-flight file at that shared path, and
+# `rm -rf` would remove an unrelated directory a third party had placed
+# there too (#1241 challenge round 5, finding F16). A small leftover file,
+# overwritten by the next real invocation's own fake curl, is the safer
+# trade.
 stale_bin="${test_tmp}/stale-bin"
 helper_bin="${test_tmp}/helpers"
 curl_log="${test_tmp}/curl.log"
