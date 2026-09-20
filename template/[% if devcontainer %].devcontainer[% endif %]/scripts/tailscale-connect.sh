@@ -86,13 +86,34 @@ fi
 # live PID and no socket, and the `tailscale status` / `tailscale up` calls
 # below race it. That used to cost a swallowed error message; now that a failed
 # connect is fatal it would cost a failed build on nothing but timing.
+# Wait for the daemon to ANSWER, not merely for its socket path to exist.
+# `[ -S ... ]` proves an inode is there, which is not the same thing: a unix
+# socket file outlives the process that bound it, so a tailscaled that crashed
+# or was killed uncleanly leaves one behind. The replacement daemon then unlinks
+# and re-binds it, and a bare `-S` check passes instantly against the STALE
+# inode — so `status` and `up` race a daemon that is still starting. That was
+# survivable while failures were swallowed; now it would fail the build on a
+# daemon that was about to recover.
+#
+# So require both: the socket, and a status response that actually parses as
+# tailscale's JSON. Exit status is deliberately not the test — `tailscale
+# status` reports a logged-out backend through its output rather than
+# consistently through its exit code, and this loop must not depend on which.
+# Empty output is what a dead or still-starting daemon gives.
+TS_STATUS_JSON=""
 for _ in $(seq 1 100); do
-    [ -S "${TS_SOCKET}" ] && break
+    if [ -S "${TS_SOCKET}" ]; then
+        TS_STATUS_JSON="$(sudo tailscale status --json 2>/dev/null || true)"
+        case "${TS_STATUS_JSON}" in
+        *'"BackendState"'*) break ;;
+        esac
+        TS_STATUS_JSON=""
+    fi
     sleep 0.1
 done
-if [ ! -S "${TS_SOCKET}" ]; then
+if [ -z "${TS_STATUS_JSON}" ]; then
     tail -5 /var/log/tailscaled.log 2>/dev/null || true
-    bail "tailscaled is not listening on ${TS_SOCKET} after 10s; see /var/log/tailscaled.log."
+    bail "tailscaled is not answering on ${TS_SOCKET} after 10s; see /var/log/tailscaled.log."
 fi
 
 # Ask the backend whether it is actually up, not whether it remembers an
@@ -112,13 +133,16 @@ fi
 # dev build, where today the container starts and reconnects on its own when
 # the control plane returns.
 #
-# Capture, then match — do NOT pipe into `grep -q`. That reads as equivalent and
-# is not: grep exits at the first match and closes the pipe, tailscale dies of
-# SIGPIPE, and the `set -o pipefail` at the top of this script turns the whole
-# condition false. On a tailnet large enough for the JSON to exceed the pipe
-# buffer that reports "not connected" for a perfectly healthy node and re-runs
-# `tailscale up` against it.
-TS_STATUS_JSON="$(sudo tailscale status --json 2>/dev/null || true)"
+# Matched, never piped into `grep -q`. That reads as equivalent and is not: grep
+# exits at the first match and closes the pipe, tailscale dies of SIGPIPE, and
+# the `set -o pipefail` at the top of this script turns the whole condition
+# false. On a tailnet large enough for the JSON to exceed the pipe buffer that
+# reports "not connected" for a perfectly healthy node and re-runs `tailscale
+# up` against it.
+#
+# TS_STATUS_JSON is the response the readiness loop above already proved parses,
+# so this re-uses it rather than asking a second time — one fewer call, and no
+# window in which the two answers could disagree.
 TS_RUNNING_RE='"BackendState"[[:space:]]*:[[:space:]]*"Running"'
 if [[ "${TS_STATUS_JSON}" =~ $TS_RUNNING_RE ]]; then
     echo "Tailscale already connected."
