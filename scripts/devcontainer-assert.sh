@@ -626,10 +626,20 @@ SENTINEL_SCRIPT
     ts_bin="${work_dir}/tailscale-bin"
     mkdir -p "$ts_bin"
     ln -s "$bash_bin" "${ts_bin}/bash"
-    for ts_dep in seq sleep tail cat printf hostname basename cut git timeout; do
+    for ts_dep in seq sleep tail cat printf hostname basename cut git; do
         ts_dep_path="$(command -v "$ts_dep" 2>/dev/null)" || continue
         ln -s "$ts_dep_path" "${ts_bin}/${ts_dep}"
     done
+    # timeout is NOT optional and NOT resolvable by name alone: Homebrew
+    # coreutils on macOS installs it as `gtimeout`, the same split
+    # devcontainer-smoke.sh handles. tailscale-connect.sh calls bare `timeout`,
+    # and the constrained PATH below is all it can see — so resolve whichever
+    # exists and link it UNDER THE NAME the script calls. Skipping it silently
+    # (as a `continue` in the loop above would) leaves cases (h)-(j) exiting
+    # 127 on a supported dev platform, with the suite blaming tailscale.
+    ts_dep_path="$(command -v timeout || command -v gtimeout)" ||
+        fail "neither timeout nor gtimeout is available for the tailscale unit cases"
+    ln -s "$ts_dep_path" "${ts_bin}/timeout"
     # sudo → exec "$@" and pgrep → exit 0: the connect paths below must be
     # reachable without root and without a real daemon. pgrep succeeding means
     # the script skips the start-tailscaled branch and goes straight to the

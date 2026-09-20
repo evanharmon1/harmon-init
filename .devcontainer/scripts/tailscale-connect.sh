@@ -103,7 +103,12 @@ fi
 TS_STATUS_JSON=""
 for _ in $(seq 1 100); do
     if [ -S "${TS_SOCKET}" ]; then
-        TS_STATUS_JSON="$(sudo tailscale status --json 2>/dev/null || true)"
+        # Bounded per attempt. A daemon that accepts the connection and then
+        # never replies would otherwise block here forever, so the loop would
+        # never reach its advertised 10s failure path and postStartCommand
+        # would HANG instead of failing — the same "no signal" outcome this
+        # change exists to remove, one layer down.
+        TS_STATUS_JSON="$(sudo timeout 3 tailscale status --json 2>/dev/null || true)"
         case "${TS_STATUS_JSON}" in
         *'"BackendState"'*) break ;;
         esac
@@ -179,8 +184,13 @@ fi
 # installs; guessing wrong there would turn every dev build into an
 # unknown-flag failure. `timeout` is coreutils, as available as the `pgrep` and
 # `sudo` this script already assumes.
+#
+# `-k 10` is the hard bound. Plain `timeout 90` sends SIGTERM and then
+# WAITS for the child, so a wedged `tailscale up` that ignores TERM keeps
+# the lifecycle hanging past the deadline that was supposed to end it.
+# devcontainer-smoke.sh already uses `-k` for the same reason.
 if TS_CONNECT_OUTPUT="$(
-    sudo timeout 90 tailscale up \
+    sudo timeout -k 10 90 tailscale up \
         --ssh \
         --hostname="${TS_HOSTNAME}" \
         --authkey="${TS_KEY}" \
