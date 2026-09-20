@@ -55,6 +55,10 @@ use_coderabbit: false
 use_gemini_code_assist: true
 
 devcontainer: true
+# harmon-init's own dev profile IS tailnet-bearing (Evan's Coder workspaces
+# reach the homelab over it), so the root answers yes and keeps the fatal gate.
+# Generated repos default to no — see copier.yml's tailscale_required.
+tailscale_required: true
 # Dogfoods the opt-in, read-only GitHub CLI fallback for a missing Claude PR
 # payload. Generated projects leave it off unless their maintainer opts in.
 use_statusline_pr_lookup: true

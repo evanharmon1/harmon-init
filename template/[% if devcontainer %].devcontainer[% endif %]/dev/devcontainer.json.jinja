@@ -116,7 +116,14 @@
   // marker's value; only bot-autonomy/antigravity.sh (bot-only) does that.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
+[% if tailscale_required %]    // This marker is what makes a tailnet failure FATAL for this profile:
+    // tailscale-connect.sh exits nonzero instead of skipping, so a container
+    // cannot come up silently logged out. It is gated on the tailscale_required
+    // answer because the fatal gate makes this profile unable to start without
+    // a Tailscale account and a live auth key — a dependency no generated repo
+    // may carry by default.
     "DEVCONTAINER_TAILSCALE": "true",
+[% endif %]
     // gh checks GH_BROWSER before generic browser discovery. Route interactive
     // OAuth links through the host bridge so an installed terminal browser
     // cannot capture the flow inside the container.

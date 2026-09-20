@@ -1368,19 +1368,33 @@ assert_config_invariants() {
     [ "$terminal_browser_config" = "" ] ||
         fail "${profile} config no longer blanks generic BROWSER in VS Code terminals"
 
-    # The tailnet gate's two config-level invariants.
+    # The tailnet gate's config-level invariants.
     #
     # DEVCONTAINER_TAILSCALE is what tells tailscale-connect.sh that a failed
-    # connect is a broken build rather than a skip. Losing it from the dev
-    # config breaks nothing visibly — the container still starts, still reports
-    # success, and silently restores the exit-0-on-every-failure behavior the
-    # gate exists to prevent. Asserted per profile: dev sets it, bot must not.
+    # connect is a broken build rather than a skip. It is OPTIONAL by design:
+    # arming it makes a profile unable to start without a Tailscale account and
+    # a live auth key, which no generated repo may depend on by default, so it
+    # is gated on the `tailscale_required` copier answer (default no). Absence
+    # is therefore a legitimate rendering, not a regression — this script is a
+    # verbatim twin and runs in repos that answered either way.
+    #
+    # What stays enforceable everywhere: the value is exactly `true` or absent
+    # (a typo like "yes" would silently disarm the gate while looking armed);
+    # only a profile that actually HAS the tailscale feature may arm it, since
+    # requiring a tailnet a profile cannot reach is unsatisfiable by
+    # construction; and the bot profile may never arm it at all.
     local ts_marker ts_optional_env ts_map
     ts_marker="$(printf '%s' "$cfg" |
         jq -r '.configuration.containerEnv.DEVCONTAINER_TAILSCALE // "<absent>"')"
+    case "$ts_marker" in
+    true | "<absent>") ;;
+    *) fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE='${ts_marker}' — only the exact string 'true' arms the gate, so this looks armed and is not" ;;
+    esac
     if [ "$profile" = "dev" ]; then
-        [ "$ts_marker" = "true" ] ||
-            fail "dev config does not set containerEnv.DEVCONTAINER_TAILSCALE=true (a failed tailnet would silently become a no-op); found '${ts_marker}'"
+        if [ "$ts_marker" = "true" ]; then
+            [ "$has_ts_feature" != "0" ] ||
+                fail "dev config requires the tailnet (DEVCONTAINER_TAILSCALE=true) but installs no tailscale feature — the gate could never be satisfied"
+        fi
     else
         [ "$ts_marker" != "true" ] ||
             fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE=true — only the tailnet-bearing profile may require the tailnet"
