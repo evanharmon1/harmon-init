@@ -125,8 +125,11 @@ if [ -f .dogfood-answers.yml ] && [ -d template ]; then
 fi
 
 managed_helpers="$tmp_root/managed-hooks.sh"
-sed -n '/^install_repo_managed_hooks()/,/^}$/p' "$bot_post_create" >"$managed_helpers"
+sed -n '/^resolve_relative_to()/,/^install_repo_managed_hooks() {$/{/^install_repo_managed_hooks() {$/!p}' "$bot_post_create" >"$managed_helpers"
+sed -n '/^install_repo_managed_hooks()/,/^}$/p' "$bot_post_create" >>"$managed_helpers"
 [ -s "$managed_helpers" ] || fail "could not extract managed hook installer"
+grep -q '^resolve_hooks_common_dir()' "$managed_helpers" ||
+    fail "the extracted helpers do not include resolve_hooks_common_dir (#1241 integration round 2, Codex finding 4056048551)"
 grep -q '^install_repo_managed_hooks()' "$managed_helpers" ||
     fail "the extracted hook installer is missing its function"
 
@@ -405,6 +408,65 @@ grep -Fqx "$(expected_chown_log "$f23_clone/.git" "$expected_owner")" "$f23_log"
     fail "reconciliation did not grant group-write on the clone's own (non-hard-linked) HEAD file"
 [ "$(git_mode "$f23_clone/.git")" = "2775" ] ||
     fail "reconciliation did not set the clone's own .git directory mode/setgid"
+
+echo "==> reconciliation breaks the hard link for a multi-linked object the container user cannot read, without mutating the source (#1241 integration round 2, Codex finding 4056048549)"
+# Needs REAL sudo (not the logging shim above): the whole point is that only
+# a privileged process can read a mode-0000 object to copy it. Skip
+# gracefully, like the F13 non-member-gid fixture, if this environment has
+# no passwordless sudo.
+if sudo -n true 2>/dev/null; then
+    f2_source="$fixture/f2-source"
+    f2_clone="$fixture/workspaces/f2-clone"
+    f2_xdg="$fixture/f2-xdg/git/config"
+    mkdir -p "$f2_source" "$fixture/f2-xdg/git"
+    (
+        umask 027
+        git -C "$f2_source" init -q
+        printf '%s\n' tracked >"$f2_source/file.txt"
+        git -C "$f2_source" -c user.name=fixture -c user.email=fixture@example.test add file.txt
+        git -C "$f2_source" -c user.name=fixture -c user.email=fixture@example.test commit -qm init
+        git clone -q --local "$f2_source" "$f2_clone"
+    )
+    mkdir -p "$f2_clone/subdirectory"
+    f2_object="$(find "$f2_source/.git/objects" -type f | sort | head -1)"
+    [ -n "$f2_object" ] || fail "fixture setup: source repo has no loose objects to test with"
+    f2_object_relative="${f2_object#"$f2_source"/}"
+    f2_clone_object="$f2_clone/$f2_object_relative"
+    [ "$(stat -c '%i' "$f2_object")" = "$(stat -c '%i' "$f2_clone_object")" ] ||
+        fail "fixture setup: git clone --local did not hard-link objects — cannot exercise this finding without it"
+    # Simulate the real-world gap directly: a restrictive host-side umask at
+    # clone time can leave a hard-linked object unreadable to a different
+    # container uid/gid. This environment cannot fake a different uid, so
+    # mode 0000 removes even the invoking user's own read access — real
+    # sudo can still read it; the unprivileged reconciliation cannot,
+    # exactly like the gap this fixture proves closed.
+    chmod 0000 "$f2_object"
+    [ ! -r "$f2_object" ] || fail "fixture setup: object is still readable to the invoking user, cannot exercise this finding"
+    f2_source_inode_before="$(stat -c '%i' "$f2_object")"
+    # REAL sudo, not the logging shim above (same reasoning as the F13
+    # non-member-gid fixture): breaking the hard link needs genuine
+    # privilege to read a mode-0000 object, which the shim's unprivileged
+    # exec cannot grant.
+    f2_resolved="$(
+        cd "$f2_clone/subdirectory"
+        HOME="$home" XDG_CONFIG_HOME="$xdg" \
+            bash -c 'set -e; . "$1"; reconcile_workspace_permissions "$2"; printf "%s\n" "$RECONCILED_WORKSPACE_ROOT"' _ "$helpers" "$f2_xdg"
+    )" || fail "reconciliation failed against the umask-027 hard-linked-object fixture"
+    [ "$f2_resolved" = "$f2_clone" ] ||
+        fail "reconciliation of the umask-027 clone did not resolve its own workspace root (resolved '$f2_resolved', expected '$f2_clone')"
+    [ "$(stat -c '%i' "$f2_object")" = "$f2_source_inode_before" ] ||
+        fail "breaking the hard link changed the SOURCE repository's object inode — the shared object outside \$git_dir must never be mutated"
+    [ ! -r "$f2_object" ] ||
+        fail "the SOURCE repository's object became readable — its mode must be untouched, only the clone's own copy is fixed"
+    [ "$(stat -c '%i' "$f2_clone_object")" != "$f2_source_inode_before" ] ||
+        fail "the clone's object is still hard-linked to the source after reconciliation — the link was never broken"
+    [ -r "$f2_clone_object" ] ||
+        fail "the clone's own copy of the object is still unreadable to the container user after reconciliation"
+    [ "$(git_mode "$f2_clone_object")" = "664" ] ||
+        fail "the clone's own (now single-linked) copy was not reconciled to this workspace's target mode"
+else
+    echo "  (skipped: no passwordless sudo available to exercise this with)"
+fi
 
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
@@ -752,5 +814,61 @@ if (
 fi
 grep -q . "$tmp_root/hook-fail.err" ||
     fail "a chmod +x failure on a managed hook produced no diagnostic output"
+
+echo "==> hooks installation skips (never writes), rather than aborting, for a genuine --separate-git-dir checkout (#1241 integration round 2, Codex finding 4056048551)"
+hook_sgd_repo="$fixture/workspaces/hook-sgd-repo"
+hook_sgd_gitdir="$fixture/hook-sgd-external-gitdir"
+mkdir -p "$hook_sgd_repo"
+git init -q --separate-git-dir="$hook_sgd_gitdir" "$hook_sgd_repo"
+hook_sgd_repo="$(cd "$hook_sgd_repo" && pwd -P)"
+mkdir -p "$hook_sgd_repo/.devcontainer/hooks"
+printf '%s\n' '#!/bin/sh' 'echo managed-sgd' >"$hook_sgd_repo/.devcontainer/hooks/post-checkout"
+chmod 0644 "$hook_sgd_repo/.devcontainer/hooks/post-checkout"
+hook_sgd_gitdir_listing_before="$(find "$hook_sgd_gitdir" | sort)"
+(
+    cd "$hook_sgd_repo"
+    . "$managed_helpers"
+    install_repo_managed_hooks
+) >/dev/null 2>"$tmp_root/hook-sgd.err" ||
+    fail "hooks installation aborted for a genuine --separate-git-dir checkout instead of skipping it"
+grep -Fq "non-worktree indirection" "$tmp_root/hook-sgd.err" ||
+    fail "hooks installation did not explain why it skipped a --separate-git-dir checkout"
+hook_sgd_gitdir_listing_after="$(find "$hook_sgd_gitdir" | sort)"
+[ "$hook_sgd_gitdir_listing_before" = "$hook_sgd_gitdir_listing_after" ] ||
+    fail "hooks installation wrote into a --separate-git-dir checkout's external Git directory despite skipping it"
+[ ! -e "$hook_sgd_gitdir/hooks/post-checkout" ] ||
+    fail "hooks installation copied a managed hook into a skipped --separate-git-dir checkout"
+
+echo "==> hooks installation refuses a crafted admin dir it cannot verify, never writing into the victim it redirects to (#1241 integration round 2, Codex finding 4056048551)"
+hook_atk_victim="$fixture/workspaces/hook-atk-victim"
+hook_atk_attacker="$fixture/workspaces/hook-atk-attacker"
+hook_atk_fake_admin="$fixture/hook-atk-fake-admin"
+mkdir -p "$hook_atk_victim" "$hook_atk_attacker" "$hook_atk_fake_admin"
+git -C "$hook_atk_victim" init -q
+hook_atk_victim="$(cd "$hook_atk_victim" && pwd -P)"
+hook_atk_victim_hooks_before="$(find "$hook_atk_victim/.git/hooks" | sort)"
+mkdir -p "$hook_atk_attacker/.devcontainer/hooks"
+printf '%s\n' '#!/bin/sh' 'echo managed-attack' >"$hook_atk_attacker/.devcontainer/hooks/post-checkout"
+chmod 0644 "$hook_atk_attacker/.devcontainer/hooks/post-checkout"
+# Same crafted-admin-dir shape as resolve_git_dir's own F19 fixture: the
+# fake admin dir's OWN reverse pointer correctly names the attacker's .git
+# file, but its "commondir" redirects to the unrelated victim repository.
+hook_atk_attacker="$(cd "$hook_atk_attacker" && pwd -P)"
+printf 'gitdir: %s/.git\n' "$hook_atk_attacker" >"$hook_atk_fake_admin/gitdir"
+printf '%s\n' "$hook_atk_victim/.git" >"$hook_atk_fake_admin/commondir"
+printf 'ref: refs/heads/main\n' >"$hook_atk_fake_admin/HEAD"
+printf 'gitdir: %s\n' "$hook_atk_fake_admin" >"$hook_atk_attacker/.git"
+if (
+    cd "$hook_atk_attacker"
+    . "$managed_helpers"
+    install_repo_managed_hooks
+) >/dev/null 2>"$tmp_root/hook-atk.err"; then
+    fail "hooks installation accepted a crafted admin dir whose commondir redirects to an unrelated repository"
+fi
+hook_atk_victim_hooks_after="$(find "$hook_atk_victim/.git/hooks" | sort)"
+[ "$hook_atk_victim_hooks_before" = "$hook_atk_victim_hooks_after" ] ||
+    fail "hooks installation copied a managed hook into the unrelated victim repository's hooks directory"
+[ ! -e "$hook_atk_victim/.git/hooks/post-checkout" ] ||
+    fail "the crafted redirect's managed hook landed in the victim repository"
 
 echo "devcontainer Git permissions: all cases passed"

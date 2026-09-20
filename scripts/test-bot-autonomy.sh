@@ -2042,18 +2042,29 @@ bash -c '
     discard_transaction "${install_dir}/.agy-real.harmon-init-transaction" "agy-real"
 ' _ "$agy25_home" "$agy25_ensure_helpers"
 # The mismatch path now quarantine-renames before validating (#1241 review
-# round 3, finding F6), so the surviving bytes land under a private
-# "<name>.discard.XXXXXX" name, not back at the original predictable path —
-# that rename is exactly what closes the check-then-delete race.
-agy25_tamper1_quarantine="$(find "${agy25_home}" -maxdepth 1 -name 'agy-real.tmp.TAMPER1.discard.*' -print -quit)"
-[ -n "$agy25_tamper1_quarantine" ] ||
+# round 3, finding F6; hardened into a private mktemp -d directory in
+# integration round 2), so the surviving bytes land under a private
+# ".harmon-init-discard.XXXXXX/proof" directory, not back at the original
+# predictable path — that rename is exactly what closes the check-then-
+# delete race.
+agy25_tamper1_dir="$(find "${agy25_home}" -maxdepth 1 -type d -name '.harmon-init-discard.*' -print -quit)"
+[ -n "$agy25_tamper1_dir" ] ||
     fail "discard_transaction deleted a temp file whose bytes no longer matched its proof, instead of quarantining it (#1241 item 7 / review round 3, finding F6 regression)"
+agy25_tamper1_quarantine="${agy25_tamper1_dir}/proof"
+[ -f "$agy25_tamper1_quarantine" ] ||
+    fail "discard_transaction's quarantine directory did not contain the retained proof file"
 [ "$(cat "$agy25_tamper1_quarantine")" = "replaced by another actor" ] ||
     fail "discard_transaction's mismatch path modified the tampered temp file"
 [ ! -e "${agy25_home}/agy-real.tmp.TAMPER1" ] ||
     fail "discard_transaction left the tampered file at its original, predictable pathname instead of quarantining it under a private name"
 [ ! -e "${agy25_home}/.agy-real.harmon-init-transaction" ] ||
     fail "discard_transaction left its transaction record behind after reporting a mismatch"
+# Both discard_transaction and discard_launcher_transaction create their
+# private quarantine directories directly under this same $agy25_home, so
+# clean up 25a's retained directory now — otherwise 25b's own find below
+# could nondeterministically match either directory and pass on a
+# coincidence (both tests happen to tamper with the same literal content).
+rm -rf "$agy25_tamper1_dir"
 
 echo "==> 25b. bot-autonomy/antigravity.sh discard_launcher_transaction: the mirrored fix behaves identically"
 agy25_link_transaction="${agy25_home}/.agy.harmon-init-transaction"
@@ -2088,11 +2099,15 @@ bash -c '
     discard_launcher_transaction
 ' _ "${agy25_home}/agy" "$agy25_link_transaction" "${agy25_home}/agy.tmp.TAMPER2" "$agy25_launcher_helpers"
 # Same quarantine-rename shape as discard_transaction above (#1241 review
-# round 3, finding F6) — the survivor lands under a private name, not back
-# at the original predictable path.
-agy25_tamper2_quarantine="$(find "${agy25_home}" -maxdepth 1 -name 'agy.tmp.TAMPER2.discard.*' -print -quit)"
-[ -n "$agy25_tamper2_quarantine" ] ||
+# round 3, finding F6; hardened in integration round 2) — the survivor
+# lands under a private directory, not back at the original predictable
+# path.
+agy25_tamper2_dir="$(find "${agy25_home}" -maxdepth 1 -type d -name '.harmon-init-discard.*' -print -quit)"
+[ -n "$agy25_tamper2_dir" ] ||
     fail "discard_launcher_transaction deleted a temp file whose bytes no longer matched its proof, instead of quarantining it (#1241 item 7 / review round 3, finding F6 regression)"
+agy25_tamper2_quarantine="${agy25_tamper2_dir}/proof"
+[ -f "$agy25_tamper2_quarantine" ] ||
+    fail "discard_launcher_transaction's quarantine directory did not contain the retained proof file"
 [ "$(cat "$agy25_tamper2_quarantine")" = "replaced by another actor" ] ||
     fail "discard_launcher_transaction's mismatch path modified the tampered temp file"
 [ ! -e "${agy25_home}/agy.tmp.TAMPER2" ] ||

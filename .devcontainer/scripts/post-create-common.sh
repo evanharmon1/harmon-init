@@ -310,6 +310,43 @@ reconcile_git_metadata_ownership() {
         reconcile_step_failed "could not set permissions under $git_dir"
         return 1
     }
+
+    # The pass above deliberately skips multi-linked regular files (F23),
+    # since they never need the write grant this reconciliation exists to
+    # give — but a restrictive host-side umask at clone time can leave one
+    # genuinely UNREADABLE to the container user (e.g. mode 0440, owned by
+    # neither the container's uid nor its preserved group), defeating the
+    # whole point of this reconciliation for that one object. Directories
+    # and single-linked files above are already reconciled by this point,
+    # so traversal into every subtree now actually works, and this can run
+    # AFTER them. Break the hard link for exactly the unreadable ones —
+    # never a readable one, which correctly stays untouched and still
+    # shares the source repository's inode — by privileged-copying the
+    # bytes (only root can read the original in the first place) into a
+    # sibling temp name in the same directory, chowning/chmoding that copy
+    # to match this reconciliation's own target state, then atomically
+    # replacing the path with it: the original inode, and whatever else
+    # still references it outside $git_dir, is never touched (#1241
+    # integration round 2, Codex finding 4056048549 — verified empirically
+    # with a --local clone fixture under umask 027).
+    while IFS= read -r unreadable_object; do
+        [ -n "$unreadable_object" ] || continue
+        [ -r "$unreadable_object" ] && continue
+        sudo sh -c '
+            target="$1"
+            owner="$2"
+            tmp="$(mktemp "$(dirname "$target")/.harmon-init-unlink.XXXXXX")" || exit 1
+            if ! cp -p "$target" "$tmp"; then
+                rm -f "$tmp"
+                exit 1
+            fi
+            chown "$owner" "$tmp" && chmod u=rwX,g=rwX,o=rX "$tmp" && mv -f "$tmp" "$target"
+        ' _ "$unreadable_object" "$(id -u):${orig_gid}" || {
+            reconcile_step_failed "could not break the hard link for an unreadable object at $unreadable_object"
+            return 1
+        }
+    done < <(find "$git_dir" -type f -links +1 -print 2>/dev/null)
+
     # setgid on directories only (never files — on a FILE this bit means
     # something unrelated and security-sensitive, set-group-ID on
     # execution, which must never land on a hook script): every new file or

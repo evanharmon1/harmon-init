@@ -146,24 +146,33 @@ discard_transaction() {
     case "$temp_name" in
     "${prefix}.tmp."*)
         temp_path="${install_dir}/${temp_name}"
-        # Quarantine-rename before validating, then delete: revalidating
-        # against the pathname alone (as this used to) narrows the window a
-        # racing process could replace temp_path in, but does not close it —
-        # the check and the rm -f are still two separate operations on the
-        # same name. An atomic mv pins whichever inode currently sits at
-        # temp_path under a private name nothing else knows, so nothing can
-        # swap the bytes between validating and deleting them (#1241 item 7,
-        # re-raised as review round 3, finding F6; same shape as
-        # remove_if_owned's own quarantine step below).
+        # Quarantine into a FRESH, PRIVATE per-call directory (mktemp -d,
+        # beside temp_path so the rename stays on the same filesystem and
+        # atomic) before validating, then delete — not a same-directory
+        # sibling name created with a plain mktemp, then rm'd, then mv'd
+        # onto: that create-then-remove-then-move sequence makes the
+        # quarantine name publicly observable in the window between the
+        # create and the remove, and the final move was a plain mv -f, not
+        # no-clobber — together still leaving a window a racing process
+        # could exploit (#1241 item 7; review round 3, finding F6; hardened
+        # in integration round 2 after Codex/Gemini re-raised the same gap
+        # against this exact remedy). The move into the private directory
+        # is no-clobber (-n) with no prior rm: nothing can have pre-created
+        # a path inside a directory nobody else knows exists, and a refused
+        # move is treated as a failed quarantine — the delete below never
+        # runs.
         if path_exists "$temp_path"; then
-            quarantine_path="$(mktemp "${temp_path}.discard.XXXXXX")"
-            rm -f "$quarantine_path"
-            if mv -f "$temp_path" "$quarantine_path" 2>/dev/null; then
-                if proof_matches "$transaction" "$quarantine_path"; then
-                    rm -f "$quarantine_path"
-                else
-                    echo "Transaction proof for ${quarantine_path} (quarantined from ${temp_path}) no longer matches its content; leaving it for manual review" >&2
+            quarantine_dir="$(mktemp -d "${install_dir}/.harmon-init-discard.XXXXXX" 2>/dev/null)" || quarantine_dir=""
+            if [ -n "$quarantine_dir" ]; then
+                quarantine_path="${quarantine_dir}/proof"
+                if mv -n "$temp_path" "$quarantine_path" 2>/dev/null && [ -e "$quarantine_path" ]; then
+                    if proof_matches "$transaction" "$quarantine_path"; then
+                        rm -f "$quarantine_path"
+                    else
+                        echo "Transaction proof for ${quarantine_path} (quarantined from ${temp_path}) no longer matches its content; leaving it for manual review" >&2
+                    fi
                 fi
+                rmdir "$quarantine_dir" 2>/dev/null || true
             fi
         fi
         ;;
