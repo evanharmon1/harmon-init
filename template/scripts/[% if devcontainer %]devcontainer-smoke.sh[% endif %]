@@ -102,12 +102,25 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> Running devcontainer smoke test for ${CONFIG_PATH}..."
+# DEVCONTAINER_TAILSCALE_OPTIONAL=true: this builds the dev profile with no
+# TS_AUTHKEY on purpose — it proves the image and lifecycle scripts work, it is
+# not testing connectivity. tailscale-connect.sh treats a missing tailnet as
+# FATAL for that profile, so without this the smoke test would fail on the one
+# thing it is deliberately not providing.
+#
+# --remote-env rather than a containerEnv entry, for two reasons. It is applied
+# when the CLI runs the user lifecycle commands, which is where
+# tailscale-connect.sh is invoked from; and opting out stays an explicit act at
+# the CALL SITE, so no devcontainer.json can disable the gate from inside the
+# config the gate exists to guard (devcontainer-assert.sh enforces that).
+# Inert for the bot profile, which never marks the tailnet required.
 "$TIMEOUT_BIN" -k 30 1800 "${DEVCONTAINER_CMD[@]}" up \
     --workspace-folder "${WORKSPACE_ROOT}" \
     --config "${CONFIG_PATH}" \
     --remove-existing-container \
     --user-data-folder "${USER_DATA_DIR}" \
     --container-session-data-folder "${SESSION_DATA_DIR}" \
+    --remote-env DEVCONTAINER_TAILSCALE_OPTIONAL=true \
     --log-format json \
     --log-level info | tee "${LOG_FILE}"
 

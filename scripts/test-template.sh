@@ -208,6 +208,12 @@ full)
         --data include_ansible=true
         --data devcontainer=true
         --data use_statusline_pr_lookup=true
+        # tailscale_required defaults OFF (it makes the dev profile unable to
+        # start without a Tailscale account), so every other profile covers the
+        # OFF branch and this is the only place its ON branch — the dev
+        # profile's DEVCONTAINER_TAILSCALE marker and the guide's required-key
+        # prose — is ever rendered.
+        --data tailscale_required=true
         --data ci_runner=self-hosted
         --data github_org=test-org
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"

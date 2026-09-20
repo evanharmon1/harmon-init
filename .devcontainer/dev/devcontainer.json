@@ -102,7 +102,13 @@
   // marker's value; only bot-autonomy/antigravity.sh (bot-only) does that.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
+    // "This profile HAS a tailnet": post-start-common.sh uses this to decide
+    // whether to invoke tailscale-connect.sh at all. It does NOT make failure
+    // fatal.
     "DEVCONTAINER_TAILSCALE": "true",
+    // "...and a tailnet it cannot join is a broken build." harmon-init answers
+    // tailscale_required: true; generated repos default it off.
+    "DEVCONTAINER_TAILSCALE_REQUIRED": "true",
     // gh checks GH_BROWSER before generic browser discovery. Route interactive
     // OAuth links through the host bridge so an installed terminal browser
     // cannot capture the flow inside the container.

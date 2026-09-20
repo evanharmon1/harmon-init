@@ -101,12 +101,16 @@ bash .devcontainer/scripts/check-image-staleness.sh || true
 
 if [ "${DEVCONTAINER_TAILSCALE:-}" = "true" ]; then
     echo "==> Connecting to Tailscale..."
-    if command -v tailscale &>/dev/null && sudo tailscale ip -4 >/dev/null 2>&1; then
-        echo "Tailscale already connected."
-    else
-        # Run in foreground — post-start output is already redirected to a log file
-        # so there is no SIGPIPE risk, and background processes get killed when
-        # VS Code's postStartCommand process group exits.
-        bash .devcontainer/scripts/tailscale-connect.sh
-    fi
+    # Delegate unconditionally. This used to carry its own "already connected"
+    # probe (`tailscale ip -4`) and skip the script when it passed — but that is
+    # the WEAKER check and it won: `tailscale ip` answers from local state that
+    # outlives the node it describes, so a reaped ephemeral node still reports an
+    # address and none of tailscale-connect.sh's failure handling ever ran.
+    # tailscale-connect.sh owns that decision now and has the same fast path,
+    # checked properly against BackendState.
+    #
+    # Run in foreground — post-start output is already redirected to a log file
+    # so there is no SIGPIPE risk, and background processes get killed when
+    # VS Code's postStartCommand process group exits.
+    bash .devcontainer/scripts/tailscale-connect.sh
 fi
