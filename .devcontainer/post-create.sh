@@ -48,6 +48,7 @@ install_repo_managed_hooks() {
     # as a path segment would make `cp` fail ("Not a directory") and abort
     # the whole script under set -e (review round 1, finding F20).
     hooks_dir="$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
+    mkdir -p "$hooks_dir"
     echo "==> Installing git hooks from .devcontainer/hooks/..."
     for hook in .devcontainer/hooks/*; do
         [ -f "$hook" ] || continue

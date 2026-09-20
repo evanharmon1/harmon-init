@@ -186,9 +186,9 @@ runs:
           : "${GITHUB_PATH:?GITHUB_PATH is required to publish the pinned gitleaks}"
           gitleaks_bin="${RUNNER_TEMP}/harmon-init-gitleaks/${GITLEAKS_VERSION}"
           mkdir -p "$gitleaks_bin"
-          curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/gitleaks.tgz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz"
-          tar -xzf /tmp/gitleaks.tgz -C "$gitleaks_bin" gitleaks
+          tar -xzf "${RUNNER_TEMP}/gitleaks.tgz" -C "$gitleaks_bin" gitleaks
           printf '%s\n' "$gitleaks_bin" >> "$GITHUB_PATH"
           export PATH="${gitleaks_bin}:${PATH}"
         fi

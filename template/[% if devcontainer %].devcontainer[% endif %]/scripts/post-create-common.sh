@@ -165,6 +165,13 @@ resolve_git_dir() {
         echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — no reverse gitdir pointer found" >&2
         return 1
     }
+    # Command substitution strips trailing newlines but not a trailing CR —
+    # a "gitdir" file written with CRLF line endings (a Windows host, or a
+    # host-side editor/tool that normalizes line endings) would otherwise
+    # leave a literal \r on the end of the path, breaking both the
+    # resolve_relative_to call below and the exact-match comparison after
+    # it.
+    reverse_pointer="${reverse_pointer%$'\r'}"
     reverse_pointer_resolved="$(resolve_relative_to "$admin_dir" "$reverse_pointer")" || {
         echo "ERROR: could not resolve the reverse gitdir pointer at $admin_dir/gitdir" >&2
         return 1
