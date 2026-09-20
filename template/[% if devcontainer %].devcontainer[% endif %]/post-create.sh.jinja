@@ -80,6 +80,18 @@ resolve_hooks_common_dir() {
     git_marker="$workspace_root/.git"
 
     if [ -d "$git_marker" ]; then
+        # A .git DIRECTORY containing its own "commondir" file is
+        # indirection Git itself follows (the same marker a worktree admin
+        # dir uses) — Git resolves hooks under whatever commondir actually
+        # points to, so trusting $git_marker/hooks directly here would
+        # install into the wrong location entirely. Same shape, same
+        # non-worktree-indirection skip, as post-create-common.sh's own
+        # resolve_git_dir (#1241 integration round 3, Codex finding
+        # 4056166565; mirrored here for hook installation in integration
+        # round 5, Codex finding 4056410777).
+        if [ -e "$git_marker/commondir" ]; then
+            return 2
+        fi
         printf '%s\n' "$git_marker"
         return 0
     fi

@@ -13,15 +13,15 @@ fail() {
 
 test_tmp="$(mktemp -d -t harmon-init-setup-versions-XXXXXX)"
 trap 'rm -rf "$test_tmp"' EXIT
-# The gitleaks installer hardcodes /tmp/gitleaks.tgz (no RUNNER_TEMP-scoped
-# override exists for it, unlike the lint tools below), and the fake curl
-# below writes there faithfully — but NOT cleaned up here: two concurrent
-# invocations (or a real `task security` run racing this test) would
-# otherwise delete each other's in-flight file at that shared path, and
-# `rm -rf` would remove an unrelated directory a third party had placed
-# there too (#1241 challenge round 5, finding F16). A small leftover file,
-# overwritten by the next real invocation's own fake curl, is the safer
-# trade.
+# The gitleaks archive now downloads to a RUNNER_TEMP-scoped path — the
+# same scoping the lint tools below already used — rather than the
+# hardcoded shared /tmp/gitleaks.tgz this comment used to describe
+# (#1241 challenge round 5, finding F16 first raised the shared-path
+# concern; the installer's own hardcoded path was closed in integration
+# round 4). runner_temp below is created under this test's own test_tmp,
+# so the trap above already cleans up the downloaded archive along with
+# everything else here — no special-case non-cleanup reasoning is needed
+# anymore (#1241 integration round 5, Gemini finding 4056368206).
 stale_bin="${test_tmp}/stale-bin"
 helper_bin="${test_tmp}/helpers"
 curl_log="${test_tmp}/curl.log"

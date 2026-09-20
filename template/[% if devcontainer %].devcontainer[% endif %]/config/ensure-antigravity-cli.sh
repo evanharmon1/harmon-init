@@ -142,6 +142,12 @@ write_proof() (
 discard_transaction() {
     transaction="$1"
     prefix="$2"
+    # Declared (not assigned) here, separately from their eventual
+    # command-substitution assignments below: `local x="$(cmd)"` masks
+    # cmd's own exit status behind local's own — the declaration alone
+    # does not (#1241 integration round 5, Gemini findings
+    # 4056368199/4056368200/4056368201/4056368204).
+    local temp_path quarantine_dir quarantine_path
     temp_name="$(proof_value "$transaction" temp_name 2>/dev/null || true)"
     case "$temp_name" in
     "${prefix}.tmp."*)

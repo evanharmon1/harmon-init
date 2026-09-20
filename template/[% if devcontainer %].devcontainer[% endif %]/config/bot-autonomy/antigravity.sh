@@ -106,6 +106,12 @@ launcher_proof_matches() (
 )
 
 discard_launcher_transaction() {
+    # Declared (not assigned) here, separately from their eventual
+    # command-substitution assignments below: `local x="$(cmd)"` masks
+    # cmd's own exit status behind local's own — the declaration alone
+    # does not (#1241 integration round 5, Gemini findings
+    # 4056368199/4056368200/4056368201/4056368204).
+    local temp_path quarantine_dir quarantine_path
     temp_name="$(proof_value "$AGY_LINK_TRANSACTION" temp_name 2>/dev/null || true)"
     case "$temp_name" in
     agy.tmp.*)

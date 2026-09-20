@@ -976,6 +976,31 @@ hook_sgd_gitdir_listing_after="$(find "$hook_sgd_gitdir" | sort)"
 [ ! -e "$hook_sgd_gitdir/hooks/post-checkout" ] ||
     fail "hooks installation copied a managed hook into a skipped --separate-git-dir checkout"
 
+echo "==> hooks installation skips (never writes), rather than installing into the wrong tree, for a .git DIRECTORY containing its own commondir file (#1241 integration round 5, Codex finding 4056410777)"
+hook_cd_repo="$fixture/workspaces/hook-cd-repo"
+hook_cd_victim="$fixture/hook-cd-victim-common"
+mkdir -p "$hook_cd_repo/.git" "$hook_cd_repo/.devcontainer/hooks" "$hook_cd_victim"
+git -C "$hook_cd_victim" init -q
+hook_cd_victim="$(cd "$hook_cd_victim" && pwd -P)"
+printf '%s\n' "$hook_cd_victim/.git" >"$hook_cd_repo/.git/commondir"
+printf 'ref: refs/heads/main\n' >"$hook_cd_repo/.git/HEAD"
+printf '%s\n' '#!/bin/sh' 'echo managed-cd' >"$hook_cd_repo/.devcontainer/hooks/post-checkout"
+chmod 0644 "$hook_cd_repo/.devcontainer/hooks/post-checkout"
+hook_cd_victim_hooks_before="$(find "$hook_cd_victim/.git/hooks" | sort)"
+(
+    cd "$hook_cd_repo"
+    . "$managed_helpers"
+    install_repo_managed_hooks
+) >/dev/null 2>"$tmp_root/hook-cd.err" ||
+    fail "hooks installation aborted for a .git directory with its own commondir file instead of skipping it"
+grep -Fq "non-worktree indirection" "$tmp_root/hook-cd.err" ||
+    fail "hooks installation did not explain why it skipped a .git directory with its own commondir file"
+hook_cd_victim_hooks_after="$(find "$hook_cd_victim/.git/hooks" | sort)"
+[ "$hook_cd_victim_hooks_before" = "$hook_cd_victim_hooks_after" ] ||
+    fail "hooks installation wrote into the commondir-redirected victim repository's hooks despite skipping it"
+[ ! -e "$hook_cd_repo/.git/hooks" ] ||
+    fail "hooks installation created a hooks directory directly on the .git directory this shape must skip entirely"
+
 echo "==> hooks installation refuses a crafted admin dir it cannot verify, never writing into the victim it redirects to (#1241 integration round 2, Codex finding 4056048551)"
 hook_atk_victim="$fixture/workspaces/hook-atk-victim"
 hook_atk_attacker="$fixture/workspaces/hook-atk-attacker"

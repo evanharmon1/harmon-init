@@ -401,7 +401,10 @@ reconcile_git_metadata_ownership() {
                 rm -f "$tmp"
                 exit 1
             fi
-            chown "$owner" "$tmp" && chmod u=rwX,g=rwX,o=rX "$tmp" && mv -f "$tmp" "$target"
+            if ! chown "$owner" "$tmp" || ! chmod u=rwX,g=rwX,o=rX "$tmp" || ! mv -f "$tmp" "$target"; then
+                rm -f "$tmp"
+                exit 1
+            fi
         ' _ "$linked_object" "$(id -u):${orig_gid}" "$seen_inode" || {
             reconcile_step_failed "could not break the hard link for a multi-linked object at $linked_object (or it changed since it was found)"
             return 1
