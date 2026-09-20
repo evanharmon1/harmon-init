@@ -622,7 +622,7 @@ SENTINEL_SCRIPT
     #
     #     Every case strips both knobs from the inherited environment for the
     #     reason above, then sets only what it is testing.
-    local ts_bin ts_sock ts_up_marker ts_rc ts_case_out ts_dep ts_dep_path
+    local ts_bin ts_sock ts_sock_ready ts_up_marker ts_rc ts_case_out ts_dep ts_dep_path
     ts_bin="${work_dir}/tailscale-bin"
     mkdir -p "$ts_bin"
     ln -s "$bash_bin" "${ts_bin}/bash"
@@ -659,14 +659,39 @@ exit 0
 TS_STUB
     chmod 0755 "${ts_bin}/tailscale"
 
-    # A REAL unix socket, because the script tests with `[ -S ... ]`. Without
-    # one every case below would fall into the socket-wait bail after 10s.
-    ts_sock="${work_dir}/tailscaled.sock"
-    python3 -c 'import socket, sys
+    # Cases (g)-(j) reach the connect paths, which means getting past
+    # `[ -S "${TS_SOCKET}" ]` — so they need a REAL unix socket; there is no
+    # way to satisfy `-S` without binding one. Cases (a)-(f) all bail before
+    # the socket wait and need none.
+    #
+    # Creating it is best-effort and must NEVER fail the suite, because two
+    # environments legitimately cannot: a sandbox that denies AF_UNIX bind
+    # (Codex's workspace-write sandbox does), and any host whose TMPDIR makes
+    # the path exceed sun_path's ~104-byte limit — mktemp -d under a long
+    # TMPDIR is enough, and the error there is a confusing "path too long"
+    # rather than anything about tailscale. Both used to take down every
+    # assertion in this file, including the ones that have nothing to do with
+    # the tailnet, and this script ships verbatim to generated repos where the
+    # same `task ci` is expected to run locally.
+    #
+    # So: bind if we can, and otherwise SKIP (g)-(j) loudly. The skip is
+    # printed rather than silent — a quiet coverage hole is the failure mode
+    # this whole change exists to prevent — and CI and the devcontainer, where
+    # the bind succeeds, still run every case.
+    ts_sock="${work_dir}/ts.sock"
+    ts_sock_ready=no
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "==> SKIP tailscale cases (g)-(j): python3 is unavailable to create a stub socket."
+    elif python3 -c 'import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1])
-s.listen(1)' "$ts_sock" ||
-        fail "could not create the stub tailscaled socket at ${ts_sock}"
+s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
+        ts_sock_ready=yes
+    else
+        echo "==> SKIP tailscale cases (g)-(j): cannot bind a stub unix socket at ${ts_sock}"
+        echo "    (sandbox denial, or TMPDIR makes the path exceed sun_path's ~104-byte limit)."
+        echo "    Cases (a)-(f) still run; CI and the devcontainer run the full set."
+    fi
     ts_up_marker="${work_dir}/ts-up-ran"
 
     # ts_connect_run <expected-rc> <label> [VAR=VAL ...]
@@ -729,44 +754,46 @@ s.listen(1)' "$ts_sock" ||
     ts_connect_run 1 "f (required, OPTIONAL=1 is not true)" \
         DEVCONTAINER_TAILSCALE=true DEVCONTAINER_TAILSCALE_OPTIONAL=1
 
-    # (g) required + BackendState=Running → exit 0 via the fast path, and
-    #     `tailscale up` is NOT called. Proves readiness is judged by
-    #     BackendState rather than by reconnecting unconditionally.
-    rm -f "$ts_up_marker"
-    ts_connect_run 0 "g (required, already Running)" \
-        DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATE=Running
-    [ ! -e "$ts_up_marker" ] ||
-        fail "tailscale-connect.sh case g: ran 'tailscale up' although BackendState was already Running"
+    if [ "$ts_sock_ready" = "yes" ]; then
+        # (g) required + BackendState=Running → exit 0 via the fast path, and
+        #     `tailscale up` is NOT called. Proves readiness is judged by
+        #     BackendState rather than by reconnecting unconditionally.
+        rm -f "$ts_up_marker"
+        ts_connect_run 0 "g (required, already Running)" \
+            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATE=Running
+        [ ! -e "$ts_up_marker" ] ||
+            fail "tailscale-connect.sh case g: ran 'tailscale up' although BackendState was already Running"
 
-    # (h) required + NeedsLogin + up succeeds → exit 0, and reports the
-    #     environment-appropriate node name.
-    rm -f "$ts_up_marker"
-    ts_connect_run 0 "h (required, NeedsLogin, up ok)" \
-        DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
-        TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=0
-    [ -e "$ts_up_marker" ] ||
-        fail "tailscale-connect.sh case h: never ran 'tailscale up' from NeedsLogin"
-    case "$ts_case_out" in
-    *"Connected to tailnet as cr-"* | *"Connected to tailnet as dc-"* | *"Connected to tailnet as gh-"*) ;;
-    *) fail "tailscale-connect.sh case h: did not report a prefixed node name: ${ts_case_out}" ;;
-    esac
+        # (h) required + NeedsLogin + up succeeds → exit 0, and reports the
+        #     environment-appropriate node name.
+        rm -f "$ts_up_marker"
+        ts_connect_run 0 "h (required, NeedsLogin, up ok)" \
+            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
+            TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=0
+        [ -e "$ts_up_marker" ] ||
+            fail "tailscale-connect.sh case h: never ran 'tailscale up' from NeedsLogin"
+        case "$ts_case_out" in
+        *"Connected to tailnet as cr-"* | *"Connected to tailnet as dc-"* | *"Connected to tailnet as gh-"*) ;;
+        *) fail "tailscale-connect.sh case h: did not report a prefixed node name: ${ts_case_out}" ;;
+        esac
 
-    # (i) required + NeedsLogin + up FAILS → exit 1, FATAL. THE case this whole
-    #     change exists for: an expired or already-consumed auth key. Mutating
-    #     the script back to its swallow-on-failure behavior makes this one
-    #     return 0, which is the mutation test the issue asks for.
-    ts_connect_run 1 "i (required, NeedsLogin, up failed)" \
-        DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
-        TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
-    case "$ts_case_out" in
-    *FATAL*) ;;
-    *) fail "tailscale-connect.sh case i: failed connect did not report FATAL: ${ts_case_out}" ;;
-    esac
+        # (i) required + NeedsLogin + up FAILS → exit 1, FATAL. THE case this whole
+        #     change exists for: an expired or already-consumed auth key. Mutating
+        #     the script back to its swallow-on-failure behavior makes this one
+        #     return 0, which is the mutation test the issue asks for.
+        ts_connect_run 1 "i (required, NeedsLogin, up failed)" \
+            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
+            TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
+        case "$ts_case_out" in
+        *FATAL*) ;;
+        *) fail "tailscale-connect.sh case i: failed connect did not report FATAL: ${ts_case_out}" ;;
+        esac
 
-    # (j) optional + NeedsLogin + up FAILS → exit 0. The unchanged behavior
-    #     everywhere the tailnet is genuinely optional.
-    ts_connect_run 0 "j (optional, NeedsLogin, up failed)" \
-        TS_AUTHKEY=stub-key TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
+        # (j) optional + NeedsLogin + up FAILS → exit 0. The unchanged behavior
+        #     everywhere the tailnet is genuinely optional.
+        ts_connect_run 0 "j (optional, NeedsLogin, up failed)" \
+            TS_AUTHKEY=stub-key TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
+    fi
 
     # 8. Antigravity runs without permission prompts inside the container,
     #    which is the isolation boundary. The apply helper must enforce those
