@@ -1265,6 +1265,50 @@ SENTINEL_SCRIPT
     *) fail "the unparseable indeterminate report carries no provisioning remedy: ${gh_id_out}" ;;
     esac
 
+    # The same login on two hosts with DIFFERENT credential sources —
+    # `alice (GH_TOKEN)` on github.com beside `alice (keyring)` on a GHES
+    # host — is one entry after `sort -u`, so an if/else source lookup records
+    # only one of them and the remedy drops the `gh auth logout` the stored
+    # credential needs. Both remedies must appear. Found by the integration
+    # stage's cloud review.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account alice (GH_TOKEN)' \
+        '' \
+        'ghe.example.com' \
+        '  ✓ Logged in to ghe.example.com account alice (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "duplicate non-bot login across hosts exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*) ;;
+    *) fail "a login with BOTH env and stored records lost the stored credential's logout remedy: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *"cannot remove it"*) ;;
+    *) fail "a login with BOTH env and stored records lost the environment remedy: ${gh_id_out}" ;;
+    esac
+
+    # An unconfigured GH_HOST reports its own `(default)` failure ALONGSIDE
+    # another host's healthy bot record. Accepting the parsed login first
+    # declared a clean identity while the host gh would actually write to was
+    # unauthenticated. The `(default)` branch must be reached first.
+    printf '%s\n' \
+        'ghe.example.com' \
+        '  X Failed to log in to ghe.example.com using token (default)' \
+        '' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "2" ] ||
+        fail "an unauthenticated GH_HOST target beside a stored bot login exited ${gh_id_rc}, expected unauthenticated (2)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the unauthenticated-target banner names no provisioning remedy: ${gh_id_out}" ;;
+    esac
+
     # The violation remedy must match the credential SOURCE. `gh auth logout`
     # removes a stored record and can do nothing about a token from the
     # environment — and a misprovisioned GH_TOKEN carrying the wrong account
@@ -1685,6 +1729,25 @@ SENTINEL_SCRIPT
     # scripts/test-status.sh, beside the ${GH_REMEDY} derivation guard it was
     # widened from (issue #596) — one invariant, one home. This file keeps the
     # devcontainer WIRING assertions only.
+
+    # The identity verdict must reach the credential group's COUNTERS, not just
+    # the screen: that group's tally is the sole credential input to the setup
+    # summary, so discarding the exit code let `status:setup` print a NON-BOT
+    # violation above a green 100%. render_gh_identity_check is what carries it,
+    # and it must be called from inside render_local_credentials — a call sited
+    # after the tally write would increment nothing.
+    local render_body
+    render_body="$(awk '
+        /^render_local_credentials\(\) \{/ { inf = 1; next }
+        inf && /^\}/ { exit }
+        inf { print }
+    ' "$status_sh")"
+    printf '%s\n' "$render_body" | grep -q 'render_gh_identity_check' ||
+        fail "render_local_credentials never calls render_gh_identity_check — the identity verdict would not reach the setup summary's counters"
+    printf '%s\n' "$render_body" |
+        awk '/render_gh_identity_check/ { seen = 1 } /cred-counts/ { print (seen ? "ok" : "late"); exit }' |
+        grep -qx ok ||
+        fail "render_gh_identity_check runs after the cred-counts tally is written — the verdict would be counted too late to matter"
 
     # The credential line's own remedy must not contradict the tripwire banner
     # on the same screen: in the bot profile an operator `gh auth login` is the

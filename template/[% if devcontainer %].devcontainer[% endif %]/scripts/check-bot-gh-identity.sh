@@ -185,10 +185,19 @@ for login in $logins; do
     *-bot) continue ;;
     esac
     bad="${bad}${bad:+ }${login}"
-    if printf '%s\n' "$status_out" | grep -E "(account|as) ${login} \\(" |
+    # Independent tests, never if/else: `sort -u` above collapses one login to
+    # one entry, but the same login can hold DIFFERENT credentials on different
+    # hosts — `alice (GH_TOKEN)` on github.com beside `alice (keyring)` on a
+    # GHES host. An else-branch records only whichever was found first, and the
+    # remedy then omits the `gh auth logout` the stored one actually needs,
+    # leaving the personal credential installed.
+    login_records="$(printf '%s\n' "$status_out" | grep -E "(account|as) ${login} \\(" || true)"
+    if printf '%s\n' "$login_records" |
         grep -qE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
         bad_env=true
-    else
+    fi
+    if printf '%s\n' "$login_records" |
+        grep -qvE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
         bad_stored=true
     fi
 done
@@ -283,11 +292,6 @@ if [ "$unnamed_token" = true ]; then
     exit 3
 fi
 
-if [ -n "$logins" ]; then
-    echo "==> gh-identity: every gh credential matches the bot '-bot' relationship."
-    exit 0
-fi
-
 unauthenticated_banner() {
     banner
     echo "  BOT CONTAINER: GitHub CLI is NOT authenticated."
@@ -308,6 +312,17 @@ if [ "$env_token_present" = false ] &&
     printf '%s\n' "$status_out" | grep -qE 'log in to [^ ]+ using token \(default\)'; then
     unauthenticated_banner
     exit 2
+fi
+
+# Only now may parsed logins declare success. This check sits AFTER the
+# `(default)` branch on purpose: when GH_HOST selects a host with no stored
+# login and no token, gh reports that host's `using token (default)` failure
+# ALONGSIDE another host's healthy bot record, so accepting the parsed login
+# first reported a clean identity while the host gh would actually write to was
+# unauthenticated.
+if [ -n "$logins" ]; then
+    echo "==> gh-identity: every gh credential matches the bot '-bot' relationship."
+    exit 0
 fi
 
 case "$status_out" in

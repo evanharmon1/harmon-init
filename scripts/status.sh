@@ -681,15 +681,43 @@ gh_identity_launch() {
     GH_IDENTITY_PID=$!
 }
 
-gh_identity_collect() {
+# Reap the probe and record its VERDICT, separately from printing its banner.
+# The two are split because they belong in different places: the verdict has to
+# reach the credential group's counters (checkline mutates SETUP_*, and that
+# group's tally is the sole credential input to the setup summary), while the
+# banner is wide multi-line output that must not go through section_box. Keeping
+# them together let `status:setup` print a NON-BOT violation and still finish at
+# a green 100% — the exact "summary contradicts the line above it" defect the
+# credential group's own comments already warn about.
+gh_identity_reap() {
+    GH_IDENTITY_RC=""
     [ -n "${GH_IDENTITY_PID}" ] || return 0
     # "skipped" is the unreadable-helper note above: there is no child to wait
     # on, but its message still has to reach the reader.
     if [ "${GH_IDENTITY_PID}" != "skipped" ]; then
-        wait "${GH_IDENTITY_PID}" || true
+        GH_IDENTITY_RC=0
+        wait "${GH_IDENTITY_PID}" || GH_IDENTITY_RC=$?
+    else
+        GH_IDENTITY_RC=3
     fi
-    cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
     GH_IDENTITY_PID=""
+}
+
+# Emit the counted line. Called from inside render_local_credentials so the
+# increment lands in the same group whose tallies reach the setup summary.
+render_gh_identity_check() {
+    gh_identity_reap
+    [ -n "${GH_IDENTITY_RC}" ] || return 0
+    case "${GH_IDENTITY_RC}" in
+    0) checkline ok "bot gh identity" "every gh credential matches the bot relationship" ;;
+    1) checkline no "bot gh identity" "NON-BOT credential in the bot container — see the warning below" ;;
+    2) checkline no "bot gh identity" "gh unauthenticated — provision GH_TOKEN (see the warning below)" ;;
+    *) checkline unknown "bot gh identity" "identity could not be verified — see the note below" ;;
+    esac
+}
+
+gh_identity_collect() {
+    cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
 }
 
 # The interactive-login remedy is HUMAN-profile advice. In the bot profile
@@ -863,6 +891,8 @@ render_local_credentials() {
             ;;
         esac
     fi
+
+    render_gh_identity_check
 
     # Hand this group's tallies to the setup summary (see the caller there).
     # Guarded, and deliberately last: with `pipefail` set, a failed write here
