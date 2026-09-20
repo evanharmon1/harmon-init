@@ -56,6 +56,10 @@ grep -Fq '[ -L "$candidate/.git" ]' "$helpers" ||
     fail "permissions reconciliation does not reject symlinked Git markers"
 grep -Fq 'git_dir="$(resolve_git_dir "$workspace_root")"' "$helpers" ||
     fail "permissions reconciliation does not resolve the real Git directory before touching it"
+grep -Fq 'reverse_pointer="$(cat "$admin_dir/gitdir" 2>/dev/null)"' "$helpers" ||
+    fail "resolve_git_dir does not require the worktree admin dir's reverse pointer before trusting it (#1241 challenge round 6, finding F17)"
+grep -Fq '[ "$reverse_pointer" = "$git_marker" ]' "$helpers" ||
+    fail "resolve_git_dir does not validate the reverse pointer round-trips to this exact workspace"
 grep -Fq "orig_gid=\"\$(stat -c '%g' \"\$git_dir\"" "$helpers" ||
     fail "permissions reconciliation does not capture the original group before reassigning ownership"
 grep -Fq 'sudo chown -R "$(id -u):${orig_gid}" "$git_dir"' "$helpers" ||
@@ -413,6 +417,34 @@ wt_safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$fixture/wt-xdg" git config --f
 wt_host_status="$(GIT_CONFIG_NOSYSTEM=1 HOME="$host_home" XDG_CONFIG_HOME="$host_xdg" git -C "$wt_linked" status --short)"
 [ -z "$wt_host_status" ] ||
     fail "host-side Git was not usable in the linked worktree after container setup: $wt_host_status"
+
+echo "==> resolve_git_dir refuses a .git pointer redirected at an unrelated repository (#1241 challenge round 6, finding F17)"
+crafted_victim="$fixture/workspaces/crafted-victim"
+crafted_attacker="$fixture/workspaces/crafted-attacker"
+crafted_xdg="$fixture/crafted-xdg/git/config"
+crafted_log="$fixture/crafted-sudo.log"
+mkdir -p "$crafted_victim" "$crafted_attacker/subdirectory" "$fixture/crafted-xdg/git"
+git -C "$crafted_victim" init -q
+crafted_victim="$(cd "$crafted_victim" && pwd -P)"
+victim_listing_before="$(find "$crafted_victim/.git" | sort)"
+# A stale/crafted .git FILE naming a real, unrelated repository directly —
+# not a genuine worktree admin dir — is exactly the attack the finding
+# describes: safe.directory would let Git resolve it, but it carries no
+# "gitdir" reverse pointer at all, so the round-trip check refuses it.
+printf 'gitdir: %s\n' "${crafted_victim}/.git" >"$crafted_attacker/.git"
+if run_reconcile_at "$crafted_attacker" "$crafted_xdg" "$crafted_log" >/dev/null 2>"$tmp_root/crafted.err"; then
+    fail "reconciliation accepted a .git pointer redirected at an unrelated repository"
+fi
+grep -Fq "refusing an untrusted worktree admin directory" "$tmp_root/crafted.err" ||
+    fail "reconciliation did not name the untrusted-pointer refusal"
+[ ! -e "$crafted_log" ] || [ ! -s "$crafted_log" ] ||
+    fail "reconciliation invoked sudo against the crafted pointer before refusing it"
+victim_listing_after="$(find "$crafted_victim/.git" | sort)"
+[ "$victim_listing_before" = "$victim_listing_after" ] ||
+    fail "the unrelated victim repository's Git directory contents changed"
+crafted_safe_entries="$(git config --file "$crafted_xdg" --get-all safe.directory 2>/dev/null || true)"
+! grep -Fqx "$crafted_attacker" <<<"$crafted_safe_entries" ||
+    fail "the crafted-pointer refusal persisted safe.directory"
 
 echo "==> symlinked Git markers fail closed before chmod"
 symlink_repo="$fixture/workspaces/symlinked"

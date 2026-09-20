@@ -532,6 +532,23 @@ gitleaks_resolved="$(PATH="${gitleaks_published}:${gitleaks_stale_bin}:${PATH}" 
 [ "$gitleaks_resolved" = "${gitleaks_published}/gitleaks" ] ||
     fail "the pinned gitleaks does not take precedence over a stale binary already on PATH"
 
+echo "==> a present but non-executing (corrupted) gitleaks does not abort the step — it is treated as a mismatch and replaced (#1241 challenge round 6, finding F18)"
+gitleaks_corrupt_bin="${test_tmp}/gitleaks-corrupt-bin"
+mkdir -p "$gitleaks_corrupt_bin"
+cat >"${gitleaks_corrupt_bin}/gitleaks" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${gitleaks_corrupt_bin}/gitleaks"
+gitleaks_corrupt_ghpath="${test_tmp}/gitleaks-github-path-corrupt"
+run_gitleaks_install X64 "$gitleaks_corrupt_bin" "${test_tmp}/gitleaks-runner-corrupt" "$gitleaks_corrupt_ghpath"
+grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+    fail "a corrupted pre-installed gitleaks did not trigger a reinstall — the step aborted instead"
+gitleaks_corrupt_published="$(gitleaks_published_bin "$gitleaks_corrupt_ghpath")" ||
+    fail "the corrupted-gitleaks replacement did not publish a GITHUB_PATH entry"
+[ "$(bash "${gitleaks_corrupt_published}/gitleaks")" = "8.24.3" ] ||
+    fail "the corrupted-gitleaks replacement binary is not the pinned version"
+
 echo "==> gitleaks architecture selection: X64 and ARM64 fetch the matching asset, an unsupported arch fails loudly"
 run_gitleaks_install X64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-x64" "${test_tmp}/gitleaks-github-path-x64"
 grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
@@ -642,6 +659,18 @@ snyk_published="$(snyk_published_bin "$snyk_stale_ghpath")" ||
 snyk_resolved="$(PATH="${snyk_published}:${snyk_stale_bin}:${PATH}" command -v snyk)"
 [ "$snyk_resolved" = "${snyk_published}/snyk" ] ||
     fail "the pinned Snyk CLI does not take precedence over a stale binary already on PATH"
+
+echo "==> a present but non-executing (corrupted) Snyk CLI does not abort the step — it is treated as a mismatch and replaced (#1241 challenge round 6, finding F18)"
+snyk_corrupt_bin="${test_tmp}/snyk-corrupt-bin"
+mkdir -p "$snyk_corrupt_bin"
+cat >"${snyk_corrupt_bin}/snyk" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${snyk_corrupt_bin}/snyk"
+run_snyk_install "$snyk_corrupt_bin" "${test_tmp}/snyk-runner-corrupt" "${test_tmp}/snyk-github-path-corrupt"
+grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+    fail "a corrupted pre-installed Snyk CLI did not trigger a reinstall — the step aborted instead"
 
 echo "==> a missing Snyk CLI is installed"
 run_snyk_install "$test_tmp/nonexistent" "${test_tmp}/snyk-runner-missing" "${test_tmp}/snyk-github-path-missing"

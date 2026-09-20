@@ -194,10 +194,16 @@ runs:
         GITLEAKS_VERSION=8.24.3
         # A pre-installed gitleaks (a self-hosted or pre-baked runner) is only
         # reused when its version matches the pin exactly — otherwise the
-        # runner silently ran whatever version happened to be on it.
+        # runner silently ran whatever version happened to be on it. The
+        # trailing "|| true" matters: GitHub's `shell: bash` steps always run
+        # `bash -eo pipefail`, so a PRESENT but non-executing binary (a
+        # corrupted download, wrong arch, missing shared library) would
+        # otherwise abort this entire step instead of being treated as a
+        # mismatch and replaced — worse than the version check this fix
+        # exists to add.
         installed_gitleaks_version=
         if command -v gitleaks >/dev/null 2>&1; then
-          installed_gitleaks_version="$(gitleaks version 2>/dev/null | tr -d '[:space:]')"
+          installed_gitleaks_version="$(gitleaks version 2>/dev/null | tr -d '[:space:]')" || true
         fi
         if [ "$installed_gitleaks_version" != "$GITLEAKS_VERSION" ]; then
           runner_arch="${RUNNER_ARCH:-$(uname -m)}"
@@ -230,10 +236,11 @@ runs:
       run: |
         # renovate: datasource=npm depName=snyk
         SNYK_VERSION=1.1305.2
-        # Same reuse-only-on-exact-match reasoning as gitleaks above.
+        # Same reuse-only-on-exact-match reasoning, and the same "|| true"
+        # abort-under-set-e reasoning, as gitleaks above.
         installed_snyk_version=
         if command -v snyk >/dev/null 2>&1; then
-          installed_snyk_version="$(snyk --version 2>/dev/null | tr -d '[:space:]')"
+          installed_snyk_version="$(snyk --version 2>/dev/null | tr -d '[:space:]')" || true
         fi
         if [ "$installed_snyk_version" != "$SNYK_VERSION" ]; then
           # Same job-scoped-directory + GITHUB_PATH-prepend reasoning as

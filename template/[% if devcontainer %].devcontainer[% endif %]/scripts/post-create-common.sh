@@ -66,7 +66,48 @@ resolve_workspace_root() {
 # root has been trusted anywhere durable.
 resolve_git_dir() {
     local workspace_root="$1"
-    local git_dir
+    local git_marker="$workspace_root/.git"
+    local git_dir admin_dir reverse_pointer
+
+    if [ -d "$git_marker" ]; then
+        # Ordinary checkout: no attacker-controlled indirection to validate
+        # — $git_marker IS the Git directory, not a pointer to one.
+        printf '%s\n' "$git_marker"
+        return 0
+    fi
+
+    # Linked worktree: .git is a FILE naming the admin directory to trust,
+    # and that content is checkout-controlled — safe.directory only bypasses
+    # Git's ownership check; it proves nothing about whether the resolved
+    # directory actually belongs to this workspace. A stale, corrupted, or
+    # crafted pointer (e.g. "gitdir: /path/to/another/repo/...") would
+    # otherwise redirect the privileged recursive chown/chmod below onto an
+    # unrelated repository (#1241 challenge rounds 3/4/6, findings
+    # F8/F11/F17).
+    #
+    # Require the resolved admin directory to round-trip: every worktree
+    # admin directory Git itself creates (`git worktree add`) contains its
+    # OWN "gitdir" file naming the linked worktree's .git file right back —
+    # verified empirically against a real `git worktree add`. A path that
+    # does not carry this exact reverse pointer is refused before anything
+    # is mutated.
+    admin_dir="$(git -c safe.directory="$workspace_root" -C "$workspace_root" \
+        rev-parse --path-format=absolute --git-dir 2>/dev/null)" || {
+        echo "ERROR: could not resolve the Git admin directory for $workspace_root" >&2
+        return 1
+    }
+    [ -n "$admin_dir" ] || {
+        echo "ERROR: Git reported an empty admin directory for $workspace_root" >&2
+        return 1
+    }
+    reverse_pointer="$(cat "$admin_dir/gitdir" 2>/dev/null)" || {
+        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — no reverse gitdir pointer found" >&2
+        return 1
+    }
+    [ "$reverse_pointer" = "$git_marker" ] || {
+        echo "ERROR: refusing an untrusted worktree admin directory at $admin_dir — its reverse pointer ($reverse_pointer) does not name $git_marker" >&2
+        return 1
+    }
 
     git_dir="$(git -c safe.directory="$workspace_root" -C "$workspace_root" \
         rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || {
