@@ -1688,20 +1688,26 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
         err "$claude_wf has no step-level timeout — a job timeout would strand the claim"
 done
 
-# Required checks must run on the draft, or the gate has nothing to read. A
-# bare `pull_request:` trigger already covers draft opened/synchronize. The
-# closing-keyword job deliberately narrows event types, but keeps the four PR
-# events that create, edit, or add commits to a draft workbench.
+# Required checks must run on the draft, or the gate has nothing to read.
 for wf in .github/workflows/*.yml; do
     [ -f "$wf" ] || continue
     ! grep -Fq 'pull_request.draft' "$wf" ||
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
 done
+# The two halves of the `edited` split (harmon-init#1328). The build matrix
+# must NOT re-run on a title/body edit — the readiness gate edits the body to
+# tick deferred findings, and each edit otherwise put every concluded check
+# back to pending. The closing-keyword guard MUST, because the title and body
+# are its input. Assert both directions: either one alone is satisfiable by
+# deleting the wrong trigger.
 build_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/build.yml)"
-if grep -q 'types:' <<<"$build_trigger" &&
-    ! grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$build_trigger"; then
-    err "build.yml pull_request types omit a draft-closing-keyword trigger"
-fi
+grep -Fq 'types: [opened, synchronize, reopened]' <<<"$build_trigger" ||
+    err "build.yml pull_request types must be [opened, synchronize, reopened]"
+! grep -Eq '^ *types:.*\bedited\b' <<<"$build_trigger" ||
+    err "build.yml re-runs the whole matrix on a PR title/body edit"
+ck_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/closing-keywords.yml)"
+grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$ck_trigger" ||
+    err "closing-keywords.yml must re-run when the PR title or body is edited"
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
 # minimal renders with devcontainer=false; every other profile has it on.
@@ -2068,7 +2074,10 @@ else # use_release_please default on, release_content_paths="" (guard present, u
     [ -x scripts/require-release-title.sh ] || err "require-release-title.sh missing (use_release_please on)"
     grep -q 'test:release-title' Taskfile.yml || err "test:release-title task missing (use_release_please on)"
     [ ! -f .github/workflows/release-content-guard.yml ] || err "release-content-guard.yml rendered but release_content_paths empty"
-    ! grep -q 'guard:release-title' Taskfile.yml || err "guard:release-title task rendered but release_content_paths empty"
+    # Anchored to a DEFINITION or an INVOCATION: an unanchored match also fires
+    # on prose in a comment, which is not a rendered task.
+    ! grep -Eq '^ *(- task: )?guard:release-title:?$' Taskfile.yml ||
+        err "guard:release-title task rendered but release_content_paths empty"
 fi
 
 # ── 9h. Terraform lint contract renders per include_terraform ───────

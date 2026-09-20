@@ -568,6 +568,18 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   changes (docs, this repo's own tooling) keep their normal type. Pre-flight it
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
+- **A PR body that closes an issue must pre-flight `guard:closing-keywords`
+  too.** A same-repo `Closes #N` while `#N` still has unchecked acceptance
+  criteria fails the required `closing-keywords` check, and the guard is a
+  metadata read — so pay for it locally, in the second before `gh pr create`,
+  rather than in a CI round and a fix push. It stays **out of `verify`**
+  deliberately: `verify` is offline and this guard calls the GitHub API.
+  Pre-flight it with the body you are about to publish:
+  `PR_TITLE="<title>" PR_BODY="$(cat body.md)" task guard:closing-keywords`.
+  With both variables unset it reads the branch's open PR instead, which is
+  the form to re-run after a body edit; `task ci` runs it first for the same
+  reason. Fix the issue's criteria — or drop the closing keyword to `Refs` —
+  rather than bypassing it.
 
 ### Spec-driven changes (OpenSpec)
 
@@ -913,7 +925,14 @@ the workflow rules above:
 
 - `.github/workflows/build.yml` — jobs `lint`, `security`, `template-test` (matrix
   of copier answer profiles), and the aggregate `verify` gate. All jobs delegate to
-  `task` targets.
+  `task` targets. Its `pull_request` trigger carries **no `edited`**: the
+  readiness gate requires PR-body edits, so a title/body edit must not restart
+  the matrix (#1328). Guards that genuinely read the title or body keep
+  `edited` in their own workflows.
+- `.github/workflows/closing-keywords.yml` — the metadata-only `closing-keywords`
+  gate, split out of `build.yml` for exactly that reason. It is a required
+  status check keyed by its job id; `task guard:closing-keywords`
+  (`scripts/guard-closing-keywords.sh`) is the local pre-flight.
 - `.github/workflows/devcontainer-build.yml` — builds the dual-profile
   devcontainer images (bot + dev) and pushes them to GHCR as build caches. The
   root repo dogfoods the same `.devcontainer/` the template generates
