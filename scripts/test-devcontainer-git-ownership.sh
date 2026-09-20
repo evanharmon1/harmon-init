@@ -256,7 +256,24 @@ echo "==> the ORIGINAL group survives reconciliation, distinct from the invoking
 # SECONDARY group id proves the same thing this fix depends on: the group is
 # read from the tree at reconciliation time, not defaulted to whatever the
 # reconciling process's own primary gid happens to be.
-secondary_gid="$(id -G | tr ' ' '\n' | grep -vx "$(id -g)" | head -1 || true)"
+#
+# In a user-namespaced or id-mapped container, `id -G` can list an overflow
+# supplementary gid (e.g. 65534) the mounted filesystem cannot actually
+# assign — chgrp to it fails, and under this script's `set -e` that would
+# abort the whole suite rather than the one fixture. Probe each candidate
+# with a scratch chgrp first and use only one that is actually assignable
+# here; skip the fixture with a reason rather than failing if none is
+# (#1241 challenge round 3, finding F7).
+gid_probe_target="$fixture/gid-probe-target"
+secondary_gid=""
+for candidate_gid in $(id -G | tr ' ' '\n' | grep -vx "$(id -g)"); do
+    : >"$gid_probe_target"
+    if chgrp "$candidate_gid" "$gid_probe_target" 2>/dev/null; then
+        secondary_gid="$candidate_gid"
+        break
+    fi
+done
+rm -f "$gid_probe_target"
 if [ -n "$secondary_gid" ]; then
     gid_repo="$fixture/workspaces/gid-example"
     gid_config="$fixture/gid-xdg/git/config"
@@ -274,7 +291,7 @@ if [ -n "$secondary_gid" ]; then
     [ "$(stat -c '%g' "$gid_repo/.git" 2>/dev/null || stat -f '%g' "$gid_repo/.git")" = "$secondary_gid" ] ||
         fail "reconciliation changed the group away from the original (non-primary) one"
 else
-    echo "  (skipped: the test-invoking user belongs to no secondary group to exercise this with)"
+    echo "  (skipped: no secondary group available that is both distinct from the primary gid and actually assignable here)"
 fi
 
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"
