@@ -66,6 +66,10 @@ grep -Fq 'find "$git_dir" -type d -exec chmod g+s {} +' "$helpers" ||
     fail "permissions reconciliation does not set the setgid bit (scoped to directories only) so new entries inherit the original group"
 grep -Fq 'git -c safe.directory="$workspace_root" -C "$workspace_root" config core.sharedRepository 0664' "$helpers" ||
     fail "permissions reconciliation does not configure an explicit, umask-independent core.sharedRepository so future commits stay group-writable, never world-writable"
+grep -q '^reconcile_step_failed()' "$helpers" ||
+    fail "the extracted helpers do not include reconcile_step_failed"
+grep -Fq 'safe to retry' "$helpers" ||
+    fail "permissions reconciliation does not name a retry remedy on failure"
 
 reconcile_line="$(grep -nF 'reconcile_workspace_permissions "$ENV_GITCONFIG"' "$post_create" |
     head -1 | cut -d: -f1)"
@@ -408,6 +412,48 @@ failed_safe_entries="$(git config --file "$failed_config" --get-all safe.directo
 failed_owner_after="$(ls -dn "$failed_repo/.git" | awk '{ print $3 ":" $4 }')"
 [ "$failed_owner_after" = "$failed_owner_before" ] ||
     fail "a failed reconciliation changed Git metadata ownership"
+grep -Fq "safe to retry" "$tmp_root/failed.err" ||
+    fail "a failed reconciliation did not name the retry remedy"
+
+echo "==> an interrupted reconciliation converges to the same state on retry, never leaving a state only rollback could fix (#1241 challenge round 4, finding F12)"
+converge_repo="$fixture/workspaces/converge"
+converge_config="$fixture/converge-xdg/git/config"
+converge_log="$fixture/converge-sudo.log"
+converge_fail_bin="$fixture/converge-fail-bin"
+mkdir -p "$converge_repo/subdirectory" "$fixture/converge-xdg/git" "$converge_fail_bin"
+git -C "$converge_repo" init -q
+chmod 0700 "$converge_repo/.git"
+cat >"${converge_fail_bin}/chmod" <<'EOF'
+#!/bin/sh
+echo "simulated interrupted chmod" >&2
+exit 1
+EOF
+chmod 0755 "${converge_fail_bin}/chmod"
+
+# First attempt: sudo chown succeeds, then chmod is interrupted (simulated).
+if (
+    cd "$converge_repo/subdirectory"
+    HOME="$home" XDG_CONFIG_HOME="$fixture/converge-xdg" SUDO_LOG="$converge_log" SUDO_FAIL="" \
+        PATH="${converge_fail_bin}:${fake_bin}:${PATH}" \
+        bash -c 'set -e; . "$1"; reconcile_workspace_permissions "$2"' _ "$helpers" "$converge_config"
+) >/dev/null 2>"$tmp_root/converge.err"; then
+    fail "an interrupted reconciliation (chmod failing after chown) unexpectedly succeeded"
+fi
+grep -Fq "safe to retry" "$tmp_root/converge.err" ||
+    fail "an interrupted reconciliation did not name the retry remedy"
+[ "$(stat -c '%u' "$converge_repo/.git" 2>/dev/null || stat -f '%u' "$converge_repo/.git")" = "$(id -u)" ] ||
+    fail "fixture setup: chown did not complete before the simulated chmod interruption, so this fixture would not test the intended partial state"
+
+# Retry with the real chmod restored (no PATH override): must converge to
+# the fully-reconciled state, proving the interruption above left nothing
+# only a rollback could have fixed.
+converge_resolved="$(run_reconcile_at "$converge_repo" "$converge_config" "$converge_log")"
+[ "$converge_resolved" = "$converge_repo" ] ||
+    fail "the retried reconciliation resolved workspace root was '$converge_resolved', expected '$converge_repo'"
+[ "$(git_mode "$converge_repo/.git")" = "2775" ] ||
+    fail "the retried reconciliation did not converge to the setgid, group-writable directory mode"
+[ "$(git -C "$converge_repo" config core.sharedRepository)" = "0664" ] ||
+    fail "the retried reconciliation did not converge to configuring core.sharedRepository"
 
 echo "==> only repository-managed hook names are chmodded"
 hook_fixture="$fixture/managed-hooks"

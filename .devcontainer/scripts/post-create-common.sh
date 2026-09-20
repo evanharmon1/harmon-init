@@ -80,6 +80,23 @@ resolve_git_dir() {
     printf '%s\n' "$git_dir"
 }
 
+# Every step below (chown, chmod, setgid, core.sharedRepository) is
+# individually idempotent and their combined end state does not depend on
+# what order a RETRY finds them in — re-running this function always
+# converges to the same fully-reconciled tree. That is deliberate: a true
+# rollback would mean snapshotting every file's original owner and mode
+# before touching anything, which is itself another privileged, fallible
+# recursive walk. Converging on retry is the cheaper, safer answer to the
+# same problem (#1241 challenge round 4, finding F12) — an interruption
+# between any two steps leaves a state the NEXT post-create (or a
+# container rebuild) completes, never one only a rollback could fix. One
+# shared failure message names that remedy instead of repeating it.
+reconcile_step_failed() {
+    echo "ERROR: $1" >&2
+    echo "Reconciliation is safe to retry — re-run post-create-common.sh, or rebuild the container, to complete it; every step converges to the same end state regardless of where a previous attempt stopped." >&2
+    return 1
+}
+
 reconcile_workspace_permissions() {
     local env_gitconfig="$1"
     local workspace_root git_dir orig_gid
@@ -103,7 +120,7 @@ reconcile_workspace_permissions() {
     # finding F1; confirmed empirically — the fix is a maintainer-ruled
     # ownership-model revision, not a mode-only change).
     orig_gid="$(stat -c '%g' "$git_dir" 2>/dev/null || stat -f '%g' "$git_dir")" || {
-        echo "ERROR: could not determine the current group of $git_dir" >&2
+        reconcile_step_failed "could not determine the current group of $git_dir"
         return 1
     }
 
@@ -117,11 +134,11 @@ reconcile_workspace_permissions() {
     # with its own chmod +x after this runs) keeps its executable bit
     # instead of being silently disabled.
     sudo chown -R "$(id -u):${orig_gid}" "$git_dir" || {
-        echo "ERROR: could not reclaim ownership of the Git directory at $git_dir" >&2
+        reconcile_step_failed "could not reclaim ownership of the Git directory at $git_dir"
         return 1
     }
     chmod -R u=rwX,g=rwX,o=rX "$git_dir" || {
-        echo "ERROR: could not set permissions under $git_dir" >&2
+        reconcile_step_failed "could not set permissions under $git_dir"
         return 1
     }
     # setgid on directories only (never files — on a FILE this bit means
@@ -130,7 +147,7 @@ reconcile_workspace_permissions() {
     # directory Git creates under here inherits the original group instead
     # of whichever process's primary group happened to create it.
     find "$git_dir" -type d -exec chmod g+s {} + || {
-        echo "ERROR: could not set the setgid bit under $git_dir" >&2
+        reconcile_step_failed "could not set the setgid bit under $git_dir"
         return 1
     }
     # setgid only propagates GROUP OWNERSHIP to new entries — it does not
@@ -148,7 +165,7 @@ reconcile_workspace_permissions() {
     # this whole change exists to close. An explicit octal pins the bits
     # Git actually applies regardless of umask.
     git -c safe.directory="$workspace_root" -C "$workspace_root" config core.sharedRepository 0664 || {
-        echo "ERROR: could not configure shared-repository permissions for $workspace_root" >&2
+        reconcile_step_failed "could not configure shared-repository permissions for $workspace_root"
         return 1
     }
 
