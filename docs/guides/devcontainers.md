@@ -660,11 +660,18 @@ init-env.sh: the container will start without them. On Coder/Codespaces set them
 init-env.sh: workspace/repo secrets; locally populate the env-file from 1Password.
 ```
 
-The build still succeeds — a missing optional secret must not block a rebuild,
-and `initializeCommand` runs on the host, where a non-zero exit aborts the whole
-build. So this is a signal to read, not a failure. Without it the container comes
-up clean and only the dependent step fails later, far from the cause: a missing
-`TS_AUTHKEY` went unnoticed for hours in a Coder workspace that way.
+**This warning is not itself a failure.** `initializeCommand` runs on the host,
+where a non-zero exit aborts the whole build, so a missing optional secret must
+not block a rebuild there — it is a signal to read.
+
+What happens next depends on the secret. For most, the container comes up clean
+and only the dependent step fails later, far from the cause. `TS_AUTHKEY` in the
+**dev profile** is the exception: that profile declares
+`DEVCONTAINER_TAILSCALE=true`, so `postStartCommand` fails the start outright
+rather than leaving a container that is up but logged out. The warning tells you
+early; the start is what refuses. That is deliberate — a missing `TS_AUTHKEY`
+once went unnoticed for hours in a Coder workspace precisely because the start
+reported success.
 
 The warning covers **only** the vars this profile's allow-list permits, so the
 bot profile never reports `TS_AUTHKEY` missing. Its absence there is correct —

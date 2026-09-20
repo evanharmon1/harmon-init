@@ -77,7 +77,7 @@ if ! pgrep -x tailscaled &>/dev/null; then
     fi
 fi
 
-# Wait for the socket regardless of who started the daemon.
+# Wait for the daemon to ANSWER, and do it regardless of who started it.
 #
 # This wait used to live inside the branch above, so it ran only when THIS
 # script started tailscaled. But `pgrep` succeeding proves only that the
@@ -86,7 +86,8 @@ fi
 # live PID and no socket, and the `tailscale status` / `tailscale up` calls
 # below race it. That used to cost a swallowed error message; now that a failed
 # connect is fatal it would cost a failed build on nothing but timing.
-# Wait for the daemon to ANSWER, not merely for its socket path to exist.
+#
+# Answering, not merely existing, because the socket path alone proves nothing.
 # `[ -S ... ]` proves an inode is there, which is not the same thing: a unix
 # socket file outlives the process that bound it, so a tailscaled that crashed
 # or was killed uncleanly leaves one behind. The replacement daemon then unlinks
@@ -100,15 +101,21 @@ fi
 # status` reports a logged-out backend through its output rather than
 # consistently through its exit code, and this loop must not depend on which.
 # Empty output is what a dead or still-starting daemon gives.
+# The bound is a WALL-CLOCK DEADLINE, not an iteration count. Counting
+# iterations only bounds the wait when every iteration is instant: a probe that
+# is itself allowed seconds turns "100 tries" into minutes, so the deadline in
+# the failure message stops being true exactly when it matters — against the
+# slow or wedged daemon the deadline exists for.
+#
+# Each probe is hard-bounded too, with `-k`. Plain `timeout N` sends SIGTERM and
+# then waits for the child, so a status call that ignores TERM would hang inside
+# an otherwise-bounded loop. Worst case is therefore the deadline plus one
+# probe's own budget, not an unbounded stall.
 TS_STATUS_JSON=""
-for _ in $(seq 1 100); do
+TS_READY_DEADLINE=$((SECONDS + 10))
+while [ "${SECONDS}" -lt "${TS_READY_DEADLINE}" ]; do
     if [ -S "${TS_SOCKET}" ]; then
-        # Bounded per attempt. A daemon that accepts the connection and then
-        # never replies would otherwise block here forever, so the loop would
-        # never reach its advertised 10s failure path and postStartCommand
-        # would HANG instead of failing — the same "no signal" outcome this
-        # change exists to remove, one layer down.
-        TS_STATUS_JSON="$(sudo timeout 3 tailscale status --json 2>/dev/null || true)"
+        TS_STATUS_JSON="$(sudo timeout -k 1 2 tailscale status --json 2>/dev/null || true)"
         case "${TS_STATUS_JSON}" in
         *'"BackendState"'*) break ;;
         esac

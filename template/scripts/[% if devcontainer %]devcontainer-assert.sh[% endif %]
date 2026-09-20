@@ -661,6 +661,14 @@ status)
     # returns nothing. The readiness loop must keep waiting and then bail,
     # rather than treating the stale inode as proof the daemon is up.
     [ "${TS_STUB_STATUS_SILENT:-0}" = "1" ] && exit 1
+    # TS_STUB_STATUS_HANG=1 is a daemon that accepts the request and never
+    # answers. It must be killed by the probe's own timeout, and the loop must
+    # still finish on its wall-clock deadline rather than multiplying the hang
+    # by its iteration count.
+    if [ "${TS_STUB_STATUS_HANG:-0}" = "1" ]; then
+        sleep 120
+        exit 1
+    fi
     printf '{"BackendState": "%s"}\n' "${TS_STUB_STATE:-NeedsLogin}"
     exit 0
     ;;
@@ -674,7 +682,7 @@ exit 0
 TS_STUB
     chmod 0755 "${ts_bin}/tailscale"
 
-    # Cases (g)-(l) reach the connect paths, which means getting past
+    # Cases (g)-(m) reach the connect paths, which means getting past
     # `[ -S "${TS_SOCKET}" ]` — so they need a REAL unix socket; there is no
     # way to satisfy `-S` without binding one. Cases (a)-(f) all bail before
     # the socket wait and need none.
@@ -696,14 +704,14 @@ TS_STUB
     ts_sock="${work_dir}/ts.sock"
     ts_sock_ready=no
     if ! command -v python3 >/dev/null 2>&1; then
-        echo "==> SKIP tailscale cases (g)-(l): python3 is unavailable to create a stub socket."
+        echo "==> SKIP tailscale cases (g)-(m): python3 is unavailable to create a stub socket."
     elif python3 -c 'import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1])
 s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         ts_sock_ready=yes
     else
-        echo "==> SKIP tailscale cases (g)-(l): cannot bind a stub unix socket at ${ts_sock}"
+        echo "==> SKIP tailscale cases (g)-(m): cannot bind a stub unix socket at ${ts_sock}"
         echo "    (sandbox denial, or TMPDIR makes the path exceed sun_path's ~104-byte limit)."
         echo "    Cases (a)-(f) still run; CI and the devcontainer run the full set."
     fi
@@ -721,7 +729,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         # PATH here would silently hand it back and test the wrong path.
         ts_case_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_OPTIONAL \
             -u TS_AUTHKEY -u TS_AUTH_KEY -u TS_STUB_STATE -u TS_STUB_UP_RC \
-            -u TS_STUB_STATUS_SILENT \
+            -u TS_STUB_STATUS_SILENT -u TS_STUB_STATUS_HANG \
             TS_SOCKET_PATH="$ts_sock" TS_STUB_UP_MARKER="$ts_up_marker" \
             PATH="$ts_bin" "$@" "$bash_bin" "$ts_connect" 2>&1)" || ts_rc=$?
         [ "$ts_rc" = "$want_rc" ] ||
@@ -829,6 +837,26 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         #     the tailnet was never required.
         ts_connect_run 0 "l (optional, stale socket, daemon silent)" \
             TS_AUTHKEY=stub-key TS_STUB_STATUS_SILENT=1
+
+        # (m) required + a daemon that HANGS rather than answering. The point
+        #     is the BOUND, not just the exit code: a probe timeout multiplied
+        #     by an iteration count would take minutes, and an unkilled probe
+        #     would never return at all, so the failure message's deadline
+        #     would be a lie precisely when it is load-bearing. Allow generous
+        #     slack over the 10s deadline (CI is slow and each probe carries
+        #     its own budget) while still failing decisively on a loop that
+        #     multiplies instead of deadlines.
+        local ts_hang_start ts_hang_elapsed
+        ts_hang_start=$SECONDS
+        ts_connect_run 1 "m (required, daemon hangs)" \
+            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATUS_HANG=1
+        ts_hang_elapsed=$((SECONDS - ts_hang_start))
+        [ "$ts_hang_elapsed" -lt 60 ] ||
+            fail "tailscale-connect.sh case m: took ${ts_hang_elapsed}s against a hanging daemon — the readiness wait is not bounded by its deadline"
+        case "$ts_case_out" in
+        *"not answering"*) ;;
+        *) fail "tailscale-connect.sh case m: did not report an unanswering daemon: ${ts_case_out}" ;;
+        esac
     fi
 
     # 8. Antigravity runs without permission prompts inside the container,
