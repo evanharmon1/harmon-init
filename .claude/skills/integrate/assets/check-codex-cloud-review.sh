@@ -51,6 +51,10 @@ never wait, re-run, or re-trigger. A PR fetch that FAILS is still the
 transient bounded-wait path (pending/retry/escalate); only a non-open
 answer is 14. `reserve` and `attach` refuse a non-open PR outright,
 exit 2 with a reason naming the reported state.
+
+State locks are never reclaimed automatically. On lock-held, inspect the
+reported PID and age; removing a lock directory is an explicit human recovery
+action performed outside this helper.
 EOF
     exit 2
 }
@@ -147,7 +151,6 @@ case "$command_name" in
 reap) [ -n "$root_dir" ] || usage ;;
 *) [ -n "$state_file" ] || usage ;;
 esac
-
 valid_repo() {
     grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' <<<"$1"
 }
@@ -193,10 +196,10 @@ valid_time() {
 #
 # Adopting is safe to do retroactively (not just before any `check` has run)
 # because nothing about a `check` verdict is durable: every command
-# re-derives `elapsed` from `reserved_at` and `timeout_min` fresh, on its own
+# re-derives `elapsed` from `requested_at` and `timeout_min` fresh, on its own
 # invocation, against the real clock. There is no cached "attempt 1 timed
 # out" decision anywhere in state for a later adoption to contradict — only
-# `reserved_at` (fixed at reservation) and `timeout_min` (this cycle's
+# `requested_at` (fixed at attachment) and `timeout_min` (this cycle's
 # budget) are persisted, and adoption keeps those two mutually consistent for
 # every command that reads them afterward. The one case that DOES get a
 # second vote is two conflicting EXPLICIT flags — that is not absence
@@ -315,14 +318,21 @@ provider_head() {
 
 run_gh() {
     call_timeout=60
-    if [ -n "${state_reserved:-}" ] && valid_time "$state_reserved"; then
-        reserved_epoch=$(jq -nr \
-            --arg value "$state_reserved" '$value | fromdateiso8601') ||
+    window_anchor=${state_requested:-${state_reserved:-}}
+    if [ -n "$window_anchor" ] && valid_time "$window_anchor"; then
+        anchor_epoch=$(jq -nr \
+            --arg value "$window_anchor" '$value | fromdateiso8601') ||
             return 1
         current_epoch=$(date -u '+%s')
-        remaining=$((reserved_epoch + timeout_min * 60 - current_epoch))
+        remaining=$((anchor_epoch + timeout_min * 60 - current_epoch))
         if [ "$remaining" -le 0 ]; then
-            call_timeout=1
+            # A post-window check still owes one terminal evidence sweep. Give
+            # that sweep an independent normal request budget; reducing every
+            # call to one second here makes a completed remote review look
+            # absent precisely when the checker is deciding its final result.
+            if [ "$command_name" != "check" ]; then
+                call_timeout=1
+            fi
         elif [ "$remaining" -lt "$call_timeout" ]; then
             call_timeout=$remaining
         fi
@@ -387,17 +397,22 @@ read_state() {
           (.note | type == "string") and ((.note | length) > 0) and
           (.content_fingerprint | type == "string") and
           ((.content_fingerprint | length) > 0) and
+          (.attempt == null or .attempt == 1 or .attempt == 2) and
           (.settled_at | type == "string"))))) and
       (.repo | type == "string") and
       (.pr | type == "number") and
       (.head | type == "string") and
       (.attempt == 1 or .attempt == 2) and
       (.phase == "reserved" or .phase == "attached") and
-      (.cycle_requested_at == null or
-        (.cycle_requested_at | type == "string")) and
+      (.requires_full_window == null or
+        (.requires_full_window | type == "boolean")) and
       (.previous_trigger_comment_id == null or
-        (.previous_trigger_comment_id | type == "number")) and
-      (.timeout_min == null or (.timeout_min | type == "number"))
+        (.previous_trigger_comment_id | type == "number" and . > 0)) and
+      (.timeout_min == null or (.timeout_min | type == "number")) and
+      (.boundary_source == null or
+        (.boundary_source == "check-suite" or .boundary_source == "commit-date")) and
+      (.commit_date_boundary == null or (.commit_date_boundary | type == "string")) and
+      (.check_suite_boundary == null or (.check_suite_boundary | type == "string"))
     ' "$state_file" >/dev/null || die "malformed state file: $state_file"
 }
 
@@ -405,12 +420,28 @@ acquire_state_lock() {
     parent=$(dirname "$state_file")
     mkdir -p "$parent"
     lock_dir="${state_file}.lock"
-    mkdir "$lock_dir" 2>/dev/null ||
-        die "state is locked by another shepherd; inspect before retrying"
-    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+        lock_pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+        lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null ||
+            stat -f %m "$lock_dir" 2>/dev/null || true)
+        lock_now=$(date -u '+%s')
+        lock_age=unknown
+        if grep -Eq '^[0-9]+$' <<<"$lock_mtime" &&
+            [ "$lock_now" -ge "$lock_mtime" ]; then
+            lock_age="$((lock_now - lock_mtime))s"
+        fi
+        lock_holder=${lock_pid:-unknown}
+        die "lock-held: holder_pid=$lock_holder age=$lock_age; inspect and remove manually only when safe"
+    fi
+    printf '%s\n' "$$" >"$lock_dir/pid" || {
+        rmdir "$lock_dir" 2>/dev/null || true
+        die "cannot record the state-lock holder PID"
+    }
+    trap 'rm -f "$lock_dir/pid"; rmdir "$lock_dir" 2>/dev/null || true' EXIT
 }
 
 release_state_lock() {
+    rm -f "$lock_dir/pid"
     rmdir "$lock_dir" 2>/dev/null || true
     lock_dir=
     trap - EXIT
@@ -461,14 +492,14 @@ bounded_wait() {
         now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     fi
     valid_time "$now" || die "--now must be an ISO-8601 UTC second"
-    reserved_epoch=$(jq -nr \
-        --arg value "$state_reserved" '$value | fromdateiso8601') ||
-        die "cannot parse reservation time"
+    requested_epoch=$(jq -nr \
+        --arg value "$state_requested" '$value | fromdateiso8601') ||
+        die "cannot parse request time"
     now_epoch=$(jq -nr --arg value "$now" '$value | fromdateiso8601') ||
         die "cannot parse current time"
-    [ "$now_epoch" -ge "$reserved_epoch" ] ||
-        die "--now predates the local reservation"
-    elapsed=$((now_epoch - reserved_epoch))
+    [ "$now_epoch" -ge "$requested_epoch" ] ||
+        die "--now predates the review request"
+    elapsed=$((now_epoch - requested_epoch))
     timeout_seconds=$((timeout_min * 60))
     if [ "$elapsed" -lt "$timeout_seconds" ]; then
         emit pending "$detail"
@@ -480,6 +511,28 @@ bounded_wait() {
     fi
     emit escalate "$detail; both attempt windows elapsed"
     exit 13
+}
+
+require_latest_window_elapsed() {
+    requires_full_window=$(jq -r '.requires_full_window // false' "$state_file")
+    [ "$state_attempt" = "1" ] && [ "$requires_full_window" != "true" ] && return
+    if [ -z "$now" ]; then
+        now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    fi
+    valid_time "$now" || die "--now must be an ISO-8601 UTC second"
+    requested_epoch=$(jq -nr \
+        --arg value "$state_requested" '$value | fromdateiso8601') ||
+        die "cannot parse request time"
+    now_epoch=$(jq -nr --arg value "$now" '$value | fromdateiso8601') ||
+        die "cannot parse current time"
+    [ "$now_epoch" -ge "$requested_epoch" ] ||
+        die "--now predates the review request"
+    elapsed=$((now_epoch - requested_epoch))
+    timeout_seconds=$((timeout_min * 60))
+    if [ "$elapsed" -lt "$timeout_seconds" ]; then
+        emit pending "latest attempt window has not elapsed"
+        exit 11
+    fi
 }
 
 flatten_pages() {
@@ -529,6 +582,21 @@ codex_verdict_defs=$(
               gsub("^[[:space:]]+|[[:space:]]+$"; "") | ascii_downcase);
           def has_severity_marker:
             (body_text | ascii_downcase | test("\\bp[0-9]+\\b"));
+          # Integration remediation 1 (2026-09-14, Codex cloud review on
+          # `a5bc99a`, confirmed finding `4010207997`): a bare `type ==
+          # "number"` check on a provider-supplied id admits `0`, a negative
+          # number, and a fraction like `1.5` — none of them a real GitHub
+          # object id, all of them silently usable as the accepted evidence's
+          # `accepted.id` once inside `newest_result_record`/
+          # `comment_candidates`. Mirrors `valid_uint`'s bash-level shape
+          # (positive, integral) inside jq. Deliberately not `% 1 == 0` as
+          # the fractional-part test: jq's `%` truncates BOTH operands to
+          # integers before dividing (`1.5 % 1` is `0`, not `0.5`), so it
+          # would silently accept 1.5 as "integral" — comparing against
+          # `floor` does not have that trap. `> 0` rejects zero and negative
+          # values the same way `valid_uint`'s `[1-9][0-9]*` anchor does.
+          def is_positive_integer:
+            (type == "number") and (. == (. | floor)) and (. > 0);
           # Factored out of `rest_is_boilerplate` so the carrier defs below can
           # reuse the exact same removal and the exact same metadata pattern
           # instead of restating them. Same regexes, same flags, same order —
@@ -662,6 +730,7 @@ reserve)
     fi
     [ "$live_head" = "$head" ] || die "PR head changed before reservation"
 
+    replaced_trigger_comment_id=
     if [ -f "$state_file" ]; then
         read_state
         old_repo=$(jq -r '.repo' "$state_file")
@@ -677,6 +746,15 @@ reserve)
             [ "$old_attempt" = "1" ] && [ "$attempt" = "2" ] &&
                 [ "$old_phase" = "attached" ] ||
                 die "refusing an uncontrolled duplicate trigger for this head"
+            # harmon-devkit#1014 ruling 2: this reservation is about to
+            # overwrite an attached attempt-1 state that itself carried a
+            # trigger comment — that trigger is real same-head history, not
+            # nothing, so the fresh reserved payload below must carry it
+            # forward as `previous_trigger_comment_id` rather than the
+            # attempt-1 shape's hardcoded `null`. `attach` (above) still owns
+            # recomputing this field from live GitHub evidence once a new
+            # trigger is attached; this is only the value in between.
+            replaced_trigger_comment_id=$(jq -r '.trigger_comment_id // empty' "$state_file")
         else
             [ "$attempt" = "1" ] ||
                 die "a new head must begin at attempt 1"
@@ -686,8 +764,6 @@ reserve)
     fi
 
     reserved_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-    cycle_requested_at=
-    previous_trigger_id=null
     # Settlements are statements about a HEAD, not about an attempt, so attempt
     # 2 of the same head keeps them — discarding them would make every attempt-2
     # cycle re-block on findings a human already disposed of. A different head
@@ -697,23 +773,12 @@ reserve)
         carried_settled=$(jq -c '.settled // []' "$state_file")
     fi
     if [ "$attempt" = "2" ]; then
-        cycle_requested_at=$(jq -r '.cycle_requested_at' "$state_file")
-        previous_reserved_at=$(jq -r '.reserved_at' "$state_file")
-        previous_trigger_id=$(jq -r '.trigger_comment_id' "$state_file")
-        valid_time "$cycle_requested_at" ||
-            die "attempt 1 state has an invalid cycle request time"
-        valid_time "$previous_reserved_at" ||
-            die "attempt 1 state has an invalid reservation time"
-        prev_mechanism=$(jq -r '.finder.trigger_mechanism // "review-comment"' "$state_file")
-        if [ "$prev_mechanism" = "requested-reviewer" ]; then
-            previous_trigger_id=null
-        else
-            valid_uint "$previous_trigger_id" ||
-                die "attempt 1 state has an invalid trigger ID"
-        fi
-        previous_reserved_epoch=$(jq -nr \
-            --arg value "$previous_reserved_at" '$value | fromdateiso8601') ||
-            die "cannot parse attempt 1 reservation time"
+        previous_requested_at=$(jq -r '.requested_at' "$state_file")
+        valid_time "$previous_requested_at" ||
+            die "attempt 1 state has an invalid request time"
+        previous_requested_epoch=$(jq -nr \
+            --arg value "$previous_requested_at" '$value | fromdateiso8601') ||
+            die "cannot parse attempt 1 request time"
         # harmon-devkit#223: attempt 2 has no --timeout-min of its own in the
         # documented flow, and even when one is passed it must not silently
         # open a second window — a timeout already persisted on the attempt-1
@@ -732,7 +797,7 @@ reserve)
         persist_adopted_timeout
         current_epoch=$(date -u '+%s')
         [ "$current_epoch" -ge \
-            "$((previous_reserved_epoch + timeout_min * 60))" ] ||
+            "$((previous_requested_epoch + timeout_min * 60))" ] ||
             die "attempt 1 window has not elapsed"
     fi
     # harmon-devkit#223: attempt 1 of a fresh cycle persists a CHOICE only
@@ -789,24 +854,30 @@ reserve)
         rm -rf "$finder_tmpdir"
     fi
 
+    if [ -n "$replaced_trigger_comment_id" ]; then
+        valid_uint "$replaced_trigger_comment_id" ||
+            die "attempt 1 state has an invalid trigger id to carry forward"
+        payload_previous_trigger_comment_id=$replaced_trigger_comment_id
+    else
+        payload_previous_trigger_comment_id=null
+    fi
+
     payload=$(jq -cn \
         --arg repo "$repo" \
         --argjson pr "$pr" \
         --arg head "$head" \
         --argjson attempt "$attempt" \
         --arg reserved_at "$reserved_at" \
-        --arg cycle_requested_at "$cycle_requested_at" \
-        --argjson previous_trigger_id "$previous_trigger_id" \
         --argjson timeout_min "$payload_timeout_min" \
         --argjson settled "$carried_settled" \
         --argjson finder "$finder_payload" \
+        --argjson previous_trigger_comment_id "$payload_previous_trigger_comment_id" \
         '{
           version:2,repo:$repo,pr:$pr,head:$head,attempt:$attempt,
           phase:"reserved",reserved_at:$reserved_at,
           trigger_comment_id:null,requested_at:null,
-          cycle_requested_at:
-            (if $cycle_requested_at == "" then null else $cycle_requested_at end),
-          previous_trigger_comment_id:$previous_trigger_id,
+          previous_trigger_comment_id:$previous_trigger_comment_id,
+          requires_full_window:false,
           timeout_min:$timeout_min,
           settled:$settled,
           finder:$finder
@@ -872,8 +943,7 @@ attach)
               .version = 2 |
               .phase = "attached" |
               .trigger_comment_id = null |
-              .requested_at = $requested_at |
-              .cycle_requested_at = (.cycle_requested_at // $requested_at)
+              .requested_at = $requested_at
             ' "$state_file")
         write_state "$state_file" "$payload"
         release_state_lock
@@ -906,14 +976,194 @@ attach)
     requested_at=$(printf '%s' "$comment" | jq -er '.created_at')
     valid_time "$requested_at" || die "trigger has a malformed creation time"
 
+    requires_full_window=false
+    previous_trigger_comment_id=null
+
+    # A reconstructed reservation can be newer than the trigger attached to
+    # it even though an earlier trigger already exists for this head. Detect
+    # that history from one issue-comment read.
+    #
+    # The lower boundary for "same-head history" needs a timestamp GitHub
+    # itself assigned, not one the committer wrote. Trigger comments carry no
+    # head field, so harmon-devkit#1014's original version fell back to the
+    # current commit's author/committer dates as a "conservative" boundary —
+    # but those are client-controlled: a commit dated at or after a real
+    # prior trigger hides that trigger from reconstruction entirely.
+    #
+    # The head's earliest check-suite `created_at` is server time,
+    # un-spoofable by the committer — but challenge round 1 (2026-09-14,
+    # confirmed harmon-devkit#1014 finding challenge-r1-codex-adversarial-1)
+    # found that PREFERRING a check-run's `started_at` outright whenever any
+    # check run exists — replacing the commit-date boundary rather than
+    # combining the two — reopens the exact regression class this boundary
+    # exists to close, via ordinary CI timing rather than a spoofed date.
+    # Fixed with `min(commit-date boundary, earliest check-run started_at)`.
+    #
+    # Integration remediation 1 (2026-09-14, Codex cloud review on `a5bc99a`,
+    # confirmed finding `4010207979`) found a COMBINED case that `min()` over
+    # check-run `started_at` still does not close: when the commit dates are
+    # ALSO future-dated (spoofed later than reality) AND a trusted trigger is
+    # posted before CI has started its first RUN, `min()` still picks the
+    # check-run boundary (since it is earlier than the inflated commit
+    # dates) — but that boundary is itself later than the genuine trigger,
+    # because a check RUN's `started_at` carries real CI-queue/startup
+    # latency on top of when GitHub actually received the push. A check
+    # SUITE (the envelope check runs belong to) is created essentially the
+    # instant GitHub processes the push, before any run inside it has had a
+    # chance to start — a tighter, still-unspoofable proxy for "when this
+    # commit became the head" than any individual run's start time. Using
+    # the earliest check-suite `created_at` instead of the earliest
+    # check-run `started_at` closes this combined gap while keeping the same
+    # `min()` structure (still defeats a plain commit-date spoof) and the
+    # same fallback (commit dates alone, when no check suite exists at all).
+    # `commit_date_boundary`/`check_suite_boundary` name both compared inputs
+    # in state (the latter `null` when no check suite exists), and
+    # `boundary_source` names only which one actually won the comparison — a
+    # later reader can audit the comparison itself rather than trust a
+    # single opaque label.
+    #
+    # KNOWN RESIDUAL (harmon-devkit#1030, Codex cycle 2 on `30b613c`,
+    # confirmed finding `4010671547`, adjudicated P2 — a residual of the
+    # timestamp approach itself, not a defect in this change): when the
+    # commit dates are ALSO future-dated AND the trusted trigger is posted
+    # before the first check SUITE exists (not merely before the first
+    # run), every available lower bound — commit dates and check-suite
+    # creation alike — postdates the trigger, so it is filtered out and
+    # `requires_full_window` stays false. No further timestamp refinement
+    # closes this: the trigger genuinely precedes every server-side signal
+    # available at reconstruction time. #1030 tracks the structural fix —
+    # on a reservation with no prior local state for the head, treat any
+    # other trusted `@codex review` comment on the PR, posted after the
+    # previous head's last accepted result (or, absent such a record, any
+    # at all), as a prior trigger regardless of its timestamp ordering
+    # against commit or check-suite creation.
+    head_payload=$(run_gh api "repos/$state_repo/commits/$state_head") ||
+        die "cannot fetch the current head commit for trigger reconstruction"
+    printf '%s' "$head_payload" | jq -e --arg head "$state_head" \
+        '.sha == $head' >/dev/null ||
+        die "GitHub returned the wrong head commit during trigger reconstruction"
+    head_authored_at=$(printf '%s' "$head_payload" |
+        jq -er '.commit.author.date | select(type == "string")') ||
+        die "current head commit has no usable author timestamp"
+    valid_time "$head_authored_at" ||
+        die "current head commit has a malformed author timestamp"
+    head_committed_at=$(printf '%s' "$head_payload" |
+        jq -er '.commit.committer.date | select(type == "string")') ||
+        die "current head commit has no usable committer timestamp"
+    valid_time "$head_committed_at" ||
+        die "current head commit has a malformed committer timestamp"
+    commit_date_boundary=$head_committed_at
+    if [ "$head_authored_at" \< "$commit_date_boundary" ]; then
+        commit_date_boundary=$head_authored_at
+    fi
+    check_suite_pages=$(run_gh api --paginate --slurp \
+        "repos/$state_repo/commits/$state_head/check-suites?per_page=100") ||
+        die "cannot fetch check suites for trigger reconstruction"
+    check_suite_boundary=$(printf '%s' "$check_suite_pages" | jq -r '
+          [.[] | (.check_suites // [])[] | .created_at |
+            select(type == "string")] | sort | first // empty
+        ') || die "cannot classify check-suite creation times"
+    if [ -n "$check_suite_boundary" ]; then
+        valid_time "$check_suite_boundary" ||
+            die "GitHub returned a malformed check-suite creation time"
+    fi
+    head_trigger_boundary=$commit_date_boundary
+    boundary_source=commit-date
+    if [ -n "$check_suite_boundary" ] &&
+        [ "$check_suite_boundary" \< "$head_trigger_boundary" ]; then
+        head_trigger_boundary=$check_suite_boundary
+        boundary_source=check-suite
+    fi
+    issue_comments=$(run_gh api --paginate --slurp \
+        "repos/$state_repo/issues/$state_pr/comments?per_page=100") ||
+        die "cannot fetch PR comments for trigger reconstruction"
+    # A candidate created in the SAME SECOND as the attached trigger cannot be
+    # excluded by a strict `<` on `created_at` alone (harmon-devkit#1014
+    # ruling 3, Codex cycle-1 finding `4007296525`): GitHub timestamps these
+    # to whole seconds, so a genuinely prior trigger posted in the same
+    # second as the one just attached would otherwise be discarded. Comment
+    # ids are monotonically assigned within the same resource type, so a
+    # same-second candidate whose id precedes the attached trigger's id is
+    # still provably prior; this is a same-surface (comment-vs-comment) id
+    # comparison, unlike the cross-surface case in `check` below, which never
+    # tie-breaks by id.
+    prior_trigger_candidates=$(printf '%s' "$issue_comments" | jq -c \
+        --argjson attached "$trigger_id" \
+        --arg expected "$expected_trigger_body" \
+        --arg after "$head_trigger_boundary" \
+        --arg before "$requested_at" '
+          [flatten[] | select(
+            ((.id? | type) == "number") and .id != $attached and
+            ((.user.id? | type) == "number") and
+            (((.body // "") |
+              gsub("^[[:space:]]+|[[:space:]]+$"; "")) == $expected) and
+            ((.created_at? | type) == "string") and
+            (.created_at >= $after) and
+            ((.created_at < $before) or
+             ((.created_at == $before) and (.id < $attached)))
+          )]
+        ') || die "cannot classify prior review triggers"
+
+    if [ "$requested_at" \< "$state_reserved" ] ||
+        [ "$(printf '%s' "$prior_trigger_candidates" | jq 'length')" -gt 0 ]; then
+        # A trigger that predates this local reservation is state-recovery
+        # evidence, not a newly posted first attempt. A distinct same-head
+        # trigger is reconstruction evidence even when this attached trigger
+        # is newer than the reservation. Authenticate either inference only
+        # against the merge-base registry's orchestrator actor set.
+        # shellcheck source=trusted-registry.sh
+        . "$SCRIPT_DIR/trusted-registry.sh"
+        trigger_registry_dir=$(mktemp -d -t codex-trigger-registry-XXXXXX)
+        resolve_trusted_registry "$state_repo" "$state_pr" \
+            "$trigger_registry_dir/registry.json" || {
+            rm -rf "$trigger_registry_dir"
+            die "cannot authenticate a pre-existing trigger against the trusted actor set"
+        }
+
+        if [ "$requested_at" \< "$state_reserved" ]; then
+            trigger_author_id=$(printf '%s' "$comment" |
+                jq -er '.user.id | select(type == "number" and . > 0)') || {
+                rm -rf "$trigger_registry_dir"
+                die "pre-existing trigger has no usable author identity"
+            }
+            jq -e --argjson id "$trigger_author_id" '
+              (.trusted_orchestrator_actor_ids // []) | index($id) != null
+            ' "$trigger_registry_dir/registry.json" >/dev/null || {
+                rm -rf "$trigger_registry_dir"
+                die "pre-existing trigger author is not in the trusted actor set"
+            }
+            requires_full_window=true
+        fi
+
+        previous_trigger_comment_id=$(jq -nr \
+            --argjson candidates "$prior_trigger_candidates" \
+            --slurpfile registry "$trigger_registry_dir/registry.json" '
+              ($registry[0].trusted_orchestrator_actor_ids // []) as $trusted |
+              [$candidates[] | select(.user.id as $id | $trusted | index($id))] |
+              sort_by(.created_at, .id) | last // null | .id // null
+            ')
+        rm -rf "$trigger_registry_dir"
+        [ "$previous_trigger_comment_id" = null ] || requires_full_window=true
+    fi
+
     payload=$(jq \
         --argjson id "$trigger_id" \
-        --arg requested_at "$requested_at" '
+        --arg requested_at "$requested_at" \
+        --argjson previous_trigger_comment_id "$previous_trigger_comment_id" \
+        --argjson requires_full_window "$requires_full_window" \
+        --arg boundary_source "$boundary_source" \
+        --arg commit_date_boundary "$commit_date_boundary" \
+        --arg check_suite_boundary "$check_suite_boundary" '
           .version = 2 |
           .phase = "attached" |
           .trigger_comment_id = $id |
           .requested_at = $requested_at |
-          .cycle_requested_at = (.cycle_requested_at // $requested_at)
+          .previous_trigger_comment_id = $previous_trigger_comment_id |
+          .requires_full_window = $requires_full_window |
+          .boundary_source = $boundary_source |
+          .commit_date_boundary = $commit_date_boundary |
+          .check_suite_boundary = (if $check_suite_boundary == ""
+            then null else $check_suite_boundary end)
         ' "$state_file")
     write_state "$state_file" "$payload"
     release_state_lock
@@ -1158,17 +1408,12 @@ check)
     state_trigger=$(jq -r '.trigger_comment_id // empty' "$state_file")
     state_reserved=$(jq -r '.reserved_at' "$state_file")
     state_requested=$(jq -r '.requested_at' "$state_file")
-    cycle_requested=$(jq -r '.cycle_requested_at' "$state_file")
-    previous_trigger=$(jq -r '.previous_trigger_comment_id // empty' "$state_file")
     # trigger_comment_id is null for requested-reviewer finders
     if [ "$finder_trigger_mechanism" = "review-comment" ]; then
         valid_uint "$state_trigger" || die "state has an invalid trigger ID"
     fi
     valid_time "$state_reserved" || die "state has an invalid reservation time"
     valid_time "$state_requested" || die "state has an invalid request time"
-    valid_time "$cycle_requested" || die "state has an invalid cycle request time"
-    [ -z "$previous_trigger" ] || valid_uint "$previous_trigger" ||
-        die "state has an invalid previous trigger ID"
     # harmon-devkit#223: the window `bounded_wait` and `run_gh`'s per-call
     # budget measure against `state_reserved` must be the one this cycle was
     # actually reserved under, not whatever `--timeout-min` this particular
@@ -1197,7 +1442,7 @@ check)
     }
 
     workdir=$(mktemp -d -t codex-cloud-review-XXXXXX)
-    trap 'rm -rf "$workdir"; rmdir "$lock_dir" 2>/dev/null || true' EXIT
+    trap 'rm -rf "$workdir"; rm -f "$lock_dir/pid"; rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
     actor=$(run_gh api "users/$actor_login") || {
         bounded_wait "cannot authenticate the configured finder actor"
@@ -1238,18 +1483,8 @@ check)
     if finder_has_surface reaction && [ "$finder_trigger_mechanism" = "review-comment" ] && [ -n "$state_trigger" ]; then
         fetch_evidence \
             "repos/$state_repo/issues/comments/$state_trigger/reactions?per_page=100" \
-            "$workdir/current-reactions.json" \
+            "$workdir/reactions.json" \
             "exact-trigger reactions"
-        printf '%s\n' '[]' >"$workdir/previous-reactions.json"
-        if [ -n "$previous_trigger" ]; then
-            fetch_evidence \
-                "repos/$state_repo/issues/comments/$previous_trigger/reactions?per_page=100" \
-                "$workdir/previous-reactions.json" \
-                "previous-trigger reactions"
-        fi
-        jq -s 'add' \
-            "$workdir/current-reactions.json" \
-            "$workdir/previous-reactions.json" >"$workdir/reactions.json"
     fi
     printf '%s\n' '[]' >"$workdir/comments.json"
     if finder_has_surface comment; then
@@ -1305,6 +1540,33 @@ check)
             exit 2
         }
     done
+
+    while IFS=$'\t' read -r review_id review_time; do
+        [ -n "$review_id" ] || review_id=unknown
+        valid_time "$review_time" || {
+            emit indeterminate "current-head review $review_id carries a malformed submitted_at timestamp"
+            exit 2
+        }
+    done < <(jq -r \
+        --argjson id "$actor_id" \
+        --arg head "$state_head" '
+          .[] | select(.user.id? == $id and .commit_id? == $head) |
+          [(.id? // "" | tostring), (.submitted_at? // "")] | @tsv
+        ' "$workdir/reviews.json")
+
+    # Success reactions must carry usable evidence metadata just like review
+    # and comment results. Only the exact latest trigger is consulted.
+    while IFS= read -r reaction_time; do
+        valid_time "$reaction_time" || {
+            emit indeterminate "trigger success reaction carries a malformed timestamp"
+            exit 2
+        }
+    done < <(jq -r \
+        --argjson id "$actor_id" \
+        --arg success "$finder_success_reaction" '
+          .[] | select(.user.id? == $id and .content? == $success) |
+          (.created_at? // "")
+        ' "$workdir/reactions.json")
 
     # Settled dispositions are re-verified against the evidence just fetched,
     # never trusted from the state file alone. An entry is honoured only while
@@ -1579,12 +1841,145 @@ check)
                       ) | .id | tostring] | last // ""
                     ' "$workdir/reviews.json")
             fi
-            emit findings "authenticated current-head inline review findings are unanswered by a trusted in-thread reply" \
+            emit findings "current-head inline review findings are unanswered by a trusted in-thread reply" \
                 review "$inline_findings_review_id"
             exit 10
         fi
         adjudicated_findings=1
     fi
+
+    # Pick the newest accepted current-head result after the latest trigger.
+    # This is ordering, not attempt attribution: earlier attempts and pending
+    # acknowledgements have no bearing on the decision. An empty review is an
+    # ordering result only when current-head inline findings attribute to its
+    # exact ID; an unattributed shell remains pending evidence below.
+    #
+    # Each candidate is tagged with its `surface` (review/comment/reaction).
+    # Ids from different GitHub resource types are not chronologically
+    # comparable — a review id and a comment id are drawn from unrelated
+    # sequences — so when the newest timestamp is shared by candidates from
+    # more than one surface, that tie is unresolvable here and `tie:true`
+    # says so (harmon-devkit#1014 ruling 4, Codex cycle-1 finding
+    # `4007296539`); a same-surface tie is still broken by id, same as
+    # before. The bash `tie` check below acts on this only once every
+    # non-codex finder mode has already exited, so this flag never changes
+    # CodeRabbit/Copilot behavior.
+    #
+    # Integration remediation 1 (2026-09-14, Codex cloud review on `a5bc99a`,
+    # confirmed finding `4010207991`) found two compounding problems with the
+    # tie exit as it stood: (1) a `settle`d review/comment is never excluded
+    # from tie consideration, so once a human disposes of the finding behind
+    # a cross-surface tie, the exact same tie recurs on every later check —
+    # an immutable indeterminate result the settlement can never clear,
+    # reopening the #275 deadlock class this file works hard everywhere else
+    # to avoid; (2) a tie where one side carries an actual badged finding
+    # exited indeterminate before the review/comment classifiers below ever
+    # got a chance to surface it as `findings`, discarding a concrete result
+    # in favor of a shrug.
+    #
+    # Fixed by tagging each candidate `disposed` (its id is in
+    # `disposed_reviews`/`disposed_comments`) rather than dropping it from
+    # the array outright: a disposed candidate is answered, not a live
+    # contender for "which surface is newest," but it must still be able to
+    # BE `newest_result` on its own — the pre-existing `disposed_applied`
+    # terminal-clean exit further below depends on a solo disposed finding
+    # (nothing else posted on this head) still resolving to its own
+    # time/id, exactly as before this fix. So disposed candidates are
+    # excluded only from the *diversity* check that decides whether a tie is
+    # genuinely live (`$top_live`), never from the candidate pool itself:
+    # when nothing live ties with it, a disposed candidate (or several
+    # disposed candidates sharing one surface) still resolves normally,
+    # same-surface id-tiebreak included; when it ties with something live
+    # from a different surface, only the live side counts toward "is this
+    # ambiguous," and an `actionable` (severity-badged) live candidate is
+    # preferred over declaring an unresolvable tie — findings dominate an
+    # ambiguous ordering the same way they already dominate everywhere else
+    # in this file. This flag does not itself have to name the single
+    # correct finding — not declaring `tie:true` is enough for control to
+    # reach the independent `review_result`/`comment_result` classifiers
+    # below, which detect and cite the real finding on their own regardless
+    # of what `newest_result` pointed at. A live tie with no actionable side
+    # is still genuinely unresolvable and still exits indeterminate exactly
+    # as before.
+    newest_result_record=$(jq -nr \
+        --argjson id "$actor_id" \
+        --arg head "$state_head" \
+        --arg requested "$state_requested" \
+        --arg success "$finder_success_reaction" \
+        --argjson attributed "$attributed_reviews" \
+        --argjson disposed_reviews "$disposed_reviews" \
+        --argjson disposed_comments "$disposed_comments" \
+        --slurpfile reviews "$workdir/reviews.json" \
+        --slurpfile comments "$workdir/comments.json" \
+        --slurpfile reactions "$workdir/reactions.json" \
+        "$codex_verdict_defs"'
+          ([
+            $reviews[0][] | select(
+              .user.id? == $id and .commit_id? == $head and
+              (((.body? // "") != "") or
+               (((.id? | type) == "number") and
+                (.id as $rid | $attributed | index($rid) != null))) and
+              ((.submitted_at? // "") > $requested) and
+              ((.id? | type) == "number")
+            ) | {time: .submitted_at, id: .id, surface: "review",
+                 actionable: has_severity_marker,
+                 disposed: ((.id as $rid | $disposed_reviews | index($rid)) != null)}
+          ] + [
+            $comments[0][] | select(.user.id? == $id) |
+            ((.body // "") |
+              try match(
+                "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
+                "i"
+              ).captures[0].string catch "") as $prefix |
+            select($prefix != "") |
+            select(($head | ascii_downcase) | startswith($prefix | ascii_downcase)) |
+            select((.created_at? // "") > $requested) |
+            select(.id? | is_positive_integer) |
+            {time: .created_at, id: .id, surface: "comment",
+             actionable: has_severity_marker,
+             disposed: ((.id as $cid | $disposed_comments | index($cid)) != null)}
+          ] + [
+            $reactions[0][] | select(
+              .user.id? == $id and .content? == $success and
+              ((.created_at? // "") >= $requested) and
+              ((.id? | type) == "number")
+            ) | {time: .created_at, id: .id, surface: "reaction",
+                 actionable: false, disposed: false}
+          ]) as $candidates |
+          (if ($candidates | length) == 0 then {time:"",id:"",tie:false}
+           else
+             ($candidates | max_by(.time) | .time) as $max_time |
+             ($candidates | map(select(.time == $max_time))) as $top |
+             ($top | map(select(.disposed | not))) as $top_live |
+             if ($top_live | length) == 0 then
+               ($top | sort_by(.surface, .id) | last) as $winner |
+               {time: $winner.time, id: $winner.id, tie:false}
+             elif ($top_live | map(.surface) | unique | length) > 1 then
+               ($top_live | map(select(.actionable))) as $actionable_top |
+               if ($actionable_top | length) > 0 then
+                 ($actionable_top | sort_by(.surface, .id) | last) as $winner |
+                 {time: $winner.time, id: $winner.id, tie: false}
+               else
+                 {time: $max_time, id:"", tie:true}
+               end
+             else
+               ($top_live[0].surface) as $live_surface |
+               ($top | map(select(.surface == $live_surface)) | sort_by(.id) | last) as $winner |
+               {time: $winner.time, id: $winner.id, tie:false}
+             end
+           end) |
+          [.time, (.id | tostring), (.tie | tostring)] | join(",")
+        ')
+    # `@tsv` (and any IFS made only of tab/space/newline) collapses a run of
+    # empty fields on read: bash read treats those three characters as IFS
+    # whitespace and strips/merges them regardless of how many are
+    # consecutive, which would silently reshuffle a row with an empty middle
+    # field (id:"" on the tie branch above) into the wrong variables. A comma
+    # is not in that class and cannot appear in any of these three fields (an
+    # ISO-8601 second, a bare integer, or true/false), so read below splits on
+    # it literally and every empty field stays exactly where it is.
+    IFS=, read -r newest_result_time newest_result_id newest_result_tie \
+        <<<"$newest_result_record"
 
     # --- Per-finder verdict classification (#804) ---
     # Non-codex verdict modes exit here. The codex clean-sentence classification
@@ -1593,11 +1988,13 @@ check)
         # CodeRabbit: parse review bodies for "actionable comments posted: N".
         # N=0 means clean; N>0 means findings; no match means pending.
         actionable_review_id=""
+        actionable_review_time=""
         actionable_count=-1
         while IFS='	' read -r rid rtime rbody_count; do
             [ -n "$rid" ] || continue
             actionable_count=$rbody_count
             actionable_review_id=$rid
+            actionable_review_time=$rtime
         done < <(jq -r \
             --argjson id "$actor_id" \
             --arg head "$state_head" \
@@ -1607,7 +2004,7 @@ check)
                 (.commit_id? == $head) and
                 ((.body // "") != "")
               ) | {
-                id: (.id | tostring),
+                id: (if (.id? | type) == "number" then (.id | tostring) else "" end),
                 time: (.submitted_at // ""),
                 count: ((.body // "") | (try (match($pattern; "i").captures[0].string | tonumber) catch -1))
               }] | sort_by(.time) | .[] |
@@ -1615,6 +2012,9 @@ check)
             ' "$workdir/reviews.json" 2>/dev/null)
 
         if [ "$adjudicated_findings" = "1" ] && [ -n "$actionable_review_id" ]; then
+            [ "$actionable_review_time" \> "$state_requested" ] ||
+                bounded_wait "adjudicated findings have no accepted review result after the latest trigger"
+            require_latest_window_elapsed
             emit clean "current-head findings are all adjudicated by trusted in-thread replies" \
                 review "$actionable_review_id"
             exit 0
@@ -1625,6 +2025,10 @@ check)
                 review "$actionable_review_id"
             exit 10
         elif [ "$actionable_count" -eq 0 ]; then
+            [ -n "$actionable_review_id" ] &&
+                [ "$actionable_review_time" \> "$state_requested" ] ||
+                bounded_wait "clean evidence was not created after the latest trigger"
+            require_latest_window_elapsed
             emit clean "finder reported zero actionable comments" \
                 review "$actionable_review_id"
             exit 0
@@ -1643,18 +2047,72 @@ check)
               [.[] | select(
                 .user.id? == $id and
                 (.commit_id? == $head) and
-                ((.submitted_at // "") > $after)
+                ((.submitted_at // "") > $after) and
+                ((.id? | type) == "number")
               ) | .id | tostring] | last // ""
             ' "$workdir/reviews.json")
 
         if [ -n "$copilot_review_id" ]; then
             if [ "$adjudicated_findings" = "1" ] || [ "$inline_head_findings" -eq 0 ]; then
+                require_latest_window_elapsed
                 emit clean "requested-reviewer finder submitted a review with no unadjudicated findings" \
                     review "$copilot_review_id"
                 exit 0
             fi
         fi
         bounded_wait "no terminal current-head evidence from inline-comment-count finder yet"
+    fi
+
+    # Both non-codex finder modes above always exit internally (a terminal
+    # `emit`/`exit` on every branch, `bounded_wait` on falling through), so
+    # everything from here down runs only for the clean-sentence/codex path
+    # this issue scopes to.
+    #
+    # harmon-devkit#1014 ruling 4: act on the cross-surface tie flagged above.
+    if [ "$newest_result_tie" = "true" ]; then
+        emit indeterminate "the newest current-head result is tied across surfaces at $newest_result_time and cannot be ordered"
+        exit 2
+    fi
+
+    # harmon-devkit#1014 ruling 6 (Codex cycle-1 finding `4007296552`): a
+    # `Reviewed commit` top-level comment from the actor, naming this exact
+    # head, is candidate verdict evidence. The numeric-id filter both
+    # `newest_result_record` above and `comment_candidates` below apply
+    # exists so `.id` can be used as a tiebreak and as `accepted.id` — it is
+    # not a statement that a comment without one doesn't count. Silently
+    # dropping one let the checker fall back to older or absent evidence
+    # while real, unclassifiable evidence about this head sat right there;
+    # fail closed instead.
+    #
+    # Integration remediation 2 (2026-09-15, Codex cloud review on `30b613c`,
+    # confirmed finding `4010671551`) found this scan itself used a looser
+    # `type == "number"` check than the `is_positive_integer` predicate the
+    # candidate filters use, so a fractional or non-positive id (JSON type
+    # still "number") slid past THIS scan while being silently excluded from
+    # candidacy elsewhere — an older, unrelated clean result could then be
+    # accepted instead of failing closed on the newer, unclassifiable
+    # comment. Matching the predicate here closes that gap.
+    malformed_top_level=$(jq -r \
+        --argjson id "$actor_id" \
+        --arg head "$state_head" \
+        "$codex_verdict_defs"'
+          [.[] | select(.user.id? == $id) |
+            ((.body // "") |
+              try match(
+                "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
+                "i"
+              ).captures[0].string catch "") as $prefix |
+            select($prefix != "") |
+            select(($head | ascii_downcase) | startswith($prefix | ascii_downcase)) |
+            select((.id? | is_positive_integer) | not)
+          ] | length
+        ' "$workdir/comments.json") || {
+        emit indeterminate "current-head conversation comments could not be scanned for malformed ids"
+        exit 2
+    }
+    if [ "$malformed_top_level" -gt 0 ]; then
+        emit indeterminate "a Reviewed-commit top-level comment from the finder has no usable numeric id"
+        exit 2
     fi
 
     # Classifying a current-head result is three-way, not binary, because
@@ -1777,14 +2235,18 @@ check)
     # pinning the tail deadlocked real PRs — there the strict reading was
     # fail-closed toward *blocking clean work*, here it is fail-closed toward
     # blocking work that still has an open finding.
-    # `body_text != ""` drops EMPTY-BODY reviews from classification, and only
-    # from classification. GitHub auto-creates a body-less COMMENTED review
+    # `body_text != ""` drops EMPTY-BODY reviews from verdict classification,
+    # and only from verdict classification. GitHub auto-creates a body-less
+    # COMMENTED review
     # shell to carry inline comments (reply shells, and Codex's own shell
     # posted before its inline findings land), and an empty body is no
     # evidence in either direction: it has no verdict to be clean and no
     # free-text surface where an unanswered concern could hide — anything it
     # carries is inline comments, which the inline gate above already
-    # classifies on their own. Classifying the shell instead would read it as
+    # classifies on their own. Once those comments attribute to its exact
+    # review ID, the review timestamp orders their adjudicated result; an
+    # unattributed shell remains no result at all. Classifying the shell itself
+    # would read it as
     # `findings` (no clean opening sentence) and hard-block a cycle whose
     # real review has not arrived yet. `fetched_reviews` below deliberately
     # still includes shells: inline comments attribute to them by review ID,
@@ -1802,10 +2264,12 @@ check)
     shell_barrier=$(jq -r \
         --argjson id "$actor_id" \
         --arg head "$state_head" \
+        --arg requested "$state_requested" \
         --argjson attributed "$attributed_reviews" '
           [.[] | select(
             .user.id? == $id and
             (.commit_id? == $head) and
+            ((.submitted_at? // "") > $requested) and
             ((.body // "") == "") and
             ((.id? | type) == "number")
           ) |
@@ -1836,10 +2300,10 @@ check)
           ] | length
         ' "$workdir/reviews.json") || die "cannot evaluate recorded dispositions"
     [ "$disposed_review_hits" -eq 0 ] || disposed_applied=1
-
-    review_result=$(jq -r \
+    review_result_record=$(jq -r \
         --argjson id "$actor_id" \
         --arg head "$state_head" \
+        --arg requested "$state_requested" \
         --argjson settled "$settled_reviews" \
         --argjson disposed "$disposed_reviews" \
         "$codex_verdict_defs"'
@@ -1849,26 +2313,33 @@ check)
             (body_text != "")
           ) |
           . as $review | verdict_class as $class |
-          if $class == "findings" then
+          if ($review.submitted_at > $requested) or $class == "findings" then
+           if $class == "findings" then
             # A recorded disposition settles the review BODY on its own,
             # badge and prose included — that is what was disposed of. It
             # says nothing about the inline comments hanging off that same
             # review, which keep their own reply-based path above.
             (if (($review.id? | type) == "number") and
                 ($disposed | index($review.id))
-             then "settled"
+             then {class:"settled",time:$review.submitted_at,id:$review.id}
              elif (($review.id? | type) == "number") and
                 ($settled | index($review.id)) and
                 ((has_severity_marker) | not) and
                 is_carrier_only
-             then "settled" else "findings" end)
-          else $class end
-          ] |
-          if index("findings") then "findings"
-          elif index("unrecognized") then "unrecognized"
-          elif index("clean") then "clean"
-          else "none" end
+             then {class:"settled",time:$review.submitted_at,id:$review.id}
+             else {class:"findings",time:$review.submitted_at,id:$review.id} end)
+           else {class:$class,time:$review.submitted_at,id:$review.id} end
+          else {class:"none",time:$review.submitted_at,id:$review.id} end
+          ] as $classified |
+          if any($classified[]; .class == "findings") then
+            ([$classified[] | select(.class == "findings")] |
+             sort_by(.time, .id) | last)
+          else ([$classified[] |
+                  select(.class == "unrecognized" or .class == "clean")] |
+                sort_by(.time, .id) | last // {class:"none",time:"",id:""}) end |
+          [.class, .time, (.id | tostring)] | @tsv
         ' "$workdir/reviews.json")
+    IFS=$'\t' read -r review_result review_result_time review_result_id <<<"$review_result_record"
     # The reviews this check actually saw for the current head, by ID. The
     # adjudicated-clean fallback below reconciles the two endpoints against
     # each other with it: an inline comment naming a review nobody fetched is
@@ -1907,15 +2378,10 @@ check)
               ) |
               .id | tostring] | first // ""
             ' "$workdir/reviews.json")
-        emit findings "authenticated current-head review requires adjudication" \
+        emit findings "current-head review requires adjudication" \
             review "$findings_review_id"
         exit 10
     fi
-    if [ "$review_result" = "unrecognized" ]; then
-        emit indeterminate "current-head review opens with the clean verdict but carries prose beyond Codex's own metadata"
-        exit 2
-    fi
-
     comment_candidates="$workdir/comment-candidates.tsv"
     jq -r \
         --argjson id "$actor_id" \
@@ -1927,6 +2393,7 @@ check)
               "i"
             ).captures[0].string catch "") as $prefix |
           select($prefix != "") |
+          select(.id? | is_positive_integer) |
           [
             $prefix,
             verdict_class,
@@ -1936,11 +2403,21 @@ check)
         ' "$workdir/comments.json" >"$comment_candidates"
 
     comment_result=none
+    comment_result_time=""
+    comment_result_id=""
     clean_comment_time=""
     clean_comment_id=""
     findings_comment_id=""
     while IFS='	' read -r prefix classification comment_id comment_created; do
         [ -n "$prefix" ] || continue
+        valid_time "$comment_created" || {
+            emit indeterminate "bot review comment carries a malformed creation time"
+            exit 2
+        }
+        if [ "$classification" != "findings" ] &&
+            ! [ "$comment_created" \> "$state_requested" ]; then
+            continue
+        fi
         grep -Eq '^[0-9a-fA-F]{7,40}$' <<<"$prefix" || {
             emit indeterminate "bot review comment contains a malformed commit prefix"
             exit 2
@@ -1977,30 +2454,110 @@ check)
         if [ "$classification" = "findings" ]; then
             comment_result=findings
             [ -n "$findings_comment_id" ] || findings_comment_id=$comment_id
-        elif [ "$classification" = "unrecognized" ]; then
-            # findings outranks unrecognized outranks clean, so a single
-            # unclassifiable verdict is never masked by a clean sibling.
-            [ "$comment_result" = "findings" ] || comment_result=unrecognized
-        elif [ "$comment_result" = "none" ]; then
-            comment_result=clean
+        elif [ "$comment_result" != "findings" ] && {
+            [ "$comment_created" \> "$comment_result_time" ] || {
+                [ "$comment_created" = "$comment_result_time" ] &&
+                    [ "$comment_id" -gt "${comment_result_id:-0}" ]
+            }
+        }; then
+            # Findings dominate. Non-finding classifications use provider
+            # order, matching review bodies: a newer valid clean result may
+            # supersede an older unrecognized one, but never vice versa.
+            comment_result=$classification
+            comment_result_time=$comment_created
+            comment_result_id=$comment_id
         fi
-        if [ "$classification" = "clean" ] &&
-            [ "$comment_created" \> "$clean_comment_time" ]; then
+        if [ "$classification" = "clean" ] && {
+            [ "$comment_created" \> "$clean_comment_time" ] || {
+                [ "$comment_created" = "$clean_comment_time" ] &&
+                    [ "$comment_id" -gt "${clean_comment_id:-0}" ]
+            }
+        }; then
             clean_comment_time=$comment_created
             clean_comment_id=$comment_id
         fi
     done <"$comment_candidates"
 
     if [ "$comment_result" = "findings" ]; then
-        emit findings "authenticated current-head conversation finding requires adjudication" \
+        emit findings "current-head conversation finding requires adjudication" \
             comment "$findings_comment_id"
         exit 10
     fi
-    if [ "$comment_result" = "unrecognized" ]; then
+    if [ "$comment_result" = "unrecognized" ] &&
+        [ "$comment_result_time" = "$newest_result_time" ] &&
+        [ "$comment_result_id" = "$newest_result_id" ]; then
         emit indeterminate "current-head result opens with the clean verdict but carries prose beyond Codex's own metadata"
         exit 2
     fi
-    if [ "$review_result" = "clean" ] || [ "$comment_result" = "clean" ]; then
+    if [ "$review_result" = "unrecognized" ] &&
+        [ "$review_result_time" = "$newest_result_time" ] &&
+        [ "$review_result_id" = "$newest_result_id" ]; then
+        emit indeterminate "current-head review opens with the clean verdict but carries prose beyond Codex's own metadata"
+        exit 2
+    fi
+
+    # A positive reaction on this exact latest trigger is the one immediate
+    # re-trigger terminal: its causal binding is unambiguous, so it need not
+    # wait out the window. Findings have already exited above.
+    like_evidence=$(jq -c \
+        --argjson id "$actor_id" \
+        --arg requested "$state_requested" '
+          [.[] | select(
+            .user.id? == $id and .content? == "+1" and
+            (.created_at? >= $requested) and
+            ((.created_at? | type) == "string") and
+            ((.id? | type) == "number")
+          )] | sort_by(.created_at, .id) | last // null
+        ' "$workdir/reactions.json")
+    like_time=$(printf '%s' "$like_evidence" | jq -r '.created_at? // ""')
+    like_id=$(printf '%s' "$like_evidence" | jq -r '.id? // "" | tostring')
+    if [ -n "$like_id" ]; then
+        if [ -n "$shell_barrier" ] && ! [ "$like_time" \> "$shell_barrier" ]; then
+            emit pending "a newer empty review shell is still in flight for this head"
+            exit 11
+        fi
+        emit clean "authenticated bot reacted positively on the exact latest trigger" \
+            reaction "$like_id"
+        exit 0
+    fi
+
+    # harmon-devkit#1014 ruling 5 (Codex cycle-1 finding `4007296546`):
+    # `review_result` above is computed only from reviews with a non-empty
+    # body — `verdict_class` needs body text — so an EMPTY-body review whose
+    # inline findings are fully adjudicated never appears in it at all, even
+    # though `newest_result_record` above already orders such a review ahead
+    # of an older non-empty one (see its own "ordering, not attempt
+    # attribution" comment). When that happens, `review_result` can read
+    # "clean" from the older review while `newest_result` correctly points at
+    # the newer, adjudicated one; forcing the clean branch below to match
+    # `newest_result` against the OLDER review's evidence then bounded-waits
+    # forever, because the older review can never become the newest one it
+    # already lost to. The same shape applies to a NON-empty review too: a
+    # findings review whose inline findings are fully adjudicated is
+    # reclassified to "settled" (not "clean") by `review_result_record`
+    # above, so it likewise falls out of `review_result` while still being
+    # able to win `newest_result` on the strength of its non-empty body.
+    # Detect either case directly — `newest_result` names a review that is a
+    # member of `$settled_reviews`, the inline-reply-adjudication set — and
+    # skip the clean branch so control reaches the existing
+    # `adjudicated_findings` branch below instead. This is a pure exclusion:
+    # it can only prevent entering the clean branch, never cause it to fire
+    # when it wouldn't have otherwise.
+    newest_is_settled_review=false
+    if [ "$adjudicated_findings" = "1" ]; then
+        newest_is_settled_review=$(jq -r \
+            --arg time "$newest_result_time" \
+            --arg id "$newest_result_id" \
+            --argjson settled "$settled_reviews" '
+              ([.[] | select(
+                ((.id? | type) == "number") and ((.id | tostring) == $id) and
+                ((.submitted_at? // "") == $time) and
+                (.id as $rid | ($settled | index($rid)) != null)
+              )] | length) > 0
+            ' "$workdir/reviews.json")
+    fi
+    if { [ "$review_result" = "clean" ] || [ "$comment_result" = "clean" ]; } &&
+        [ "$newest_is_settled_review" != "true" ]; then
         # The newest clean evidence must be NEWER than the dangling-shell
         # barrier above: an older clean result cannot vouch for a head whose
         # next review is already in flight.
@@ -2009,23 +2566,7 @@ check)
         # whole seconds, so a shell and the verdict can tie, and a tie is
         # undecidable — the verdict may belong to the shell's review or
         # predate a review that is now in flight. `>` reads a tie as pending:
-        # fail closed, and not permanent, because the attempt machinery
-        # re-triggers and Codex then posts strictly newer evidence for this
-        # head that resolves the cycle either way. `>=` would trade that
-        # bounded delay for a promote-during-the-gap race inside the
-        # coincidence second.
-        #
-        # Accepted residual, stated so nobody rediscovers it: attempt 2 can
-        # post a clean verdict while attempt 1's review — same head, same
-        # diff, declared dead a full window ago — is somehow still running,
-        # and that newer verdict clears attempt 1's shell. Timestamps cannot
-        # correlate a verdict with a shell, so no comparison closes this
-        # without reopening the abandoned-shell deadlock on the other side.
-        # The exposure requires Codex to contradict itself on identical
-        # input, is caught by the caller's mandatory pre-promotion re-check
-        # when the late findings land before promotion, and beyond that a
-        # reviewer that may post arbitrarily late defeats any polling design
-        # — which is why the gate promotes to ready-for-review, not merge.
+        # fail closed.
         clean_review_time=""
         clean_review_id=""
         if [ "$review_result" = "clean" ]; then
@@ -2038,14 +2579,16 @@ check)
             clean_review_evidence=$(jq -c \
                 --argjson id "$actor_id" \
                 --arg head "$state_head" \
+                --arg requested "$state_requested" \
                 "$codex_verdict_defs"'
                   [.[] | select(
                     .user.id? == $id and
                     (.commit_id? == $head) and
+                    ((.submitted_at? // "") > $requested) and
                     (body_text != "")
                   ) | select(verdict_class == "clean") |
                   select((.submitted_at? | type) == "string" and (.id? | type) == "number")] |
-                  sort_by(.submitted_at) | last // null
+                  sort_by(.submitted_at, .id) | last // null
                 ' "$workdir/reviews.json")
             clean_review_time=$(printf '%s' "$clean_review_evidence" | jq -r '.submitted_at? // ""')
             clean_review_id=$(printf '%s' "$clean_review_evidence" | jq -r '.id? // "" | tostring')
@@ -2053,7 +2596,10 @@ check)
         newest_clean=$clean_review_time
         newest_clean_surface=review
         newest_clean_id=$clean_review_id
-        if [ "$clean_comment_time" \> "$newest_clean" ]; then
+        if [ "$clean_comment_time" \> "$newest_clean" ] || {
+            [ "$clean_comment_time" = "$newest_clean" ] &&
+                [ "${clean_comment_id:-0}" -gt "${newest_clean_id:-0}" ]
+        }; then
             newest_clean=$clean_comment_time
             newest_clean_surface=comment
             newest_clean_id=$clean_comment_id
@@ -2062,54 +2608,14 @@ check)
             emit pending "a newer empty review shell is still in flight for this head"
             exit 11
         fi
-        emit clean "authenticated bot posted a current-head clean result" \
+        [ -n "$newest_clean" ] || bounded_wait "the cycle has no terminal current-head evidence yet"
+        [ -n "$newest_clean_id" ] || bounded_wait "clean evidence has no accepted object ID"
+        [ "$newest_clean" = "$newest_result_time" ] &&
+            [ "$newest_clean_id" = "$newest_result_id" ] ||
+            bounded_wait "the newest current-head result is not clean"
+        require_latest_window_elapsed
+        emit clean "authenticated bot posted the newest current-head result after the latest trigger" \
             "$newest_clean_surface" "$newest_clean_id"
-        exit 0
-    fi
-
-    like_time=$(jq -r \
-        --argjson id "$actor_id" \
-        --arg requested "$cycle_requested" '
-          [.[] | select(
-            .user.id? == $id and
-            .content? == "+1" and
-            (.created_at? >= $requested)
-          ) | .created_at? | select(type == "string")] | max // ""
-        ' "$workdir/reactions.json")
-    exact_like=$(jq \
-        --argjson id "$actor_id" \
-        --arg requested "$cycle_requested" '
-          [.[] | select(
-            .user.id? == $id and
-            .content? == "+1" and
-            (.created_at? >= $requested)
-          )] | length
-        ' "$workdir/reactions.json")
-    if [ "$exact_like" -gt 0 ]; then
-        if [ -n "$shell_barrier" ] && ! [ "$like_time" \> "$shell_barrier" ]; then
-            emit pending "a newer empty review shell is still in flight for this head"
-            exit 11
-        fi
-        # The reaction sharing $like_time (the newest qualifying +1) — same
-        # filter as $like_time/$exact_like above, plus pinning to that exact
-        # timestamp, so this can never name a different reaction than the one
-        # that actually qualified the cycle. A tie at whole-second precision
-        # breaks toward the highest id, deterministically (harmon-devkit#639
-        # gauntlet challenge round 4).
-        like_id=$(jq -r \
-            --argjson id "$actor_id" \
-            --arg requested "$cycle_requested" \
-            --arg newest "$like_time" '
-              [.[] | select(
-                .user.id? == $id and
-                .content? == "+1" and
-                (.created_at? >= $requested) and
-                (.created_at? == $newest) and
-                ((.id? | type) == "number")
-              ) | .id] | max // empty | tostring
-            ' "$workdir/reactions.json")
-        emit clean "authenticated bot reacted +1 on the exact current-head trigger" \
-            reaction "$like_id"
         exit 0
     fi
 
@@ -2164,12 +2670,9 @@ check)
         # above through its own time-ordered gate — so a shell that is still
         # dangling at this point is a review in flight or an abandoned one,
         # and both are pending: fail closed, bounded by the attempt window.
-        # Attempt 2's newer evidence resolves the cycle when it is a clean
-        # verdict or reaction (the time-ordered exits above accept it). When
-        # attempt 2 instead returns findings and an ABANDONED attempt-1
-        # shell still dangles, this exit stays pending after those findings
-        # are adjudicated, and the cycle ends in the attempt machinery's
-        # escalation. Deliberate, not a gap: an actor shell nobody can
+        # If an abandoned shell still dangles, this exit stays pending after
+        # findings are adjudicated and the bounded window escalates.
+        # Deliberate, not a gap: an actor shell nobody can
         # explain plus adjudicated findings is incomplete evidence, and the
         # checker's discipline for incomplete evidence is a human hand-off,
         # never a green it cannot support.
@@ -2182,9 +2685,18 @@ check)
               [.[] | select((.id? | type) == "number") |
                . as $r | select($settled | index($r.id)) |
                {id: ($r.id | tostring), time: ($r.submitted_at // "")}] |
-              sort_by(.time) | last // null | .id // ""
+              sort_by(.time, (.id | tonumber)) | last // null | .id // ""
             ' "$workdir/reviews.json")
-        emit clean "current-head findings are all adjudicated by trusted in-thread replies" \
+        adjudicated_review_time=$(jq -r \
+            --argjson id "$adjudicated_review_id" '
+              [.[] | select(.id? == $id)] | first | .submitted_at? // ""
+            ' "$workdir/reviews.json")
+        [ -n "$adjudicated_review_id" ] || bounded_wait "adjudicated findings have no accepted review result after the latest trigger"
+        [ "$adjudicated_review_time" = "$newest_result_time" ] &&
+            [ "$adjudicated_review_id" = "$newest_result_id" ] ||
+            bounded_wait "the newest current-head result is not the adjudicated review"
+        require_latest_window_elapsed
+        emit clean "newest current-head findings after the latest trigger are adjudicated by trusted in-thread replies" \
             review "$adjudicated_review_id"
         exit 0
     fi
@@ -2206,30 +2718,59 @@ check)
         disposed_surface=""
         disposed_id=""
         disposed_review_latest=$(jq -r \
-            --argjson disposed "$disposed_reviews" '
+            --argjson disposed "$disposed_reviews" \
+            --arg requested "$state_requested" '
               [.[] | select((.id? | type) == "number") |
                . as $r | select($disposed | index($r.id)) |
+               select((.submitted_at // "") > $requested) |
                {id: ($r.id | tostring), time: ($r.submitted_at // "")}] |
-              sort_by(.time) | last // null | .id // ""
+              sort_by(.time, (.id | tonumber)) | last // null | .id // ""
             ' "$workdir/reviews.json")
         disposed_comment_latest=$(jq -r \
-            --argjson disposed "$disposed_comments" '
+            --argjson disposed "$disposed_comments" \
+            --arg requested "$state_requested" '
               [.[] | select((.id? | type) == "number") |
                . as $r | select($disposed | index($r.id)) |
+               select((.created_at // "") > $requested) |
                {id: ($r.id | tostring), time: ($r.created_at // "")}] |
-              sort_by(.time) | last // null | .id // ""
+              sort_by(.time, (.id | tonumber)) | last // null | .id // ""
             ' "$workdir/comments.json")
         if [ -n "$disposed_review_latest" ]; then
             disposed_surface=review
             disposed_id=$disposed_review_latest
         fi
         if [ -n "$disposed_comment_latest" ]; then
-            if [ -z "$disposed_surface" ]; then
+            disposed_comment_time=$(jq -r \
+                --argjson id "$disposed_comment_latest" '
+                  [.[] | select(.id? == $id)] | first | .created_at? // ""
+                ' "$workdir/comments.json")
+            disposed_review_time=""
+            if [ -n "$disposed_review_latest" ]; then
+                disposed_review_time=$(jq -r \
+                    --argjson id "$disposed_review_latest" '
+                      [.[] | select(.id? == $id)] | first | .submitted_at? // ""
+                    ' "$workdir/reviews.json")
+            fi
+            if [ -z "$disposed_surface" ] ||
+                [ "$disposed_comment_time" \> "$disposed_review_time" ] || {
+                [ "$disposed_comment_time" = "$disposed_review_time" ] &&
+                    [ "$disposed_comment_latest" -gt "$disposed_review_latest" ]
+            }; then
                 disposed_surface=comment
                 disposed_id=$disposed_comment_latest
             fi
         fi
-        emit clean "current-head non-thread findings are all settled: ${applied_dispositions:-recorded dispositions}" \
+        case "$disposed_surface" in
+        review) disposed_latest_time=${disposed_review_time:-$(jq -r --argjson id "$disposed_id" '[.[] | select(.id? == $id)] | first | .submitted_at? // ""' "$workdir/reviews.json")} ;;
+        comment) disposed_latest_time=$disposed_comment_time ;;
+        *) disposed_latest_time= ;;
+        esac
+        [ -n "$disposed_id" ] || bounded_wait "settled findings have no accepted result after the latest trigger"
+        [ "$disposed_latest_time" = "$newest_result_time" ] &&
+            [ "$disposed_id" = "$newest_result_id" ] ||
+            bounded_wait "the newest current-head result is not the settled finding"
+        require_latest_window_elapsed
+        emit clean "newest current-head non-thread findings after the latest trigger are settled: ${applied_dispositions:-recorded dispositions}" \
             "$disposed_surface" "$disposed_id"
         exit 0
     fi
@@ -2265,9 +2806,12 @@ settle)
     state_repo=$(jq -r '.repo' "$state_file")
     state_pr=$(jq -r '.pr' "$state_file")
     state_head=$(jq -r '.head' "$state_file")
+    state_attempt=$(jq -r '.attempt' "$state_file")
+    state_requested=$(jq -r '.requested_at // empty' "$state_file")
     valid_repo "$state_repo" || die "state has an invalid repository"
     valid_uint "$state_pr" || die "state has an invalid PR number"
     valid_sha "$state_head" || die "state has an invalid head"
+    valid_time "$state_requested" || die "state has an invalid request time"
     # `state_reserved` is deliberately left unset, which gives `run_gh` its flat
     # per-call budget: settlement is a human act that lands after the cycle
     # reported findings, often long after the attempt window closed, and
@@ -2331,6 +2875,12 @@ settle)
         ;;
     esac
 
+    case "$surface" in
+    comment) target_result_time=$(printf '%s' "$target" | jq -r '.created_at // ""') ;;
+    review) target_result_time=$(printf '%s' "$target" | jq -r '.submitted_at // ""') ;;
+    esac
+    valid_time "$target_result_time" ||
+        die "target $target_id has no usable result timestamp"
     # The badge is the only machine-emitted signal that this is a finding at
     # all. Requiring it keeps settlement off every other shape the surfaces
     # carry — a clean verdict, a carrier body, an unrecognized one — none of
@@ -2406,7 +2956,8 @@ settle)
                          (.content_fingerprint != $fingerprint)))) +
             [{
               surface:$surface,id:$id,disposition:$disposition,note:$note,
-              content_fingerprint:$fingerprint,settled_at:$settled_at
+              content_fingerprint:$fingerprint,
+              settled_at:$settled_at
             }]
           )
         ' "$state_file")
