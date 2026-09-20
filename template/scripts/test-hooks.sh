@@ -267,6 +267,8 @@ if [ -x "$repo/$devc_protect" ]; then
     assert_protect_allows "$devc_protect" "/repo/src/env.ts"
     assert_protect_allows "$devc_protect" "/repo/env.config.json"
     assert_protect_allows "$devc_protect" "/repo/prod.env.local"
+    assert_protect_allows "$devc_protect" "/repo/.env.d/README.md"
+    assert_protect_allows "$devc_protect" "/repo/.environment/schema.json"
     assert_protect_allows "$devc_protect" ""
 
     echo "==> protect-files regression tests OK"
