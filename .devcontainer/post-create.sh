@@ -75,7 +75,7 @@ resolve_relative_to() {
 # operation than the privileged reconciliation that shape's NOTE line
 # describes; or 1 for anything else, refusing.
 resolve_hooks_common_dir() {
-    local workspace_root git_marker admin_dir git_dir reverse_pointer reverse_pointer_resolved
+    local workspace_root git_marker admin_dir git_dir reverse_pointer reverse_pointer_resolved cr
     workspace_root="$(pwd -P)"
     git_marker="$workspace_root/.git"
 
@@ -97,7 +97,14 @@ resolve_hooks_common_dir() {
 
     [ "$(dirname "$admin_dir")" = "$git_dir/worktrees" ] || return 1
     reverse_pointer="$(cat "$admin_dir/gitdir" 2>/dev/null)" || return 1
-    reverse_pointer="${reverse_pointer%$'\r'}"
+    # cr="$(printf '\r')" + "${var%"$cr"}" (rather than the $'\r' ANSI-C-
+    # quoted form): the same trailing-CR strip mirrored from
+    # post-create-common.sh's resolve_git_dir, with no shell-specific
+    # quoting syntax in it (#1241 integration round 4, Gemini findings
+    # re-raising this as non-POSIX after it was already declined on those
+    # grounds).
+    cr="$(printf '\r')"
+    reverse_pointer="${reverse_pointer%"$cr"}"
     reverse_pointer_resolved="$(resolve_relative_to "$admin_dir" "$reverse_pointer")" || return 1
     [ "$reverse_pointer_resolved" = "$git_marker" ] || return 1
 

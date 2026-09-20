@@ -515,6 +515,63 @@ chmod 0644 "$hook_hl_repo/.devcontainer/hooks/pre-commit"
 grep -Fqx 'echo managed-now' "$hook_hl_repo/.git/hooks/pre-commit" ||
     fail "install_repo_managed_hooks did not actually install the managed hook after reconciliation un-linked the path"
 
+echo "==> the privileged un-link copy refuses a target swapped to a symlink between enumeration and copy, never dereferencing it (#1241 integration round 4, Codex finding 4056318550)"
+# A genuine multi-process race (something swaps the path between find's
+# enumeration and the privileged copy) cannot be staged deterministically
+# and portably in this fixture. Instead, extract the exact privileged
+# inline script from the production file by its own markers — so this
+# stays attached to the real implementation rather than a hand-copied
+# duplicate that could silently drift — and drive it directly with a
+# controlled precondition: a candidate whose inode was captured (as find
+# would), then swapped to a symlink before the script runs against that
+# now-stale captured inode. No real privilege is needed for either case
+# below: the property under test is that the swap is DETECTED and
+# refused, which happens before any read of the swapped-to content is
+# even attempted.
+priv_start_line="$(grep -n "^        sudo sh -c '\$" "$post_create" | head -1 | cut -d: -f1)"
+priv_end_line="$(grep -n '^        . _ "\$linked_object"' "$post_create" | head -1 | cut -d: -f1)"
+[ -n "$priv_start_line" ] && [ -n "$priv_end_line" ] ||
+    fail "could not locate the privileged un-link script's markers in $post_create"
+priv_script="$tmp_root/priv-unlink.sh"
+sed -n "$((priv_start_line + 1)),$((priv_end_line - 1))p" "$post_create" >"$priv_script"
+[ -s "$priv_script" ] || fail "extracted an empty privileged un-link script"
+grep -Fq 'cp -Pp' "$priv_script" ||
+    fail "the extracted privileged script does not use a no-dereference copy (#1241 integration round 4, Codex finding 4056318550)"
+grep -Fq 'current_inode' "$priv_script" ||
+    fail "the extracted privileged script does not compare the captured inode before copying"
+
+priv_repo="$tmp_root/priv-unlink-repo"
+priv_decoy="$tmp_root/priv-unlink-decoy"
+mkdir -p "$priv_repo"
+printf 'original content\n' >"$priv_repo/candidate"
+priv_seen_inode="$(stat -c '%i' "$priv_repo/candidate" 2>/dev/null || stat -f '%i' "$priv_repo/candidate")"
+printf 'DECOY-must-never-appear-in-workspace\n' >"$priv_decoy"
+rm -f "$priv_repo/candidate"
+ln -s "$priv_decoy" "$priv_repo/candidate"
+if sh "$priv_script" "$priv_repo/candidate" "$(id -u):$(id -g)" "$priv_seen_inode" 2>/dev/null; then
+    fail "the privileged un-link script accepted a target that was swapped to a symlink with a stale captured inode"
+fi
+[ -L "$priv_repo/candidate" ] ||
+    fail "the swapped symlink was replaced instead of being left alone after refusing"
+if [ ! -L "$priv_repo/candidate" ] && grep -q DECOY "$priv_repo/candidate" 2>/dev/null; then
+    fail "the decoy content was copied into the workspace as a plain file — the swapped symlink was dereferenced"
+fi
+[ -z "$(find "$tmp_root" -maxdepth 1 -name '.harmon-init-unlink.*' -print -quit)" ] ||
+    fail "a leftover .harmon-init-unlink.* temp file was left behind after refusing"
+
+# Hardening a real attack path must never break the genuine, unmodified
+# candidate this whole mechanism exists to reconcile.
+priv_repo2="$tmp_root/priv-unlink-repo2"
+mkdir -p "$priv_repo2"
+printf 'original content\n' >"$priv_repo2/candidate"
+priv_seen_inode2="$(stat -c '%i' "$priv_repo2/candidate" 2>/dev/null || stat -f '%i' "$priv_repo2/candidate")"
+sh "$priv_script" "$priv_repo2/candidate" "$(id -u):$(id -g)" "$priv_seen_inode2" ||
+    fail "the privileged un-link script refused a genuine, unmodified candidate"
+[ "$(cat "$priv_repo2/candidate")" = "original content" ] ||
+    fail "the privileged un-link script did not preserve content for a genuine candidate"
+[ "$(git_mode "$priv_repo2/candidate")" = "664" ] ||
+    fail "the privileged un-link script did not reconcile mode for a genuine candidate"
+
 echo "==> exact safe.directory is added beside, not instead of, a wildcard"
 safe_entries="$(HOME="$home" XDG_CONFIG_HOME="$xdg" git config --file "$xdg/git/config" --get-all safe.directory)"
 [ "$(printf '%s\n' "$safe_entries" | grep -Fxc "$repo")" -eq 1 ] ||

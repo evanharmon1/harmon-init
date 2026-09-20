@@ -165,7 +165,12 @@ runs:
         # exists to add.
         installed_gitleaks_version=
         if command -v gitleaks >/dev/null 2>&1; then
-          installed_gitleaks_version="$(gitleaks version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -n1)" || true
+          # The whole reported token (not a regex-extracted semver-shaped
+          # substring of it) so that build metadata or an adjacent suffix
+          # with no separator (8.24.3+vendor.1, 8.24.3rc1) is preserved and
+          # fails the exact comparison below, instead of being silently
+          # trimmed off and accepted as matching the pin.
+          installed_gitleaks_version="$(gitleaks version 2>/dev/null | head -n1 | tr -d '[:space:]')" || true
           installed_gitleaks_version="${installed_gitleaks_version#v}"
         fi
         if [ "$installed_gitleaks_version" != "$GITLEAKS_VERSION" ]; then
@@ -203,7 +208,9 @@ runs:
         # abort-under-set-e reasoning, as gitleaks above.
         installed_snyk_version=
         if command -v snyk >/dev/null 2>&1; then
-          installed_snyk_version="$(snyk --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -n1)" || true
+          # Same reasoning as the gitleaks check above: the whole token,
+          # not a regex-extracted subset of it.
+          installed_snyk_version="$(snyk --version 2>/dev/null | head -n1 | tr -d '[:space:]')" || true
           installed_snyk_version="${installed_snyk_version#v}"
         fi
         if [ "$installed_snyk_version" != "$SNYK_VERSION" ]; then

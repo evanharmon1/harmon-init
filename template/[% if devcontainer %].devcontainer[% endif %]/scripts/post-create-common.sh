@@ -84,7 +84,7 @@ resolve_relative_to() {
 resolve_git_dir() {
     local workspace_root="$1"
     local git_marker="$workspace_root/.git"
-    local git_dir admin_dir reverse_pointer reverse_pointer_resolved
+    local git_dir admin_dir reverse_pointer reverse_pointer_resolved cr
 
     if [ -d "$git_marker" ]; then
         # A .git DIRECTORY containing its own "commondir" file is indirection
@@ -182,8 +182,14 @@ resolve_git_dir() {
     # host-side editor/tool that normalizes line endings) would otherwise
     # leave a literal \r on the end of the path, breaking both the
     # resolve_relative_to call below and the exact-match comparison after
-    # it.
-    reverse_pointer="${reverse_pointer%$'\r'}"
+    # it. cr="$(printf '\r')" + "${var%"$cr"}" (rather than the $'\r'
+    # ANSI-C-quoted form) is the same strip with no shell-specific quoting
+    # syntax in it (#1241 integration round 4, Gemini findings re-raising
+    # this as non-POSIX after it was already declined on those grounds —
+    # this repo's shebang and invocation are bash either way, but this form
+    # is equally correct and stops the re-raise).
+    cr="$(printf '\r')"
+    reverse_pointer="${reverse_pointer%"$cr"}"
     reverse_pointer_resolved="$(resolve_relative_to "$admin_dir" "$reverse_pointer")" || {
         echo "ERROR: could not resolve the reverse gitdir pointer at $admin_dir/gitdir" >&2
         return 1
@@ -361,17 +367,43 @@ reconcile_git_metadata_ownership() {
             [ -r "$linked_object" ] && continue
             ;;
         esac
+        # Capture the inode find itself saw, unprivileged, right here — the
+        # privileged block below re-checks against it immediately before
+        # copying, so a same-uid process swapping a symlink in at this
+        # exact path between enumeration and the privileged copy is
+        # detected and refused rather than followed (#1241 integration
+        # round 4, Codex finding 4056318550).
+        seen_inode="$(stat -c '%i' "$linked_object" 2>/dev/null || stat -f '%i' "$linked_object" 2>/dev/null)" || continue
         sudo sh -c '
             target="$1"
             owner="$2"
+            seen_inode="$3"
+            # Re-verify immediately before the privileged copy: refuse if
+            # the path no longer names a plain regular file, or now names a
+            # DIFFERENT inode than the one just captured — either signals a
+            # race since enumeration, not the file this loop meant to fix.
+            [ -f "$target" ] && [ ! -L "$target" ] || exit 1
+            current_inode="$(stat -c "%i" "$target" 2>/dev/null || stat -f "%i" "$target" 2>/dev/null)" || exit 1
+            [ "$current_inode" = "$seen_inode" ] || exit 1
             tmp="$(mktemp "$(dirname "$target")/.harmon-init-unlink.XXXXXX")" || exit 1
-            if ! cp -p "$target" "$tmp"; then
+            # -P (POSIX/BSD-portable spelling of --no-dereference): if
+            # something raced past the checks above in the instant before
+            # this runs, copy the symlink itself, never what it points to
+            # — a privileged cp that DID dereference would let a same-uid
+            # process read an arbitrary root-readable file into the
+            # workspace. Re-checked once more right after: only a genuine
+            # plain file proceeds to chown/chmod/move.
+            if ! cp -Pp "$target" "$tmp"; then
+                rm -f "$tmp"
+                exit 1
+            fi
+            if [ ! -f "$tmp" ] || [ -L "$tmp" ]; then
                 rm -f "$tmp"
                 exit 1
             fi
             chown "$owner" "$tmp" && chmod u=rwX,g=rwX,o=rX "$tmp" && mv -f "$tmp" "$target"
-        ' _ "$linked_object" "$(id -u):${orig_gid}" || {
-            reconcile_step_failed "could not break the hard link for a multi-linked object at $linked_object"
+        ' _ "$linked_object" "$(id -u):${orig_gid}" "$seen_inode" || {
+            reconcile_step_failed "could not break the hard link for a multi-linked object at $linked_object (or it changed since it was found)"
             return 1
         }
     done < <(sudo find "$git_dir" -type f -links +1 -print 2>/dev/null)
