@@ -625,105 +625,22 @@ render_gh_scope_check() {
     fi
 }
 
-# Bot gh-identity tripwire (harmon-init#1236) — the VISIBLE surface for the
-# same check the bot post-start writes to its log: that log is not somewhere
-# a human (or an agent reading the session-start probe) looks, and the gh
-# credential line is a local read that cannot say WHO gh writes as. Gated by
-# the bot profile's containerEnv marker so the human profile's board never
-# prints a bot warning; honors STATUS_NO_NETWORK like the scope probe;
-# warn-only, like check-image-staleness.sh — a diagnostic never breaks the
-# board.
+# The status board deliberately carries NO gh-identity probe.
 #
-# A PAIR of functions rather than an inline block, because
-# render_local_credentials has TWO call sites — the `creds` section and the
-# `setup` audit's "Local credentials" group — and `should_show creds` is false
-# under SECTION=setup. Inlining it at the first site left `task status:setup`
-# rendering a green authenticated gh line with no identity warning in a bot
-# container authenticated as a human, which is the exact state this exists to
-# surface.
+# It had one, and it was dropped rather than hardened a fourth time. The
+# tripwire's two surviving surfaces — the bot post-start warning and the
+# container assert — carry the security property and have been stable since
+# they landed. The board's version needed a backgrounded probe, a reaper, a
+# counter hand-off, and a coupling to the session-start hook's time budget, and
+# that plumbing produced three consecutive regressions, each one introduced by
+# the previous round's fix: an uncounted verdict, then a reap inside a pipeline
+# subshell that could never observe its own child, then a serialization that
+# blew the hook budget it was written to respect. Every finding was correct and
+# every fix was sound; the surface still would not converge.
 #
-# Budget: the session-start hooks kill the creds section from the SUM of its
-# sequential probe bounds (four probes at the 3s local bound — see the hook
-# comment), so a fifth sequential probe would overrun the deadline and cost
-# the reader the whole buffered section exactly when the network is degraded.
-# This probe therefore runs in PARALLEL with those sequential probes —
-# launched before them, collected after. The helper self-bounds at 2s + a 1s
-# kill grace so its own timed-out note survives even a TERM-trapping gh, and
-# the outer run_timeout 5 contains deadline + grace as the backstop (an outer
-# bound tighter than the inner kill grace would swallow the note in exactly
-# the kill-resistant case). 5s + grace still sits far inside the ~16s the
-# sequential probes already cost, so worst-case wall clock and the hook
-# budget are unchanged.
-GH_IDENTITY_PID=""
-GH_IDENTITY_OUT=""
-
-gh_identity_launch() {
-    GH_IDENTITY_PID=""
-    GH_IDENTITY_OUT="${TMPDIR_STATUS}/gh-identity.txt"
-    [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ] || return 0
-    if [ "${STATUS_NO_NETWORK:-0}" = "1" ]; then
-        return 0
-    fi
-    # A bot profile whose helper cannot be read (a conflicted copier update,
-    # permission drift) must SAY the identity check did not run. Skipping
-    # silently leaves the ordinary credential line looking healthy while the
-    # advertised check is absent — a fail-silent in a security check is the
-    # one outcome worse than a noisy one.
-    if [ ! -r .devcontainer/scripts/check-bot-gh-identity.sh ]; then
-        printf '%s\n' "==> gh-identity: .devcontainer/scripts/check-bot-gh-identity.sh is missing or unreadable — the bot login was NOT checked (indeterminate)." \
-            >"${GH_IDENTITY_OUT}"
-        GH_IDENTITY_PID="skipped"
-        return 0
-    fi
-    GH_IDENTITY_TIMEOUT=2 GH_IDENTITY_KILL_GRACE=1 run_timeout 5 \
-        bash .devcontainer/scripts/check-bot-gh-identity.sh \
-        >"${GH_IDENTITY_OUT}" 2>&1 &
-    GH_IDENTITY_PID=$!
-}
-
-# Reap the probe and record its VERDICT, separately from printing its banner.
-# The two are split because they belong in different places: the verdict has to
-# reach the credential group's counters (checkline mutates SETUP_*, and that
-# group's tally is the sole credential input to the setup summary), while the
-# banner is wide multi-line output that must not go through section_box. Keeping
-# them together let `status:setup` print a NON-BOT violation and still finish at
-# a green 100% — the exact "summary contradicts the line above it" defect the
-# credential group's own comments already warn about.
-gh_identity_reap() {
-    GH_IDENTITY_RC=""
-    [ -n "${GH_IDENTITY_PID}" ] || return 0
-    # "skipped" is the unreadable-helper note above: there is no child to wait
-    # on, but its message still has to reach the reader.
-    if [ "${GH_IDENTITY_PID}" != "skipped" ]; then
-        GH_IDENTITY_RC=0
-        wait "${GH_IDENTITY_PID}" || GH_IDENTITY_RC=$?
-    else
-        GH_IDENTITY_RC=3
-    fi
-    GH_IDENTITY_PID=""
-}
-
-# Emit the counted line. Called from inside render_local_credentials so the
-# increment lands in the same group whose tallies reach the setup summary.
-render_gh_identity_check() {
-    # Deliberately does NOT reap: render_local_credentials runs on the left of
-    # `| section_box`, and a pipeline subshell cannot `wait` on a child of the
-    # PARENT shell — bash answers "is not a child of this shell" and returns
-    # 127, so every verdict (clean, violation, indeterminate alike) was recorded
-    # as unknown. The caller reaps in the launching shell first and this reads
-    # the result it left in GH_IDENTITY_RC, which the subshell inherits.
-    [ -n "${GH_IDENTITY_RC}" ] || return 0
-    case "${GH_IDENTITY_RC}" in
-    0) checkline ok "bot gh identity" "every gh credential matches the bot relationship" ;;
-    1) checkline no "bot gh identity" "NON-BOT credential in the bot container — see the warning below" ;;
-    2) checkline no "bot gh identity" "gh unauthenticated — provision GH_TOKEN (see the warning below)" ;;
-    *) checkline unknown "bot gh identity" "identity could not be verified — see the note below" ;;
-    esac
-}
-
-gh_identity_collect() {
-    cat "${GH_IDENTITY_OUT}" 2>/dev/null || true
-}
+# What remains here is the part that never churned: the two remedy derivations
+# below, which stop the board advising an operator to use or widen the very
+# credential the tripwire condemns. They need no probe to be right.
 
 # The interactive-login remedy is HUMAN-profile advice. In the bot profile
 # an operator `gh auth login` is the escalation harmon-init#1236 exists to
@@ -897,8 +814,6 @@ render_local_credentials() {
         esac
     fi
 
-    render_gh_identity_check
-
     # Hand this group's tallies to the setup summary (see the caller there).
     # Guarded, and deliberately last: with `pipefail` set, a failed write here
     # would become the whole pipeline's status and `set -e` would take the script
@@ -909,17 +824,8 @@ render_local_credentials() {
 }
 
 if should_show "creds"; then
-    gh_identity_launch
-
     section_header "Local Credentials"
-    # Reap BEFORE the pipeline: this is the shell that launched the probe, so
-    # it is the only one that can wait on it. It also guarantees the output
-    # file is complete before gh_identity_collect reads it — a slow probe used
-    # to leave the visible warning empty.
-    gh_identity_reap
     render_local_credentials | section_box
-
-    gh_identity_collect
 fi
 
 # ── Setup Completeness ──────────────────────────────────────────────────────
@@ -966,15 +872,10 @@ if [[ "${SECTION}" == "setup" ]]; then
     # below returns its results. The plumbing is worth it — a summary reading
     # "100% · 0 missing" directly under a red ✗ Codex CLI line on the same screen
     # is a worse defect than the file is.
-    gh_identity_launch
-    # Same reason as the creds section: reap in the launching shell, never
-    # inside the `| section_box` pipeline.
-    gh_identity_reap
     {
         subhead "Local credentials"
         render_local_credentials
     } | section_box
-    gh_identity_collect
 
     # Reuses the single bounded probe above rather than making a second,
     # unbounded `gh auth status` call to learn the same thing. Sharing that probe

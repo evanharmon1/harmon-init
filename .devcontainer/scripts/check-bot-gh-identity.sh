@@ -61,6 +61,9 @@ remedy_provisioning() {
 
 if ! command -v gh >/dev/null 2>&1; then
     echo "==> gh-identity: gh is not on PATH — cannot check the bot login (indeterminate)."
+    echo "  Remedy: restore the GitHub CLI. It ships in the devcontainer image,"
+    echo "  so its absence means image or toolchain drift — rebuild the"
+    echo "  container from the pinned image rather than installing gh by hand."
     exit 3
 fi
 
@@ -80,12 +83,23 @@ fi
 # caller would see empty output instead of the warning.
 GH_IDENTITY_TIMEOUT="${GH_IDENTITY_TIMEOUT:-10}"
 GH_IDENTITY_KILL_GRACE="${GH_IDENTITY_KILL_GRACE:-5}"
+# Colour is disabled at the source AND stripped from the capture. Either alone
+# is insufficient: a container inheriting CLICOLOR_FORCE=1 makes gh wrap the
+# login in ANSI sequences, and the parse below requires an alphanumeric
+# immediately after "account"/"as", so the login is omitted and a stored
+# NON-BOT credential degrades from a violation (1) to "could not parse" (3) —
+# which the container assert accepts, silently bypassing the whole check. That
+# is a security bypass reachable from an environment variable, so it gets both
+# a belt and braces: NO_COLOR/CLICOLOR_FORCE tell gh not to emit, and the sed
+# strips anything that arrives anyway (a future gh, a wrapper, a pager).
 status_rc=0
 if command -v timeout >/dev/null 2>&1; then
-    status_out="$(timeout -k "$GH_IDENTITY_KILL_GRACE" "$GH_IDENTITY_TIMEOUT" gh auth status </dev/null 2>&1)" || status_rc=$?
+    status_out="$(NO_COLOR=1 CLICOLOR_FORCE=0 timeout -k "$GH_IDENTITY_KILL_GRACE" "$GH_IDENTITY_TIMEOUT" gh auth status </dev/null 2>&1)" || status_rc=$?
 else
-    status_out="$(gh auth status </dev/null 2>&1)" || status_rc=$?
+    status_out="$(NO_COLOR=1 CLICOLOR_FORCE=0 gh auth status </dev/null 2>&1)" || status_rc=$?
 fi
+# CSI sequences: ESC [ ... final-byte. Portable across macOS/BSD and GNU sed.
+status_out="$(printf '%s\n' "$status_out" | sed -e 's/'"$(printf '\033')"'\[[0-9;?]*[A-Za-z]//g')"
 
 # Every credential gh knows about, by the account each one CLAIMS. gh has
 # three per-account record shapes — healthy "Logged in to <host> account

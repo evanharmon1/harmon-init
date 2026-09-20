@@ -1093,9 +1093,12 @@ SENTINEL_SCRIPT
 
     gh_id_bin="${work_dir}/gh-identity-bin"
     gh_id_fixture="${work_dir}/gh-identity-fixture"
-    mkdir -p "$gh_id_bin"
+    mkdir -p "$gh_id_bin" "${work_dir}/empty-bin"
     ln -s "$bash_bin" "${gh_id_bin}/bash"
-    for gh_id_dep in cat grep awk sort sleep; do
+    # sed is on this list because the helper strips ANSI with it — the
+    # constrained PATH exists to isolate `gh`, not to prove the script runs
+    # without POSIX tools.
+    for gh_id_dep in cat grep awk sort sleep sed; do
         ln -s "$(command -v "$gh_id_dep")" "${gh_id_bin}/${gh_id_dep}"
     done
     # timeout: Homebrew coreutils on macOS ships it as gtimeout (the same
@@ -1342,6 +1345,36 @@ SENTINEL_SCRIPT
     case "$gh_id_out" in
     *"gh auth logout --hostname"*) ;;
     *) fail "stored violation remedy omits the gh auth logout instruction: ${gh_id_out}" ;;
+    esac
+
+    # Forced colour must not defeat the parse. A container inheriting
+    # CLICOLOR_FORCE=1 makes gh wrap the login in ANSI, and the parse requires
+    # an alphanumeric immediately after "account"/"as" — so the login was
+    # omitted and a stored NON-BOT credential degraded from a violation (1) to
+    # "could not parse" (3), which the CONTAINER ASSERT ACCEPTS. That is a
+    # security bypass reachable from an environment variable. Found by the
+    # integration stage's cloud review; reproduced before fixing.
+    printf '%s\n' \
+        'github.com' \
+        "  $(printf '\033')[0;32m✓$(printf '\033')[0m Logged in to github.com account $(printf '\033')[1msomeoperator$(printf '\033')[0m (keyring)" \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "an ANSI-coloured non-bot login exited ${gh_id_rc}, expected violation (1) — colour defeated the parse and the assert accepts 3"
+    case "$gh_id_out" in
+    *someoperator*) ;;
+    *) fail "the ANSI-coloured violation warning does not name the login: ${gh_id_out}" ;;
+    esac
+
+    # gh absent is indeterminate, and an indeterminate report owes a remedy
+    # like every other one — AC3 carves out no exception for it.
+    gh_id_rc=0
+    gh_id_out="$(PATH="${work_dir}/empty-bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "gh absent exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *Remedy*) ;;
+    *) fail "the gh-absent indeterminate report carries no remedy: ${gh_id_out}" ;;
     esac
 
     # A stored login names its account even when validation fails (offline
@@ -1665,129 +1698,18 @@ SENTINEL_SCRIPT
         fail "human post-start runs the bot-only gh-identity tripwire"
     fi
 
-    # Post-start redirects everything to a log nobody watches, so the board
-    # is the VISIBLE surface (same reasoning as check-image-staleness.sh):
-    # the session-start hook runs the creds section, which must run the
-    # tripwire — gated to the bot profile by its FOREMAN_DEVCONTAINER=bot
-    # containerEnv marker, so the human profile's board never prints a
-    # bot warning.
-    #
-    # Two SEPARATE assertions, because one grep over both cannot tell them
-    # apart. The guarded block opens with a `[ -r … ]` readability test that
-    # NAMES the helper, so a proximity match on the filename alone passes on
-    # that test while the line that actually runs the helper says something
-    # else entirely — verified by mutation: replacing the invocation's path
-    # left a filename-proximity check green. So assert the guard and the
-    # INVOCATION independently, and require the invocation to be a real
-    # execution (optionally wrapped in run_timeout and env overrides) rather
-    # than any mention.
-    local status_sh status_guard_line status_invoke_line
+    # The status board no longer probes gh identity (see the note in
+    # status.sh): that surface was descoped rather than hardened a fourth time.
+    # What it still owes is the remedy WORDING below, which is checked here, and
+    # the "no hardcoded remedy acting on the current login" invariant, which
+    # lives in scripts/test-status.sh beside the ${GH_REMEDY} derivation guard
+    # it was widened from (issue #596) — one invariant, one home.
+    local status_sh
     status_sh="${repo_root}/scripts/status.sh"
-    # STRUCTURAL, not proximity-based: the invocation must live inside
-    # gh_identity_launch, and that function must carry the bot guard. An
-    # earlier line-distance heuristic broke the moment the function body grew
-    # a branch — the number was measuring layout, not the property. Extract
-    # the function body once and assert both facts against it.
-    local launch_body
-    launch_body="$(awk '
-        /^gh_identity_launch\(\) \{/ { inf = 1; next }
-        inf && /^\}/ { exit }
-        inf { print }
-    ' "$status_sh")"
-    [ -n "$launch_body" ] ||
-        fail "status board has no gh_identity_launch function to carry the tripwire"
-    printf '%s\n' "$launch_body" |
-        grep -qE '^[[:space:]]*([A-Z_]+=[^[:space:]]*[[:space:]]+)*(run_timeout[[:space:]]+[0-9]+[[:space:]]+)?bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' ||
-        fail "gh_identity_launch never executes check-bot-gh-identity.sh (a mention in a [ -r ] test is not a run)"
-    printf '%s\n' "$launch_body" | grep -q 'FOREMAN_DEVCONTAINER:-}" = "bot"' ||
-        fail "gh_identity_launch does not gate on the bot profile — the human board would print a bot warning"
-    # An unreadable helper must REPORT, never silently skip: a fail-silent in
-    # a security check leaves the ordinary credential line looking healthy
-    # while the advertised identity check is simply absent.
-    printf '%s\n' "$launch_body" | grep -q 'missing or unreadable' ||
-        fail "gh_identity_launch skips silently when the helper cannot be read — it must report the check did not run"
-
-    # EVERY render_local_credentials call site must be covered, not just the
-    # first. `should_show creds` is false under SECTION=setup, so an inline
-    # launch at the creds site alone left `task status:setup` printing a green
-    # authenticated gh line with no identity warning in a bot container
-    # authenticated as a human — the exact state the tripwire exists to
-    # surface. Found by the challenge stage; this is its regression test.
-    local render_sites launch_sites
-    render_sites="$(grep -cE '^[[:space:]]*render_local_credentials([[:space:]]|\||$)' "$status_sh")"
-    launch_sites="$(grep -cE '^[[:space:]]*gh_identity_launch[[:space:]]*$' "$status_sh")"
-    [ "$render_sites" -gt 0 ] ||
-        fail "status board has no render_local_credentials call site to guard"
-    [ "$launch_sites" -ge "$render_sites" ] ||
-        fail "status board renders local credentials at ${render_sites} site(s) but launches the gh-identity tripwire at only ${launch_sites} — a section that renders creds without it reports a human login as healthy"
-    # ...and each launch must be paired with a collect, or the banner is
-    # computed and never printed.
-    [ "$(grep -cE '^[[:space:]]*gh_identity_collect[[:space:]]*$' "$status_sh")" = "$launch_sites" ] ||
-        fail "status board's gh_identity_launch and gh_identity_collect calls are unpaired — a launched probe whose output is never collected prints nothing"
-
     # The "no hardcoded remedy acting on the current login" invariant lives in
     # scripts/test-status.sh, beside the ${GH_REMEDY} derivation guard it was
     # widened from (issue #596) — one invariant, one home. This file keeps the
     # devcontainer WIRING assertions only.
-
-    # The identity verdict must reach the credential group's COUNTERS, not just
-    # the screen: that group's tally is the sole credential input to the setup
-    # summary, so discarding the exit code let `status:setup` print a NON-BOT
-    # violation above a green 100%. render_gh_identity_check is what carries it,
-    # and it must be called from inside render_local_credentials — a call sited
-    # after the tally write would increment nothing.
-    local render_body
-    render_body="$(awk '
-        /^render_local_credentials\(\) \{/ { inf = 1; next }
-        inf && /^\}/ { exit }
-        inf { print }
-    ' "$status_sh")"
-    printf '%s\n' "$render_body" | grep -q 'render_gh_identity_check' ||
-        fail "render_local_credentials never calls render_gh_identity_check — the identity verdict would not reach the setup summary's counters"
-    printf '%s\n' "$render_body" |
-        awk '/render_gh_identity_check/ { seen = 1 } /cred-counts/ { print (seen ? "ok" : "late"); exit }' |
-        grep -qx ok ||
-        fail "render_gh_identity_check runs after the cred-counts tally is written — the verdict would be counted too late to matter"
-
-    # BEHAVIORAL, not structural: the verdict must survive the pipeline.
-    # render_local_credentials runs on the left of `| section_box`, so a `wait`
-    # placed inside it executes in a subshell that cannot wait on the PARENT
-    # shell's child — bash returns 127 ("is not a child of this shell") and
-    # every verdict, clean or violation, was recorded as unknown. A structural
-    # check that render_gh_identity_check is merely *called* passes happily on
-    # that bug, which is why this one runs the real functions against a stub.
-    local reap_probe reap_out
-    reap_probe="$(mktemp)"
-    cat >"$reap_probe" <<'REAP_FIXTURE'
-TMPDIR_STATUS="$(mktemp -d)"
-run_timeout() { shift; "$@"; }
-checkline() { printf 'checkline:%s
-' "$1"; }
-section_box() { cat; }
-REAP_FIXTURE
-    # Source the three real functions under test, then drive them exactly the
-    # way the creds section does: launch, reap in this shell, render through a
-    # pipeline.
-    sed -n '/^gh_identity_launch() {/,/^}/p;/^gh_identity_reap() {/,/^}/p;/^render_gh_identity_check() {/,/^}/p' \
-        "$status_sh" >>"$reap_probe"
-    cat >>"$reap_probe" <<'REAP_DRIVER'
-FOREMAN_DEVCONTAINER=bot
-mkdir -p .devcontainer/scripts
-printf '%s
-' '#!/bin/sh' 'exit 0' >.devcontainer/scripts/check-bot-gh-identity.sh
-chmod +x .devcontainer/scripts/check-bot-gh-identity.sh
-gh_identity_launch
-gh_identity_reap
-render_gh_identity_check | section_box
-REAP_DRIVER
-    reap_out="$(cd "$work_dir" && "$bash_bin" "$reap_probe" 2>&1)" || true
-    case "$reap_out" in
-    *"checkline:ok"*) ;;
-    *"not a child of this shell"*)
-        fail "the gh-identity probe is reaped inside the render pipeline — wait cannot see the parent's child, so every verdict reads unknown: ${reap_out}"
-        ;;
-    *) fail "a clean gh-identity probe did not produce a counted ok line: ${reap_out}" ;;
-    esac
 
     # The credential line's own remedy must not contradict the tripwire banner
     # on the same screen: in the bot profile an operator `gh auth login` is the
