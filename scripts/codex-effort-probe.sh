@@ -22,6 +22,11 @@ set -euo pipefail
 # The probe effort must DIFFER from the shipped default, or a run that ignores
 # the override looks identical to one that honours it and the probe is vacuous.
 readonly PROBE_EFFORT="${CODEX_PROBE_EFFORT:-xhigh}"
+# A second, distinct effort. One request cannot attribute the header to `-c`:
+# a persistent user or project config already holding PROBE_EFFORT produces the
+# same output from a CLI that ignores the flag entirely. No single stored value
+# can satisfy both of these, so honouring both is the attribution.
+readonly PROBE_EFFORT_ALT="${CODEX_PROBE_EFFORT_ALT:-low}"
 # Refuse to run where the layered config is absent. The probe exists to prove
 # that the devcontainer's two-layer install lets a requested effort through; on
 # a bare host there is no /etc/codex/managed_config.toml to override anything,
@@ -30,12 +35,21 @@ readonly PROBE_EFFORT="${CODEX_PROBE_EFFORT:-xhigh}"
 # carried the original unoverridable pin. A tool whose whole job is detecting
 # that must not be able to pass by being run in the wrong place.
 default_effort_file=/etc/codex/config.toml
-if [ ! -r "$default_effort_file" ] && [ "${CODEX_PROBE_ALLOW_HOST:-0}" != "1" ]; then
-    echo "codex-effort-probe: ${default_effort_file} not found — this looks like a host" >&2
-    echo "  checkout rather than the devcontainer. A host run proves nothing about the" >&2
-    echo "  container's config layering. Run it inside the devcontainer, or set" >&2
-    echo "  CODEX_PROBE_ALLOW_HOST=1 to probe this machine's CLI deliberately." >&2
-    exit 1
+managed_file=/etc/codex/managed_config.toml
+if [ "${CODEX_PROBE_ALLOW_HOST:-0}" != "1" ]; then
+    # BOTH layers, not just the defaults one. With no managed_config.toml there
+    # is no unoverridable layer to take precedence, so every override trivially
+    # "wins" and the probe proves nothing -- the same vacuous pass as a host run,
+    # just harder to notice.
+    for probe_required in "$default_effort_file" "$managed_file"; do
+        [ -r "$probe_required" ] || {
+            echo "codex-effort-probe: ${probe_required} not found — this is not a" >&2
+            echo "  fully configured devcontainer. Both Codex config layers must be present" >&2
+            echo "  or there is no precedence to test. Run it inside the devcontainer, or set" >&2
+            echo "  CODEX_PROBE_ALLOW_HOST=1 to probe this machine's CLI deliberately." >&2
+            exit 1
+        }
+    done
 fi
 
 # Read the shipped default from the live defaults layer rather than hardcoding
@@ -62,7 +76,7 @@ command -v codex >/dev/null 2>&1 || fail "the codex CLI is not on PATH"
     fail "probe effort '${PROBE_EFFORT}' equals the default; the probe would prove nothing"
 
 echo "==> codex $(codex --version 2>&1)"
-echo "==> requesting reasoning effort: ${PROBE_EFFORT}"
+echo "==> requesting reasoning efforts: ${PROBE_EFFORT} and ${PROBE_EFFORT_ALT}"
 
 # The real binary, never a shell function: interactive shells wrap `codex` to
 # inject a --profile, and a profile is exactly the kind of hidden precedence
@@ -74,7 +88,7 @@ codex_bin="$(type -P codex || true)"
     fail "could not resolve a real codex executable on PATH (a shell function is not enough)"
 
 probe_one() {
-    local model="$1" run_log rc header effective
+    local model="$1" want="$2" run_log rc header effective
     run_log="$(mktemp)"
 
     # Capture and check Codex's OWN exit status. Piping straight into grep
@@ -83,7 +97,7 @@ probe_one() {
     set +e
     "$codex_bin" exec \
         -m "$model" \
-        -c "model_reasoning_effort=\"${PROBE_EFFORT}\"" \
+        -c "model_reasoning_effort=\"${want}\"" \
         --skip-git-repo-check \
         'Reply with exactly: ok' </dev/null >"$run_log" 2>&1
     rc=$?
@@ -100,22 +114,26 @@ probe_one() {
     rm -f "$run_log"
 
     [ -n "$header" ] ||
-        fail "no 'reasoning effort:' header for model '${model}'; cannot confirm the effort"
+        fail "no 'reasoning effort:' header for model '${model}' at '${want}'; cannot confirm the effort"
 
     # "reasoning effort: xhigh" -> "xhigh"
     effective="$(printf '%s\n' "$header" | sed -n 's/.*[Rr]easoning effort:[[:space:]]*//p' | head -1)"
-    echo "    ${model}: run header reports ${effective}"
+    echo "    ${model} @ ${want}: run header reports ${effective}"
 
-    if [ "$effective" != "$PROBE_EFFORT" ]; then
-        fail "model '${model}': requested '${PROBE_EFFORT}' but the run uses '${effective}'.
+    if [ "$effective" != "$want" ]; then
+        fail "model '${model}': requested '${want}' but the run uses '${effective}'.
 A managed config is overriding it. Check that model_reasoning_effort is NOT in
 /etc/codex/managed_config.toml (it belongs in /etc/codex/config.toml, the
 overridable defaults layer) -- see docs/guides/codex-review.md."
     fi
 }
 
+[ "$PROBE_EFFORT_ALT" != "$PROBE_EFFORT" ] ||
+    fail "the two probe efforts are identical; a single value cannot prove the override applied"
+
 for probe_model in $PROBE_MODELS; do
-    probe_one "$probe_model"
+    probe_one "$probe_model" "$PROBE_EFFORT"
+    probe_one "$probe_model" "$PROBE_EFFORT_ALT"
 done
 
-echo "codex-effort-probe: OK — the requested effort reached every probed model"
+echo "codex-effort-probe: OK — both requested efforts reached every probed model"

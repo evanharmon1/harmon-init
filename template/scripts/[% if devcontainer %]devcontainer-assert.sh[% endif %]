@@ -227,8 +227,13 @@ assert_unit() {
         fail "Codex devcontainer default reasoning is not medium"
     [ "$(toml_root_scalar project_doc_max_bytes "$codex_system_config")" = "65536" ] ||
         fail "Codex devcontainer default project-doc budget is not 65536"
-    grep -qE '^[[:space:]]*"?status_line"?[[:space:]]*=' "$codex_system_config" ||
-        fail "the Codex TUI status line is missing from the defaults layer"
+    awk '
+        /^[[:space:]]*\[/ { in_tui = ($0 ~ /^[[:space:]]*\["?tui"?\]/) ; next }
+        in_tui && /^[[:space:]]*"?status_line"?[[:space:]]*=/ { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$codex_system_config" ||
+        fail "status_line is not inside a [tui] table in the defaults layer;" \
+            "as a root key Codex does not read it as the TUI status line"
     # Presence above, separation here: deleting a moved default from the system
     # file, or moving one back into a managed file, must both fail. Checking
     # only the second would let the first pass silently.
@@ -1176,11 +1181,19 @@ assert_container() {
     [ "$codex_effort" = "medium" ] || fail "Codex default reasoning is '${codex_effort}', expected medium"
     # The running container must keep the two layers separate, not just the
     # repo copies: a preference in the managed layer is unoverridable.
+    local codex_live_key
+    for codex_live_key in model model_reasoning_effort project_doc_max_bytes; do
+        if docker exec -u vscode "$container_id" \
+            grep -qE "^[[:space:]]*\"?${codex_live_key}\"?[[:space:]]*=" /etc/codex/managed_config.toml; then
+            fail "/etc/codex/managed_config.toml pins '${codex_live_key}';" \
+                "that is an overridable default and belongs in /etc/codex/config.toml" \
+                "(harmon-init#1186)"
+        fi
+    done
     if docker exec -u vscode "$container_id" \
-        grep -qE '^[[:space:]]*"?(model|model_reasoning_effort)"?[[:space:]]*=' /etc/codex/managed_config.toml; then
-        fail "/etc/codex/managed_config.toml pins model or reasoning effort;" \
-            "those are overridable defaults and belong in /etc/codex/config.toml" \
-            "(harmon-init#1186)"
+        grep -qE '^[[:space:]]*\[tui\]' /etc/codex/managed_config.toml; then
+        fail "/etc/codex/managed_config.toml pins a [tui] table; the status line is" \
+            "an overridable default and belongs in /etc/codex/config.toml (harmon-init#1186)"
     fi
 
     # `task` ships from the pinned shared image, NOT a devcontainer Feature

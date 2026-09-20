@@ -1790,9 +1790,14 @@ else
     grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-system-config.toml ||
         err "Codex devcontainer default is not pinned to medium reasoning"
     for codex_boundary in codex-managed-config.toml codex-managed-config.bot.toml; do
-        ! grep -Eq '^[[:space:]]*"?(model|model_reasoning_effort|project_doc_max_bytes)"?[[:space:]]*=' \
-            ".devcontainer/config/${codex_boundary}" ||
-            err "${codex_boundary} pins an overridable default in the unoverridable managed layer"
+        for codex_key in model model_reasoning_effort project_doc_max_bytes; do
+            ! grep -Eq "^[[:space:]]*\"?${codex_key}\"?[[:space:]]*=" \
+                ".devcontainer/config/${codex_boundary}" ||
+                err "${codex_boundary} pins '${codex_key}' in the unoverridable managed layer;" \
+                    "it belongs in codex-system-config.toml"
+        done
+        ! grep -Eq '^[[:space:]]*\[tui\]' ".devcontainer/config/${codex_boundary}" ||
+            err "${codex_boundary} pins a [tui] table in the unoverridable managed layer"
     done
     grep -q '^sandbox_mode = "workspace-write"$' .devcontainer/config/codex-managed-config.toml ||
         err "Codex human devcontainer baseline does not enable workspace-write"
