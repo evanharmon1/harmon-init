@@ -227,7 +227,11 @@ assert_protect_allows() {
     fi
 }
 
-if [ -x "$repo/$devc_protect" ]; then
+if [ ! -f "$repo/$devc_protect" ]; then
+    echo "==> protect-files regression tests skipped (devcontainer assets absent)"
+elif [ ! -x "$repo/$devc_protect" ]; then
+    fail "$devc_protect exists but is not executable"
+else
     echo "==> protect-files blocks credential-shaped paths"
     assert_protect_blocks "$devc_protect" ".env"
     assert_protect_blocks "$devc_protect" "/repo/.env"
@@ -272,6 +276,4 @@ if [ -x "$repo/$devc_protect" ]; then
     assert_protect_allows "$devc_protect" ""
 
     echo "==> protect-files regression tests OK"
-else
-    echo "==> protect-files regression tests skipped (devcontainer assets absent)"
 fi
