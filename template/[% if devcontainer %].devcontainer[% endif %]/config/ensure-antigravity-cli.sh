@@ -192,28 +192,51 @@ remove_if_owned() {
     case "$prior_temp_name" in
     "$(basename "$path")".harmon-init-quarantine.*)
         prior_quarantine="$(dirname "$path")/${prior_temp_name}"
-        # Same quarantine-rename-then-validate shape as discard_transaction
-        # and the primary quarantine step below: pin the exact bytes under a
-        # private name before revalidating, so a process racing the
-        # recorded prior_quarantine pathname cannot have its replacement
-        # deleted on the strength of this check (#1241 review round 3,
-        # finding F6).
+        # Quarantine into a FRESH, PRIVATE per-call directory (mktemp -d,
+        # beside prior_quarantine so the rename stays on the same
+        # filesystem and atomic) before validating, instead of a same-
+        # directory sibling name: nothing else can have pre-created a path
+        # inside a directory nobody else knows exists. Both moves are
+        # no-clobber (-n): if the first one's destination somehow already
+        # exists, that is a failed quarantine and the delete below is
+        # refused; if the SECOND (restore-on-mismatch) move finds a
+        # concurrent process has already recreated prior_quarantine,
+        # refusing to overwrite it is exactly what avoids reintroducing the
+        # concurrent-replacement race this whole mechanism exists to close
+        # — the recovered generation stays retained under its private
+        # directory instead of being silently dropped or clobbering the
+        # concurrent write (#1241 review round 3, finding F6; hardened in
+        # review round 5, finding F24 — the original same-directory
+        # sibling name and forced restore move left that exact race open).
         if path_exists "$prior_quarantine"; then
-            recheck="$(mktemp "${prior_quarantine}.recheck.XXXXXX")"
-            rm -f "$recheck"
-            if mv -f "$prior_quarantine" "$recheck" 2>/dev/null; then
-                if proof_matches "$proof" "$recheck"; then
-                    if ! rm -f "$recheck"; then
-                        echo "Could not remove recovered managed ${label} at ${recheck} (quarantined from ${prior_quarantine})" >&2
-                        return 1
+            recheck_dir="$(mktemp -d "$(dirname "$prior_quarantine")/.harmon-init-recheck.XXXXXX" 2>/dev/null)" || recheck_dir=""
+            if [ -n "$recheck_dir" ]; then
+                recheck="${recheck_dir}/$(basename "$prior_quarantine")"
+                if mv -n "$prior_quarantine" "$recheck" 2>/dev/null && [ -e "$recheck" ]; then
+                    if proof_matches "$proof" "$recheck"; then
+                        if ! rm -f "$recheck"; then
+                            echo "Could not remove recovered managed ${label} at ${recheck} (quarantined from ${prior_quarantine})" >&2
+                            return 1
+                        fi
+                        rmdir "$recheck_dir" 2>/dev/null || true
+                        rm -f "$proof"
+                        return 0
                     fi
-                    rm -f "$proof"
-                    return 0
+                    # Not the recorded generation after all — try to restore
+                    # it under its original name, but never clobber a
+                    # concurrent replacement: mv -n either succeeds (nothing
+                    # is there) or leaves both files exactly where they are.
+                    if mv -n "$recheck" "$prior_quarantine" 2>/dev/null && [ ! -e "$recheck" ]; then
+                        rmdir "$recheck_dir" 2>/dev/null || true
+                    else
+                        echo "A concurrent replacement occupies ${prior_quarantine}; retaining the recovered generation at ${recheck} for manual review" >&2
+                    fi
+                else
+                    # The quarantine move itself failed or was refused —
+                    # a failed quarantine refuses the delete entirely and
+                    # falls through untouched.
+                    rmdir "$recheck_dir" 2>/dev/null || true
                 fi
-                # Not the recorded generation after all — restore it under
-                # its original name so a human or a later run still finds
-                # it there, and fall through to the ordinary $path handling.
-                mv -f "$recheck" "$prior_quarantine" 2>/dev/null || true
             fi
         fi
         ;;

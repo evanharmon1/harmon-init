@@ -1933,6 +1933,66 @@ fi
 [ ! -e "${agy24_qr_home}/.local/bin/.agy-real.harmon-init-owned" ] &&
     [ -z "$agy24_qr_leftover" ] || fail "interrupted quarantine was not recovered"
 
+echo "==> 24c. remove_if_owned's prior_quarantine restore-on-mismatch never clobbers a concurrent replacement (#1241 review round 5, finding F24)"
+agy_f24_home="${work_dir}/agy-f24-home"
+agy_f24_system="${agy_f24_home}/system-agy"
+agy_f24_bin="${agy_f24_home}/fake-bin"
+agy_f24_target="${agy_f24_home}/.local/bin/agy-real"
+agy_f24_real_mv="$(command -v mv)"
+mkdir -p "${agy_f24_home}/.local/bin" "$agy_f24_bin"
+printf '#!/bin/sh\nprintf "1.0.0\\n"\n' >"$agy_f24_target"
+printf '#!/bin/sh\nprintf "1.1.11\\n"\n' >"$agy_f24_system"
+chmod +x "$agy_f24_target" "$agy_f24_system"
+HOME="$agy_f24_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=enabled HARMON_ANTIGRAVITY_SYSTEM_BINARY="$agy_f24_system" \
+    bash "$ensure_script" >/dev/null
+
+# Same "interrupted quarantine" setup as the recovery fixture above: the
+# real move happens, then the wrapper exits nonzero so the proof durably
+# records the quarantine name for a later run to recover.
+printf '%s\n' '#!/bin/sh' \
+    'if [ "$#" -eq 3 ] && [ "$1" = "-f" ] && [ "$2" = "$HARMON_TEST_QUARANTINE_TARGET" ]; then' \
+    'case "$3" in "$HARMON_TEST_QUARANTINE_TARGET".harmon-init-quarantine.*) "$HARMON_TEST_REAL_MV" "$@"; exit 75 ;; esac; fi' \
+    'exec "$HARMON_TEST_REAL_MV" "$@"' >"${agy_f24_bin}/mv"
+chmod +x "${agy_f24_bin}/mv"
+if HOME="$agy_f24_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled HARMON_TEST_QUARANTINE_TARGET="$agy_f24_target" \
+    HARMON_TEST_REAL_MV="$agy_f24_real_mv" PATH="${agy_f24_bin}:${PATH}" bash "$ensure_script" >/dev/null 2>&1; then
+    fail "F24 fixture setup: interrupted quarantine did not fail as expected"
+fi
+agy_f24_quarantine="$(find "${agy_f24_home}/.local/bin" -maxdepth 1 -name 'agy-real.harmon-init-quarantine.*' -print -quit)"
+[ -n "$agy_f24_quarantine" ] || fail "F24 fixture setup: interrupted quarantine did not leave a recorded quarantine file"
+
+# Tamper with the quarantined bytes so the recovery run's proof check
+# mismatches, forcing it down the restore-on-mismatch branch.
+printf 'tampered after interruption\n' >"$agy_f24_quarantine"
+
+# The recovery run: intercept ONLY the restore-back move (source inside a
+# private .harmon-init-recheck.* directory, destination the known
+# quarantine path) to plant a concurrent replacement immediately before it
+# would run for real — proving the no-clobber restore refuses to overwrite
+# it rather than reintroducing the race F6 (review round 3) closed.
+printf '%s\n' '#!/bin/sh' \
+    'if [ "$#" -eq 3 ] && [ "$1" = "-n" ] && [ "$3" = "$HARMON_TEST_QUARANTINE_TARGET" ]; then' \
+    '    case "$2" in' \
+    '    */.harmon-init-recheck.*)' \
+    '        printf "concurrently recreated legitimate content\\n" >"$3"' \
+    '        ;;' \
+    '    esac' \
+    'fi' \
+    'exec "$HARMON_TEST_REAL_MV" "$@"' >"${agy_f24_bin}/mv"
+chmod +x "${agy_f24_bin}/mv"
+HOME="$agy_f24_home" HARMON_BOT_AUTONOMY_ANTIGRAVITY=disabled \
+    HARMON_TEST_QUARANTINE_TARGET="$agy_f24_quarantine" \
+    HARMON_TEST_REAL_MV="$agy_f24_real_mv" \
+    PATH="${agy_f24_bin}:${PATH}" bash "$ensure_script" >/dev/null 2>"${agy_f24_home}/cleanup.stderr"
+
+[ "$(cat "$agy_f24_quarantine")" = "concurrently recreated legitimate content" ] ||
+    fail "F24 regression: restore-on-mismatch clobbered a concurrent replacement at ${agy_f24_quarantine}"
+agy_f24_recheck_dir="$(find "${agy_f24_home}/.local/bin" -maxdepth 1 -type d -name '.harmon-init-recheck.*' -print -quit)"
+[ -n "$agy_f24_recheck_dir" ] ||
+    fail "F24 regression: the recovered (tampered) generation was not retained anywhere after the restore was refused"
+grep -Fq "$agy_f24_recheck_dir" "${agy_f24_home}/cleanup.stderr" ||
+    fail "F24 regression: cleanup did not report where the retained generation lives"
+
 echo "==> 25. discard_transaction / discard_launcher_transaction revalidate the temp file before deleting it (#1241 item 7)"
 # Extracted verbatim (same technique as test-devcontainer-git-ownership.sh)
 # so the fixture is attached to the real implementation, not a second,
