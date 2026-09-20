@@ -290,7 +290,7 @@ The required checks are the build gates (see [ci-cd.md](ci-cd.md)):
 | ---------- | ----------------------------------------------------------------------------------------------- |
 | `verify`   | Aggregate build gate — rolls up root lint/template validation |
 | `security` | gitleaks + dependency audit + Semgrep CE (this repo's SAST engine — it has no CodeQL workflow) |
-| `closing-keywords` | Metadata-only PR gate: a same-repository closing keyword may pass only when its issue has no unchecked task-list items; it reports a successful no-op on push, merge-queue, and manual runs |
+| `closing-keywords` | Metadata-only PR gate: a same-repository closing keyword may pass only when its issue has no unchecked task-list items; it reports a successful no-op on push, merge-queue, and manual runs. **Must be listed here directly.** It moved out of `build.yml` into its own workflow so it could keep the `pull_request.edited` trigger the build matrix must not have (#1328), and `needs:` cannot cross workflows — so the aggregate `verify` no longer carries it. A live ruleset missing this context enforces the closing policy not at all. `task audit:ruleset` names it; `task setup:ruleset` adds it. |
 | `devcontainer-verify` | Aggregate for `devcontainer-build.yml`. Runs on every event with **no `paths:` filter** — a filtered workflow never reports, and a required check that never reports blocks the merge forever. Its `devcontainer-changes` job decides internally, so an unrelated PR is a deliberate, reported no-op. See "Fork pull requests report a vacuous pass" and "`merge_group` runs a credential-free build" below |
 
 Snyk PR/App checks are absent by default. This repo's weekly

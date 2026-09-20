@@ -91,6 +91,7 @@ tasks:
       - task: test:tasks
       - task: test:ci-results
       - task: test:audit-ruleset
+      - task: test:setup-ruleset
       - task: test:devcontainer-changed
       - task: test:summarize-gitleaks
       - task: test:output
@@ -609,6 +610,11 @@ tasks:
     cmds:
       - ./scripts/audit-ruleset.sh
 
+  test:setup-ruleset:
+    desc: Unit-test the ruleset required-check sync with offline fixtures
+    cmds:
+      - ./scripts/test-setup-ruleset.sh
+
   test:audit-ruleset:
     desc: Unit-test ruleset audit normalization with offline fixtures
     cmds:
@@ -876,6 +882,19 @@ tasks:
     interactive: true
     cmds:
       - ./scripts/setup-gh-scopes.sh
+
+  setup:ruleset:
+    desc: >-
+      Add required status-check contexts the checked-in ruleset declares and the
+      LIVE ruleset is missing (additive only — never removes a required check).
+      Closes the gap that `copier update` cannot: it never mutates a live ruleset.
+    # interactive: the script prompts before changing a merge gate, and refuses
+    # a non-interactive run without --yes. Task's global `output: group` pipes
+    # stdout, which would hide the prompt — the same reason setup:gh-scopes
+    # carries this.
+    interactive: true
+    cmds:
+      - ./scripts/setup-ruleset.sh {{.CLI_ARGS}}
 
   setup:github-labels:
     desc: Idempotently create/update this repo's starter labels (see docs/project-management.md). Requires `gh` with repo write.

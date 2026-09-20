@@ -759,6 +759,18 @@ tasks:
     cmds:
       - ./scripts/audit-ruleset.sh
 
+  setup:ruleset:
+    desc: >-
+      Add required status-check contexts the checked-in ruleset declares and the
+      LIVE ruleset is missing (additive only — never removes a required check).
+      Closes the gap that `copier update` cannot: it never mutates a live ruleset.
+    # interactive: the script prompts before changing a merge gate, and refuses
+    # a non-interactive run without --yes. Task's global `output: group` pipes
+    # stdout, which would hide that prompt.
+    interactive: true
+    cmds:
+      - ./scripts/setup-ruleset.sh {{.CLI_ARGS}}
+
   test:output:
     desc: Unit-test shared color/Unicode fallbacks and spinner cleanup
     cmds:

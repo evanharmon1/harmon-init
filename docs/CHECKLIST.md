@@ -90,12 +90,24 @@ this comment. -->
       are required — the collaborator grant sets the ceiling, the PAT's repo list
       reaches it. Procedure: [guides/bot-account.md](guides/bot-account.md).
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
-- [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** — after
-      the `closing-keywords` job (in `closing-keywords.yml`) has reported once,
-      edit the existing
-      main-branch ruleset in Settings → Rules → Rulesets and add that exact
-      required status check. Do not re-import the JSON solely for this change:
-      GitHub creates a duplicate ruleset rather than updating the live one.
+- [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
+      **required, not optional, and no longer deferrable.** Until
+      harmon-init#1328 the guard was enforced *transitively*: the job sat in
+      `build.yml` and fed the aggregate `verify` check, so a failing guard
+      failed a check the ruleset already required. Splitting it into
+      `closing-keywords.yml` (so it can keep the `pull_request.edited` trigger
+      the build matrix must not have) removes that path — `needs:` cannot cross
+      workflows. A live ruleset that does not name `closing-keywords` therefore
+      enforces nothing, and a `copier update` cannot fix that for you, because
+      it does not mutate live rulesets. After the job has reported once, run
+      **`task setup:ruleset`** — it adds every required status check the
+      checked-in ruleset declares and the live one lacks, in place, and is
+      additive only (a context live requires and the file does not is reported
+      and left alone). Re-running it is a no-op. It updates the existing
+      ruleset via `PUT`; do **not** re-import the JSON, which creates a
+      duplicate ruleset rather than updating the live one. `task
+      audit:ruleset` reports the same drift read-only, and confirms the
+      result.
 - [ ] **[human-only] Enable unattributed-changes approval in the live branch
       ruleset** — when the checked-in ruleset gains this setting, edit the
       existing main-branch ruleset in Settings → Rules → Rulesets and enable the
