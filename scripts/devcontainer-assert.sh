@@ -644,7 +644,7 @@ SENTINEL_SCRIPT
     #    assertion silently inverts depending on which profile runs it — passing
     #    on the host and on the bot profile, failing on dev.
     local ts_out
-    if ! ts_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+    if ! ts_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_REQUIRED -u DEVCONTAINER_TAILSCALE_OPTIONAL \
         PATH="/nonexistent" "$bash_bin" "$ts_connect" 2>&1)"; then
         fail "tailscale-connect.sh exited nonzero when tailscale is absent"
     fi
@@ -765,7 +765,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         # The caller's assignments come LAST so a case can override any of the
         # defaults — case (a) overrides PATH to take the CLI away, and a fixed
         # PATH here would silently hand it back and test the wrong path.
-        ts_case_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+        ts_case_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_REQUIRED -u DEVCONTAINER_TAILSCALE_OPTIONAL \
             -u TS_AUTHKEY -u TS_AUTH_KEY -u TS_STUB_STATE -u TS_STUB_UP_RC \
             -u TS_STUB_STATUS_SILENT -u TS_STUB_STATUS_HANG \
             TS_SOCKET_PATH="$ts_sock" TS_STUB_UP_MARKER="$ts_up_marker" \
@@ -786,7 +786,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     #     that used to be most obviously harmless.
     ts_rc=0
     ts_case_out="$(env -u DEVCONTAINER_TAILSCALE_OPTIONAL \
-        DEVCONTAINER_TAILSCALE=true PATH="/nonexistent" \
+        DEVCONTAINER_TAILSCALE_REQUIRED=true PATH="/nonexistent" \
         "$bash_bin" "$ts_connect" 2>&1)" || ts_rc=$?
     [ "$ts_rc" = "1" ] ||
         fail "tailscale-connect.sh case b: exited ${ts_rc} with no CLI and the tailnet required, expected 1"
@@ -796,7 +796,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     esac
 
     # (c) required + CLI + no key → exit 1, and names the variable to set.
-    ts_connect_run 1 "c (required, no key)" DEVCONTAINER_TAILSCALE=true
+    ts_connect_run 1 "c (required, no key)" DEVCONTAINER_TAILSCALE_REQUIRED=true
     case "$ts_case_out" in
     *TS_AUTHKEY*) ;;
     *) fail "tailscale-connect.sh case c: missing-key FATAL does not name TS_AUTHKEY: ${ts_case_out}" ;;
@@ -809,12 +809,12 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
 
     # (e) required + the opt-out → exit 0. The smoke test's path.
     ts_connect_run 0 "e (required, opted out)" \
-        DEVCONTAINER_TAILSCALE=true DEVCONTAINER_TAILSCALE_OPTIONAL=true
+        DEVCONTAINER_TAILSCALE_REQUIRED=true DEVCONTAINER_TAILSCALE_OPTIONAL=true
 
     # (f) required + DEVCONTAINER_TAILSCALE_OPTIONAL=1 → exit 1. ONLY the exact
     #     string `true` demotes; a truthy-looking value must not disarm a gate.
     ts_connect_run 1 "f (required, OPTIONAL=1 is not true)" \
-        DEVCONTAINER_TAILSCALE=true DEVCONTAINER_TAILSCALE_OPTIONAL=1
+        DEVCONTAINER_TAILSCALE_REQUIRED=true DEVCONTAINER_TAILSCALE_OPTIONAL=1
 
     if [ "$ts_sock_ready" = "yes" ]; then
         # (g) required + BackendState=Running → exit 0 via the fast path, and
@@ -822,7 +822,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         #     BackendState rather than by reconnecting unconditionally.
         rm -f "$ts_up_marker"
         ts_connect_run 0 "g (required, already Running)" \
-            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATE=Running
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key TS_STUB_STATE=Running
         [ ! -e "$ts_up_marker" ] ||
             fail "tailscale-connect.sh case g: ran 'tailscale up' although BackendState was already Running"
 
@@ -830,7 +830,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         #     environment-appropriate node name.
         rm -f "$ts_up_marker"
         ts_connect_run 0 "h (required, NeedsLogin, up ok)" \
-            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key \
             TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=0
         [ -e "$ts_up_marker" ] ||
             fail "tailscale-connect.sh case h: never ran 'tailscale up' from NeedsLogin"
@@ -844,7 +844,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         #     the script back to its swallow-on-failure behavior makes this one
         #     return 0, which is the mutation test the issue asks for.
         ts_connect_run 1 "i (required, NeedsLogin, up failed)" \
-            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key \
             TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
         case "$ts_case_out" in
         *FATAL*) ;;
@@ -863,7 +863,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         #     never run against a daemon that never came up.
         rm -f "$ts_up_marker"
         ts_connect_run 1 "k (required, stale socket, daemon silent)" \
-            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATUS_SILENT=1
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key TS_STUB_STATUS_SILENT=1
         case "$ts_case_out" in
         *"not answering"*) ;;
         *) fail "tailscale-connect.sh case k: did not report an unanswering daemon: ${ts_case_out}" ;;
@@ -887,7 +887,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         local ts_hang_start ts_hang_elapsed
         ts_hang_start=$SECONDS
         ts_connect_run 1 "m (required, daemon hangs)" \
-            DEVCONTAINER_TAILSCALE=true TS_AUTHKEY=stub-key TS_STUB_STATUS_HANG=1
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key TS_STUB_STATUS_HANG=1
         ts_hang_elapsed=$((SECONDS - ts_hang_start))
         [ "$ts_hang_elapsed" -lt 60 ] ||
             fail "tailscale-connect.sh case m: took ${ts_hang_elapsed}s against a hanging daemon — the readiness wait is not bounded by its deadline"
@@ -1368,36 +1368,55 @@ assert_config_invariants() {
     [ "$terminal_browser_config" = "" ] ||
         fail "${profile} config no longer blanks generic BROWSER in VS Code terminals"
 
-    # The tailnet gate's config-level invariants.
+    # The tailnet gate's config-level invariants, across TWO markers.
     #
-    # DEVCONTAINER_TAILSCALE is what tells tailscale-connect.sh that a failed
-    # connect is a broken build rather than a skip. It is OPTIONAL by design:
-    # arming it makes a profile unable to start without a Tailscale account and
-    # a live auth key, which no generated repo may depend on by default, so it
-    # is gated on the `tailscale_required` copier answer (default no). Absence
-    # is therefore a legitimate rendering, not a regression — this script is a
+    # DEVCONTAINER_TAILSCALE means "this profile HAS a tailnet".
+    # post-start-common.sh gates the whole connect step on it, so losing it from
+    # the dev config silently stops that profile from ever attempting a
+    # connection — even with a valid TS_AUTHKEY. Unconditional, asserted per
+    # profile: dev sets it, bot must not.
+    #
+    # DEVCONTAINER_TAILSCALE_REQUIRED is what makes a failed connect FATAL. It
+    # is optional by design — arming it makes a profile unable to start without
+    # a Tailscale account and a live auth key, which no generated repo may
+    # depend on by default — so it is gated on the `tailscale_required` copier
+    # answer and its absence is a legitimate rendering. This script is a
     # verbatim twin and runs in repos that answered either way.
-    #
-    # What stays enforceable everywhere: the value is exactly `true` or absent
-    # (a typo like "yes" would silently disarm the gate while looking armed);
-    # only a profile that actually HAS the tailscale feature may arm it, since
-    # requiring a tailnet a profile cannot reach is unsatisfiable by
-    # construction; and the bot profile may never arm it at all.
-    local ts_marker ts_optional_env ts_map
+    local ts_marker ts_required ts_optional_env ts_map
     ts_marker="$(printf '%s' "$cfg" |
         jq -r '.configuration.containerEnv.DEVCONTAINER_TAILSCALE // "<absent>"')"
+    ts_required="$(printf '%s' "$cfg" |
+        jq -r '.configuration.containerEnv.DEVCONTAINER_TAILSCALE_REQUIRED // "<absent>"')"
+
+    # Both markers are exact-match knobs: a plausible-looking "yes" or "1" reads
+    # as absent to the shell test, so a config could look armed while being
+    # disarmed. Only `true` or absence is a coherent state.
     case "$ts_marker" in
     true | "<absent>") ;;
-    *) fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE='${ts_marker}' — only the exact string 'true' arms the gate, so this looks armed and is not" ;;
+    *) fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE='${ts_marker}' — only the exact string 'true' counts, so this looks set and is not" ;;
     esac
+    case "$ts_required" in
+    true | "<absent>") ;;
+    *) fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE_REQUIRED='${ts_required}' — only the exact string 'true' arms the gate, so this looks armed and is not" ;;
+    esac
+
+    # Requiring a tailnet a profile cannot reach is unsatisfiable by
+    # construction, so the fatal marker may only appear where the profile
+    # actually declares a tailnet.
+    if [ "$ts_required" = "true" ] && [ "$ts_marker" != "true" ]; then
+        fail "${profile} config requires the tailnet (DEVCONTAINER_TAILSCALE_REQUIRED=true) without declaring one (DEVCONTAINER_TAILSCALE) — the gate could never be satisfied"
+    fi
+
     if [ "$profile" = "dev" ]; then
-        if [ "$ts_marker" = "true" ]; then
-            [ "$has_ts_feature" != "0" ] ||
-                fail "dev config requires the tailnet (DEVCONTAINER_TAILSCALE=true) but installs no tailscale feature — the gate could never be satisfied"
-        fi
+        [ "$ts_marker" = "true" ] ||
+            fail "dev config does not set containerEnv.DEVCONTAINER_TAILSCALE=true — post-start would never invoke tailscale-connect.sh, so this profile would never connect even with a valid TS_AUTHKEY"
+        [ "$has_ts_feature" != "0" ] ||
+            fail "dev config declares a tailnet but installs no tailscale feature"
     else
         [ "$ts_marker" != "true" ] ||
-            fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE=true — only the tailnet-bearing profile may require the tailnet"
+            fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE=true — only the tailnet-bearing profile may declare one"
+        [ "$ts_required" != "true" ] ||
+            fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE_REQUIRED=true — only the tailnet-bearing profile may require one"
     fi
 
     # DEVCONTAINER_TAILSCALE_OPTIONAL demotes a required tailnet back to

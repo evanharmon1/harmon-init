@@ -5,15 +5,26 @@ set -euo pipefail
 # by the official Tailscale devcontainer feature).
 TS_KEY="${TS_AUTHKEY:-${TS_AUTH_KEY:-}}"
 
-# DEVCONTAINER_TAILSCALE=true marks a profile whose whole point is the tailnet
-# (the dev profile sets it in containerEnv alongside the tailscale feature and
-# --device=/dev/net/tun). There, "no tailnet" is a broken build, not a skip:
-# this script used to exit 0 on every failure path, so such a container started
-# clean, reported success, and sat there logged out.
+# Two separate markers, because they answer two different questions.
 #
-# Anywhere else — the bot profile, a plain local devcontainer, CI — the tailnet
-# is genuinely optional and every path below stays a no-op exit 0, unchanged.
-TS_REQUIRED="${DEVCONTAINER_TAILSCALE:-}"
+# DEVCONTAINER_TAILSCALE=true means "this profile HAS a tailnet" — the dev
+# profile sets it alongside the tailscale feature and --device=/dev/net/tun, and
+# post-start-common.sh uses it to decide whether to invoke this script at all.
+# It is NOT what makes a failure fatal: folding the two together would mean a
+# profile that merely wants to connect opportunistically could not, because
+# turning off fatality would also turn off the connection attempt.
+#
+# DEVCONTAINER_TAILSCALE_REQUIRED=true is what makes "no tailnet" a broken build
+# rather than a skip. This script used to exit 0 on every failure path, so such
+# a container started clean, reported success, and sat there logged out. It is
+# gated on the `tailscale_required` copier answer (default no) because a fatal
+# gate makes a profile unable to start without a Tailscale account and a live
+# auth key — a dependency no generated repo may carry by default.
+#
+# Anywhere the second marker is absent — the bot profile, a default generated
+# repo, a plain local devcontainer, CI — every path below stays a no-op exit 0,
+# unchanged, and a present TS_AUTHKEY is still used to connect.
+TS_REQUIRED="${DEVCONTAINER_TAILSCALE_REQUIRED:-}"
 
 # Overridable so devcontainer-assert.sh can exercise the connect paths below
 # against a stub socket, without root and without a real daemon. Nothing in a
@@ -49,7 +60,7 @@ fi
 bail() {
     if [ "${TS_REQUIRED}" = "true" ]; then
         echo "tailscale-connect.sh: FATAL: $1" >&2
-        echo "tailscale-connect.sh: this profile requires the tailnet (DEVCONTAINER_TAILSCALE=true)." >&2
+        echo "tailscale-connect.sh: this profile requires the tailnet (DEVCONTAINER_TAILSCALE_REQUIRED=true)." >&2
         exit 1
     fi
     echo "$1 Skipping tailnet connect."

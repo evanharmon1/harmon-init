@@ -676,10 +676,11 @@ not block a rebuild there — it is a signal to read.
 What happens next depends on the secret. For most, the container comes up clean
 and only the dependent step fails later, far from the cause. `TS_AUTHKEY` in the
 **dev profile** is the exception *in this repository*: harmon-init answers
-`tailscale_required: true`, so that profile declares
-`DEVCONTAINER_TAILSCALE=true` and `postStartCommand` fails the start outright
-rather than leaving a container that is up but logged out. Generated repos
-default that answer to **no**, where a missing key stays a skip. The warning tells you
+`tailscale_required: true`, so that profile also declares
+`DEVCONTAINER_TAILSCALE_REQUIRED=true` and `postStartCommand` fails the start
+outright rather than leaving a container that is up but logged out. Generated
+repos default that answer to **no**, where the profile still connects whenever
+a key is present and a missing one stays a skip. The warning tells you
 early; the start is what refuses. That is deliberate — a missing `TS_AUTHKEY`
 once went unnoticed for hours in a Coder workspace precisely because the start
 reported success.
