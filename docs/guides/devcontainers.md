@@ -710,8 +710,9 @@ repo** (one template serves every repo). To stand this repo up in Coder:
    - secrets → `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`, and
      `GH_TOKEN` **for a bot workspace only** — a dev workspace runs
      `gh auth login` instead (+ `TS_AUTHKEY`, which the dev profile
-     **requires** — it declares `DEVCONTAINER_TAILSCALE=true`, so a start that
-     cannot join the tailnet fails the build rather than coming up logged out);
+     **requires** — it declares `DEVCONTAINER_TAILSCALE_REQUIRED=true`, so a
+     start that cannot join the tailnet fails the build rather than coming up
+     logged out);
      `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
      `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `QWEN_API_KEY` for the alt-model wrappers
      (`claude-qwen-local` needs no key — see below). Coder passes these
