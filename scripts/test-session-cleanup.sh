@@ -304,14 +304,19 @@ printf '%s\t%s\t%s\t%s\n' \
     sq-stacked "$stacked_tip" 107 feature-base \
     >"$GH_STUB_PRS"
 
-# Audit fixtures: sidecar files and a shepherd cycle state.
+# Audit fixtures: sidecar files and Codex cycle state under BOTH the retired
+# shepherd-codex pin and the current integrate-codex pin (#1241 item 3) — a
+# repo mid-migration, or still on the older pin, must never read as clean
+# while either directory actually has cycle state.
 gitdir="$(git -C "$fixture" rev-parse --absolute-git-dir)"
-mkdir -p "$gitdir/deferred-findings" "$gitdir/adjudication-ledger/dead" "$gitdir/shepherd-codex/stub/fixture"
+mkdir -p "$gitdir/deferred-findings" "$gitdir/adjudication-ledger/dead" \
+    "$gitdir/shepherd-codex/stub/fixture" "$gitdir/integrate-codex/stub/fixture"
 echo "p2 note" >"$gitdir/deferred-findings/unpushed-live"
 mkdir -p "$gitdir/worktrees/wt/deferred-findings"
 echo "linked-worktree note" >"$gitdir/worktrees/wt/deferred-findings/wt-checked"
 echo "orphan" >"$gitdir/adjudication-ledger/dead/branch"
 echo '{}' >"$gitdir/shepherd-codex/stub/fixture/42.json"
+echo '{}' >"$gitdir/integrate-codex/stub/fixture/43.json"
 
 snapshot() {
     git -C "$fixture" for-each-ref --format='%(refname) %(objectname)'
@@ -359,7 +364,8 @@ expect_contains "$audit_out" "$test_tmp/wt — wt-checked" "audit: other worktre
 expect_contains "$audit_out" "active    deferred-findings/unpushed-live" "audit: live sidecar"
 expect_contains "$audit_out" "leftover  adjudication-ledger/dead/branch" "audit: orphan sidecar"
 expect_contains "$audit_out" "deferred-findings/wt-checked (branch exists) [worktrees/wt]" "audit: linked-worktree sidecar state scanned"
-expect_contains "$audit_out" "stub/fixture/42.json" "audit: shepherd cycle state listed"
+expect_contains "$audit_out" "shepherd-codex/stub/fixture/42.json" "audit: retired shepherd-codex cycle state listed"
+expect_contains "$audit_out" "integrate-codex/stub/fixture/43.json" "audit: current-pin integrate-codex cycle state listed (#1241 item 3)"
 echo "ok: audit reports all artifact classes read-only"
 
 # ── Case B2: the audit's prunable figure equals what clean:branches deletes ──

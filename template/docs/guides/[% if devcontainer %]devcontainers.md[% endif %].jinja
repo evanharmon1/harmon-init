@@ -233,6 +233,50 @@ Prebuilt images are pulled from GHCR as a build cache
 (`[[ devcontainer_image ]]` / `[[ devcontainer_image ]]-dev`), so a warm rebuild
 is fast. A cache miss is non-fatal — it just rebuilds from the `Dockerfile`.
 
+## Bind-mounted checkout permissions
+
+`post-create-common.sh` reconciles the bind-mounted workspace's `.git`
+metadata tree on every attach: it reclaims ownership for the container
+user (keeping the tree's original group), grants that group read/write,
+sets directories setgid so new Git objects and refs stay group-writable
+too (`core.sharedRepository`), and never leaves the tree world-writable.
+
+**What this guarantees, and what it does not.** Write access after
+reconciliation is guaranteed for the container user and for anyone
+sharing the checkout's original group — in practice, same-uid re-attaches
+(a container rebuild reusing the same runtime user) and other containers
+or processes running as a group-mate. It does **not** extend trust to a
+genuinely different host identity: Git's own "detected dubious ownership"
+safety check is keyed on the file owner's uid, not on permission bits, so
+a host process running as a *different* uid than the container sees the
+reconciled checkout as owned by someone else regardless of the group
+permissions — the same check that made `a+rwX` (world-writable) tempting
+in the first place, and the reason this reconciliation never reintroduces
+it. It is also a deliberate non-goal for a workspace root that is itself a
+Git submodule or a `--separate-git-dir` checkout, rather than a linked
+worktree: Git gives that shape no reverse pointer to validate a redirect
+against, so the privileged mutation is skipped there (with a logged reason)
+instead of trusting it, and the workspace still becomes usable without the
+ownership repair. The reconciliation can only write its `safe.directory` trust entry
+into the container's own environment-scoped Git config
+(`.devcontainer/scripts/post-create-common.sh`'s `$ENV_GITCONFIG`), a
+location a separate host machine's own Git installation has no way to
+read.
+
+**If a different-uid host needs to run Git directly against the same
+checkout** (outside any container — for example a host-side terminal or
+Git client, not a devcontainer attach), it needs its own one-time trust
+entry:
+
+```sh
+git config --global --add safe.directory /path/to/the/checkout
+```
+
+Run that once, as the host user, against the exact path the checkout is
+mounted at. It only grants that one path, never a wildcard, and it is
+independent of the container's own reconciliation — repeat it if the
+checkout is ever re-cloned to a new path.
+
 ## Claude Code settings in the container
 
 Everything is sourced from `.devcontainer/config/` and baked into the **image**,

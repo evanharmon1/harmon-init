@@ -13,6 +13,15 @@ fail() {
 
 test_tmp="$(mktemp -d -t harmon-init-setup-versions-XXXXXX)"
 trap 'rm -rf "$test_tmp"' EXIT
+# The gitleaks archive now downloads to a RUNNER_TEMP-scoped path — the
+# same scoping the lint tools below already used — rather than the
+# hardcoded shared /tmp/gitleaks.tgz this comment used to describe
+# (#1241 challenge round 5, finding F16 first raised the shared-path
+# concern; the installer's own hardcoded path was closed in integration
+# round 4). runner_temp below is created under this test's own test_tmp,
+# so the trap above already cleans up the downloaded archive along with
+# everything else here — no special-case non-cleanup reasoning is needed
+# anymore (#1241 integration round 5, Gemini finding 4056368206).
 stale_bin="${test_tmp}/stale-bin"
 helper_bin="${test_tmp}/helpers"
 curl_log="${test_tmp}/curl.log"
@@ -64,26 +73,61 @@ for expected in (
     if expected not in root_segment:
         raise SystemExit(f"installer segment is missing {expected!r}")
 
-lines = root.splitlines()
-step = lines.index(
-    "    - name: Install lint tools (file, shellcheck, shfmt, actionlint, yamllint, yq)"
-)
-run = next(i for i in range(step + 1, len(lines)) if lines[i] == "      run: |")
-body = []
-for line in lines[run + 1 :]:
-    if line.startswith("    - "):
-        break
-    if not line.startswith("        ") and line:
-        raise SystemExit(f"unexpected indentation in lint-tools action body: {line!r}")
-    body.append(line[8:] if line else "")
+def extract_step_body(text: str, step_name: str) -> list[str]:
+    lines = text.splitlines()
+    step = lines.index(f"    - name: {step_name}")
+    run = next(i for i in range(step + 1, len(lines)) if lines[i] == "      run: |")
+    body = []
+    for line in lines[run + 1 :]:
+        # A column-0 jinja directive (e.g. "[% if use_python %]" gating the
+        # NEXT step) ends the body exactly like a literal next step would.
+        if line.startswith("    - ") or line.startswith("[%"):
+            break
+        if not line.startswith("        ") and line:
+            raise SystemExit(f"unexpected indentation in {step_name!r} body: {line!r}")
+        body.append(line[8:] if line else "")
+    if not body:
+        raise SystemExit(f"{step_name!r} action body extraction was empty")
+    return body
 
-if not body:
-    raise SystemExit("lint-tools action body extraction was empty")
-pathlib.Path(output_path).write_text(
-    "#!/usr/bin/env bash\nset -euo pipefail\n" + "\n".join(body) + "\n"
+
+def write_script(body: list[str], out: str) -> None:
+    pathlib.Path(out).write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n" + "\n".join(body) + "\n"
+    )
+
+
+write_script(
+    extract_step_body(
+        root, "Install lint tools (file, shellcheck, shfmt, actionlint, yamllint, yq)"
+    ),
+    output_path,
 )
+
+# gitleaks/snyk bodies are NOT jinja-conditional — byte-identical in both
+# files — so extracting from root alone and cross-checking equality with the
+# template's own extraction pins both against drift in one assertion.
+gitleaks_root = extract_step_body(root, "Install gitleaks")
+gitleaks_template = extract_step_body(template, "Install gitleaks")
+if gitleaks_root != gitleaks_template:
+    raise SystemExit("root/template Install-gitleaks bodies differ")
+snyk_root = extract_step_body(root, "Install Snyk CLI")
+snyk_template = extract_step_body(template, "Install Snyk CLI")
+if snyk_root != snyk_template:
+    raise SystemExit("root/template Install-Snyk-CLI bodies differ")
+for expected in (
+    "X64|x86_64) gitleaks_arch=x64 ;;",
+    "ARM64|arm64|aarch64) gitleaks_arch=arm64 ;;",
+    "Unsupported runner architecture for pinned gitleaks",
+    "linux_${gitleaks_arch}.tar.gz",
+):
+    if expected not in "\n".join(gitleaks_root):
+        raise SystemExit(f"Install-gitleaks body is missing {expected!r}")
+write_script(gitleaks_root, f"{output_path}.gitleaks")
+write_script(snyk_root, f"{output_path}.snyk")
 PY
-chmod +x "${test_tmp}/install-lint-tools.sh"
+chmod +x "${test_tmp}/install-lint-tools.sh" "${test_tmp}/install-lint-tools.sh.gitleaks" \
+    "${test_tmp}/install-lint-tools.sh.snyk"
 
 cat >"${stale_bin}/shellcheck" <<'EOF'
 #!/usr/bin/env bash
@@ -366,5 +410,271 @@ case "$unsupported_output" in
 esac
 [ "$(wc -l <"$curl_log" | tr -d ' ')" -eq "$curl_count" ] ||
     fail "unsupported architecture downloaded an asset before failing"
+
+## ── gitleaks: version-check reuse + architecture selection (#1241 item 2) ──
+## Job-scoped install dir + GITHUB_PATH prepend (#1241 challenge round 1,
+## finding F3): a stale gitleaks earlier on PATH than /usr/local/bin must
+## not keep winning resolution after the pin lands on disk.
+
+gitleaks_bin="${test_tmp}/gitleaks-bin"
+gitleaks_curl_log="${test_tmp}/gitleaks-curl.log"
+mkdir -p "$gitleaks_bin"
+
+cat >"${gitleaks_bin}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=
+url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    -o)
+        output="$2"
+        shift 2
+        ;;
+    http*)
+        url="$1"
+        shift
+        ;;
+    *) shift ;;
+    esac
+done
+[ -n "$output" ] && [ -n "$url" ]
+printf '%s|%s\n' "$output" "$url" >>"$GITLEAKS_CURL_LOG"
+printf 'fake archive\n' >"$output"
+EOF
+cat >"${gitleaks_bin}/tar" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+destination=
+member=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    -C)
+        destination="$2"
+        shift 2
+        ;;
+    -xzf)
+        shift 2
+        ;;
+    gitleaks)
+        member="$1"
+        shift
+        ;;
+    *) shift ;;
+    esac
+done
+[ -n "$destination" ] && [ "$member" = gitleaks ]
+mkdir -p "$destination"
+printf '#!/usr/bin/env bash\nprintf "%s\\n" "%s"\n' "$FAKE_GITLEAKS_DOWNLOADED_VERSION" >"${destination}/gitleaks"
+chmod +x "${destination}/gitleaks"
+EOF
+chmod +x "${gitleaks_bin}"/*
+
+# Resolve the binary GITHUB_PATH published (its last line) so assertions can
+# check the actual PATH-prepended install, not just curl's download log.
+gitleaks_published_bin() {
+    local github_path="$1"
+    [ -s "$github_path" ] || return 1
+    tail -n 1 "$github_path"
+}
+
+run_gitleaks_install() {
+    local arch="$1" pre_installed_path="$2" runner_temp="$3" github_path="$4"
+    mkdir -p "$runner_temp"
+    : >"$gitleaks_curl_log"
+    : >"$github_path"
+    PATH="${pre_installed_path}:${gitleaks_bin}:${PATH}" \
+        RUNNER_ARCH="$arch" \
+        RUNNER_TEMP="$runner_temp" \
+        GITHUB_PATH="$github_path" \
+        GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
+        FAKE_GITLEAKS_DOWNLOADED_VERSION="8.24.3" \
+        bash "${test_tmp}/install-lint-tools.sh.gitleaks"
+}
+
+echo "==> a pre-installed gitleaks matching the pin is reused, not redownloaded"
+gitleaks_match_bin="${test_tmp}/gitleaks-match-bin"
+mkdir -p "$gitleaks_match_bin"
+cat >"${gitleaks_match_bin}/gitleaks" <<'EOF'
+#!/usr/bin/env bash
+printf '8.24.3\n'
+EOF
+chmod +x "${gitleaks_match_bin}/gitleaks"
+gitleaks_match_temp="${test_tmp}/gitleaks-runner-match"
+gitleaks_match_ghpath="${test_tmp}/gitleaks-github-path-match"
+run_gitleaks_install X64 "$gitleaks_match_bin" "$gitleaks_match_temp" "$gitleaks_match_ghpath"
+[ ! -s "$gitleaks_curl_log" ] ||
+    fail "a version-matching pre-installed gitleaks was redownloaded"
+[ ! -s "$gitleaks_match_ghpath" ] ||
+    fail "a version-matching pre-installed gitleaks published a GITHUB_PATH entry"
+
+echo "==> a pre-installed gitleaks at the WRONG version is replaced and wins PATH resolution (#1241 items 2, F3)"
+gitleaks_stale_bin="${test_tmp}/gitleaks-stale-bin"
+mkdir -p "$gitleaks_stale_bin"
+cat >"${gitleaks_stale_bin}/gitleaks" <<'EOF'
+#!/usr/bin/env bash
+printf '8.18.0\n'
+EOF
+chmod +x "${gitleaks_stale_bin}/gitleaks"
+gitleaks_stale_temp="${test_tmp}/gitleaks-runner-stale"
+gitleaks_stale_ghpath="${test_tmp}/gitleaks-github-path-stale"
+run_gitleaks_install X64 "$gitleaks_stale_bin" "$gitleaks_stale_temp" "$gitleaks_stale_ghpath"
+grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+    fail "a version-mismatched pre-installed gitleaks was not replaced with the pin"
+gitleaks_published="$(gitleaks_published_bin "$gitleaks_stale_ghpath")" ||
+    fail "the replacement gitleaks install did not publish a GITHUB_PATH entry"
+[ "$(bash "${gitleaks_published}/gitleaks")" = "8.24.3" ] ||
+    fail "the replacement gitleaks binary is not the pinned version"
+# The stale binary is still earlier on PATH (as a shadowing self-hosted
+# runner would have it) — resolution must prefer the PUBLISHED directory,
+# proving the fix actually wins PATH order, not just installs a fresh file.
+gitleaks_resolved="$(PATH="${gitleaks_published}:${gitleaks_stale_bin}:${PATH}" command -v gitleaks)"
+[ "$gitleaks_resolved" = "${gitleaks_published}/gitleaks" ] ||
+    fail "the pinned gitleaks does not take precedence over a stale binary already on PATH"
+
+echo "==> a present but non-executing (corrupted) gitleaks does not abort the step — it is treated as a mismatch and replaced (#1241 challenge round 6, finding F18)"
+gitleaks_corrupt_bin="${test_tmp}/gitleaks-corrupt-bin"
+mkdir -p "$gitleaks_corrupt_bin"
+cat >"${gitleaks_corrupt_bin}/gitleaks" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${gitleaks_corrupt_bin}/gitleaks"
+gitleaks_corrupt_ghpath="${test_tmp}/gitleaks-github-path-corrupt"
+run_gitleaks_install X64 "$gitleaks_corrupt_bin" "${test_tmp}/gitleaks-runner-corrupt" "$gitleaks_corrupt_ghpath"
+grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+    fail "a corrupted pre-installed gitleaks did not trigger a reinstall — the step aborted instead"
+gitleaks_corrupt_published="$(gitleaks_published_bin "$gitleaks_corrupt_ghpath")" ||
+    fail "the corrupted-gitleaks replacement did not publish a GITHUB_PATH entry"
+[ "$(bash "${gitleaks_corrupt_published}/gitleaks")" = "8.24.3" ] ||
+    fail "the corrupted-gitleaks replacement binary is not the pinned version"
+
+echo "==> gitleaks architecture selection: X64 and ARM64 fetch the matching asset, an unsupported arch fails loudly"
+run_gitleaks_install X64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-x64" "${test_tmp}/gitleaks-github-path-x64"
+grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+    fail "X64 did not fetch the x64 gitleaks asset"
+run_gitleaks_install ARM64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-arm64" "${test_tmp}/gitleaks-github-path-arm64"
+grep -Fq '/gitleaks_8.24.3_linux_arm64.tar.gz' "$gitleaks_curl_log" ||
+    fail "ARM64 did not fetch the arm64 gitleaks asset"
+: >"$gitleaks_curl_log"
+gitleaks_unsupported_temp="${test_tmp}/gitleaks-runner-unsupported"
+gitleaks_unsupported_ghpath="${test_tmp}/gitleaks-github-path-unsupported"
+mkdir -p "$gitleaks_unsupported_temp"
+: >"$gitleaks_unsupported_ghpath"
+if gitleaks_unsupported_output="$(PATH="${test_tmp}/nonexistent:${gitleaks_bin}:${PATH}" \
+    RUNNER_ARCH=RISCV64 RUNNER_TEMP="$gitleaks_unsupported_temp" GITHUB_PATH="$gitleaks_unsupported_ghpath" \
+    GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
+    bash "${test_tmp}/install-lint-tools.sh.gitleaks" 2>&1)"; then
+    fail "an unsupported runner architecture was accepted for gitleaks"
+fi
+case "$gitleaks_unsupported_output" in
+*"Unsupported runner architecture for pinned gitleaks"*) : ;;
+*) fail "unsupported gitleaks architecture failure did not explain the refusal" ;;
+esac
+[ ! -s "$gitleaks_curl_log" ] ||
+    fail "unsupported gitleaks architecture downloaded an asset before failing"
+[ ! -s "$gitleaks_unsupported_ghpath" ] ||
+    fail "unsupported gitleaks architecture published a GITHUB_PATH entry before failing"
+
+## ── Snyk: version-check reuse (#1241 item 2) ───────────────────────────────
+## Same job-scoped install dir + GITHUB_PATH prepend as gitleaks (#1241
+## challenge round 1, finding F4).
+
+snyk_bin="${test_tmp}/snyk-bin"
+npm_log="${test_tmp}/npm.log"
+mkdir -p "$snyk_bin"
+cat >"${snyk_bin}/npm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$NPM_LOG"
+prefix=
+pkg=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --prefix)
+        prefix="$2"
+        shift 2
+        ;;
+    snyk@*)
+        pkg="$1"
+        shift
+        ;;
+    *) shift ;;
+    esac
+done
+[ -n "$prefix" ] && [ -n "$pkg" ]
+mkdir -p "${prefix}/bin"
+printf '#!/usr/bin/env bash\nprintf "%s\\n" "%s"\n' "${pkg#snyk@}" >"${prefix}/bin/snyk"
+chmod +x "${prefix}/bin/snyk"
+EOF
+chmod +x "${snyk_bin}/npm"
+
+snyk_published_bin() {
+    local github_path="$1"
+    [ -s "$github_path" ] || return 1
+    tail -n 1 "$github_path"
+}
+
+run_snyk_install() {
+    local pre_installed_path="$1" runner_temp="$2" github_path="$3"
+    mkdir -p "$runner_temp"
+    : >"$npm_log"
+    : >"$github_path"
+    PATH="${pre_installed_path}:${snyk_bin}:${PATH}" \
+        RUNNER_TEMP="$runner_temp" GITHUB_PATH="$github_path" NPM_LOG="$npm_log" \
+        bash "${test_tmp}/install-lint-tools.sh.snyk"
+}
+
+echo "==> a pre-installed Snyk CLI matching the pin is reused, not reinstalled"
+snyk_match_bin="${test_tmp}/snyk-match-bin"
+mkdir -p "$snyk_match_bin"
+cat >"${snyk_match_bin}/snyk" <<'EOF'
+#!/usr/bin/env bash
+printf '1.1305.2\n'
+EOF
+chmod +x "${snyk_match_bin}/snyk"
+snyk_match_ghpath="${test_tmp}/snyk-github-path-match"
+run_snyk_install "$snyk_match_bin" "${test_tmp}/snyk-runner-match" "$snyk_match_ghpath"
+[ ! -s "$npm_log" ] ||
+    fail "a version-matching pre-installed Snyk CLI was reinstalled"
+[ ! -s "$snyk_match_ghpath" ] ||
+    fail "a version-matching pre-installed Snyk CLI published a GITHUB_PATH entry"
+
+echo "==> a pre-installed Snyk CLI at the WRONG version is replaced and wins PATH resolution (#1241 items 2, F4)"
+snyk_stale_bin="${test_tmp}/snyk-stale-bin"
+mkdir -p "$snyk_stale_bin"
+cat >"${snyk_stale_bin}/snyk" <<'EOF'
+#!/usr/bin/env bash
+printf '1.1200.0\n'
+EOF
+chmod +x "${snyk_stale_bin}/snyk"
+snyk_stale_ghpath="${test_tmp}/snyk-github-path-stale"
+run_snyk_install "$snyk_stale_bin" "${test_tmp}/snyk-runner-stale" "$snyk_stale_ghpath"
+grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+    fail "a version-mismatched pre-installed Snyk CLI was not replaced with the pin"
+snyk_published="$(snyk_published_bin "$snyk_stale_ghpath")" ||
+    fail "the replacement Snyk install did not publish a GITHUB_PATH entry"
+[ "$(bash "${snyk_published}/snyk")" = "1.1305.2" ] ||
+    fail "the replacement Snyk binary is not the pinned version"
+snyk_resolved="$(PATH="${snyk_published}:${snyk_stale_bin}:${PATH}" command -v snyk)"
+[ "$snyk_resolved" = "${snyk_published}/snyk" ] ||
+    fail "the pinned Snyk CLI does not take precedence over a stale binary already on PATH"
+
+echo "==> a present but non-executing (corrupted) Snyk CLI does not abort the step — it is treated as a mismatch and replaced (#1241 challenge round 6, finding F18)"
+snyk_corrupt_bin="${test_tmp}/snyk-corrupt-bin"
+mkdir -p "$snyk_corrupt_bin"
+cat >"${snyk_corrupt_bin}/snyk" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${snyk_corrupt_bin}/snyk"
+run_snyk_install "$snyk_corrupt_bin" "${test_tmp}/snyk-runner-corrupt" "${test_tmp}/snyk-github-path-corrupt"
+grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+    fail "a corrupted pre-installed Snyk CLI did not trigger a reinstall — the step aborted instead"
+
+echo "==> a missing Snyk CLI is installed"
+run_snyk_install "$test_tmp/nonexistent" "${test_tmp}/snyk-runner-missing" "${test_tmp}/snyk-github-path-missing"
+grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+    fail "a missing Snyk CLI was not installed"
 
 echo "setup action tool-version checks: PASS"

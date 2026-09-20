@@ -152,20 +152,77 @@ runs:
       if: inputs.gitleaks == 'true'
       shell: bash
       run: |
-        if ! command -v gitleaks >/dev/null 2>&1; then
-          # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
-          GITLEAKS_VERSION=8.24.3
-          curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          tar -xzf /tmp/gitleaks.tgz -C /tmp
-          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+        # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
+        GITLEAKS_VERSION=8.24.3
+        # A pre-installed gitleaks (a self-hosted or pre-baked runner) is only
+        # reused when its version matches the pin exactly — otherwise the
+        # runner silently ran whatever version happened to be on it. The
+        # trailing "|| true" matters: GitHub's `shell: bash` steps always run
+        # `bash -eo pipefail`, so a PRESENT but non-executing binary (a
+        # corrupted download, wrong arch, missing shared library) would
+        # otherwise abort this entire step instead of being treated as a
+        # mismatch and replaced — worse than the version check this fix
+        # exists to add.
+        installed_gitleaks_version=
+        if command -v gitleaks >/dev/null 2>&1; then
+          # The whole reported token (not a regex-extracted semver-shaped
+          # substring of it) so that build metadata or an adjacent suffix
+          # with no separator (8.24.3+vendor.1, 8.24.3rc1) is preserved and
+          # fails the exact comparison below, instead of being silently
+          # trimmed off and accepted as matching the pin.
+          installed_gitleaks_version="$(gitleaks version 2>/dev/null | head -n1 | tr -d '[:space:]')" || true
+          installed_gitleaks_version="${installed_gitleaks_version#v}"
+        fi
+        if [ "$installed_gitleaks_version" != "$GITLEAKS_VERSION" ]; then
+          runner_arch="${RUNNER_ARCH:-$(uname -m)}"
+          case "$runner_arch" in
+            X64|x86_64) gitleaks_arch=x64 ;;
+            ARM64|arm64|aarch64) gitleaks_arch=arm64 ;;
+            *)
+              echo "::error::Unsupported runner architecture for pinned gitleaks: ${runner_arch}" >&2
+              exit 1
+              ;;
+          esac
+          # Install into a job-scoped directory and PREPEND it via
+          # GITHUB_PATH, rather than /usr/local/bin: on a self-hosted
+          # runner, a stale gitleaks earlier on PATH than /usr/local/bin
+          # would otherwise keep winning command resolution even after the
+          # pinned binary lands on disk.
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required for the job-private gitleaks install}"
+          : "${GITHUB_PATH:?GITHUB_PATH is required to publish the pinned gitleaks}"
+          gitleaks_bin="${RUNNER_TEMP}/harmon-init-gitleaks/${GITLEAKS_VERSION}"
+          mkdir -p "$gitleaks_bin"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/gitleaks.tgz" -C "$gitleaks_bin" gitleaks
+          printf '%s\n' "$gitleaks_bin" >> "$GITHUB_PATH"
+          export PATH="${gitleaks_bin}:${PATH}"
         fi
     - name: Install Snyk CLI
       if: inputs.snyk == 'true'
       shell: bash
       run: |
-        if ! command -v snyk >/dev/null 2>&1; then
-          # renovate: datasource=npm depName=snyk
-          SNYK_VERSION=1.1305.2
-          npm install --global "snyk@${SNYK_VERSION}"
+        # renovate: datasource=npm depName=snyk
+        SNYK_VERSION=1.1305.2
+        # Same reuse-only-on-exact-match reasoning, and the same "|| true"
+        # abort-under-set-e reasoning, as gitleaks above.
+        installed_snyk_version=
+        if command -v snyk >/dev/null 2>&1; then
+          # Same reasoning as the gitleaks check above: the whole token,
+          # not a regex-extracted subset of it.
+          installed_snyk_version="$(snyk --version 2>/dev/null | head -n1 | tr -d '[:space:]')" || true
+          installed_snyk_version="${installed_snyk_version#v}"
+        fi
+        if [ "$installed_snyk_version" != "$SNYK_VERSION" ]; then
+          # Same job-scoped-directory + GITHUB_PATH-prepend reasoning as
+          # gitleaks above: `npm install --global` alone does not change
+          # PATH order, so a stale snyk earlier on PATH than npm's global
+          # bin directory would otherwise keep winning resolution.
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required for the job-private Snyk install}"
+          : "${GITHUB_PATH:?GITHUB_PATH is required to publish the pinned Snyk CLI}"
+          snyk_install_dir="${RUNNER_TEMP}/harmon-init-snyk/${SNYK_VERSION}"
+          mkdir -p "$snyk_install_dir"
+          npm install --global --prefix "$snyk_install_dir" "snyk@${SNYK_VERSION}"
+          printf '%s\n' "${snyk_install_dir}/bin" >> "$GITHUB_PATH"
+          export PATH="${snyk_install_dir}/bin:${PATH}"
         fi

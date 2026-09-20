@@ -1916,8 +1916,6 @@ if [ -d .devcontainer ]; then
             err "bot devcontainer.json marker is not enabled for the opted-in profile"
         grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "enabled"' .devcontainer/dev/devcontainer.json ||
             err "dev devcontainer.json marker is not enabled for the opted-in profile"
-        grep -Fq '"AGY_CLI_DISABLE_AUTO_UPDATE": "true"' .devcontainer/devcontainer.json ||
-            err "bot runtime does not disable fallback Antigravity auto-updates"
         grep -Fq 'Antigravity autonomy is enabled' docs/guides/devcontainers.md ||
             err "devcontainer guide omits opted-in Antigravity account/policy guidance"
     else
@@ -1925,11 +1923,15 @@ if [ -d .devcontainer ]; then
             err "bot devcontainer.json marker is not disabled for the default-off profile"
         grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "disabled"' .devcontainer/dev/devcontainer.json ||
             err "dev devcontainer.json marker is not disabled for the default-off profile"
-        ! grep -Fq 'AGY_CLI_DISABLE_AUTO_UPDATE' .devcontainer/devcontainer.json ||
-            err "Antigravity runtime policy rendered without explicit opt-in"
         grep -Fq 'Antigravity autonomy is off by default' docs/guides/devcontainers.md ||
             err "devcontainer guide omits default-off Antigravity posture"
     fi
+    # AGY_CLI_DISABLE_AUTO_UPDATE is emitted unconditionally, never gated on
+    # use_antigravity_cli (#1241 item 4): devcontainer-assert.sh's bot-profile
+    # permission gate requires it regardless of that answer, and the variable
+    # is harmless when the compatibility binary is never installed.
+    grep -Fq '"AGY_CLI_DISABLE_AUTO_UPDATE": "true"' .devcontainer/devcontainer.json ||
+        err "bot devcontainer.json does not unconditionally disable fallback Antigravity auto-updates"
     # The dev profile may apply its own balanced policy (antigravity-settings-dev.json)
     # but must never apply the bot's always-proceed policy (antigravity-settings.json).
     # Strip comment lines first so an explanatory comment naming the bot file is
@@ -1937,6 +1939,34 @@ if [ -d .devcontainer ]; then
     if grep -Eq 'antigravity-settings\.json' \
         < <(grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh); then
         err "human dev profile applies the bot-only always-proceed Antigravity policy"
+    fi
+fi
+
+# AC (#1241 item 4): a devcontainer=true, use_antigravity_cli=false render
+# must pass `task test:devcontainer:permissions` unmodified straight out of
+# the render — the env var devcontainer-assert.sh's bot-profile gate
+# requires is now emitted unconditionally, never gated on the Copier answer
+# that only ever toggles the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker's value.
+# A second, surgical render (only on the "full" pass, so this heavier check
+# is paid for once, not per profile) rather than flipping "full" itself,
+# which exists to maximize conditional coverage with the CLI turned ON.
+if [ "$profile" = "full" ]; then
+    agy_off_dest="$job_tmp/render-agy-off"
+    # Reuse "full"'s own complete answer set (project_name and everything
+    # else that has no Copier default) and override only the one flag under
+    # test, rather than a bare devcontainer=true/use_antigravity_cli=false
+    # pair that would leave every no-default question unanswered.
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data use_antigravity_cli=false \
+        "$repo_root" "$agy_off_dest"; then
+        (
+            cd "$agy_off_dest"
+            ./scripts/devcontainer-assert.sh unit
+            ./scripts/test-devcontainer-git-ownership.sh
+        ) || err "devcontainer=true, use_antigravity_cli=false render failed task test:devcontainer:permissions"
+    else
+        err "devcontainer=true, use_antigravity_cli=false render failed to generate"
     fi
 fi
 
