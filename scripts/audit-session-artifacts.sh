@@ -348,25 +348,34 @@ while IFS=$'\t' read -r root_label root_path; do
 done <"$tmp/state-roots"
 [ "$sidecars_found" = true ] || echo "  none"
 
-# ── 5. Shepherd cycle state ─────────────────────────────────────────────────
+# ── 5. Codex cycle state ─────────────────────────────────────────────────────
 
-section "Shepherd Codex cycle-state files"
+# --- Codex cycle-state scan ---
+# integrate-codex is the current skill pin's state directory; shepherd-codex
+# is the retired pin's name for the same thing. Both are scanned so a repo
+# mid-migration (or still on the older pin) never reads as clean while it
+# actually has cycle state sitting in the directory this audit stopped
+# looking at (#1241 item 3).
+section "Codex cycle-state files (integrate-codex current pin / shepherd-codex retired pin)"
 cycles_found=false
 while IFS=$'\t' read -r root_label root_path; do
-    cycles_dir="$root_path/shepherd-codex"
-    [ -d "$cycles_dir" ] || continue
-    find "$cycles_dir" -type f 2>/dev/null >"$tmp/cycles-list"
-    [ -s "$tmp/cycles-list" ] || continue
-    cycles_found=true
-    while IFS= read -r f; do
-        printf '  %s [%s]\n' "${f#"$cycles_dir"/}" "$root_label"
-    done <"$tmp/cycles-list"
+    for cycles_name in shepherd-codex integrate-codex; do
+        cycles_dir="$root_path/$cycles_name"
+        [ -d "$cycles_dir" ] || continue
+        find "$cycles_dir" -type f 2>/dev/null >"$tmp/cycles-list"
+        [ -s "$tmp/cycles-list" ] || continue
+        cycles_found=true
+        while IFS= read -r f; do
+            printf '  %s/%s [%s]\n' "$cycles_name" "${f#"$cycles_dir"/}" "$root_label"
+        done <"$tmp/cycles-list"
+    done
 done <"$tmp/state-roots"
 if [ "$cycles_found" = true ]; then
-    echo "  (the shepherd checker's 'reap' subcommand sweeps states whose PR has closed)"
+    echo "  (the integrate checker's 'reap' subcommand sweeps states whose PR has closed)"
 else
     echo "  none"
 fi
+# --- End Codex cycle-state scan ---
 
 # ── 5b. Rescue pins ─────────────────────────────────────────────────────────
 

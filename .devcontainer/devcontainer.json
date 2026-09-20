@@ -102,6 +102,12 @@
   // docker exec, so it belongs in the image build, not this runtime layer.
   "containerEnv": {
     "CODER": "${localEnv:CODER}",
+    // Emitted unconditionally (not gated on use_antigravity_cli): it is
+    // harmless when the compatibility binary is never installed, and
+    // devcontainer-assert.sh's bot-profile permission gate requires it
+    // regardless of the answer (#1241 item 4) — gating the assert on the
+    // Copier answer instead would have been the wrong fix, since the assert
+    // runs against the RENDERED tree with no access to that answer.
     "AGY_CLI_DISABLE_AUTO_UPDATE": "true",
     "FOREMAN_DEVCONTAINER": "bot",
     "HARMON_BOT_AUTONOMY_ANTIGRAVITY": "enabled",
