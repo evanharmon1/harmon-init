@@ -393,14 +393,42 @@ config rather than pattern-matching individual keys.
 - **THEN** `sandbox_mode` reads `danger-full-access` and `approval_policy`
   reads `never`
 
+### Requirement: Overridable Codex defaults stay out of the managed layer
+`/etc/codex/managed_config.toml` is Codex's legacy MDM layer, in which every
+key is an unoverridable requirement that outranks `-c`,
+`~/.codex/config.toml`, and a trusted project `.codex/config.toml` alike,
+without reporting that it did so. The explicit `-m` flag is the documented
+exception: it still overrode a pinned `model`, so the pin degraded quietly
+instead of failing outright. Both
+devcontainer profiles SHALL therefore restrict that file to the
+sandbox/approval boundary and its hooks, and SHALL carry overridable
+preferences -- model, reasoning effort, project-doc budget, TUI status line --
+in `codex-system-config.toml`, installed to `/etc/codex/config.toml`.
+
+#### Scenario: a dispatched worker's requested effort takes effect
+- **WHEN** an agent or orchestration session runs
+  `codex exec -c model_reasoning_effort="xhigh"` in either profile
+- **THEN** the run header reports `xhigh`, not the shipped default
+
+#### Scenario: the boundary still resists the same override
+- **WHEN** the same session passes `-c sandbox_mode="danger-full-access"` or
+  `-c approval_policy="never"` in the human profile
+- **THEN** the effective sandbox stays `workspace-write` and approvals stay
+  `on-request`
+
+#### Scenario: a preference drifting back into the managed layer fails
+- **WHEN** `model`, `model_reasoning_effort`, or `project_doc_max_bytes`
+  appears in either managed config
+- **THEN** the devcontainer assertions and the template tests fail naming the
+  key and the layer it belongs in
+
 ### Requirement: Codex bot config stays structurally derived from the shared baseline
 `codex-managed-config.bot.toml` SHALL match
 `.devcontainer/config/codex-managed-config.toml` on every key except
 `sandbox_mode` and `approval_policy`. A structural parity test SHALL fail
 when the two files diverge on any other key, so an edit to the shared
-baseline (model, reasoning effort, project-doc budget, hooks, status line)
-cannot silently go stale in the bot file while checksum `verify` keeps
-passing against the stale copy.
+baseline (approvals reviewer, hooks) cannot silently go stale in the bot file
+while checksum `verify` keeps passing against the stale copy.
 
 #### Scenario: a parity test catches baseline drift
 - **WHEN** the structural parity test runs
