@@ -92,15 +92,13 @@ environment — against the items below
       the build matrix must not have) removes that path — `needs:` cannot cross
       workflows. A live ruleset that does not name `closing-keywords` therefore
       enforces nothing, and a `copier update` cannot fix that for you, because
-      it does not mutate live rulesets. After the job has reported once, run
-      **`task setup:ruleset`** — it adds every required status check the
-      checked-in ruleset declares and the live one lacks, in place, and is
-      additive only (a context live requires and the file does not is reported
-      and left alone). Re-running it is a no-op. It updates the existing
-      ruleset via `PUT`; do **not** re-import the JSON, which creates a
-      duplicate ruleset rather than updating the live one. `task
-      audit:ruleset` reports the same drift read-only, and confirms the
-      result.
+      it does not mutate live rulesets. After the job has reported once, edit
+      the existing main-branch ruleset in Settings → Rules → Rulesets and add
+      that exact required status check. Do **not** re-import the JSON solely
+      for this change: GitHub creates a duplicate ruleset rather than updating
+      the live one. `task audit:ruleset` names a context the live ruleset is
+      missing — run it to confirm. (evanharmon1/harmon-init#1333 will automate
+      this as `task setup:ruleset`; until it lands the edit is by hand.)
 - [ ] **[human-only] Enable unattributed-changes approval in the live branch
       ruleset** — after a `copier update` adds this parameter, edit the existing
       main-branch ruleset in Settings → Rules → Rulesets and enable the matching
