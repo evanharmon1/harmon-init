@@ -145,6 +145,25 @@ jq --slurpfile file "$ruleset_file" "
 " "$tmp_dir/live.json" >"$tmp_dir/extra.json" 2>/dev/null ||
     die_unavailable "could not compare required status checks"
 
+# Same context name, different integration_id. GitHub uses integration_id to
+# constrain WHICH app may satisfy a required check, so a same-named check from
+# another source can satisfy the gate while the checked-in ruleset asks for the
+# GitHub Actions one. Name-only matching would call that "already in sync".
+# Detected, never silently repaired: changing an existing entry's integration
+# would alter a check the repository already requires, and this tool only ever
+# adds. Reported for a human, and exit 1 so it is not mistaken for clean.
+jq --slurpfile live "$tmp_dir/live.json" "
+  $jq_defs
+  (\$live[0] | checks) as \$have
+  | [ checks[]
+      | . as \$want
+      | \$have[]
+      | select(.context == \$want.context and .integration_id != \$want.integration_id)
+      | \"\(.context) (live integration_id \(.integration_id // \"null\"), expected \(\$want.integration_id // \"null\"))\" ]
+" "$ruleset_file" >"$tmp_dir/mismatch.json" 2>/dev/null ||
+    die_unavailable "could not compare required status checks"
+mismatch_count="$(jq 'length' "$tmp_dir/mismatch.json")"
+
 missing_count="$(jq 'length' "$tmp_dir/missing.json")"
 extra_count="$(jq 'length' "$tmp_dir/extra.json")"
 
@@ -152,7 +171,17 @@ if [ "$extra_count" -gt 0 ]; then
     echo "RULESET SETUP NOTE: ${repo} requires $(jq -r 'join(", ")' "$tmp_dir/extra.json") — not in the checked-in ruleset, left alone (this tool never removes a required check)."
 fi
 
+if [ "$mismatch_count" -gt 0 ]; then
+    echo "RULESET SETUP MISMATCH: ${repo} requires these contexts from a different integration than the checked-in ruleset asks for:" >&2
+    jq -r '.[] | "  ! \(.)"' "$tmp_dir/mismatch.json" >&2
+    echo "Fix these by hand — this tool only ADDS required checks, it never changes one the repository already requires." >&2
+fi
+
 if [ "$missing_count" -eq 0 ]; then
+    if [ "$mismatch_count" -gt 0 ]; then
+        echo "RULESET SETUP INCOMPLETE: nothing to add, but the mismatch above needs a human." >&2
+        exit 1
+    fi
     echo "RULESET SETUP CLEAN: ${ruleset_name} (${repo}) already requires every checked-in status check."
     exit 0
 fi
@@ -175,19 +204,64 @@ if [ "$assume_yes" != yes ]; then
     esac
 fi
 
-# Send back LIVE's own rules with only the required_status_checks contexts
-# extended. PUT updates the existing ruleset in place — unlike POST, which
-# creates a duplicate — and echoing live's other rules verbatim means a local
+# Re-read before writing. The snapshot above was taken before the prompt, and a
+# PUT sends a whole `rules` array — so a rule another administrator changed
+# while the prompt waited would be silently reverted to the stale snapshot.
+# Abort rather than overwrite a concurrent security-setting change.
+if [ -z "$fixture_detail" ]; then
+    gh api "repos/${repo}/rulesets/${ruleset_id}" >"$tmp_dir/live.recheck.json" 2>/dev/null ||
+        die_unavailable "gh cannot re-read live ruleset ${ruleset_id} before writing"
+    if ! diff -q <(jq -S '.rules' "$tmp_dir/live.json") \
+        <(jq -S '.rules' "$tmp_dir/live.recheck.json") >/dev/null 2>&1; then
+        die_unavailable "the live ruleset changed while this was waiting — re-run and re-read the plan"
+    fi
+fi
+
+# Send back LIVE's own rules with the required_status_checks contexts extended.
+# PUT updates the existing ruleset in place — unlike POST, which creates a
+# duplicate — and echoing live's other rules verbatim means a local
 # customization outside this one array is preserved rather than reset.
-jq --slurpfile missing "$tmp_dir/missing.json" '
-  { rules: (
-      .rules
-      | map(if .type == "required_status_checks"
-            then .parameters.required_status_checks += $missing[0]
-            else . end)
-    ) }
+#
+# The `else` branch is load-bearing: a live ruleset may have NO
+# required_status_checks rule at all (observed on a real repository whose only
+# rule was copilot_code_review). Appending to a rule that is not there is a
+# no-op, so the payload would equal live, the PUT would succeed, and this would
+# report APPLIED having changed nothing — a false success on exactly the
+# migration this command exists to perform. When the rule is absent it is
+# CREATED, taking its parameters from the checked-in ruleset so the policy
+# flags come from the file rather than being invented here.
+jq --slurpfile missing "$tmp_dir/missing.json" --slurpfile file "$ruleset_file" '
+  ([ .rules[]? | select(.type == "required_status_checks") ] | length > 0) as $has_rule
+  | { rules: (
+        if $has_rule then
+          .rules | map(if .type == "required_status_checks"
+                       then .parameters.required_status_checks += $missing[0]
+                       else . end)
+        else
+          .rules + [ ($file[0].rules[] | select(.type == "required_status_checks"))
+                     | .parameters.required_status_checks = $missing[0] ]
+        end
+      ) }
 ' "$tmp_dir/live.json" >"$tmp_dir/payload.json" ||
     die_unavailable "could not build the update payload"
+
+# Every context that must be required once this lands: what live already had,
+# plus what is being added. Used to prove the outcome rather than assume it.
+jq -r --slurpfile live "$tmp_dir/live.json" "
+  $jq_defs
+  [ (\$live[0] | names[]), (.[] | .context) ] | unique | .[]
+" "$tmp_dir/missing.json" | sort >"$tmp_dir/expected.txt"
+
+# Assert the PAYLOAD carries them before sending. This catches a merge that
+# silently did nothing, whatever the cause — the invariant, not one bug.
+jq -r "$jq_defs names[]" "$tmp_dir/payload.json" | sort >"$tmp_dir/payload.txt"
+payload_absent="$(comm -23 "$tmp_dir/expected.txt" "$tmp_dir/payload.txt" | tr '\n' ' ')"
+case "$payload_absent" in
+*[![:space:]]*)
+    echo "RULESET SETUP FAILED: the update payload would not require: ${payload_absent}" >&2
+    exit 1
+    ;;
+esac
 
 if [ -n "$fixture_write" ]; then
     cp "$tmp_dir/payload.json" "$fixture_write"
@@ -203,6 +277,20 @@ if ! gh api --method PUT "repos/${repo}/rulesets/${ruleset_id}" \
     echo "Do NOT re-import the JSON — GitHub creates a duplicate ruleset instead of updating this one." >&2
     exit 1
 fi
+
+# Prove the outcome. A 2xx says the request was accepted, not that the merge
+# gate changed: read the ruleset back and require every expected context.
+gh api "repos/${repo}/rulesets/${ruleset_id}" >"$tmp_dir/after.json" 2>/dev/null ||
+    die_unavailable "the update was accepted but the ruleset could not be re-read to confirm it"
+jq -r "$jq_defs names[]" "$tmp_dir/after.json" | sort >"$tmp_dir/after.txt"
+absent="$(comm -23 "$tmp_dir/expected.txt" "$tmp_dir/after.txt" | tr '\n' ' ')"
+case "$absent" in
+*[![:space:]]*)
+    echo "RULESET SETUP FAILED: the update was accepted but ${repo} still does not require: ${absent}" >&2
+    echo "Add them by hand: Settings → Rules → Rulesets → ${ruleset_name}." >&2
+    exit 1
+    ;;
+esac
 
 echo "RULESET SETUP APPLIED: ${ruleset_name} (${repo}) now requires every checked-in status check."
 echo "Confirm with: task audit:ruleset"

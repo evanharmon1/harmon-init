@@ -90,4 +90,45 @@ fi
 grep -q 'not found exactly once' "$tmp_dir/out" || fail "wrong duplicate-ruleset message"
 printf '[{"id":42,"name":"Protect Main","source_type":"Repository"}]\n' >"$list"
 
+echo "==> a live ruleset with NO required_status_checks rule gets one CREATED"
+# Observed shape: a real repository whose only branch rule was copilot_code_review.
+# Appending to a rule that is not there is a no-op, so the payload would equal
+# live and the script would report APPLIED having changed nothing.
+jq '{name, target, enforcement, rules: [{"type":"copilot_code_review"}]}' "$file" >"$live"
+out="$(run_setup --yes)" || fail "absent-rule run exited non-zero"
+[ -f "$wrote" ] || fail "absent-rule run wrote nothing"
+jq -e '[.rules[] | select(.type=="required_status_checks")] | length == 1' "$wrote" >/dev/null ||
+    fail "payload did not create exactly one required_status_checks rule"
+diff <(live_contexts "$wrote") <(live_contexts "$file") ||
+    fail "created rule does not require every checked-in context"
+jq -e '[.rules[] | select(.type=="copilot_code_review")] | length == 1' "$wrote" >/dev/null ||
+    fail "creating the rule dropped live's other rules"
+# The rule's policy flags must come from the checked-in file, not be invented.
+diff \
+    <(jq -S '[.rules[] | select(.type=="required_status_checks") | .parameters | del(.required_status_checks)]' "$file") \
+    <(jq -S '[.rules[] | select(.type=="required_status_checks") | .parameters | del(.required_status_checks)]' "$wrote") ||
+    fail "created rule did not take its parameters from the checked-in ruleset"
+
+echo "==> a same-context/different-integration entry is reported, not called clean"
+jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks)
+    |= map(if .context == "closing-keywords" then .integration_id = 99999 else . end)' "$file" >"$live"
+if run_setup --yes >"$tmp_dir/out" 2>&1; then
+    fail "an integration_id mismatch was reported as success"
+else
+    status=$?
+    [ "$status" -eq 1 ] || fail "mismatch exit was $status, expected 1"
+fi
+grep -q 'RULESET SETUP MISMATCH' "$tmp_dir/out" || fail "mismatch not reported: $(cat "$tmp_dir/out")"
+grep -q 'closing-keywords' "$tmp_dir/out" || fail "mismatch did not name the context"
+[ ! -f "$wrote" ] || fail "mismatch triggered a write"
+
+echo "==> the payload is proven to carry every expected context before sending"
+# Union semantics: live's own extra context must survive into the payload
+# alongside the added one, or the write would silently drop a required check.
+jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks)
+    |= (map(select(.context != "closing-keywords")) + [{"context":"locally-added-check","integration_id":1}])' "$file" >"$live"
+out="$(run_setup --yes)" || fail "union run exited non-zero"
+live_contexts "$wrote" | grep -qx 'closing-keywords' || fail "payload lost the added context"
+live_contexts "$wrote" | grep -qx 'locally-added-check' || fail "payload dropped live's own required check"
+
 echo "setup-ruleset: all cases passed"
