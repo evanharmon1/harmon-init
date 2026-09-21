@@ -14,8 +14,7 @@
           "selections": {
             "rigor": { "value": "standard", "source": "default" },
             "strategy": { "value": "plan", "source": "default" }
-          },
-          "rounds": { "integration": 4, "integration_exempt": 4 }
+          }
         }
       }
     },
@@ -31,8 +30,7 @@
           "selections": {
             "rigor": { "value": "deep", "source": "explicit" },
             "strategy": { "value": "council", "source": "explicit" }
-          },
-          "rounds": { "integration": 6, "integration_exempt": 6 }
+          }
         }
       }
     },

@@ -453,6 +453,61 @@ printf '%s' "$historical_resolved" | jq -e '
     exit 1
 }
 
+# harmon-init#1326, review round 1 (P2, confirmed): the exempt ceiling has
+# three producers — the v2 resolve path, the two historical decoders, and the
+# absent-policy fallback — and only the v1 decoder was exercised above. A
+# regression in either of the others would have left the targeted suite green.
+# The pre-v1 legacy shape had no coverage in this suite at all, so this closes
+# a pre-existing gap as well as the one this change introduced.
+legacy_policy="$tmp/historical-legacy.toml"
+cat >"$legacy_policy" <<'TOML'
+default_rigor = "standard"
+default_method = "plan"
+
+[rigor.standard]
+challenge = 3
+review = 3
+shepherd = 4
+min_rounds = 1
+
+[method.plan]
+topology = "single-agent"
+planning = "explicit"
+delegation = "optional"
+human_gates = []
+description = "Historical plan"
+TOML
+legacy_resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --merge-base-policy "$legacy_policy" \
+    --merge-base-registry agent-registry.json \
+    --taskfile-dir . \
+    --json)"
+printf '%s' "$legacy_resolved" | jq -e '
+    .source == "merge-base-historical-decode:legacy" and
+    .rounds.integration == 4 and
+    .rounds.integration_exempt == 0
+' >/dev/null || {
+    echo "FAIL: legacy merge-base decode must resolve integration_exempt to 0" >&2
+    exit 1
+}
+
+# The absent-policy fallback is the other untested producer. It is the promised
+# stable vocabulary a deleted or unreadable .devflow.toml falls back to, so its
+# exempt ceiling must track its charged one exactly as the operating path does.
+absent_resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy "$tmp/does-not-exist.toml" \
+    --registry agent-registry.json \
+    --taskfile-dir . \
+    --json)"
+printf '%s' "$absent_resolved" | jq -e '
+    .rounds.integration_exempt == .rounds.integration and
+    .rounds.integration_exempt > 0
+' >/dev/null || {
+    echo "FAIL: absent-policy fallback must expose integration_exempt == integration" >&2
+    exit 1
+}
+
 # Family, harness, and model tier must intersect in one executable tuple.
 # Gemini can run through Antigravity and Claude has an apex model, but
 # Antigravity cannot execute Claude; independent existence checks would accept
