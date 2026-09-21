@@ -430,11 +430,17 @@ historical_resolved="$(node scripts/devflow-policy.mjs resolve \
     --rigor trivial \
     --strategy legacy-council \
     --json)"
+# harmon-init#1326: a historical policy has no base-merge exemption, so the
+# decode may not invent one. v1/legacy spend integration and remediation from
+# ONE shared total; an exempt ceiling on top would let a branch buy cycles the
+# merge-base policy never permitted, which is exactly what the merge-base rule
+# exists to prevent.
 printf '%s' "$historical_resolved" | jq -e '
     .source == "merge-base-historical-decode:v1" and
     .rigor.level == "trivial" and
     .rigor.tier_escalation == true and
     .rounds.wall_clock_min == 77 and
+    .rounds.integration_exempt == 0 and
     .breadth == {policy:"v1:bounded", max_agent_runs:7, max_parallel_agents:2} and
     .roles.orchestrator.tier == "local" and
     .roles.implementer.tier == "local" and

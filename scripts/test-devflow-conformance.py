@@ -240,6 +240,13 @@ def run_v2(repo: Path, fixture: dict, config: Path) -> int:
                     ),
                 },
             }
+            # harmon-init#1326: the resolved rounds table is part of the
+            # portable contract, not just the reader's private output — a
+            # consumer has to be able to assert that a base-merge-only cycle
+            # has its own ceiling and does not spend `integration`. Additive:
+            # matches() is a subset comparison, so cases that assert nothing
+            # about rounds are unaffected.
+            normalized["rounds"] = resolved["rounds"]
         elif "schema_version" in result.stderr and (
             "legacy" in result.stderr
             or "v1" in result.stderr
