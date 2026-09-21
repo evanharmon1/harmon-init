@@ -91,15 +91,15 @@ ARG TTT_VERSION=1.5.0
 ARG TTT_SHA256_AMD64=d5b5e3ef0c3c8c834360c7506628c23c2a61c00c006e402490ad4f336cacbe5f
 ARG TTT_SHA256_ARM64=667ace6b7288ffbd7724a82335e68fe1dcb9c03fe526c9df8da77ab9f811a1c3
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
-ARG GLOW_VERSION=2.1.2
+ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
 ARG LAZYGIT_VERSION=0.65.1
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
-ARG TOKEI_VERSION=13.0.0-alpha.0
+ARG TOKEI_VERSION=15.0.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
 ARG GH_DASH_VERSION=4.25.2
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
-ARG GUM_VERSION=0.17.0
+ARG GUM_VERSION=2.0.1
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
 ARG ONEFETCH_VERSION=2.28.1
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
