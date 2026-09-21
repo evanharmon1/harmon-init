@@ -92,6 +92,12 @@ authored, and always equals `integration` — including at 0, where cloud review
 is off and there is no cycle of either kind to run. A run's ledger names which
 counter each cycle spent, so `round n/cap` stays honest.
 
+The reader defines the two ceilings; the integration stage spends them. The
+exemption therefore takes effect only once that stage's implementation
+accounts for it — until then its single cycle counter governs, no cycle is
+exempt, and a cycle ordinal above `integration` is rejected by the readiness
+gate as `codex-cap-mismatch`.
+
 It also supplies `min_rounds` and the run-wide `wall_clock_min`. A cap is a
 ceiling, never a quota. Zero disables only the named heuristic activity; it
 does not weaken tests, security, CI, branch protection, or human approval.

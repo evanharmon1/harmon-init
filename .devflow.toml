@@ -162,7 +162,10 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # changed. A merge that resolves a conflict, or that touches any file the
 # change under review touches, is ordinary work and charges normally. The
 # ceiling is derived, not authored — it always equals `integration`, 0
-# included, so disabling cloud review leaves no cycle of either kind.
+# included, so disabling cloud review leaves no cycle of either kind. This
+# file defines the two ceilings; the integration stage spends them, so the
+# exemption takes effect only once that stage's implementation accounts for
+# it.
 # remediation: bounds fix pushes in the integration stage. Terminal action is
 # escalation with the unresolved findings listed — never abandonment, never
 # promotion past them. 0 = the first finding needing a code fix escalates.
