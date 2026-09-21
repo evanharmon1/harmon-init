@@ -79,6 +79,30 @@ The selected `[rounds.*]` table supplies separate ceilings for:
 - `integration`: current-head cloud-review cycles;
 - `remediation`: integration-stage fix pushes.
 
+Only a cycle that reviews something new is charged against `integration`. A
+cycle whose head differs from the last reviewed head **only** by a base merge
+that changed nothing under review re-reads identical code by construction, so
+it is exempt: it runs, and it spends a separate ceiling of the same size —
+which the reader exposes as `integration_exempt` — rather than `integration`.
+Exempt is not free, and the separate ceiling is why: otherwise a busy base
+branch could spend a whole run on re-reviews of code nobody changed. A merge
+that resolves a conflict, or that touches any file the change under review
+touches, is ordinary work and charges normally. The ceiling is derived, never
+authored. On the operating path it equals `integration` — including at 0, where
+cloud review is off and there is no cycle of either kind to run. The one
+exception is a **historical merge-base decode**: a legacy or v1 policy spends
+integration and remediation from a single shared total and knows no exemption,
+so the ceiling resolves to 0 there even where `integration` is positive.
+Granting exempt cycles on that path would hand a branch budget its merge-base
+policy never allowed. A run's ledger names which
+counter each cycle spent, so `round n/cap` stays honest.
+
+The reader defines the two ceilings; the integration stage spends them. The
+exemption therefore takes effect only once that stage's implementation
+accounts for it — until then its single cycle counter governs, no cycle is
+exempt, and a cycle ordinal above `integration` is rejected by the readiness
+gate as `codex-cap-mismatch`.
+
 It also supplies `min_rounds` and the run-wide `wall_clock_min`. A cap is a
 ceiling, never a quota. Zero disables only the named heuristic activity; it
 does not weaken tests, security, CI, branch protection, or human approval.

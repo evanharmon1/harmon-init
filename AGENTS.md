@@ -448,6 +448,21 @@ wall-clock ceiling. Challenge and review bound confidence passes;
 `integration` bounds current-head Codex review cycles; `remediation` bounds
 integration-stage fix pushes. A zero cap disables only the work it names,
 never a deterministic gate, security scan, branch rule, or human approval.
+`integration` charges only cycles that review something new: one whose head
+differs from the last reviewed head **only** by a base merge that changed
+nothing under review re-reads identical code, so it spends the separate,
+equal `integration_exempt` ceiling the reader derives instead. A merge that
+resolves a conflict, or that touches any file under review, charges normally,
+and the ledger names which counter each cycle spent so `round n/cap` stays
+honest. The accounting belongs to the integration stage, so the exemption
+takes effect only where that stage implements it. Until the vendored pin in
+`.claude/skills/` carries it, that skill's single cycle counter governs and no
+cycle is exempt. This is the one case where a lagging skill is **not**
+overridden by this file: its readiness gate enforces the count mechanically,
+and a cycle ordinal above `integration` reads there as `codex-cap-mismatch` —
+an *indeterminate* gate condition, which leaves the PR draft. Acting on the
+exemption before the pin implements it would stall the gate it was meant to
+unblock.
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,

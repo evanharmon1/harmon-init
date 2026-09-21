@@ -133,6 +133,20 @@ with tempfile.TemporaryDirectory() as tmp:
         )
         if run.returncode != 0:
             fail(f"{label}: executable reader rejected rendered policy: {run.stderr.strip()}")
+        # harmon-init#1326: the base-merge exemption is DERIVED, so it must
+        # track the charged ceiling on every render — 0 included. A repo that
+        # opted out of cloud review has no reviewer to run an exempt cycle
+        # against, so a positive exempt ceiling there would conjure cycles the
+        # operator disabled; a render is the only place that case is reachable,
+        # since no shipped level sets integration = 0.
+        resolved_rounds = json.loads(run.stdout)["rounds"]
+        if "integration_exempt" not in resolved_rounds:
+            fail(f"{label}: resolved rounds must expose integration_exempt")
+        if resolved_rounds["integration_exempt"] != resolved_rounds["integration"]:
+            fail(
+                f"{label}: rounds.integration_exempt ({resolved_rounds['integration_exempt']}) "
+                f"must equal integration ({resolved_rounds['integration']})"
+            )
 
 schema = json.loads((root / ".devflow.schema.json").read_text())
 if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
