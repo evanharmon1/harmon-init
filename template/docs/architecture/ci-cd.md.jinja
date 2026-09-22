@@ -14,6 +14,21 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 ## Workflows
 
 - `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
+  Its `pull_request:` trigger is `[opened, synchronize, reopened]`.
+  **`edited` is deliberately absent**: it fires on a title/body edit, and the
+  dev loop's readiness gate *requires* body edits to tick
+  `## Deferred findings` — so carrying it here made settling a finding restart
+  the whole matrix at the last step before promotion. `edited` also covers a
+  base-**branch** change; losing that re-run is accepted, because retargeting a
+  PR is rare and a strict required-status-checks policy forces an up-to-date
+  head before merge, which arrives as a `synchronize`.
+- `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
+  `Closes #N` while `#N` has unchecked task-list items. It lives in its own
+  workflow precisely so it can keep `pull_request.edited`: it reads the PR
+  title and body, so a body edit genuinely changes its input. `closing-keywords`
+  is a required status check in its own right, keyed by the job id — keep that
+  id stable. `task guard:closing-keywords` is the local pre-flight
+  (`scripts/guard-closing-keywords.sh`).
 [% if use_node %]
   The **`e2e`** job is separate from `build-test` on purpose: Playwright serves
   the app, and everything an agent runs locally (`check`/`build`/`test`/

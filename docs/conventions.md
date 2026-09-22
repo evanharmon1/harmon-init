@@ -306,7 +306,9 @@ has.
   copier answer (empty = no guard). Automated dependency PRs (Renovate/Dependabot)
   are skipped — retitle by hand if a dep bump to guarded content must ship.
 - **Closing an issue is guarded separately.** The `closing-keywords` job in
-  `build.yml` reads only PR and issue metadata with a read-only token, and scans
+  `closing-keywords.yml` — its own workflow, so that it can keep the
+  `pull_request.edited` trigger `build.yml` deliberately drops — reads only PR
+  and issue metadata with a read-only token, and scans
   the PR title, body, and every commit message for
   `Closes`/`Fixes`/`Resolves` references.
   A bare `#N` is same-repository work: the gate refuses it while issue `#N`

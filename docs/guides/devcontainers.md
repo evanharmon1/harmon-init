@@ -209,6 +209,50 @@ Prebuilt images are pulled from GHCR as a build cache
 (`ghcr.io/evanharmon1/harmon-init-devcontainer` / `ghcr.io/evanharmon1/harmon-init-devcontainer-dev`), so a warm rebuild
 is fast. A cache miss is non-fatal — it just rebuilds from the `Dockerfile`.
 
+## Bind-mounted checkout permissions
+
+`post-create-common.sh` reconciles the bind-mounted workspace's `.git`
+metadata tree on every attach: it reclaims ownership for the container
+user (keeping the tree's original group), grants that group read/write,
+sets directories setgid so new Git objects and refs stay group-writable
+too (`core.sharedRepository`), and never leaves the tree world-writable.
+
+**What this guarantees, and what it does not.** Write access after
+reconciliation is guaranteed for the container user and for anyone
+sharing the checkout's original group — in practice, same-uid re-attaches
+(a container rebuild reusing the same runtime user) and other containers
+or processes running as a group-mate. It does **not** extend trust to a
+genuinely different host identity: Git's own "detected dubious ownership"
+safety check is keyed on the file owner's uid, not on permission bits, so
+a host process running as a *different* uid than the container sees the
+reconciled checkout as owned by someone else regardless of the group
+permissions — the same check that made `a+rwX` (world-writable) tempting
+in the first place, and the reason this reconciliation never reintroduces
+it. It is also a deliberate non-goal for a workspace root that is itself a
+Git submodule or a `--separate-git-dir` checkout, rather than a linked
+worktree: Git gives that shape no reverse pointer to validate a redirect
+against, so the privileged mutation is skipped there (with a logged reason)
+instead of trusting it, and the workspace still becomes usable without the
+ownership repair. The reconciliation can only write its `safe.directory` trust entry
+into the container's own environment-scoped Git config
+(`.devcontainer/scripts/post-create-common.sh`'s `$ENV_GITCONFIG`), a
+location a separate host machine's own Git installation has no way to
+read.
+
+**If a different-uid host needs to run Git directly against the same
+checkout** (outside any container — for example a host-side terminal or
+Git client, not a devcontainer attach), it needs its own one-time trust
+entry:
+
+```sh
+git config --global --add safe.directory /path/to/the/checkout
+```
+
+Run that once, as the host user, against the exact path the checkout is
+mounted at. It only grants that one path, never a wildcard, and it is
+independent of the container's own reconciliation — repeat it if the
+checkout is ever re-cloned to a new path.
+
 ## Claude Code settings in the container
 
 Everything is sourced from `.devcontainer/config/` and baked into the **image**,
@@ -687,11 +731,21 @@ init-env.sh: the container will start without them. On Coder/Codespaces set them
 init-env.sh: workspace/repo secrets; locally populate the env-file from 1Password.
 ```
 
-The build still succeeds — a missing optional secret must not block a rebuild,
-and `initializeCommand` runs on the host, where a non-zero exit aborts the whole
-build. So this is a signal to read, not a failure. Without it the container comes
-up clean and only the dependent step fails later, far from the cause: a missing
-`TS_AUTHKEY` went unnoticed for hours in a Coder workspace that way.
+**This warning is not itself a failure.** `initializeCommand` runs on the host,
+where a non-zero exit aborts the whole build, so a missing optional secret must
+not block a rebuild there — it is a signal to read.
+
+What happens next depends on the secret. For most, the container comes up clean
+and only the dependent step fails later, far from the cause. `TS_AUTHKEY` in the
+**dev profile** is the exception *in this repository*: harmon-init answers
+`tailscale_required: true`, so that profile also declares
+`DEVCONTAINER_TAILSCALE_REQUIRED=true` and `postStartCommand` fails the start
+outright rather than leaving a container that is up but logged out. Generated
+repos default that answer to **no**, where the profile still connects whenever
+a key is present and a missing one stays a skip. The warning tells you
+early; the start is what refuses. That is deliberate — a missing `TS_AUTHKEY`
+once went unnoticed for hours in a Coder workspace precisely because the start
+reported success.
 
 The warning covers **only** the vars this profile's allow-list permits, so the
 bot profile never reports `TS_AUTHKEY` missing. Its absence there is correct —
@@ -717,7 +771,10 @@ repo** (one template serves every repo). To stand this repo up in Coder:
    - **repo** → `https://github.com/evanharmon1/harmon-init`
    - secrets → `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_DECK_TELEGRAM_KEY`, and
      `GH_TOKEN` **for a bot workspace only** — a dev workspace runs
-     `gh auth login` instead (+ `TS_AUTHKEY` if you want Tailscale);
+     `gh auth login` instead (+ `TS_AUTHKEY`, which the dev profile
+     **requires** — it declares `DEVCONTAINER_TAILSCALE_REQUIRED=true`, so a
+     start that cannot join the tailnet fails the build rather than coming up
+     logged out);
      `KIMI_API_KEY`/`MOONSHOT_API_KEY`,
      `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `QWEN_API_KEY` for the alt-model wrappers
      (`claude-qwen-local` needs no key — see below). Coder passes these

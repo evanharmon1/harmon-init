@@ -448,6 +448,21 @@ wall-clock ceiling. Challenge and review bound confidence passes;
 `integration` bounds current-head Codex review cycles; `remediation` bounds
 integration-stage fix pushes. A zero cap disables only the work it names,
 never a deterministic gate, security scan, branch rule, or human approval.
+`integration` charges only cycles that review something new: one whose head
+differs from the last reviewed head **only** by a base merge that changed
+nothing under review re-reads identical code, so it spends the separate,
+equal `integration_exempt` ceiling the reader derives instead. A merge that
+resolves a conflict, or that touches any file under review, charges normally,
+and the ledger names which counter each cycle spent so `round n/cap` stays
+honest. The accounting belongs to the integration stage, so the exemption
+takes effect only where that stage implements it. Until the vendored pin in
+`.claude/skills/` carries it, that skill's single cycle counter governs and no
+cycle is exempt. This is the one case where a lagging skill is **not**
+overridden by this file: its readiness gate enforces the count mechanically,
+and a cycle ordinal above `integration` reads there as `codex-cap-mismatch` —
+an *indeterminate* gate condition, which leaves the PR draft. Acting on the
+exemption before the pin implements it would stall the gate it was meant to
+unblock.
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
@@ -568,6 +583,21 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   changes (docs, this repo's own tooling) keep their normal type. Pre-flight it
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
+- **A PR that closes an issue must pre-flight `guard:closing-keywords` too —
+  from the body, the title, or a commit message.** The checker scans all
+  three, so a `Closes #N` written only into a commit subject counts and is the
+  easy one to forget. A same-repo `Closes #N` while `#N` still has unchecked
+  acceptance criteria fails the required `closing-keywords` check, and the
+  guard is a
+  metadata read — so pay for it locally, in the second before `gh pr create`,
+  rather than in a CI round and a fix push. It stays **out of `verify`**
+  deliberately: `verify` is offline and this guard calls the GitHub API.
+  Pre-flight it with the body you are about to publish:
+  `PR_TITLE="<title>" PR_BODY="$(cat body.md)" task guard:closing-keywords`.
+  With both variables unset it reads the branch's open PR instead, which is
+  the form to re-run after a body edit; `task ci` runs it first for the same
+  reason. Fix the issue's criteria — or drop the closing keyword to `Refs` —
+  rather than bypassing it.
 
 ### Spec-driven changes (OpenSpec)
 
@@ -913,7 +943,14 @@ the workflow rules above:
 
 - `.github/workflows/build.yml` — jobs `lint`, `security`, `template-test` (matrix
   of copier answer profiles), and the aggregate `verify` gate. All jobs delegate to
-  `task` targets.
+  `task` targets. Its `pull_request` trigger carries **no `edited`**: the
+  readiness gate requires PR-body edits, so a title/body edit must not restart
+  the matrix (#1328). Guards that genuinely read the title or body keep
+  `edited` in their own workflows.
+- `.github/workflows/closing-keywords.yml` — the metadata-only `closing-keywords`
+  gate, split out of `build.yml` for exactly that reason. It is a required
+  status check keyed by its job id; `task guard:closing-keywords`
+  (`scripts/guard-closing-keywords.sh`) is the local pre-flight.
 - `.github/workflows/devcontainer-build.yml` — builds the dual-profile
   devcontainer images (bot + dev) and pushes them to GHCR as build caches. The
   root repo dogfoods the same `.devcontainer/` the template generates

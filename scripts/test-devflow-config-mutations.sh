@@ -430,11 +430,17 @@ historical_resolved="$(node scripts/devflow-policy.mjs resolve \
     --rigor trivial \
     --strategy legacy-council \
     --json)"
+# harmon-init#1326: a historical policy has no base-merge exemption, so the
+# decode may not invent one. v1/legacy spend integration and remediation from
+# ONE shared total; an exempt ceiling on top would let a branch buy cycles the
+# merge-base policy never permitted, which is exactly what the merge-base rule
+# exists to prevent.
 printf '%s' "$historical_resolved" | jq -e '
     .source == "merge-base-historical-decode:v1" and
     .rigor.level == "trivial" and
     .rigor.tier_escalation == true and
     .rounds.wall_clock_min == 77 and
+    .rounds.integration_exempt == 0 and
     .breadth == {policy:"v1:bounded", max_agent_runs:7, max_parallel_agents:2} and
     .roles.orchestrator.tier == "local" and
     .roles.implementer.tier == "local" and
@@ -444,6 +450,61 @@ printf '%s' "$historical_resolved" | jq -e '
     .strategy.topology == "independent-proposals"
 ' >/dev/null || {
     echo "FAIL: JS reader did not preserve compatible merge-base v1 values" >&2
+    exit 1
+}
+
+# harmon-init#1326, review round 1 (P2, confirmed): the exempt ceiling has
+# three producers — the v2 resolve path, the two historical decoders, and the
+# absent-policy fallback — and only the v1 decoder was exercised above. A
+# regression in either of the others would have left the targeted suite green.
+# The pre-v1 legacy shape had no coverage in this suite at all, so this closes
+# a pre-existing gap as well as the one this change introduced.
+legacy_policy="$tmp/historical-legacy.toml"
+cat >"$legacy_policy" <<'TOML'
+default_rigor = "standard"
+default_method = "plan"
+
+[rigor.standard]
+challenge = 3
+review = 3
+shepherd = 4
+min_rounds = 1
+
+[method.plan]
+topology = "single-agent"
+planning = "explicit"
+delegation = "optional"
+human_gates = []
+description = "Historical plan"
+TOML
+legacy_resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy .devflow.toml \
+    --merge-base-policy "$legacy_policy" \
+    --merge-base-registry agent-registry.json \
+    --taskfile-dir . \
+    --json)"
+printf '%s' "$legacy_resolved" | jq -e '
+    .source == "merge-base-historical-decode:legacy" and
+    .rounds.integration == 4 and
+    .rounds.integration_exempt == 0
+' >/dev/null || {
+    echo "FAIL: legacy merge-base decode must resolve integration_exempt to 0" >&2
+    exit 1
+}
+
+# The absent-policy fallback is the other untested producer. It is the promised
+# stable vocabulary a deleted or unreadable .devflow.toml falls back to, so its
+# exempt ceiling must track its charged one exactly as the operating path does.
+absent_resolved="$(node scripts/devflow-policy.mjs resolve \
+    --policy "$tmp/does-not-exist.toml" \
+    --registry agent-registry.json \
+    --taskfile-dir . \
+    --json)"
+printf '%s' "$absent_resolved" | jq -e '
+    .rounds.integration_exempt == .rounds.integration and
+    .rounds.integration_exempt > 0
+' >/dev/null || {
+    echo "FAIL: absent-policy fallback must expose integration_exempt == integration" >&2
     exit 1
 }
 

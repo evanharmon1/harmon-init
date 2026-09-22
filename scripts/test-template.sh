@@ -208,6 +208,12 @@ full)
         --data include_ansible=true
         --data devcontainer=true
         --data use_statusline_pr_lookup=true
+        # tailscale_required defaults OFF (it makes the dev profile unable to
+        # start without a Tailscale account), so every other profile covers the
+        # OFF branch and this is the only place its ON branch — the dev
+        # profile's DEVCONTAINER_TAILSCALE marker and the guide's required-key
+        # prose — is ever rendered.
+        --data tailscale_required=true
         --data ci_runner=self-hosted
         --data github_org=test-org
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
@@ -1682,20 +1688,28 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
         err "$claude_wf has no step-level timeout — a job timeout would strand the claim"
 done
 
-# Required checks must run on the draft, or the gate has nothing to read. A
-# bare `pull_request:` trigger already covers draft opened/synchronize. The
-# closing-keyword job deliberately narrows event types, but keeps the four PR
-# events that create, edit, or add commits to a draft workbench.
+# Required checks must run on the draft, or the gate has nothing to read.
 for wf in .github/workflows/*.yml; do
     [ -f "$wf" ] || continue
     ! grep -Fq 'pull_request.draft' "$wf" ||
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
 done
+# The two halves of the `edited` split (harmon-init#1328). The build matrix
+# must NOT re-run on a title/body edit — the readiness gate edits the body to
+# tick deferred findings, and each edit otherwise put every concluded check
+# back to pending. The closing-keyword guard MUST, because the title and body
+# are its input. Assert both directions: either one alone is satisfiable by
+# deleting the wrong trigger.
 build_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/build.yml)"
-if grep -q 'types:' <<<"$build_trigger" &&
-    ! grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$build_trigger"; then
-    err "build.yml pull_request types omit a draft-closing-keyword trigger"
-fi
+grep -Fq 'types: [opened, synchronize, reopened]' <<<"$build_trigger" ||
+    err "build.yml pull_request types must be [opened, synchronize, reopened]"
+# Fixed-string with comments stripped — see test-ci-results.sh for why `\b`
+# is avoided in a negative assertion, and why comments must go first.
+! grep -v '^[[:space:]]*#' <<<"$build_trigger" | grep -Fq 'edited' ||
+    err "build.yml re-runs the whole matrix on a PR title/body edit"
+ck_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/closing-keywords.yml)"
+grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$ck_trigger" ||
+    err "closing-keywords.yml must re-run when the PR title or body is edited"
 
 # ── 9e. devcontainer machinery renders per the devcontainer answer ──
 # minimal renders with devcontainer=false; every other profile has it on.
@@ -1910,8 +1924,6 @@ if [ -d .devcontainer ]; then
             err "bot devcontainer.json marker is not enabled for the opted-in profile"
         grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "enabled"' .devcontainer/dev/devcontainer.json ||
             err "dev devcontainer.json marker is not enabled for the opted-in profile"
-        grep -Fq '"AGY_CLI_DISABLE_AUTO_UPDATE": "true"' .devcontainer/devcontainer.json ||
-            err "bot runtime does not disable fallback Antigravity auto-updates"
         grep -Fq 'Antigravity autonomy is enabled' docs/guides/devcontainers.md ||
             err "devcontainer guide omits opted-in Antigravity account/policy guidance"
     else
@@ -1919,11 +1931,15 @@ if [ -d .devcontainer ]; then
             err "bot devcontainer.json marker is not disabled for the default-off profile"
         grep -Fq '"HARMON_BOT_AUTONOMY_ANTIGRAVITY": "disabled"' .devcontainer/dev/devcontainer.json ||
             err "dev devcontainer.json marker is not disabled for the default-off profile"
-        ! grep -Fq 'AGY_CLI_DISABLE_AUTO_UPDATE' .devcontainer/devcontainer.json ||
-            err "Antigravity runtime policy rendered without explicit opt-in"
         grep -Fq 'Antigravity autonomy is off by default' docs/guides/devcontainers.md ||
             err "devcontainer guide omits default-off Antigravity posture"
     fi
+    # AGY_CLI_DISABLE_AUTO_UPDATE is emitted unconditionally, never gated on
+    # use_antigravity_cli (#1241 item 4): devcontainer-assert.sh's bot-profile
+    # permission gate requires it regardless of that answer, and the variable
+    # is harmless when the compatibility binary is never installed.
+    grep -Fq '"AGY_CLI_DISABLE_AUTO_UPDATE": "true"' .devcontainer/devcontainer.json ||
+        err "bot devcontainer.json does not unconditionally disable fallback Antigravity auto-updates"
     # The dev profile may apply its own balanced policy (antigravity-settings-dev.json)
     # but must never apply the bot's always-proceed policy (antigravity-settings.json).
     # Strip comment lines first so an explanatory comment naming the bot file is
@@ -1931,6 +1947,34 @@ if [ -d .devcontainer ]; then
     if grep -Eq 'antigravity-settings\.json' \
         < <(grep -Ev '^[[:space:]]*#' .devcontainer/dev/post-create.sh); then
         err "human dev profile applies the bot-only always-proceed Antigravity policy"
+    fi
+fi
+
+# AC (#1241 item 4): a devcontainer=true, use_antigravity_cli=false render
+# must pass `task test:devcontainer:permissions` unmodified straight out of
+# the render — the env var devcontainer-assert.sh's bot-profile gate
+# requires is now emitted unconditionally, never gated on the Copier answer
+# that only ever toggles the HARMON_BOT_AUTONOMY_ANTIGRAVITY marker's value.
+# A second, surgical render (only on the "full" pass, so this heavier check
+# is paid for once, not per profile) rather than flipping "full" itself,
+# which exists to maximize conditional coverage with the CLI turned ON.
+if [ "$profile" = "full" ]; then
+    agy_off_dest="$job_tmp/render-agy-off"
+    # Reuse "full"'s own complete answer set (project_name and everything
+    # else that has no Copier default) and override only the one flag under
+    # test, rather than a bare devcontainer=true/use_antigravity_cli=false
+    # pair that would leave every no-default question unanswered.
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data use_antigravity_cli=false \
+        "$repo_root" "$agy_off_dest"; then
+        (
+            cd "$agy_off_dest"
+            ./scripts/devcontainer-assert.sh unit
+            ./scripts/test-devcontainer-git-ownership.sh
+        ) || err "devcontainer=true, use_antigravity_cli=false render failed task test:devcontainer:permissions"
+    else
+        err "devcontainer=true, use_antigravity_cli=false render failed to generate"
     fi
 fi
 
@@ -2062,7 +2106,10 @@ else # use_release_please default on, release_content_paths="" (guard present, u
     [ -x scripts/require-release-title.sh ] || err "require-release-title.sh missing (use_release_please on)"
     grep -q 'test:release-title' Taskfile.yml || err "test:release-title task missing (use_release_please on)"
     [ ! -f .github/workflows/release-content-guard.yml ] || err "release-content-guard.yml rendered but release_content_paths empty"
-    ! grep -q 'guard:release-title' Taskfile.yml || err "guard:release-title task rendered but release_content_paths empty"
+    # Anchored to a DEFINITION or an INVOCATION: an unanchored match also fires
+    # on prose in a comment, which is not a rendered task.
+    ! grep -Eq '^ *(- task: )?guard:release-title:?$' Taskfile.yml ||
+        err "guard:release-title task rendered but release_content_paths empty"
 fi
 
 # ── 9h. Terraform lint contract renders per include_terraform ───────

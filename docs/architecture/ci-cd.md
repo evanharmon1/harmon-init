@@ -13,13 +13,29 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint, security, then the aggregate **`verify`** job.
-  Its `pull_request:` trigger carries **no** `types:` filter, so it fires on
-  draft `opened`/`synchronize` too. That is load-bearing, not incidental: PRs
-  are drafts for their whole automated life (AGENTS.md, "Dev Loop"), and the
-  readiness gate that promotes one reads these check results. Narrowing the
-  trigger, or gating a job on `github.event.pull_request.draft`, would leave the
-  gate with nothing to read until after the handoff it is supposed to authorize.
+- `build.yml` — on push/PR to `main`: lint, security, template-test, then the
+  aggregate **`verify`** job. Its `pull_request:` trigger is
+  `[opened, synchronize, reopened]` — **no `draft` filter**, so it fires on
+  draft PRs too. That is load-bearing, not incidental: PRs are drafts for their
+  whole automated life (AGENTS.md, "Dev Loop"), and the readiness gate that
+  promotes one reads these check results. Gating a job on
+  `github.event.pull_request.draft` would leave the gate with nothing to read
+  until after the handoff it is supposed to authorize.
+  **`edited` is deliberately absent** (#1328): it fires on a title/body edit,
+  and the readiness gate *requires* body edits to tick `## Deferred findings`
+  — so carrying it here made settling a finding restart lint, security and all
+  seven template-test profiles, putting condition 1 (checks concluded) back to
+  pending at the last step before promotion. `edited` also covers a
+  base-**branch** change; losing that re-run is accepted, because retargeting a
+  PR is rare and `strict_required_status_checks_policy` forces an up-to-date
+  head before merge, which arrives as a `synchronize`.
+- `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
+  `Closes #N` while `#N` has unchecked task-list items. It lives in its own
+  workflow precisely so it can keep `pull_request.edited`: it reads the PR
+  title and body, so a body edit genuinely changes its input. `closing-keywords`
+  is a required status check in its own right, keyed by the job id — keep that
+  id stable. `task guard:closing-keywords` is the local pre-flight
+  (`scripts/guard-closing-keywords.sh`).
 - `claude-plan` / `claude-implement` / `claude-review` — **mention-only**: an
   explicit `@claude` mention naming `plan`, `implement`, or `review` in a
   comment or review from a sender on the `claude_authorized_members` allowlist. There is no

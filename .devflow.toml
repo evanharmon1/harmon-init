@@ -153,6 +153,22 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # gate's Codex condition drops out; every other condition stays). A fix after
 # the last permitted cycle = `capped`: blocker report naming the unreviewed
 # head, PR stays draft. The verdict is never waived.
+# Only a cycle that reviews something NEW is charged. One whose head differs
+# from the last reviewed head ONLY by a base merge that changed nothing under
+# review re-reads identical code by construction, so it is EXEMPT: it runs,
+# and it spends a separate ceiling of the same size — surfaced by the resolver
+# as `integration_exempt` — instead of `integration`. Exempt is not free: a
+# busy base branch could otherwise spend a whole run re-reviewing code nobody
+# changed. A merge that resolves a conflict, or that touches any file the
+# change under review touches, is ordinary work and charges normally. The
+# ceiling is derived, not authored — on the operating path it equals
+# `integration`, 0 included, so disabling cloud review leaves no cycle of
+# either kind. A historical (legacy/v1) merge-base decode is the exception: it
+# resolves to 0 even where `integration` is positive, because those shapes
+# spend one shared total and never allowed an exemption at all. This
+# file defines the two ceilings; the integration stage spends them, so the
+# exemption takes effect only once that stage's implementation accounts for
+# it.
 # remediation: bounds fix pushes in the integration stage. Terminal action is
 # escalation with the unresolved findings listed — never abandonment, never
 # promotion past them. 0 = the first finding needing a code fix escalates.

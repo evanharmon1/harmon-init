@@ -314,6 +314,23 @@ devcontainer:
   # the forbidden combination through.
   validator: "[% if use_foreman and not devcontainer %]Foreman runs only inside the bot devcontainer (its D2 tripwire refuses any other environment) — enable devcontainer or disable use_foreman.[% endif %]"
 
+tailscale_required:
+  type: bool
+  help: >-
+    TAILSCALE REQUIRED: Make the dev devcontainer FAIL TO START when it cannot
+    join your tailnet? Defaults off. The dev profile installs the Tailscale CLI
+    either way and connects when TS_AUTHKEY is present — this only decides
+    whether a missing, expired, or rejected key is a fatal build error instead
+    of a skip. Turn it on only for a profile whose whole point is the tailnet,
+    where a container that starts up logged out is worse than one that does not
+    start: that silent state is easy to miss for hours. Requires a Tailscale
+    account and a valid auth key on every start. Tailscale's free plan covers
+    personal use and works with private repositories, but this needs an account
+    and an auth key that has not expired or been consumed — without one, every
+    dev container start fails by design.
+  default: no
+  when: "[[ devcontainer ]]"
+
 use_statusline_pr_lookup:
   type: bool
   help: >-

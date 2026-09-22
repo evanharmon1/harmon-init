@@ -338,11 +338,18 @@ assert_unit() {
     # must never launch against a drifted policy) and NODE_OPTIONS must be
     # unset before verify (so a Node-based harness CLI verify step is not
     # itself broken by an inherited VS Code debug value).
+    #
+    # The grep filter below deliberately sees only those three Node-relevant
+    # steps, so this asserts their ORDER RELATIVE TO EACH OTHER, not that
+    # nothing whatsoever precedes them. The gh-identity tripwire (10b) does
+    # run first, by design — it is a bash script driving a Go binary, so the
+    # unset does not apply to it, and running it ahead of the set -e verify
+    # step is what makes it fire on every start.
     local post_start_order
     post_start_order="$(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-start.sh" |
         grep -E 'unset NODE_OPTIONS|bot-autonomy\.sh verify|post-start-common\.sh')"
     [ "$(printf '%s\n' "$post_start_order" | sed -n '1p')" = "unset NODE_OPTIONS" ] ||
-        fail "bot post-start does not unset NODE_OPTIONS before anything else"
+        fail "bot post-start does not unset NODE_OPTIONS before the Node-dependent startup steps"
     case "$(printf '%s\n' "$post_start_order" | sed -n '2p')" in
     *"bot-autonomy.sh verify") ;;
     *) fail "bot post-start does not call bot-autonomy.sh verify immediately after unsetting NODE_OPTIONS" ;;
@@ -638,14 +645,264 @@ SENTINEL_SCRIPT
     # 7. tailscale-connect.sh no-ops (exit 0, prints its "unavailable" message)
     #    when `tailscale` is not on PATH. Invoke with an absolute bash path so
     #    the unreachable PATH doesn't also hide the interpreter.
+    #    `env -u DEVCONTAINER_TAILSCALE` is load-bearing: THIS SUITE RUNS INSIDE
+    #    A DEVCONTAINER, and the dev profile sets that marker to true, which
+    #    makes a missing CLI fatal rather than a skip. Without the strip, this
+    #    assertion silently inverts depending on which profile runs it — passing
+    #    on the host and on the bot profile, failing on dev.
     local ts_out
-    if ! ts_out="$(PATH="/nonexistent" "$bash_bin" "$ts_connect" 2>&1)"; then
+    if ! ts_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_REQUIRED -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+        PATH="/nonexistent" "$bash_bin" "$ts_connect" 2>&1)"; then
         fail "tailscale-connect.sh exited nonzero when tailscale is absent"
     fi
     case "$ts_out" in
     *"unavailable"*) ;;
     *) fail "tailscale-connect.sh did not report tailscale unavailable: ${ts_out}" ;;
     esac
+
+    # 7b. The tailnet gate itself. A profile whose defining feature is the
+    #     tailnet must FAIL ITS BUILD when it cannot join one — it must never
+    #     start clean, report success, and sit there logged out. Every path in
+    #     this script used to `exit 0`, which is exactly that failure.
+    #
+    #     Every case strips both knobs from the inherited environment for the
+    #     reason above, then sets only what it is testing.
+    local ts_bin ts_sock ts_sock_ready ts_up_marker ts_rc ts_case_out ts_dep ts_dep_path
+    ts_bin="${work_dir}/tailscale-bin"
+    mkdir -p "$ts_bin"
+    ln -s "$bash_bin" "${ts_bin}/bash"
+    for ts_dep in seq sleep tail cat printf hostname basename cut git; do
+        ts_dep_path="$(command -v "$ts_dep" 2>/dev/null)" || continue
+        ln -s "$ts_dep_path" "${ts_bin}/${ts_dep}"
+    done
+    # timeout is NOT optional and NOT resolvable by name alone: Homebrew
+    # coreutils on macOS installs it as `gtimeout`, the same split
+    # devcontainer-smoke.sh handles. tailscale-connect.sh calls bare `timeout`,
+    # and the constrained PATH below is all it can see — so resolve whichever
+    # exists and link it UNDER THE NAME the script calls. Skipping it silently
+    # (as a `continue` in the loop above would) leaves cases (h)-(j) exiting
+    # 127 on a supported dev platform, with the suite blaming tailscale.
+    ts_dep_path="$(command -v timeout || command -v gtimeout)" ||
+        fail "neither timeout nor gtimeout is available for the tailscale unit cases"
+    ln -s "$ts_dep_path" "${ts_bin}/timeout"
+    # sudo → exec "$@" and pgrep → exit 0: the connect paths below must be
+    # reachable without root and without a real daemon. pgrep succeeding means
+    # the script skips the start-tailscaled branch and goes straight to the
+    # unconditional socket wait, which is the ordering this change introduced.
+    printf '%s\n' '#!/bin/sh' 'exec "$@"' >"${ts_bin}/sudo"
+    printf '%s\n' '#!/bin/sh' 'exit 0' >"${ts_bin}/pgrep"
+    chmod 0755 "${ts_bin}/sudo" "${ts_bin}/pgrep"
+
+    # The tailscale stub answers `status --json` from TS_STUB_STATE and `up`
+    # from TS_STUB_UP_RC, touching TS_STUB_UP_MARKER so a case can tell whether
+    # `up` ran at all — which is how case (g) proves the already-connected fast
+    # path short-circuits instead of reconnecting.
+    cat >"${ts_bin}/tailscale" <<'TS_STUB'
+#!/bin/sh
+case "$1" in
+status)
+    # TS_STUB_STATUS_SILENT=1 is a daemon that is NOT answering: the socket
+    # inode is there (a crashed tailscaled leaves one behind) but `status`
+    # returns nothing. The readiness loop must keep waiting and then bail,
+    # rather than treating the stale inode as proof the daemon is up.
+    [ "${TS_STUB_STATUS_SILENT:-0}" = "1" ] && exit 1
+    # TS_STUB_STATUS_HANG=1 is a daemon that accepts the request and never
+    # answers. It must be killed by the probe's own timeout, and the loop must
+    # still finish on its wall-clock deadline rather than multiplying the hang
+    # by its iteration count.
+    if [ "${TS_STUB_STATUS_HANG:-0}" = "1" ]; then
+        sleep 120
+        exit 1
+    fi
+    printf '{"BackendState": "%s"}\n' "${TS_STUB_STATE:-NeedsLogin}"
+    exit 0
+    ;;
+up)
+    [ -n "${TS_STUB_UP_MARKER:-}" ] && : >"${TS_STUB_UP_MARKER}"
+    [ "${TS_STUB_UP_RC:-0}" = "0" ] || echo "stub: tailscale up refused the key" >&2
+    exit "${TS_STUB_UP_RC:-0}"
+    ;;
+esac
+exit 0
+TS_STUB
+    chmod 0755 "${ts_bin}/tailscale"
+
+    # Cases (g)-(m) reach the connect paths, which means getting past
+    # `[ -S "${TS_SOCKET}" ]` — so they need a REAL unix socket; there is no
+    # way to satisfy `-S` without binding one. Cases (a)-(f) all bail before
+    # the socket wait and need none.
+    #
+    # Creating it is best-effort and must NEVER fail the suite, because two
+    # environments legitimately cannot: a sandbox that denies AF_UNIX bind
+    # (Codex's workspace-write sandbox does), and any host whose TMPDIR makes
+    # the path exceed sun_path's ~104-byte limit — mktemp -d under a long
+    # TMPDIR is enough, and the error there is a confusing "path too long"
+    # rather than anything about tailscale. Both used to take down every
+    # assertion in this file, including the ones that have nothing to do with
+    # the tailnet, and this script ships verbatim to generated repos where the
+    # same `task ci` is expected to run locally.
+    #
+    # So: bind if we can, and otherwise SKIP (g)-(l) loudly. The skip is
+    # printed rather than silent — a quiet coverage hole is the failure mode
+    # this whole change exists to prevent — and CI and the devcontainer, where
+    # the bind succeeds, still run every case.
+    ts_sock="${work_dir}/ts.sock"
+    ts_sock_ready=no
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "==> SKIP tailscale cases (g)-(m): python3 is unavailable to create a stub socket."
+    elif python3 -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])
+s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
+        ts_sock_ready=yes
+    else
+        echo "==> SKIP tailscale cases (g)-(m): cannot bind a stub unix socket at ${ts_sock}"
+        echo "    (sandbox denial, or TMPDIR makes the path exceed sun_path's ~104-byte limit)."
+        echo "    Cases (a)-(f) still run; CI and the devcontainer run the full set."
+    fi
+    ts_up_marker="${work_dir}/ts-up-ran"
+
+    # ts_connect_run <expected-rc> <label> [VAR=VAL ...]
+    # Runs tailscale-connect.sh with both knobs stripped and only the named
+    # variables set, then asserts the exit code. Output lands in ts_case_out.
+    ts_connect_run() {
+        local want_rc="$1" label="$2"
+        shift 2
+        ts_rc=0
+        # The caller's assignments come LAST so a case can override any of the
+        # defaults — case (a) overrides PATH to take the CLI away, and a fixed
+        # PATH here would silently hand it back and test the wrong path.
+        ts_case_out="$(env -u DEVCONTAINER_TAILSCALE -u DEVCONTAINER_TAILSCALE_REQUIRED -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+            -u TS_AUTHKEY -u TS_AUTH_KEY -u TS_STUB_STATE -u TS_STUB_UP_RC \
+            -u TS_STUB_STATUS_SILENT -u TS_STUB_STATUS_HANG \
+            TS_SOCKET_PATH="$ts_sock" TS_STUB_UP_MARKER="$ts_up_marker" \
+            PATH="$ts_bin" "$@" "$bash_bin" "$ts_connect" 2>&1)" || ts_rc=$?
+        [ "$ts_rc" = "$want_rc" ] ||
+            fail "tailscale-connect.sh case ${label}: exited ${ts_rc}, expected ${want_rc}: ${ts_case_out}"
+    }
+
+    # (a) optional + no CLI → exit 0, and still says "unavailable" (test 7's
+    #     assertion greps for that substring, so the wording is a contract).
+    ts_connect_run 0 "a (optional, no CLI)" PATH="/nonexistent"
+    case "$ts_case_out" in
+    *"unavailable"*) ;;
+    *) fail "tailscale-connect.sh case a: did not report tailscale unavailable: ${ts_case_out}" ;;
+    esac
+
+    # (b) required + no CLI → exit 1, FATAL. The missing-CLI path is the one
+    #     that used to be most obviously harmless.
+    ts_rc=0
+    ts_case_out="$(env -u DEVCONTAINER_TAILSCALE_OPTIONAL \
+        DEVCONTAINER_TAILSCALE_REQUIRED=true PATH="/nonexistent" \
+        "$bash_bin" "$ts_connect" 2>&1)" || ts_rc=$?
+    [ "$ts_rc" = "1" ] ||
+        fail "tailscale-connect.sh case b: exited ${ts_rc} with no CLI and the tailnet required, expected 1"
+    case "$ts_case_out" in
+    *FATAL*) ;;
+    *) fail "tailscale-connect.sh case b: required + no CLI did not report FATAL: ${ts_case_out}" ;;
+    esac
+
+    # (c) required + CLI + no key → exit 1, and names the variable to set.
+    ts_connect_run 1 "c (required, no key)" DEVCONTAINER_TAILSCALE_REQUIRED=true
+    case "$ts_case_out" in
+    *TS_AUTHKEY*) ;;
+    *) fail "tailscale-connect.sh case c: missing-key FATAL does not name TS_AUTHKEY: ${ts_case_out}" ;;
+    esac
+
+    # (d) optional + CLI + no key → exit 0. The bot profile and every plain
+    #     local devcontainer live here; this is the behavior that must NOT
+    #     change.
+    ts_connect_run 0 "d (optional, no key)"
+
+    # (e) required + the opt-out → exit 0. The smoke test's path.
+    ts_connect_run 0 "e (required, opted out)" \
+        DEVCONTAINER_TAILSCALE_REQUIRED=true DEVCONTAINER_TAILSCALE_OPTIONAL=true
+
+    # (f) required + DEVCONTAINER_TAILSCALE_OPTIONAL=1 → exit 1. ONLY the exact
+    #     string `true` demotes; a truthy-looking value must not disarm a gate.
+    ts_connect_run 1 "f (required, OPTIONAL=1 is not true)" \
+        DEVCONTAINER_TAILSCALE_REQUIRED=true DEVCONTAINER_TAILSCALE_OPTIONAL=1
+
+    if [ "$ts_sock_ready" = "yes" ]; then
+        # (g) required + BackendState=Running → exit 0 via the fast path, and
+        #     `tailscale up` is NOT called. Proves readiness is judged by
+        #     BackendState rather than by reconnecting unconditionally.
+        rm -f "$ts_up_marker"
+        ts_connect_run 0 "g (required, already Running)" \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key TS_STUB_STATE=Running
+        [ ! -e "$ts_up_marker" ] ||
+            fail "tailscale-connect.sh case g: ran 'tailscale up' although BackendState was already Running"
+
+        # (h) required + NeedsLogin + up succeeds → exit 0, and reports the
+        #     environment-appropriate node name.
+        rm -f "$ts_up_marker"
+        ts_connect_run 0 "h (required, NeedsLogin, up ok)" \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key \
+            TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=0
+        [ -e "$ts_up_marker" ] ||
+            fail "tailscale-connect.sh case h: never ran 'tailscale up' from NeedsLogin"
+        case "$ts_case_out" in
+        *"Connected to tailnet as cr-"* | *"Connected to tailnet as dc-"* | *"Connected to tailnet as gh-"*) ;;
+        *) fail "tailscale-connect.sh case h: did not report a prefixed node name: ${ts_case_out}" ;;
+        esac
+
+        # (i) required + NeedsLogin + up FAILS → exit 1, FATAL. THE case this whole
+        #     change exists for: an expired or already-consumed auth key. Mutating
+        #     the script back to its swallow-on-failure behavior makes this one
+        #     return 0, which is the mutation test the issue asks for.
+        ts_connect_run 1 "i (required, NeedsLogin, up failed)" \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key \
+            TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
+        case "$ts_case_out" in
+        *FATAL*) ;;
+        *) fail "tailscale-connect.sh case i: failed connect did not report FATAL: ${ts_case_out}" ;;
+        esac
+
+        # (j) optional + NeedsLogin + up FAILS → exit 0. The unchanged behavior
+        #     everywhere the tailnet is genuinely optional.
+        ts_connect_run 0 "j (optional, NeedsLogin, up failed)" \
+            TS_AUTHKEY=stub-key TS_STUB_STATE=NeedsLogin TS_STUB_UP_RC=1
+
+        # (k) required + a STALE socket: the inode exists (this fixture binds
+        #     and then exits, which is exactly what a crashed tailscaled leaves
+        #     behind) but the daemon does not answer. Readiness must not be
+        #     satisfied by the inode alone — it must wait, then bail. `up` must
+        #     never run against a daemon that never came up.
+        rm -f "$ts_up_marker"
+        ts_connect_run 1 "k (required, stale socket, daemon silent)" \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key TS_STUB_STATUS_SILENT=1
+        case "$ts_case_out" in
+        *"not answering"*) ;;
+        *) fail "tailscale-connect.sh case k: did not report an unanswering daemon: ${ts_case_out}" ;;
+        esac
+        [ ! -e "$ts_up_marker" ] ||
+            fail "tailscale-connect.sh case k: ran 'tailscale up' against a daemon that never answered"
+
+        # (l) the same, optional → exit 0. A silent daemon is not fatal where
+        #     the tailnet was never required.
+        ts_connect_run 0 "l (optional, stale socket, daemon silent)" \
+            TS_AUTHKEY=stub-key TS_STUB_STATUS_SILENT=1
+
+        # (m) required + a daemon that HANGS rather than answering. The point
+        #     is the BOUND, not just the exit code: a probe timeout multiplied
+        #     by an iteration count would take minutes, and an unkilled probe
+        #     would never return at all, so the failure message's deadline
+        #     would be a lie precisely when it is load-bearing. Allow generous
+        #     slack over the 10s deadline (CI is slow and each probe carries
+        #     its own budget) while still failing decisively on a loop that
+        #     multiplies instead of deadlines.
+        local ts_hang_start ts_hang_elapsed
+        ts_hang_start=$SECONDS
+        ts_connect_run 1 "m (required, daemon hangs)" \
+            DEVCONTAINER_TAILSCALE_REQUIRED=true TS_AUTHKEY=stub-key TS_STUB_STATUS_HANG=1
+        ts_hang_elapsed=$((SECONDS - ts_hang_start))
+        [ "$ts_hang_elapsed" -lt 60 ] ||
+            fail "tailscale-connect.sh case m: took ${ts_hang_elapsed}s against a hanging daemon — the readiness wait is not bounded by its deadline"
+        case "$ts_case_out" in
+        *"not answering"*) ;;
+        *) fail "tailscale-connect.sh case m: did not report an unanswering daemon: ${ts_case_out}" ;;
+        esac
+    fi
 
     # 8. Antigravity runs without permission prompts inside the container,
     #    which is the isolation boundary. The apply helper must enforce those
@@ -1068,6 +1325,686 @@ SENTINEL_SCRIPT
         esac
     done
 
+    # 10b. The bot profile's gh-identity tripwire (harmon-init#1236). The git-identity
+    #    assertions prove who a container COMMITS as; nothing proved who `gh`
+    #    WRITES as. A bot container whose gh holds a human credential
+    #    attributes every issue, PR, and comment to that human — and parks a
+    #    personal credential inside a bypassPermissions container. The helper
+    #    decides from `gh auth status` output ALONE (the stored-credential
+    #    shapes name their account even when validation fails), so these cases
+    #    run against a stub gh with no network. The contract under test:
+    #    unauthenticated passes-with-remedy (a fresh container before token
+    #    provisioning is healthy), any credential naming a non-bot account is
+    #    a violation, and an unverifiable token is indeterminate — never a
+    #    failure.
+    local gh_check gh_id_bin gh_id_fixture gh_id_out gh_id_rc
+    gh_check="${repo_root}/.devcontainer/scripts/check-bot-gh-identity.sh"
+    [ -f "$gh_check" ] || fail "check-bot-gh-identity.sh not found at ${gh_check}"
+
+    gh_id_bin="${work_dir}/gh-identity-bin"
+    gh_id_fixture="${work_dir}/gh-identity-fixture"
+    mkdir -p "$gh_id_bin" "${work_dir}/empty-bin"
+    ln -s "$bash_bin" "${gh_id_bin}/bash"
+    # sed is on this list because the helper strips ANSI with it — the
+    # constrained PATH exists to isolate `gh`, not to prove the script runs
+    # without POSIX tools.
+    for gh_id_dep in cat grep awk sort sleep sed; do
+        ln -s "$(command -v "$gh_id_dep")" "${gh_id_bin}/${gh_id_dep}"
+    done
+    # timeout: Homebrew coreutils on macOS ships it as gtimeout (the same
+    # split scripts/status.sh handles), so resolve whichever exists and link
+    # it under the name the helper probes — the wedged-gh case below depends
+    # on the bound existing, and `ln -s ""` under set -e would otherwise
+    # abort the whole unit run before any identity case.
+    local gh_id_timeout
+    gh_id_timeout="$(command -v timeout || command -v gtimeout)" ||
+        fail "neither timeout nor gtimeout is available for the gh-identity unit cases"
+    ln -s "$gh_id_timeout" "${gh_id_bin}/timeout"
+
+    gh_identity_run() {
+        # $1 = stub gh exit code; the fixture file holds the stub's output.
+        # The token aliases are cleared explicitly: unit mode also runs
+        # inside the bot container, whose real GH_TOKEN would otherwise
+        # leak into every case's environment.
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" \
+            GH_IDENTITY_TEST_RC="$1" \
+            GH_TOKEN= GITHUB_TOKEN= GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    }
+
+    # gh ABSENT from PATH: indeterminate (3), never a violation — the image
+    # toolchain checks own "gh is installed"; this check owns identity only.
+    # Runs before the stub gh below is created, so the constrained PATH
+    # genuinely has no gh.
+    gh_id_rc=0
+    PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "gh-identity check exited ${gh_id_rc} with no gh on PATH — expected indeterminate (3)"
+
+    printf '%s\n' '#!/bin/sh' 'cat "$GH_IDENTITY_TEST_FIXTURE"' \
+        'exit "${GH_IDENTITY_TEST_RC:-0}"' >"${gh_id_bin}/gh"
+    chmod 0755 "${gh_id_bin}/gh"
+
+    # Fresh container, token never provisioned: PASS-WITH-REMEDY (2). The
+    # remedy must name GH_TOKEN and the env-file, and must never be an
+    # operator login — gh's own output suggests exactly that, which is how
+    # the live violation happened.
+    printf '%s\n' \
+        'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "2" ] ||
+        fail "unauthenticated gh exited ${gh_id_rc}, expected pass-with-remedy (2)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "unauthenticated gh-identity warning does not name GH_TOKEN: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *.devcontainer/devcontainer.env*) ;;
+    *) fail "unauthenticated gh-identity warning does not name .devcontainer/devcontainer.env: ${gh_id_out}" ;;
+    esac
+    # The remedy must describe the PROVISIONING chain (harmon-init#1236 scope correction):
+    # on Coder the PAT arrives from the workspace's template parameter, and
+    # generically from the host env init-env.sh projects — never a
+    # hand-authored secret file, and never an interactive login.
+    case "$gh_id_out" in
+    *"template parameter"*) ;;
+    *) fail "unauthenticated gh-identity warning does not name the Coder template parameter: ${gh_id_out}" ;;
+    esac
+    if offers_login "$gh_id_out"; then
+        fail "gh-identity warning offers an operator login in a bot container"
+    fi
+
+    # Authenticated as the bot: OK. The RELATIONSHIP (a '-bot' suffix, same
+    # style as the git-identity assertions) — never a literal account name.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "0" ] ||
+        fail "bot-suffixed gh login exited ${gh_id_rc}, expected pass (0)"
+
+    # The observed violation (harmon-init#1236): an operator login in the bot container.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        '  - Active account: true' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot gh login exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *someoperator*) ;;
+    *) fail "gh-identity violation warning does not name the offending login: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "gh-identity violation warning does not name the GH_TOKEN remedy: ${gh_id_out}" ;;
+    esac
+    if offers_login "$gh_id_out"; then
+        fail "gh-identity violation warning offers an operator login in a bot container"
+    fi
+
+    # Enterprise Managed Users. GitHub appends `_<enterprise-shortcode>` to
+    # the IdP username, so the bot account provisioned as `someowner-bot` IS
+    # `someowner-bot_acme` there — the canonical generated shape, and it must
+    # PASS. An earlier round tested the raw login and rejected exactly this
+    # account; the relationship belongs on the IdP component.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot_acme (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "0" ] ||
+        fail "canonical EMU bot login 'someowner-bot_acme' exited ${gh_id_rc}, expected pass (0)"
+
+    # ...and an EMU login whose IdP component is NOT a bot is still a
+    # violation, named in full so the operator can find the real account.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator_acme (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "EMU non-bot login 'someoperator_acme' exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *someoperator_acme*) ;;
+    *) fail "EMU violation warning does not name the FULL login: ${gh_id_out}" ;;
+    esac
+
+    # The ORDINARY naming pair this repo uses — `alice` beside `alice-bot` —
+    # is the case a substring source-lookup gets wrong: `alice` also matches
+    # the bot's (GH_TOKEN) record, which would classify the human credential
+    # as environment-sourced, drop the `gh auth logout` it needs, and send the
+    # operator to repair an already-correct bot token. The stored human
+    # credential must still get the logout instruction.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account alice-bot (GH_TOKEN)' \
+        '  ✓ Logged in to github.com account alice (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "human 'alice' beside bot 'alice-bot' exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*) ;;
+    *) fail "the stored human credential 'alice' lost its logout instruction to a substring match on 'alice-bot': ${gh_id_out}" ;;
+    esac
+
+    # Every INDETERMINATE report carries the remedy, never a bare verdict: the
+    # acceptance criteria ask for indeterminate *with* the remedy, and a
+    # reader told only "unverified" has nothing to act on. Timeout path:
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 124
+    [ "$gh_id_rc" = "3" ] ||
+        fail "timed-out enumeration exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the timeout indeterminate report carries no provisioning remedy: ${gh_id_out}" ;;
+    esac
+
+    # ...and the unparseable-output path:
+    printf '%s\n' 'something gh has never printed before' >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "3" ] ||
+        fail "unparseable gh output exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the unparseable indeterminate report carries no provisioning remedy: ${gh_id_out}" ;;
+    esac
+
+    # The same login on two hosts with DIFFERENT credential sources —
+    # `alice (GH_TOKEN)` on github.com beside `alice (keyring)` on a GHES
+    # host — is one entry after `sort -u`, so an if/else source lookup records
+    # only one of them and the remedy drops the `gh auth logout` the stored
+    # credential needs. Both remedies must appear. Found by the integration
+    # stage's cloud review.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account alice (GH_TOKEN)' \
+        '' \
+        'ghe.example.com' \
+        '  ✓ Logged in to ghe.example.com account alice (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "duplicate non-bot login across hosts exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*) ;;
+    *) fail "a login with BOTH env and stored records lost the stored credential's logout remedy: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *"cannot remove it"*) ;;
+    *) fail "a login with BOTH env and stored records lost the environment remedy: ${gh_id_out}" ;;
+    esac
+
+    # An unconfigured GH_HOST reports its own `(default)` failure ALONGSIDE
+    # another host's healthy bot record. Accepting the parsed login first
+    # declared a clean identity while the host gh would actually write to was
+    # unauthenticated. The `(default)` branch must be reached first.
+    printf '%s\n' \
+        'ghe.example.com' \
+        '  X Failed to log in to ghe.example.com using token (default)' \
+        '' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "2" ] ||
+        fail "an unauthenticated GH_HOST target beside a stored bot login exited ${gh_id_rc}, expected unauthenticated (2)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the unauthenticated-target banner names no provisioning remedy: ${gh_id_out}" ;;
+    esac
+
+    # The violation remedy must match the credential SOURCE. `gh auth logout`
+    # removes a stored record and can do nothing about a token from the
+    # environment — and a misprovisioned GH_TOKEN carrying the wrong account
+    # is a primary failure mode, so a remedy that cannot work there is worse
+    # than none. Found by the review stage.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "env-sourced non-bot login exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"cannot remove it"*) ;;
+    *) fail "env-sourced violation remedy does not say gh auth logout cannot remove it: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*)
+        fail "env-sourced violation remedy prescribes gh auth logout, which cannot remove an environment token"
+        ;;
+    esac
+
+    # ...while a STORED non-bot record still gets the logout instruction.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "stored non-bot login exited ${gh_id_rc}, expected violation (1)"
+    case "$gh_id_out" in
+    *"gh auth logout --hostname"*) ;;
+    *) fail "stored violation remedy omits the gh auth logout instruction: ${gh_id_out}" ;;
+    esac
+
+    # Forced colour must not defeat the parse. A container inheriting
+    # CLICOLOR_FORCE=1 makes gh wrap the login in ANSI, and the parse requires
+    # an alphanumeric immediately after "account"/"as" — so the login was
+    # omitted and a stored NON-BOT credential degraded from a violation (1) to
+    # "could not parse" (3), which the CONTAINER ASSERT ACCEPTS. That is a
+    # security bypass reachable from an environment variable. Found by the
+    # integration stage's cloud review; reproduced before fixing.
+    printf '%s\n' \
+        'github.com' \
+        "  $(printf '\033')[0;32m✓$(printf '\033')[0m Logged in to github.com account $(printf '\033')[1msomeoperator$(printf '\033')[0m (keyring)" \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "an ANSI-coloured non-bot login exited ${gh_id_rc}, expected violation (1) — colour defeated the parse and the assert accepts 3"
+    case "$gh_id_out" in
+    *someoperator*) ;;
+    *) fail "the ANSI-coloured violation warning does not name the login: ${gh_id_out}" ;;
+    esac
+
+    # gh absent is indeterminate, and an indeterminate report owes a remedy
+    # like every other one — AC3 carves out no exception for it.
+    gh_id_rc=0
+    gh_id_out="$(PATH="${work_dir}/empty-bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "gh absent exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *Remedy*) ;;
+    *) fail "the gh-absent indeterminate report carries no remedy: ${gh_id_out}" ;;
+    esac
+
+    # A stored login names its account even when validation fails (offline
+    # or revoked): the CREDENTIAL is the violation, not the token's
+    # freshness, so this must not degrade to indeterminate.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com account someoperator (/home/vscode/.config/gh/hosts.yml)' \
+        '  - Active account: true' \
+        '  - The token in /home/vscode/.config/gh/hosts.yml is invalid.' \
+        '  - To re-authenticate, run: gh auth refresh -h github.com' \
+        '  - To forget about this account, run: gh auth logout -h github.com -u someoperator' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "1" ] ||
+        fail "stale non-bot gh credential exited ${gh_id_rc}, expected violation (1)"
+    if offers_login "$gh_id_out"; then
+        fail "stale-credential gh-identity warning offers an operator login in a bot container"
+    fi
+
+    # GH_TOKEN present but unverifiable (offline, rate-limited, expired):
+    # gh names no account, so identity is INDETERMINATE (3) — a network
+    # hiccup must not fail the assert or block a fresh container.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '  - The token in GH_TOKEN is invalid.' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "3" ] ||
+        fail "unverifiable GH_TOKEN exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # A human credential parked BESIDE a valid bot token is still a
+    # violation: gh can switch accounts, and the personal credential is
+    # inside the container either way.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 0
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot credential beside the bot token exited ${gh_id_rc}, expected violation (1)"
+
+    # An UNNAMED failed-token entry beside a named stored bot login: gh
+    # prefers an environment token for writes, so while one is unverified
+    # the ACTIVE identity is unknown no matter which stored logins are also
+    # present — indeterminate (3), never a clean 0 off the stored account.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '' \
+        '  ✓ Logged in to github.com account someowner-bot (keyring)' \
+        '  - Active account: false' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "3" ] ||
+        fail "unverifiable token beside a stored bot login exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # ...but a KNOWN non-bot credential still outranks that indeterminacy:
+    # the stored human login is a violation regardless of what the unnamed
+    # token would have resolved to.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        '  - Active account: false' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot stored login beside an unverifiable token exited ${gh_id_rc}, expected violation (1)"
+
+    # A SHADOWED environment-token alias is credential material gh cannot
+    # enumerate: with both GH_TOKEN and GITHUB_TOKEN set, gh auth status
+    # reports only GH_TOKEN (verified live), so a valid bot token in front
+    # of a different personal token must not read as "every credential is
+    # a bot". Indeterminate — and the warning names the alias, never the
+    # value.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN=sentinel-shadowed \
+        GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "a shadowed GITHUB_TOKEN behind a bot GH_TOKEN exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *GITHUB_TOKEN*) ;;
+    *) fail "shadowed-alias warning does not name the shadowed variable: ${gh_id_out}" ;;
+    esac
+    case "$gh_id_out" in
+    *sentinel-shadowed* | *sentinel-primary*)
+        fail "shadowed-alias warning printed a token VALUE"
+        ;;
+    esac
+
+    # The same value spelled through two aliases is one credential twice,
+    # not a shadow: stays clean.
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN=sentinel-primary \
+        GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "0" ] ||
+        fail "duplicate same-value aliases exited ${gh_id_rc}, expected pass (0)"
+
+    # A known non-bot login still outranks the shadow's indeterminacy.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN=sentinel-shadowed \
+        GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "1" ] ||
+        fail "non-bot login beside shadowed aliases exited ${gh_id_rc}, expected violation (1)"
+
+    # An environment token gh attributes to NO host (an enterprise alias
+    # with no configured GHES host) must not read as clean-unauthenticated:
+    # the credential is present, just invisible to the enumeration.
+    printf '%s\n' \
+        'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=1 \
+        GH_TOKEN= GITHUB_TOKEN= GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "an unattributed enterprise token with no logins exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # gh's own BUILT-IN timeout is a fourth status shape: it exits with the
+    # ordinary failure code (not 124/137) and writes "Timeout ... log in to
+    # <host> using token" / "... account <login>". A timed-out active token
+    # beside a stored bot login must stay unverified, not clean.
+    printf '%s\n' \
+        'github.com' \
+        '  X Timeout trying to log in to github.com using token (GH_TOKEN)' \
+        '  - Active account: true' \
+        '' \
+        '  ✓ Logged in to github.com account someowner-bot (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "3" ] ||
+        fail "a gh-internal token timeout beside a stored bot login exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # ...and a timeout record that NAMES a non-bot account is still a
+    # credential claiming a human identity: violation, whatever wording
+    # variant gh used.
+    printf '%s\n' \
+        'github.com' \
+        '  X Timeout error trying to log in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "1" ] ||
+        fail "a gh-internal timeout naming a non-bot account exited ${gh_id_rc}, expected violation (1)"
+
+    # The two alias pairs are INDEPENDENT precedence groups (gh help
+    # environment): a bot GH_TOKEN beside a different GH_ENTERPRISE_TOKEN,
+    # both enumerated as bot accounts on their own hosts, is a legitimate
+    # setup — never a shadow.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        '' \
+        'ghe.example.com' \
+        '  ✓ Logged in to ghe.example.com account someowner-bot (GH_ENTERPRISE_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN= \
+        GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    [ "$gh_id_rc" = "0" ] ||
+        fail "cross-pair bot tokens on their own hosts exited ${gh_id_rc}, expected pass (0)"
+
+    # A *.ghe.com tenant host is served by GH_TOKEN (gh help environment),
+    # so its presence is NOT evidence the enterprise token was enumerated:
+    # only a record explicitly sourced from the enterprise alias is.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        '' \
+        'tenant.ghe.com' \
+        '  ✓ Logged in to tenant.ghe.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN= \
+        GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "an enterprise token with only GH_TOKEN-sourced ghe.com records exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *"never enumerated"*) ;;
+    *) fail "the ghe.com-tenant note does not say the enterprise token was never enumerated: ${gh_id_out}" ;;
+    esac
+
+    # gh's "(default)" pseudo-source — GH_HOST selecting a host with
+    # neither a stored login nor a token — is the ordinary unauthenticated
+    # state, not an unverified token: the banner-and-remedy exit, never a
+    # false token-present indeterminate.
+    printf '%s\n' \
+        'github.com' \
+        '  X Failed to log in to github.com using token (default)' \
+        >"$gh_id_fixture"
+    gh_identity_run 1
+    [ "$gh_id_rc" = "2" ] ||
+        fail "a (default) pseudo-source with no aliases exited ${gh_id_rc}, expected unauthenticated (2)"
+    case "$gh_id_out" in
+    *GH_TOKEN*) ;;
+    *) fail "the (default) unauthenticated banner does not name GH_TOKEN: ${gh_id_out}" ;;
+    esac
+    if offers_login "$gh_id_out"; then
+        fail "the (default) unauthenticated banner offers an operator login"
+    fi
+
+    # ...but an enterprise token gh attributes to NO host was never
+    # enumerated: present-but-invisible credential material, indeterminate
+    # even while the github.com login reads bot.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+        GH_TOKEN=sentinel-primary GITHUB_TOKEN= \
+        GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    [ "$gh_id_rc" = "3" ] ||
+        fail "an enterprise token with no GHES host enumerated exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *"never enumerated"*) ;;
+    *) fail "the unattributed enterprise-token note does not say the token was never enumerated: ${gh_id_out}" ;;
+    esac
+
+    # A TIMED-OUT enumeration is INCOMPLETE, not clean: gh validates
+    # accounts sequentially, so a probe killed after printing the bot
+    # account but before a later stored human credential must not read as
+    # "every credential is a bot". The stub reproduces the partial output
+    # and timeout(1)'s 124.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+        >"$gh_id_fixture"
+    gh_identity_run 124
+    [ "$gh_id_rc" = "3" ] ||
+        fail "timed-out bot-only enumeration exited ${gh_id_rc}, expected indeterminate (3)"
+
+    # ...while a non-bot login already parsed BEFORE the deadline is
+    # evidence that stands: the violation outranks the incompleteness.
+    printf '%s\n' \
+        'github.com' \
+        '  ✓ Logged in to github.com account someoperator (keyring)' \
+        >"$gh_id_fixture"
+    gh_identity_run 124
+    [ "$gh_id_rc" = "1" ] ||
+        fail "timed-out enumeration with a parsed non-bot login exited ${gh_id_rc}, expected violation (1)"
+
+    # A WEDGED gh (stalled network, DNS, or credential backend) must not
+    # hang the callers: post-start and the container assert invoke the
+    # helper with no wrapper, so the bound has to live inside it. The stub
+    # sleeps far past the 1s override; only the helper's own timeout can
+    # end the run quickly, and the elapsed bound is what catches an
+    # unbounded probe.
+    local gh_id_start gh_id_elapsed
+    printf '%s\n' '#!/bin/sh' 'sleep 45' >"${gh_id_bin}/gh"
+    gh_id_start="$(date +%s)"
+    gh_id_rc=0
+    GH_IDENTITY_TIMEOUT=1 PATH="$gh_id_bin" "$bash_bin" "$gh_check" >/dev/null 2>&1 || gh_id_rc=$?
+    gh_id_elapsed=$(($(date +%s) - gh_id_start))
+    [ "$gh_id_elapsed" -lt 30 ] ||
+        fail "gh-identity probe ran ${gh_id_elapsed}s against a wedged gh — the helper carries no timeout"
+    [ "$gh_id_rc" = "3" ] ||
+        fail "wedged gh exited ${gh_id_rc}, expected indeterminate (3) via the helper's own timeout"
+
+    # A kill-resistant gh (TERM trapped) must still resolve inside the
+    # caller's window: the kill grace is parameterized so the status
+    # board's outer bound can contain deadline + grace, and the helper's
+    # own timed-out note survives to be printed. Elapsed is the assertion:
+    # the default 5s grace would run ~6s and lose the note to the outer
+    # kill.
+    printf '%s\n' '#!/bin/sh' "trap '' TERM" 'sleep 45' >"${gh_id_bin}/gh"
+    gh_id_start="$(date +%s)"
+    gh_id_rc=0
+    gh_id_out="$(GH_IDENTITY_TIMEOUT=1 GH_IDENTITY_KILL_GRACE=1 \
+        PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    gh_id_elapsed=$(($(date +%s) - gh_id_start))
+    [ "$gh_id_elapsed" -lt 5 ] ||
+        fail "kill-resistant gh took ${gh_id_elapsed}s under a 1s deadline + 1s grace — the grace is not parameterized"
+    [ "$gh_id_rc" = "3" ] ||
+        fail "kill-resistant gh exited ${gh_id_rc}, expected indeterminate (3)"
+    case "$gh_id_out" in
+    *"timed out"*) ;;
+    *) fail "kill-resistant gh lost the helper's own timed-out note: ${gh_id_out}" ;;
+    esac
+
+    # Wiring: the BOT post-start runs the tripwire on every start (an
+    # interactive login can happen at any point in a container's life, not
+    # just at create); the human profile must not — a human login is that
+    # profile's correct state.
+    #
+    # Matched as an EXECUTION line with comments stripped, the way the
+    # status-board assertion above is. A bare grep over the whole file passes
+    # on any mention of the filename — today the only mention is the
+    # invocation, so it does bite, but the comments right above it describe
+    # the tripwire and one edit that names the file there would silently make
+    # this check vacuous. Cheap to close now; invisible once it happens.
+    grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-start.sh" |
+        grep -qE '^[[:space:]]*bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' ||
+        fail "bot post-start does not EXECUTE the gh-identity tripwire (a mention in a comment is not a run)"
+    if grep -q 'check-bot-gh-identity.sh' "${repo_root}/.devcontainer/dev/post-start.sh"; then
+        fail "human post-start runs the bot-only gh-identity tripwire"
+    fi
+
+    # The status board no longer probes gh identity (see the note in
+    # status.sh): that surface was descoped rather than hardened a fourth time.
+    # What it still owes is the remedy WORDING below, which is checked here, and
+    # the "no hardcoded remedy acting on the current login" invariant, which
+    # lives in scripts/test-status.sh beside the ${GH_REMEDY} derivation guard
+    # it was widened from (issue #596) — one invariant, one home.
+    local status_sh
+    status_sh="${repo_root}/scripts/status.sh"
+    # The "no hardcoded remedy acting on the current login" invariant lives in
+    # scripts/test-status.sh, beside the ${GH_REMEDY} derivation guard it was
+    # widened from (issue #596) — one invariant, one home. This file keeps the
+    # devcontainer WIRING assertions only.
+
+    # The credential line's own remedy must not contradict the tripwire banner
+    # on the same screen: in the bot profile an operator `gh auth login` is the
+    # escalation harmon-init#1236 exists to stop.
+    local remedy_out
+    remedy_out="$(FOREMAN_DEVCONTAINER=bot "$bash_bin" -c \
+        "$(sed -n '/^gh_login_remedy() {/,/^}/p' "$status_sh"); gh_login_remedy")"
+    if offers_login "$remedy_out"; then
+        fail "status board's gh remedy offers an interactive login in the bot profile: ${remedy_out}"
+    fi
+    case "$remedy_out" in
+    *GH_TOKEN*) ;;
+    *) fail "status board's bot-profile gh remedy does not name GH_TOKEN: ${remedy_out}" ;;
+    esac
+    remedy_out="$(FOREMAN_DEVCONTAINER= "$bash_bin" -c \
+        "$(sed -n '/^gh_login_remedy() {/,/^}/p' "$status_sh"); gh_login_remedy")"
+    if ! offers_login "$remedy_out"; then
+        fail "status board's gh remedy omits the operator login outside the bot profile: ${remedy_out}"
+    fi
+
+    # The SCOPE remedy gets the same behavioral treatment as the login remedy.
+    # The static guard in test-status.sh exempts this helper's whole body —
+    # correctly, since it is the derivation — which means reverting its bot
+    # branch to `task setup:gh-scopes` would slip past a purely static check.
+    # That residual is what this pair closes. Found by the review stage.
+    local scope_src
+    scope_src="$(sed -n '/^gh_scope_remedy_default() {/,/^}/p' "$status_sh")"
+    remedy_out="$(FOREMAN_DEVCONTAINER=bot "$bash_bin" -c \
+        ". \"$scopes_lib\"; $scope_src; gh_scope_remedy_default")"
+    case "$remedy_out" in
+    *"setup:gh-scopes"* | *"gh auth refresh"* | *"gh auth login"*)
+        fail "status board's bot-profile scope remedy tells the reader to act on the current login, which the tripwire may be about to condemn: ${remedy_out}"
+        ;;
+    esac
+    case "$remedy_out" in
+    *GH_TOKEN*) ;;
+    *) fail "status board's bot-profile scope remedy does not point at re-provisioning GH_TOKEN: ${remedy_out}" ;;
+    esac
+    remedy_out="$(FOREMAN_DEVCONTAINER= "$bash_bin" -c \
+        ". \"$scopes_lib\"; $scope_src; gh_scope_remedy_default")"
+    case "$remedy_out" in
+    *"setup:gh-scopes"*) ;;
+    *) fail "status board's scope remedy outside the bot profile no longer names the scopes task: ${remedy_out}" ;;
+    esac
+
     # 11. Static devcontainer.json invariants via the devcontainers CLI.
     assert_config_invariants "$repo_root" "$bot_config" bot
     assert_config_invariants "$repo_root" "$dev_config" dev
@@ -1117,6 +2054,70 @@ assert_config_invariants() {
         jq -r '.configuration.customizations.vscode.settings["terminal.integrated.env.linux"].BROWSER // "<absent>"')"
     [ "$terminal_browser_config" = "" ] ||
         fail "${profile} config no longer blanks generic BROWSER in VS Code terminals"
+
+    # The tailnet gate's config-level invariants, across TWO markers.
+    #
+    # DEVCONTAINER_TAILSCALE means "this profile HAS a tailnet".
+    # post-start-common.sh gates the whole connect step on it, so losing it from
+    # the dev config silently stops that profile from ever attempting a
+    # connection — even with a valid TS_AUTHKEY. Unconditional, asserted per
+    # profile: dev sets it, bot must not.
+    #
+    # DEVCONTAINER_TAILSCALE_REQUIRED is what makes a failed connect FATAL. It
+    # is optional by design — arming it makes a profile unable to start without
+    # a Tailscale account and a live auth key, which no generated repo may
+    # depend on by default — so it is gated on the `tailscale_required` copier
+    # answer and its absence is a legitimate rendering. This script is a
+    # verbatim twin and runs in repos that answered either way.
+    local ts_marker ts_required ts_optional_env ts_map
+    ts_marker="$(printf '%s' "$cfg" |
+        jq -r '.configuration.containerEnv.DEVCONTAINER_TAILSCALE // "<absent>"')"
+    ts_required="$(printf '%s' "$cfg" |
+        jq -r '.configuration.containerEnv.DEVCONTAINER_TAILSCALE_REQUIRED // "<absent>"')"
+
+    # Both markers are exact-match knobs: a plausible-looking "yes" or "1" reads
+    # as absent to the shell test, so a config could look armed while being
+    # disarmed. Only `true` or absence is a coherent state.
+    case "$ts_marker" in
+    true | "<absent>") ;;
+    *) fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE='${ts_marker}' — only the exact string 'true' counts, so this looks set and is not" ;;
+    esac
+    case "$ts_required" in
+    true | "<absent>") ;;
+    *) fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE_REQUIRED='${ts_required}' — only the exact string 'true' arms the gate, so this looks armed and is not" ;;
+    esac
+
+    # Requiring a tailnet a profile cannot reach is unsatisfiable by
+    # construction, so the fatal marker may only appear where the profile
+    # actually declares a tailnet.
+    if [ "$ts_required" = "true" ] && [ "$ts_marker" != "true" ]; then
+        fail "${profile} config requires the tailnet (DEVCONTAINER_TAILSCALE_REQUIRED=true) without declaring one (DEVCONTAINER_TAILSCALE) — the gate could never be satisfied"
+    fi
+
+    if [ "$profile" = "dev" ]; then
+        [ "$ts_marker" = "true" ] ||
+            fail "dev config does not set containerEnv.DEVCONTAINER_TAILSCALE=true — post-start would never invoke tailscale-connect.sh, so this profile would never connect even with a valid TS_AUTHKEY"
+        [ "$has_ts_feature" != "0" ] ||
+            fail "dev config declares a tailnet but installs no tailscale feature"
+    else
+        [ "$ts_marker" != "true" ] ||
+            fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE=true — only the tailnet-bearing profile may declare one"
+        [ "$ts_required" != "true" ] ||
+            fail "${profile} config sets containerEnv.DEVCONTAINER_TAILSCALE_REQUIRED=true — only the tailnet-bearing profile may require one"
+    fi
+
+    # DEVCONTAINER_TAILSCALE_OPTIONAL demotes a required tailnet back to
+    # optional, and is meant to arrive via `devcontainer up --remote-env` so
+    # opting out is an explicit act at the CALL SITE. remoteEnv in a
+    # devcontainer.json IS applied to lifecycle commands, so a profile that set
+    # it either way could disable the gate from inside the very config the gate
+    # exists to guard. NEITHER profile may carry it in either map.
+    for ts_map in containerEnv remoteEnv; do
+        ts_optional_env="$(printf '%s' "$cfg" |
+            jq -r --arg m "$ts_map" '(.configuration[$m] // {}).DEVCONTAINER_TAILSCALE_OPTIONAL // "<absent>"')"
+        [ "$ts_optional_env" = "<absent>" ] ||
+            fail "${profile} config sets ${ts_map}.DEVCONTAINER_TAILSCALE_OPTIONAL ('${ts_optional_env}') — the tailnet opt-out belongs at the call site, not in the config it guards"
+    done
 
     if [ "$profile" = "bot" ]; then
         [ "$has_ts_feature" = "0" ] || fail "bot config has a tailscale feature"
@@ -1240,6 +2241,25 @@ assert_container() {
         case "$git_name" in
         *-bot) ;;
         *) fail "bot git name '${git_name}' does not end with '-bot'" ;;
+        esac
+
+        # Who gh WRITES as, not just who git commits as (harmon-init#1236) —
+        # the live counterpart of unit check 10b. The checkout's helper runs
+        # inside the container over stdin, so no workspace mount path is
+        # assumed. Only exit 1 — a credential naming a non-bot account — is the
+        # violation this assert exists to catch. Unauthenticated (2) passes:
+        # the helper already printed the GH_TOKEN remedy, and a fresh
+        # container before token provisioning is healthy. Indeterminate (3:
+        # offline, rate-limited, or an unverifiable token) is not evidence
+        # of a violation and must not fail a smoke run.
+        local gh_identity_rc=0
+        docker exec -i -u vscode "$container_id" bash -s \
+            <"${repo_root}/.devcontainer/scripts/check-bot-gh-identity.sh" ||
+            gh_identity_rc=$?
+        case "$gh_identity_rc" in
+        0 | 2 | 3) ;;
+        1) fail "bot container gh credential does not match the '-bot' relationship (see warning above)" ;;
+        *) fail "could not run the gh-identity check in the bot container (exit ${gh_identity_rc})" ;;
         esac
 
         # `command` is a shell BUILTIN, so it must run inside a shell: bare

@@ -26,7 +26,9 @@ if ! task --list-all >/dev/null 2>&1; then
     fail "task --list-all failed — the Taskfile does not compile"
 fi
 
-echo "==> closing-keyword preflight mirrors the API cap and supports pre-PR metadata"
+echo "==> closing-keyword preflight delegates to a linted script, not inline Taskfile bash"
+# The logic lives in scripts/guard-closing-keywords.sh so shellcheck/shfmt see
+# it (harmon-init#1196); inline `cmds:` strings are invisible to lint:shell.
 for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
     [ -f "$taskfile" ] || continue
     block="$(awk '
@@ -35,19 +37,29 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         inblock { print }
     ' "$taskfile")"
     [ -n "$block" ] || fail "${taskfile}: guard:closing-keywords task not found"
-    grep -Fq 'git merge-base "$base_sha" "$head_sha"' <<<"$block" ||
-        fail "${taskfile}: closing-keyword guard does not resolve the merge base"
-    grep -Fq 'git rev-list --count "${merge_base}..${head_sha}"' <<<"$block" ||
-        fail "${taskfile}: closing-keyword guard does not mirror the workflow commit cap"
-    grep -Fq 'git log --format=%B "${merge_base}..${head_sha}"' <<<"$block" ||
-        fail "${taskfile}: closing-keyword guard does not scan merge-base-to-head only"
-    if grep -Fq '${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}' <<<"$block"; then
-        fail "${taskfile}: closing-keyword guard still scans the symmetric difference"
+    grep -Fq './scripts/guard-closing-keywords.sh' <<<"$block" ||
+        fail "${taskfile}: guard:closing-keywords does not call scripts/guard-closing-keywords.sh"
+    if grep -Fq 'git merge-base' <<<"$block"; then
+        fail "${taskfile}: guard:closing-keywords re-inlined shell that lint:shell cannot see"
     fi
-    grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' <<<"$block" ||
-        fail "${taskfile}: closing-keyword guard does not distinguish unset metadata from an empty body"
-    grep -Fq 'gh pr list --head "$branch" --state open --limit 2 --json title,body' <<<"$block" ||
-        fail "${taskfile}: closing-keyword guard does not distinguish a missing PR from an API failure"
+done
+
+echo "==> closing-keyword preflight mirrors the API cap and supports pre-PR metadata"
+for guard in scripts/guard-closing-keywords.sh template/scripts/guard-closing-keywords.sh; do
+    [ -f "$guard" ] || continue
+    grep -Fq 'git merge-base "$base_sha" "$head_sha"' "$guard" ||
+        fail "${guard}: closing-keyword guard does not resolve the merge base"
+    grep -Fq 'git rev-list --count "${merge_base}..${head_sha}"' "$guard" ||
+        fail "${guard}: closing-keyword guard does not mirror the workflow commit cap"
+    grep -Fq 'git log --format=%B "${merge_base}..${head_sha}"' "$guard" ||
+        fail "${guard}: closing-keyword guard does not scan merge-base-to-head only"
+    if grep -Fq '${BASE_SHA:-origin/main}...${HEAD_SHA:-HEAD}' "$guard"; then
+        fail "${guard}: closing-keyword guard still scans the symmetric difference"
+    fi
+    grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' "$guard" ||
+        fail "${guard}: closing-keyword guard does not distinguish unset metadata from an empty body"
+    grep -Fq 'gh pr list --head "$branch" --state open --limit 2 --json title,body' "$guard" ||
+        fail "${guard}: closing-keyword guard does not distinguish a missing PR from an API failure"
 done
 
 guard_bin="${test_tmp}/closing-keywords-bin"

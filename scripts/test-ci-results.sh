@@ -41,7 +41,22 @@ reject_required "a malformed pair" success lint
 reject_required "an unsupported expectation" neutral lint=neutral
 reject_required "an empty result set" success
 
-workflow="${repo}/.github/workflows/build.yml"
+# The closing-keyword guard lives in its own workflow (harmon-init#1328) so it
+# can keep the `pull_request.edited` trigger the build matrix deliberately
+# drops — it reads the PR title and body, so a body edit genuinely changes its
+# input, while a body edit cannot change what the matrix tests.
+workflow="${repo}/.github/workflows/closing-keywords.yml"
+grep -q 'types: \[opened, edited, synchronize, reopened\]' "$workflow" ||
+    fail 'the closing-keyword guard must re-run when the PR title or body is edited'
+# Fixed-string over the trigger block with COMMENTS STRIPPED: `\b` is a GNU
+# extension (BSD grep happens to honour it, ugrep does too — but a negative
+# assertion that silently stops matching is vacuous, and this form depends on
+# nothing beyond POSIX). Comments must go first: build.yml's own explanation of
+# why `edited` is absent contains the word.
+if awk '/^on:/,/^jobs:/' "${repo}/.github/workflows/build.yml" |
+    grep -v '^[[:space:]]*#' | grep -Fq 'edited'; then
+    fail 'the build matrix must not re-run on a PR title/body edit'
+fi
 grep -q 'HEAD_REPO:.*head.repo.full_name' "$workflow" || fail 'bootstrap must compare the PR head repository'
 grep -q "grep -q '(HTTP 404)'" "$workflow" || fail 'bootstrap must require a confirmed default-branch 404'
 grep -Fq '[ "$HEAD_REPO" = "$GH_REPO" ]' "$workflow" || fail 'bootstrap must permit same-repo heads only'
