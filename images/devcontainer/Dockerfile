@@ -44,8 +44,8 @@ ARG PI_VERSION=0.85.1
 ARG OH_MY_PI_VERSION=18.2.6
 # oh-my-pi release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG OH_MY_PI_SHA256_AMD64=0d9dfcc4561b5877f571cac81226fe8a1466d951cb840e091f3f82a684b3fde4
-ARG OH_MY_PI_SHA256_ARM64=63086a9f6307a49595dc39b0ddcf9e97e1e63abb32b972595651202c58bb833a
+ARG OH_MY_PI_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
+ARG OH_MY_PI_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.31
 # Pinned from Google's per-platform release manifests. Keep the version, build,
