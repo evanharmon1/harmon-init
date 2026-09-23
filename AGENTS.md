@@ -342,22 +342,33 @@ and both procedures.
 advanced **only** by a base catch-up merge can carry the change forward
 byte-for-byte, and a fresh cycle then re-attests the same bytes at the cost of
 a full reviewer window. Where the PR's three-dot diff (`base...head`) has the
-same `git patch-id --verbatim` identity at the previously reviewed head and at
-this one — computed from immutable commit SHAs in the local checkout, never
-reconstructed from the API — the prior **clean** verdict carries to this head
-and no cycle is triggered. Equality of that one value is the whole argument:
-the reviewed artifact is the diff, and two heads whose diffs are identical are
-the same change. `--verbatim` rather than `--stable` is load-bearing, because
-`--stable` ignores all whitespace and would carry a verdict across a reformatted
-hunk. Anything that cannot be established — a changed patch, history rewritten
-rather than merged, a base the verdict was never corroborated against, a
-checkout without the commits, a verdict that was `findings` — requires the
-ordinary cycle, on the same invariant the exemption above runs under. Two things
-never move with the carry: **CI re-runs on the new head in full, always**,
-because what a base merge can change is everything *outside* the diff and that
-is CI's to catch; and the proof is **re-derived** wherever it is relied on
-rather than read back from the record, so a resumed session trusts nothing a
-previous process wrote. Like the exemption, this belongs to the integration
+same identity at the previously reviewed head and at this one — a digest of
+that diff's own text, computed from immutable commit SHAs in the local
+checkout, never reconstructed from the API — the prior **clean** verdict
+carries to this head and no cycle is triggered. Equality of that one value is
+the whole argument: the reviewed artifact is the diff, and two heads whose
+diffs are identical are the same change.
+
+The identity is deliberately **not** `git patch-id`, which ignores hunk
+offsets: a reviewed edit relocated between two identically-surrounded regions
+— what a conflict resolution can produce — yields two different trees and one
+patch id, so a verdict would carry across a change that really moved. Digesting
+the diff text keeps the `@@` headers that distinguish them.
+
+Anything that cannot be established — a changed diff, history rewritten rather
+than merged, a base the verdict was never corroborated against, a checkout
+without the commits or one whose history is overridden by replace refs or
+grafts, a verdict that was `findings` — requires the ordinary cycle, on the
+same invariant the exemption above runs under.
+
+Three things never move with the carry. **CI re-runs on the new head in full,
+always**, because what a base merge can change is everything *outside* the diff
+and that is CI's to catch. **The origin cycle is re-checked against live
+evidence** wherever the carried verdict is relied on, so a finding that lands
+on the reviewed head after the carry still blocks — what a carry removes is the
+second *review*, never the second *look*. And the proof is **re-derived** each
+time rather than read back from the record, so a resumed session trusts nothing
+a previous process wrote. Like the exemption, this belongs to the integration
 stage and takes effect only where that stage implements it — until the vendored
 pin in `.claude/skills/` carries it, every head is reviewed on its own and no
 verdict is carried.
@@ -490,7 +501,7 @@ unblock.
 
 `integration` also stops charging a cycle it never runs (#752). Where the head
 advanced only by a base merge and the PR's three-dot diff has the same
-`git patch-id --verbatim` identity as at the previously reviewed head, the
+identity as at the previously reviewed head, the
 prior clean verdict carries forward and **no cycle is triggered at all** —
 neither ceiling is spent, the cycle ordinal does not advance, and the ledger
 names the carried head (`cycle n/cap (+m exempt, +k carried)`) because a head
