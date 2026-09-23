@@ -22,7 +22,10 @@ to remove it is tracked in
 Remove the OpenSpec CLI, generated harness integrations, task and CI wiring,
 and `openspec/` tree. Return change planning to GitHub issues, ADRs, and plain
 files under `specs/`; unfinished work that remains valuable is tracked on its
-canonical issue before its OpenSpec artifact is removed.
+canonical issue before its OpenSpec artifact is removed. In particular,
+[harmon-init#1091](https://github.com/evanharmon1/harmon-init/issues/1091)
+retains the progress-bookkeeping work and the retirement note records the
+OpenSpec draft's unresolved design obligations.
 
 **Not:** remove the vendored Dev Loop skills managed by the skills sync.
 Only OpenSpec-generated entries are retired.
