@@ -172,6 +172,14 @@ run_guard
 expect_fail unannotated-version
 expect_output unannotated-version "version SHFMT_VERSION is not directly under a"
 
+echo "==> a hash name the Renovate checksum manager cannot extract -> fails"
+new_repo uppercase-hash
+sed -i.bak 's/shfmt_sha256=/SHFMT_SHA256=/' .github/actions/setup/action.yml
+rm -f .github/actions/setup/action.yml.bak
+run_guard
+expect_fail uppercase-hash
+expect_output uppercase-hash "must be lowercase"
+
 echo "==> a marker on a line that is not NAME=value -> fails"
 new_repo bad-marker
 printf '%s\n' '        echo hi # pin-pair: shfmt' >>.github/actions/setup/action.yml

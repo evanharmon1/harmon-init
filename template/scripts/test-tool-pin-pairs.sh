@@ -138,6 +138,13 @@ def parse(path, text, errors):
                 )
             entry["version"] = (i, var, val, ann["dep"] if ann else None)
         elif var.lower().endswith("_sha256"):
+            # Exactly the name grammar the renovate.json checksum manager
+            # extracts (`[a-z0-9_]+_sha256`); anything else is never updated.
+            if not re.fullmatch(r"[a-z0-9_]+_sha256", var):
+                errors.append(
+                    f"{path}:{i}: pin-pair '{tool}' hash {var} must be lowercase `[a-z0-9_]+_sha256` "
+                    "— the Renovate checksum manager extracts nothing else"
+                )
             if not re.fullmatch(r"[0-9a-f]{64}", val):
                 errors.append(f"{path}:{i}: pin-pair '{tool}' hash {var} is not 64 lowercase hex digits")
             ann = ANNOTATION.match(lines[i - 2]) if i >= 2 else None
