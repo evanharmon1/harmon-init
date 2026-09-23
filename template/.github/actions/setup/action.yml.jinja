@@ -37,6 +37,9 @@ runs:
   steps:
 [% if use_node %]
     - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      with:
+        # renovate: datasource=npm depName=pnpm
+        version: 12.5.1
     # PNPM_CONFIG_STORE_DIR is pnpm 12's environment-variable form of
     # `--store-dir`, verified against the pinned consumer version with
     # `pnpm config get store-dir`. $RUNNER_TEMP is emptied for every job;

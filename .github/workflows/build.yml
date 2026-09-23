@@ -193,20 +193,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          # renovate: datasource=node-version depName=node
-          node-version: "24"
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup
       - name: Install copier and validation tools
         run: |
           pipx install copier
           pip install yamllint
-          npm install -g @devcontainers/cli lefthook pnpm
+          npm install -g @devcontainers/cli lefthook
           # renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
           ACTIONLINT_VERSION=1.7.12
           curl -fsSL --retry 3 "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
