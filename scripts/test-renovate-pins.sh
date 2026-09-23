@@ -65,6 +65,25 @@ def js_to_py(rx):
 
 errors = []
 
+# CI and the strict-validation dispatcher must cover the same profile set.
+# This keeps a new matrix entry from silently taking an unsupported path.
+workflow = pathlib.Path(".github/workflows/build.yml").read_text()
+matrix_match = re.search(r"profile:\s*\[([^]]+)\]", workflow)
+dispatcher = pathlib.Path("scripts/test-renovate-config.sh").read_text()
+profiles_match = re.search(r"profiles=\(([^)]+)\)", dispatcher)
+if not matrix_match or not profiles_match:
+    errors.append("unable to read template-test matrix or strict-validation profiles")
+else:
+    matrix_profiles = [item.strip() for item in matrix_match.group(1).split(",")]
+    strict_profiles = profiles_match.group(1).split()
+    if matrix_profiles != strict_profiles:
+        errors.append(
+            "template-test matrix profiles do not match test:renovate-config: "
+            f"matrix={matrix_profiles!r}, strict={strict_profiles!r}"
+        )
+if './scripts/test-template-update.sh renovate-config' not in dispatcher:
+    errors.append("test:renovate-config does not validate the update profile's rendered config")
+
 root_mgr = load_shell_manager("renovate.json")
 tmpl_mgr = load_shell_manager("template/renovate.json.jinja")
 if not root_mgr:
@@ -211,10 +230,12 @@ def resolve_group(cfg, path, dep, datasource, manager="custom.regex"):
         if "matchDepTypes" in rule:
             continue  # regex-managed pins carry no depType
         names = rule.get("matchPackageNames")
-        if names and "*" not in names and dep not in names:
-            continue
-        if dep in rule.get("excludePackageNames", []):
-            continue
+        if names:
+            if f"!{dep}" in names:
+                continue
+            positive_names = [name for name in names if not name.startswith("!")]
+            if positive_names and "*" not in positive_names and dep not in positive_names:
+                continue
         globs = rule.get("matchFileNames")
         if globs and not any(glob_to_re(g).match(path) for g in globs):
             continue

@@ -109,7 +109,7 @@
         "scripts/**",
         "taskfiles/**"
       ],
-      "excludePackageNames": ["renovate"],
+      "matchPackageNames": ["!renovate"],
       "groupName": "Devcontainer"
     },
     {

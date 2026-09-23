@@ -9,9 +9,9 @@ cd "$repo_root"
 requested="${1:-all}"
 case "$requested" in
 all)
-    profiles=(minimal web webapp iac full meta)
+    profiles=(minimal web webapp iac full meta update)
     ;;
-minimal | web | webapp | iac | full | meta)
+minimal | web | webapp | iac | full | meta | update)
     profiles=("$requested")
     ;;
 *)
@@ -21,5 +21,9 @@ minimal | web | webapp | iac | full | meta)
 esac
 
 for profile in "${profiles[@]}"; do
-    ./scripts/test-template.sh "$profile" renovate-config
+    if [ "$profile" = "update" ]; then
+        ./scripts/test-template-update.sh renovate-config
+    else
+        ./scripts/test-template.sh "$profile" renovate-config
+    fi
 done
