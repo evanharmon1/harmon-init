@@ -223,6 +223,30 @@ is clean. Earlier activity never counts for a newer head, and a 👀 is pending,
 success. Immediately before accepting a result or promoting, re-check the
 **cycle** as well as `headRefOid`: a same-head finding can land after a clean
 one. § "Second-Model Review" carries the trigger cadence and both procedures.
+
+**One carve-out, and it is proved rather than judged** (#752). A head that
+advanced **only** by a base catch-up merge can carry the change forward
+byte-for-byte, and a fresh cycle then re-attests the same bytes at the cost of
+a full reviewer window. Where the PR's three-dot diff (`base...head`) has the
+same `git patch-id --verbatim` identity at the previously reviewed head and at
+this one — computed from immutable commit SHAs in the local checkout, never
+reconstructed from the API — the prior **clean** verdict carries to this head
+and no cycle is triggered. Equality of that one value is the whole argument:
+the reviewed artifact is the diff, and two heads whose diffs are identical are
+the same change. `--verbatim` rather than `--stable` is load-bearing, because
+`--stable` ignores all whitespace and would carry a verdict across a reformatted
+hunk. Anything that cannot be established — a changed patch, history rewritten
+rather than merged, a base the verdict was never corroborated against, a
+checkout without the commits, a verdict that was `findings` — requires the
+ordinary cycle, on the same invariant the exemption above runs under. Two things
+never move with the carry: **CI re-runs on the new head in full, always**,
+because what a base merge can change is everything *outside* the diff and that
+is CI's to catch; and the proof is **re-derived** wherever it is relied on
+rather than read back from the record, so a resumed session trusts nothing a
+previous process wrote. Like the exemption, this belongs to the integration
+stage and takes effect only where that stage implements it — until the vendored
+pin in `.claude/skills/` carries it, every head is reviewed on its own and no
+verdict is carried.
 [% endif %]
 
 ### Readiness gate
@@ -349,6 +373,20 @@ and a cycle ordinal above `integration` reads there as `codex-cap-mismatch` —
 an *indeterminate* gate condition, which leaves the PR draft. Acting on the
 exemption before the pin implements it would stall the gate it was meant to
 unblock.
+
+`integration` also stops charging a cycle it never runs (#752). Where the head
+advanced only by a base merge and the PR's three-dot diff has the same
+`git patch-id --verbatim` identity as at the previously reviewed head, the
+prior clean verdict carries forward and **no cycle is triggered at all** —
+neither ceiling is spent, the cycle ordinal does not advance, and the ledger
+names the carried head (`cycle n/cap (+m exempt, +k carried)`) because a head
+attested without a reviewer reading it is exactly what a human must be able to
+see. The exemption above is the weaker, file-set test and stays for what the
+identity cannot prove; the two compose, carry first because it is both stricter
+and cheaper. The same carve-out in full, including why CI still re-runs
+unconditionally, is under § "Dev Loop" → the current-head Codex contract, and
+the same pin caveat applies: until `.claude/skills/` carries it, no verdict is
+carried.
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
@@ -520,11 +558,15 @@ condition drops out of the readiness gate; every other gate still applies.)
 If both attempts are incomplete, stop and escalate without reporting green.
 **Where the pinned checker is vendored**
 (`.claude/skills/integrate/assets/check-codex-cloud-review.sh`), it is the
-required implementation — never hand-roll the polling: `reserve` the cycle
+required implementation — never hand-roll the polling: `carry` first on a head
+that moved (exit 0 carries the previous clean verdict and there is no cycle to
+run; exit 17 is the ordinary "reserve one" answer), otherwise `reserve` the cycle
 against the captured head *before* posting the trigger (the durable state must
 exist before the GitHub write), then post `@codex review`, `attach` with
 `--trigger-id <comment id>`, and `check`, acting on its exit code (0 clean, 10 findings,
-11 pending, 12 retry, 13 escalate, 2 indeterminate). It never writes to GitHub,
+11 pending, 12 retry, 13 escalate, 2 indeterminate). `check` runs either way: on
+a carried head it re-derives the proof instead of polling, so one re-check
+covers both shapes. It never writes to GitHub,
 so posting the trigger stays yours, and its `settle` subcommand records the
 disposition of a badged finding stated outside an inline thread.
 **Where it is not vendored**, the same contract is satisfied by hand: post the
