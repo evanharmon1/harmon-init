@@ -101,7 +101,7 @@
       "groupName": "Docker images"
     },
     {
-      "description": "Batch the canonical shared-image source, current dogfood/template devcontainers, and their coupled script pins into one PR — must come after the Docker images rule so base images land here instead. Root scripts/** and taskfiles/** are included because their regex-managed pins are dogfood-parity twins of template/** copies; splitting a dependency across groups makes each Renovate PR fail parity.",
+      "description": "Batch the canonical shared-image source, current dogfood/template devcontainers, and their coupled script pins into one PR — must come after the Docker images rule so base images land here instead. Root scripts/** and taskfiles/** are included because their regex-managed pins are dogfood-parity twins of template/** copies; splitting a dependency across groups makes each Renovate PR fail parity. OH_MY_PI_SHA256_AMD64/ARM64 in images/devcontainer/Dockerfile are the one pin pair this batch deliberately excludes from that automation: oh-my-pi ships unsigned release binaries, so a person must verify each release by hand, and only OH_MY_PI_VERSION here is Renovate-managed.",
       "matchFileNames": [
         "images/devcontainer/**",
         ".devcontainer/**",
@@ -109,7 +109,10 @@
         "scripts/**",
         "taskfiles/**"
       ],
-      "groupName": "Devcontainer"
+      "groupName": "Devcontainer",
+      "prBodyNotes": [
+        "If this bump touches OH_MY_PI_VERSION in images/devcontainer/Dockerfile, its hashes are NOT auto-updated: download the release, check its release notes and provenance, compute the sha256 of both the amd64 and arm64 archives, update OH_MY_PI_SHA256_AMD64/ARM64, and move the `# verified-for:` marker to match before merging. `task check` (scripts/test-oh-my-pi-pin.sh) fails fast until you do."
+      ]
     },
     {
       "description": "Template workflow AND composite-action pins belong with the GitHub Actions batch, not the Devcontainer batch — must come after the Devcontainer rule (which claims all of template/**) so this override wins. Composite actions are listed explicitly: template/.github/actions/setup/action.yml.jinja pins setup-node/-python/-uv/-terraform/-task/-tflint, and without this line they would all be filed as Devcontainer updates",
