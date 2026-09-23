@@ -26,14 +26,6 @@ if ! task --list-all >/dev/null 2>&1; then
     fail "task --list-all failed — the Taskfile does not compile"
 fi
 
-echo "==> task ci reaches the explicit strict Renovate configuration gate"
-ci_plan="$(task --dry ci 2>&1)" || fail "task --dry ci failed"
-grep -Fq './scripts/test-renovate-config.sh' <<<"$ci_plan" ||
-    fail "task ci does not run test:renovate-config"
-if grep -Fq 'HARMON_INIT_VALIDATE_RENOVATE' Taskfile.yml; then
-    fail "Taskfile.yml still relies on task-scoped env propagation for strict Renovate validation"
-fi
-
 echo "==> closing-keyword preflight delegates to a linted script, not inline Taskfile bash"
 # The logic lives in scripts/guard-closing-keywords.sh so shellcheck/shfmt see
 # it (harmon-init#1196); inline `cmds:` strings are invisible to lint:shell.

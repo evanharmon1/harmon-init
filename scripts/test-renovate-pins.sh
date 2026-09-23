@@ -24,6 +24,20 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
+echo "==> task ci reaches the explicit strict Renovate configuration gate"
+ci_plan="$(task --dry ci 2>&1)" || {
+    echo "task --dry ci failed" >&2
+    exit 1
+}
+grep -Fq './scripts/test-renovate-config.sh' <<<"$ci_plan" || {
+    echo "task ci does not run test:renovate-config" >&2
+    exit 1
+}
+if grep -Fq 'HARMON_INIT_VALIDATE_RENOVATE' Taskfile.yml; then
+    echo "Taskfile.yml still relies on task-scoped env propagation for strict Renovate validation" >&2
+    exit 1
+fi
+
 python3 - <<'PY'
 import json, re, sys, pathlib
 
