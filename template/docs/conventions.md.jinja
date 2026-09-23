@@ -221,6 +221,13 @@ it points here.
 - **Pin third-party actions by full commit SHA** with a trailing `# vX.Y.Z`
   comment, and annotate tool versions with `# renovate: datasource=…` so
   Renovate keeps them current.
+- **A checksum-pinned download moves as a pair.** Each per-architecture
+  `*_sha256=` line sits under a `# renovate: datasource=github-release-attachments
+  depName=<owner/repo> digestVersion=<tag>` annotation (the raw release tag),
+  and the version line and every hash line carry a trailing
+  `# pin-pair: <tool>`. Renovate then moves version, tag and hashes in one PR;
+  `task lint:pin-pairs` (in `task check`) fails a change that bumps the version
+  and leaves a hash behind.
 - Third-party CI/SaaS integrations that require an account, app installation,
   trial, or payment must be explicit opt-ins that default off. Document free-tier
   and private-repository limitations before adding them to generated output.

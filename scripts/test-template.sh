@@ -287,6 +287,23 @@ if [ -x scripts/lint-hygiene.sh ]; then
     ./scripts/lint-hygiene.sh || err "rendered output fails its own lint:hygiene gate"
 fi
 
+# ── 0a'. Rendered checksum pins keep their pairs ────────────────────
+# The setup action's version and checksum pins sit inside jinja conditionals
+# (yq only with use_skills_sync), so a gate that splits a pair — a hash left
+# behind without its version line — is only visible after rendering. The guard
+# reads tracked files, so it needs the scaffold commit; a --skip-tasks profile
+# has none and is skipped.
+if [ -x scripts/test-tool-pin-pairs.sh ] && git rev-parse --verify --quiet HEAD >/dev/null; then
+    if pin_pairs_out="$(PIN_PAIRS_BASE='' ./scripts/test-tool-pin-pairs.sh 2>&1)"; then
+        case "$pin_pairs_out" in
+        *" pair(s) in "*) : ;;
+        *) err "rendered setup action has no pin-pair markers: ${pin_pairs_out}" ;;
+        esac
+    else
+        err "rendered output fails its own pin-pair guard: ${pin_pairs_out}"
+    fi
+fi
+
 # ── 0b. Agent worktrees are ignored in BOTH layers ──────────────────
 # A registered git worktree under .claude/worktrees/ is a gitlink with no
 # `.gitmodules` entry. Left unignored it is swept into copier's dirty-tree wip
