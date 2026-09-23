@@ -21,9 +21,12 @@
 #   1. static  — every hash member sits directly under its Renovate
 #                annotation, and that annotation's tag is the version line's
 #                value (with or without a leading `v`);
-#   2. drift   — when a `*_VERSION` value differs from the merge-base, every
-#                paired hash must differ too. A tag bumped without its hash is
-#                what Renovate leaves when it cannot find the release asset.
+#   2. drift   — against the merge-base, keyed by the `case` branch (the
+#                architecture) each hash sits in: no branch that had a hash
+#                loses it, and when a `*_VERSION` value differs from the
+#                merge-base, every branch's hash differs too. A tag bumped
+#                without its hash is what Renovate leaves when it cannot find
+#                the release asset.
 # The drift check needs a merge-base. On a pull request (GITHUB_BASE_REF set)
 # a missing one fails the guard — the checkout needs `fetch-depth: 0` — because
 # the action's own `sha256sum -c` is skipped whenever the runner already has
@@ -97,13 +100,22 @@ ANNOTATION = re.compile(
     r"^\s*# renovate: datasource=github-release-attachments depName=(?P<dep>\S+) digestVersion=(?P<tag>\S+)\s*$"
 )
 VERSION_ANNOTATION = re.compile(r"^\s*# renovate: datasource=\S+ depName=(?P<dep>\S+)")
+# A shell `case` pattern line such as `X64|x86_64)` names the architecture
+# branch the hashes below it belong to.
+CASE_LABEL = re.compile(r"^\s*(?P<label>[^\s#()][^()]*)\)\s*$")
 
 
 def parse(path, text, errors):
-    """{tool: {"version": (line, var, val, dep) | None, "hashes": [(line, var, val, dep, tag)]}}"""
+    """{tool: {"version": (line, var, val, dep) | None, "hashes": [(line, var, val, dep, tag, branch)]}}"""
     pairs = {}
     lines = text.splitlines()
+    branch = ""
     for i, line in enumerate(lines, 1):
+        label = CASE_LABEL.match(line)
+        if label:
+            branch = label["label"].strip()
+        elif line.strip() == "esac":
+            branch = ""
         # A comment-only line may talk about the marker; only code carries one.
         if not MARKER.search(line) or line.lstrip().startswith("#"):
             continue
@@ -135,9 +147,13 @@ def parse(path, text, errors):
                     "`# renovate: datasource=github-release-attachments depName=<owner/repo> digestVersion=<tag>` "
                     "annotation, so Renovate will never update it"
                 )
-                entry["hashes"].append((i, var, val, None, None))
-            else:
-                entry["hashes"].append((i, var, val, ann["dep"], ann["tag"]))
+            dup = next((h for h in entry["hashes"] if (h[1], h[5]) == (var, branch)), None)
+            if dup:
+                errors.append(
+                    f"{path}:{i}: pin-pair '{tool}' assigns {var} twice in the same branch "
+                    f"({branch or 'outside a case'}; first at line {dup[0]})"
+                )
+            entry["hashes"].append((i, var, val, ann["dep"] if ann else None, ann["tag"] if ann else None, branch))
         else:
             errors.append(f"{path}:{i}: pin-pair '{tool}' member {var} is neither a *_VERSION nor a *_sha256 line")
     return pairs
@@ -164,7 +180,7 @@ for path in files:
             errors.append(f"{path}:{entry['version'][0]}: pin-pair '{tool}' has a version line but no `*_sha256=… # pin-pair: {tool}` lines")
             continue
         vline, vvar, version, vdep = entry["version"]
-        for line, var, _, dep, tag in entry["hashes"]:
+        for line, var, _, dep, tag, _branch in entry["hashes"]:
             if dep is not None and vdep is not None and dep != vdep:
                 errors.append(
                     f"{path}:{line}: pin-pair '{tool}': {var} is annotated for {dep} but {vvar} "
@@ -179,14 +195,19 @@ for path in files:
                     f"         (<asset> is the file this step downloads for that architecture)"
                 )
         old = (base or {}).get(tool)
-        if not old or not old["version"] or old["version"][2] == version:
+        if not old or not old["version"]:
             continue
-        if len(entry["hashes"]) < len(old["hashes"]):
-            errors.append(
-                f"{path}: pin-pair '{tool}': {vvar} changed {old['version'][2]} -> {version} since {base_ref} "
-                f"and its hash lines went from {len(old['hashes'])} to {len(entry['hashes'])} — "
-                "an architecture lost its checksum"
-            )
+        # Keyed by (variable, case branch): an architecture that had a hash at
+        # the merge-base must still have one, whether or not the version moved.
+        current = {(h[1], h[5]) for h in entry["hashes"]}
+        for h in old["hashes"]:
+            if (h[1], h[5]) not in current:
+                errors.append(
+                    f"{path}: pin-pair '{tool}': {h[1]} for branch `{h[5] or 'outside a case'}` existed at "
+                    f"{base_ref} and is gone — that architecture lost its checksum"
+                )
+        if old["version"][2] == version:
+            continue
         old_hashes = {h[2] for h in old["hashes"]}
         stale = [h for h in entry["hashes"] if h[2] in old_hashes]
         if stale:

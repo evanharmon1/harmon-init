@@ -229,7 +229,30 @@ grep -q "shfmt_sha256=${NEW_ARM}" .github/actions/setup/action.yml && fail "drop
 grep -q "shfmt_sha256=${NEW_AMD}" .github/actions/setup/action.yml || fail "dropped-arch: fixture edit removed the amd64 hash"
 run_guard
 expect_fail dropped-arch
-expect_output dropped-arch "hash lines went from 2 to 1"
+expect_output dropped-arch "for branch \`ARM64|arm64|aarch64\` existed at base and is gone"
+
+echo "==> dropping one architecture's hash WITHOUT a version change -> fails"
+new_repo dropped-arch-same-version
+awk -v t="shfmt_sha256=${OLD_ARM}" '
+    NR > 1 { if (!done && index($0, t)) done = 2; else if (done == 2) done = 1; else print prev }
+    { prev = $0 }
+    END { if (done != 2) print prev }
+' .github/actions/setup/action.yml >action.tmp
+mv action.tmp .github/actions/setup/action.yml
+grep -q "shfmt_sha256=${OLD_ARM}" .github/actions/setup/action.yml && fail "dropped-arch-same-version: fixture edit kept the arm64 hash"
+run_guard
+expect_fail dropped-arch-same-version
+expect_output dropped-arch-same-version "existed at base and is gone"
+
+echo "==> an architecture's hash moved into another branch (count unchanged) -> fails"
+new_repo arch-swap
+write_action 3.14.1 v3.14.1 "$NEW_AMD" v3.14.1 "$NEW_ARM"
+# Rename the arm64 branch's pattern so its hash now sits in a second X64 branch.
+sed -i.bak 's/^          ARM64|arm64|aarch64)$/          X64|x86_64)/' .github/actions/setup/action.yml
+rm -f .github/actions/setup/action.yml.bak
+run_guard
+expect_fail arch-swap
+expect_output arch-swap "assigns shfmt_sha256 twice in the same branch"
 
 echo "==> an explicit PIN_PAIRS_BASE that does not resolve -> fails rather than silently skipping"
 new_repo bad-base
