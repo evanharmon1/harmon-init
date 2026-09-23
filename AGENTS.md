@@ -363,12 +363,14 @@ same invariant the exemption above runs under.
 
 Three things never move with the carry. **CI re-runs on the new head in full,
 always**, because what a base merge can change is everything *outside* the diff
-and that is CI's to catch. **The origin cycle is re-checked against live
-evidence** wherever the carried verdict is relied on, so a finding that lands
-on the reviewed head after the carry still blocks — what a carry removes is the
-second *review*, never the second *look*. And the proof is **re-derived** each
-time rather than read back from the record, so a resumed session trusts nothing
-a previous process wrote. Like the exemption, this belongs to the integration
+and that is CI's to catch. **The review cycle itself does not move**: a carry
+records that an existing cycle's verdict also attests a later head, and changes
+nothing else — so the ordinary evidence scan keeps running against the commit a
+reviewer actually read, a finding landing there after the carry still blocks,
+and it is still answered the ordinary way. What a carry removes is the second
+*review*, never the second *look*. And the proof is **re-derived** each time
+rather than read back from the record, so a resumed session trusts nothing a
+previous process wrote. Like the exemption, this belongs to the integration
 stage and takes effect only where that stage implements it — until the vendored
 pin in `.claude/skills/` carries it, every head is reviewed on its own and no
 verdict is carried.
@@ -724,14 +726,15 @@ is why [docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them
 to this file rather than restating either. **Where the pinned checker is
 vendored** — it is, in this repo — never hand-roll the polling:
 `.claude/skills/integrate/assets/check-codex-cloud-review.sh` is the required
-implementation (`carry` first on a head that moved — exit 0 carries the
-previous clean verdict and there is no cycle to run, exit 17 is the ordinary
-"reserve one" answer — otherwise `reserve` the cycle against the captured head
-*before* posting the trigger, then `attach` with `--trigger-id <comment id>`,
-then `check`), and
+implementation (`carry` first on a head that moved — exit 0 means an existing
+cycle's verdict already attests it and there is no cycle to run, exit 17 is the
+ordinary "reserve one" answer — otherwise `reserve` the cycle against the
+captured head *before* posting the trigger, then `attach` with
+`--trigger-id <comment id>`, then `check`), and
 its `settle` subcommand records the disposition of a badged finding stated
-outside an inline thread. `check` runs either way: on a carried head it
-re-derives the proof instead of polling, so one re-check covers both shapes.
+outside an inline thread. `check` runs either way, and on a carrying cycle it
+re-derives the identity as a precondition before the same evidence scan it
+always runs.
 **Where it is not vendored**, the same contract is satisfied by hand: post the
 trigger, record its comment ID and request time yourself, and poll all four
 surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
