@@ -101,6 +101,7 @@ tasks:
       - task: test:copier-validators
       - task: test:renovate-pins
       - task: test:tool-pin-pairs
+      - task: test:oh-my-pi-pin
       - task: test:lint-hygiene
       - task: test:release-title
       - task: test:claim-release-merged
@@ -150,6 +151,7 @@ tasks:
       - lint:actions
       - lint:hygiene
       - lint:pin-pairs
+      - lint:oh-my-pi-pin
 
   lint:yaml:
     desc: yamllint (template/ excluded via .yamllint ignore)
@@ -185,6 +187,11 @@ tasks:
     desc: Version pins and their paired checksum pins moved together (scripts/test-tool-pin-pairs.sh)
     cmds:
       - ./scripts/test-tool-pin-pairs.sh
+
+  lint:oh-my-pi-pin:
+    desc: Fail fast when OH_MY_PI_VERSION outruns its hand-verified marker (scripts/test-oh-my-pi-pin.sh)
+    cmds:
+      - ./scripts/test-oh-my-pi-pin.sh
 
   lint:hygiene:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
@@ -506,6 +513,11 @@ tasks:
     desc: Behavioural fixtures for the version/checksum pin-pair guard
     cmds:
       - ./scripts/test-tool-pin-pairs-cases.sh
+
+  test:oh-my-pi-pin:
+    desc: Behavioural fixtures for the oh-my-pi verified-for marker guard
+    cmds:
+      - ./scripts/test-oh-my-pi-pin-cases.sh
 
   test:lint-hygiene:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
