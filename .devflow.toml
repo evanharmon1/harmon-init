@@ -169,6 +169,14 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # file defines the two ceilings; the integration stage spends them, so the
 # exemption takes effect only once that stage's implementation accounts for
 # it.
+# A carry is tried BEFORE the exemption: when the change's canonical diff
+# digest against the new base is identical to the one a clean verdict already
+# covered, that verdict attests the new head — no review runs and neither
+# ceiling is spent (CI still re-runs in full; the ledger names the head as
+# carried). The exemption covers what a carry cannot prove. Carry takes effect
+# only once the checker, the readiness gate, the integrator agent, and the
+# repository's own result schemas and validator all recognise it; until then
+# every head is reviewed.
 # remediation: bounds fix pushes in the integration stage. Terminal action is
 # escalation with the unresolved findings listed — never abandonment, never
 # promotion past them. 0 = the first finding needing a code fix escalates.
