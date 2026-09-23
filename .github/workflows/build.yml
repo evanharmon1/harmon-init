@@ -71,6 +71,7 @@ jobs:
       - run: task test:worktree
       - run: task test:renovate-pins
       - run: task test:tool-pin-pairs
+      - run: task test:oh-my-pi-pin
       - run: task test:lint-hygiene
       - run: task test:release-title
       - run: task test:claim-release-merged

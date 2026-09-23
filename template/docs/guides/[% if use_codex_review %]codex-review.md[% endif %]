@@ -278,7 +278,12 @@ If Codex cloud review is connected to the repo, PRs
 get a cloud pass too: inline comments only for high-priority findings, a
 👍 from the pinned Codex bot actor ID `199175422` on the exact
 `@codex review` trigger comment as the clean pass. That reaction must post
-after both the current head was pushed and its review request was created.
+after both the current head was pushed and its review request was created —
+with one exception: where the integration stage implements **carry**, a clean
+verdict on an earlier head (a 👍 included) also attests a head that moved only
+by a base catch-up merge leaving the change's canonical diff byte-identical, so
+no new request is made for that head. `AGENTS.md` § "Dev Loop" (the
+current-head Codex contract) states the condition and when carry is active.
 Those requests are explicit and made while the PR is draft — which is why
 Automatic reviews must be off (setup step 6): an automatic review triggered by
 `gh pr ready` would land after the gate that promoted the PR.
