@@ -2826,6 +2826,14 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
     fi
 fi
 
+# CHECKLIST.md must tell a Cloudflare-enabled consumer to add wrangler now that
+# the deploy workflows no longer pin wranglerVersion (harmon-init#1347) — the
+# template ships no package.json, so nothing else tells a fresh scaffold to.
+if grep -Eq '^deploy_cloudflare_workers:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+    grep -q 'pnpm add -D wrangler' docs/CHECKLIST.md ||
+        err "CHECKLIST.md does not instruct a Cloudflare-enabled consumer to add wrangler as a devDependency"
+fi
+
 # ── 12. web-app: the shipped ESLint config + tsc type-check a real React app ──
 # Same idea as the web-astro check above, for the web-app (React) project type.
 # The shipped config is ESLint 10 + type-aware linting (projectService), so the
