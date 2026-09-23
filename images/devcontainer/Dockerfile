@@ -47,7 +47,7 @@ ARG OH_MY_PI_VERSION=18.2.6
 # moving them, a person must download the new release's omp-linux-x64 and
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
-# fast until the marker below — and both hashes — move with OH_MY_PI_VERSION.
+# fast until the marker below is moved to match OH_MY_PI_VERSION.
 # verified-for: 18.2.6
 ARG OH_MY_PI_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
 ARG OH_MY_PI_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4

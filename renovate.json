@@ -111,7 +111,7 @@
       ],
       "groupName": "Devcontainer",
       "prBodyNotes": [
-        "If this bump touches OH_MY_PI_VERSION in images/devcontainer/Dockerfile, its hashes are NOT auto-updated: download the release, check its release notes and provenance, compute the sha256 of both the amd64 and arm64 archives, update OH_MY_PI_SHA256_AMD64/ARM64, and move the `# verified-for:` marker to match before merging. `task check` (scripts/test-oh-my-pi-pin.sh) fails fast until you do."
+        "If this bump touches OH_MY_PI_VERSION in images/devcontainer/Dockerfile, its hashes are NOT auto-updated: read the release notes and provenance, download the omp-linux-x64 and omp-linux-arm64 binary assets (not the source archives), compute their sha256, update OH_MY_PI_SHA256_AMD64/ARM64, and move the `# verified-for:` marker to match before merging. `task check` (scripts/test-oh-my-pi-pin.sh) fails fast until you do."
       ]
     },
     {
