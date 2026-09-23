@@ -1724,6 +1724,17 @@ for wf in .github/workflows/*.yml; do
     ! grep -Fq 'pull_request.draft' "$wf" ||
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
 done
+
+# wranglerVersion double-pins Cloudflare Workers' version against the
+# wrangler devDependency the lockfile already pins — the two drift apart
+# because Renovate updates them in different groups (harmon-init#1347). The
+# lockfile is the single source of truth; cloudflare/wrangler-action falls
+# back to the pre-installed copy when wranglerVersion is omitted.
+for wf in .github/workflows/*.yml; do
+    [ -f "$wf" ] || continue
+    ! grep -Fq 'wranglerVersion:' "$wf" ||
+        err "$(basename "$wf") pins wranglerVersion — the wrangler devDependency in package.json is the single source of truth"
+done
 # The two halves of the `edited` split (harmon-init#1328). The build matrix
 # must NOT re-run on a title/body edit — the readiness gate edits the body to
 # tick deferred findings, and each edit otherwise put every concluded check
@@ -2811,9 +2822,21 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         required pnpm "web-astro toolchain validation" || fail=1
     else
         cp -R "$repo_root/tests/fixtures/web-astro/." .
-        pnpm install --silent >/dev/null 2>&1 || true
+        # cloudflare/wrangler-action needs a pre-installed wrangler now that
+        # wranglerVersion is no longer pinned in the workflow (harmon-init#1347).
+        if grep -Eq '^deploy_cloudflare_workers:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+            grep -q '"wrangler"' package.json ||
+                err "web-astro fixture: package.json has no wrangler dependency — cloudflare/wrangler-action needs a pre-installed copy since wranglerVersion is no longer pinned"
+        fi
+        # wrangler pulls sharp in deeply enough that pnpm treats a failed sharp
+        # install as fatal (unlike astro's own tolerated-optional pull of it).
+        # sharp's installer prefers a contributor's global libvips (e.g. Homebrew's)
+        # over its own bundled prebuilt when one is on PKG_CONFIG_PATH, and that
+        # from-source build then fails without node-addon-api — a machine-local
+        # false failure, never a CI one (runners carry no global libvips).
+        SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --silent >/dev/null 2>&1 || true
         bin="node_modules/.bin"
-        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ]; then
+        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ] || [ ! -x "$bin/wrangler" ]; then
             err "web-astro fixture: install did not provide the toolchain (see tests/fixtures/web-astro/package.json)"
         elif ! "$bin/eslint" . >/dev/null 2>&1; then
             "$bin/eslint" . || true
@@ -2827,10 +2850,21 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         elif ! "$bin/astro" build >/dev/null 2>&1; then
             "$bin/astro" build || true
             err "web-astro fixture: astro build failed"
+        elif ! "$bin/wrangler" --version >/dev/null 2>&1; then
+            "$bin/wrangler" --version || true
+            err "web-astro fixture: wrangler --version failed — a binary can be linked but unusable (e.g. workerd's own install failed) while pnpm install still exits 0, which is exactly what cloudflare/wrangler-action's pre-installed-copy fallback needs to not be true"
         else
-            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build) clean on a real app"
+            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build + wrangler) clean on a real app"
         fi
     fi
+fi
+
+# CHECKLIST.md must tell a Cloudflare-enabled consumer to add wrangler now that
+# the deploy workflows no longer pin wranglerVersion (harmon-init#1347) — the
+# template ships no package.json, so nothing else tells a fresh scaffold to.
+if grep -Eq '^deploy_cloudflare_workers:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+    grep -q 'pnpm add -D wrangler' docs/CHECKLIST.md ||
+        err "CHECKLIST.md does not instruct a Cloudflare-enabled consumer to add wrangler as a devDependency"
 fi
 
 # ── 12. web-app: the shipped ESLint config + tsc type-check a real React app ──
