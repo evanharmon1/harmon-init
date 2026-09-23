@@ -51,6 +51,14 @@
     },
     {
       "customType": "regex",
+      "description": "Per-architecture checksum pins, `*_sha256=<hex>` under a `# renovate: datasource=github-release-attachments ... digestVersion=<tag>` annotation, one annotated line per architecture. When the paired `*_VERSION` pin moves, Renovate bumps the tag and recomputes the hash of the same release asset in the same PR. digestVersion is the RAW release tag (v3.14.1, no extractVersion) because the datasource looks the release up by that exact tag.",
+      "managerFilePatterns": ["/^\\.github/(actions|workflows)/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) digestVersion=(?<currentValue>\\S+)\\s+[a-z0-9_]+_sha256=(?<currentDigest>[0-9a-f]{64})"
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Taskfile tool pins (root Taskfile + included taskfiles/), `FOO_VERSION: x.y.z` var style",
       "managerFilePatterns": [
         "/(^|\\/)Taskfile\\.ya?ml$/",
@@ -107,6 +115,17 @@
       "matchManagers": ["custom.regex"],
       "matchFileNames": [".github/workflows/**", ".github/actions/**"],
       "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Give the checksum-pinned CI lint tools (shellcheck, shfmt, actionlint, yq, gitleaks) their own PR instead of the batched GitHub Actions group: their pins carry companion values (per-architecture hashes; for a formatter, what counts as correctly formatted), so one red lint-tool bump must not hold every Actions update back. Must come after the GitHub Actions grouping rules so this override wins.",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["koalaman/shellcheck", "mvdan/sh", "rhysd/actionlint", "mikefarah/yq", "gitleaks/gitleaks"],
+      "matchFileNames": [".github/**"],
+      "groupName": "CI lint tools",
+      "prBodyNotes": [
+        "Checksums move with their versions: every `*_sha256` pin carries a `github-release-attachments` annotation, so this PR should already contain the new hashes. If `task check` (scripts/test-tool-pin-pairs.sh) reports a hash left behind, retry this PR from the Dependency Dashboard rather than hand-editing the hash.",
+        "A formatter bump (shfmt) can change what `task check` accepts: run `task fix` and push the reformat as a separate commit; do not amend Renovate's commit."
+      ]
     },
     {
       "description": "Eject anthropics/claude-code-action from the batched GitHub Actions group and skip the 3-day release-age wait. It ships near-daily first-party releases, so grouping + minimumReleaseAge kept the whole Actions batch perpetually pending on the renovate/stability-days gate. Must come after the GitHub Actions group rules so this override wins.",
