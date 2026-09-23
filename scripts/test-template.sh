@@ -640,12 +640,10 @@ violations = []
 def contract_violations(source: str) -> list[str]:
     flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
     problems = []
-    global_flag = r"(?:--global|-g)"
-    if re.search(rf"\bpnpm\s+{global_flag}\s+config\s+set\b", flat) or re.search(
-        rf"\bpnpm\s+config\s+(?:{global_flag}\s+)?set\b.{{0,240}}?\s{global_flag}(?:\s|$)",
-        flat,
-    ):
-        problems.append("pnpm config set must not use --global/-g")
+    global_selector = r"(?:--global|-g|--location(?:=|\s+)global)"
+    pnpm_config_set = r"\bpnpm\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
+    if re.search(rf"{pnpm_config_set}{global_selector}(?:\s|$)", flat):
+        problems.append("pnpm config set must not select global configuration")
     if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
         problems.append("store paths must not escape GITHUB_WORKSPACE")
     return problems
@@ -656,6 +654,8 @@ def contract_violations(source: str) -> list[str]:
 for fixture in (
     'run: pnpm config set store-dir "$RUNNER_TEMP/store" --global',
     'run: pnpm -g config set "store-dir" "$RUNNER_TEMP/store"',
+    'run: pnpm config --global set "store-dir" "$RUNNER_TEMP/store"',
+    'run: pnpm config set --location=global "store-dir" "$RUNNER_TEMP/store"',
     'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
 ):
     if not contract_violations(fixture):
