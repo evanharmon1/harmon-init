@@ -32,11 +32,12 @@ mkdir -p "$stale_bin" "$helper_bin"
 
 # Bind the test to the real action body and prove the complete shared installer
 # segment stays identical between the root action and its template twin.
-python3 - "$root_action" "$template_action" "${test_tmp}/install-lint-tools.sh" <<'PY'
+python3 - "$root_action" "$template_action" "${test_tmp}/install-lint-tools.sh" "${test_tmp}/pins.env" <<'PY'
 import pathlib
+import re
 import sys
 
-root_path, template_path, output_path = sys.argv[1:]
+root_path, template_path, output_path, pins_path = sys.argv[1:]
 root = pathlib.Path(root_path).read_text()
 template = pathlib.Path(template_path).read_text()
 
@@ -65,13 +66,43 @@ for expected in (
     "Unsupported runner architecture",
     "harmon-init-lint-tools-download.XXXXXX",
     '>> "$GITHUB_PATH"',
-    "fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1",
-    "32d92acaa5cd8abb29fc49dac123dc412442d5713967819d8af2c29f1b3857c7",
-    "a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7",
-    "0e7e1524f68d91b3ff9b089872d185940ab0fa020a5a9052046ef10547023156",
 ):
     if expected not in root_segment:
         raise SystemExit(f"installer segment is missing {expected!r}")
+
+# The expected versions and hashes are READ from the action, never restated
+# here: a copy in this test is one more companion value a Renovate bump cannot
+# update, and would fail every lint-tool bump PR. Hashes are keyed by the
+# architecture branch of the `case` they sit in.
+pins = {}
+for var, value in re.findall(r"^\s*([A-Z]+)_VERSION=(\S+)", root, re.M):
+    pins[f"PIN_{var}"] = value
+arch = None
+for line in root.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("X64|x86_64)"):
+        arch = "AMD64"
+    elif stripped.startswith("ARM64|arm64|aarch64)"):
+        arch = "ARM64"
+    elif stripped in (";;", "*)", "esac"):
+        arch = None
+    m = re.match(r"([a-z]+)_sha256=([0-9a-f]{64})\b", stripped)
+    if m:
+        if arch is None:
+            raise SystemExit(f"{m[1]}_sha256 is outside an architecture branch")
+        pins[f"PIN_{m[1].upper()}_SHA256_{arch}"] = m[2]
+for required in (
+    "PIN_SHELLCHECK", "PIN_SHFMT", "PIN_ACTIONLINT", "PIN_YAMLLINT", "PIN_YQ",
+    "PIN_GITLEAKS", "PIN_SNYK",
+    "PIN_SHFMT_SHA256_AMD64", "PIN_SHFMT_SHA256_ARM64",
+    "PIN_YQ_SHA256_AMD64", "PIN_YQ_SHA256_ARM64",
+    "PIN_GITLEAKS_SHA256_AMD64", "PIN_GITLEAKS_SHA256_ARM64",
+):
+    if required not in pins:
+        raise SystemExit(f"could not read {required} from {root_path}")
+pathlib.Path(pins_path).write_text(
+    "".join(f"export {k}={v}\n" for k, v in sorted(pins.items()))
+)
 
 def extract_step_body(text: str, step_name: str) -> list[str]:
     lines = text.splitlines()
@@ -116,10 +147,11 @@ snyk_template = extract_step_body(template, "Install Snyk CLI")
 if snyk_root != snyk_template:
     raise SystemExit("root/template Install-Snyk-CLI bodies differ")
 for expected in (
-    "X64|x86_64) gitleaks_arch=x64 ;;",
-    "ARM64|arm64|aarch64) gitleaks_arch=arm64 ;;",
+    "gitleaks_arch=x64",
+    "gitleaks_arch=arm64",
     "Unsupported runner architecture for pinned gitleaks",
     "linux_${gitleaks_arch}.tar.gz",
+    'echo "${gitleaks_sha256}  ${RUNNER_TEMP}/gitleaks.tgz" | sha256sum -c -',
 ):
     if expected not in "\n".join(gitleaks_root):
         raise SystemExit(f"Install-gitleaks body is missing {expected!r}")
@@ -128,6 +160,8 @@ write_script(snyk_root, f"{output_path}.snyk")
 PY
 chmod +x "${test_tmp}/install-lint-tools.sh" "${test_tmp}/install-lint-tools.sh.gitleaks" \
     "${test_tmp}/install-lint-tools.sh.snyk"
+# shellcheck source=/dev/null
+. "${test_tmp}/pins.env"
 
 cat >"${stale_bin}/shellcheck" <<'EOF'
 #!/usr/bin/env bash
@@ -176,16 +210,16 @@ mkdir -p "$(dirname "$output")"
 printf '%s|%s\n' "$output" "$url" >>"$TEST_CURL_LOG"
 case "${output##*/}" in
 shfmt)
-    cat >"$output" <<'SHFMT'
+    cat >"$output" <<SHFMT
 #!/usr/bin/env bash
-printf '%s\n' 'v3.13.1'
+printf '%s\n' 'v${PIN_SHFMT}'
 SHFMT
     chmod +x "$output"
     ;;
 yq)
-    cat >"$output" <<'YQ'
+    cat >"$output" <<YQ
 #!/usr/bin/env bash
-printf '%s\n' 'yq (https://github.com/mikefarah/yq/) version v4.44.3'
+printf '%s\n' 'yq (https://github.com/mikefarah/yq/) version v${PIN_YQ}'
 YQ
     chmod +x "$output"
     ;;
@@ -213,17 +247,17 @@ done
 [ -n "$archive" ] && [ -n "$destination" ]
 case "${archive##*/}" in
 shellcheck.tar.xz)
-    mkdir -p "${destination}/shellcheck-v0.11.0"
-    cat >"${destination}/shellcheck-v0.11.0/shellcheck" <<'SHELLCHECK'
+    mkdir -p "${destination}/shellcheck-v${PIN_SHELLCHECK}"
+    cat >"${destination}/shellcheck-v${PIN_SHELLCHECK}/shellcheck" <<SHELLCHECK
 #!/usr/bin/env bash
-printf '%s\n' 'ShellCheck - shell script analysis tool' 'version: 0.11.0'
+printf '%s\n' 'ShellCheck - shell script analysis tool' 'version: ${PIN_SHELLCHECK}'
 SHELLCHECK
-    chmod +x "${destination}/shellcheck-v0.11.0/shellcheck"
+    chmod +x "${destination}/shellcheck-v${PIN_SHELLCHECK}/shellcheck"
     ;;
 actionlint.tar.gz)
-    cat >"${destination}/actionlint" <<'ACTIONLINT'
+    cat >"${destination}/actionlint" <<ACTIONLINT
 #!/usr/bin/env bash
-printf '%s\n' '1.7.12' 'installed by building from source' 'built with go1.24.0 compiler for linux/amd64'
+printf '%s\n' '${PIN_ACTIONLINT}' 'installed by building from source' 'built with go1.24.0 compiler for linux/amd64'
 ACTIONLINT
     chmod +x "${destination}/actionlint"
     ;;
@@ -241,17 +275,17 @@ while IFS='|' read -r logged_path logged_url; do
         asset_url="$logged_url"
     fi
 done <"$TEST_CURL_LOG"
-case "${asset_url}|${expected_digest}" in
-*/shfmt_v3.13.1_linux_amd64\|fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1 | \
-    */shfmt_v3.13.1_linux_arm64\|32d92acaa5cd8abb29fc49dac123dc412442d5713967819d8af2c29f1b3857c7 | \
-    */yq_linux_amd64\|a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7 | \
-    */yq_linux_arm64\|0e7e1524f68d91b3ff9b089872d185940ab0fa020a5a9052046ef10547023156)
-        ;;
-*)
+case "$asset_url" in
+*"/v${PIN_SHFMT}/shfmt_v${PIN_SHFMT}_linux_amd64") pinned_digest="$PIN_SHFMT_SHA256_AMD64" ;;
+*"/v${PIN_SHFMT}/shfmt_v${PIN_SHFMT}_linux_arm64") pinned_digest="$PIN_SHFMT_SHA256_ARM64" ;;
+*"/v${PIN_YQ}/yq_linux_amd64") pinned_digest="$PIN_YQ_SHA256_AMD64" ;;
+*"/v${PIN_YQ}/yq_linux_arm64") pinned_digest="$PIN_YQ_SHA256_ARM64" ;;
+*) pinned_digest= ;;
+esac
+if [ -z "$pinned_digest" ] || [ "$expected_digest" != "$pinned_digest" ]; then
     printf 'unexpected asset/checksum pair: %s|%s\n' "$asset_url" "$expected_digest" >&2
     exit 1
-    ;;
-esac
+fi
 EOF
 cat >"${helper_bin}/python3" <<'EOF'
 #!/usr/bin/env bash
@@ -263,11 +297,11 @@ cat >"${venv_path}/bin/python" <<'PYTHON'
 #!/usr/bin/env bash
 set -euo pipefail
 [ "$#" -eq 5 ] && [ "$1" = -m ] && [ "$2" = pip ] && [ "$3" = install ]
-[ "$4" = --disable-pip-version-check ] && [ "$5" = yamllint==1.38.0 ]
+[ "$4" = --disable-pip-version-check ] && [ "$5" = "yamllint==${PIN_YAMLLINT}" ]
 venv_bin="$(dirname "$0")"
-cat >"${venv_bin}/yamllint" <<'YAMLLINT'
+cat >"${venv_bin}/yamllint" <<YAMLLINT
 #!/usr/bin/env bash
-printf '%s\n' 'yamllint 1.38.0'
+printf '%s\n' 'yamllint ${PIN_YAMLLINT}'
 YAMLLINT
 chmod +x "${venv_bin}/yamllint"
 printf '%s|%s\n' yamllint "${venv_bin}/yamllint" >>"$TEST_INSTALL_LOG"
@@ -310,19 +344,19 @@ assert_pins() {
     tool_path="${published_bin}:${stale_bin}:${helper_bin}:${PATH}"
     shellcheck_output="$(PATH="$tool_path" shellcheck --version)"
     case "$shellcheck_output" in
-    *"version: 0.11.0"*) : ;;
+    *"version: ${PIN_SHELLCHECK}"*) : ;;
     *) fail "wrong-version shellcheck remained authoritative: ${shellcheck_output}" ;;
     esac
-    [ "$(PATH="$tool_path" shfmt --version)" = v3.13.1 ] ||
+    [ "$(PATH="$tool_path" shfmt --version)" = "v${PIN_SHFMT}" ] ||
         fail "wrong-version shfmt remained authoritative"
     actionlint_output="$(PATH="$tool_path" actionlint --version)"
     case "$actionlint_output" in
-    1.7.12$'\n'*) : ;;
+    "${PIN_ACTIONLINT}"$'\n'*) : ;;
     *) fail "wrong-version actionlint remained authoritative: ${actionlint_output}" ;;
     esac
-    [ "$(PATH="$tool_path" yq --version)" = 'yq (https://github.com/mikefarah/yq/) version v4.44.3' ] ||
+    [ "$(PATH="$tool_path" yq --version)" = "yq (https://github.com/mikefarah/yq/) version v${PIN_YQ}" ] ||
         fail "missing yq was not replaced with the architecture-correct pin"
-    [ "$(PATH="$tool_path" yamllint --version)" = 'yamllint 1.38.0' ] ||
+    [ "$(PATH="$tool_path" yamllint --version)" = "yamllint ${PIN_YAMLLINT}" ] ||
         fail "wrong-version yamllint remained authoritative"
 }
 
@@ -341,7 +375,7 @@ run_arch_case() {
     run_action "$arch" "$runner_temp" "$github_path"
     published_bin="$(tail -n 1 "$github_path")"
     case "$published_bin" in
-    "${runner_temp}/harmon-init-lint-tools/0.11.0-3.13.1-1.7.12-1.38.0/${arch}") : ;;
+    "${runner_temp}/harmon-init-lint-tools/${PIN_SHELLCHECK}-${PIN_SHFMT}-${PIN_ACTIONLINT}-${PIN_YAMLLINT}/${arch}") : ;;
     *) fail "${arch}: GITHUB_PATH did not receive the job-private versioned bin first" ;;
     esac
     assert_pins "$published_bin"
@@ -366,14 +400,14 @@ run_arch_case() {
 }
 
 run_arch_case X64 \
-    shellcheck-v0.11.0.linux.x86_64.tar.xz \
-    shfmt_v3.13.1_linux_amd64 \
-    actionlint_1.7.12_linux_amd64.tar.gz \
+    "shellcheck-v${PIN_SHELLCHECK}.linux.x86_64.tar.xz" \
+    "shfmt_v${PIN_SHFMT}_linux_amd64" \
+    "actionlint_${PIN_ACTIONLINT}_linux_amd64.tar.gz" \
     yq_linux_amd64
 run_arch_case ARM64 \
-    shellcheck-v0.11.0.linux.aarch64.tar.xz \
-    shfmt_v3.13.1_linux_arm64 \
-    actionlint_1.7.12_linux_arm64.tar.gz \
+    "shellcheck-v${PIN_SHELLCHECK}.linux.aarch64.tar.xz" \
+    "shfmt_v${PIN_SHFMT}_linux_arm64" \
+    "actionlint_${PIN_ACTIONLINT}_linux_arm64.tar.gz" \
     yq_linux_arm64
 
 # The stale PATH entries remain untouched; precedence comes only from the
@@ -468,7 +502,35 @@ mkdir -p "$destination"
 printf '#!/usr/bin/env bash\nprintf "%s\\n" "%s"\n' "$FAKE_GITLEAKS_DOWNLOADED_VERSION" >"${destination}/gitleaks"
 chmod +x "${destination}/gitleaks"
 EOF
+# The archive must be verified against the pinned hash for ITS architecture
+# before extraction; FAKE_GITLEAKS_SHA256_MISMATCH simulates a download that
+# does not match the pin.
+cat >"${gitleaks_bin}/sha256sum" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$*" = "-c -" ]
+IFS=' ' read -r expected_digest downloaded_path
+asset_url=
+while IFS='|' read -r logged_path logged_url; do
+    if [ "$logged_path" = "$downloaded_path" ]; then
+        asset_url="$logged_url"
+    fi
+done <"$GITLEAKS_CURL_LOG"
+printf '%s\n' "$asset_url" >>"$GITLEAKS_SHA_LOG"
+case "$asset_url" in
+*"/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz") pinned_digest="$PIN_GITLEAKS_SHA256_AMD64" ;;
+*"/gitleaks_${PIN_GITLEAKS}_linux_arm64.tar.gz") pinned_digest="$PIN_GITLEAKS_SHA256_ARM64" ;;
+*) pinned_digest= ;;
+esac
+if [ -n "${FAKE_GITLEAKS_SHA256_MISMATCH:-}" ] || [ -z "$pinned_digest" ] ||
+    [ "$expected_digest" != "$pinned_digest" ]; then
+    printf '%s: FAILED\n' "$downloaded_path"
+    exit 1
+fi
+printf '%s: OK\n' "$downloaded_path"
+EOF
 chmod +x "${gitleaks_bin}"/*
+gitleaks_sha_log="${test_tmp}/gitleaks-sha.log"
 
 # Resolve the binary GITHUB_PATH published (its last line) so assertions can
 # check the actual PATH-prepended install, not just curl's download log.
@@ -482,22 +544,24 @@ run_gitleaks_install() {
     local arch="$1" pre_installed_path="$2" runner_temp="$3" github_path="$4"
     mkdir -p "$runner_temp"
     : >"$gitleaks_curl_log"
+    : >"$gitleaks_sha_log"
     : >"$github_path"
     PATH="${pre_installed_path}:${gitleaks_bin}:${PATH}" \
         RUNNER_ARCH="$arch" \
         RUNNER_TEMP="$runner_temp" \
         GITHUB_PATH="$github_path" \
         GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
-        FAKE_GITLEAKS_DOWNLOADED_VERSION="8.24.3" \
+        GITLEAKS_SHA_LOG="$gitleaks_sha_log" \
+        FAKE_GITLEAKS_DOWNLOADED_VERSION="$PIN_GITLEAKS" \
         bash "${test_tmp}/install-lint-tools.sh.gitleaks"
 }
 
 echo "==> a pre-installed gitleaks matching the pin is reused, not redownloaded"
 gitleaks_match_bin="${test_tmp}/gitleaks-match-bin"
 mkdir -p "$gitleaks_match_bin"
-cat >"${gitleaks_match_bin}/gitleaks" <<'EOF'
+cat >"${gitleaks_match_bin}/gitleaks" <<EOF
 #!/usr/bin/env bash
-printf '8.24.3\n'
+printf '%s\n' '${PIN_GITLEAKS}'
 EOF
 chmod +x "${gitleaks_match_bin}/gitleaks"
 gitleaks_match_temp="${test_tmp}/gitleaks-runner-match"
@@ -519,11 +583,11 @@ chmod +x "${gitleaks_stale_bin}/gitleaks"
 gitleaks_stale_temp="${test_tmp}/gitleaks-runner-stale"
 gitleaks_stale_ghpath="${test_tmp}/gitleaks-github-path-stale"
 run_gitleaks_install X64 "$gitleaks_stale_bin" "$gitleaks_stale_temp" "$gitleaks_stale_ghpath"
-grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz" "$gitleaks_curl_log" ||
     fail "a version-mismatched pre-installed gitleaks was not replaced with the pin"
 gitleaks_published="$(gitleaks_published_bin "$gitleaks_stale_ghpath")" ||
     fail "the replacement gitleaks install did not publish a GITHUB_PATH entry"
-[ "$(bash "${gitleaks_published}/gitleaks")" = "8.24.3" ] ||
+[ "$(bash "${gitleaks_published}/gitleaks")" = "$PIN_GITLEAKS" ] ||
     fail "the replacement gitleaks binary is not the pinned version"
 # The stale binary is still earlier on PATH (as a shadowing self-hosted
 # runner would have it) — resolution must prefer the PUBLISHED directory,
@@ -542,20 +606,36 @@ EOF
 chmod +x "${gitleaks_corrupt_bin}/gitleaks"
 gitleaks_corrupt_ghpath="${test_tmp}/gitleaks-github-path-corrupt"
 run_gitleaks_install X64 "$gitleaks_corrupt_bin" "${test_tmp}/gitleaks-runner-corrupt" "$gitleaks_corrupt_ghpath"
-grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz" "$gitleaks_curl_log" ||
     fail "a corrupted pre-installed gitleaks did not trigger a reinstall — the step aborted instead"
 gitleaks_corrupt_published="$(gitleaks_published_bin "$gitleaks_corrupt_ghpath")" ||
     fail "the corrupted-gitleaks replacement did not publish a GITHUB_PATH entry"
-[ "$(bash "${gitleaks_corrupt_published}/gitleaks")" = "8.24.3" ] ||
+[ "$(bash "${gitleaks_corrupt_published}/gitleaks")" = "$PIN_GITLEAKS" ] ||
     fail "the corrupted-gitleaks replacement binary is not the pinned version"
 
 echo "==> gitleaks architecture selection: X64 and ARM64 fetch the matching asset, an unsupported arch fails loudly"
 run_gitleaks_install X64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-x64" "${test_tmp}/gitleaks-github-path-x64"
-grep -Fq '/gitleaks_8.24.3_linux_x64.tar.gz' "$gitleaks_curl_log" ||
+grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz" "$gitleaks_curl_log" ||
     fail "X64 did not fetch the x64 gitleaks asset"
+grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz" "$gitleaks_sha_log" ||
+    fail "X64 gitleaks archive was not checksum-verified against the x64 pin"
 run_gitleaks_install ARM64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-arm64" "${test_tmp}/gitleaks-github-path-arm64"
-grep -Fq '/gitleaks_8.24.3_linux_arm64.tar.gz' "$gitleaks_curl_log" ||
+grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_arm64.tar.gz" "$gitleaks_curl_log" ||
     fail "ARM64 did not fetch the arm64 gitleaks asset"
+grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_arm64.tar.gz" "$gitleaks_sha_log" ||
+    fail "ARM64 gitleaks archive was not checksum-verified against the arm64 pin"
+
+echo "==> a gitleaks archive that does not match its pinned hash fails closed before extraction"
+gitleaks_mismatch_ghpath="${test_tmp}/gitleaks-github-path-mismatch"
+gitleaks_mismatch_temp="${test_tmp}/gitleaks-runner-mismatch"
+if FAKE_GITLEAKS_SHA256_MISMATCH=1 run_gitleaks_install X64 "$test_tmp/nonexistent" \
+    "$gitleaks_mismatch_temp" "$gitleaks_mismatch_ghpath" >/dev/null 2>&1; then
+    fail "a gitleaks archive with a mismatched checksum was accepted"
+fi
+[ ! -e "${gitleaks_mismatch_temp}/harmon-init-gitleaks/${PIN_GITLEAKS}/gitleaks" ] ||
+    fail "a gitleaks archive with a mismatched checksum was extracted"
+[ ! -s "$gitleaks_mismatch_ghpath" ] ||
+    fail "a gitleaks archive with a mismatched checksum published a GITHUB_PATH entry"
 : >"$gitleaks_curl_log"
 gitleaks_unsupported_temp="${test_tmp}/gitleaks-runner-unsupported"
 gitleaks_unsupported_ghpath="${test_tmp}/gitleaks-github-path-unsupported"
@@ -628,9 +708,9 @@ run_snyk_install() {
 echo "==> a pre-installed Snyk CLI matching the pin is reused, not reinstalled"
 snyk_match_bin="${test_tmp}/snyk-match-bin"
 mkdir -p "$snyk_match_bin"
-cat >"${snyk_match_bin}/snyk" <<'EOF'
+cat >"${snyk_match_bin}/snyk" <<EOF
 #!/usr/bin/env bash
-printf '1.1305.2\n'
+printf '%s\n' '${PIN_SNYK}'
 EOF
 chmod +x "${snyk_match_bin}/snyk"
 snyk_match_ghpath="${test_tmp}/snyk-github-path-match"
@@ -650,11 +730,11 @@ EOF
 chmod +x "${snyk_stale_bin}/snyk"
 snyk_stale_ghpath="${test_tmp}/snyk-github-path-stale"
 run_snyk_install "$snyk_stale_bin" "${test_tmp}/snyk-runner-stale" "$snyk_stale_ghpath"
-grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+grep -Fq "snyk@${PIN_SNYK}" "$npm_log" ||
     fail "a version-mismatched pre-installed Snyk CLI was not replaced with the pin"
 snyk_published="$(snyk_published_bin "$snyk_stale_ghpath")" ||
     fail "the replacement Snyk install did not publish a GITHUB_PATH entry"
-[ "$(bash "${snyk_published}/snyk")" = "1.1305.2" ] ||
+[ "$(bash "${snyk_published}/snyk")" = "$PIN_SNYK" ] ||
     fail "the replacement Snyk binary is not the pinned version"
 snyk_resolved="$(PATH="${snyk_published}:${snyk_stale_bin}:${PATH}" command -v snyk)"
 [ "$snyk_resolved" = "${snyk_published}/snyk" ] ||
@@ -669,12 +749,12 @@ exit 1
 EOF
 chmod +x "${snyk_corrupt_bin}/snyk"
 run_snyk_install "$snyk_corrupt_bin" "${test_tmp}/snyk-runner-corrupt" "${test_tmp}/snyk-github-path-corrupt"
-grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+grep -Fq "snyk@${PIN_SNYK}" "$npm_log" ||
     fail "a corrupted pre-installed Snyk CLI did not trigger a reinstall — the step aborted instead"
 
 echo "==> a missing Snyk CLI is installed"
 run_snyk_install "$test_tmp/nonexistent" "${test_tmp}/snyk-runner-missing" "${test_tmp}/snyk-github-path-missing"
-grep -Fq 'snyk@1.1305.2' "$npm_log" ||
+grep -Fq "snyk@${PIN_SNYK}" "$npm_log" ||
     fail "a missing Snyk CLI was not installed"
 
 echo "setup action tool-version checks: PASS"
