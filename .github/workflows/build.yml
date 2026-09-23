@@ -70,6 +70,7 @@ jobs:
       - run: task test:gh-scopes
       - run: task test:worktree
       - run: task test:renovate-pins
+      - run: task test:tool-pin-pairs
       - run: task test:lint-hygiene
       - run: task test:release-title
       - run: task test:claim-release-merged

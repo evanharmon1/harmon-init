@@ -46,6 +46,14 @@
     },
     {
       "customType": "regex",
+      "description": "Per-architecture checksum pins, `*_sha256=<hex>` under a `# renovate: datasource=github-release-attachments ... digestVersion=<tag>` annotation, one annotated line per architecture. When the paired `*_VERSION` pin moves, Renovate bumps the tag and recomputes the hash of the same release asset in the same PR. digestVersion is the RAW release tag (v3.14.1, no extractVersion) because the datasource looks the release up by that exact tag. Both layers: the template twin is matched through its jinja filename.",
+      "managerFilePatterns": ["/\\.github/(actions|workflows)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) digestVersion=(?<currentValue>\\S+)\\s+[a-z0-9_]+_sha256=(?<currentDigest>[0-9a-f]{64})"
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "GitHub Action SHA pins (`uses: owner/repo@sha # vX.Y.Z`) in the template's .jinja workflows AND composite actions — the native github-actions manager can't parse the .jinja extension, so these pins rotted silently until the omator retro caught them. `actions/` is covered too: template/.github/actions/setup/action.yml.jinja pins setup-node, setup-python, setup-uv, setup-terraform and setup-tflint by SHA. Conditional workflow filenames (`…yml[% endif %].jinja`) must stay matched or their pins rot the same way.",
       "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\[% endif %\\])?\\.jinja$/"],
       "matchStrings": [
@@ -108,6 +116,17 @@
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["template/.github/workflows/**", "template/.github/actions/**"],
       "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Give the checksum-pinned CI lint tools (shellcheck, shfmt, actionlint, yq, gitleaks) their own PR instead of the batched GitHub Actions group: their pins carry companion values (per-architecture hashes; for a formatter, what counts as correctly formatted), so one red lint-tool bump must not hold every Actions update back. Must come after the GitHub Actions grouping rules so this override wins. In this repo it must also follow the Devcontainer rule (which claims template/**); the Dockerfile copies of these pins stay in the Devcontainer batch.",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["koalaman/shellcheck", "mvdan/sh", "rhysd/actionlint", "mikefarah/yq", "gitleaks/gitleaks"],
+      "matchFileNames": [".github/**", "template/.github/**"],
+      "groupName": "CI lint tools",
+      "prBodyNotes": [
+        "Checksums move with their versions: every `*_sha256` pin carries a `github-release-attachments` annotation, so this PR should already contain the new hashes. If `task check` (scripts/test-tool-pin-pairs.sh) reports a hash left behind, retry this PR from the Dependency Dashboard rather than hand-editing the hash.",
+        "A formatter bump (shfmt) can change what `task check` accepts: run `task fix` and push the reformat as a separate commit; do not amend Renovate's commit."
+      ]
     },
     {
       "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
