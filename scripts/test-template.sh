@@ -626,6 +626,13 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+if have npx; then
+    run_quiet renovate-config-validator \
+        npx --yes --package renovate@latest -- renovate-config-validator --strict ||
+        err "rendered renovate.json fails renovate-config-validator --strict"
+else
+    required npx "strict Renovate configuration validation" || fail=1
+fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
 grep -q 'task test:ci-results' .github/workflows/build.yml ||

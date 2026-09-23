@@ -363,6 +363,62 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
     if cfg.get("vulnerabilityAlerts", {}).get("enabled") is not True:
         errors.append(f"{label}: vulnerabilityAlerts.enabled must be true")
 
+# npm update routing is order-sensitive: generic majors are ejected first,
+# then the two tightly coupled toolchains deliberately override that null group.
+# Assert both layers here so a root-only or template-only edit cannot silently
+# restore the red mega-PR this policy replaces.
+def check_npm_policy(label, cfg):
+    rules = cfg.get("packageRules", [])
+    by_description = {rule.get("description", ""): (i, rule) for i, rule in enumerate(rules)}
+
+    def find(prefix):
+        matches = [(i, rule) for desc, (i, rule) in by_description.items() if desc.startswith(prefix)]
+        if len(matches) != 1:
+            errors.append(f"{label}: expected exactly one package rule starting {prefix!r}")
+            return None, None
+        return matches[0]
+
+    minor_i, minor = find("Batch non-major npm/Node updates")
+    major_i, major = find("Give each npm major its own PR")
+    typescript_i, typescript = find("Hold TypeScript below 7")
+    package_manager_i, package_manager = find("Require explicit approval for package-manager majors")
+    eslint_i, eslint = find("Keep the tightly coupled ESLint packages together")
+    astro_i, astro = find("Keep Astro and its official integrations together")
+    found = [minor, major, typescript, package_manager, eslint, astro]
+    if any(rule is None for rule in found):
+        return
+
+    if set(minor.get("matchUpdateTypes", [])) != {"minor", "patch", "pin", "digest"} or minor.get("groupName") != "npm dependencies":
+        errors.append(f"{label}: non-major npm updates must be the 'npm dependencies' group")
+    if major.get("matchUpdateTypes") != ["major"] or major.get("groupName", "missing") is not None:
+        errors.append(f"{label}: npm majors must set groupName to null")
+    description = typescript.get("description", "")
+    if typescript.get("allowedVersions") != "<7.0.0" or not all(
+        issue in description
+        for issue in ("typescript-eslint/typescript-eslint/issues/10940", "withastro/roadmap/issues/1321")
+    ):
+        errors.append(f"{label}: TypeScript 7 hold must name both upstream removal conditions")
+    notes = "\n".join(package_manager.get("prBodyNotes", []))
+    if (
+        package_manager.get("matchDepTypes") != ["packageManager"]
+        or package_manager.get("matchUpdateTypes") != ["major"]
+        or package_manager.get("dependencyDashboardApproval") is not True
+        or "docs/CHECKLIST.md#package-manager-major-upgrades" not in notes
+        or "deliberately stays on an older major" not in notes
+    ):
+        errors.append(f"{label}: package-manager majors must be approval-gated with the migration/hold guidance")
+    if set(eslint.get("matchPackageNames", [])) != {"typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*"} or eslint.get("groupName") != "ESLint toolchain":
+        errors.append(f"{label}: ESLint toolchain rule is incomplete")
+    if set(astro.get("matchPackageNames", [])) != {"astro", "@astrojs/*"} or astro.get("groupName") != "Astro":
+        errors.append(f"{label}: Astro toolchain rule is incomplete")
+    if not (minor_i < major_i < typescript_i < package_manager_i < eslint_i < astro_i):
+        errors.append(f"{label}: npm package rules are not in override-safe order")
+
+
+for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
+    if cfg is not None:
+        check_npm_policy(label, cfg)
+
 if errors:
     for e in errors:
         print(f"FAIL: {e}", file=sys.stderr)

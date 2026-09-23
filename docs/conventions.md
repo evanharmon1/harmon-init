@@ -183,6 +183,14 @@ it points here.
 - CI authenticates as the **`evanharmon1-ci` GitHub App** (short-lived
   tokens), not a PAT — see [architecture/security.md](architecture/security.md).
 
+### When a grouped Renovate PR goes red
+
+Identify the suspect major from the failing job, revert only that package on
+the Renovate branch, and rerun `task verify`. Repeat until the remaining group
+is green. If a major is genuinely incompatible, file a narrowly scoped hold
+rule with the upstream compatibility condition and removal trigger instead of
+leaving the whole group blocked.
+
 ## Secrets
 
 - Local env comes from **1Password** (`op run` / `op inject`); CI reads GitHub

@@ -71,6 +71,15 @@ this comment. -->
 - [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
 - [ ] macOS (Bunch): scaffold the launcher with `task util:bunch-add` (if not generated at copier time), then `task util:bunch-install` to move it to iCloud and leave a `.meta/*.bunch` symlink (re-run install if missing)
 
+### Package-manager major upgrades
+
+Before approving a pnpm, npm, or yarn major in Renovate, read its migration
+guide; update the `packageManager` declaration and any Corepack/bootstrap or CI
+setup together; regenerate the lockfile with that major; then run `task verify`.
+If this repository intentionally remains on an older major, add a local
+Renovate package rule that disables only that package-manager update and state
+the compatibility reason in the rule's `description`.
+
 ## 2. GitHub repo settings
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
