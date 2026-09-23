@@ -6,12 +6,8 @@ Date: 2026-09-01
 
 Superseded
 
-Superseded on 2026-09-23 by the decision recorded in
-[harmon-init#1361](https://github.com/evanharmon1/harmon-init/issues/1361):
-the workflow did not become part of regular development, while its generated
-integration files and Renovate-driven CLI pin created recurring maintenance
-work. The repository returned to its existing issue, ADR, and plain `specs/`
-process instead.
+Superseded by
+[Retire the OpenSpec workflow](2026-09-23-retire-openspec-workflow.md).
 
 ## Context
 
