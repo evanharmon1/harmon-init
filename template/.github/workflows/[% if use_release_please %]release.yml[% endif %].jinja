@@ -105,21 +105,15 @@ jobs:
           # Tag from release-please on release runs; the dispatched ref on
           # manual runs.
           ref: ${{ needs.release-please.outputs.tag_name || github.ref }}
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
       # No `cache: pnpm` here on purpose: the repo-wide Actions cache is
       # writable from lower-trust PR runs, and this job holds production
       # deploy credentials -- a cold install is the safe trade. deploy-preview
       # keeps its cache: that job builds the PR's own code, so poisoning it
       # grants nothing the PR does not already have.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: ./.github/actions/setup
         with:
-          # renovate: datasource=node-version depName=node
-          node-version: "24"
-      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
-        with:
-          # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
-          version: 3.51.1
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          install-deps: "false"
+          cache: "false"
       - name: Install dependencies
         # wrangler pulls sharp in deeply enough that pnpm treats a failed
         # sharp build as fatal. sharp's installer prefers a runner's global

@@ -621,12 +621,77 @@ grep -q '^  security:sca:snyk:' Taskfile.yml || err "explicit optional Snyk SCA 
 grep -q 'snyk test --all-projects' Taskfile.yml || err "Snyk SCA must scan every detected manifest"
 grep -q '^  snyk:' .github/actions/setup/action.yml || err "shared setup action is missing the opt-in Snyk installer"
 grep -q 'SNYK_VERSION=' .github/actions/setup/action.yml || err "Snyk CLI must be pinned and Renovate-manageable"
+python3 - <<'PY' || err "rendered workflows/actions violate the job-private pnpm store contract"
+import pathlib
+import re
+import sys
+
+roots = (pathlib.Path(".github/actions"), pathlib.Path(".github/workflows"))
+files = [
+    path
+    for root in roots
+    if root.is_dir()
+    for path in root.rglob("*")
+    if path.is_file() and path.suffix in {".yml", ".yaml"}
+]
+violations = []
+
+
+def contract_violations(source: str) -> list[str]:
+    flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
+    problems = []
+    global_flag = r"(?:--global|-g)"
+    if re.search(rf"\bpnpm\s+{global_flag}\s+config\s+set\b", flat) or re.search(
+        rf"\bpnpm\s+config\s+(?:{global_flag}\s+)?set\b.{{0,240}}?\s{global_flag}(?:\s|$)",
+        flat,
+    ):
+        problems.append("pnpm config set must not use --global/-g")
+    if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
+        problems.append("store paths must not escape GITHUB_WORKSPACE")
+    return problems
+
+
+# Negative controls prove this guard fails on both regression classes rather
+# than merely scanning the current render and reporting it clean.
+for fixture in (
+    'run: pnpm config set store-dir "$RUNNER_TEMP/store" --global',
+    'run: pnpm -g config set "store-dir" "$RUNNER_TEMP/store"',
+    'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
+):
+    if not contract_violations(fixture):
+        print(f"pnpm-store guard missed its negative control: {fixture}", file=sys.stderr)
+        raise SystemExit(1)
+
+for path in files:
+    text = path.read_text()
+    violations.extend(f"{path}: {problem}" for problem in contract_violations(text))
+
+if violations:
+    print("\n".join(violations), file=sys.stderr)
+    raise SystemExit(1)
+PY
 if [ -f prettier.config.cjs ] || [ -f pyproject.toml ]; then
     grep -q '^  install-deps:' .github/actions/setup/action.yml ||
         err "dependency-bearing profiles must expose the install-deps input"
 else
     ! grep -q '^  install-deps:' .github/actions/setup/action.yml ||
         err "dependency-free profiles must not expose an unused install-deps input"
+fi
+if grep -q 'brew "pnpm"' Brewfile; then
+    grep -q 'PNPM_CONFIG_STORE_DIR=${store_dir}' .github/actions/setup/action.yml ||
+        err "shared setup action does not export the job-private pnpm store"
+    grep -q 'resolved="$(pnpm config get store-dir)"' .github/actions/setup/action.yml ||
+        err "shared setup action does not verify pnpm's configured store base"
+    grep -q 'effective="$(pnpm store path)"' .github/actions/setup/action.yml ||
+        err "shared setup action does not print pnpm's effective store path"
+fi
+if [ -f .github/workflows/deploy-preview.yml ]; then
+    grep -q 'uses: ./.github/actions/setup' .github/workflows/deploy-preview.yml ||
+        err "deploy-preview must use the shared job-private pnpm setup"
+    grep -q 'uses: ./.github/actions/setup' .github/workflows/release.yml ||
+        err "production deploy must use the shared job-private pnpm setup"
+    grep -A4 'uses: ./.github/actions/setup' .github/workflows/release.yml | grep -q 'cache: "false"' ||
+        err "production deploy must disable the lower-trust pnpm Actions cache"
 fi
 if [ -f pyproject.toml ]; then
     grep -q 'if \[ -f uv.lock \]; then' .github/actions/setup/action.yml ||

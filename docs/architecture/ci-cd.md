@@ -244,6 +244,16 @@ Jobs use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`, so th
 `CI_RUNS_ON` variable dynamically controls runner placement without requiring a
 commit or template re-render.
 
+### Job-private filesystem contract
+
+CI may run on persistent self-hosted runners. Only `$GITHUB_WORKSPACE` and
+`$RUNNER_TEMP` are treated as job-private; the runner empties `$RUNNER_TEMP`
+for each job, while files elsewhere can survive and affect another job or
+repository. CI must never write global tool configuration (`--global`,
+`~/.config`, `~/.npmrc`) or construct a supposedly private path from
+`$GITHUB_WORKSPACE/..`. The shared setup action therefore puts pnpm's store
+under `${RUNNER_TEMP}/.pnpm-store` through a job-scoped environment variable.
+
 ### Variable hierarchy and precedence
 
 Runner selection resolves hierarchically via GitHub Actions variables:
