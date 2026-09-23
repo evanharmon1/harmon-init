@@ -460,10 +460,10 @@ environment — against the items below
 - [ ] Scaffold Astro: `pnpm create astro@latest . --template minimal` (or preferred template)
 [% if deploy_cloudflare_workers %]
 - [ ] Add Wrangler as a devDependency: `pnpm add -D wrangler` — the deploy
-      workflows no longer pin `wranglerVersion` (harmon-init#1347), so
-      `cloudflare/wrangler-action` deploys with whatever version this lockfile
-      pins; Renovate's `npm dependencies` group keeps it current like any
-      other devDependency.
+      workflows no longer set a separate Cloudflare Workers version input for
+      the deploy action (harmon-init#1347), so `cloudflare/wrangler-action`
+      deploys with whatever version this lockfile pins; Renovate's `npm
+      dependencies` group keeps it current like any other devDependency.
 [% endif %]
 - [ ] Add the standard stack: Tailwind v4 (`@tailwindcss/vite`), zod, vitest, lucide
 - [ ] Move lint tooling into devDependencies (prettier, eslint, markdownlint-cli2,
@@ -523,10 +523,10 @@ environment — against the items below
 - [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
 [% if deploy_cloudflare_workers %]
 - [ ] Add Wrangler as a devDependency: `pnpm add -D wrangler` — the deploy
-      workflows no longer pin `wranglerVersion` (harmon-init#1347), so
-      `cloudflare/wrangler-action` deploys with whatever version this lockfile
-      pins; Renovate's `npm dependencies` group keeps it current like any
-      other devDependency.
+      workflows no longer set a separate Cloudflare Workers version input for
+      the deploy action (harmon-init#1347), so `cloudflare/wrangler-action`
+      deploys with whatever version this lockfile pins; Renovate's `npm
+      dependencies` group keeps it current like any other devDependency.
 [% endif %]
 - [ ] Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide
 - [ ] Move lint tooling into devDependencies (`pnpm add -D prettier
