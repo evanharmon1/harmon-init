@@ -160,6 +160,18 @@ run_guard
 expect_fail wrong-dep
 expect_output wrong-dep "is annotated for mvdan/other but SHFMT_VERSION"
 
+echo "==> a version line with no Renovate annotation above it -> fails"
+new_repo unannotated-version
+awk -v t="SHFMT_VERSION=3.13.1" '
+    NR > 1 { if (!done && index($0, t)) done = 1; else print prev }
+    { prev = $0 }
+    END { print prev }
+' .github/actions/setup/action.yml >action.tmp
+mv action.tmp .github/actions/setup/action.yml
+run_guard
+expect_fail unannotated-version
+expect_output unannotated-version "version SHFMT_VERSION is not directly under a"
+
 echo "==> a marker on a line that is not NAME=value -> fails"
 new_repo bad-marker
 printf '%s\n' '        echo hi # pin-pair: shfmt' >>.github/actions/setup/action.yml

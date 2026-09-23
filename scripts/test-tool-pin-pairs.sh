@@ -118,6 +118,12 @@ def parse(path, text, errors):
                 errors.append(f"{path}:{i}: pin-pair '{tool}' has a second version line (first at line {entry['version'][0]})")
                 continue
             ann = VERSION_ANNOTATION.match(lines[i - 2]) if i >= 2 else None
+            if not ann:
+                errors.append(
+                    f"{path}:{i}: pin-pair '{tool}' version {var} is not directly under a "
+                    "`# renovate: datasource=… depName=<owner/repo>` annotation, so Renovate would "
+                    "move its hashes but never the version"
+                )
             entry["version"] = (i, var, val, ann["dep"] if ann else None)
         elif var.lower().endswith("_sha256"):
             if not re.fullmatch(r"[0-9a-f]{64}", val):
