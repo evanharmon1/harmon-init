@@ -224,7 +224,7 @@ success. Immediately before accepting a result or promoting, re-check the
 **cycle** as well as `headRefOid`: a same-head finding can land after a clean
 one. § "Second-Model Review" carries the trigger cadence and both procedures.
 
-**One carve-out, and it is proved rather than judged** (#752). A head that
+**One carve-out, and it is proved rather than judged** (evanharmon1/harmon-init#752). A head that
 advanced **only** by a base catch-up merge can carry the change forward
 byte-for-byte, and a fresh cycle then re-attests the same bytes at the cost of
 a full reviewer window. Where the PR's three-dot diff (`base...head`) has the
@@ -257,9 +257,14 @@ and it is still answered the ordinary way. What a carry removes is the second
 *review*, never the second *look*. And the proof is **re-derived** each time
 rather than read back from the record, so a resumed session trusts nothing a
 previous process wrote. Like the exemption, this belongs to the integration
-stage and takes effect only where that stage implements it — until the vendored
-pin in `.claude/skills/` carries it, every head is reviewed on its own and no
-verdict is carried.
+stage and takes effect only where that stage implements it. Three things have
+to carry it, and a skills-pin bump is only the first: the vendored checker and
+readiness gate under `.claude/skills/`, **and** this repo's own
+`ai/schemas/result.integrator.schema.json` and `scripts/validate-result-schemas.mjs`
+(plus their `template/` twins), which a pin bump does not touch and which
+otherwise reject a carried result for naming a reviewed commit that is not the
+gated head. Until all of them carry it, every head is reviewed on its own and
+no verdict is carried.
 [% endif %]
 
 ### Readiness gate
@@ -386,8 +391,9 @@ and a cycle ordinal above `integration` reads there as `codex-cap-mismatch` —
 an *indeterminate* gate condition, which leaves the PR draft. Acting on the
 exemption before the pin implements it would stall the gate it was meant to
 unblock.
+[% if use_codex_cloud_review %]
 
-`integration` also stops charging a cycle it never runs (#752). Where the head
+`integration` also stops charging a cycle it never runs (evanharmon1/harmon-init#752). Where the head
 advanced only by a base merge and the PR's three-dot diff has the same
 identity as at the previously reviewed head, the
 prior clean verdict carries forward and **no cycle is triggered at all** —
@@ -398,8 +404,10 @@ see. The exemption above is the weaker, file-set test and stays for what the
 identity cannot prove; the two compose, carry first because it is both stricter
 and cheaper. The same carve-out in full, including why CI still re-runs
 unconditionally, is under § "Dev Loop" → the current-head Codex contract, and
-the same pin caveat applies: until `.claude/skills/` carries it, no verdict is
-carried.
+the same caveat applies — and it is more than a pin: until the vendored
+assets AND this repository's own result schema and validator all carry it, no
+verdict is carried.
+[% endif %]
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
@@ -571,10 +579,7 @@ condition drops out of the readiness gate; every other gate still applies.)
 If both attempts are incomplete, stop and escalate without reporting green.
 **Where the pinned checker is vendored**
 (`.claude/skills/integrate/assets/check-codex-cloud-review.sh`), it is the
-required implementation — never hand-roll the polling: `carry` first on a head
-that moved (exit 0 means an existing cycle's verdict already attests it and
-there is no cycle to run; exit 17 is the ordinary "reserve one" answer),
-otherwise `reserve` the cycle
+required implementation — never hand-roll the polling: `reserve` the cycle
 against the captured head *before* posting the trigger (the durable state must
 exist before the GitHub write), then post `@codex review`, `attach` with
 `--trigger-id <comment id>`, and `check`, acting on its exit code (0 clean, 10 findings,
@@ -583,6 +588,15 @@ and on a carrying cycle it re-derives the identity as a precondition before the
 same evidence scan it always runs. It never writes to GitHub,
 so posting the trigger stays yours, and its `settle` subcommand records the
 disposition of a badged finding stated outside an inline thread.
+On a head that MOVED, one step comes first — but only where the pinned checker
+implements it. `carry` asks whether an existing cycle's verdict already attests
+the new head (exit 0: post no trigger, go straight to `check`; exit 17: reserve
+the ordinary cycle). A pin that predates it has no `carry` subcommand and exits
+2 through its usage fallback, which would BLOCK integration rather than run the
+ordinary per-head review — so confirm the capability before relying on it
+(`check-codex-cloud-review.sh --help` listing `carry`) and take the ordinary
+`reserve` flow when it is absent.
+
 **Where it is not vendored**, the same contract is satisfied by hand: post the
 trigger and record its comment ID and request time yourself, then poll all four
 surfaces — PR reactions (fetched by that exact comment ID), top-level comments,

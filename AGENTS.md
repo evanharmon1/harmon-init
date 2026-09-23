@@ -371,9 +371,14 @@ and it is still answered the ordinary way. What a carry removes is the second
 *review*, never the second *look*. And the proof is **re-derived** each time
 rather than read back from the record, so a resumed session trusts nothing a
 previous process wrote. Like the exemption, this belongs to the integration
-stage and takes effect only where that stage implements it — until the vendored
-pin in `.claude/skills/` carries it, every head is reviewed on its own and no
-verdict is carried.
+stage and takes effect only where that stage implements it. Three things have
+to carry it, and a skills-pin bump is only the first: the vendored checker and
+readiness gate under `.claude/skills/`, **and** this repo's own
+`ai/schemas/result.integrator.schema.json` and `scripts/validate-result-schemas.mjs`
+(plus their `template/` twins), which a pin bump does not touch and which
+otherwise reject a carried result for naming a reviewed commit that is not the
+gated head. Until all of them carry it, every head is reviewed on its own and
+no verdict is carried.
 
 ### Readiness gate
 
@@ -726,15 +731,21 @@ is why [docs/guides/codex-review.md](docs/guides/codex-review.md) delegates them
 to this file rather than restating either. **Where the pinned checker is
 vendored** — it is, in this repo — never hand-roll the polling:
 `.claude/skills/integrate/assets/check-codex-cloud-review.sh` is the required
-implementation (`carry` first on a head that moved — exit 0 means an existing
-cycle's verdict already attests it and there is no cycle to run, exit 17 is the
-ordinary "reserve one" answer — otherwise `reserve` the cycle against the
+implementation (`reserve` the cycle against the
 captured head *before* posting the trigger, then `attach` with
 `--trigger-id <comment id>`, then `check`), and
 its `settle` subcommand records the disposition of a badged finding stated
-outside an inline thread. `check` runs either way, and on a carrying cycle it
-re-derives the identity as a precondition before the same evidence scan it
-always runs.
+outside an inline thread.
+On a head that MOVED, one step comes first — but only where the pinned checker
+implements it. `carry` asks whether an existing cycle's verdict already attests
+the new head (exit 0: post no trigger, go straight to `check`; exit 17: reserve
+the ordinary cycle). A pin that predates it has no `carry` subcommand and exits
+2 through its usage fallback, which would BLOCK integration rather than run the
+ordinary per-head review — so confirm the capability before relying on it
+(`check-codex-cloud-review.sh --help` listing `carry`) and take the ordinary
+`reserve` flow when it is absent.
+`check` runs either way, and on a carrying cycle it re-derives the identity as
+a precondition before the same evidence scan it always runs.
 **Where it is not vendored**, the same contract is satisfied by hand: post the
 trigger, record its comment ID and request time yourself, and poll all four
 surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
