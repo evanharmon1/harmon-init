@@ -102,8 +102,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: pnpm
-          # renovate: datasource=npm depName=wrangler
-          wranglerVersion: "4.107.0"
           command: >-
             versions upload
             --preview-alias=${{ steps.branch.outputs.alias }}
