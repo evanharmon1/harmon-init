@@ -418,6 +418,20 @@ def check_npm_policy(label, cfg):
         errors.append(f"{label}: ESLint toolchain rule is incomplete")
     if set(astro.get("matchPackageNames", [])) != {"astro", "@astrojs/*"} or astro.get("groupName") != "Astro":
         errors.append(f"{label}: Astro toolchain rule is incomplete")
+    if label == "renovate.json":
+        fixture_file_patterns = {
+            "**/package.json",
+            "!tests/fixtures/web-astro/package.json",
+            "!tests/fixtures/web-app/package.json",
+        }
+        for name, rule in (
+            ("non-major npm", minor),
+            ("npm major", major),
+            ("ESLint toolchain", eslint),
+            ("Astro toolchain", astro),
+        ):
+            if set(rule.get("matchFileNames", [])) != fixture_file_patterns:
+                errors.append(f"{label}: {name} rule must preserve fixture-specific grouping")
     if not (minor_i < major_i < typescript_i < package_manager_i < eslint_i < astro_i):
         errors.append(f"{label}: npm package rules are not in override-safe order")
 
