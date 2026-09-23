@@ -294,7 +294,9 @@ fi
 # reads tracked files, so it needs the scaffold commit; a --skip-tasks profile
 # has none and is skipped.
 if [ -x scripts/test-tool-pin-pairs.sh ] && git rev-parse --verify --quiet HEAD >/dev/null; then
-    if pin_pairs_out="$(PIN_PAIRS_BASE='' ./scripts/test-tool-pin-pairs.sh 2>&1)"; then
+    # No base in a fresh render: clear both inputs so harmon-init's own PR
+    # context (GITHUB_BASE_REF) does not demand one.
+    if pin_pairs_out="$(PIN_PAIRS_BASE='' GITHUB_BASE_REF='' ./scripts/test-tool-pin-pairs.sh 2>&1)"; then
         case "$pin_pairs_out" in
         *" pair(s) in "*) : ;;
         *) err "rendered setup action has no pin-pair markers: ${pin_pairs_out}" ;;

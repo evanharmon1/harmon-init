@@ -67,9 +67,12 @@ new_repo() {
 }
 
 # run_guard: runs the guard in the current repo, capturing status and output.
+# GITHUB_BASE_REF is cleared unless a case sets it: this suite runs inside
+# harmon-init's own pull-request CI, where the real value would point the
+# fixture repos at an origin they do not have.
 run_guard() {
     status=0
-    output="$(PIN_PAIRS_BASE="${PIN_PAIRS_BASE-base}" "$guard" 2>&1)" || status=$?
+    output="$(PIN_PAIRS_BASE="${PIN_PAIRS_BASE-base}" GITHUB_BASE_REF="${CASE_GITHUB_BASE_REF:-}" "$guard" 2>&1)" || status=$?
 }
 
 expect_fail() {
@@ -149,6 +152,14 @@ run_guard
 expect_fail unannotated
 expect_output unannotated "not directly under a"
 
+echo "==> a hash annotated for a different project than its version line -> fails"
+new_repo wrong-dep
+sed -i.bak 's#depName=mvdan/sh digestVersion=v3.13.1#depName=mvdan/other digestVersion=v3.13.1#' .github/actions/setup/action.yml
+rm -f .github/actions/setup/action.yml.bak
+run_guard
+expect_fail wrong-dep
+expect_output wrong-dep "is annotated for mvdan/other but SHFMT_VERSION"
+
 echo "==> a marker on a line that is not NAME=value -> fails"
 new_repo bad-marker
 printf '%s\n' '        echo hi # pin-pair: shfmt' >>.github/actions/setup/action.yml
@@ -170,6 +181,20 @@ write_action 3.14.1 v3.14.1 "$OLD_AMD" v3.14.1 "$OLD_ARM"
 PIN_PAIRS_BASE='' run_guard
 expect_pass no-base
 expect_output no-base "drift check skipped"
+
+echo "==> a pull request with no merge-base (shallow checkout) -> fails rather than skipping the drift check"
+new_repo pr-no-base
+PIN_PAIRS_BASE='' CASE_GITHUB_BASE_REF=main run_guard
+expect_fail pr-no-base
+expect_output pr-no-base "fetch-depth: 0"
+
+echo "==> a pull request whose base resolves -> drift is checked against origin/<base>"
+new_repo pr-base
+git update-ref refs/remotes/origin/main refs/heads/base
+write_action 3.14.1 v3.14.1 "$OLD_AMD" v3.14.1 "$OLD_ARM"
+PIN_PAIRS_BASE='' CASE_GITHUB_BASE_REF=main run_guard
+expect_fail pr-base
+expect_output pr-base "since origin/main"
 
 echo "==> an explicit PIN_PAIRS_BASE that does not resolve -> fails rather than silently skipping"
 new_repo bad-base

@@ -24,9 +24,11 @@
 #   2. drift   — when a `*_VERSION` value differs from the merge-base, every
 #                paired hash must differ too. A tag bumped without its hash is
 #                what Renovate leaves when it cannot find the release asset.
-# The drift check needs a merge-base; with none (a shallow CI checkout, no
-# remote) it is skipped with a notice, and the action's own `sha256sum -c`
-# remains the fail-closed backstop.
+# The drift check needs a merge-base. On a pull request (GITHUB_BASE_REF set)
+# a missing one fails the guard — the checkout needs `fetch-depth: 0` — because
+# the action's own `sha256sum -c` is skipped whenever the runner already has
+# the pinned version (GitHub-hosted images ship a current yq). Elsewhere (a
+# local clone with no remote, a push build) it is skipped with a notice.
 #
 # Base ref: PIN_PAIRS_BASE if set, else origin/$GITHUB_BASE_REF on a pull
 # request, else origin/HEAD, origin/main, origin/master — first that resolves.
@@ -49,6 +51,10 @@ fi
 merge_base=
 if [ -n "$base_ref" ]; then
     merge_base="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
+fi
+if [ -z "$merge_base" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+    echo "pin-pairs: no merge-base with ${base_ref:-origin/${GITHUB_BASE_REF}} on a pull request, so a version bump that left its checksum behind cannot be detected — check out with fetch-depth: 0" >&2
+    exit 1
 fi
 
 # git grep exits 1 for "no match" and 2+ for a real failure; only the former
@@ -83,10 +89,11 @@ MARKER = re.compile(r"# pin-pair:")
 ANNOTATION = re.compile(
     r"^\s*# renovate: datasource=github-release-attachments depName=(?P<dep>\S+) digestVersion=(?P<tag>\S+)\s*$"
 )
+VERSION_ANNOTATION = re.compile(r"^\s*# renovate: datasource=\S+ depName=(?P<dep>\S+)")
 
 
 def parse(path, text, errors):
-    """{tool: {"version": (line, var, val) | None, "hashes": [(line, var, val, dep, tag)]}}"""
+    """{tool: {"version": (line, var, val, dep) | None, "hashes": [(line, var, val, dep, tag)]}}"""
     pairs = {}
     lines = text.splitlines()
     for i, line in enumerate(lines, 1):
@@ -103,7 +110,8 @@ def parse(path, text, errors):
             if entry["version"]:
                 errors.append(f"{path}:{i}: pin-pair '{tool}' has a second version line (first at line {entry['version'][0]})")
                 continue
-            entry["version"] = (i, var, val)
+            ann = VERSION_ANNOTATION.match(lines[i - 2]) if i >= 2 else None
+            entry["version"] = (i, var, val, ann["dep"] if ann else None)
         elif var.lower().endswith("_sha256"):
             if not re.fullmatch(r"[0-9a-f]{64}", val):
                 errors.append(f"{path}:{i}: pin-pair '{tool}' hash {var} is not 64 lowercase hex digits")
@@ -142,8 +150,13 @@ for path in files:
         if not entry["hashes"]:
             errors.append(f"{path}:{entry['version'][0]}: pin-pair '{tool}' has a version line but no `*_sha256=… # pin-pair: {tool}` lines")
             continue
-        vline, vvar, version = entry["version"]
+        vline, vvar, version, vdep = entry["version"]
         for line, var, _, dep, tag in entry["hashes"]:
+            if dep is not None and vdep is not None and dep != vdep:
+                errors.append(
+                    f"{path}:{line}: pin-pair '{tool}': {var} is annotated for {dep} but {vvar} "
+                    f"(line {vline}) tracks {vdep} — Renovate would compute this hash from the wrong project"
+                )
             if tag is not None and tag.removeprefix("v") != version.removeprefix("v"):
                 errors.append(
                     f"{path}:{line}: pin-pair '{tool}': {var} is annotated for {tag} but {vvar} is {version} "
