@@ -244,16 +244,18 @@ for top in SWEEP:
         if ANNOT.search(text):
             file_pins[str(p)] = extract_pins(root_cfg, str(p), text)
 
-# Pins that are deliberately root-only: the tool is dogfooded here but never
-# shipped to generated repos (no copier answer, nothing under template/, no
-# copier.yml change) — so no twin will ever exist to extract it from. Keep
-# this narrow and name the reason inline rather than growing a general
+# Pins that deliberately differ between the dogfood root and template twin.
+# Keep this narrow and name the reason inline rather than growing a general
 # opt-out; the default for every other pin stays "must have a twin."
-ROOT_ONLY_PINS = {
+INTENTIONALLY_UNPAIRED_PINS = {
     # OpenSpec: root-only spec-driven change workflow, Evan's decision
     # 2026-09-01 (docs/decisions/2026-09-01-adopt-openspec.md). AGENTS.md's
     # hard rules forbid it from reaching template/ or copier.yml.
     "@fission-ai/openspec",
+    # The root action pins the pnpm version harmon-init dogfoods. Generated
+    # repos leave pnpm/action-setup's version input unset so it can honor each
+    # consumer's packageManager declaration instead of conflicting with it.
+    "pnpm",
 }
 
 twin_of = {twin_name(p): p for p in file_pins if p.startswith("template/")}
@@ -264,7 +266,7 @@ for root_path, root_pins in sorted(file_pins.items()):
     if not tmpl_path:
         continue
     for dep, ds in sorted(root_pins - file_pins[tmpl_path]):
-        if dep in ROOT_ONLY_PINS:
+        if dep in INTENTIONALLY_UNPAIRED_PINS:
             continue
         errors.append(
             f"{dep}: pinned in {root_path} but not extractable from its twin "

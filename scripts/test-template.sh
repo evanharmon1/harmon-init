@@ -641,9 +641,11 @@ def contract_violations(source: str) -> list[str]:
     flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
     problems = []
     global_selector = r"(?:--global|-g|--location(?:=|\s+)global)"
-    pnpm_config_set = r"\bpnpm\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
-    if re.search(rf"{pnpm_config_set}{global_selector}(?:\s|$)", flat):
-        problems.append("pnpm config set must not select global configuration")
+    package_config_set = r"\b(?:pnpm|npm)\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
+    if re.search(rf"{package_config_set}{global_selector}(?:\s|$)", flat):
+        problems.append("package-manager config set must not select global configuration")
+    if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.npmrc", flat):
+        problems.append("workflows must not write the user-global .npmrc")
     if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
         problems.append("store paths must not escape GITHUB_WORKSPACE")
     return problems
@@ -656,6 +658,9 @@ for fixture in (
     'run: pnpm -g config set "store-dir" "$RUNNER_TEMP/store"',
     'run: pnpm config --global set "store-dir" "$RUNNER_TEMP/store"',
     'run: pnpm config set --location=global "store-dir" "$RUNNER_TEMP/store"',
+    'run: npm config set "store-dir" "$RUNNER_TEMP/store" --global',
+    'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.npmrc',
+    'run: echo "store-dir=$RUNNER_TEMP/store" | tee -a "$HOME/.npmrc"',
     'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
 ):
     if not contract_violations(fixture):
@@ -684,6 +689,11 @@ if grep -q 'brew "pnpm"' Brewfile; then
         err "shared setup action does not verify pnpm's configured store base"
     grep -q 'effective="$(pnpm store path)"' .github/actions/setup/action.yml ||
         err "shared setup action does not print pnpm's effective store path"
+    export_line=$(grep -n 'name: Export job-private pnpm store' .github/actions/setup/action.yml | cut -d: -f1)
+    node_line=$(grep -n 'uses: actions/setup-node@' .github/actions/setup/action.yml | cut -d: -f1)
+    verify_line=$(grep -n 'name: Verify job-private pnpm store' .github/actions/setup/action.yml | cut -d: -f1)
+    [ "$export_line" -lt "$node_line" ] && [ "$node_line" -lt "$verify_line" ] ||
+        err "pnpm store export must precede setup-node and verification must follow it"
 fi
 if [ -f .github/workflows/deploy-preview.yml ]; then
     grep -q 'uses: ./.github/actions/setup' .github/workflows/deploy-preview.yml ||

@@ -37,21 +37,28 @@ runs:
   steps:
 [% if use_node %]
     - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      with:
-        # renovate: datasource=npm depName=pnpm
-        version: 12.5.1
-    # PNPM_CONFIG_STORE_DIR is pnpm 12's environment-variable form of
-    # `--store-dir`, verified against the pinned consumer version with
+    # PNPM_CONFIG_STORE_DIR is pnpm's environment-variable form of
+    # `--store-dir`, verified empirically with pnpm 11 and 12 via
     # `pnpm config get store-dir`. $RUNNER_TEMP is emptied for every job;
     # unlike pnpm's user/global config or a sibling of $GITHUB_WORKSPACE, it
     # cannot leak a store across jobs or repositories on a persistent runner.
-    - name: Pin pnpm store to the job
+    - name: Export job-private pnpm store
       shell: bash
       run: |
         : "${RUNNER_TEMP:?RUNNER_TEMP is required to isolate the pnpm store}"
         store_dir="${RUNNER_TEMP}/.pnpm-store"
         echo "PNPM_CONFIG_STORE_DIR=${store_dir}" >> "$GITHUB_ENV"
-        export PNPM_CONFIG_STORE_DIR="${store_dir}"
+[% endif %]
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      with:
+        # renovate: datasource=node-version depName=node
+        node-version: "24"
+[% if use_node %]
+        cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
+    - name: Verify job-private pnpm store
+      shell: bash
+      run: |
+        store_dir="${RUNNER_TEMP}/.pnpm-store"
         resolved="$(pnpm config get store-dir)"
         echo "pnpm config get store-dir: ${resolved}"
         if [ "$resolved" != "$store_dir" ]; then
@@ -67,13 +74,6 @@ runs:
             exit 1
             ;;
         esac
-[% endif %]
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-      with:
-        # renovate: datasource=node-version depName=node
-        node-version: "24"
-[% if use_node %]
-        cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
 [% endif %]
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
