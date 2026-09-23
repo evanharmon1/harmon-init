@@ -125,8 +125,19 @@ if [ -f .dogfood-answers.yml ] && [ -d template ]; then
 fi
 
 managed_helpers="$tmp_root/managed-hooks.sh"
-sed -n '/^resolve_relative_to()/,/^install_repo_managed_hooks() {$/{/^install_repo_managed_hooks() {$/!p}' "$bot_post_create" >"$managed_helpers"
-sed -n '/^install_repo_managed_hooks()/,/^}$/p' "$bot_post_create" >>"$managed_helpers"
+# GNU sed's `{addr!p}` grouping (the previous form here) is rejected by BSD
+# sed ("extra characters at the end of p command") — #1337. Print the whole
+# range, then drop its last line (the range's own end address) with a second
+# pass instead, the same POSIX-portable idiom already used above for the
+# workspace-permissions extraction. On macOS, PATH can be shadowed by a
+# non-BSD sed (e.g. Homebrew coreutils), which would mask a BSD-only
+# regression here, so pin to the real platform sed there; elsewhere stay on
+# bare `sed` — this script also ships to generated repos, and not every
+# Linux environment keeps sed at /usr/bin/sed (BusyBox, NixOS).
+sed_bin=sed
+[ "$(uname -s)" != Darwin ] || sed_bin=/usr/bin/sed
+"$sed_bin" -n '/^resolve_relative_to()/,/^install_repo_managed_hooks() {$/p' "$bot_post_create" | "$sed_bin" '$d' >"$managed_helpers"
+"$sed_bin" -n '/^install_repo_managed_hooks()/,/^}$/p' "$bot_post_create" >>"$managed_helpers"
 [ -s "$managed_helpers" ] || fail "could not extract managed hook installer"
 grep -q '^resolve_hooks_common_dir()' "$managed_helpers" ||
     fail "the extracted helpers do not include resolve_hooks_common_dir (#1241 integration round 2, Codex finding 4056048551)"
@@ -163,7 +174,15 @@ chmod 0500 "$repo/.git/hooks"
 chmod 0700 "$repo/.git"
 
 git_mode() {
-    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+    stat -c '%a' "$1" 2>/dev/null && return
+    # BSD stat has no equivalent to GNU's %a: %Lp alone drops the
+    # setuid/setgid/sticky digit entirely, silently reporting "775" for a
+    # setgid 2775 directory (#1337). %Mp%Lp keeps it but always pads a
+    # leading "0" when unset, where %a omits it — strip that one leading
+    # zero to match.
+    local mode
+    mode="$(stat -f '%Mp%Lp' "$1")"
+    printf '%s\n' "${mode#0}"
 }
 expected_owner="$(id -u):$(id -g)"
 # The fake sudo shim logs its args verbatim, so the ownership reclaim's
@@ -318,6 +337,12 @@ if [ -n "$secondary_gid" ]; then
     gid_config="$fixture/gid-xdg/git/config"
     gid_log="$fixture/gid-sudo.log"
     mkdir -p "$gid_repo/subdirectory" "$fixture/gid-xdg/git"
+    # Resolve to the physical path, matching $repo/$unrelated above: on
+    # macOS $TMPDIR sits under /var, itself a symlink to /private/var, and
+    # reconcile_workspace_permissions resolves its own workspace_root via
+    # `pwd -P` — an unresolved expected value here would never match it
+    # (#1337).
+    gid_repo="$(cd "$gid_repo" && pwd -P)"
     git -C "$gid_repo" init -q
     chgrp "$secondary_gid" "$gid_repo/.git"
     [ "$(stat -c '%g' "$gid_repo/.git" 2>/dev/null || stat -f '%g' "$gid_repo/.git")" = "$secondary_gid" ] ||
