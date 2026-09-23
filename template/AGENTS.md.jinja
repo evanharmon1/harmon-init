@@ -259,11 +259,10 @@ rather than read back from the record, so a resumed session trusts nothing a
 previous process wrote. Like the exemption, this belongs to the integration
 stage and takes effect only where that stage implements it. Three things have
 to carry it, and a skills-pin bump is only the first: the vendored checker and
-readiness gate under `.claude/skills/`, **and** this repo's own
-`ai/schemas/result.integrator.schema.json` and `scripts/validate-result-schemas.mjs`
-(plus their `template/` twins), which a pin bump does not touch and which
-otherwise reject a carried result for naming a reviewed commit that is not the
-gated head. Until all of them carry it, every head is reviewed on its own and
+readiness gate under `.claude/skills/`, **and** this repository's own
+`ai/schemas/result.integrator.schema.json` and `scripts/validate-result-schemas.mjs`,
+which a pin bump does not touch and which otherwise reject a carried result for
+naming a reviewed commit that is not the gated head. Until all of them carry it, every head is reviewed on its own and
 no verdict is carried.
 [% endif %]
 
@@ -584,8 +583,8 @@ against the captured head *before* posting the trigger (the durable state must
 exist before the GitHub write), then post `@codex review`, `attach` with
 `--trigger-id <comment id>`, and `check`, acting on its exit code (0 clean, 10 findings,
 11 pending, 12 retry, 13 escalate, 2 indeterminate). `check` runs either way,
-and on a carrying cycle it re-derives the identity as a precondition before the
-same evidence scan it always runs. It never writes to GitHub,
+and on a carrying cycle it runs the same evidence scan it always runs and
+re-derives the identity immediately before any verdict it reaches. It never writes to GitHub,
 so posting the trigger stays yours, and its `settle` subcommand records the
 disposition of a badged finding stated outside an inline thread.
 On a head that MOVED, one step comes first — but only where the pinned checker

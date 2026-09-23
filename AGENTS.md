@@ -517,8 +517,9 @@ see. The exemption above is the weaker, file-set test and stays for what the
 identity cannot prove; the two compose, carry first because it is both stricter
 and cheaper. The same carve-out in full, including why CI still re-runs
 unconditionally, is under § "Dev Loop" → the current-head Codex contract, and
-the same pin caveat applies: until `.claude/skills/` carries it, no verdict is
-carried.
+the same caveat applies, and it is more than a pin: until the vendored assets
+AND this repository's own result schema and validator all carry it, no verdict
+is carried.
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
