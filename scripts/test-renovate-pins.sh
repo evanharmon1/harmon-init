@@ -369,10 +369,12 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
 # restore the red mega-PR this policy replaces.
 def check_npm_policy(label, cfg):
     rules = cfg.get("packageRules", [])
-    by_description = {rule.get("description", ""): (i, rule) for i, rule in enumerate(rules)}
-
     def find(prefix):
-        matches = [(i, rule) for desc, (i, rule) in by_description.items() if desc.startswith(prefix)]
+        matches = [
+            (i, rule)
+            for i, rule in enumerate(rules)
+            if rule.get("description", "").startswith(prefix)
+        ]
         if len(matches) != 1:
             errors.append(f"{label}: expected exactly one package rule starting {prefix!r}")
             return None, None
@@ -393,9 +395,14 @@ def check_npm_policy(label, cfg):
     if major.get("matchUpdateTypes") != ["major"] or major.get("groupName", "missing") is not None:
         errors.append(f"{label}: npm majors must set groupName to null")
     description = typescript.get("description", "")
-    if typescript.get("allowedVersions") != "<7.0.0" or not all(
+    if (
+        typescript.get("matchManagers") != ["npm"]
+        or typescript.get("matchPackageNames") != ["typescript"]
+        or typescript.get("allowedVersions") != "<7.0.0"
+        or not all(
         issue in description
         for issue in ("typescript-eslint/typescript-eslint/issues/10940", "withastro/roadmap/issues/1321")
+        )
     ):
         errors.append(f"{label}: TypeScript 7 hold must name both upstream removal conditions")
     notes = "\n".join(package_manager.get("prBodyNotes", []))
