@@ -129,11 +129,15 @@ managed_helpers="$tmp_root/managed-hooks.sh"
 # sed ("extra characters at the end of p command") — #1337. Print the whole
 # range, then drop its last line (the range's own end address) with a second
 # pass instead, the same POSIX-portable idiom already used above for the
-# workspace-permissions extraction. Pinned to /usr/bin/sed rather than a bare
-# `sed` so this proves out against the platform's real sed even where PATH
-# resolves `sed` to something else (e.g. GNU coreutils ahead of it on macOS).
-/usr/bin/sed -n '/^resolve_relative_to()/,/^install_repo_managed_hooks() {$/p' "$bot_post_create" | /usr/bin/sed '$d' >"$managed_helpers"
-/usr/bin/sed -n '/^install_repo_managed_hooks()/,/^}$/p' "$bot_post_create" >>"$managed_helpers"
+# workspace-permissions extraction. On macOS, PATH can be shadowed by a
+# non-BSD sed (e.g. Homebrew coreutils), which would mask a BSD-only
+# regression here, so pin to the real platform sed there; elsewhere stay on
+# bare `sed` — this script also ships to generated repos, and not every
+# Linux environment keeps sed at /usr/bin/sed (BusyBox, NixOS).
+sed_bin=sed
+[ "$(uname -s)" != Darwin ] || sed_bin=/usr/bin/sed
+"$sed_bin" -n '/^resolve_relative_to()/,/^install_repo_managed_hooks() {$/p' "$bot_post_create" | "$sed_bin" '$d' >"$managed_helpers"
+"$sed_bin" -n '/^install_repo_managed_hooks()/,/^}$/p' "$bot_post_create" >>"$managed_helpers"
 [ -s "$managed_helpers" ] || fail "could not extract managed hook installer"
 grep -q '^resolve_hooks_common_dir()' "$managed_helpers" ||
     fail "the extracted helpers do not include resolve_hooks_common_dir (#1241 integration round 2, Codex finding 4056048551)"
