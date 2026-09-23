@@ -298,6 +298,14 @@ runs:
     - name: Install dependencies
       if: inputs.install-deps == 'true'
       shell: bash
+      # A Cloudflare Workers project's wrangler pulls sharp in deeply enough
+      # that pnpm treats a failed sharp build as fatal. sharp's installer
+      # prefers a runner's global libvips over its own bundled prebuilt when
+      # one is on PKG_CONFIG_PATH (a self-hosted runner image can carry
+      # one), and that from-source build then fails without node-addon-api.
+      # Harmless when sharp isn't installed at all.
+      env:
+        SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
       run: |
         if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
 [% endif %]
