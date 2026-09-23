@@ -26,8 +26,8 @@ one's status.
   record and nothing in its body is seed-specific.
 - [0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
   — proposed v1 contract for portable devflow consumers.
-- [2026-09-01-adopt-openspec.md](2026-09-01-adopt-openspec.md) — adopts
-  OpenSpec as this repo's spec-driven change process, root-only.
+- [2026-09-01-adopt-openspec.md](2026-09-01-adopt-openspec.md) — superseded
+  record of the retired root-only OpenSpec workflow.
 - [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
   — the process-kill guard hook is removed; the hard rule binds the agent directly.
 - [2026-09-13-brief-envelope-schema-bound-free-form-body.md](2026-09-13-brief-envelope-schema-bound-free-form-body.md)

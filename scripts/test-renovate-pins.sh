@@ -244,17 +244,7 @@ for top in SWEEP:
         if ANNOT.search(text):
             file_pins[str(p)] = extract_pins(root_cfg, str(p), text)
 
-# Pins that are deliberately root-only: the tool is dogfooded here but never
-# shipped to generated repos (no copier answer, nothing under template/, no
-# copier.yml change) — so no twin will ever exist to extract it from. Keep
-# this narrow and name the reason inline rather than growing a general
-# opt-out; the default for every other pin stays "must have a twin."
-ROOT_ONLY_PINS = {
-    # OpenSpec: root-only spec-driven change workflow, Evan's decision
-    # 2026-09-01 (docs/decisions/2026-09-01-adopt-openspec.md). AGENTS.md's
-    # hard rules forbid it from reaching template/ or copier.yml.
-    "@fission-ai/openspec",
-}
+ROOT_ONLY_PINS = set()
 
 twin_of = {twin_name(p): p for p in file_pins if p.startswith("template/")}
 for root_path, root_pins in sorted(file_pins.items()):

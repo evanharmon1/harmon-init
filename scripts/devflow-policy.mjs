@@ -4,9 +4,8 @@
 // Every Dev flow v2 consumer (the exit script, the round-push broker, the
 // integrator, the stage skills) resolves policy through this one module
 // rather than parsing TOML itself, so shape refusal and resolution never
-// drift between consumers (design.md decision 13). See
-// openspec/changes/dev-flow-v2/specs/config/spec.md for the normative
-// contract this implements, and AGENTS.md "Round caps are resolved, not
+// drift between consumers (design.md decision 13). See AGENTS.md
+// "Round caps are resolved, not
 // stated here" / "Tier and strategy" for the legacy-repo policy this
 // repository's OWN live .devflow.toml still uses (never operated under by
 // this module — see "Shape detection" below).

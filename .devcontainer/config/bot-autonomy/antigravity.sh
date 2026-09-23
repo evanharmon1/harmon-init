@@ -8,9 +8,7 @@ set -euo pipefail
 # the rendered containerEnv.HARMON_BOT_AUTONOMY_ANTIGRAVITY marker (never the
 # Copier answer directly: this file is a verbatim template twin, shipped
 # byte-identical to every generated repo, so it has no template-time
-# substitution to read). See
-# https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap/design.md - Decisions for the full
-# "~/.local/bin/agy is exactly one of three states" rationale.
+# substitution to read).
 #
 #   marker == enabled  -> apply-antigravity-settings.sh apply (always-proceed)
 #                          + install the flag-injecting wrapper at
