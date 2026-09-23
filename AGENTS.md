@@ -746,8 +746,9 @@ the ordinary cycle). A pin that predates it has no `carry` subcommand and exits
 ordinary per-head review — so confirm the capability before relying on it
 (`check-codex-cloud-review.sh --help` listing `carry`) and take the ordinary
 `reserve` flow when it is absent.
-`check` runs either way, and on a carrying cycle it re-derives the identity as
-a precondition before the same evidence scan it always runs.
+`check` runs either way, and on a carrying cycle it runs the same evidence scan
+it always runs and re-derives the identity immediately before any verdict it
+reaches.
 **Where it is not vendored**, the same contract is satisfied by hand: post the
 trigger, record its comment ID and request time yourself, and poll all four
 surfaces — PR reactions (fetched by that exact comment ID), top-level comments,
