@@ -374,10 +374,11 @@ previous process wrote. Like the exemption, this belongs to the integration
 stage and takes effect only where that stage implements it. Three things have
 to carry it, and a skills-pin bump is only the first: the vendored checker and
 readiness gate under `.claude/skills/`, **and** this repo's own
-`ai/schemas/result.integrator.schema.json` and `scripts/validate-result-schemas.mjs`
-(plus their `template/` twins), which a pin bump does not touch and which
-otherwise reject a carried result for naming a reviewed commit that is not the
-gated head. Until all of them carry it, every head is reviewed on its own and
+`ai/schemas/result.integrator.schema.json`, the composed
+`ai/schemas/result.schema.json` that embeds it, and
+`scripts/validate-result-schemas.mjs` (plus their `template/` twins), which a
+pin bump does not touch and which otherwise reject a carried result for naming
+a reviewed commit that is not the gated head. Until all of them carry it, every head is reviewed on its own and
 no verdict is carried.
 
 ### Readiness gate
@@ -518,8 +519,8 @@ identity cannot prove; the two compose, carry first because it is both stricter
 and cheaper. The same carve-out in full, including why CI still re-runs
 unconditionally, is under § "Dev Loop" → the current-head Codex contract, and
 the same caveat applies, and it is more than a pin: until the vendored assets
-AND this repository's own result schema and validator all carry it, no verdict
-is carried.
+AND this repository's own result schemas (the integrator schema and the
+composed one embedding it) and validator all carry it, no verdict is carried.
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
