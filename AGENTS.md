@@ -346,9 +346,9 @@ same identity at the previously reviewed head and at this one — a digest of
 that diff's own text, computed from immutable commit SHAs in the local
 checkout, never reconstructed from the API, and generated under fixed,
 non-normalizing options (no textconv or external diff driver, no rename
-detection, full object IDs and gitlinks, and pinned context, algorithm,
-prefixes, and file order) so no checkout's configuration can make two different
-diffs digest alike; this is the *canonical diff digest* the guides and
+detection, submodule changes never ignored, full object IDs and gitlinks, and
+pinned context, algorithm, prefixes, and file order) so no checkout's
+configuration can hide a change or make two different diffs digest alike; this is the *canonical diff digest* the guides and
 `.devflow.toml` refer to — the prior **clean** verdict
 carries to this head and no cycle is triggered. Equality of that one value is
 the whole argument: the reviewed artifact is the diff, and two heads whose
@@ -443,10 +443,11 @@ as **`round n/cap`** against the `.devflow.toml` cap that bounds *that* work —
 challenge, review, integration (Codex re-review cycles), and remediation
 (integration-stage fix pushes) are counted and capped separately and never
 combined, so name the counter whenever the stage has more than one. Integration
-cycles that spent nothing charged are named beside the count, never folded
-into it: `round n/cap (+m exempt, +k carried)`, where `m` counts exempt cycles
-and `k` counts heads carried forward without a review — so a head attested
-without a reviewer reading it stays visible. `Next` names the next
+heads not charged to `integration` are named beside the count, never folded
+into it: `round n/cap (+m exempt, +k carried)`. `m` counts exempt cycles, which
+still run a review and spend the separate `integration_exempt` ceiling; `k`
+counts heads carried forward without a review, which spend neither — so a head
+attested without a reviewer reading it stays visible. `Next` names the next
 concrete gate or action, including the `task verify` a fix owes before the next
 round. Post it at every stage transition, at each round boundary, as the concise
 tick during a long wait (no re-dumping unchanged command output), and
