@@ -2806,7 +2806,7 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         # false failure, never a CI one (runners carry no global libvips).
         SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --silent >/dev/null 2>&1 || true
         bin="node_modules/.bin"
-        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ]; then
+        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ] || [ ! -x "$bin/wrangler" ]; then
             err "web-astro fixture: install did not provide the toolchain (see tests/fixtures/web-astro/package.json)"
         elif ! "$bin/eslint" . >/dev/null 2>&1; then
             "$bin/eslint" . || true
@@ -2820,8 +2820,11 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         elif ! "$bin/astro" build >/dev/null 2>&1; then
             "$bin/astro" build || true
             err "web-astro fixture: astro build failed"
+        elif ! "$bin/wrangler" --version >/dev/null 2>&1; then
+            "$bin/wrangler" --version || true
+            err "web-astro fixture: wrangler --version failed — a binary can be linked but unusable (e.g. workerd's own install failed) while pnpm install still exits 0, which is exactly what cloudflare/wrangler-action's pre-installed-copy fallback needs to not be true"
         else
-            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build) clean on a real app"
+            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build + wrangler) clean on a real app"
         fi
     fi
 fi
