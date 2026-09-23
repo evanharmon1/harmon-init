@@ -30,15 +30,22 @@
 # the pinned version (GitHub-hosted images ship a current yq). Elsewhere (a
 # local clone with no remote, a push build) it is skipped with a notice.
 #
-# Base ref: PIN_PAIRS_BASE if set, else origin/$GITHUB_BASE_REF on a pull
-# request, else origin/HEAD, origin/main, origin/master — first that resolves.
+# Base ref: PIN_PAIRS_BASE if set; on a pull request exactly
+# origin/$GITHUB_BASE_REF (never a fallback — a wrong base would hide a stale
+# hash); otherwise the first of origin/HEAD, origin/main, origin/master.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+if [ -n "${PIN_PAIRS_BASE:-}" ]; then
+    candidates=("$PIN_PAIRS_BASE")
+elif [ -n "${GITHUB_BASE_REF:-}" ]; then
+    candidates=("origin/${GITHUB_BASE_REF}")
+else
+    candidates=(origin/HEAD origin/main origin/master)
+fi
 base_ref=
-for candidate in "${PIN_PAIRS_BASE:-}" "${GITHUB_BASE_REF:+origin/${GITHUB_BASE_REF}}" origin/HEAD origin/main origin/master; do
-    [ -n "$candidate" ] || continue
+for candidate in "${candidates[@]}"; do
     if git rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null; then
         base_ref="$candidate"
         break
@@ -168,6 +175,12 @@ for path in files:
         old = (base or {}).get(tool)
         if not old or not old["version"] or old["version"][2] == version:
             continue
+        if len(entry["hashes"]) < len(old["hashes"]):
+            errors.append(
+                f"{path}: pin-pair '{tool}': {vvar} changed {old['version'][2]} -> {version} since {base_ref} "
+                f"and its hash lines went from {len(old['hashes'])} to {len(entry['hashes'])} — "
+                "an architecture lost its checksum"
+            )
         old_hashes = {h[2] for h in old["hashes"]}
         stale = [h for h in entry["hashes"] if h[2] in old_hashes]
         if stale:

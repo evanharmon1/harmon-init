@@ -196,6 +196,29 @@ PIN_PAIRS_BASE='' CASE_GITHUB_BASE_REF=main run_guard
 expect_fail pr-base
 expect_output pr-base "since origin/main"
 
+echo "==> a pull request never falls back to another base when origin/<base> is missing"
+new_repo pr-no-fallback
+git update-ref refs/remotes/origin/main refs/heads/base
+write_action 3.14.1 v3.14.1 "$OLD_AMD" v3.14.1 "$OLD_ARM"
+PIN_PAIRS_BASE='' CASE_GITHUB_BASE_REF=release run_guard
+expect_fail pr-no-fallback
+expect_output pr-no-fallback "no merge-base with origin/release"
+
+echo "==> a version bump that drops one architecture's hash line -> fails"
+new_repo dropped-arch
+write_action 3.14.1 v3.14.1 "$NEW_AMD" v3.14.1 "$NEW_ARM"
+awk -v t="shfmt_sha256=${NEW_ARM}" '
+    NR > 1 { if (!done && index($0, t)) done = 2; else if (done == 2) done = 1; else print prev }
+    { prev = $0 }
+    END { if (done != 2) print prev }
+' .github/actions/setup/action.yml >action.tmp
+mv action.tmp .github/actions/setup/action.yml
+grep -q "shfmt_sha256=${NEW_ARM}" .github/actions/setup/action.yml && fail "dropped-arch: fixture edit kept the arm64 hash"
+grep -q "shfmt_sha256=${NEW_AMD}" .github/actions/setup/action.yml || fail "dropped-arch: fixture edit removed the amd64 hash"
+run_guard
+expect_fail dropped-arch
+expect_output dropped-arch "hash lines went from 2 to 1"
+
 echo "==> an explicit PIN_PAIRS_BASE that does not resolve -> fails rather than silently skipping"
 new_repo bad-base
 PIN_PAIRS_BASE=does-not-exist run_guard
