@@ -199,6 +199,8 @@ def resolve_group(cfg, path, dep, datasource, manager="custom.regex"):
         names = rule.get("matchPackageNames")
         if names and "*" not in names and dep not in names:
             continue
+        if dep in rule.get("excludePackageNames", []):
+            continue
         globs = rule.get("matchFileNames")
         if globs and not any(glob_to_re(g).match(path) for g in globs):
             continue
@@ -297,6 +299,20 @@ if producer_group != "Devcontainer":
     errors.append(
         "root config: semgrep in images/devcontainer/Dockerfile resolves to "
         f"group {producer_group!r}, expected 'Devcontainer'"
+    )
+
+# The root-only Renovate validator is CI tooling, not part of the devcontainer
+# toolchain. The broad scripts/** rule must explicitly leave it ungrouped.
+validator_group = resolve_group(
+    root_cfg,
+    "scripts/test-template.sh",
+    "renovate",
+    "npm",
+)
+if validator_group is not None:
+    errors.append(
+        "root config: renovate in scripts/test-template.sh resolves to "
+        f"group {validator_group!r}, expected no group"
     )
 
 # ── Template config: rendered packageRules route consumer pins correctly ────
