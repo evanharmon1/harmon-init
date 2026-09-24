@@ -540,13 +540,41 @@ gitleaks_published_bin() {
     tail -n 1 "$github_path"
 }
 
+# A stub that answers `version` with something that is never the pin, placed
+# after each case's own `pre_installed_path` and before the inherited PATH.
+# A case that installs its own copy still wins resolution, and a case that
+# installs none sees this stub rather than whatever the HOST has. The step
+# treats a mismatched version exactly like an absent one (empty or not the
+# pin, it installs the pinned asset), so the stub stands for "nothing
+# installed" without rewriting PATH.
+#
+# Why it is needed: the sync-harmon-devkit job runs the setup action
+# (installing the PINNED gitleaks) before `task verify`, so the "nothing
+# installed" case found that real binary, reused it, fetched nothing, and
+# failed there while passing wherever gitleaks was absent or at another
+# version. An earlier fix rewrote PATH to hide the host's copy instead, and
+# each review round found another corner of PATH semantics it got wrong
+# (directories holding other commands, relative and empty entries, glob
+# characters, colliding names). Shadowing needs none of that.
+mismatch_stub_dir() {
+    local tool="$1" dir="${test_tmp}/mismatch-stub-$1"
+    if [ ! -x "${dir}/${tool}" ]; then
+        mkdir -p "$dir"
+        printf '#!/usr/bin/env bash\necho 0.0.0-hermetic-stub\n' >"${dir}/${tool}"
+        chmod +x "${dir}/${tool}"
+    fi
+    printf '%s' "$dir"
+}
+
 run_gitleaks_install() {
     local arch="$1" pre_installed_path="$2" runner_temp="$3" github_path="$4"
+    local step_path
     mkdir -p "$runner_temp"
     : >"$gitleaks_curl_log"
     : >"$gitleaks_sha_log"
     : >"$github_path"
-    PATH="${pre_installed_path}:${gitleaks_bin}:${PATH}" \
+    step_path="${pre_installed_path}:$(mismatch_stub_dir gitleaks):${gitleaks_bin}:${PATH}"
+    PATH="$step_path" \
         RUNNER_ARCH="$arch" \
         RUNNER_TEMP="$runner_temp" \
         GITHUB_PATH="$github_path" \
@@ -614,6 +642,11 @@ gitleaks_corrupt_published="$(gitleaks_published_bin "$gitleaks_corrupt_ghpath")
     fail "the corrupted-gitleaks replacement binary is not the pinned version"
 
 echo "==> gitleaks architecture selection: X64 and ARM64 fetch the matching asset, an unsupported arch fails loudly"
+# Premise: with nothing pre-installed, the gitleaks the step resolves is the
+# mismatch stub, never a host binary, or the architecture cases prove nothing.
+[ "$(PATH="${test_tmp}/nonexistent:$(mismatch_stub_dir gitleaks):${gitleaks_bin}:${PATH}" command -v gitleaks)" = \
+    "$(mismatch_stub_dir gitleaks)/gitleaks" ] ||
+    fail "the architecture cases must resolve the mismatch stub, not a gitleaks already on the host"
 run_gitleaks_install X64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-x64" "${test_tmp}/gitleaks-github-path-x64"
 grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz" "$gitleaks_curl_log" ||
     fail "X64 did not fetch the x64 gitleaks asset"
@@ -641,7 +674,8 @@ gitleaks_unsupported_temp="${test_tmp}/gitleaks-runner-unsupported"
 gitleaks_unsupported_ghpath="${test_tmp}/gitleaks-github-path-unsupported"
 mkdir -p "$gitleaks_unsupported_temp"
 : >"$gitleaks_unsupported_ghpath"
-if gitleaks_unsupported_output="$(PATH="${test_tmp}/nonexistent:${gitleaks_bin}:${PATH}" \
+gitleaks_unsupported_path="${test_tmp}/nonexistent:$(mismatch_stub_dir gitleaks):${gitleaks_bin}:${PATH}"
+if gitleaks_unsupported_output="$(PATH="$gitleaks_unsupported_path" \
     RUNNER_ARCH=RISCV64 RUNNER_TEMP="$gitleaks_unsupported_temp" GITHUB_PATH="$gitleaks_unsupported_ghpath" \
     GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
     bash "${test_tmp}/install-lint-tools.sh.gitleaks" 2>&1)"; then
@@ -697,10 +731,12 @@ snyk_published_bin() {
 
 run_snyk_install() {
     local pre_installed_path="$1" runner_temp="$2" github_path="$3"
+    local step_path
     mkdir -p "$runner_temp"
     : >"$npm_log"
     : >"$github_path"
-    PATH="${pre_installed_path}:${snyk_bin}:${PATH}" \
+    step_path="${pre_installed_path}:$(mismatch_stub_dir snyk):${snyk_bin}:${PATH}"
+    PATH="$step_path" \
         RUNNER_TEMP="$runner_temp" GITHUB_PATH="$github_path" NPM_LOG="$npm_log" \
         bash "${test_tmp}/install-lint-tools.sh.snyk"
 }
