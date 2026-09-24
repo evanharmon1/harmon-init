@@ -79,6 +79,12 @@ printf '<html><body><p>Open<svg><path d="x"/></svg>\n.</p></body></html>\n' \
 run_guard "${tmp}/svg/a" "${tmp}/svg/b"
 [ "$status" -ne 0 ] || fail "svg adjacency: guard passed; output: ${output}"
 
+echo "==> a quoted attribute containing a literal '>' (Tailwind arbitrary variant) doesn't leak as text -> passes (Codex review round 4, P2)"
+write_page "${tmp}/tw-attr/a" '<div class="[&>svg]:block flex">text</div>'
+write_page "${tmp}/tw-attr/b" '<div class="flex [&>svg]:block">text</div>'
+run_guard "${tmp}/tw-attr/a" "${tmp}/tw-attr/b"
+[ "$status" -eq 0 ] || fail "quoted-attribute '>' : guard failed; output: ${output}"
+
 echo "==> leading whitespace at a <pre> boundary -> fails (Codex review round 2, P2)"
 write_page "${tmp}/pre/a" '<pre> a</pre>'
 write_page "${tmp}/pre/b" '<pre>a</pre>'

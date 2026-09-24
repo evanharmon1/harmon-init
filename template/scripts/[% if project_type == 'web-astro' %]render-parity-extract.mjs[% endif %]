@@ -113,17 +113,27 @@ function decodeEntities(s) {
 const BREAK = '\u0000'
 const MARK = '\u0001'
 
+// Attribute content, quote-aware: any run of characters that are none of
+// `>`/`"`/`'`, OR a fully double-quoted string, OR a fully single-quoted
+// string. A naive `[^>]*` stops at the FIRST `>` even when it sits inside a
+// quoted attribute value — e.g. a Tailwind arbitrary variant like
+// `class="[&>svg]:block flex"` — which truncates the tag match early and
+// leaks the rest of the real tag as literal visible text (harmon-init#1350
+// Codex review round 4). This fragment is reused everywhere a tag is
+// matched so no call site can regress independently.
+const ATTRS = `(?:[^>"']|"[^"]*"|'[^']*')*`
+
 function stripTagsKeepWhitespace(html) {
   // Used only inside a verbatim element, where whitespace is significant:
   // strip comments and tags without collapsing a single space or newline.
   return decodeEntities(
-    html.replace(/<!--[\s\S]*?-->/g, '').replace(/<\/?[a-z0-9]+(?:\s[^>]*)?\/?>/gi, '')
+    html.replace(/<!--[\s\S]*?-->/g, '').replace(new RegExp(`<\\/?[a-z0-9]+${ATTRS}>`, 'gi'), '')
   )
 }
 
 function visibleText(html) {
   let s = html.replace(/<!--[\s\S]*?-->/g, '')
-  s = s.replace(/<!doctype\b[^>]*>/gi, '')
+  s = s.replace(new RegExp(`<!doctype${ATTRS}>`, 'gi'), '')
   // Removed as EMPTY, not a space: a space here would fabricate the same
   // "collapses to one visible space" signature the whitespace pass below
   // uses to catch a reflowed inline newline, hiding that exact bug whenever
@@ -132,7 +142,7 @@ function visibleText(html) {
   // distinguishable from `Open<svg>…</svg>\n.`). <template> content is
   // inert (never rendered until cloned by script) so it is dropped the same
   // way.
-  s = s.replace(/<(script|style|template)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+  s = s.replace(new RegExp(`<(script|style|template)\\b${ATTRS}>[\\s\\S]*?<\\/\\1>`, 'gi'), '')
 
   // Verbatim elements (<pre>, <textarea>) render whitespace exactly as
   // written, so protect their content from the general collapse below:
@@ -141,7 +151,7 @@ function visibleText(html) {
   // trailing space inside the block would be stripped right back out.
   const blocks = []
   for (const tag of VERBATIM_TAGS) {
-    s = s.replace(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi'), (m, inner) => {
+    s = s.replace(new RegExp(`<${tag}\\b${ATTRS}>([\\s\\S]*?)<\\/${tag}>`, 'gi'), (m, inner) => {
       // The HTML parsing spec drops exactly one leading LF immediately after
       // a <pre>/<textarea> start tag before it ever reaches the reader, so
       // `<pre>\na</pre>` and `<pre>a</pre>` render identically; without this,
@@ -153,8 +163,8 @@ function visibleText(html) {
     })
   }
 
-  s = s.replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '')
-  s = s.replace(/<\/?([a-z0-9]+)(?:\s[^>]*)?\/?>/gi, (m, tag) =>
+  s = s.replace(new RegExp(`<svg\\b${ATTRS}>[\\s\\S]*?<\\/svg>`, 'gi'), '')
+  s = s.replace(new RegExp(`<\\/?([a-z0-9]+)${ATTRS}>`, 'gi'), (m, tag) =>
     BLOCK_TAGS.has(tag.toLowerCase()) ? BREAK : ''
   )
   s = decodeEntities(s)

@@ -62,7 +62,19 @@ try {
 // Astro's own default is true (HTML minification on) when the key is absent.
 const astroValue = astroConfig.compressHTML ?? true
 
-const astroOverride = (prettierConfig.overrides || []).find((o) => o.files === '*.astro')
+// Prettier's own `files` accepts either a single glob string or an array of
+// them, and when several overrides match the same file, the LAST matching
+// override in the array wins (later entries take precedence over earlier
+// ones) -- not the first. `.find()` picking the first exact-string match
+// missed both: an array-form `files: ['*.astro']` never matched at all, and
+// a config with an earlier `*.astro` override plus a later, more specific
+// one reported the wrong options object (harmon-init#1350 Codex review
+// round 4, P2).
+function matchesAstro(files) {
+  return Array.isArray(files) ? files.includes('*.astro') : files === '*.astro'
+}
+const matchingOverrides = (prettierConfig.overrides || []).filter((o) => matchesAstro(o.files))
+const astroOverride = matchingOverrides[matchingOverrides.length - 1]
 const prettierRaw = astroOverride?.options?.astroCompressHTML
 // The plugin's own default when the key is absent is its 'jsx' mode, which
 // never matches either alias below — an unset option is a mismatch by design.

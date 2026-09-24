@@ -94,9 +94,21 @@ formatter_relevant() {
     # headers) so an unrelated dependency change that merely sits within diff
     # context of an untouched formatter entry does not also activate the gate
     # (round 3, P1).
-    local diff_content
+    local diff_content changed_lines
     diff_content="$(git diff "$merge_base" "$head_sha" -- package.json pnpm-lock.yaml)"
-    printf '%s\n' "$diff_content" | grep -E '^[+-][^+-]' | grep -qE "$formatter_package_pattern"
+    # `grep -E` (no `-q`) reads its ENTIRE input rather than closing early on
+    # the first match, so this stage cannot itself trigger the pipe-closure
+    # class of bug above. The FINAL check, though, still could: even the
+    # already-fixed `printf | grep -q` remains vulnerable, because `pipefail`
+    # reports the RIGHTMOST NON-ZERO status across every stage, not merely
+    # the last stage's own exit code — so an upstream SIGPIPE still poisons
+    # the result even when the terminal `grep -q` itself found a match and
+    # exited 0 (harmon-init#1350 Codex review round 4, P2; reproduced with
+    # `PIPESTATUS=(141 141 0)` on a large diff). Bash's own `=~` operates on
+    # an in-memory string via a builtin, with no subprocess or pipe at all,
+    # so there is no pipe left to close early.
+    changed_lines="$(printf '%s\n' "$diff_content" | grep -E '^[+-][^+-]' || true)"
+    [[ "$changed_lines" =~ $formatter_package_pattern ]]
 }
 if ! formatter_relevant; then
     echo "render-parity: no formatter-package change between ${merge_base} and ${head_sha} -- skipping"
