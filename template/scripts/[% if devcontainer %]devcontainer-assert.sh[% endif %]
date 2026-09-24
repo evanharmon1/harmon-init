@@ -133,8 +133,8 @@ assert_unit() {
     local script_dir repo_root init_env ts_connect bash_bin codex_config
     local bot_autonomy bot_autonomy_module_dir codex_module claude_module codex_bot_config
     local codex_system_config
-    script_dir="$(cd "$(dirname "$0")" && pwd)"
-    repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
+    script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+    repo_root="$(cd "$script_dir/.." && pwd -P)"
     init_env="${repo_root}/.devcontainer/scripts/init-env.sh"
     ts_connect="${repo_root}/.devcontainer/scripts/tailscale-connect.sh"
     codex_config="${repo_root}/.devcontainer/config/codex-managed-config.toml"
@@ -2202,8 +2202,8 @@ assert_container() {
     # was really built from the approved immutable reference, not a stale or
     # floating image that happens to have the binaries.
     local script_dir repo_root pinned_source manifest manifest_revision pinned_task actual_task
-    script_dir="$(cd "$(dirname "$0")" && pwd)"
-    repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
+    script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+    repo_root="$(cd "$script_dir/.." && pwd -P)"
     pinned_source="$(assert_image_pin "${repo_root}/.devcontainer/Dockerfile")"
     manifest="$(docker exec -u vscode "$container_id" cat "$HARMON_IMAGE_MANIFEST" 2>/dev/null)" ||
         fail "image manifest ${HARMON_IMAGE_MANIFEST} is missing in the ${profile} container"

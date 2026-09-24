@@ -10,7 +10,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 CONFIG_PATH="$1"
-WORKSPACE_ROOT="$(git rev-parse --show-toplevel)"
+WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 
 # Documented exclusion: this smoke test does not run from a linked worktree.
 # Only the workspace folder is mounted, and in a linked worktree `.git` is a
