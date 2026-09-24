@@ -661,7 +661,7 @@ if [ "$validation_scope" = "renovate-config" ]; then
             npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict ||
             err "rendered renovate.json fails renovate-config-validator --strict"
     else
-        required npx "strict Renovate configuration validation" || fail=1
+        err "required tool 'npx' is not installed for strict Renovate configuration validation"
     fi
 fi
 if [ "$validation_scope" = "renovate-config" ]; then

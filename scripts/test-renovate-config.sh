@@ -20,6 +20,17 @@ minimal | web | webapp | iac | full | meta | update)
     ;;
 esac
 
+if ! command -v npx >/dev/null 2>&1; then
+    echo "FAIL: required tool 'npx' is not installed for strict Renovate configuration validation" >&2
+    exit 1
+fi
+
+# Validate the dogfood layer once before rendering the template profiles.
+# renovate: datasource=npm depName=renovate
+RENOVATE_VALIDATOR_VERSION=44.110.0
+npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
+    renovate-config-validator --strict renovate.json
+
 for profile in "${profiles[@]}"; do
     if [ "$profile" = "update" ]; then
         ./scripts/test-template-update.sh renovate-config

@@ -83,6 +83,16 @@ else:
         )
 if './scripts/test-template-update.sh renovate-config' not in dispatcher:
     errors.append("test:renovate-config does not validate the update profile's rendered config")
+if 'renovate-config-validator --strict renovate.json' not in dispatcher:
+    errors.append("test:renovate-config does not strictly validate the root renovate.json")
+if "command -v npx" not in dispatcher:
+    errors.append("test:renovate-config does not require npx before strict validation")
+for strict_path in ("scripts/test-template.sh", "scripts/test-template-update.sh"):
+    strict_script = pathlib.Path(strict_path).read_text()
+    if "skipping strict Renovate configuration validation" in strict_script:
+        errors.append(f"{strict_path}: strict Renovate validation still skips when npx is unavailable")
+if 'required npx "strict Renovate configuration validation"' in pathlib.Path("scripts/test-template.sh").read_text():
+    errors.append("scripts/test-template.sh: strict Renovate validation still uses the fail-open optional-tool helper")
 
 root_mgr = load_shell_manager("renovate.json")
 tmpl_mgr = load_shell_manager("template/renovate.json.jinja")
@@ -220,6 +230,13 @@ def glob_to_re(pat):
             out, i = out + re.escape(pat[i]), i + 1
     return re.compile("^" + out + "$")
 
+def match_file_patterns(patterns, path):
+    negatives = [glob_to_re(pattern[1:]) for pattern in patterns if pattern.startswith("!")]
+    if any(rx.match(path) for rx in negatives):
+        return False
+    positives = [glob_to_re(pattern) for pattern in patterns if not pattern.startswith("!")]
+    return not positives or any(rx.match(path) for rx in positives)
+
 def resolve_group(cfg, path, dep, datasource, manager="custom.regex"):
     group = None
     for rule in cfg.get("packageRules", []):
@@ -237,7 +254,7 @@ def resolve_group(cfg, path, dep, datasource, manager="custom.regex"):
             if positive_names and "*" not in positive_names and dep not in positive_names:
                 continue
         globs = rule.get("matchFileNames")
-        if globs and not any(glob_to_re(g).match(path) for g in globs):
+        if globs and not match_file_patterns(globs, path):
             continue
         if "groupName" in rule:
             group = rule["groupName"]
@@ -465,16 +482,12 @@ def check_npm_policy(label, cfg):
         or "deliberately stays on an older major" not in notes
     ):
         errors.append(f"{label}: package-manager majors must be approval-gated with the migration/hold guidance")
-    if set(eslint.get("matchPackageNames", [])) != {"typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*"} or eslint.get("groupName") != "ESLint toolchain":
+    if set(eslint.get("matchPackageNames", [])) != {"typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"} or eslint.get("groupName") != "ESLint toolchain":
         errors.append(f"{label}: ESLint toolchain rule is incomplete")
     if set(astro.get("matchPackageNames", [])) != {"astro", "@astrojs/*"} or astro.get("groupName") != "Astro":
         errors.append(f"{label}: Astro toolchain rule is incomplete")
     if label == "renovate.json":
-        fixture_file_patterns = {
-            "**/package.json",
-            "!tests/fixtures/web-astro/package.json",
-            "!tests/fixtures/web-app/package.json",
-        }
+        fixture_file_patterns = {"!tests/fixtures/**"}
         for name, rule in (
             ("non-major npm", minor),
             ("npm major", major),
@@ -483,6 +496,17 @@ def check_npm_policy(label, cfg):
         ):
             if set(rule.get("matchFileNames", [])) != fixture_file_patterns:
                 errors.append(f"{label}: {name} rule must preserve fixture-specific grouping")
+        for fixture_path, fixture_group in (
+            ("tests/fixtures/web-astro/package.json", "web-astro fixture"),
+            ("tests/fixtures/web-app/package.json", "web-app fixture"),
+        ):
+            for dep in ("typescript", "eslint", "astro"):
+                resolved = resolve_group(cfg, fixture_path, dep, "npm", manager="npm")
+                if resolved != fixture_group:
+                    errors.append(
+                        f"{label}: {dep} in {fixture_path} resolves to {resolved!r}, "
+                        f"expected {fixture_group!r}"
+                    )
     if not (minor_i < major_i < typescript_i < package_manager_i < eslint_i < astro_i):
         errors.append(f"{label}: npm package rules are not in override-safe order")
 

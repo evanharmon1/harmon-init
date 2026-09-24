@@ -213,10 +213,8 @@ if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         (cd "$gen" && npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict) ||
             err "updated project renovate.json failed strict validation"
-    elif [ -n "${GITHUB_ACTIONS:-}" ]; then
-        err "required tool 'npx' is not installed in CI"
     else
-        echo "SKIP: 'npx' not installed — skipping strict Renovate configuration validation"
+        err "required tool 'npx' is not installed for strict Renovate configuration validation"
     fi
 fi
 

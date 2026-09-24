@@ -160,14 +160,14 @@
       "description": "Batch non-major npm/Node updates into one PR",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "matchFileNames": ["**/package.json", "!tests/fixtures/web-astro/package.json", "!tests/fixtures/web-app/package.json"],
+      "matchFileNames": ["!tests/fixtures/**"],
       "groupName": "npm dependencies"
     },
     {
       "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["major"],
-      "matchFileNames": ["**/package.json", "!tests/fixtures/web-astro/package.json", "!tests/fixtures/web-app/package.json"],
+      "matchFileNames": ["!tests/fixtures/**"],
       "groupName": null
     },
     {
@@ -187,17 +187,17 @@
       ]
     },
     {
-      "description": "Keep the tightly coupled ESLint packages together while isolating their breakage from unrelated npm updates",
+      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
       "matchManagers": ["npm"],
-      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*"],
-      "matchFileNames": ["**/package.json", "!tests/fixtures/web-astro/package.json", "!tests/fixtures/web-app/package.json"],
+      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
+      "matchFileNames": ["!tests/fixtures/**"],
       "groupName": "ESLint toolchain"
     },
     {
       "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
       "matchManagers": ["npm"],
       "matchPackageNames": ["astro", "@astrojs/*"],
-      "matchFileNames": ["**/package.json", "!tests/fixtures/web-astro/package.json", "!tests/fixtures/web-app/package.json"],
+      "matchFileNames": ["!tests/fixtures/**"],
       "groupName": "Astro"
     },
     {
