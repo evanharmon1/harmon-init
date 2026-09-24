@@ -298,7 +298,40 @@ for top in SWEEP:
         if ANNOT.search(text):
             file_pins[str(p)] = extract_pins(root_cfg, str(p), text)
 
-ROOT_ONLY_PINS = set()
+# Pins that deliberately differ between the dogfood root and template twin.
+# Keep this narrow and name the reason inline rather than growing a general
+# opt-out; the default for every other pin stays "must have a twin."
+INTENTIONALLY_UNPAIRED_PINS = set()
+INTENTIONALLY_UNPAIRED_TWIN_PINS = {
+    # The root action pins the pnpm version harmon-init dogfoods. Its exact
+    # template twin leaves pnpm/action-setup's version input unset so it can
+    # honor each consumer's packageManager declaration instead.
+    (
+        ".github/actions/setup/action.yml",
+        "template/.github/actions/setup/action.yml.jinja",
+        "pnpm",
+    ),
+}
+
+template_setup = pathlib.Path("template/.github/actions/setup/action.yml.jinja").read_text()
+template_setup_lines = template_setup.splitlines()
+pnpm_step = next(
+    (i for i, line in enumerate(template_setup_lines) if "- uses: pnpm/action-setup@" in line),
+    None,
+)
+if pnpm_step is None:
+    errors.append("template setup action is missing pnpm/action-setup")
+else:
+    pnpm_step_body = []
+    for line in template_setup_lines[pnpm_step + 1 :]:
+        if line.startswith("    - "):
+            break
+        pnpm_step_body.append(line)
+    if any(re.match(r"^\s+version\s*:", line) for line in pnpm_step_body):
+        errors.append(
+            "template setup action must leave pnpm/action-setup's version unset "
+            "so each consumer's packageManager declaration remains authoritative"
+        )
 
 twin_of = {twin_name(p): p for p in file_pins if p.startswith("template/")}
 for root_path, root_pins in sorted(file_pins.items()):
@@ -308,7 +341,11 @@ for root_path, root_pins in sorted(file_pins.items()):
     if not tmpl_path:
         continue
     for dep, ds in sorted(root_pins - file_pins[tmpl_path]):
-        if dep in ROOT_ONLY_PINS:
+        if dep in INTENTIONALLY_UNPAIRED_PINS or (
+            root_path,
+            tmpl_path,
+            dep,
+        ) in INTENTIONALLY_UNPAIRED_TWIN_PINS:
             continue
         errors.append(
             f"{dep}: pinned in {root_path} but not extractable from its twin "
