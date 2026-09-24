@@ -88,21 +88,53 @@ function decodeEntities(s) {
 }
 
 // A sentinel (never legal in decoded HTML text) marks a forced block break so
-// it survives the whitespace-collapse pass below undisturbed.
+// it survives the whitespace-collapse pass below undisturbed. A second,
+// distinct sentinel wraps an extracted <pre> block's placeholder index so it
+// also survives that pass untouched, unlike its whitespace-significant
+// content.
 const BREAK = '\u0000'
+const PRE_MARK = '\u0001'
+
+function stripTagsKeepWhitespace(html) {
+  // Used only inside <pre>, where whitespace is significant: strip comments
+  // and tags without collapsing a single space or newline.
+  return decodeEntities(
+    html.replace(/<!--[\s\S]*?-->/g, '').replace(/<\/?[a-z0-9]+(?:\s[^>]*)?\/?>/gi, '')
+  )
+}
 
 function visibleText(html) {
-  let s = html.replace(/<(script|style|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+  let s = html.replace(/<!--[\s\S]*?-->/g, '')
+  // Removed as EMPTY, not a space: a space here would fabricate the same
+  // "collapses to one visible space" signature the whitespace pass below
+  // uses to catch a reflowed inline newline, hiding that exact bug whenever
+  // one of these sits directly against visible text with no whitespace in
+  // the source (e.g. an inline `<svg>` icon: `Open<svg>…</svg>.` must stay
+  // distinguishable from `Open<svg>…</svg>\n.`).
+  s = s.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+
+  // <pre> is whitespace-significant (browsers render it verbatim), so
+  // protect its content from the general collapse below: extract it now,
+  // strip only its tags/comments, and splice the untouched result back in
+  // after the collapse runs on everything else.
+  const preBlocks = []
+  s = s.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (m, inner) => {
+    preBlocks.push(stripTagsKeepWhitespace(inner))
+    return `${BREAK}${PRE_MARK}${preBlocks.length - 1}${PRE_MARK}${BREAK}`
+  })
+
+  s = s.replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '')
   s = s.replace(/<\/?([a-z0-9]+)(?:\s[^>]*)?\/?>/gi, (m, tag) =>
     BLOCK_TAGS.has(tag.toLowerCase()) ? BREAK : ''
   )
   s = decodeEntities(s)
-  // Collapse EVERY run of raw whitespace — including a newline sitting
-  // between two inline elements — to exactly one space. Under
+  // Collapse EVERY remaining run of raw whitespace — including a newline
+  // sitting between two inline elements — to exactly one space. Under
   // compressHTML: false that whitespace-only text node is not stripped at
   // build time, so the browser collapses it to one visible space; collapsing
   // it to zero here would hide the exact bug this script exists to catch.
   s = s.replace(/\s+/g, ' ')
+  s = s.replace(new RegExp(`${PRE_MARK}(\\d+)${PRE_MARK}`, 'g'), (m, i) => preBlocks[Number(i)])
   return s
     .split(BREAK)
     .map((line) => line.trim())

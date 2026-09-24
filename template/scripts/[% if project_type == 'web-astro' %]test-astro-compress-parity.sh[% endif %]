@@ -34,20 +34,43 @@ if [ -z "$astro_config" ]; then
     exit 0
 fi
 
+# Astro is scaffolded, so prettier.config.cjs (template-shipped from day one)
+# is expected to exist. Missing here means it was deleted or renamed after
+# Astro was scaffolded — fail closed rather than silently skip, or `task
+# verify` would pass with no proof astroCompressHTML matches Astro at all.
 if [ ! -f "$prettier_config" ]; then
-    echo "test-astro-compress-parity: ${prettier_config} not found -- skipping" >&2
-    exit 0
+    echo "test-astro-compress-parity: astro.config.* exists but ${prettier_config} does not -- cannot verify astroCompressHTML matches compressHTML" >&2
+    exit 1
 fi
+
+# Strip // and single-line /* */ comments before matching, so a decoy value
+# mentioned only in a comment (or a later shadowing definition) is never
+# matched ahead of the real one. This does not handle a multi-line block
+# comment straddling the property line — a full JS parse is out of scope for
+# this guard, same tradeoff as scripts/validate-jsonld.mjs.
+strip_comments() {
+    sed -E 's#/\*.*\*/##g; s#//.*$##' "$1"
+}
 
 # Astro's own default is true (HTML minification on) when the key is absent.
 # `grep -oE` exits 1 on no match (an expected outcome here, handled by the
 # `${var:-default}` below) — `|| true` keeps that from tripping `set -e`.
-astro_raw="$( (grep -oE 'compressHTML[[:space:]]*:[[:space:]]*(true|false)' "$astro_config" || true) | head -n1 | sed -E 's/.*:[[:space:]]*//')"
+astro_text="$(strip_comments "$astro_config")"
+astro_raw="$(printf '%s\n' "$astro_text" | { grep -oE 'compressHTML[[:space:]]*:[[:space:]]*(true|false)' || true; } | head -n1 | sed -E 's/.*:[[:space:]]*//')"
+if [ -z "$astro_raw" ] && printf '%s\n' "$astro_text" | grep -qE '(^|[^A-Za-z0-9_.])compressHTML([^A-Za-z0-9_]|$)'; then
+    # Object-shorthand property (`defineConfig({ compressHTML })`) referring
+    # to a same-named const/let/var declared elsewhere in the file.
+    astro_raw="$(printf '%s\n' "$astro_text" | { grep -oE '(const|let|var)[[:space:]]+compressHTML[[:space:]]*=[[:space:]]*(true|false)' || true; } | head -n1 | sed -E 's/.*=[[:space:]]*//')"
+fi
 astro_value="${astro_raw:-true}"
 
 # The plugin's own default when the key is absent is its 'jsx' mode, which
 # never matches either alias below — an unset option is a mismatch by design.
-prettier_raw="$( (grep -oE "astroCompressHTML[[:space:]]*:[[:space:]]*(true|false|'[^']*'|\"[^\"]*\")" "$prettier_config" || true) | head -n1 | sed -E "s/.*:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+prettier_text="$(strip_comments "$prettier_config")"
+prettier_raw="$(printf '%s\n' "$prettier_text" | { grep -oE "astroCompressHTML[[:space:]]*:[[:space:]]*(true|false|'[^']*'|\"[^\"]*\")" || true; } | head -n1 | sed -E "s/.*:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+if [ -z "$prettier_raw" ] && printf '%s\n' "$prettier_text" | grep -qE '(^|[^A-Za-z0-9_.])astroCompressHTML([^A-Za-z0-9_]|$)'; then
+    prettier_raw="$(printf '%s\n' "$prettier_text" | { grep -oE '(const|let|var)[[:space:]]+astroCompressHTML[[:space:]]*=[[:space:]]*(true|false|'"'"'[^'"'"']*'"'"'|"[^"]*")' || true; } | head -n1 | sed -E "s/.*=[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+fi
 case "$prettier_raw" in
 true) prettier_mode="html" ;;
 false) prettier_mode="none" ;;

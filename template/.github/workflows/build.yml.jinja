@@ -344,14 +344,20 @@ jobs:
             }
 
   render-parity:
-    # Proves a formatter/content change didn't alter the built site's visible
+    # Proves a formatter/dependency bump didn't alter the built site's visible
     # text (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh).
     # Builds the merge-base AND HEAD, so it only runs the expensive check on a
-    # PR that actually touches *.astro or a formatter pin — REQUIRED (listed
-    # in verify.needs) rather than self-activating like e2e/a11y, so the job
-    # itself always runs and reports success either way: a job-level `if:`
-    # skip would report "skipped", which scripts/verify-ci-results.sh treats
-    # as a failure for a required job.
+    # PR that touches a formatter pin (package.json, the lockfile, or
+    # prettier.config.cjs) — REQUIRED (listed in verify.needs) rather than
+    # self-activating like e2e/a11y, so the job itself always runs and
+    # reports success either way: a job-level `if:` skip would report
+    # "skipped", which scripts/verify-ci-results.sh treats as a failure for a
+    # required job.
+    #
+    # Deliberately NOT triggered by an ordinary `*.astro` content edit: that
+    # is EXPECTED to change the rendered text, and gating on it would fail
+    # every normal page-content PR, not just the formatter reflows this job
+    # exists to catch (harmon-init#1350 Codex review, P1).
     #
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
@@ -370,11 +376,27 @@ jobs:
       - name: Detect a formatter-relevant change
         id: trigger
         env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # merge_group has no pull_request object, so it needs its own base;
+          # github.sha is the merge group's own temporary combined commit.
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.sha }}
         run: |
-          if [ -z "$BASE_REF" ]; then
+          if [ -n "$PR_BASE_REF" ]; then
+            range="origin/${PR_BASE_REF}...HEAD"
+          elif [ -n "$MERGE_GROUP_BASE_SHA" ]; then
+            range="${MERGE_GROUP_BASE_SHA}...${MERGE_GROUP_HEAD_SHA}"
+          else
             echo "present=false" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "origin/${BASE_REF}...HEAD" -- '*.astro' package.json pnpm-lock.yaml prettier.config.cjs | grep -q .; then
+            exit 0
+          fi
+          # `--quiet` (exit 1 iff there is a difference) instead of piping
+          # `--name-only` into `grep -q`: under bash's default `pipefail`,
+          # `grep -q` can close the pipe as soon as it sees one match, and a
+          # large enough diff then SIGPIPEs `git diff` — whose non-zero exit
+          # made the `elif` take the `present=false` branch, silently
+          # skipping the gate (harmon-init#1350 Codex review, P2).
+          if ! git diff --quiet "$range" -- package.json pnpm-lock.yaml prettier.config.cjs; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"

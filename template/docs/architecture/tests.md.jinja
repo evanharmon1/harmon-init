@@ -39,7 +39,7 @@ tier binds a port**, not what it is named:
 | `task test:e2e` (Playwright) | **yes** — serves the app | `task ci`, CI `e2e` job |
 [% if project_type == 'web-astro' %]
 | Lighthouse | **yes** — serves + headless Chrome | CI `lighthouse` job only |
-| `task test:render-parity` | no — builds merge-base + HEAD twice, doesn't serve | CI `render-parity` job only (builds twice; too slow for `verify`) |
+| `task test:render-parity` | no — builds merge-base + HEAD twice, doesn't serve | `task ci`, CI `render-parity` job (builds twice; too slow for `verify`) |
 [% endif %]
 
 Everything an agent runs on every change is port-free, so N agents in N
