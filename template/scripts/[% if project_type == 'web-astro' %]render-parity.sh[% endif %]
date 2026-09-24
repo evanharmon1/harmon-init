@@ -65,6 +65,35 @@ if [ "$merge_base" = "$head_sha" ]; then
     exit 0
 fi
 
+# Only a change to a known formatter package (or its own config file) may
+# require byte-for-byte-equivalent rendered output; an unrelated dependency
+# bump riding alongside a legitimate content edit must never trip this gate.
+# This is the SAME check whether invoked from CI or from `task ci`/
+# `task test:render-parity` locally — a second, drifted copy of this
+# predicate is exactly what let an earlier version of this gate fire on any
+# package.json/lockfile change at all (harmon-init#1350 Codex review round 2,
+# P1 + P2).
+formatter_package_pattern='"(prettier|prettier-plugin-[A-Za-z0-9._-]+|prettier-config-[A-Za-z0-9._-]+|markdownlint-cli2)"'
+formatter_relevant() {
+    ! git diff --quiet "$merge_base" "$head_sha" -- prettier.config.cjs ||
+        git diff "$merge_base" "$head_sha" -- package.json pnpm-lock.yaml |
+        grep -qE "$formatter_package_pattern"
+}
+if ! formatter_relevant; then
+    echo "render-parity: no formatter-package change between ${merge_base} and ${head_sha} -- skipping"
+    exit 0
+fi
+
+# The base predates Astro being scaffolded (the template's own conventions-
+# only state has no package.json), so there is no buildable "before" to
+# compare against — installing there would fail with ERR_PNPM_NO_PKG_MANIFEST
+# before task build's own "not scaffolded yet" skip ever runs
+# (harmon-init#1350 Codex review round 2, P1).
+if ! git cat-file -e "${merge_base}:package.json" 2>/dev/null; then
+    echo "render-parity: merge-base (${merge_base}) has no package.json yet (Astro not scaffolded there) -- nothing to compare, skipping"
+    exit 0
+fi
+
 work_base="$(mktemp -d -t render-parity-base-XXXXXX)"
 work_head="$(mktemp -d -t render-parity-head-XXXXXX)"
 cleanup() {
@@ -78,7 +107,12 @@ git worktree add --detach --force "$work_head" "$head_sha" >/dev/null
 
 build_one() (
     cd "$1"
-    pnpm install --frozen-lockfile
+    # Matches the setup action's own install step (see
+    # template/.github/actions/setup/action.yml.jinja): sharp's installer can
+    # prefer a self-hosted runner's global libvips over its bundled prebuilt,
+    # and that from-source build fails without node-addon-api. A step-scoped
+    # env var there does not carry into this script's own installs.
+    SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --frozen-lockfile
     task build
 )
 

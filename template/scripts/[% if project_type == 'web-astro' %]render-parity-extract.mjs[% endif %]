@@ -1,7 +1,8 @@
 // render-parity-extract.mjs — diff the reader-visible text of two dist/ trees.
 //
 // Extraction models what a browser actually renders, not the raw markup: drop
-// <script>/<style>/<svg> content entirely, let block-level elements force a
+// <script>/<style>/<svg>/<template> content entirely, preserve <pre>/<textarea>
+// content verbatim (whitespace-significant), let block-level elements force a
 // line break, and collapse every other run of whitespace (including a
 // newline introduced between two inline elements) to a single space — that
 // last part matters because that is exactly what compressHTML: false leaves
@@ -36,7 +37,9 @@ function htmlFiles(dir) {
 }
 
 // Elements a browser lays out on their own line. `br`/`hr` are included so a
-// forced break still separates otherwise-adjacent inline runs.
+// forced break still separates otherwise-adjacent inline runs. Not
+// exhaustive against the full HTML spec, but covers the native block-level
+// set a real site is likely to use.
 const BLOCK_TAGS = new Set([
   'p',
   'div',
@@ -47,12 +50,14 @@ const BLOCK_TAGS = new Set([
   'nav',
   'main',
   'aside',
+  'address',
   'ul',
   'ol',
   'li',
   'br',
   'hr',
   'table',
+  'caption',
   'thead',
   'tbody',
   'tr',
@@ -67,14 +72,26 @@ const BLOCK_TAGS = new Set([
   'blockquote',
   'pre',
   'form',
+  'fieldset',
+  'legend',
   'figure',
   'figcaption',
   'dl',
   'dt',
-  'dd'
+  'dd',
+  'details',
+  'summary',
+  'dialog',
+  'menu',
+  'search'
 ])
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+// Elements a browser renders whitespace-verbatim in. Their content is
+// extracted and preserved untouched (only tags/comments stripped) rather
+// than swept into the generic whitespace collapse below.
+const VERBATIM_TAGS = ['pre', 'textarea']
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
 
 function decodeEntities(s) {
   return s.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, code) => {
@@ -89,15 +106,16 @@ function decodeEntities(s) {
 
 // A sentinel (never legal in decoded HTML text) marks a forced block break so
 // it survives the whitespace-collapse pass below undisturbed. A second,
-// distinct sentinel wraps an extracted <pre> block's placeholder index so it
-// also survives that pass untouched, unlike its whitespace-significant
-// content.
+// distinct sentinel wraps an extracted verbatim block's placeholder index so
+// it also survives that pass — its restoration happens AFTER the final
+// trim/join, not before, or trim() would eat the very leading/trailing
+// whitespace the block exists to preserve.
 const BREAK = '\u0000'
-const PRE_MARK = '\u0001'
+const MARK = '\u0001'
 
 function stripTagsKeepWhitespace(html) {
-  // Used only inside <pre>, where whitespace is significant: strip comments
-  // and tags without collapsing a single space or newline.
+  // Used only inside a verbatim element, where whitespace is significant:
+  // strip comments and tags without collapsing a single space or newline.
   return decodeEntities(
     html.replace(/<!--[\s\S]*?-->/g, '').replace(/<\/?[a-z0-9]+(?:\s[^>]*)?\/?>/gi, '')
   )
@@ -105,41 +123,49 @@ function stripTagsKeepWhitespace(html) {
 
 function visibleText(html) {
   let s = html.replace(/<!--[\s\S]*?-->/g, '')
+  s = s.replace(/<!doctype\b[^>]*>/gi, '')
   // Removed as EMPTY, not a space: a space here would fabricate the same
   // "collapses to one visible space" signature the whitespace pass below
   // uses to catch a reflowed inline newline, hiding that exact bug whenever
   // one of these sits directly against visible text with no whitespace in
   // the source (e.g. an inline `<svg>` icon: `Open<svg>…</svg>.` must stay
-  // distinguishable from `Open<svg>…</svg>\n.`).
-  s = s.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+  // distinguishable from `Open<svg>…</svg>\n.`). <template> content is
+  // inert (never rendered until cloned by script) so it is dropped the same
+  // way.
+  s = s.replace(/<(script|style|template)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
 
-  // <pre> is whitespace-significant (browsers render it verbatim), so
-  // protect its content from the general collapse below: extract it now,
-  // strip only its tags/comments, and splice the untouched result back in
-  // after the collapse runs on everything else.
-  const preBlocks = []
-  s = s.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (m, inner) => {
-    preBlocks.push(stripTagsKeepWhitespace(inner))
-    return `${BREAK}${PRE_MARK}${preBlocks.length - 1}${PRE_MARK}${BREAK}`
-  })
+  // Verbatim elements (<pre>, <textarea>) render whitespace exactly as
+  // written, so protect their content from the general collapse below:
+  // extract it now, strip only its tags/comments, and splice the untouched
+  // result back in as the very last step — after trim(), or a leading/
+  // trailing space inside the block would be stripped right back out.
+  const blocks = []
+  for (const tag of VERBATIM_TAGS) {
+    s = s.replace(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi'), (m, inner) => {
+      blocks.push(stripTagsKeepWhitespace(inner))
+      return `${BREAK}${MARK}${blocks.length - 1}${MARK}${BREAK}`
+    })
+  }
 
   s = s.replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '')
   s = s.replace(/<\/?([a-z0-9]+)(?:\s[^>]*)?\/?>/gi, (m, tag) =>
     BLOCK_TAGS.has(tag.toLowerCase()) ? BREAK : ''
   )
   s = decodeEntities(s)
-  // Collapse EVERY remaining run of raw whitespace — including a newline
-  // sitting between two inline elements — to exactly one space. Under
-  // compressHTML: false that whitespace-only text node is not stripped at
-  // build time, so the browser collapses it to one visible space; collapsing
-  // it to zero here would hide the exact bug this script exists to catch.
-  s = s.replace(/\s+/g, ' ')
-  s = s.replace(new RegExp(`${PRE_MARK}(\\d+)${PRE_MARK}`, 'g'), (m, i) => preBlocks[Number(i)])
-  return s
+  // Collapse EVERY remaining run of COLLAPSIBLE whitespace (space, tab, CR,
+  // LF, FF) — including a newline sitting between two inline elements — to
+  // exactly one space. Under compressHTML: false that whitespace-only text
+  // node is not stripped at build time, so the browser collapses it to one
+  // visible space; collapsing it to zero here would hide the exact bug this
+  // script exists to catch. `\s` is deliberately NOT used: it also matches
+  // U+00A0 (the decoded &nbsp;), which a browser does NOT collapse.
+  s = s.replace(/[ \t\r\n\f\v]+/g, ' ')
+  const collapsed = s
     .split(BREAK)
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .join('\n')
+  return collapsed.replace(new RegExp(`${MARK}(\\d+)${MARK}`, 'g'), (m, i) => blocks[Number(i)])
 }
 
 const filesA = new Map(htmlFiles(dirA).map((f) => [relative(dirA, f), f]))

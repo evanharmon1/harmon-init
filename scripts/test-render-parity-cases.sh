@@ -71,4 +71,30 @@ mkdir -p "${tmp}/missing/b"
 run_guard "${tmp}/missing/a" "${tmp}/missing/b"
 [ "$status" -ne 0 ] || fail "missing page: guard passed; output: ${output}"
 
+echo "==> a reflowed newline against an inline <svg> icon -> fails (Codex review round 2, P2)"
+write_page "${tmp}/svg/a" '<p>Open<svg><path d="x"/></svg>.</p>'
+mkdir -p "${tmp}/svg/b"
+printf '<html><body><p>Open<svg><path d="x"/></svg>\n.</p></body></html>\n' \
+    >"${tmp}/svg/b/index.html"
+run_guard "${tmp}/svg/a" "${tmp}/svg/b"
+[ "$status" -ne 0 ] || fail "svg adjacency: guard passed; output: ${output}"
+
+echo "==> leading whitespace at a <pre> boundary -> fails (Codex review round 2, P2)"
+write_page "${tmp}/pre/a" '<pre> a</pre>'
+write_page "${tmp}/pre/b" '<pre>a</pre>'
+run_guard "${tmp}/pre/a" "${tmp}/pre/b"
+[ "$status" -ne 0 ] || fail "pre boundary: guard passed; output: ${output}"
+
+echo "==> identical <pre> content, internal whitespace preserved -> passes"
+write_page "${tmp}/pre-match/a" '<pre>a  b</pre>'
+write_page "${tmp}/pre-match/b" '<pre>a  b</pre>'
+run_guard "${tmp}/pre-match/a" "${tmp}/pre-match/b"
+[ "$status" -eq 0 ] || fail "pre identical: guard failed; output: ${output}"
+
+echo "==> a collapsed nbsp reads as different from two nbsp -> fails (Codex review round 2, P2)"
+write_page "${tmp}/nbsp/a" '<p>a&nbsp;&nbsp;b</p>'
+write_page "${tmp}/nbsp/b" '<p>a b</p>'
+run_guard "${tmp}/nbsp/a" "${tmp}/nbsp/b"
+[ "$status" -ne 0 ] || fail "nbsp: guard passed; output: ${output}"
+
 echo "render-parity guard cases: PASS"

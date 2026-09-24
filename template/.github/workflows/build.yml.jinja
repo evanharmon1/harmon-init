@@ -79,6 +79,9 @@ jobs:
       - run: task audit:agent-instructions
       - run: task test:agent-instructions-size
       - run: task test:agent-skill-links
+[% if project_type == 'web-astro' %]
+      - run: task test:astro-compress-parity
+[% endif %]
       - run: task test:output
       - run: task test:meta-install
       - run: task test:session-cleanup
@@ -344,20 +347,21 @@ jobs:
             }
 
   render-parity:
-    # Proves a formatter/dependency bump didn't alter the built site's visible
+    # Proves a formatter-package bump didn't alter the built site's visible
     # text (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh).
-    # Builds the merge-base AND HEAD, so it only runs the expensive check on a
-    # PR that touches a formatter pin (package.json, the lockfile, or
-    # prettier.config.cjs) — REQUIRED (listed in verify.needs) rather than
-    # self-activating like e2e/a11y, so the job itself always runs and
-    # reports success either way: a job-level `if:` skip would report
-    # "skipped", which scripts/verify-ci-results.sh treats as a failure for a
-    # required job.
-    #
-    # Deliberately NOT triggered by an ordinary `*.astro` content edit: that
-    # is EXPECTED to change the rendered text, and gating on it would fail
-    # every normal page-content PR, not just the formatter reflows this job
-    # exists to catch (harmon-init#1350 Codex review, P1).
+    # Builds the merge-base AND HEAD, so it is expensive — REQUIRED (listed in
+    # verify.needs) rather than self-activating like e2e/a11y, so the job
+    # itself always runs and reports success either way: a job-level `if:`
+    # skip would report "skipped", which scripts/verify-ci-results.sh treats
+    # as a failure for a required job. The job always runs `task
+    # test:render-parity` unconditionally; render-parity.sh itself carries
+    # the ONE trigger predicate (only a change to a known formatter package,
+    # never an ordinary `*.astro` content edit or an unrelated dependency
+    # bump — harmon-init#1350 Codex review rounds 1-2, P1) and self-skips
+    # cheaply otherwise. That predicate lives in exactly one place so `task
+    # ci`/`task test:render-parity` behave identically locally and in CI —
+    # duplicating it into a separate detection step here is what let an
+    # earlier version drift out of sync with the script.
     #
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
@@ -373,38 +377,8 @@ jobs:
           # Full history: render-parity.sh resolves the merge-base itself and
           # builds it in a disposable git worktree.
           fetch-depth: 0
-      - name: Detect a formatter-relevant change
-        id: trigger
-        env:
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          # merge_group has no pull_request object, so it needs its own base;
-          # github.sha is the merge group's own temporary combined commit.
-          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
-          MERGE_GROUP_HEAD_SHA: ${{ github.sha }}
-        run: |
-          if [ -n "$PR_BASE_REF" ]; then
-            range="origin/${PR_BASE_REF}...HEAD"
-          elif [ -n "$MERGE_GROUP_BASE_SHA" ]; then
-            range="${MERGE_GROUP_BASE_SHA}...${MERGE_GROUP_HEAD_SHA}"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # `--quiet` (exit 1 iff there is a difference) instead of piping
-          # `--name-only` into `grep -q`: under bash's default `pipefail`,
-          # `grep -q` can close the pipe as soon as it sees one match, and a
-          # large enough diff then SIGPIPEs `git diff` — whose non-zero exit
-          # made the `elif` take the `present=false` branch, silently
-          # skipping the gate (harmon-init#1350 Codex review, P2).
-          if ! git diff --quiet "$range" -- package.json pnpm-lock.yaml prettier.config.cjs; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
       - uses: ./.github/actions/setup
-        if: steps.trigger.outputs.present == 'true'
-      - name: Render parity (merge-base vs. HEAD)
-        if: steps.trigger.outputs.present == 'true'
+      - name: Render parity (merge-base vs. HEAD; self-skips on a non-formatter change)
         run: task test:render-parity
 [% endif %]
 [% if project_type in ['web-astro', 'web-app'] %]

@@ -14,6 +14,14 @@
 # configured to do — so an unset option is a mismatch whenever Astro's own
 # setting (explicit or its `true` default) is anything else.
 #
+# This is a regex-based reader, not a JS parser (same tradeoff as
+# scripts/validate-jsonld.mjs), so it can only classify a value it can
+# actually see as a literal. Whenever a `compressHTML`/`astroCompressHTML`
+# key IS found but its value isn't a plain `true`/`false` (or, for prettier,
+# a quoted mode string) or a directly-resolvable `const`/`let`/`var`, it
+# FAILS CLOSED rather than silently treating the setting as absent — a
+# silent false pass is exactly the mismatch this guard exists to catch.
+#
 # Skips cleanly before Astro is scaffolded (fresh repo, no astro.config.* yet)
 # — like lint:eslint / lint:prettier — so `task check` stays green until then.
 set -euo pipefail
@@ -52,31 +60,107 @@ strip_comments() {
     sed -E 's#/\*.*\*/##g; s#//.*$##' "$1"
 }
 
-# Astro's own default is true (HTML minification on) when the key is absent.
-# `grep -oE` exits 1 on no match (an expected outcome here, handled by the
-# `${var:-default}` below) — `|| true` keeps that from tripping `set -e`.
+# extract_kv_raw <text> <key> — the raw expression text to the right of
+# `<key>:` (quoted or bare key), up to the next comma/brace/newline, with
+# trailing whitespace trimmed. Empty if the key is not present as an object
+# property at all.
+extract_kv_raw() {
+    printf '%s\n' "$1" |
+        { grep -oE "['\"]?${2}['\"]?[[:space:]]*:[[:space:]]*[^,}]+" || true; } |
+        head -n1 |
+        sed -E "s/^['\"]?${2}['\"]?[[:space:]]*:[[:space:]]*//; s/[[:space:]]+\$//"
+}
+
+# extract_shorthand_raw <text> <name> — the raw expression assigned to a
+# `const|let|var <name> = ...` declaration, up to `;`/newline. Empty if no
+# such declaration exists.
+extract_shorthand_raw() {
+    printf '%s\n' "$1" |
+        { grep -oE "(const|let|var)[[:space:]]+${2}[[:space:]]*=[[:space:]]*[^;]+" || true; } |
+        head -n1 |
+        sed -E "s/^(const|let|var)[[:space:]]+${2}[[:space:]]*=[[:space:]]*//; s/[[:space:]]+\$//; s/;\$//"
+}
+
+# has_shorthand_ref <text> <name> — true if <name> appears as a bareword
+# (object-shorthand property reference), never as part of a longer
+# identifier or preceded by a member-access dot.
+has_shorthand_ref() {
+    printf '%s\n' "$1" | grep -qE "(^|[^A-Za-z0-9_.])${2}([^A-Za-z0-9_]|\$)"
+}
+
+# resolve_bool <raw> <label> <config-file> — classify a raw expression as
+# true/false, or fail closed (exit 1) on anything else. Echoes `true` or
+# `false`; the caller distinguishes "not found at all" by never calling this
+# on an empty raw value.
+resolve_bool() {
+    case "$1" in
+    true) echo true ;;
+    false) echo false ;;
+    *)
+        echo "test-astro-compress-parity: ${3} sets ${2} to an expression this guard cannot statically evaluate ('$1') -- use a plain true/false literal" >&2
+        exit 1
+        ;;
+    esac
+}
+
 astro_text="$(strip_comments "$astro_config")"
-astro_raw="$(printf '%s\n' "$astro_text" | { grep -oE 'compressHTML[[:space:]]*:[[:space:]]*(true|false)' || true; } | head -n1 | sed -E 's/.*:[[:space:]]*//')"
-if [ -z "$astro_raw" ] && printf '%s\n' "$astro_text" | grep -qE '(^|[^A-Za-z0-9_.])compressHTML([^A-Za-z0-9_]|$)'; then
+astro_kv_raw="$(extract_kv_raw "$astro_text" 'compressHTML')"
+if [ -n "$astro_kv_raw" ]; then
+    astro_raw="$(resolve_bool "$astro_kv_raw" "compressHTML" "$astro_config")"
+elif has_shorthand_ref "$astro_text" 'compressHTML'; then
     # Object-shorthand property (`defineConfig({ compressHTML })`) referring
     # to a same-named const/let/var declared elsewhere in the file.
-    astro_raw="$(printf '%s\n' "$astro_text" | { grep -oE '(const|let|var)[[:space:]]+compressHTML[[:space:]]*=[[:space:]]*(true|false)' || true; } | head -n1 | sed -E 's/.*=[[:space:]]*//')"
+    shorthand_raw="$(extract_shorthand_raw "$astro_text" 'compressHTML')"
+    if [ -z "$shorthand_raw" ]; then
+        echo "test-astro-compress-parity: ${astro_config} references compressHTML as a shorthand property, but no resolvable 'const/let/var compressHTML = <literal>' declaration was found -- use a plain true/false literal" >&2
+        exit 1
+    fi
+    astro_raw="$(resolve_bool "$shorthand_raw" "compressHTML" "$astro_config")"
+else
+    astro_raw=""
 fi
+# Astro's own default is true (HTML minification on) when the key is absent.
 astro_value="${astro_raw:-true}"
 
-# The plugin's own default when the key is absent is its 'jsx' mode, which
-# never matches either alias below — an unset option is a mismatch by design.
 prettier_text="$(strip_comments "$prettier_config")"
-prettier_raw="$(printf '%s\n' "$prettier_text" | { grep -oE "astroCompressHTML[[:space:]]*:[[:space:]]*(true|false|'[^']*'|\"[^\"]*\")" || true; } | head -n1 | sed -E "s/.*:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
-if [ -z "$prettier_raw" ] && printf '%s\n' "$prettier_text" | grep -qE '(^|[^A-Za-z0-9_.])astroCompressHTML([^A-Za-z0-9_]|$)'; then
-    prettier_raw="$(printf '%s\n' "$prettier_text" | { grep -oE '(const|let|var)[[:space:]]+astroCompressHTML[[:space:]]*=[[:space:]]*(true|false|'"'"'[^'"'"']*'"'"'|"[^"]*")' || true; } | head -n1 | sed -E "s/.*=[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+prettier_kv_raw="$(extract_kv_raw "$prettier_text" 'astroCompressHTML')"
+resolve_prettier_mode() {
+    # astroCompressHTML additionally accepts a quoted mode string (the
+    # plugin's own 'html'/'none'/'jsx'/... modes), not just true/false.
+    case "$1" in
+    true)
+        echo html
+        ;;
+    false)
+        echo none
+        ;;
+    \'*\' | \"*\")
+        printf '%s\n' "$1" | sed -E "s/^['\"]//; s/['\"]\$//"
+        ;;
+    *)
+        echo "test-astro-compress-parity: ${2} sets astroCompressHTML to an expression this guard cannot statically evaluate ('$1') -- use a plain true/false/'<mode>' literal" >&2
+        exit 1
+        ;;
+    esac
+}
+if [ -n "$prettier_kv_raw" ]; then
+    prettier_raw="$prettier_kv_raw"
+    prettier_mode="$(resolve_prettier_mode "$prettier_kv_raw" "$prettier_config")"
+elif has_shorthand_ref "$prettier_text" 'astroCompressHTML'; then
+    shorthand_raw="$(extract_shorthand_raw "$prettier_text" 'astroCompressHTML')"
+    if [ -z "$shorthand_raw" ]; then
+        echo "test-astro-compress-parity: ${prettier_config} references astroCompressHTML as a shorthand property, but no resolvable 'const/let/var astroCompressHTML = <literal>' declaration was found -- use a plain true/false/'<mode>' literal" >&2
+        exit 1
+    fi
+    prettier_raw="$shorthand_raw"
+    prettier_mode="$(resolve_prettier_mode "$shorthand_raw" "$prettier_config")"
+else
+    # The plugin's own default when the key is absent is its 'jsx' mode,
+    # which never matches either alias below — an unset option is a
+    # mismatch by design.
+    prettier_raw=""
+    prettier_mode="jsx"
 fi
-case "$prettier_raw" in
-true) prettier_mode="html" ;;
-false) prettier_mode="none" ;;
-"") prettier_mode="jsx" ;;
-*) prettier_mode="$prettier_raw" ;;
-esac
 
 case "$astro_value" in
 true) expected_mode="html" ;;
