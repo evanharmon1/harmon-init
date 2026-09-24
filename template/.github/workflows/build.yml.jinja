@@ -79,6 +79,9 @@ jobs:
       - run: task audit:agent-instructions
       - run: task test:agent-instructions-size
       - run: task test:agent-skill-links
+[% if project_type == 'web-astro' %]
+      - run: task test:astro-compress-parity
+[% endif %]
       - run: task test:output
       - run: task test:meta-install
       - run: task test:session-cleanup
@@ -342,6 +345,41 @@ jobs:
                 body,
               })
             }
+
+  render-parity:
+    # Proves a formatter-package bump didn't alter the built site's visible
+    # text (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh).
+    # Builds the merge-base AND HEAD, so it is expensive — REQUIRED (listed in
+    # verify.needs) rather than self-activating like e2e/a11y, so the job
+    # itself always runs and reports success either way: a job-level `if:`
+    # skip would report "skipped", which scripts/verify-ci-results.sh treats
+    # as a failure for a required job. The job always runs `task
+    # test:render-parity` unconditionally; render-parity.sh itself carries
+    # the ONE trigger predicate (only a change to a known formatter package,
+    # never an ordinary `*.astro` content edit or an unrelated dependency
+    # bump — harmon-init#1350 Codex review rounds 1-2, P1) and self-skips
+    # cheaply otherwise. That predicate lives in exactly one place so `task
+    # ci`/`task test:render-parity` behave identically locally and in CI —
+    # duplicating it into a separate detection step here is what let an
+    # earlier version drift out of sync with the script.
+    #
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: render-parity.sh resolves the merge-base itself and
+          # builds it in a disposable git worktree.
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Render parity (merge-base vs. HEAD; self-skips on a non-formatter change)
+        run: task test:render-parity
 [% endif %]
 [% if project_type in ['web-astro', 'web-app'] %]
 
@@ -381,7 +419,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
+    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %]]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
@@ -400,6 +438,7 @@ jobs:
 [% endif %]
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
+          RENDER_PARITY_RESULT: ${{ needs.render-parity.result }}
 [% endif %]
         run: |
           fail=0
@@ -417,6 +456,7 @@ jobs:
 [% endif %]
 [% if project_type == 'web-astro' %]
           check_skipped lighthouse "$LIGHTHOUSE_RESULT"
+          check_skipped render-parity "$RENDER_PARITY_RESULT"
 [% endif %]
           if [ "$fail" -ne 0 ]; then
             exit 1
@@ -438,8 +478,9 @@ jobs:
 [% endif %]
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
+          RENDER_PARITY_RESULT: ${{ needs.render-parity.result }}
 [% endif %]
-        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
+        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}" "render-parity=${RENDER_PARITY_RESULT}"[% endif %]
 
 # Keep a literal final line after the inline Jinja conditionals above; with
 # trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.

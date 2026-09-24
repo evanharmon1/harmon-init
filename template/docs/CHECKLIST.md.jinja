@@ -485,6 +485,14 @@ the compatibility reason in the rule's `description`.
       `pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-astro globals`
 - [ ] Install the shipped prettier config's plugins:
       `pnpm add -D prettier prettier-config-standard prettier-plugin-astro prettier-plugin-tailwindcss`
+- [ ] If you set `compressHTML` in `astro.config.*` to anything other than its
+      default (`true`), update `astroCompressHTML` to match in
+      `prettier.config.cjs`'s `*.astro` override — `task test:astro-compress-parity`
+      (part of `task verify`) fails otherwise, and a mismatch lets a prettier
+      run reflow whitespace-sensitive inline markup into a visibly different
+      page (harmon-init#1350). Before merging a prettier/prettier-plugin-astro
+      bump, also run `task test:render-parity` — it builds the merge-base and
+      HEAD and diffs the rendered text, so it isn't part of `verify`.
 - [ ] Build-script approvals + version pins already ship in
       **`pnpm-workspace.yaml`** — the template pre-approves `esbuild` + `sharp`
       (and **`workerd`** when deploying to Cloudflare Workers, so `wrangler deploy`

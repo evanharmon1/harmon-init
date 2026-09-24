@@ -203,7 +203,16 @@
       "matchManagers": ["npm"],
       "matchDepTypes": ["overrides"],
       "enabled": false
-    }[% endif %][% if include_terraform %],
+    }[% endif %],
+    {
+      "description": "Batch prettier (with its plugins and shared config), markdownlint-cli2, and Black together as \"Formatters\": a formatter bump can reformat every file it touches with no code change behind it, so it gets its own PR and its own reminders rather than riding the generic npm/majors batches. Always present — markdownlint-cli2 is not gated by use_node — but must come after the npm major/non-major split above so a prettier major still lands here instead of getting its own solo PR (no other rule here matches these names, so ordering against ESLint/Astro/CI lint tools/Devcontainer is otherwise moot). shfmt is already isolated in the 'CI lint tools' group (#1352) and is deliberately not duplicated here.",
+      "matchPackageNames": ["markdownlint-cli2"[% if use_node %], "prettier", "prettier-plugin-*", "prettier-config-*"[% endif %][% if use_python %], "black"[% endif %]],
+      "groupName": "Formatters",
+      "prBodyNotes": [
+        "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit.",
+        "web-astro only: before merging, run `task test:render-parity` — a prettier-plugin-astro bump can silently reflow whitespace-sensitive inline markup when this repo's `astroCompressHTML` setting (prettier.config.cjs) disagrees with `astro.config`'s `compressHTML` (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh)."
+      ]
+    }[% if include_terraform %],
     {
       "description": "Batch all Terraform provider updates into one PR",
       "matchManagers": ["terraform"],
