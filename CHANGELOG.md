@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.47.1](https://github.com/evanharmon1/harmon-init/compare/v4.47.0...v4.47.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **devcontainer:** resolve repo root without git in assert and smoke scripts ([#1382](https://github.com/evanharmon1/harmon-init/issues/1382)) ([b6178f4](https://github.com/evanharmon1/harmon-init/commit/b6178f47477fb231b42c5cc22f15604d25df7408))
+
 ## [4.47.0](https://github.com/evanharmon1/harmon-init/compare/v4.46.0...v4.47.0) (2026-09-24)
 
 
