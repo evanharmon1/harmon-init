@@ -36,7 +36,11 @@ fi
 # Base ref: RENDER_PARITY_BASE if set; on a pull request exactly
 # origin/$GITHUB_BASE_REF (never a fallback — a wrong base would compare
 # against the wrong tree); otherwise the first of origin/HEAD, origin/main,
-# origin/master. Same reasoning as scripts/test-tool-pin-pairs.sh.
+# origin/master. Same reasoning as scripts/test-tool-pin-pairs.sh. A fresh
+# local repo with no remote at all (the default when github_remote_create is
+# off) has genuinely nothing to compare against — that is a skip, not a hard
+# error, or `task ci` is unusable there (harmon-init#1350 Codex review
+# round 3, P2).
 resolve_base() {
     if [ -n "${RENDER_PARITY_BASE:-}" ]; then
         echo "$RENDER_PARITY_BASE"
@@ -52,11 +56,13 @@ resolve_base() {
             return
         fi
     done
-    echo "render-parity.sh: could not resolve a merge-base ref (set RENDER_PARITY_BASE)" >&2
-    exit 1
 }
 
 base_ref="$(resolve_base)"
+if [ -z "$base_ref" ]; then
+    echo "render-parity: no base ref to compare against (no origin remote and RENDER_PARITY_BASE unset) -- nothing to compare, skipping"
+    exit 0
+fi
 merge_base="$(git merge-base HEAD "$base_ref")"
 head_sha="$(git rev-parse HEAD)"
 
@@ -75,9 +81,22 @@ fi
 # P1 + P2).
 formatter_package_pattern='"(prettier|prettier-plugin-[A-Za-z0-9._-]+|prettier-config-[A-Za-z0-9._-]+|markdownlint-cli2)"'
 formatter_relevant() {
-    ! git diff --quiet "$merge_base" "$head_sha" -- prettier.config.cjs ||
-        git diff "$merge_base" "$head_sha" -- package.json pnpm-lock.yaml |
-        grep -qE "$formatter_package_pattern"
+    if ! git diff --quiet "$merge_base" "$head_sha" -- prettier.config.cjs; then
+        return 0
+    fi
+    # Capture the diff fully before grepping it (never pipe git diff's own
+    # stdout straight into grep): under pipefail, grep closing the pipe after
+    # its first match can SIGPIPE git diff mid-write on a large diff, and
+    # that non-zero exit would read as "not relevant" (harmon-init#1350 Codex
+    # review round 3, P2 — the same class of bug as round 1's finding, now in
+    # this centralized predicate instead of the workflow step). Restricted to
+    # ADDED/REMOVED lines only (`^[+-][^+-]`, excluding the `+++`/`---`
+    # headers) so an unrelated dependency change that merely sits within diff
+    # context of an untouched formatter entry does not also activate the gate
+    # (round 3, P1).
+    local diff_content
+    diff_content="$(git diff "$merge_base" "$head_sha" -- package.json pnpm-lock.yaml)"
+    printf '%s\n' "$diff_content" | grep -E '^[+-][^+-]' | grep -qE "$formatter_package_pattern"
 }
 if ! formatter_relevant; then
     echo "render-parity: no formatter-package change between ${merge_base} and ${head_sha} -- skipping"

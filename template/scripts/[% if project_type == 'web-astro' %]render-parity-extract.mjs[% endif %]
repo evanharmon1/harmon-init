@@ -142,7 +142,13 @@ function visibleText(html) {
   const blocks = []
   for (const tag of VERBATIM_TAGS) {
     s = s.replace(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi'), (m, inner) => {
-      blocks.push(stripTagsKeepWhitespace(inner))
+      // The HTML parsing spec drops exactly one leading LF immediately after
+      // a <pre>/<textarea> start tag before it ever reaches the reader, so
+      // `<pre>\na</pre>` and `<pre>a</pre>` render identically; without this,
+      // a formatter that adds or removes that single conventional newline
+      // would trip the gate over a change nobody sees (harmon-init#1350
+      // Codex review round 3).
+      blocks.push(stripTagsKeepWhitespace(inner).replace(/^\n/, ''))
       return `${BREAK}${MARK}${blocks.length - 1}${MARK}${BREAK}`
     })
   }
@@ -171,6 +177,16 @@ function visibleText(html) {
 const filesA = new Map(htmlFiles(dirA).map((f) => [relative(dirA, f), f]))
 const filesB = new Map(htmlFiles(dirB).map((f) => [relative(dirB, f), f]))
 const pages = new Set([...filesA.keys(), ...filesB.keys()])
+
+// An SSR/server-output build can legitimately emit no static *.html at all,
+// in which case there is nothing here to prove parity over — that is
+// indeterminate, not a silent pass (harmon-init#1350 Codex review round 3).
+if (pages.size === 0) {
+  console.error(
+    'render-parity: no *.html files found in either build -- cannot verify parity for an SSR/server-only build with this tool'
+  )
+  process.exit(1)
+}
 
 let failed = 0
 for (const page of [...pages].sort()) {
