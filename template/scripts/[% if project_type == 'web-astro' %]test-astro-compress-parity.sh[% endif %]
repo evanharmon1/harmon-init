@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# test-astro-compress-parity.sh — fail when prettier's astroCompressHTML
+# disagrees with Astro's own compressHTML, instead of discovering it only
+# after prettier-plugin-astro silently reflows whitespace-sensitive inline
+# markup into a visibly different rendered page (harmon-init#1350,
+# ponderousdev/lawnomator-site#192 commit b74aaaf: "privacy policy .",
+# "9:41 ··").
+#
+# prettier-plugin-astro's `astroCompressHTML` option and Astro's own
+# `compressHTML` build option are two independent settings that MUST agree.
+# `true`/`false` are the plugin's shorthand aliases for its own `'html'` /
+# `'none'` modes; when the option is left unset the plugin defaults to its
+# `'jsx'` mode (Astro 7's default) regardless of what Astro itself is
+# configured to do — so an unset option is a mismatch whenever Astro's own
+# setting (explicit or its `true` default) is anything else.
+#
+# Skips cleanly before Astro is scaffolded (fresh repo, no astro.config.* yet)
+# — like lint:eslint / lint:prettier — so `task check` stays green until then.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+prettier_config="prettier.config.cjs"
+astro_config=""
+for candidate in astro.config.mjs astro.config.ts astro.config.cjs astro.config.js astro.config.mts astro.config.cts; do
+    if [ -f "$candidate" ]; then
+        astro_config="$candidate"
+        break
+    fi
+done
+
+if [ -z "$astro_config" ]; then
+    echo "test-astro-compress-parity: no astro.config.* yet -- skipping (scaffold Astro first, see docs/CHECKLIST.md)"
+    exit 0
+fi
+
+if [ ! -f "$prettier_config" ]; then
+    echo "test-astro-compress-parity: ${prettier_config} not found -- skipping" >&2
+    exit 0
+fi
+
+# Astro's own default is true (HTML minification on) when the key is absent.
+# `grep -oE` exits 1 on no match (an expected outcome here, handled by the
+# `${var:-default}` below) — `|| true` keeps that from tripping `set -e`.
+astro_raw="$( (grep -oE 'compressHTML[[:space:]]*:[[:space:]]*(true|false)' "$astro_config" || true) | head -n1 | sed -E 's/.*:[[:space:]]*//')"
+astro_value="${astro_raw:-true}"
+
+# The plugin's own default when the key is absent is its 'jsx' mode, which
+# never matches either alias below — an unset option is a mismatch by design.
+prettier_raw="$( (grep -oE "astroCompressHTML[[:space:]]*:[[:space:]]*(true|false|'[^']*'|\"[^\"]*\")" "$prettier_config" || true) | head -n1 | sed -E "s/.*:[[:space:]]*//; s/^['\"]//; s/['\"]\$//")"
+case "$prettier_raw" in
+true) prettier_mode="html" ;;
+false) prettier_mode="none" ;;
+"") prettier_mode="jsx" ;;
+*) prettier_mode="$prettier_raw" ;;
+esac
+
+case "$astro_value" in
+true) expected_mode="html" ;;
+false) expected_mode="none" ;;
+esac
+
+if [ "$prettier_mode" != "$expected_mode" ]; then
+    cat >&2 <<EOF
+test-astro-compress-parity: astroCompressHTML (${prettier_config}: ${prettier_raw:-<unset, defaults to 'jsx'>}) disagrees with compressHTML (${astro_config}: ${astro_raw:-<unset, defaults to true>}).
+
+prettier-plugin-astro's astroCompressHTML must mirror Astro's own compressHTML
+(true -> 'html', false -> 'none'), or a formatter run can reflow
+whitespace-sensitive inline markup into a visibly different rendered page.
+Set astroCompressHTML: ${astro_value} in the '*.astro' override in ${prettier_config}.
+EOF
+    exit 1
+fi
+
+echo "test-astro-compress-parity OK: ${prettier_config}'s astroCompressHTML (${prettier_mode}) matches ${astro_config}'s compressHTML (${astro_value})"

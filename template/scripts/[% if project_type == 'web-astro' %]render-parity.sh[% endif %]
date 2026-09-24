@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# render-parity.sh — prove a change doesn't alter the built site's visible text.
+#
+# A formatter bump (prettier-plugin-astro in particular) can reflow
+# whitespace-sensitive inline markup with no code change behind it. Under
+# `compressHTML: false` a reflowed newline between two inline elements is not
+# a no-op: the browser collapses it to a single visible space that was not
+# there before (see docs/CHECKLIST.md and
+# scripts/test-astro-compress-parity.sh for the config half of this guard).
+#
+# Default mode builds the merge-base and HEAD into disposable git worktrees
+# and diffs their rendered dist/**/*.html visible text (render-parity-extract.mjs).
+# `--compare <dir-a> <dir-b>` skips the git/build step and diffs two
+# already-built directories directly; the root repo's behavioural test
+# (scripts/test-render-parity-cases.sh) uses this mode so it can exercise the
+# diff logic without a real Astro build.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+cd "$repo_root"
+
+compare() {
+    node "${script_dir}/render-parity-extract.mjs" "$1" "$2"
+}
+
+if [ "${1:-}" = "--compare" ]; then
+    [ "$#" -eq 3 ] || {
+        echo "Usage: render-parity.sh --compare <dir-a> <dir-b>" >&2
+        exit 2
+    }
+    compare "$2" "$3"
+    exit $?
+fi
+
+# Base ref: RENDER_PARITY_BASE if set; on a pull request exactly
+# origin/$GITHUB_BASE_REF (never a fallback — a wrong base would compare
+# against the wrong tree); otherwise the first of origin/HEAD, origin/main,
+# origin/master. Same reasoning as scripts/test-tool-pin-pairs.sh.
+resolve_base() {
+    if [ -n "${RENDER_PARITY_BASE:-}" ]; then
+        echo "$RENDER_PARITY_BASE"
+        return
+    fi
+    if [ -n "${GITHUB_BASE_REF:-}" ]; then
+        echo "origin/${GITHUB_BASE_REF}"
+        return
+    fi
+    for ref in origin/HEAD origin/main origin/master; do
+        if git rev-parse --verify --quiet "$ref" >/dev/null; then
+            echo "$ref"
+            return
+        fi
+    done
+    echo "render-parity.sh: could not resolve a merge-base ref (set RENDER_PARITY_BASE)" >&2
+    exit 1
+}
+
+base_ref="$(resolve_base)"
+merge_base="$(git merge-base HEAD "$base_ref")"
+head_sha="$(git rev-parse HEAD)"
+
+if [ "$merge_base" = "$head_sha" ]; then
+    echo "render-parity: HEAD is the merge-base -- nothing to compare, skipping"
+    exit 0
+fi
+
+work_base="$(mktemp -d -t render-parity-base-XXXXXX)"
+work_head="$(mktemp -d -t render-parity-head-XXXXXX)"
+cleanup() {
+    git worktree remove --force "$work_base" >/dev/null 2>&1 || rm -rf "$work_base"
+    git worktree remove --force "$work_head" >/dev/null 2>&1 || rm -rf "$work_head"
+}
+trap cleanup EXIT
+
+git worktree add --detach --force "$work_base" "$merge_base" >/dev/null
+git worktree add --detach --force "$work_head" "$head_sha" >/dev/null
+
+build_one() (
+    cd "$1"
+    pnpm install --frozen-lockfile
+    task build
+)
+
+echo "render-parity: building merge-base (${merge_base})..."
+build_one "$work_base"
+echo "render-parity: building HEAD (${head_sha})..."
+build_one "$work_head"
+
+compare "${work_base}/dist" "${work_head}/dist"

@@ -13,7 +13,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
+- `build.yml` — on push/PR to `main`: lint[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
   Its `pull_request:` trigger is `[opened, synchronize, reopened]`.
   **`edited` is deliberately absent**: it fires on a title/body edit, and the
   dev loop's readiness gate *requires* body edits to tick

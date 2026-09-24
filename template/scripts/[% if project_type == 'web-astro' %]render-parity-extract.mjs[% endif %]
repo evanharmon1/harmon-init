@@ -1,0 +1,147 @@
+// render-parity-extract.mjs — diff the reader-visible text of two dist/ trees.
+//
+// Extraction models what a browser actually renders, not the raw markup: drop
+// <script>/<style>/<svg> content entirely, let block-level elements force a
+// line break, and collapse every other run of whitespace (including a
+// newline introduced between two inline elements) to a single space — that
+// last part matters because that is exactly what compressHTML: false leaves
+// behind for the browser to collapse, and it is what a reflowed inline
+// newline actually renders as: a stray visible space, not nothing. This is
+// intentionally not a full HTML parser (same tradeoff as validate-jsonld.mjs
+// / validate-og.mjs) — it only needs to answer "did the visible text change",
+// not render the page.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join, relative } from 'node:path'
+
+const [, , dirA, dirB] = process.argv
+if (!dirA || !dirB) {
+  console.error('Usage: render-parity-extract.mjs <dir-a> <dir-b>')
+  process.exit(2)
+}
+for (const d of [dirA, dirB]) {
+  if (!existsSync(d)) {
+    console.error(`FAIL: ${d} not found`)
+    process.exit(1)
+  }
+}
+
+function htmlFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) out.push(...htmlFiles(p))
+    else if (entry.endsWith('.html')) out.push(p)
+  }
+  return out
+}
+
+// Elements a browser lays out on their own line. `br`/`hr` are included so a
+// forced break still separates otherwise-adjacent inline runs.
+const BLOCK_TAGS = new Set([
+  'p',
+  'div',
+  'section',
+  'article',
+  'header',
+  'footer',
+  'nav',
+  'main',
+  'aside',
+  'ul',
+  'ol',
+  'li',
+  'br',
+  'hr',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'td',
+  'th',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'pre',
+  'form',
+  'figure',
+  'figcaption',
+  'dl',
+  'dt',
+  'dd'
+])
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+
+function decodeEntities(s) {
+  return s.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, code) => {
+    if (code[0] === '#') {
+      const cp =
+        code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10)
+      return Number.isNaN(cp) ? m : String.fromCodePoint(cp)
+    }
+    return ENTITIES[code.toLowerCase()] ?? m
+  })
+}
+
+// A sentinel (never legal in decoded HTML text) marks a forced block break so
+// it survives the whitespace-collapse pass below undisturbed.
+const BREAK = '\u0000'
+
+function visibleText(html) {
+  let s = html.replace(/<(script|style|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+  s = s.replace(/<\/?([a-z0-9]+)(?:\s[^>]*)?\/?>/gi, (m, tag) =>
+    BLOCK_TAGS.has(tag.toLowerCase()) ? BREAK : ''
+  )
+  s = decodeEntities(s)
+  // Collapse EVERY run of raw whitespace — including a newline sitting
+  // between two inline elements — to exactly one space. Under
+  // compressHTML: false that whitespace-only text node is not stripped at
+  // build time, so the browser collapses it to one visible space; collapsing
+  // it to zero here would hide the exact bug this script exists to catch.
+  s = s.replace(/\s+/g, ' ')
+  return s
+    .split(BREAK)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n')
+}
+
+const filesA = new Map(htmlFiles(dirA).map((f) => [relative(dirA, f), f]))
+const filesB = new Map(htmlFiles(dirB).map((f) => [relative(dirB, f), f]))
+const pages = new Set([...filesA.keys(), ...filesB.keys()])
+
+let failed = 0
+for (const page of [...pages].sort()) {
+  const pathA = filesA.get(page)
+  const pathB = filesB.get(page)
+  if (!pathA || !pathB) {
+    console.error(`DIFF ${page}: page only exists in ${pathA ? 'the base' : 'HEAD'}`)
+    failed++
+    continue
+  }
+  const textA = visibleText(readFileSync(pathA, 'utf-8'))
+  const textB = visibleText(readFileSync(pathB, 'utf-8'))
+  if (textA !== textB) {
+    failed++
+    console.error(`DIFF ${page}:`)
+    const linesA = textA.split('\n')
+    const linesB = textB.split('\n')
+    const max = Math.max(linesA.length, linesB.length)
+    for (let i = 0; i < max; i++) {
+      if (linesA[i] !== linesB[i]) {
+        console.error(`  - ${linesA[i] ?? '<missing>'}`)
+        console.error(`  + ${linesB[i] ?? '<missing>'}`)
+      }
+    }
+  }
+}
+
+if (failed > 0) {
+  console.error(`render-parity: ${failed} page(s) differ in visible text`)
+  process.exit(1)
+}
+console.log(`render-parity: ${pages.size} page(s) match`)

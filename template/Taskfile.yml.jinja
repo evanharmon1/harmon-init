@@ -65,12 +65,15 @@ tasks:
     # It is deliberately not in `verify`, which stays offline — the pre-push hook
     # uses verify:skills:offline for that reason.
 [% endif %]
-    desc: Full CI mirror (guard:closing-keywords → verify[% if use_node %] → test:e2e[% endif %][% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
+    desc: Full CI mirror (guard:closing-keywords → verify[% if use_node %] → test:e2e[% endif %][% if project_type == 'web-astro' %] → test:render-parity[% endif %][% if use_skills_sync %] → verify:skills[% endif %][% if devcontainer %] → test:devcontainer:permissions[% endif %] → security)
     cmds:
       - task: guard:closing-keywords
       - task: verify
 [% if use_node %]
       - task: test:e2e
+[% endif %]
+[% if project_type == 'web-astro' %]
+      - task: test:render-parity
 [% endif %]
 [% if use_skills_sync %]
       - task: verify:skills
@@ -108,6 +111,9 @@ tasks:
       - task: build
 [% endif %]
       - task: validate
+[% if project_type == 'web-astro' %]
+      - task: test:astro-compress-parity
+[% endif %]
       - task: test:agent-registry
       - task: test:result-schemas
       - task: test:registry-drift
@@ -454,6 +460,22 @@ tasks:
       # --root-dir is required to resolve root-relative links (/about, /rss.xml)
       # against dist/ instead of failing with "provide a root dir".
       - lychee --offline --no-progress --root-dir "{{.PWD}}/dist" ./dist
+
+  test:astro-compress-parity:
+    # Static config check (no build needed) — fast enough for `verify`, unlike
+    # test:render-parity below. See docs/CHECKLIST.md.
+    desc: Fail when prettier's astroCompressHTML disagrees with astro.config's compressHTML
+    cmds:
+      - ./scripts/test-astro-compress-parity.sh
+
+  test:render-parity:
+    # Builds the merge-base AND HEAD (two full Astro builds), so this is
+    # deliberately NOT part of `verify` — run it locally before merging a
+    # formatter bump, and see build.yml, which runs it in CI on PRs that touch
+    # *.astro or a formatter pin.
+    desc: Prove a change doesn't alter the built site's visible text (builds merge-base + HEAD; slow)
+    cmds:
+      - ./scripts/render-parity.sh
 [% endif %]
 
   guard:no-commit-to-main:

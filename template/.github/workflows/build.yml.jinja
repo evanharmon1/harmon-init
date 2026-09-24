@@ -342,6 +342,48 @@ jobs:
                 body,
               })
             }
+
+  render-parity:
+    # Proves a formatter/content change didn't alter the built site's visible
+    # text (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh).
+    # Builds the merge-base AND HEAD, so it only runs the expensive check on a
+    # PR that actually touches *.astro or a formatter pin — REQUIRED (listed
+    # in verify.needs) rather than self-activating like e2e/a11y, so the job
+    # itself always runs and reports success either way: a job-level `if:`
+    # skip would report "skipped", which scripts/verify-ci-results.sh treats
+    # as a failure for a required job.
+    #
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: render-parity.sh resolves the merge-base itself and
+          # builds it in a disposable git worktree.
+          fetch-depth: 0
+      - name: Detect a formatter-relevant change
+        id: trigger
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ -z "$BASE_REF" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "origin/${BASE_REF}...HEAD" -- '*.astro' package.json pnpm-lock.yaml prettier.config.cjs | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/setup
+        if: steps.trigger.outputs.present == 'true'
+      - name: Render parity (merge-base vs. HEAD)
+        if: steps.trigger.outputs.present == 'true'
+        run: task test:render-parity
 [% endif %]
 [% if project_type in ['web-astro', 'web-app'] %]
 
@@ -381,7 +423,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse[% endif %]]
+    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %]]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
@@ -400,6 +442,7 @@ jobs:
 [% endif %]
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
+          RENDER_PARITY_RESULT: ${{ needs.render-parity.result }}
 [% endif %]
         run: |
           fail=0
@@ -417,6 +460,7 @@ jobs:
 [% endif %]
 [% if project_type == 'web-astro' %]
           check_skipped lighthouse "$LIGHTHOUSE_RESULT"
+          check_skipped render-parity "$RENDER_PARITY_RESULT"
 [% endif %]
           if [ "$fail" -ne 0 ]; then
             exit 1
@@ -438,8 +482,9 @@ jobs:
 [% endif %]
 [% if project_type == 'web-astro' %]
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
+          RENDER_PARITY_RESULT: ${{ needs.render-parity.result }}
 [% endif %]
-        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}"[% endif %]
+        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}" "render-parity=${RENDER_PARITY_RESULT}"[% endif %]
 
 # Keep a literal final line after the inline Jinja conditionals above; with
 # trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.
