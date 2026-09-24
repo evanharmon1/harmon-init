@@ -33,12 +33,11 @@
 [% endif %]
     {
       "customType": "regex",
-      "description": "Workflow tool pins — `version:`, `<tool>-version:` (e.g. setup-node's node-version) and `wranglerVersion:` styles",
+      "description": "Workflow tool pins — `version:` and `<tool>-version:` (e.g. setup-node's node-version) styles",
       "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*(?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+wranglerVersion:\\s*\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?"
       ]
     },
     {
@@ -47,6 +46,14 @@
       "managerFilePatterns": ["/^(\\.github/(actions|workflows)/.*\\.ya?ml|scripts/.*\\.sh)$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Per-architecture checksum pins, `*_sha256=<hex>` under a `# renovate: datasource=github-release-attachments ... digestVersion=<tag>` annotation, one annotated line per architecture. When the paired `*_VERSION` pin moves, Renovate bumps the tag and recomputes the hash of the same release asset in the same PR. digestVersion is the RAW release tag (v3.14.1, no extractVersion) because the datasource looks the release up by that exact tag.",
+      "managerFilePatterns": ["/^\\.github/(actions|workflows)/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) digestVersion=(?<currentValue>\\S+)\\s+[a-z0-9_]+_sha256=(?<currentDigest>[0-9a-f]{64})"
       ]
     },
     {
@@ -109,6 +116,17 @@
       "groupName": "GitHub Actions"
     },
     {
+      "description": "Give the checksum-pinned CI lint tools (shellcheck, shfmt, actionlint, yq, gitleaks) their own PR instead of the batched GitHub Actions group: their pins carry companion values (per-architecture hashes; for a formatter, what counts as correctly formatted), so one red lint-tool bump must not hold every Actions update back. Must come after the GitHub Actions grouping rules so this override wins.",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["koalaman/shellcheck", "mvdan/sh", "rhysd/actionlint", "mikefarah/yq", "gitleaks/gitleaks"],
+      "matchFileNames": [".github/**"],
+      "groupName": "CI lint tools",
+      "prBodyNotes": [
+        "Checksums move with their versions: every `*_sha256` pin carries a `github-release-attachments` annotation, so this PR should already contain the new hashes. If `task check` (scripts/test-tool-pin-pairs.sh) reports a hash left behind, retry this PR from the Dependency Dashboard rather than hand-editing the hash.",
+        "A formatter bump (shfmt) can change what `task check` accepts: run `task fix` and push the reformat as a separate commit; do not amend Renovate's commit."
+      ]
+    },
+    {
       "description": "Eject anthropics/claude-code-action from the batched GitHub Actions group and skip the 3-day release-age wait. It ships near-daily first-party releases, so grouping + minimumReleaseAge kept the whole Actions batch perpetually pending on the renovate/stability-days gate. Must come after the GitHub Actions group rules so this override wins.",
       "matchPackageNames": ["anthropics/claude-code-action"],
       "groupName": null,
@@ -141,9 +159,44 @@
       "groupName": "Devcontainer"
     }[% endif %][% if use_node %],
     {
-      "description": "Batch all npm/Node updates into one PR",
+      "description": "Batch non-major npm/Node updates into one PR",
       "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "npm dependencies"
+    },
+    {
+      "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "groupName": null
+    },
+    {
+      "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0"
+    },
+    {
+      "description": "Require explicit approval for package-manager majors because pnpm/npm/yarn migrations can change lockfiles, install behavior, and CI bootstrapping",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["packageManager"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "Before approving this update, follow the [package-manager major-upgrade checklist](docs/CHECKLIST.md#package-manager-major-upgrades). If this repository deliberately stays on an older major, add a local disabling package rule whose description records why."
+      ]
+    },
+    {
+      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
+      "groupName": "ESLint toolchain"
+    },
+    {
+      "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["astro", "@astrojs/*"],
+      "groupName": "Astro"
     },
     {
       "description": "Disable auto-update for npm overrides used as security pins — Renovate runs npm install <pkg>@<version> to update overrides, which causes EOVERRIDE when the package also appears as a transitive dep",

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
-# Usage: ./scripts/test-template.sh <profile>
+# Usage: ./scripts/test-template.sh <profile> [full|renovate-config]
 # Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
@@ -33,6 +33,14 @@ export GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
 export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
 
 profile="${1:-minimal}"
+validation_scope="${2:-full}"
+case "$validation_scope" in
+full | renovate-config) ;;
+*)
+    echo "Unknown validation scope: ${validation_scope}" >&2
+    exit 2
+    ;;
+esac
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Per-job temp root. `task test:template:all` runs six of these renders and the
@@ -285,6 +293,25 @@ fi
 # needed; runs against the freshly-rendered tree.
 if [ -x scripts/lint-hygiene.sh ]; then
     ./scripts/lint-hygiene.sh || err "rendered output fails its own lint:hygiene gate"
+fi
+
+# ── 0a'. Rendered checksum pins keep their pairs ────────────────────
+# The setup action's version and checksum pins sit inside jinja conditionals
+# (yq only with use_skills_sync), so a gate that splits a pair — a hash left
+# behind without its version line — is only visible after rendering. The guard
+# reads tracked files, so it needs the scaffold commit; a --skip-tasks profile
+# has none and is skipped.
+if [ -x scripts/test-tool-pin-pairs.sh ] && git rev-parse --verify --quiet HEAD >/dev/null; then
+    # No base in a fresh render: clear both inputs so harmon-init's own PR
+    # context (GITHUB_BASE_REF) does not demand one.
+    if pin_pairs_out="$(PIN_PAIRS_BASE='' GITHUB_BASE_REF='' ./scripts/test-tool-pin-pairs.sh 2>&1)"; then
+        case "$pin_pairs_out" in
+        *" pair(s) in "*) : ;;
+        *) err "rendered setup action has no pin-pair markers: ${pin_pairs_out}" ;;
+        esac
+    else
+        err "rendered output fails its own pin-pair guard: ${pin_pairs_out}"
+    fi
 fi
 
 # ── 0b. Agent worktrees are ignored in BOTH layers ──────────────────
@@ -626,6 +653,25 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# renovate: datasource=npm depName=renovate
+RENOVATE_VALIDATOR_VERSION=44.110.0
+if [ "$validation_scope" = "renovate-config" ]; then
+    if have npx; then
+        run_quiet renovate-config-validator \
+            npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict ||
+            err "rendered renovate.json fails renovate-config-validator --strict"
+    else
+        err "required tool 'npx' is not installed for strict Renovate configuration validation"
+    fi
+fi
+if [ "$validation_scope" = "renovate-config" ]; then
+    if [ "$fail" -ne 0 ]; then
+        echo "test-renovate-config (${profile}): FAILED" >&2
+        exit 1
+    fi
+    echo "test-renovate-config (${profile}): PASS"
+    exit 0
+fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
 grep -q 'task test:ci-results' .github/workflows/build.yml ||
@@ -1693,6 +1739,17 @@ for wf in .github/workflows/*.yml; do
     [ -f "$wf" ] || continue
     ! grep -Fq 'pull_request.draft' "$wf" ||
         err "$(basename "$wf") gates on draft state — required checks would skip the workbench"
+done
+
+# wranglerVersion double-pins Cloudflare Workers' version against the
+# wrangler devDependency the lockfile already pins — the two drift apart
+# because Renovate updates them in different groups (harmon-init#1347). The
+# lockfile is the single source of truth; cloudflare/wrangler-action falls
+# back to the pre-installed copy when wranglerVersion is omitted.
+for wf in .github/workflows/*.yml; do
+    [ -f "$wf" ] || continue
+    ! grep -Fq 'wranglerVersion:' "$wf" ||
+        err "$(basename "$wf") pins wranglerVersion — the wrangler devDependency in package.json is the single source of truth"
 done
 # The two halves of the `edited` split (harmon-init#1328). The build matrix
 # must NOT re-run on a title/body edit — the readiness gate edits the body to
@@ -2781,9 +2838,21 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         required pnpm "web-astro toolchain validation" || fail=1
     else
         cp -R "$repo_root/tests/fixtures/web-astro/." .
-        pnpm install --silent >/dev/null 2>&1 || true
+        # cloudflare/wrangler-action needs a pre-installed wrangler now that
+        # wranglerVersion is no longer pinned in the workflow (harmon-init#1347).
+        if grep -Eq '^deploy_cloudflare_workers:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+            grep -q '"wrangler"' package.json ||
+                err "web-astro fixture: package.json has no wrangler dependency — cloudflare/wrangler-action needs a pre-installed copy since wranglerVersion is no longer pinned"
+        fi
+        # wrangler pulls sharp in deeply enough that pnpm treats a failed sharp
+        # install as fatal (unlike astro's own tolerated-optional pull of it).
+        # sharp's installer prefers a contributor's global libvips (e.g. Homebrew's)
+        # over its own bundled prebuilt when one is on PKG_CONFIG_PATH, and that
+        # from-source build then fails without node-addon-api — a machine-local
+        # false failure, never a CI one (runners carry no global libvips).
+        SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --silent >/dev/null 2>&1 || true
         bin="node_modules/.bin"
-        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ]; then
+        if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ] || [ ! -x "$bin/wrangler" ]; then
             err "web-astro fixture: install did not provide the toolchain (see tests/fixtures/web-astro/package.json)"
         elif ! "$bin/eslint" . >/dev/null 2>&1; then
             "$bin/eslint" . || true
@@ -2797,10 +2866,21 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         elif ! "$bin/astro" build >/dev/null 2>&1; then
             "$bin/astro" build || true
             err "web-astro fixture: astro build failed"
+        elif ! "$bin/wrangler" --version >/dev/null 2>&1; then
+            "$bin/wrangler" --version || true
+            err "web-astro fixture: wrangler --version failed — a binary can be linked but unusable (e.g. workerd's own install failed) while pnpm install still exits 0, which is exactly what cloudflare/wrangler-action's pre-installed-copy fallback needs to not be true"
         else
-            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build) clean on a real app"
+            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build + wrangler) clean on a real app"
         fi
     fi
+fi
+
+# CHECKLIST.md must tell a Cloudflare-enabled consumer to add wrangler now that
+# the deploy workflows no longer pin wranglerVersion (harmon-init#1347) — the
+# template ships no package.json, so nothing else tells a fresh scaffold to.
+if grep -Eq '^deploy_cloudflare_workers:[[:space:]]+(true|yes)$' .copier-answers.yml; then
+    grep -q 'pnpm add -D wrangler' docs/CHECKLIST.md ||
+        err "CHECKLIST.md does not instruct a Cloudflare-enabled consumer to add wrangler as a devDependency"
 fi
 
 # ── 12. web-app: the shipped ESLint config + tsc type-check a real React app ──

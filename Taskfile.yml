@@ -64,10 +64,11 @@ tasks:
     # which stays offline — pre-push uses verify:skills:offline for that reason.
     # The devcontainer permission assertion is a unit check and does not build or
     # start a container.
-    desc: Full CI mirror (guard:closing-keywords → verify → verify:skills → test:devcontainer:permissions → security)
+    desc: Full CI mirror (guard:closing-keywords → verify → strict Renovate config → verify:skills → test:devcontainer:permissions → security)
     cmds:
       - task: guard:closing-keywords
       - task: verify
+      - task: test:renovate-config
       - task: verify:skills
       - task: test:devcontainer:permissions
       - task: security
@@ -99,6 +100,8 @@ tasks:
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
+      - task: test:tool-pin-pairs
+      - task: test:oh-my-pi-pin
       - task: test:lint-hygiene
       - task: test:release-title
       - task: test:claim-release-merged
@@ -147,6 +150,8 @@ tasks:
       - lint:markdown
       - lint:actions
       - lint:hygiene
+      - lint:pin-pairs
+      - lint:oh-my-pi-pin
 
   lint:yaml:
     desc: yamllint (template/ excluded via .yamllint ignore)
@@ -177,6 +182,16 @@ tasks:
       SHELLCHECK_OPTS: --exclude=SC2016
     cmds:
       - actionlint
+
+  lint:pin-pairs:
+    desc: Version pins and their paired checksum pins moved together (scripts/test-tool-pin-pairs.sh)
+    cmds:
+      - ./scripts/test-tool-pin-pairs.sh
+
+  lint:oh-my-pi-pin:
+    desc: Fail fast when OH_MY_PI_VERSION outruns its hand-verified marker (scripts/test-oh-my-pi-pin.sh)
+    cmds:
+      - ./scripts/test-oh-my-pi-pin.sh
 
   lint:hygiene:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
@@ -488,6 +503,21 @@ tasks:
     desc: Check every annotated shell version pin is extractable by Renovate
     cmds:
       - ./scripts/test-renovate-pins.sh
+
+  test:renovate-config:
+    desc: Render each template profile and validate renovate.json strictly (pass one profile with -- <profile>)
+    cmds:
+      - ./scripts/test-renovate-config.sh {{.CLI_ARGS}}
+
+  test:tool-pin-pairs:
+    desc: Behavioural fixtures for the version/checksum pin-pair guard
+    cmds:
+      - ./scripts/test-tool-pin-pairs-cases.sh
+
+  test:oh-my-pi-pin:
+    desc: Behavioural fixtures for the oh-my-pi verified-for marker guard
+    cmds:
+      - ./scripts/test-oh-my-pi-pin-cases.sh
 
   test:lint-hygiene:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan

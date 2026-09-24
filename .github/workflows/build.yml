@@ -70,6 +70,8 @@ jobs:
       - run: task test:gh-scopes
       - run: task test:worktree
       - run: task test:renovate-pins
+      - run: task test:tool-pin-pairs
+      - run: task test:oh-my-pi-pin
       - run: task test:lint-hygiene
       - run: task test:release-title
       - run: task test:claim-release-merged
@@ -240,7 +242,12 @@ jobs:
           git config --global user.name "ci"
           git config --global user.email "ci@users.noreply.github.com"
           git config --global init.defaultBranch main
-      - run: task test:template:${{ matrix.profile }}
+      - name: Render and validate template profile
+        run: task test:template:${{ matrix.profile }}
+      # Strict Renovate validation resolves Renovate from npm and is therefore
+      # an explicit CI/local-CI task; ordinary `task verify` stays offline.
+      - name: Strictly validate rendered Renovate config
+        run: task test:renovate-config -- ${{ matrix.profile }}
 
   verify:
     if: always()

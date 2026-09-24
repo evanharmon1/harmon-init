@@ -45,6 +45,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history so `task check`'s pin-pair guard can diff against the
+          # PR's merge-base: it is the only check that catches a Renovate bump
+          # that moved a tool's version but not its checksum, and it fails
+          # rather than skipping on a pull request without that history.
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           lint-tools: "true"

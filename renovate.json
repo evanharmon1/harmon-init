@@ -33,8 +33,7 @@
       "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*(?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+wranglerVersion:\\s*\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?"
       ]
     },
     {
@@ -43,6 +42,14 @@
       "managerFilePatterns": ["/(\\.github/(actions|workflows)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?|scripts/.*\\.sh(\\[% endif %\\])?)$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z_]+_VERSION=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Per-architecture checksum pins, `*_sha256=<hex>` under a `# renovate: datasource=github-release-attachments ... digestVersion=<tag>` annotation, one annotated line per architecture. When the paired `*_VERSION` pin moves, Renovate bumps the tag and recomputes the hash of the same release asset in the same PR. digestVersion is the RAW release tag (v3.14.1, no extractVersion) because the datasource looks the release up by that exact tag. Both layers: the template twin is matched through its jinja filename.",
+      "managerFilePatterns": ["/\\.github/(actions|workflows)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) digestVersion=(?<currentValue>\\S+)\\s+[a-z0-9_]+_sha256=(?<currentDigest>[0-9a-f]{64})"
       ]
     },
     {
@@ -94,7 +101,7 @@
       "groupName": "Docker images"
     },
     {
-      "description": "Batch the canonical shared-image source, current dogfood/template devcontainers, and their coupled script pins into one PR — must come after the Docker images rule so base images land here instead. Root scripts/** and taskfiles/** are included because their regex-managed pins are dogfood-parity twins of template/** copies; splitting a dependency across groups makes each Renovate PR fail parity.",
+      "description": "Batch the canonical shared-image source, current dogfood/template devcontainers, and their coupled script pins into one PR — must come after the Docker images rule so base images land here instead. Root scripts/** and taskfiles/** are included because their regex-managed pins are dogfood-parity twins of template/** copies; splitting a dependency across groups makes each Renovate PR fail parity. OH_MY_PI_SHA256_AMD64/ARM64 in images/devcontainer/Dockerfile are the one pin pair this batch deliberately excludes from that automation: oh-my-pi ships unsigned release binaries, so a person must verify each release by hand, and only OH_MY_PI_VERSION here is Renovate-managed.",
       "matchFileNames": [
         "images/devcontainer/**",
         ".devcontainer/**",
@@ -102,13 +109,28 @@
         "scripts/**",
         "taskfiles/**"
       ],
-      "groupName": "Devcontainer"
+      "matchPackageNames": ["!renovate"],
+      "groupName": "Devcontainer",
+      "prBodyNotes": [
+        "If this bump touches OH_MY_PI_VERSION in images/devcontainer/Dockerfile, its hashes are NOT auto-updated: read the release notes and provenance, download the omp-linux-x64 and omp-linux-arm64 binary assets (not the source archives), compute their sha256, update OH_MY_PI_SHA256_AMD64/ARM64, and move the `# verified-for:` marker to match before merging. `task check` (scripts/test-oh-my-pi-pin.sh) fails fast until you do."
+      ]
     },
     {
       "description": "Template workflow AND composite-action pins belong with the GitHub Actions batch, not the Devcontainer batch — must come after the Devcontainer rule (which claims all of template/**) so this override wins. Composite actions are listed explicitly: template/.github/actions/setup/action.yml.jinja pins setup-node/-python/-uv/-terraform/-task/-tflint, and without this line they would all be filed as Devcontainer updates",
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["template/.github/workflows/**", "template/.github/actions/**"],
       "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Give the checksum-pinned CI lint tools (shellcheck, shfmt, actionlint, yq, gitleaks) their own PR instead of the batched GitHub Actions group: their pins carry companion values (per-architecture hashes; for a formatter, what counts as correctly formatted), so one red lint-tool bump must not hold every Actions update back. Must come after the GitHub Actions grouping rules so this override wins. In this repo it must also follow the Devcontainer rule (which claims template/**); the Dockerfile copies of these pins stay in the Devcontainer batch.",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["koalaman/shellcheck", "mvdan/sh", "rhysd/actionlint", "mikefarah/yq", "gitleaks/gitleaks"],
+      "matchFileNames": [".github/**", "template/.github/**"],
+      "groupName": "CI lint tools",
+      "prBodyNotes": [
+        "Checksums move with their versions: every `*_sha256` pin carries a `github-release-attachments` annotation, so this PR should already contain the new hashes. If `task check` (scripts/test-tool-pin-pairs.sh) reports a hash left behind, retry this PR from the Dependency Dashboard rather than hand-editing the hash.",
+        "A formatter bump (shfmt) can change what `task check` accepts: run `task fix` and push the reformat as a separate commit; do not amend Renovate's commit."
+      ]
     },
     {
       "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
@@ -133,6 +155,50 @@
       "matchFileNames": ["tests/fixtures/web-app/package.json"],
       "groupName": "web-app fixture",
       "separateMajorMinor": false
+    },
+    {
+      "description": "Batch non-major npm/Node updates into one PR",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": "npm dependencies"
+    },
+    {
+      "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": null
+    },
+    {
+      "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0"
+    },
+    {
+      "description": "Require explicit approval for package-manager majors because pnpm/npm/yarn migrations can change lockfiles, install behavior, and CI bootstrapping",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["packageManager"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "Before approving this update, follow the [package-manager major-upgrade checklist](docs/CHECKLIST.md#package-manager-major-upgrades). If this repository deliberately stays on an older major, add a local disabling package rule whose description records why."
+      ]
+    },
+    {
+      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": "ESLint toolchain"
+    },
+    {
+      "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["astro", "@astrojs/*"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": "Astro"
     },
     {
       "description": "Eject anthropics/claude-code-action from the batched GitHub Actions group and skip the 3-day release-age wait. It ships near-daily first-party releases, so grouping + minimumReleaseAge kept the whole Actions batch perpetually pending on the renovate/stability-days gate — each rebase pulled in a fresh release and reset the 3-day clock. It's a trusted first-party action and all updates are reviewed manually (automerge is off globally). Must come LAST so this override wins over every grouping rule (GitHub Actions, Devcontainer, template workflow pins).",
