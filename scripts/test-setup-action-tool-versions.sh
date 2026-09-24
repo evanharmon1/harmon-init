@@ -540,13 +540,34 @@ gitleaks_published_bin() {
     tail -n 1 "$github_path"
 }
 
+# The inherited PATH minus every directory holding the named tool. Each case
+# decides which copy of a tool — if any — the step can see, through
+# `pre_installed_path`; a real one leaking in from the host decides it
+# instead. That is not hypothetical: the sync-harmon-devkit job runs the setup
+# action (installing the PINNED gitleaks) before `task verify`, so the
+# "nothing installed" case found the real binary, reused it, fetched nothing,
+# and failed there while passing everywhere gitleaks was absent — or present
+# at a different version, which a developer machine usually is.
+path_without_tool() {
+    local tool="$1" dir kept=
+    local IFS=:
+    for dir in $PATH; do
+        [ -n "$dir" ] || continue
+        [ -x "${dir}/${tool}" ] && continue
+        kept="${kept:+${kept}:}${dir}"
+    done
+    printf '%s' "$kept"
+}
+
 run_gitleaks_install() {
     local arch="$1" pre_installed_path="$2" runner_temp="$3" github_path="$4"
+    local hermetic_path
     mkdir -p "$runner_temp"
     : >"$gitleaks_curl_log"
     : >"$gitleaks_sha_log"
     : >"$github_path"
-    PATH="${pre_installed_path}:${gitleaks_bin}:${PATH}" \
+    hermetic_path="${pre_installed_path}:${gitleaks_bin}:$(path_without_tool gitleaks)"
+    PATH="$hermetic_path" \
         RUNNER_ARCH="$arch" \
         RUNNER_TEMP="$runner_temp" \
         GITHUB_PATH="$github_path" \
@@ -614,6 +635,11 @@ gitleaks_corrupt_published="$(gitleaks_published_bin "$gitleaks_corrupt_ghpath")
     fail "the corrupted-gitleaks replacement binary is not the pinned version"
 
 echo "==> gitleaks architecture selection: X64 and ARM64 fetch the matching asset, an unsupported arch fails loudly"
+# Premise: with nothing pre-installed, NO gitleaks may be resolvable, or the
+# step can reuse one and the architecture case below proves nothing.
+if PATH="${test_tmp}/nonexistent:${gitleaks_bin}:$(path_without_tool gitleaks)" command -v gitleaks >/dev/null 2>&1; then
+    fail "the architecture cases need an environment with no gitleaks on PATH, but one is still resolvable"
+fi
 run_gitleaks_install X64 "$test_tmp/nonexistent" "${test_tmp}/gitleaks-runner-x64" "${test_tmp}/gitleaks-github-path-x64"
 grep -Fq "/gitleaks_${PIN_GITLEAKS}_linux_x64.tar.gz" "$gitleaks_curl_log" ||
     fail "X64 did not fetch the x64 gitleaks asset"
@@ -641,7 +667,8 @@ gitleaks_unsupported_temp="${test_tmp}/gitleaks-runner-unsupported"
 gitleaks_unsupported_ghpath="${test_tmp}/gitleaks-github-path-unsupported"
 mkdir -p "$gitleaks_unsupported_temp"
 : >"$gitleaks_unsupported_ghpath"
-if gitleaks_unsupported_output="$(PATH="${test_tmp}/nonexistent:${gitleaks_bin}:${PATH}" \
+gitleaks_unsupported_path="${test_tmp}/nonexistent:${gitleaks_bin}:$(path_without_tool gitleaks)"
+if gitleaks_unsupported_output="$(PATH="$gitleaks_unsupported_path" \
     RUNNER_ARCH=RISCV64 RUNNER_TEMP="$gitleaks_unsupported_temp" GITHUB_PATH="$gitleaks_unsupported_ghpath" \
     GITLEAKS_CURL_LOG="$gitleaks_curl_log" \
     bash "${test_tmp}/install-lint-tools.sh.gitleaks" 2>&1)"; then
@@ -697,10 +724,12 @@ snyk_published_bin() {
 
 run_snyk_install() {
     local pre_installed_path="$1" runner_temp="$2" github_path="$3"
+    local hermetic_path
     mkdir -p "$runner_temp"
     : >"$npm_log"
     : >"$github_path"
-    PATH="${pre_installed_path}:${snyk_bin}:${PATH}" \
+    hermetic_path="${pre_installed_path}:${snyk_bin}:$(path_without_tool snyk)"
+    PATH="$hermetic_path" \
         RUNNER_TEMP="$runner_temp" GITHUB_PATH="$github_path" NPM_LOG="$npm_log" \
         bash "${test_tmp}/install-lint-tools.sh.snyk"
 }
