@@ -24,6 +24,20 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
+echo "==> task ci reaches the explicit strict Renovate configuration gate"
+ci_plan="$(task --dry ci 2>&1)" || {
+    echo "task --dry ci failed" >&2
+    exit 1
+}
+grep -Fq './scripts/test-renovate-config.sh' <<<"$ci_plan" || {
+    echo "task ci does not run test:renovate-config" >&2
+    exit 1
+}
+if grep -Fq 'HARMON_INIT_VALIDATE_RENOVATE' Taskfile.yml; then
+    echo "Taskfile.yml still relies on task-scoped env propagation for strict Renovate validation" >&2
+    exit 1
+fi
+
 python3 - <<'PY'
 import json, re, sys, pathlib
 
@@ -50,6 +64,35 @@ def js_to_py(rx):
     return rx.replace("(?<", "(?P<")
 
 errors = []
+
+# CI and the strict-validation dispatcher must cover the same profile set.
+# This keeps a new matrix entry from silently taking an unsupported path.
+workflow = pathlib.Path(".github/workflows/build.yml").read_text()
+matrix_match = re.search(r"profile:\s*\[([^]]+)\]", workflow)
+dispatcher = pathlib.Path("scripts/test-renovate-config.sh").read_text()
+profiles_match = re.search(r"profiles=\(([^)]+)\)", dispatcher)
+if not matrix_match or not profiles_match:
+    errors.append("unable to read template-test matrix or strict-validation profiles")
+else:
+    matrix_profiles = [item.strip() for item in matrix_match.group(1).split(",")]
+    strict_profiles = profiles_match.group(1).split()
+    if matrix_profiles != strict_profiles:
+        errors.append(
+            "template-test matrix profiles do not match test:renovate-config: "
+            f"matrix={matrix_profiles!r}, strict={strict_profiles!r}"
+        )
+if './scripts/test-template-update.sh renovate-config' not in dispatcher:
+    errors.append("test:renovate-config does not validate the update profile's rendered config")
+if 'renovate-config-validator --strict renovate.json' not in dispatcher:
+    errors.append("test:renovate-config does not strictly validate the root renovate.json")
+if "command -v npx" not in dispatcher:
+    errors.append("test:renovate-config does not require npx before strict validation")
+for strict_path in ("scripts/test-template.sh", "scripts/test-template-update.sh"):
+    strict_script = pathlib.Path(strict_path).read_text()
+    if "skipping strict Renovate configuration validation" in strict_script:
+        errors.append(f"{strict_path}: strict Renovate validation still skips when npx is unavailable")
+if 'required npx "strict Renovate configuration validation"' in pathlib.Path("scripts/test-template.sh").read_text():
+    errors.append("scripts/test-template.sh: strict Renovate validation still uses the fail-open optional-tool helper")
 
 root_mgr = load_shell_manager("renovate.json")
 tmpl_mgr = load_shell_manager("template/renovate.json.jinja")
@@ -187,6 +230,13 @@ def glob_to_re(pat):
             out, i = out + re.escape(pat[i]), i + 1
     return re.compile("^" + out + "$")
 
+def match_file_patterns(patterns, path):
+    negatives = [glob_to_re(pattern[1:]) for pattern in patterns if pattern.startswith("!")]
+    if any(rx.match(path) for rx in negatives):
+        return False
+    positives = [glob_to_re(pattern) for pattern in patterns if not pattern.startswith("!")]
+    return not positives or any(rx.match(path) for rx in positives)
+
 def resolve_group(cfg, path, dep, datasource, manager="custom.regex"):
     group = None
     for rule in cfg.get("packageRules", []):
@@ -197,10 +247,14 @@ def resolve_group(cfg, path, dep, datasource, manager="custom.regex"):
         if "matchDepTypes" in rule:
             continue  # regex-managed pins carry no depType
         names = rule.get("matchPackageNames")
-        if names and "*" not in names and dep not in names:
-            continue
+        if names:
+            if f"!{dep}" in names:
+                continue
+            positive_names = [name for name in names if not name.startswith("!")]
+            if positive_names and "*" not in positive_names and dep not in positive_names:
+                continue
         globs = rule.get("matchFileNames")
-        if globs and not any(glob_to_re(g).match(path) for g in globs):
+        if globs and not match_file_patterns(globs, path):
             continue
         if "groupName" in rule:
             group = rule["groupName"]
@@ -321,6 +375,20 @@ if producer_group != "Devcontainer":
         f"group {producer_group!r}, expected 'Devcontainer'"
     )
 
+# The root-only Renovate validator is CI tooling, not part of the devcontainer
+# toolchain. The broad scripts/** rule must explicitly leave it ungrouped.
+validator_group = resolve_group(
+    root_cfg,
+    "scripts/test-template.sh",
+    "renovate",
+    "npm",
+)
+if validator_group is not None:
+    errors.append(
+        "root config: renovate in scripts/test-template.sh resolves to "
+        f"group {validator_group!r}, expected no group"
+    )
+
 # ── Template config: rendered packageRules route consumer pins correctly ────
 # The generated repo has no parity gate, so the requirement is the opposite
 # shape: devcontainer-coupled pins batch into the Devcontainer group (semgrep
@@ -384,6 +452,90 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
         errors.append(f"{label}: osvVulnerabilityAlerts must be true")
     if cfg.get("vulnerabilityAlerts", {}).get("enabled") is not True:
         errors.append(f"{label}: vulnerabilityAlerts.enabled must be true")
+
+# npm update routing is order-sensitive: generic majors are ejected first,
+# then the two tightly coupled toolchains deliberately override that null group.
+# Assert both layers here so a root-only or template-only edit cannot silently
+# restore the red mega-PR this policy replaces.
+def check_npm_policy(label, cfg):
+    rules = cfg.get("packageRules", [])
+    def find(prefix):
+        matches = [
+            (i, rule)
+            for i, rule in enumerate(rules)
+            if rule.get("description", "").startswith(prefix)
+        ]
+        if len(matches) != 1:
+            errors.append(f"{label}: expected exactly one package rule starting {prefix!r}")
+            return None, None
+        return matches[0]
+
+    minor_i, minor = find("Batch non-major npm/Node updates")
+    major_i, major = find("Give each npm major its own PR")
+    typescript_i, typescript = find("Hold TypeScript below 7")
+    package_manager_i, package_manager = find("Require explicit approval for package-manager majors")
+    eslint_i, eslint = find("Keep the tightly coupled ESLint packages together")
+    astro_i, astro = find("Keep Astro and its official integrations together")
+    found = [minor, major, typescript, package_manager, eslint, astro]
+    if any(rule is None for rule in found):
+        return
+
+    if set(minor.get("matchUpdateTypes", [])) != {"minor", "patch", "pin", "digest"} or minor.get("groupName") != "npm dependencies":
+        errors.append(f"{label}: non-major npm updates must be the 'npm dependencies' group")
+    if major.get("matchUpdateTypes") != ["major"] or major.get("groupName", "missing") is not None:
+        errors.append(f"{label}: npm majors must set groupName to null")
+    description = typescript.get("description", "")
+    if (
+        typescript.get("matchManagers") != ["npm"]
+        or typescript.get("matchPackageNames") != ["typescript"]
+        or typescript.get("allowedVersions") != "<7.0.0"
+        or not all(
+        issue in description
+        for issue in ("typescript-eslint/typescript-eslint/issues/10940", "withastro/roadmap/issues/1321")
+        )
+    ):
+        errors.append(f"{label}: TypeScript 7 hold must name both upstream removal conditions")
+    notes = "\n".join(package_manager.get("prBodyNotes", []))
+    if (
+        package_manager.get("matchDepTypes") != ["packageManager"]
+        or package_manager.get("matchUpdateTypes") != ["major"]
+        or package_manager.get("dependencyDashboardApproval") is not True
+        or "docs/CHECKLIST.md#package-manager-major-upgrades" not in notes
+        or "deliberately stays on an older major" not in notes
+    ):
+        errors.append(f"{label}: package-manager majors must be approval-gated with the migration/hold guidance")
+    if set(eslint.get("matchPackageNames", [])) != {"typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"} or eslint.get("groupName") != "ESLint toolchain":
+        errors.append(f"{label}: ESLint toolchain rule is incomplete")
+    if set(astro.get("matchPackageNames", [])) != {"astro", "@astrojs/*"} or astro.get("groupName") != "Astro":
+        errors.append(f"{label}: Astro toolchain rule is incomplete")
+    if label == "renovate.json":
+        fixture_file_patterns = {"!tests/fixtures/**"}
+        for name, rule in (
+            ("non-major npm", minor),
+            ("npm major", major),
+            ("ESLint toolchain", eslint),
+            ("Astro toolchain", astro),
+        ):
+            if set(rule.get("matchFileNames", [])) != fixture_file_patterns:
+                errors.append(f"{label}: {name} rule must preserve fixture-specific grouping")
+        for fixture_path, fixture_group in (
+            ("tests/fixtures/web-astro/package.json", "web-astro fixture"),
+            ("tests/fixtures/web-app/package.json", "web-app fixture"),
+        ):
+            for dep in ("typescript", "eslint", "astro"):
+                resolved = resolve_group(cfg, fixture_path, dep, "npm", manager="npm")
+                if resolved != fixture_group:
+                    errors.append(
+                        f"{label}: {dep} in {fixture_path} resolves to {resolved!r}, "
+                        f"expected {fixture_group!r}"
+                    )
+    if not (minor_i < major_i < typescript_i < package_manager_i < eslint_i < astro_i):
+        errors.append(f"{label}: npm package rules are not in override-safe order")
+
+
+for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
+    if cfg is not None:
+        check_npm_policy(label, cfg)
 
 if errors:
     for e in errors:

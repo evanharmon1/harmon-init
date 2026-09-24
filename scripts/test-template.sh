@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
-# Usage: ./scripts/test-template.sh <profile>
+# Usage: ./scripts/test-template.sh <profile> [full|renovate-config]
 # Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
@@ -33,6 +33,14 @@ export GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
 export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
 
 profile="${1:-minimal}"
+validation_scope="${2:-full}"
+case "$validation_scope" in
+full | renovate-config) ;;
+*)
+    echo "Unknown validation scope: ${validation_scope}" >&2
+    exit 2
+    ;;
+esac
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Per-job temp root. `task test:template:all` runs six of these renders and the
@@ -741,6 +749,25 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# renovate: datasource=npm depName=renovate
+RENOVATE_VALIDATOR_VERSION=44.110.0
+if [ "$validation_scope" = "renovate-config" ]; then
+    if have npx; then
+        run_quiet renovate-config-validator \
+            npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict ||
+            err "rendered renovate.json fails renovate-config-validator --strict"
+    else
+        err "required tool 'npx' is not installed for strict Renovate configuration validation"
+    fi
+fi
+if [ "$validation_scope" = "renovate-config" ]; then
+    if [ "$fail" -ne 0 ]; then
+        echo "test-renovate-config (${profile}): FAILED" >&2
+        exit 1
+    fi
+    echo "test-renovate-config (${profile}): PASS"
+    exit 0
+fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
 grep -q 'task test:ci-results' .github/workflows/build.yml ||

@@ -109,6 +109,7 @@
         "scripts/**",
         "taskfiles/**"
       ],
+      "matchPackageNames": ["!renovate"],
       "groupName": "Devcontainer",
       "prBodyNotes": [
         "If this bump touches OH_MY_PI_VERSION in images/devcontainer/Dockerfile, its hashes are NOT auto-updated: read the release notes and provenance, download the omp-linux-x64 and omp-linux-arm64 binary assets (not the source archives), compute their sha256, update OH_MY_PI_SHA256_AMD64/ARM64, and move the `# verified-for:` marker to match before merging. `task check` (scripts/test-oh-my-pi-pin.sh) fails fast until you do."
@@ -154,6 +155,50 @@
       "matchFileNames": ["tests/fixtures/web-app/package.json"],
       "groupName": "web-app fixture",
       "separateMajorMinor": false
+    },
+    {
+      "description": "Batch non-major npm/Node updates into one PR",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": "npm dependencies"
+    },
+    {
+      "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": null
+    },
+    {
+      "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0"
+    },
+    {
+      "description": "Require explicit approval for package-manager majors because pnpm/npm/yarn migrations can change lockfiles, install behavior, and CI bootstrapping",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["packageManager"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "Before approving this update, follow the [package-manager major-upgrade checklist](docs/CHECKLIST.md#package-manager-major-upgrades). If this repository deliberately stays on an older major, add a local disabling package rule whose description records why."
+      ]
+    },
+    {
+      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": "ESLint toolchain"
+    },
+    {
+      "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["astro", "@astrojs/*"],
+      "matchFileNames": ["!tests/fixtures/**"],
+      "groupName": "Astro"
     },
     {
       "description": "Eject anthropics/claude-code-action from the batched GitHub Actions group and skip the 3-day release-age wait. It ships near-daily first-party releases, so grouping + minimumReleaseAge kept the whole Actions batch perpetually pending on the renovate/stability-days gate — each rebase pulled in a fresh release and reset the 3-day clock. It's a trusted first-party action and all updates are reviewed manually (automerge is off globally). Must come LAST so this override wins over every grouping rule (GitHub Actions, Devcontainer, template workflow pins).",
