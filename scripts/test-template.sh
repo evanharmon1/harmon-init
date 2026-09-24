@@ -657,7 +657,10 @@ files = [
 violations = []
 
 
-def contract_violations(source: str) -> list[str]:
+SETUP_ACTION_PATH = pathlib.Path(".github/actions/setup/action.yml")
+
+
+def contract_violations(source: str, path: "pathlib.Path | None" = None) -> list[str]:
     flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
     problems = []
     package_config_set = r"\b(?:pnpm|npm|yarn)\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
@@ -672,6 +675,13 @@ def contract_violations(source: str) -> list[str]:
         flat,
     ):
         problems.append("workflows must not override pnpm's job-private store on a command")
+    # The literal "echo PNPM_CONFIG_STORE_DIR=${store_dir} >> $GITHUB_ENV" line is
+    # only exempt from the inline-override check in the one file that owns it, and
+    # only when that same file derives store_dir from $RUNNER_TEMP — matching the
+    # echo text alone can't tell a job-private export from a persistent one.
+    export_exempt = path == SETUP_ACTION_PATH and bool(
+        re.search(r"\bstore_dir=\"?\$\{?RUNNER_TEMP\}?/", source)
+    )
     for line in source.splitlines():
         if re.search(
             r"^\s*(?:export\s+)?PNPM_CONFIG_STORE_DIR\s*[:=]",
@@ -679,9 +689,12 @@ def contract_violations(source: str) -> list[str]:
             flags=re.IGNORECASE,
         ):
             problems.append("workflows must export PNPM_CONFIG_STORE_DIR only through the shared setup action")
-        elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line, flags=re.IGNORECASE) and not re.search(
-            r'^\s*echo\s+["\']PNPM_CONFIG_STORE_DIR=\$\{store_dir\}["\']\s*>>\s*["\']\$GITHUB_ENV["\']\s*$',
-            line,
+        elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line, flags=re.IGNORECASE) and not (
+            export_exempt
+            and re.search(
+                r'^\s*echo\s+["\']PNPM_CONFIG_STORE_DIR=\$\{store_dir\}["\']\s*>>\s*["\']\$GITHUB_ENV["\']\s*$',
+                line,
+            )
         ):
             problems.append("workflows must not override PNPM_CONFIG_STORE_DIR inline")
     if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
@@ -717,9 +730,28 @@ for fixture in (
         print(f"pnpm-store guard missed its negative control: {fixture}", file=sys.stderr)
         raise SystemExit(1)
 
+# The literal safe-echo line is exempt only in the shared setup action, and only
+# when that file derives store_dir from $RUNNER_TEMP — matching the echo text
+# alone can't distinguish a job-private export from a persistent one.
+SAFE_EXPORT_LINE = 'echo "PNPM_CONFIG_STORE_DIR=${store_dir}" >> "$GITHUB_ENV"'
+RUNNER_TEMP_ASSIGNMENT = 'store_dir="${RUNNER_TEMP}/.pnpm-store"'
+HOME_ASSIGNMENT = 'store_dir="$HOME/.pnpm-store"'
+
+if contract_violations(f"{RUNNER_TEMP_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", SETUP_ACTION_PATH):
+    print("pnpm-store guard flagged its own job-private export as a violation", file=sys.stderr)
+    raise SystemExit(1)
+
+for fixture_source, fixture_path, label in (
+    (f"{RUNNER_TEMP_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", None, "outside the shared setup action"),
+    (f"{HOME_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", SETUP_ACTION_PATH, "store_dir not derived from $RUNNER_TEMP"),
+):
+    if not contract_violations(fixture_source, fixture_path):
+        print(f"pnpm-store guard missed its negative control: {label}", file=sys.stderr)
+        raise SystemExit(1)
+
 for path in files:
     text = path.read_text()
-    violations.extend(f"{path}: {problem}" for problem in contract_violations(text))
+    violations.extend(f"{path}: {problem}" for problem in contract_violations(text, path))
 
 if violations:
     print("\n".join(violations), file=sys.stderr)
