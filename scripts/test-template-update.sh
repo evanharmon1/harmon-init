@@ -14,6 +14,15 @@
 # recorded _commit to be a resolvable version tag, so HEAD/dirty refs won't do).
 set -euo pipefail
 
+validation_scope="${1:-full}"
+case "$validation_scope" in
+full | renovate-config) ;;
+*)
+    echo "Unknown validation scope: ${validation_scope}" >&2
+    exit 2
+    ;;
+esac
+
 # Copier clones the template into a TemporaryDirectory; a large diff (the
 # foreman-v2 strip deletes >100 files) trips git auto-gc in that clone, and
 # the detached gc process is still writing .git/objects when Python's
@@ -198,8 +207,23 @@ markers="$(grep -rl '^<<<<<<<' "$gen" 2>/dev/null | grep -v '/\.git/' || true)"
 rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"
 [ -z "$rejs" ] || err "copier .rej files left: $rejs"
 
+if [ "$validation_scope" = "renovate-config" ]; then
+    # renovate: datasource=npm depName=renovate
+    RENOVATE_VALIDATOR_VERSION=44.110.0
+    if have npx; then
+        (cd "$gen" && npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict) ||
+            err "updated project renovate.json failed strict validation"
+    else
+        err "required tool 'npx' is not installed for strict Renovate configuration validation"
+    fi
+fi
+
 if [ "$fail" -ne 0 ]; then
     echo "test-template-update: FAILED" >&2
     exit 1
+fi
+if [ "$validation_scope" = "renovate-config" ]; then
+    echo "test-renovate-config (update): PASS"
+    exit 0
 fi
 echo "test-template-update: PASS"

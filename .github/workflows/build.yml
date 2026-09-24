@@ -242,7 +242,12 @@ jobs:
           git config --global user.name "ci"
           git config --global user.email "ci@users.noreply.github.com"
           git config --global init.defaultBranch main
-      - run: task test:template:${{ matrix.profile }}
+      - name: Render and validate template profile
+        run: task test:template:${{ matrix.profile }}
+      # Strict Renovate validation resolves Renovate from npm and is therefore
+      # an explicit CI/local-CI task; ordinary `task verify` stays offline.
+      - name: Strictly validate rendered Renovate config
+        run: task test:renovate-config -- ${{ matrix.profile }}
 
   verify:
     if: always()

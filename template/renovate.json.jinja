@@ -159,9 +159,44 @@
       "groupName": "Devcontainer"
     }[% endif %][% if use_node %],
     {
-      "description": "Batch all npm/Node updates into one PR",
+      "description": "Batch non-major npm/Node updates into one PR",
       "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "npm dependencies"
+    },
+    {
+      "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "groupName": null
+    },
+    {
+      "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0"
+    },
+    {
+      "description": "Require explicit approval for package-manager majors because pnpm/npm/yarn migrations can change lockfiles, install behavior, and CI bootstrapping",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["packageManager"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "Before approving this update, follow the [package-manager major-upgrade checklist](docs/CHECKLIST.md#package-manager-major-upgrades). If this repository deliberately stays on an older major, add a local disabling package rule whose description records why."
+      ]
+    },
+    {
+      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
+      "groupName": "ESLint toolchain"
+    },
+    {
+      "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["astro", "@astrojs/*"],
+      "groupName": "Astro"
     },
     {
       "description": "Disable auto-update for npm overrides used as security pins — Renovate runs npm install <pkg>@<version> to update overrides, which causes EOVERRIDE when the package also appears as a transitive dep",
