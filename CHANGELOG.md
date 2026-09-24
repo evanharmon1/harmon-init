@@ -8,6 +8,23 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.47.0](https://github.com/evanharmon1/harmon-init/compare/v4.46.0...v4.47.0) (2026-09-24)
+
+
+### Features
+
+* **template:** gate formatter upgrades on unchanged rendered output ([#1366](https://github.com/evanharmon1/harmon-init/issues/1366)) ([3ade29e](https://github.com/evanharmon1/harmon-init/commit/3ade29e4dd712c049c836efde24adb7d761a6b4e))
+
+
+### Bug Fixes
+
+* **ci:** keep pnpm stores job-private ([#1365](https://github.com/evanharmon1/harmon-init/issues/1365)) ([66e8ea3](https://github.com/evanharmon1/harmon-init/commit/66e8ea3312515f60ad635c4a714ea75d3b1f4d35))
+* **devflow:** say carry needs only the vendored assets, now that v0.47.0 ships them ([#1381](https://github.com/evanharmon1/harmon-init/issues/1381)) ([bcb7f32](https://github.com/evanharmon1/harmon-init/commit/bcb7f32ed378b4b9e84c456647545499f8c62370))
+* retire OpenSpec from harmon-init ([#1364](https://github.com/evanharmon1/harmon-init/issues/1364)) ([44b14eb](https://github.com/evanharmon1/harmon-init/commit/44b14ebd4bbbf55f0ae82bb7eba14180a51fc0e0))
+* **scripts:** decouple heredocs from if conditions for cross-version shfmt compatibility ([#1380](https://github.com/evanharmon1/harmon-init/issues/1380)) ([45dab06](https://github.com/evanharmon1/harmon-init/commit/45dab06e3d8f40c332f54a4b734cda66167184fb))
+* **template:** sync harmon-devkit skills to v0.47.0 ([#1379](https://github.com/evanharmon1/harmon-init/issues/1379)) ([95f2ea6](https://github.com/evanharmon1/harmon-init/commit/95f2ea6c2810e6da48c9a5d540d00feed5739c71))
+* **test:** make the setup-action tool tests hermetic to tools already on PATH ([#1378](https://github.com/evanharmon1/harmon-init/issues/1378)) ([44d1e6d](https://github.com/evanharmon1/harmon-init/commit/44d1e6d9311774f1f297d72e95d0322107ab65ac))
+
 ## [4.46.0](https://github.com/evanharmon1/harmon-init/compare/v4.45.0...v4.46.0) (2026-09-24)
 
 
